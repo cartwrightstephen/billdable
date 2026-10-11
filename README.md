@@ -35,6 +35,3 @@ docker build -t billdable .
 docker run -p 8765:8765 billdable
 ```
 
-## Non-goals
-
-Real QuickBooks OAuth, live email delivery, user auth, multi-tenancy, full lien filing, estimating, payroll, or autonomous money/lien actions. Adapters are usable local stubs.
