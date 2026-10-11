@@ -1,0 +1,101 @@
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import domain
+from seed import seed_state
+
+
+class MoneyFileTests(unittest.TestCase):
+    def test_oak_street_money_file_separates_unsigned_change_order(self):
+        job = seed_state()["jobs"][0]
+        money = domain.job_money(job)
+        self.assertEqual(money["billed_cents"], 4000000)
+        self.assertEqual(money["collected_cents"], 4000000)
+        self.assertEqual(money["unbilled_completed_cents"], 4400000)
+        self.assertEqual(money["pending_co_cents"], 640000)
+        self.assertEqual(money["outstanding_cents"], 0)
+
+    def test_status_names_the_blocker(self):
+        job = seed_state()["jobs"][0]
+        self.assertIn("Atlanta Millwork", domain.status_label(job))
+        self.assertNotEqual(domain.status_label(job), "Pending")
+
+    def test_send_is_gated_until_packet_and_signature_clear(self):
+        state = seed_state()
+        domain.draft_invoice(state, "job-oak")
+        with self.assertRaises(domain.GateError) as raised:
+            domain.approve_and_send(state, "job-oak")
+        self.assertGreaterEqual(len(raised.exception.blockers), 2)
+        domain.resolve_packet_item(state, "job-oak", "pkt-oak-waiver")
+        domain.resolve_packet_item(state, "job-oak", "pkt-oak-tickets")
+        job = domain._job(state, "job-oak")
+        job["change_orders"][0]["status"] = "approved"
+        job["change_orders"][0]["included_in_billing"] = False
+        domain._refresh_draft_gate(job)
+        domain.approve_and_send(state, "job-oak", actor="owner")
+        invoice = job["invoices"][-1]
+        self.assertEqual(invoice["status"], "sent")
+        self.assertEqual(invoice["approved_by"], "owner")
+
+    def test_payment_match_opens_waiver(self):
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 11970000, "QBO-20011")
+        job = domain._job(state, "job-turner")
+        self.assertEqual(job["invoices"][-1]["status"], "paid")
+        self.assertTrue(job["waiver_due"])
+        self.assertEqual(domain.status_label(job), "Payment received, waiver not sent")
+        domain.send_waiver(state, "job-turner")
+        self.assertTrue(job["waiver_sent"])
+
+    def test_retainage_chase_requires_closeout_packet(self):
+        state = seed_state()
+        with self.assertRaises(domain.GateError):
+            domain.chase_retainage(state, "job-decatur")
+        domain.resolve_packet_item(state, "job-decatur", "pkt-dec-punch")
+        domain.chase_retainage(state, "job-decatur")
+        self.assertEqual(domain._job(state, "job-decatur")["retainage_chases"], 2)
+
+    def test_partial_payment_does_not_mark_paid(self):
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 5000000, "QBO-20012")
+        job = domain._job(state, "job-turner")
+        self.assertEqual(job["invoices"][-1]["status"], "partial")
+        self.assertFalse(job["waiver_due"])
+        self.assertEqual(domain.job_money(job)["outstanding_cents"], 6970000)
+
+    def test_playbook_update_and_learn_rejection(self):
+        state = seed_state()
+        domain.update_payer(state, "payer-ellison", {"follow_up_days": 5, "rejects_when": "Missing photos"})
+        payer = domain._payer(state, "payer-ellison")
+        self.assertEqual(payer["follow_up_days"], 5)
+        domain.learn_rejection(state, "job-oak", "Unsigned millwork waiver")
+        self.assertIn("Unsigned millwork waiver", domain._payer(state, "payer-ellison")["rejects_when"])
+
+    def test_email_log_on_send(self):
+        state = seed_state()
+        domain.resolve_packet_item(state, "job-oak", "pkt-oak-waiver")
+        domain.resolve_packet_item(state, "job-oak", "pkt-oak-tickets")
+        job = domain._job(state, "job-oak")
+        job["change_orders"][0]["status"] = "approved"
+        job["change_orders"][0]["included_in_billing"] = False
+        domain._refresh_draft_gate(job)
+        domain.draft_invoice(state, "job-oak")
+        domain.approve_and_send(state, "job-oak", actor="owner")
+        self.assertGreater(len(state.get("email_log", [])), 0)
+        self.assertEqual(state["email_log"][-1]["kind"], "pay_app")
+
+    def test_add_and_approve_change_order(self):
+        state = seed_state()
+        domain.add_change_order(state, "job-ponce", "Tile upgrade", 120000)
+        job = domain._job(state, "job-ponce")
+        self.assertEqual(len(job["change_orders"]), 1)
+        co_id = job["change_orders"][0]["id"]
+        domain.approve_change_order(state, "job-ponce", co_id)
+        self.assertEqual(job["change_orders"][0]["status"], "approved")
+
+
+if __name__ == "__main__":
+    unittest.main()
