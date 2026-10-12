@@ -719,7 +719,9 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json()
             url = app_url()
             if not (mailer.configured() and url):
-                self._json(200, {"message": "Password reset by email isn't set up on this server yet. Ask the Billdable team to reset it."})
+                contact = (os.environ.get("LEGAL_EMAIL") or "").strip()
+                self._json(200, {"message": "Password reset by email isn't set up on this server yet. "
+                                 + (f"Email {contact} to reset it." if contact else "Ask the Billdable team to reset it.")})
                 return
             requested = _text(body, "email", limit=300)
 
