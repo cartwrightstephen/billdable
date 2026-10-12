@@ -202,8 +202,9 @@ class MailHttpTests(unittest.TestCase):
         return res, json.loads(payload or b"{}")
 
     def company(self, email_addr, ap="ap@park.example"):
-        res, _ = self.request("POST", "/api/auth/signup", {"email": email_addr, "password": PASSWORD, "name": "Pat Pine", "company_name": "Pine & Sons"})
+        res, data = self.request("POST", "/api/auth/signup", {"email": email_addr, "password": PASSWORD, "name": "Pat Pine", "company_name": "Pine & Sons"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))  # sending needs a verified address
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": ap,
                "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
@@ -241,8 +242,11 @@ class MailHttpTests(unittest.TestCase):
         self.assertIn("billing@billdable.test", str(msg["From"]))
         self.assertIn("Pay application PA-", msg["Subject"])
         self.assertIn("Amount due this application", msg.get_body(("plain",)).get_content())
-        self.assertIn("1 document is attached", msg.get_body(("plain",)).get_content())
-        self.assertEqual([p.get_filename() for p in msg.iter_attachments()], ["contract.pdf"])
+        self.assertIn("1 packet document is attached", msg.get_body(("plain",)).get_content())
+        names = [p.get_filename() for p in msg.iter_attachments()]
+        self.assertEqual(names, [f"{state['jobs'][0]['invoices'][-1]['number']}.pdf", "contract.pdf"])
+        pdf = next(msg.iter_attachments()).get_content()
+        self.assertTrue(pdf.startswith(b"%PDF-1.4") and b"APPLICATION FOR PAYMENT" in pdf)
 
     def test_not_set_up_then_retry(self):
         for key in MAIL_ENV:
@@ -274,7 +278,7 @@ class MailHttpTests(unittest.TestCase):
         _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
         entry = state["email_log"][-1]
         self.assertTrue(entry["status"].startswith("failed: recipient refused"), entry["status"])
-        self.assertNotIn("attached", entry["body"])  # nothing was attached, so the email doesn't say so
+        self.assertNotIn("packet document", entry["body"])  # no packet files, so the email doesn't claim any
         self.assertEqual(state["jobs"][0]["invoices"][-1]["status"], "sent")  # the approval stands
         self.sink.reject.clear()
         _, state = self.request("POST", f"/api/outbox/{entry['id']}/retry", {}, cookie=cookie)
@@ -372,8 +376,9 @@ class MailHttpTests(unittest.TestCase):
         self.assertEqual(len(self.sink.messages), 1)
 
     def test_unicode_line_separator_in_job_name_still_sends(self):  # review finding 8
-        res, _ = self.request("POST", "/api/auth/signup", {"email": "mail10@pine.example", "password": PASSWORD, "name": "Pat", "company_name": "Pine"})
+        res, data = self.request("POST", "/api/auth/signup", {"email": "mail10@pine.example", "password": PASSWORD, "name": "Pat", "company_name": "Pine"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))
         job = {"name": "Elm\u2028addition\x85x", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim",
                "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)

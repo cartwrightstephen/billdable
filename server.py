@@ -18,7 +18,9 @@ import os
 import secrets
 import shutil
 import sys
+import re
 import threading
+import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
@@ -27,13 +29,16 @@ from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse
 
 import auth
+import backup
 import calendar_feed
 import domain
 import helper
 import importer
 import mailer
+import payapp_pdf
 import sov
 import storage
+import trial
 from seed import seed_state
 
 ROOT = Path(__file__).resolve().parent
@@ -68,6 +73,32 @@ def is_helper_admin(user: dict) -> bool:
     """
     allowed = {e.strip() for e in os.environ.get("HELPER_ADMIN_USER_IDS", "").split(",") if e.strip()}
     return bool(user) and user.get("id", "") in allowed
+
+
+def app_url() -> str | None:
+    """The public address used in emailed links (password reset, verification, invites).
+    Never taken from the request's Host header, which a stranger controls."""
+    url = (os.environ.get("BILLDABLE_URL") or "").strip().rstrip("/")
+    return url if re.match(r"^https?://[^\s/]+", url) else None
+
+
+SECRET_PATHS = (
+    (re.compile(r"(/api/inbound/(?:email|sms)/)[^/?\s]+"), r"\1[token]"),
+    (re.compile(r"(/api/calendar/)[^/?\s]+?(\.ics)"), r"\1[token]\2"),
+)
+
+
+def redact(text: str) -> str:
+    """Paths in the log never carry the secret parts of inbound or calendar addresses, or query strings."""
+    text = str(text)
+    for pattern, repl in SECRET_PATHS:
+        text = pattern.sub(repl, text)
+    return re.sub(r"\?[^\s\"]*", "", text)
+
+
+def log_json(level: str, **fields) -> None:
+    record = {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "level": level, **fields}
+    sys.stderr.write(json.dumps(record, default=str) + "\n")
 
 
 class BadRequest(Exception):
@@ -164,8 +195,27 @@ class Handler(BaseHTTPRequestHandler):
     # A client that stops sending or reading is dropped after this many seconds.
     timeout = 30
 
-    # One line per request goes to stderr (Render shows it in the service log).
-    # The default formatter logs the request line only, never headers or cookies.
+    # One JSON line per request goes to stderr (Render shows it in the service log): method,
+    # path with secrets removed, status, milliseconds and a request id. Never headers or cookies.
+    _rid = ""
+    _t0 = 0.0
+
+    def log_request(self, code="-", size="-") -> None:
+        log_json(
+            "info",
+            method=getattr(self, "command", ""),
+            path=redact(urlparse(getattr(self, "path", "")).path),
+            status=int(code) if str(code).isdigit() else str(code),
+            ms=round((time.monotonic() - self._t0) * 1000) if self._t0 else None,
+            rid=self._rid,
+        )
+
+    def log_error(self, format: str, *args) -> None:
+        log_json("warn", msg=redact(format % args), rid=self._rid)
+
+    def _crash(self) -> None:
+        log_json("error", rid=self._rid, path=redact(urlparse(self.path).path), trace=traceback.format_exc())
+        self._json(500, {"error": "Something went wrong on our side. It has been logged.", "request_id": self._rid})
 
     def _send(self, code: int, body: bytes, content_type: str, headers: dict | None = None) -> None:
         self.send_response(code)
@@ -173,6 +223,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         for k, v in SECURITY_HEADERS.items():
             self.send_header(k, v)
+        if self._rid:
+            self.send_header("X-Request-Id", self._rid)
         if self.path.startswith("/api/"):
             self.send_header("Cache-Control", "no-store")
         for k, v in (headers or {}).items():
@@ -265,23 +317,73 @@ class Handler(BaseHTTPRequestHandler):
         return user
 
     def do_GET(self) -> None:
+        self._rid, self._t0 = secrets.token_hex(6), time.monotonic()
         try:
             self._get()
+        except BadRequest as exc:
+            self._json(exc.code, {"error": str(exc)})
         except Exception:
-            traceback.print_exc()
-            self._json(500, {"error": "Something went wrong on our side. It has been logged."})
+            self._crash()
 
     def do_POST(self) -> None:
+        self._rid, self._t0 = secrets.token_hex(6), time.monotonic()
         try:
             self._post()
         except BadRequest as exc:
             self._json(exc.code, {"error": str(exc)})
         except Exception:
-            traceback.print_exc()
-            self._json(500, {"error": "Something went wrong on our side. It has been logged."})
+            self._crash()
 
     def _get(self) -> None:
         path = urlparse(self.path).path
+        if path == "/healthz":
+            # For an uptime monitor: no sign-in, no secrets, 503 when data can't be written.
+            writable = True
+            try:
+                probe = storage.DATA_DIR / f".health-{secrets.token_hex(4)}"
+                storage.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                probe.write_text("ok")
+                probe.unlink()
+            except OSError:
+                writable = False
+            self._json(200 if writable else 503, {
+                "ok": writable,
+                "storage": "ok" if writable else "not writable",
+                "email": "configured" if mailer.configured() else "not set up",
+                "last_backup": backup.newest_time(),
+            })
+            return
+        if path == "/api/team":
+            user = self._require_user()
+            if not user:
+                return
+            data = auth.team(user["company_id"])
+            if user["role"] != "owner":
+                data["invites"] = []
+            self._json(200, data)
+            return
+        if path == "/api/admin/companies":
+            user = self._require_user()
+            if not user:
+                return
+            if not is_helper_admin(user):
+                self._json(403, {"error": "Only the Billdable team can see this."})
+                return
+            self._json(200, {"companies": self._company_overview()})
+            return
+        m = re.match(r"^/api/jobs/([^/]+)/payapp/([^/]+)\.pdf$", path)
+        if m:
+            user = self._require_user()
+            if not user:
+                return
+            with STATE_LOCK:
+                state = load_company(user["company_id"])
+            pdf, name = self._payapp_pdf(state, m.group(1), m.group(2))
+            if not pdf:
+                self._json(404, {"error": "Pay app not found."})
+                return
+            self._send(200, pdf, "application/pdf", {"Content-Disposition": f'inline; filename="{name}"'})
+            return
         if path == "/api/auth/me":
             user = auth.session_user(self._token())
             if not user:
@@ -289,7 +391,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             with STATE_LOCK:
                 state = load_company(user["company_id"])
-            self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user)})
+            self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
+                             "mail_ready": bool(mailer.configured() and app_url())})
             return
         if path == "/api/helper/review":
             user = self._require_user()
@@ -419,10 +522,13 @@ class Handler(BaseHTTPRequestHandler):
                     _text(body, "name"),
                     company_id,
                 )
+                fresh = empty_state(_text(body, "company_name").strip() or "New company")
+                trial.start(fresh["company"])
                 with STATE_LOCK:
-                    save_company(company_id, empty_state(_text(body, "company_name").strip() or "New company"))
+                    save_company(company_id, fresh)
                 token = auth.create_session(user)
-                self._json(200, {"user": user}, self._set_cookie(token))
+                verification = self._send_verification(user)
+                self._json(200, {"user": user, "verification": verification}, self._set_cookie(token))
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
             return
@@ -430,6 +536,69 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/auth/logout":
             auth.destroy_session(self._token())
             self._json(200, {"ok": True}, self._set_cookie(None))
+            return
+
+        if path == "/api/auth/forgot":
+            body = self._read_json()
+            url = app_url()
+            if not (mailer.configured() and url):
+                self._json(200, {"message": "Password reset by email isn't set up on this server yet. Ask the Billdable team to reset it."})
+                return
+            found = auth.password_reset_token(_text(body, "email", limit=300))
+            if found:
+                raw, account = found
+                # Sent in the background, so the answer takes the same time whether or not the account exists.
+                threading.Thread(target=self._system_email, daemon=True, args=(
+                    account["email"], "Reset your Billdable password",
+                    f"Someone asked to reset the password for {account['email']} on Billdable.\n\n"
+                    f"Choose a new password here (the link works once, for one hour):\n{url}/#reset={raw}\n\n"
+                    "If it wasn't you, ignore this email; your password stays the same.",
+                )).start()
+            self._json(200, {"message": "If an account exists for that email, a reset link is on its way. It works for one hour."})
+            return
+
+        if path == "/api/auth/reset":
+            body = self._read_json()
+            try:
+                user = auth.reset_password(body.get("token"), body.get("password"))
+            except auth.AuthError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+            return
+
+        if path == "/api/auth/verify":
+            body = self._read_json()
+            try:
+                user = auth.verify_email(body.get("token"))
+            except auth.AuthError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, {"user": user})
+            return
+
+        if path == "/api/auth/invite-info":
+            body = self._read_json()
+            info = auth.invite_info(body.get("token"))
+            if not info:
+                self._json(404, {"error": "This invite is invalid or has expired. Ask for a new one."})
+                return
+            with STATE_LOCK:
+                company = load_company(info["company_id"]).get("company", {})
+            self._json(200, {"email": info["email"], "role": info["role"], "company_name": company.get("name", ""),
+                             "invited_by": info["invited_by"]})
+            return
+
+        if path == "/api/auth/accept-invite":
+            body = self._read_json()
+            try:
+                user = auth.accept_invite(body.get("token"), body.get("name"), body.get("password"))
+            except auth.AuthError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._change(user["company_id"], lambda st: domain.audit(
+                st, "", "team_join", f"{user['name']} ({user['email']}) joined the team as {user['role']}.", user["name"]))
+            self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
             return
 
         if path.startswith("/api/inbound/email/"):
@@ -482,6 +651,33 @@ class Handler(BaseHTTPRequestHandler):
             except domain.GateError as exc:
                 self._json(409, {"error": str(exc)})
             return
+        if path in {"/api/reset", "/api/import/rotate"} and user["role"] != "owner":
+            self._json(403, {"error": "Only an owner can do that."})
+            return
+        if path == "/api/auth/resend-verify":
+            if user.get("email_verified"):
+                self._json(409, {"error": "Your email is already verified."})
+                return
+            result = self._send_verification(user)
+            if result != "sent":
+                self._json(409, {"error": f"No verification email was sent: {result}."})
+                return
+            self._json(200, {"ok": True, "message": f"A verification link is on its way to {user['email']}."})
+            return
+        if path == "/api/auth/password":
+            try:
+                auth.change_password(user["id"], body.get("current"), body.get("new"))
+            except auth.AuthError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, {"ok": True})
+            return
+        if path == "/api/onboarding/dismiss":
+            self._json(*self._change(company_id, lambda st: st["company"].__setitem__("onboarding_dismissed", True)))
+            return
+        if path.startswith("/api/team/") or path == "/api/account/delete":
+            self._team_action(path, parts, body, user)
+            return
         if path == "/api/import/text":
             file_now = (parse_qs(urlparse(self.path).query).get("file") or [""])[0] == "1"
             self._json(*self._change(company_id, lambda st: self._import_text(st, body, actor if file_now else None)))
@@ -530,6 +726,140 @@ class Handler(BaseHTTPRequestHandler):
         # stops reading cannot stall every other company's requests.
         self._json(code, payload)
 
+    # ----- accounts and team -----
+
+    def _system_email(self, to: str, subject: str, body: str) -> str:
+        """An email from Billdable itself (reset, verification, invite). Returns "sent" or the reason it wasn't."""
+        if not mailer.configured():
+            return "email delivery is not set up on this server"
+        cfg = mailer.settings()
+        try:
+            msg, _ = mailer.build_message({"to": to, "subject": subject, "body": body}, "", "", [], cfg, sender_name="Billdable")
+            error = mailer.send([msg], cfg)[0]
+        except Exception as exc:
+            error = f"{exc.__class__.__name__}: {exc}"
+        if error:
+            log_json("warn", msg="system email failed", reason=str(error)[:200], rid=self._rid)
+        return "sent" if not error else str(error)
+
+    def _send_verification(self, user: dict) -> str:
+        url = app_url()
+        if user["company_id"] == auth.DEMO_COMPANY_ID:
+            return "the demo account isn't verified"
+        if not (mailer.configured() and url):
+            return "email delivery or BILLDABLE_URL is not set up on this server"
+        raw = auth.verify_email_token(user["id"])
+        return self._system_email(
+            user["email"], "Confirm your email for Billdable",
+            f"Hi {user['name']},\n\nConfirm that this is your email address (the link works for 3 days):\n{url}/#verify={raw}\n\n"
+            "Billdable emails your pay apps from this address's account, with replies coming back to it, "
+            "so we check it first. If you didn't sign up, ignore this email.",
+        )
+
+    def _team_action(self, path: str, parts: list, body: dict, user: dict) -> None:
+        company_id = user["company_id"]
+        if user["role"] != "owner":
+            self._json(403, {"error": "Only an owner can manage the team or the account."})
+            return
+        if company_id == auth.DEMO_COMPANY_ID:
+            self._json(403, {"error": "The demo account's team can't be changed."})
+            return
+        note = None
+        try:
+            if path == "/api/team/invite":
+                raw, invite = auth.create_invite(company_id, body.get("email"), body.get("role") or "member", user["name"])
+                link = f"{app_url() or self._base_url()}/#invite={raw}"
+                with STATE_LOCK:
+                    company_name = load_company(company_id).get("company", {}).get("name", "your company")
+                emailed = "not sent"
+                if app_url():
+                    emailed = self._system_email(
+                        invite["email"], f"{user['name']} invited you to {company_name} on Billdable",
+                        f"{user['name']} invited you to join {company_name} on Billdable as {invite['role']}.\n\n"
+                        f"Accept here (the link works for 7 days):\n{link}\n",
+                    )
+                note = {"invite_link": link, "emailed": emailed == "sent", "email_status": emailed}
+                detail = f"{user['name']} invited {invite['email']} as {invite['role']}."
+            elif len(parts) == 5 and parts[2] == "invites" and parts[4] == "revoke":
+                auth.revoke_invite(company_id, parts[3])
+                detail = f"{user['name']} revoked an invite."
+            elif len(parts) == 4 and parts[3] == "role":
+                changed = auth.set_role(company_id, parts[2], body.get("role"))
+                detail = f"{user['name']} made {changed['name']} {changed['role']}."
+            elif len(parts) == 4 and parts[3] == "remove":
+                if parts[2] == user["id"]:
+                    raise auth.AuthError("You can't remove yourself. Ask another owner.")
+                removed = auth.remove_user(company_id, parts[2])
+                detail = f"{user['name']} removed {removed['name']} ({removed['email']}) from the team."
+            elif path == "/api/account/delete":
+                self._delete_account(body, user)
+                return
+            else:
+                self._json(404, {"error": "Not found"})
+                return
+        except auth.AuthError as exc:
+            self._json(409, {"error": str(exc)})
+            return
+        self._change(company_id, lambda st: domain.audit(st, "", "team", detail, user["name"]))
+        self._json(200, {**auth.team(company_id), **(note or {})})
+
+    def _delete_account(self, body: dict, user: dict) -> None:
+        company_id = user["company_id"]
+        if not auth.check_password(user["id"], body.get("password")):
+            self._json(409, {"error": "Password is wrong. Nothing was deleted."})
+            return
+        with STATE_LOCK:
+            name = load_company(company_id).get("company", {}).get("name", "")
+        if _text(body, "confirm").strip() != name:
+            self._json(409, {"error": "Type your company name exactly to confirm. Nothing was deleted."})
+            return
+        removed = auth.delete_company_users(company_id)  # every session of the company ends here
+        with STATE_LOCK:
+            for path in [company_path(company_id), *(COMPANIES / "snapshots").glob(f"{company_id}-*.json")]:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        shutil.rmtree(importer.UPLOADS / company_id, ignore_errors=True)
+        importer.forget_company(company_id)
+        log_json("info", msg="company deleted", company=company_id, users=removed, rid=self._rid)
+        self._json(200, {"ok": True, "message": "Your company and its users were deleted. Backups that still hold it expire on their own."},
+                   self._set_cookie(None))
+
+    def _payapp_pdf(self, state: dict, job_id: str, invoice_id: str) -> tuple:
+        job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
+        invoice = next((i for i in (job or {}).get("invoices", []) if i["id"] == invoice_id), None)
+        if not invoice:
+            return None, None
+        payer = next((p for p in state.get("payers", []) if p["id"] == job["payer_id"]), {})
+        name = re.sub(r"[^A-Za-z0-9._-]", "-", invoice["number"]) + ".pdf"
+        return payapp_pdf.render(state.get("company", {}).get("name", ""), job, payer, invoice), name
+
+    def _company_overview(self) -> list:
+        users = auth.all_users()
+        out = []
+        for path in sorted(COMPANIES.glob("*.json")) if COMPANIES.exists() else []:
+            company_id = path.stem
+            with STATE_LOCK:
+                try:
+                    state = load_company(company_id)
+                except (OSError, ValueError):
+                    continue
+            members = [u for u in users if u["company_id"] == company_id]
+            if not members:
+                continue
+            out.append({
+                "company_id": company_id,
+                "name": state.get("company", {}).get("name", ""),
+                "users": len(members),
+                "signed_up": min((u.get("created_at", "") for u in members), default=""),
+                "jobs": len(state.get("jobs", [])),
+                "pay_apps_sent": sum(1 for j in state.get("jobs", []) for i in j.get("invoices", []) if i.get("sent_at")),
+                "trial": trial.status(state),
+                "demo": company_id == auth.DEMO_COMPANY_ID,
+            })
+        return out
+
     # ----- email delivery -----
 
     def _deliver_queued(self, company_id: str, user: dict, only: set | None = None) -> dict | None:
@@ -543,8 +873,14 @@ class Handler(BaseHTTPRequestHandler):
             queued = [e for e in log if e.get("status") == "queued" and (only is None or e["id"] in only)]
             if not queued:
                 return None
-            if company_id == auth.DEMO_COMPANY_ID or not mailer.configured():
-                reason = mailer.DEMO if company_id == auth.DEMO_COMPANY_ID else mailer.NOT_SET_UP
+            if company_id == auth.DEMO_COMPANY_ID or not mailer.configured() or not user.get("email_verified"):
+                if company_id == auth.DEMO_COMPANY_ID:
+                    reason = mailer.DEMO
+                elif not mailer.configured():
+                    reason = mailer.NOT_SET_UP
+                else:
+                    # Replies go to the approver's address, so it must be theirs before anything goes out.
+                    reason = mailer.UNVERIFIED
                 for e in queued:
                     e["status"] = reason
                 save_company(company_id, state)
@@ -567,10 +903,22 @@ class Handler(BaseHTTPRequestHandler):
                     for fid in e.get("attachments", [])
                     if fid in files
                 ]
+                if e.get("payapp_invoice_id"):
+                    try:
+                        pdf, name = self._payapp_pdf(state, e["job_id"], e["payapp_invoice_id"])
+                    except Exception:
+                        log_json("error", msg="pay app PDF failed", rid=self._rid, trace=traceback.format_exc())
+                        pdf, name = None, None
+                    if pdf:
+                        attach.insert(0, (name, pdf))
+                    else:
+                        e["status"] = "failed: the pay app PDF could not be made; see the server log"
+                        e["failed_at"] = now.isoformat(timespec="seconds")
+                        continue
                 work.append((dict(e), attach))
             company_name = state.get("company", {}).get("name", "")
             save_company(company_id, state)
-            if not batch:
+            if not work:
                 return domain.snapshot(state)
         # Outside the lock: read attachments and talk to the mail server.
         outcome: dict = {}
@@ -976,6 +1324,10 @@ def main() -> None:
     print(f"Billdable running at {browse}:{PORT}")
     print(f"Data directory: {storage.DATA_DIR}")
     print(f"Demo login: {auth.DEMO_EMAIL} / {auth.DEMO_PASSWORD}")
+    backup.start_scheduler(
+        {"companies": STATE_LOCK, "auth": auth.LOCK, "tokens": importer.TOKENS_LOCK},
+        log=lambda msg: log_json("info", msg=msg),
+    )
     server.serve_forever()
 
 

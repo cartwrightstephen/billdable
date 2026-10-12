@@ -219,3 +219,14 @@ details.card > summary { cursor: pointer; }
 .sov-sums { max-width: 520px; margin: 8px 0; }
 #sov-sum-diff.ok { color: var(--green); }
 .email-body { white-space: pre-wrap; max-height: 9em; overflow: auto; }
+
+/* accounts, onboarding, trial */
+.verify-banner, .trial-banner { background: #f8efd8; border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; font-size: 14px; }
+.trial-banner { background: #eef3ee; }
+.onboarding { position: relative; }
+.onb-steps { margin: 6px 0 0; padding-left: 22px; display: grid; gap: 8px; }
+.onb-steps li.done { color: var(--muted, #6b645c); }
+.onb-steps li.next { font-weight: 600; }
+.invite-result { background: #eef3ee; border-radius: 8px; padding: 10px; margin: 8px 0; }
+.danger-zone { border-color: var(--red, #8d2d2d); }
+.btn.danger { background: var(--red, #8d2d2d); color: #fff; border-color: var(--red, #8d2d2d); }

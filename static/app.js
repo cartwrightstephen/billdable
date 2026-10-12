@@ -142,6 +142,7 @@ const NAV_HELP = {
   outbox: "Every email approved to send, and whether it was delivered.",
   audit: "Every action, who took it and when.",
   help: "What the terms mean and how to start.",
+  account: "Your password and email, the people on your team, and deleting the company.",
   "helper-admin": "Questions the helper couldn't answer, and the answers it uses. Team only.",
 };
 
@@ -292,7 +293,15 @@ async function load() {
   render();
 }
 
-async function boot() {
+async function boot(checkLink = true) {
+  let linkMessage = null;
+  if (checkLink) {
+    const t = readTokenFromUrl();
+    if (t) {
+      linkMessage = await handleTokenLink(t);
+      if (tokenScreen) return;   // reset or invite form is showing
+    }
+  }
   let res;
   try {
     res = await fetch("/api/auth/me");
@@ -305,11 +314,13 @@ async function boot() {
     const data = await readJson(res);
     me = escDeep(data.user);
     helperAdmin = data.helper_admin === true;
+    mailReady = data.mail_ready === true;
     await load();
   } else {
     renderLanding();
   }
   setAiVisible(!!me);
+  if (linkMessage) toast(linkMessage);
 }
 
 function setAiVisible(on) {
@@ -356,6 +367,7 @@ function renderLanding() {
             <button class="btn" type="submit">${signup ? "Create account" : "Sign in"}</button>
             ${authError ? `<div class="auth-error">${esc(authError)}</div>` : ""}
           </form>
+          ${signup ? "" : `<div class="auth-toggle"><button type="button" id="auth-forgot">Forgot your password?</button></div>`}
           <div class="auth-toggle">
             ${signup ? "Already have an account?" : "New company?"}
             <button type="button" id="auth-switch">${signup ? "Sign in" : "Create one"}</button>
@@ -392,6 +404,7 @@ function renderLanding() {
   document.getElementById("bar-start").addEventListener("click", toSignup);
   document.getElementById("price-start").addEventListener("click", toSignup);
   document.getElementById("bar-signin").addEventListener("click", toSignin);
+  document.getElementById("auth-forgot")?.addEventListener("click", () => renderForgot());
 }
 
 async function onAuthSubmit(e) {
@@ -432,7 +445,11 @@ async function onAuthSubmit(e) {
   helperLog.length = 0;
   try {
     const who = await fetch("/api/auth/me");
-    if (who.ok) helperAdmin = (await readJson(who)).helper_admin === true;
+    if (who.ok) {
+      const info = await readJson(who);
+      helperAdmin = info.helper_admin === true;
+      mailReady = info.mail_ready === true;
+    }
   } catch (_) { helperAdmin = false; }
   await load();
   setAiVisible(true);
@@ -443,6 +460,9 @@ async function logout() {
   me = null;
   state = null;
   helperAdmin = false;
+  teamData = null;
+  lastInvite = null;
+  adminCompanies = null;
   helperLog.length = 0;   // never show one person's questions to the next
   document.getElementById("ai-replies").innerHTML = "";
   document.getElementById("ai-chips").innerHTML = "";
@@ -479,7 +499,7 @@ async function post(path, body = {}) {
     const lines = data.blockers || [data.error];
     toast((data.error && lines[0] !== data.error ? data.error + " " : "Blocked: ") + lines.join("; "));
   } else if (!res.ok) {
-    toast(data.error || "Request failed");
+    toast((data.error || "Request failed") + (data.request_id ? ` Reference: ${data.request_id}.` : ""));
   } else {
     toast("Saved");
   }
@@ -500,6 +520,7 @@ function emailOutcome(entries) {
 }
 
 function nav(view, jobId = null, detailId = null) {
+  if (view === "account") teamData = null;  // fresh team list each time the page opens
   currentView = view;
   currentJobId = jobId;
   currentDetailId = detailId;
@@ -565,11 +586,12 @@ function render() {
           <button class="${active("playbook")}" data-v="playbook">Payer Playbook</button>
           <button class="${active("outbox")}" data-v="outbox">Outbox</button>
           <button class="${active("audit")}" data-v="audit">Audit</button>
+          <button class="${active("account")}" data-v="account">Team & account</button>
           <button class="${active("help")}" data-v="help">Help</button>
           ${helperAdmin ? `<button class="${active("helper-admin")}" data-v="helper-admin">Helper answers</button>` : ""}
         </nav>
         <a class="reset-btn" href="/api/export" download>Export data</a>
-        <button class="reset-btn" id="reset">Reset data</button>
+        ${me && me.role === "owner" ? `<button class="reset-btn" id="reset">Reset data</button>` : ""}
         <div class="user-meta">
           ${me ? me.name : ""}<br>${me ? me.email : ""}
           <button class="reset-btn" id="logout">Log out</button>
@@ -581,14 +603,14 @@ function render() {
   document.querySelectorAll(".nav button").forEach((b) =>
     b.addEventListener("click", () => nav(b.dataset.v))
   );
-  document.getElementById("reset").addEventListener("click", resetData);
+  document.getElementById("reset")?.addEventListener("click", resetData);
   document.getElementById("logout").addEventListener("click", logout);
-  document.getElementById("main").innerHTML = views[currentView] ? views[currentView]() : "<p>Unknown view</p>";
+  document.getElementById("main").innerHTML = verifyBannerHtml() + (views[currentView] ? views[currentView]() : "<p>Unknown view</p>");
   bindActions();
   decorateHelp(document.getElementById("app"));
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
   if (sovDraft) updateSovTotals();
-  if (currentView === "helper-admin") loadHelperReview();
+  if (currentView === "helper-admin") { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
 }
 
@@ -613,6 +635,42 @@ function bindActions() {
       const a = el.dataset.action;
       const id = el.dataset.id;
       if (a === "email-retry") e.stopPropagation();
+      if (a === "resend-verify") {
+        const r = await postJson("/api/auth/resend-verify", {});
+        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
+        return;
+      }
+      if (a === "change-password") {
+        const r = await postJson("/api/auth/password", { current: document.getElementById("pw-current").value, new: document.getElementById("pw-new").value });
+        toast(r.ok ? "Password changed." : (r.data.error || "That didn't work."));
+        if (r.ok) render();
+        return;
+      }
+      if (a === "team-invite") {
+        const email = document.getElementById("invite-email").value;
+        const data = await teamPost("/api/team/invite", { email, role: document.getElementById("invite-role").value });
+        if (data) { lastInvite = { link: data.invite_link, emailed: data.emailed, email_status: data.email_status, email }; render(); }
+        return;
+      }
+      if (a === "team-role") { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); return; }
+      if (a === "team-remove") {
+        if (!confirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`)) return;
+        await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed.");
+        return;
+      }
+      if (a === "team-revoke") { await teamPost(`/api/team/invites/${el.dataset.invite}/revoke`, {}, "Invite revoked."); return; }
+      if (a === "delete-account") {
+        if (!confirm("Delete the company, every job and file, and every user? This can't be undone here.")) return;
+        const r = await postJson("/api/account/delete", { password: document.getElementById("del-password").value, confirm: document.getElementById("del-confirm").value });
+        if (!r.ok) { toast(r.data.error || "Nothing was deleted."); return; }
+        me = null; state = null; teamData = null; lastInvite = null;
+        renderLanding();
+        toast(r.data.message);
+        return;
+      }
+      if (a === "onb-newjob") { nav("jobs"); formOpen.newjob = true; render(); return; }
+      if (a === "onb-job") { const j = state.jobs.find(x => !x.closed) || state.jobs[0]; if (j) nav("job", j.id); return; }
+      if (a === "onb-dismiss") { await post("/api/onboarding/dismiss"); return; }
       if (a === "draft") await post(`/api/jobs/${id}/draft`);
       else if (a === "sov-start") { sovStartEdit(state.jobs.find(x => x.id === id)); render(); }
       else if (a === "sov-add") { sovDraft.lines.push(blankSovLine()); render(); document.querySelectorAll(".sov-desc")[sovDraft.lines.length - 1]?.focus(); }
@@ -1195,6 +1253,245 @@ document.addEventListener("paste", (e) => {
   if (e.target && e.target.id === "sov-paste") setTimeout(sovReadPaste, 0);
 });
 
+// ---------- accounts: reset, verify, invite links; Team & account ----------
+// Links in emails carry a one-time token after "#", which browsers never send to a server.
+let mailReady = false;
+let teamData = null;      // { users, invites } from /api/team (escaped)
+let lastInvite = null;    // { link, emailed, email_status } after inviting
+let tokenScreen = null;   // { kind: "reset" | "invite", token, info }
+
+function readTokenFromUrl() {
+  const m = /^#(reset|verify|invite)=([A-Za-z0-9_-]{20,200})$/.exec(location.hash || "");
+  if (!m) return null;
+  history.replaceState(null, "", location.pathname);  // keep the token out of the address bar and history
+  return { kind: m[1], token: m[2] };
+}
+
+async function postJson(path, body) {
+  try {
+    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    return { ok: res.ok, status: res.status, data: await readJson(res), res };
+  } catch (_) {
+    setNetBanner(true);
+    return { ok: false, status: 0, data: { error: "Can't reach Billdable." } };
+  }
+}
+
+async function handleTokenLink(t) {
+  if (t.kind === "verify") {
+    const r = await postJson("/api/auth/verify", { token: t.token });
+    return r.ok ? "Your email is confirmed. Thanks." : (r.data.error || "That link didn't work.");
+  }
+  if (t.kind === "invite") {
+    const r = await postJson("/api/auth/invite-info", { token: t.token });
+    tokenScreen = { kind: "invite", token: t.token, info: r.ok ? escDeep(r.data) : null, error: r.ok ? "" : (r.data.error || "") };
+  } else {
+    tokenScreen = { kind: "reset", token: t.token, error: "" };
+  }
+  renderTokenScreen();
+  return null;
+}
+
+function renderTokenScreen() {
+  setAiVisible(false);
+  const s = tokenScreen;
+  const app = document.getElementById("app");
+  let inner;
+  if (s.kind === "invite" && !s.info) {
+    inner = `<h2>Invite not found</h2><p class="sub">${esc(s.error || "This invite is invalid or has expired. Ask for a new one.")}</p>
+      <button class="btn" id="token-done">Go to sign in</button>`;
+  } else if (s.kind === "invite") {
+    inner = `<h2>Join ${s.info.company_name}</h2>
+      <p class="sub">${s.info.invited_by ? s.info.invited_by + " invited you" : "You were invited"} as ${s.info.role}. Your sign-in email is <strong>${s.info.email}</strong>.</p>
+      <form id="token-form">
+        <label>Your name</label><input name="name" required autocomplete="name">
+        <label>Choose a password (at least 10 characters)</label><input name="password" type="password" required autocomplete="new-password" minlength="10">
+        <button class="btn" type="submit">Join the team</button>
+        ${s.error ? `<div class="auth-error">${esc(s.error)}</div>` : ""}
+      </form>`;
+  } else {
+    inner = `<h2>Choose a new password</h2>
+      <p class="sub">At least 10 characters. Every other device is signed out when you save it.</p>
+      <form id="token-form">
+        <label>New password</label><input name="password" type="password" required autocomplete="new-password" minlength="10">
+        <button class="btn" type="submit">Save and sign in</button>
+        ${s.error ? `<div class="auth-error">${esc(s.error)}</div>` : ""}
+      </form>`;
+  }
+  app.innerHTML = `<div class="landing"><header class="land-bar"><div class="brand">Billdable</div></header>
+    <section class="land-hero"><div class="auth-card land-form" id="token-card">${inner}</div></section></div>`;
+  document.getElementById("token-done")?.addEventListener("click", () => { tokenScreen = null; authMode = "login"; renderLanding(); });
+  document.getElementById("token-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    if (f.password.value.length < 10) { s.error = "Password must be at least 10 characters."; renderTokenScreen(); return; }
+    const r = s.kind === "invite"
+      ? await postJson("/api/auth/accept-invite", { token: s.token, name: f.name.value, password: f.password.value })
+      : await postJson("/api/auth/reset", { token: s.token, password: f.password.value });
+    if (!r.ok) { s.error = r.data.error || "That didn't work."; renderTokenScreen(); return; }
+    tokenScreen = null;
+    await boot(false);
+    toast(s.kind === "invite" ? "Welcome to the team." : "Password changed. You're signed in.");
+  });
+}
+
+function renderForgot(message = "", error = "") {
+  const card = document.getElementById("signup");
+  if (!card) return;
+  card.innerHTML = `<h2>Reset your password</h2>
+    <p class="sub">We'll email a link that works once, for one hour.</p>
+    <form id="forgot-form">
+      <label>Email</label><input name="email" type="email" required autocomplete="username">
+      <button class="btn" type="submit">Send the link</button>
+      ${message ? `<div class="sub">${esc(message)}</div>` : ""}${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
+    </form>
+    <div class="auth-toggle"><button type="button" id="forgot-back">Back to sign in</button></div>`;
+  document.getElementById("forgot-back").addEventListener("click", () => { authMode = "login"; renderLanding(); });
+  document.getElementById("forgot-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const r = await postJson("/api/auth/forgot", { email: e.target.email.value });
+    if (r.ok) renderForgot(r.data.message || "");
+    else renderForgot("", r.data.error || "That didn't work.");
+  });
+}
+
+async function loadTeam() {
+  try {
+    const res = await fetch("/api/team");
+    if (!res.ok) return;
+    teamData = escDeep(await readJson(res));
+  } catch (_) { setNetBanner(true); return; }
+  if (currentView === "account") render();
+}
+
+async function teamPost(path, body, okMessage) {
+  const r = await postJson(path, body);
+  if (!r.ok) { toast(r.data.error || "That didn't work."); return null; }
+  if (r.data.users) teamData = escDeep({ users: r.data.users, invites: r.data.invites || [] });
+  if (okMessage) toast(okMessage);
+  render();
+  return r.data;
+}
+
+function verifyBannerHtml() {
+  if (!mailReady || !me || me.email_verified || me.company_id === DEMO_COMPANY_ID) return "";
+  return `<div class="verify-banner">Confirm your email (${me.email}) so Billdable can send pay apps for you; replies come back to it.
+    <button class="linkish" data-action="resend-verify">Send the link again</button></div>`;
+}
+
+function accountView() {
+  if (!teamData) loadTeam();
+  const owner = me.role === "owner";
+  const isDemo = me.company_id === DEMO_COMPANY_ID;
+  const users = teamData ? teamData.users : [];
+  const invites = teamData ? teamData.invites : [];
+  const verified = me.email_verified
+    ? `<span class="pill green">confirmed</span>`
+    : `<span class="pill amber">not confirmed</span> ${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : `<span class="sub">Confirming needs email set up on the server.</span>`}`;
+  return `
+    <h1>Team & account</h1>
+    <div class="card">
+      <h2>You</h2>
+      <div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>
+      <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
+      <div class="money-row"><span class="label">Role</span><span>${me.role}</span></div>
+      ${isDemo ? "" : `<div class="form-inline">
+        <input id="pw-current" type="password" placeholder="Current password" autocomplete="current-password">
+        <input id="pw-new" type="password" placeholder="New password (10+ characters)" autocomplete="new-password">
+        <button class="btn small" data-action="change-password">Change password</button>
+      </div>`}
+    </div>
+    <div class="card">
+      <h2>Team</h2>
+      <p class="sub">Owners manage the team, inbound addresses, reset and deletion. Members do everything else. Every action is in the Audit with the person's name.</p>
+      <div class="table-wrap"><table>
+        <tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr>
+        ${users.map(u => `<tr><td>${u.name}${u.id === me.id ? " (you)" : ""}</td><td>${u.email}</td><td>${u.role}</td><td>${(u.created_at || "").slice(0, 10)}</td>
+          <td>${owner && !isDemo && u.id !== me.id ? `
+            <button class="btn small secondary" data-action="team-role" data-user="${u.id}" data-role="${u.role === "owner" ? "member" : "owner"}">Make ${u.role === "owner" ? "member" : "owner"}</button>
+            <button class="btn small secondary" data-action="team-remove" data-user="${u.id}" data-name="${u.name}">Remove</button>` : ""}</td></tr>`).join("")}
+      </table></div>
+      ${owner && !isDemo ? `
+        <h3>Invite someone</h3>
+        <div class="form-inline">
+          <input id="invite-email" type="email" placeholder="Their email" style="flex:1">
+          <select id="invite-role"><option value="member">Member</option><option value="owner">Owner</option></select>
+          <button class="btn small" data-action="team-invite">Invite</button>
+        </div>
+        ${lastInvite ? `<div class="invite-result">${lastInvite.emailed ? `Invite emailed to ${esc(lastInvite.email)}.` : `Not emailed (${esc(lastInvite.email_status)}). Send them this link yourself; it works once, for 7 days:`}
+          <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}
+        ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${i.expires_at.slice(0, 10)}
+          <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}
+    </div>
+    ${owner && !isDemo ? `
+    <div class="card danger-zone">
+      <h2>Delete the company</h2>
+      <p class="sub">Deletes every job, file, payer and record, and every user on this team. Export your data first if you want a copy. Server backups that already hold it expire on their own (the newest 14 are kept by default).</p>
+      <div class="form-inline">
+        <input id="del-password" type="password" placeholder="Your password" autocomplete="current-password">
+        <input id="del-confirm" placeholder="Type the company name: ${state.company.name}" style="flex:1">
+        <button class="btn small danger" data-action="delete-account">Delete everything</button>
+      </div>
+    </div>` : ""}
+  `;
+}
+
+function trialBannerHtml() {
+  const t = state.trial;
+  if (!t || !t.tracked) return "";
+  const day = (iso) => new Date(unesc(iso)).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  if (t.state === "active") {
+    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Billdable is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}. Billing isn't live yet.</div>`;
+  }
+  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}. Billing isn't live yet, so nothing changes for now.</div>`;
+}
+
+function onboardingHtml() {
+  if (!state || state.company.onboarding_dismissed || (me && me.company_id === DEMO_COMPANY_ID)) return "";
+  const jobs = state.jobs;
+  const invoices = jobs.flatMap(j => j.invoices);
+  const steps = [
+    ["Create your first job: contract amount, payer, approver, AP email, retainage.", jobs.length > 0, "onb-newjob", "New job"],
+    ["Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", jobs.some(j => (j.records || []).length), "onb-job", "Open the job"],
+    ["Optional: set up a schedule of values to bill line by line (paste it from your estimate).", jobs.some(j => j.sov_view && j.sov_view.present), "onb-job", "Open the job"],
+    ["Record progress, or mark the job done. Billdable drafts the pay app and lists the packet the payer requires.", invoices.length > 0, "onb-job", "Open the job"],
+    ["Clear the packet, then Approve & send.", invoices.some(i => i.sent_at), "onb-job", "Open the job"],
+  ];
+  if (steps[4][1]) return "";
+  const OPTIONAL = 2;  // the schedule of values is optional, so it doesn't count toward "done"
+  const required = steps.filter((s, i) => i !== OPTIONAL);
+  const done = required.filter(s => s[1]).length;
+  const next = steps.findIndex((s, i) => i !== OPTIONAL && !s[1]);
+  return `<div class="card onboarding">
+    <button class="help-dismiss" data-action="onb-dismiss" title="Hide this">×</button>
+    <h2>Get your first pay app out</h2>
+    <p class="sub">${done} of ${required.length} done. The Help page explains every term.</p>
+    <ol class="onb-steps">${steps.map((s, i) => `<li class="${s[1] ? "done" : i === next ? "next" : ""}">${s[1] ? "✓ " : ""}${s[0]}
+      ${i === next && (i === 0 || jobs.length) ? ` <button class="btn small" data-action="${s[2]}">${s[3]}</button>` : ""}</li>`).join("")}</ol>
+  </div>`;
+}
+
+let adminCompanies = null;
+async function loadAdminCompanies() {
+  try {
+    const res = await fetch("/api/admin/companies");
+    if (!res.ok) return;
+    adminCompanies = escDeep((await readJson(res)).companies);
+  } catch (_) { return; }
+  const el = document.getElementById("admin-companies");
+  if (el) el.innerHTML = adminCompaniesHtml();
+}
+
+function adminCompaniesHtml() {
+  if (!adminCompanies) return "Loading…";
+  const trialText = (t) => !t.tracked ? "not tracked (signed up before trials)" : t.state === "active"
+    ? `active until ${t.ends_by.slice(0, 10)}${t.extended ? " (extended)" : ""}` : `ended ${t.ended_at.slice(0, 10)}${t.reason === "paid" ? ` (${t.first_paid} paid)` : " (time)"}`;
+  return `<div class="table-wrap"><table>
+    <tr><th>Company</th><th>Signed up</th><th>Users</th><th>Jobs</th><th>Pay apps sent</th><th>Trial</th></tr>
+    ${adminCompanies.filter(c => !c.demo).map(c => `<tr><td>${c.name}</td><td>${c.signed_up.slice(0, 10)}</td><td>${c.users}</td><td>${c.jobs}</td><td>${c.pay_apps_sent}</td><td>${trialText(c.trial)}</td></tr>`).join("")}
+  </table></div>`;
+}
+
 function recordFiles(r) {
   return (r.file_ids || []).map(fid => {
     const f = (state.files || []).find(x => x.id === fid);
@@ -1376,10 +1673,12 @@ function renderHelperAdminBody() {
 }
 
 const views = {
+  account() { return accountView(); },
   "helper-admin"() {
     return `<h1>Helper answers</h1>
       <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
-      <div id="helper-admin-body">Loading…</div>`;
+      <div id="helper-admin-body">Loading…</div>
+      <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial. Billing isn't live, so nothing is enforced.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
   },
   inbox() {
     const items = (state.inbox || []).filter(i => i.status === "new").slice().reverse();
@@ -1470,7 +1769,9 @@ const views = {
     return `
       <h1>Dashboard</h1>
       <p class="sub">What needs attention and the money across open jobs.</p>
-      ${state.jobs.length === 0 ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.") : ""}
+      ${trialBannerHtml()}
+      ${onboardingHtml()}
+      ${state.jobs.length === 0 && (state.company.onboarding_dismissed || (me && me.company_id === DEMO_COMPANY_ID)) ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.") : ""}
       ${!helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" title="Dismiss">×</button>
@@ -1811,6 +2112,7 @@ const views = {
       <div class="top"><button class="back" onclick="nav('payapps')">← Pay Apps</button></div>
       <h1>${inv.number}</h1>
       <p class="sub">${j.name} · ${money(inv.amount_cents)} · ${inv.status}</p>
+      <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a> <span class="sub">The same PDF goes with the email when the pay app is sent.</span></p>
       <div class="card">
         <h2>Lines</h2>
         ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
@@ -2217,7 +2519,7 @@ const views = {
       <div class="table-wrap">
         <table>
           <tr><th>When</th><th>Kind</th><th>To</th><th>Subject</th><th>Status</th></tr>
-          ${emails.map(e => `<tr class="clickable" data-action="open-job" data-id="${e.job_id}" title="Open the job"><td>${e.at.slice(0,16)}</td><td>${e.kind.replace("_", " ")}</td><td>${e.to}</td><td><a href="#">${e.subject}</a><div class="sub email-body">${e.body || ""}</div>${(e.attachments || []).length ? `<div class="sub">${e.attachments.length} attachment${e.attachments.length === 1 ? "" : "s"}${(e.not_attached || []).length ? "; not attached: " + e.not_attached.join("; ") : ""}</div>` : ""}</td><td>${emailStatusHtml(e)}</td></tr>`).join("")}
+          ${emails.map(e => `<tr class="clickable" data-action="open-job" data-id="${e.job_id}" title="Open the job"><td>${e.at.slice(0,16)}</td><td>${e.kind.replace("_", " ")}</td><td>${e.to}</td><td><a href="#">${e.subject}</a><div class="sub email-body">${e.body || ""}</div>${e.payapp_invoice_id ? `<div class="sub">Pay app PDF attached</div>` : ""}${(e.attachments || []).length ? `<div class="sub">${e.attachments.length} attachment${e.attachments.length === 1 ? "" : "s"}${(e.not_attached || []).length ? "; not attached: " + e.not_attached.join("; ") : ""}</div>` : ""}</td><td>${emailStatusHtml(e)}</td></tr>`).join("")}
         </table>
       </div>
       ${emails.length ? "" : emptyState("Outbox is empty", "Approved sends are logged here. Nothing has been sent yet.")}
@@ -2463,6 +2765,17 @@ document.getElementById("file-input").addEventListener("change", (e) => {
   input.value = "";
   input.dataset.job = "";   // the next pick starts with no job unless its button sets one
   uploadFiles(files, jobId, !!jobId);
+});
+
+// A reset, verify or invite link opened in a tab that already has Billdable loaded only changes
+// the part after "#", which doesn't reload the page; handle it here too.
+window.addEventListener("hashchange", async () => {
+  const t = readTokenFromUrl();
+  if (!t) return;
+  const message = await handleTokenLink(t);
+  if (tokenScreen) return;
+  await boot(false);
+  if (message) toast(message);
 });
 
 window.nav = nav;

@@ -42,6 +42,7 @@ MAX_ATTACH_BYTES = 15 * 1024 * 1024
 TIMEOUT_SECONDS = 20
 NOT_SET_UP = "not sent: email delivery is not set up"
 DEMO = "not sent: demo account"
+UNVERIFIED = "not sent: verify your email address first (Team & account page), then Send again"
 
 
 def settings() -> dict[str, Any]:
@@ -118,15 +119,16 @@ def build_message(
     entry: dict[str, Any],
     company_name: str,
     reply_to: str,
-    files: list[tuple[str, Path]],
+    files: list[tuple[str, Any]],
     cfg: dict[str, Any],
+    sender_name: str | None = None,
 ) -> tuple[EmailMessage, list[str]]:
     """Return the message and a list of attachments left off (with the reason)."""
     to = _clean_header(entry.get("to", ""), 254)
     if not EMAIL_RE.match(to):
         raise ValueError(f"the address {to!r} is not a valid email address")
     msg = EmailMessage()
-    sender_name = _clean_header(f"{company_name or 'Billdable'} via Billdable", 120)
+    sender_name = _clean_header(sender_name or f"{company_name or 'Billdable'} via Billdable", 120)
     local, _, domain = cfg["from"].partition("@")
     msg["From"] = Address(display_name=sender_name, username=local, domain=domain)
     msg["To"] = to
@@ -145,7 +147,8 @@ def build_message(
     total = 0
     for name, path in files:
         try:
-            data = path.read_bytes()
+            # A file on disk, or bytes made for this email (the pay app PDF).
+            data = bytes(path) if isinstance(path, (bytes, bytearray)) else path.read_bytes()
         except OSError:
             left_off.append(f"{name} (file missing)")
             continue

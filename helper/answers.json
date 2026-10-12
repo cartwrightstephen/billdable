@@ -423,19 +423,31 @@
         "Can I add my office manager?",
         "How do I invite my bookkeeper?",
         "Can more than one person log in?",
-        "Add a user"
+        "Add a user",
+        "Invite my team",
+        "Give someone access",
+        "What can a member do?"
       ],
       "keywords": [
         "invite",
         "bookkeeper",
         "user",
         "team",
-        "office manager"
+        "office manager",
+        "member",
+        "owner",
+        "role"
       ],
-      "answer": "Each company has one login today. Inviting a bookkeeper or office manager with their own login is planned, not built. Until then, don't share the password; ask the Billdable team if you need a second person on now.",
+      "answer": "Yes. An owner opens Team & account and invites people by email, as owner or member. Members do the everyday work (jobs, pay apps, sends); owners also manage the team, the inbound addresses, reset and deleting the company. Every action shows in the Audit with the person's name. If email isn't set up on the server, the owner gets an invite link to pass on; it works once, for 7 days.",
       "handler": null,
       "needs_job": false,
-      "actions": [],
+      "actions": [
+        {
+          "type": "nav",
+          "view": "account",
+          "label": "Open Team & account"
+        }
+      ],
       "follow_ups": []
     },
     {
@@ -444,13 +456,19 @@
       "questions": [
         "What is a pay app?",
         "What is a pay application?",
-        "What's the difference between a pay app and an invoice?"
+        "What's the difference between a pay app and an invoice?",
+        "Can I get a PDF of the pay app?",
+        "Download the pay app",
+        "Print the pay app"
       ],
       "keywords": [
         "what payapp",
-        "define payapp"
+        "define payapp",
+        "pdf",
+        "print",
+        "download"
       ],
-      "answer": "A pay app (pay application) is the bill for work done this period. It lists what was completed, line by line if the job has a schedule of values, adds signed change orders, and subtracts retainage. Many contracts also require a packet of paperwork with it.",
+      "answer": "A pay app (pay application) is the bill for work done this period. It lists what was completed, line by line if the job has a schedule of values, adds signed change orders, and subtracts retainage. Many contracts also require a packet of paperwork with it. Open any pay app to download it as a PDF; the same PDF goes with the email when you send it.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -855,7 +873,7 @@
       "keywords": [
         "send waiver"
       ],
-      "answer": "When a pay app is paid in full, the job shows Send waiver. Click it to record the waiver for that pay app (one per paid pay app). It can't be sent before the payment is matched. Attach your signed waiver form to the job record so it's on file.",
+      "answer": "When a pay app is paid in full, the job shows Send waiver. Drop your signed waiver on the job record first (kind: lien waiver): the email attaches the newest one not sent before; with none, it tells the payer the waiver follows. One waiver per paid pay app, and never before the payment is matched. Billdable doesn't write waiver forms; states set them.",
       "handler": "waivers_due",
       "needs_job": false,
       "actions": [],
@@ -1284,18 +1302,26 @@
         "Reset my password",
         "Change my password",
         "Locked out",
-        "Too many wrong passwords"
+        "Too many wrong passwords",
+        "Forgot password link didn't arrive"
       ],
       "keywords": [
         "password",
         "forgot",
         "locked",
-        "login"
+        "login",
+        "reset"
       ],
-      "answer": "Password reset isn't built yet; contact the Billdable team. After 5 wrong passwords for one email, sign-in is paused for 15 minutes. New passwords need at least 10 characters.",
+      "answer": "On the sign-in screen, click Forgot your password? and enter your email: a reset link arrives that works once, for one hour, and signs you out everywhere else. Signed in, change it on Team & account. After 5 wrong passwords for one email, sign-in pauses for 15 minutes. Passwords need at least 10 characters. If the server can't send email yet, the screen says so; ask the Billdable team.",
       "handler": null,
       "needs_job": false,
-      "actions": [],
+      "actions": [
+        {
+          "type": "nav",
+          "view": "account",
+          "label": "Open Team & account"
+        }
+      ],
       "follow_ups": []
     },
     {
@@ -1313,7 +1339,7 @@
         "privacy",
         "who see"
       ],
-      "answer": "Each company's data is kept separate, and only your login can see it. Passwords are stored as one-way hashes. Billdable is still early: keep your own copies of signed documents, and use Export data for a backup. Questions you ask here are saved so the team can add better answers.",
+      "answer": "Each company's data is kept separate; only your team's logins can see it, and owners decide who is on the team. Passwords are stored as one-way hashes; reset links work once and expire. Billdable is still early: keep your own copies of signed documents, and use Export data for a copy. Questions you ask here are saved so the team can add better answers.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1390,17 +1416,26 @@
         "How much does it cost?",
         "What's the price?",
         "Is there a free trial?",
-        "How does billing work?"
+        "How does billing work?",
+        "When does my trial end?",
+        "How long is the trial?"
       ],
       "keywords": [
         "pricing",
         "free",
-        "charge"
+        "charge",
+        "trial"
       ],
-      "answer": "Billing isn't live, so nothing is charged today. The landing page shows the planned price. Before billing starts, the Billdable team will set the trial so it covers a full payment cycle: you'll see a pay app you prepared get paid before you pay.",
+      "answer": "Billing isn't live, so nothing is charged today. The trial is timed to the payment cycle: nothing to pay until the first pay app you send through Billdable is paid, or 90 days, whichever comes first (120 if a pay app is still unpaid at day 90). Your dashboard shows where your trial stands.",
       "handler": null,
       "needs_job": false,
-      "actions": [],
+      "actions": [
+        {
+          "type": "nav",
+          "view": "dashboard",
+          "label": "Open Dashboard"
+        }
+      ],
       "follow_ups": []
     },
     {
@@ -1546,12 +1581,19 @@
       "keywords": [
         "delete account",
         "cancel account",
-        "close account"
+        "close account",
+        "delete"
       ],
-      "answer": "Deleting an account isn't built yet. Ask the Billdable team and they'll remove it. To clear your data yourself, use Export data first if you want a copy, then Reset data (you type your company name to confirm).",
+      "answer": "An owner can delete the company on Team & account: type your password and the company name. It removes every job, file, payer and record, and every user on the team, at once. Use Export data first if you want a copy. Server backups that already hold the data expire on their own (the newest 14 are kept by default).",
       "handler": null,
       "needs_job": false,
-      "actions": [],
+      "actions": [
+        {
+          "type": "nav",
+          "view": "account",
+          "label": "Open Team & account"
+        }
+      ],
       "follow_ups": [
         "How do I export my data?"
       ]
@@ -1567,15 +1609,42 @@
       "keywords": [
         "backed up",
         "backup",
-        "lose data"
+        "lose data",
+        "restore"
       ],
-      "answer": "There are no automatic backups yet. Your data is written safely (a crash can't leave a half-saved file), and a reset keeps a snapshot, but keep your own copy with Export data, and keep signed documents outside Billdable too.",
+      "answer": "Yes. The server makes a backup every 24 hours (and on start-up when the last one is older) and keeps the newest 14. They sit on the same server as your data, so they guard against mistakes and bugs, not against losing the server itself. Keep your own copy with Export data, and keep signed documents outside Billdable too.",
       "handler": null,
       "needs_job": false,
       "actions": [],
       "follow_ups": [
         "How do I export my data?"
       ]
+    },
+    {
+      "id": "verify-email",
+      "category": "Account",
+      "questions": [
+        "Why do I need to confirm my email?",
+        "I didn't get the confirmation email",
+        "My emails say verify your email first",
+        "Confirm my email"
+      ],
+      "keywords": [
+        "verify",
+        "confirm email",
+        "confirmation"
+      ],
+      "answer": "Billdable sends pay apps with replies coming back to the person who approved them, so it checks that the address is really yours first. Click the link in the confirmation email (it works for 3 days). Didn't get it? Use Send the link again on Team & account, then check spam. Emails held while you were unconfirmed have Send again in the Outbox.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "account",
+          "label": "Open Team & account"
+        }
+      ],
+      "follow_ups": []
     }
   ]
 }

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import sov
+import trial
 
 BILLED_STATUSES = {"sent", "approved", "partial", "paid"}
 DRAFT_STATUSES = {"draft", "awaiting_approval"}
@@ -325,11 +326,11 @@ def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dic
     subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
     body = (
         f"{payer.get('approver') or payer['name']},\n\n"
-        f"Here is the pencil copy of {draft['number']} for {job['name']}. "
+        f"Here is the pencil copy of {draft['number']} for {job['name']}, attached as a PDF marked PENCIL COPY. "
         "Please confirm the quantities and change orders, or send corrections, before we submit the formal pay app.\n\n"
         f"{pay_app_text(state, job, draft)}\n\nApproved by {actor}."
     )
-    _record_email(state, job_id, "pencil", payer["ap_email"], subject, body, actor)
+    _record_email(state, job_id, "pencil", payer["ap_email"], subject, body, actor, payapp_invoice_id=draft["id"])
     draft["pencil_sent_at"] = utcnow()
     draft["pencil_status"] = "sent"
     job["external_status"] = f"Pencil copy with {payer.get('approver') or payer['name']} for review"
@@ -386,11 +387,12 @@ def approve_and_send(state: dict[str, Any], job_id: str, actor: str = "owner") -
     files = _packet_file_ids(state, job, invoice)
     body = (
         f"{payer.get('approver') or payer['name']},\n\n"
-        f"Please find pay application {invoice['number']} for {job['name']}. Every packet item is accounted for"
-        + (f"; {len(files)} document{'s are' if len(files) != 1 else ' is'} attached." if files else ".")
+        f"Please find pay application {invoice['number']} for {job['name']} attached as a PDF. Every packet item is accounted for"
+        + (f"; {len(files)} packet document{'s are' if len(files) != 1 else ' is'} attached too." if files else ".")
         + f"\n\n{pay_app_text(state, job, invoice)}\n\nApproved by {actor}."
     )
-    _record_email(state, job_id, "pay_app", payer["ap_email"], subject, body, actor, attachments=files, cc=_copy_list(payer))
+    _record_email(state, job_id, "pay_app", payer["ap_email"], subject, body, actor, attachments=files, cc=_copy_list(payer),
+                  payapp_invoice_id=invoice["id"])
     audit(
         state,
         job_id,
@@ -650,6 +652,7 @@ def snapshot(state: dict[str, Any]) -> dict[str, Any]:
         job.setdefault("done_notes", "")
         job["sov_view"] = _sov_view(job)
     out.setdefault("email_log", [])
+    out["trial"] = trial.status(state)
     out["totals"] = {
         "unbilled_cents": sum(j["money"]["unbilled_completed_cents"] for j in out["jobs"]),
         "outstanding_cents": sum(j["money"]["outstanding_cents"] for j in out["jobs"]),
@@ -676,6 +679,7 @@ def _record_email(
     actor: str,
     attachments: list[str] | None = None,
     cc: list[str] | None = None,
+    payapp_invoice_id: str | None = None,
 ) -> None:
     """Write an approved email to the Outbox. The server delivers queued emails after the change is saved."""
     state.setdefault("email_log", []).append({
@@ -689,6 +693,8 @@ def _record_email(
         "approved_by": actor,
         "attachments": list(attachments or []),
         "cc": list(cc or []),
+        # The pay app PDF is made when the email is sent, from the pay app as it stands then.
+        "payapp_invoice_id": payapp_invoice_id,
         "status": "queued",
     })
 

@@ -41,6 +41,10 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `TWILIO_AUTH_TOKEN` | When set, inbound texts must carry a valid `X-Twilio-Signature`. Set it before giving out the SMS address. |
 | `TWILIO_NUMBER` | The texting number shown to users in the Inbox. Display only. |
 | `INBOUND_EMAIL_ADDRESS_TEMPLATE` | The forwarding address shown in the Inbox, with `{token}` where the company's secret goes, e.g. `jobs+{token}@in.example.com`. Display only; the email service does the routing. |
+| `BILLDABLE_URL` | The public address, e.g. `https://billdable.onrender.com`. Password-reset, verification and invite emails use it for their links; they are not sent without it (a link built from the request's Host header could point a reset token at someone else's site). |
+| `BACKUP_HOURS` | Hours between automatic backups, default 24; `0` turns them off. |
+| `BACKUP_KEEP` | How many backups to keep, default 14. |
+| `BACKUP_UPLOADS` | `0` leaves uploaded files out of backups (they can be large). Default: included. |
 | `SMTP_HOST` | Mail server for outgoing email. Unset: approved emails stay in the Outbox as "not sent: email delivery is not set up". |
 | `SMTP_PORT` | Default 587 (465 with `SMTP_SECURITY=ssl`). |
 | `SMTP_USER`, `SMTP_PASSWORD` | Login for the mail provider, if it needs one. |
@@ -65,8 +69,33 @@ Approved pay apps, pencil copies, follow-ups, waivers and retainage requests are
 - From is "<company> via Billdable" at `MAIL_FROM`; Reply-To is the person who approved the send (kept if someone else retries it), so the payer's answer goes to the contractor. Addresses in the payer's Copy field are copied on pay apps.
 - A pay app goes with its full text, the schedule-of-values continuation sheet when the job has one, the packet checklist, and the files behind the records attached to its packet (up to 15 MB in total; anything left off is named in the email). A waiver email attaches the newest lien waiver on the job record not sent before, and says the waiver will follow if there is none. A retainage request attaches the closeout documents and is spaced by the payer's follow-up days, like follow-ups.
 - Delivery happens after the change is saved and the state lock is released, so a slow mail server never holds up other requests. Each email shows sending, sent (with the time), failed (with the reason) or not sent in the Outbox. Failed and unsent emails have Send again (`POST /api/outbox/{id}/retry`). The approval itself stands either way.
+- The person approving must have confirmed their email address first (when email is set up), because replies go to it; until then emails are held as "not sent" with Send again. A pay app or pencil copy also carries the pay app as a PDF (`payapp_pdf.py`), made from the pay app when the email goes out.
 - The demo account never sends. Header fields are stripped of line breaks and control characters, addresses must be plain (`name@domain.tld`), and the mail server is given the recipients directly rather than reading them back from the headers.
 - The daily limit is counted in `mail_sends.json` in the data directory, outside the company's own data, so resetting a company doesn't reset it. An email still "sending" after 30 minutes (the server stopped mid-send) can be sent again.
+
+## Accounts and team
+
+- A company has owners and members. Owners invite people (Team & account), change roles, remove people, rotate the inbound addresses, reset the company and delete it; members do everything else. The last owner can't step down or be removed. Removing someone signs them out at once.
+- Password reset: "Forgot your password?" emails a link that works once, for an hour, and signs the account out everywhere else. At most 3 requests per email per hour; the answer is the same whether or not the account exists. Signed in, the password can be changed on Team & account.
+- Email verification: sign-up sends a link (valid 3 days). An unconfirmed person can use everything but can't have emails sent under their name.
+- Invites last 7 days. Without email set up, the owner gets the link to pass on themselves.
+- Only a SHA-256 of each reset, verification and invite token is stored. Tokens travel after `#` in links, so they never reach server logs.
+- Deleting the company (owner, password plus the typed company name) removes its users, sessions, data, uploads and inbound addresses. Backups already made still hold it until they rotate out.
+- Not built: two-factor sign-in, single sign-on, per-job permissions.
+
+## Pay app PDF
+
+`GET /api/jobs/{id}/payapp/{invoice_id}.pdf`, and attached to pay-app and pencil emails. Page 1 is an application summary (lines 1–9: contract, change orders, completed to date, retainage, previous pay apps, current payment due, balance); then a continuation sheet of every schedule line (or the pay app's lines) and the packet checklist. The layout follows the G702/G703 pattern but it is Billdable's own document and says it is not an AIA form. Drafts and pencil copies are marked. Standard library only; built-in fonts. Lien waivers are not generated: their forms are set by state law.
+
+## Trial
+
+`trial.py` works out where each company stands against the agreed trial: nothing to pay until the first pay app sent through Billdable is paid, or 90 days, extended to 120 if a pay app is still unpaid on day 90. The dashboard shows it, and the founders' page lists every company with its trial. Billing isn't live, so nothing is charged or locked when a trial ends. Companies that signed up before this change aren't tracked. The 45-day variant for remodelers isn't automated.
+
+## Backups, health and logs
+
+- `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), keeping `BACKUP_KEEP`. They are on the same disk as the data: copy them elsewhere too. `python3 backup.py now|list|restore FILE`; restore (server stopped) moves the current data aside to `pre-restore-<time>/` first and refuses archives with paths outside the data directory.
+- `GET /healthz`: no sign-in; `ok`, whether the data directory is writable (503 if not), whether email is set up, and the time of the last backup. Point an uptime monitor at it.
+- Logs: one JSON line per request on stderr (time, method, path, status, milliseconds, request id). Query strings and the secret parts of inbound and calendar addresses are removed. A crash logs its traceback with the request id, and the user sees the same id to quote. There is no external error tracker; add one (for example Sentry) by reading these lines.
 
 ## Schedule of values
 
@@ -103,12 +132,15 @@ Tests write to a temporary directory, never to `data/`.
 ## Project layout
 
 - `domain.py`: money rules, packet gates, status labels, audit, playbook, email log
-- `auth.py`: users, password hashes, sessions, login throttling
+- `auth.py`: users and roles, password hashes, sessions, login throttling, reset/verify/invite tokens
 - `storage.py`: data directory and atomic JSON writes
 - `importer.py`: files, email parsing, notes splitting, job matching, the Inbox
 - `calendar_feed.py`: the .ics feed
 - `helper.py` and `helper/answers.json`: the helper and its answers
 - `sov.py`: schedule-of-values arithmetic and the paste reader
+- `payapp_pdf.py`: the pay app PDF
+- `trial.py`: trial status
+- `backup.py`: backups and restore
 - `mailer.py`: outgoing email over SMTP
 - `seed.py`: Hartline Remodeling sample data
 - `server.py`: stdlib HTTP server, cookie sessions, per-company JSON
@@ -150,6 +182,12 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/jobs/{id}/sov`: `{lines: [{id?, item, description, quantity, unit, rate}], op_pct, update_contract}`; an empty list removes the schedule
 - `POST /api/jobs/{id}/sov-progress`: `{done: {line_id: quantity_to_date}, notes}`; lump sums take a fraction (0.35 = 35%)
 - `POST /api/outbox/{id}/retry`: send a failed or unsent email again
+- `GET /api/jobs/{id}/payapp/{invoice_id}.pdf`: the pay app as a PDF
+- `POST /api/auth/forgot` `{email}`; `POST /api/auth/reset` `{token, password}`; `POST /api/auth/verify` `{token}`; `POST /api/auth/resend-verify`; `POST /api/auth/password` `{current, new}`
+- `POST /api/auth/invite-info` `{token}`; `POST /api/auth/accept-invite` `{token, name, password}`
+- `GET /api/team`; owners: `POST /api/team/invite` `{email, role}`, `/api/team/{user_id}/role` `{role}`, `/api/team/{user_id}/remove`, `/api/team/invites/{id}/revoke`, `/api/account/delete` `{password, confirm}`
+- `POST /api/onboarding/dismiss`; team only: `GET /api/admin/companies`
+- `GET /healthz`
 - `POST /api/jobs/{id}/draft`: returns 409 when there is nothing to draft or a draft is already open
 - `POST /api/jobs/{id}/send`
 - `POST /api/jobs/{id}/follow-up`

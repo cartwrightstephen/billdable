@@ -518,3 +518,10 @@ def company_for_token(token: str, kind: str) -> str | None:
     if entry and entry["kind"] == kind:
         return entry["company_id"]
     return None
+
+
+def forget_company(company_id: str) -> None:
+    """Drop a deleted company's inbound and calendar tokens, so its addresses stop working."""
+    with TOKENS_LOCK:
+        data = {t: v for t, v in load_tokens().items() if v["company_id"] != company_id}
+        storage.write_json(tokens_path(), data)
