@@ -21,11 +21,11 @@ All data lives in one directory, set by the `BILLDABLE_DATA_DIR` environment var
 
 - `companies/<company_id>.json`: one file per company
 - `companies/snapshots/`: a copy of a company file taken before each confirmed reset
-- `auth.json`: users, password hashes, sessions
+- `auth.json`: users, password hashes, and the SHA-256 of each session token (a copy of the file signs nobody in)
 
-Writes go to a temp file and are renamed into place, so a crash never leaves half a file. There are no automatic backups. `GET /api/export` downloads the signed-in company's file.
+Writes go to a temp file and are renamed into place, so a crash never leaves half a file. Backups are described under "Backups, health and logs". `GET /api/export` downloads the signed-in company's file.
 
-On Render, the default filesystem does not survive a deploy or restart. Attach a persistent disk and set `BILLDABLE_DATA_DIR` to its mount path, or every deploy starts with no accounts. When a signed-in user's company file is missing, the server logs a `WARNING: company file missing` line.
+On Render, the default filesystem does not survive a deploy or restart. `render.yaml` attaches a 1 GB persistent disk at `/var/data` (this needs a paid instance) and sets `BILLDABLE_DATA_DIR` to it; without a disk every deploy starts with no accounts. After the first deploy with the disk, deploy a second time, check that `/healthz` shows the same `last_backup` and that an account still signs in, then set `BILLDABLE_DATA_PERSISTENT=1` to remove the landing page's "data may be erased" notice. When a signed-in user's company file is missing, the server logs a `WARNING: company file missing` line.
 
 Set `COOKIE_SECURE=1` in production to force the `Secure` flag on the session cookie. Without it, the flag is set when the request arrives with `X-Forwarded-Proto: https`.
 
@@ -36,6 +36,8 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | Variable | What it does |
 | --- | --- |
 | `BILLDABLE_DATA_DIR` | Where all data lives (see above). |
+| `BILLDABLE_ENV` | `production` turns the demo account off (not created, can't sign in, old demo sessions end) and refuses to start unless `BILLDABLE_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `BILLDABLE_URL` is an `https://` address. Unset everywhere else. |
+| `BILLDABLE_DATA_PERSISTENT` | `1` once a deploy has been seen to keep the data. Until then the landing page says "Demo: data may be erased". |
 | `COOKIE_SECURE` | `1` forces the Secure cookie flag. |
 | `HELPER_ADMIN_USER_IDS` | Comma-separated account ids of the people who may review helper questions and edit answers (the founders). Nobody can, if unset. Ids, not emails, because sign-up doesn't verify email. Each person's id is at the bottom of the Help page. |
 | `TWILIO_AUTH_TOKEN` | When set, inbound texts must carry a valid `X-Twilio-Signature`. Set it before giving out the SMS address. |
@@ -122,7 +124,7 @@ Optional per job, set before the first pay app (`sov.py`). Each line is a quanti
 
 ## Calendar feed
 
-`GET /api/calendar/<token>.ics` is an iCalendar feed of follow-ups due, expected approvals, sends, payments, waivers and closeouts. Google Calendar, Apple Calendar and Outlook can subscribe to it; the URL carries a secret instead of a login. Calendar apps refresh subscribed feeds on their own schedule.
+`GET /api/calendar/<token>.ics` is an iCalendar feed of follow-ups due, expected approvals, sends, payments, waivers and closeouts. Google Calendar, Apple Calendar and Outlook can subscribe to it; the URL carries a secret instead of a login. Calendar apps refresh subscribed feeds on their own schedule. The feed and the Calendar page say these are contract and follow-up dates, not legal deadlines; Billdable computes no lien or prompt-pay dates.
 
 ## Helper
 
@@ -140,7 +142,7 @@ The ? badge opens the helper. It answers from a database of prepared answers, no
 python3 -m unittest discover -s tests -v
 ```
 
-Tests write to a temporary directory, never to `data/`.
+Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github/workflows/tests.yml`) runs them on every push and pull request; protect `main` so a red run blocks the merge (Settings, Branches, require the `unittest` check).
 
 ## Project layout
 
