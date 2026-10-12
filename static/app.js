@@ -21,6 +21,164 @@ let coPreselectJob = null;
 let formOpen = {};
 let toastTimer = null;
 const DEMO_COMPANY_ID = "co-hartline";
+let calJobFilter = "all";
+let importSettings = null;
+const RECORD_KINDS = {
+  note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
+  waiver: "Lien waiver", pay_app: "Pay app / invoice backup", ticket: "Delivery or time ticket", other: "Other",
+};
+const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email", sms: "Text message", notes: "Notes" };
+
+// Plain-language help for every field, column, tile and section. The (i) icon
+// next to a label is hidden until the area is hovered or focused; hovering,
+// focusing or tapping the icon shows the text. Keys are the visible label,
+// lower case, without arrows or asterisks.
+const FIELD_HELP = {
+  // money file and tiles
+  "contract": "The original contract amount, before any change orders.",
+  "approved cos": "Change orders the customer has signed. They add to the contract total.",
+  "pending cos": "Change orders not signed yet. They are not billable until signed.",
+  "contract total": "Contract plus signed change orders: the most you can bill on this job.",
+  "billed": "Pay apps sent to the payer, after retainage is withheld.",
+  "collected": "Payments matched to this job's pay apps.",
+  "outstanding": "Billed but not yet paid.",
+  "unbilled completed": "Work you finished that is not on any pay app yet. This is money you can bill now.",
+  "unbilled": "Work you finished that is not on any pay app yet.",
+  "retainage held": "The percentage the payer keeps back from each pay app until closeout.",
+  "retainage released": "Retainage the payer has paid you.",
+  "retainage open": "Retainage still held. It is released after the punch list and closeout packet are done.",
+  "retainage": "Retainage still held on this job.",
+  "billed this month": "Total of pay apps sent this calendar month.",
+  "blocked jobs": "Open jobs with a missing packet item or unsigned change order that stops a pay app from going out.",
+  "active jobs": "Jobs not yet closed for the record.",
+  // tables
+  "job": "The job. Click it to open the money file, packet and actions.",
+  "customer": "Who pays this job: the owner, homeowner or general contractor.",
+  "status": "What is holding the job up right now, in words. Never just \"pending\".",
+  "next": "The next thing to do to get paid on this job.",
+  "approved cos ": "Signed change orders.",
+  "code": "Short job code. Put it in an email subject or text and the Inbox files it to this job.",
+  "number": "Pay app number: PA, the job code, then the sequence.",
+  "amount": "Amount of this pay app after retainage, or of this payment.",
+  "blockers": "What must be fixed before this pay app can be sent.",
+  "missing": "Required packet items that are not in yet.",
+  "pay app": "The pay application this packet belongs to.",
+  "co": "Change order number on this job.",
+  "summary": "What the change order covers.",
+  "status / waiting on": "Signed or not, and who it is waiting on.",
+  "in billing": "Whether this unsigned change order is on the next pay app. Send stays blocked until it is signed.",
+  "unpaid": "Pay apps sent and not fully paid.",
+  "days": "Days since the pay app was sent.",
+  "contact": "Who approves payment, and their AP email and phone.",
+  "follow up": "Send a follow-up once the payer's follow-up window has passed.",
+  "reference": "Check number or QuickBooks payment id. Each can be used once per job.",
+  "matched": "Date the payment was matched.",
+  "kind": "What type of document or message this is.",
+  "open": "Retainage still held on this job.",
+  "holding it up": "Closeout items that must be done before you can ask for retainage.",
+  "unlock": "What to do next to release the retainage.",
+  "contact / follow up": "Who to ask for the retainage, and buttons to ask.",
+  "closed": "Date the job was closed for the record.",
+  "notes": "Completion notes, or the current status.",
+  "when": "When it happened.",
+  "to": "Who it was addressed to. Email delivery is not built yet; nothing has left Billdable.",
+  "subject": "Subject line of the logged message.",
+  "actor": "The signed-in person who took the action.",
+  "action": "What was done.",
+  "detail": "What changed, in words.",
+  // new job form
+  "job name": "What you call the job, for example \"Oak Street kitchen\".",
+  "address": "The job site address. The Inbox uses it to match emails and texts to this job.",
+  "contract number": "The number on the contract, if it has one.",
+  "contract amount ($)": "The signed contract amount in dollars, before change orders.",
+  "retainage %": "Percent the payer holds back from each pay app until closeout. Commonly 5 to 10 percent; check your contract.",
+  "role": "Owner: you bill the property owner or homeowner. GC: you are a sub billing a general contractor.",
+  "approver": "The person who approves your pay app.",
+  "ap email": "Where pay apps and follow-ups go: the payer's accounts payable address.",
+  "phone": "Payer phone for follow-up calls.",
+  "notes for the job record": "Anything to keep with the job: what the customer wants in a packet, contract notes.",
+  // playbook
+  "follow-up days": "Days to wait after sending before a follow-up is allowed. Set it to the payer's normal payment window.",
+  "usual approval days": "How long this payer usually takes to approve. Drives the expected-approval date on the calendar.",
+  "packet": "What this payer requires with every pay app, separated by commas. New pay apps list these items.",
+  "rejects when": "Why this payer has sent pay apps back before. Grows as you teach it.",
+  "copy": "Who to copy on pay apps for this payer.",
+};
+const NAV_HELP = {
+  inbox: "Bring in photos, PDFs, emails, texts and notes, then file them to a job in one click.",
+  dashboard: "What needs attention and the money across open jobs.",
+  daily: "A dated note of what happened on site today, saved on the job record.",
+  jobs: "Every job, with its money file, packet and actions.",
+  calendar: "Follow-ups, expected approvals, payments and closeouts by date. Can be added to Google Calendar.",
+  payapps: "Pay applications: the bill for work done this period, with the paperwork the payer requires.",
+  packets: "The paperwork that must go with each pay app: waivers, tickets, photos, signed change orders.",
+  cos: "Change orders: extra or changed work. Not billable until the customer signs.",
+  collections: "What is unpaid and who to contact.",
+  payments: "Money received and matched to a pay app.",
+  waivers: "Lien waivers: you give up lien rights for amounts you have been paid. One per paid pay app.",
+  retainage: "Money the payer holds back until closeout, and what is holding it up.",
+  history: "Jobs closed for the record.",
+  playbook: "What each payer requires, who approves, how long they take, and why they reject.",
+  outbox: "Every message approved to send. Email delivery is not built yet.",
+  audit: "Every action, who took it and when.",
+  help: "What the terms mean and how to start.",
+  "helper-admin": "Questions the helper couldn't answer, and the answers it uses. Team only.",
+};
+
+function helpFor(text) {
+  const key = (text || "").replace(/[↑↓*]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  return FIELD_HELP[key];
+}
+
+let helpTip = null;
+function showHelpTip(icon) {
+  if (!helpTip) {
+    helpTip = document.createElement("div");
+    helpTip.id = "help-tip";
+    helpTip.className = "help-tip";
+    helpTip.setAttribute("role", "tooltip");
+    document.body.appendChild(helpTip);
+  }
+  helpTip.textContent = icon.dataset.help;
+  helpTip.style.display = "block";
+  const r = icon.getBoundingClientRect();
+  const w = helpTip.offsetWidth, h = helpTip.offsetHeight;
+  let left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 8) top = r.top - h - 8;
+  helpTip.style.left = left + "px";
+  helpTip.style.top = Math.max(8, top) + "px";
+  icon.setAttribute("aria-describedby", "help-tip");
+}
+function hideHelpTip() { if (helpTip) helpTip.style.display = "none"; }
+
+function addInfoIcon(labelEl, text, hostEl) {
+  if (!text || labelEl.querySelector(".info")) return;
+  const icon = document.createElement("span");
+  icon.className = "info";
+  icon.textContent = "i";
+  icon.tabIndex = 0;
+  icon.setAttribute("role", "button");
+  icon.setAttribute("aria-label", "What is this?");
+  icon.dataset.help = text;
+  icon.addEventListener("mouseenter", () => showHelpTip(icon));
+  icon.addEventListener("mouseleave", hideHelpTip);
+  icon.addEventListener("focus", () => showHelpTip(icon));
+  icon.addEventListener("blur", hideHelpTip);
+  icon.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); showHelpTip(icon); });
+  icon.addEventListener("keydown", (e) => { if (e.key === "Escape") { hideHelpTip(); icon.blur(); } });
+  labelEl.appendChild(icon);
+  (hostEl || labelEl).classList.add("has-info");
+}
+
+function decorateHelp(root) {
+  root.querySelectorAll(".money-row .label, .metric .k, th, label").forEach(el => {
+    if (el.closest(".auth-card")) return;
+    const host = el.closest(".money-row, .metric, th, .form-grid > div") || el;
+    addInfoIcon(el, helpFor(el.textContent), host);
+  });
+  root.querySelectorAll(".nav button[data-v]").forEach(b => addInfoIcon(b, NAV_HELP[b.dataset.v], b));
+}
 
 // Every string that comes from the server is HTML-escaped once, when it
 // arrives. Templates below interpolate into innerHTML, so this is what keeps
@@ -118,6 +276,7 @@ async function boot() {
   if (res.ok) {
     const data = await readJson(res);
     me = escDeep(data.user);
+    helperAdmin = data.helper_admin === true;
     await load();
   } else {
     renderLanding();
@@ -242,6 +401,11 @@ async function onAuthSubmit(e) {
   }
   me = escDeep(data.user);
   authError = "";
+  helperLog.length = 0;
+  try {
+    const who = await fetch("/api/auth/me");
+    if (who.ok) helperAdmin = (await readJson(who)).helper_admin === true;
+  } catch (_) { helperAdmin = false; }
   await load();
   setAiVisible(true);
 }
@@ -250,6 +414,12 @@ async function logout() {
   await fetch("/api/auth/logout", { method: "POST" });
   me = null;
   state = null;
+  helperAdmin = false;
+  helperLog.length = 0;   // never show one person's questions to the next
+  document.getElementById("ai-replies").innerHTML = "";
+  document.getElementById("ai-chips").innerHTML = "";
+  aiOpen = false;
+  document.getElementById("ai-panel").classList.remove("open");
   authMode = "signup";
   setAiVisible(false);
   renderLanding();
@@ -324,6 +494,7 @@ function nextStep(j) {
 
 function render() {
   if (!state) return;
+  hideHelpTip();
   const app = document.getElementById("app");
   const company = state.company;
   const active = (v) => (currentView === v ? "active" : "");
@@ -334,6 +505,7 @@ function render() {
         <div class="company">${company.name}<br>${company.crew ? company.crew + " people · " : ""}${company.books || "QuickBooks"}</div>
         <nav class="nav">
           <div class="nav-section">Operations</div>
+          <button class="${active("inbox")}" data-v="inbox">Inbox${newInboxCount() ? ` <span class="count">${newInboxCount()}</span>` : ""}</button>
           <button class="${active("dashboard")}" data-v="dashboard">Dashboard</button>
           <button class="${active("daily")}" data-v="daily">Daily Record</button>
           <button class="${active("jobs")}" data-v="jobs">Jobs</button>
@@ -351,6 +523,8 @@ function render() {
           <button class="${active("playbook")}" data-v="playbook">Payer Playbook</button>
           <button class="${active("outbox")}" data-v="outbox">Outbox</button>
           <button class="${active("audit")}" data-v="audit">Audit</button>
+          <button class="${active("help")}" data-v="help">Help</button>
+          ${helperAdmin ? `<button class="${active("helper-admin")}" data-v="helper-admin">Helper answers</button>` : ""}
         </nav>
         <a class="reset-btn" href="/api/export" download>Export data</a>
         <button class="reset-btn" id="reset">Reset data</button>
@@ -369,6 +543,9 @@ function render() {
   document.getElementById("logout").addEventListener("click", logout);
   document.getElementById("main").innerHTML = views[currentView] ? views[currentView]() : "<p>Unknown view</p>";
   bindActions();
+  decorateHelp(document.getElementById("app"));
+  if (["inbox", "calendar"].includes(currentView)) loadImportSettings();
+  if (currentView === "helper-admin") loadHelperReview();
   updateAiContext();
 }
 
@@ -423,6 +600,53 @@ function bindActions() {
         await post(`/api/jobs/${id}/retainage-paid`, { amount_cents: cents, reference });
       }
       else if (a === "include-co") await post(`/api/jobs/${id}/include-co/${el.dataset.co}`);
+      else if (a === "pencil") await post(`/api/jobs/${id}/pencil`);
+      else if (a === "pencil-agreed") await post(`/api/jobs/${id}/pencil-response`, { agreed: true });
+      else if (a === "pencil-changes") {
+        const note = prompt("What does the payer want changed? (quantities, change orders, missing items)");
+        if (note === null) return;
+        await post(`/api/jobs/${id}/pencil-response`, { agreed: false, note });
+      }
+      else if (a === "pick-files") {
+        const input = document.getElementById("file-input");
+        if (input) { input.dataset.job = el.dataset.job || ""; input.click(); }
+      }
+      else if (a === "import-text") {
+        const text = document.querySelector("#paste-text")?.value || "";
+        const source = document.querySelector("#paste-source")?.value || "paste";
+        const jobId = el.dataset.job || "";
+        if (!text.trim()) { toast("Paste some text first."); return; }
+        const ok = await postImport("/api/import/text" + (jobId ? "?file=1" : ""), { text, source, job_id: jobId });
+        if (ok) { const box = document.querySelector("#paste-text"); if (box) box.value = ""; }
+      }
+      else if (a === "inbox-file") {
+        const itemId = el.dataset.item;
+        const jobId = document.querySelector(`#inb-job-${itemId}`)?.value || "";
+        const kind = document.querySelector(`#inb-kind-${itemId}`)?.value || "";
+        if (!jobId) { toast("Pick a job for this item."); return; }
+        await post(`/api/inbox/${itemId}/file`, { job_id: jobId, kind });
+      }
+      else if (a === "inbox-file-all") {
+        const items = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id);
+        for (const i of items) {
+          const jobId = document.querySelector(`#inb-job-${i.id}`)?.value || i.suggested_job_id;
+          const kind = document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind;
+          await post(`/api/inbox/${i.id}/file`, { job_id: jobId, kind });
+        }
+      }
+      else if (a === "inbox-dismiss") await post(`/api/inbox/${el.dataset.item}/dismiss`);
+      else if (a === "inbox-undo") await post(`/api/inbox/${el.dataset.item}/undo`);
+      else if (a === "copy") {
+        const text = document.getElementById(el.dataset.target)?.textContent || "";
+        try { await navigator.clipboard.writeText(text); toast("Copied"); }
+        catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
+      }
+      else if (a === "rotate-token") {
+        if (!confirm("Make a new address? The old one stops working right away.")) return;
+        await fetch("/api/import/rotate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: el.dataset.kind }) });
+        importSettings = null;
+        render();
+      }
       else if (a === "withdraw-co") {
         if (!confirm("Withdraw this change order? Use this when the customer will not sign it.")) return;
         await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
@@ -584,9 +808,108 @@ function bindActions() {
     s.addEventListener("change", () => {
       if (s.dataset.filterFor === "outbox") outboxJobFilter = s.value;
       else if (s.dataset.filterFor === "audit") auditJobFilter = s.value;
+      else if (s.dataset.filterFor === "calendar") calJobFilter = s.value;
       render();
     });
   });
+}
+
+function newInboxCount() {
+  return (state && state.inbox ? state.inbox.filter(i => i.status === "new").length : 0);
+}
+
+const MAX_UPLOAD_MB = 15;
+
+async function uploadFiles(fileList, jobId = "", fileNow = false) {
+  const files = [...(fileList || [])];
+  if (!files.length) return;
+  let ok = 0;
+  const failed = [];
+  for (const f of files) {
+    if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { failed.push(`${f.name}: larger than ${MAX_UPLOAD_MB} MB`); continue; }
+    const name = f.name && f.name !== "image.png" ? f.name : `Screenshot ${new Date().toISOString().slice(0, 16).replace("T", " ").replace(":", ".")}.png`;
+    const query = jobId ? `?job=${encodeURIComponent(jobId)}${fileNow ? "&file=1" : ""}` : "";
+    try {
+      const res = await fetch(`/api/import/file${query}`, {
+        method: "POST",
+        headers: { "Content-Type": f.type || "application/octet-stream", "X-Filename": encodeURIComponent(name) },
+        body: f,
+      });
+      const data = await readJson(res);
+      if (res.status === 401) { me = null; state = null; renderLanding(); return; }
+      if (res.ok) { ok++; state = escDeep(data); setNetBanner(false); }
+      else failed.push(data.error || `${name}: upload failed`);
+    } catch (_) {
+      setNetBanner(true);
+      failed.push(`${name}: can't reach Billdable`);
+    }
+  }
+  const where = fileNow ? "added to the job record" : "in the Inbox";
+  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "));
+  render();
+}
+
+async function postImport(path, body) {
+  let res;
+  try {
+    res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch (_) { setNetBanner(true); toast("Not saved: can't reach Billdable."); return false; }
+  const data = await readJson(res);
+  if (!res.ok) { toast(data.error || "Import failed."); return false; }
+  state = escDeep(data);
+  toast(body.job_id ? "Added to the job record." : "Added to the Inbox.");
+  render();
+  return true;
+}
+
+async function loadImportSettings() {
+  if (importSettings) { fillImportSettings(); return; }
+  try {
+    const res = await fetch("/api/import/settings");
+    if (res.ok) { importSettings = escDeep(await readJson(res)); fillImportSettings(); }
+  } catch (_) { /* the cards keep their "loading" text; the banner covers outages */ }
+}
+
+function fillImportSettings() {
+  const s = importSettings;
+  if (!s) return;
+  const set = (id, value) => { const el = document.getElementById(id); if (el) el.innerHTML = value; };
+  set("email-webhook", s.email_webhook);
+  set("sms-webhook", s.sms_webhook);
+  set("cal-url", s.calendar_url);
+  set("email-address", s.email_address ? `Forward or BCC job email to <strong>${s.email_address}</strong>.` : "No forwarding address is set up yet (an email provider has to be connected first; see steps).");
+  set("sms-number", s.sms_number ? `Text photos and notes to <strong>${s.sms_number}</strong>.` : "No texting number is set up yet (a Twilio number has to be connected first; see steps).");
+}
+
+function recordFiles(r) {
+  return (r.file_ids || []).map(fid => {
+    const f = (state.files || []).find(x => x.id === fid);
+    return f ? `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>` : "";
+  }).filter(Boolean).join(" · ");
+}
+
+function inboxItemCard(i) {
+  const openJobs = state.jobs.filter(j => !j.closed);
+  const files = (i.file_ids || []).map(fid => (state.files || []).find(x => x.id === fid)).filter(Boolean);
+  const title = i.subject || (files[0] && files[0].name) || (i.text || "").split("\n")[0].slice(0, 80) || "Untitled";
+  const preview = (i.text || "").slice(0, 600);
+  const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? "selected" : ""}>${v}</option>`).join("");
+  const jobs = `<option value="">Pick a job…</option>` + openJobs.map(j => `<option value="${j.id}" ${i.suggested_job_id === j.id ? "selected" : ""}>${j.name} (${j.code})</option>`).join("");
+  return `<div class="inbox-item">
+    <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${title}</strong>
+      <span class="sub">${i.from ? "from " + i.from + " · " : ""}${(i.sent_at || i.received_at || "").slice(0, 10)}${i.note_date ? " · dated " + i.note_date : ""}</span></div>
+    ${preview ? `<details><summary>${preview.slice(0, 140)}${preview.length > 140 ? "…" : ""}</summary><pre class="inbox-text">${preview}</pre></details>` : ""}
+    ${files.length ? `<div class="sub">Files: ${files.map(f => `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>`).join(" · ")}</div>` : ""}
+    ${(i.amounts || []).length || (i.dates || []).length ? `<div class="sub">Found: ${(i.amounts || []).map(a => money(a)).join(", ")}${(i.amounts || []).length && (i.dates || []).length ? " · " : ""}${(i.dates || []).join(", ")}</div>` : ""}
+    ${(i.skipped_attachments || []).length ? `<div class="field-error">${i.skipped_attachments.join(" ")}</div>` : ""}
+    <div class="sub">${i.suggested_job_id ? "Suggested because it " + i.match_reason : i.match_reason}</div>
+    <div class="form-inline">
+      <select id="inb-job-${i.id}" aria-label="Job">${jobs}</select>
+      <select id="inb-kind-${i.id}" aria-label="Kind">${kinds}</select>
+      <button class="btn small" data-action="inbox-file" data-item="${i.id}">File to job record</button>
+      <button class="btn small secondary" data-action="inbox-dismiss" data-item="${i.id}">Dismiss</button>
+    </div>
+  </div>`;
 }
 
 function filteredJobs() {
@@ -632,7 +955,199 @@ function billedThisMonth() {
   return total;
 }
 
+let helperReview = null;
+let helperDraft = null;   // the answer being written or edited
+const HELPER_VIEWS = ["inbox", "dashboard", "daily", "jobs", "calendar", "payapps", "packets", "cos", "collections", "payments", "waivers", "retainage", "history", "playbook", "outbox", "audit", "help"];
+
+async function loadHelperReview() {
+  const body = document.getElementById("helper-admin-body");
+  if (!body) return;
+  try {
+    const res = await fetch("/api/helper/review");
+    const data = await readJson(res);
+    if (!res.ok) { body.textContent = data.error || "Could not load."; return; }
+    helperReview = escDeep(data);
+  } catch (_) { setNetBanner(true); return; }
+  renderHelperAdminBody();
+}
+
+function helperEditor() {
+  const d = helperDraft || {};
+  const handlers = (helperReview && helperReview.handlers) || [];
+  const navAction = (d.actions || []).find(a => a.type === "nav");
+  return `<div class="card" id="helper-editor">
+    <h2>${d.id ? "Edit answer" : "New answer"}</h2>
+    <div class="form-grid">
+      <div class="span-2"><label for="ha-questions">Example questions, one per line</label><textarea id="ha-questions" rows="4">${(d.questions || []).join("\n")}</textarea></div>
+      <div class="span-2"><label for="ha-answer">Answer</label><textarea id="ha-answer" rows="6" placeholder="Plain words. Start a line with - for a bullet.">${d.answer || ""}</textarea></div>
+      <div><label for="ha-category">Category</label><input id="ha-category" value="${d.category || "General"}"></div>
+      <div><label for="ha-keywords">Keywords, comma separated</label><input id="ha-keywords" value="${(d.keywords || []).join(", ")}"></div>
+      <div><label for="ha-handler">Add live data from the company's jobs</label><select id="ha-handler"><option value="">None</option>${handlers.map(h => `<option ${d.handler === h ? "selected" : ""}>${h}</option>`).join("")}</select></div>
+      <div><label for="ha-nav">Button to open a page</label><select id="ha-nav"><option value="">None</option>${HELPER_VIEWS.map(v => `<option value="${v}" ${navAction && navAction.view === v ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div class="span-2"><label for="ha-follow">Suggested next questions, one per line</label><textarea id="ha-follow" rows="2">${(d.follow_ups || []).join("\n")}</textarea></div>
+    </div>
+    <div class="form-inline"><button class="btn" id="ha-save">Save answer</button><button class="btn secondary" id="ha-cancel">Cancel</button>
+    <span class="sub">Saved answers work right away for every company. Same id as a shipped answer replaces it.</span></div>
+  </div>`;
+}
+
+function renderHelperAdminBody() {
+  const body = document.getElementById("helper-admin-body");
+  if (!body || !helperReview) return;
+  const r = helperReview;
+  const s = r.stats;
+  body.innerHTML = `
+    <div class="metrics">
+      <div class="metric"><div class="k">Questions asked</div><div class="v">${s.questions}</div></div>
+      <div class="metric"><div class="k">Answered</div><div class="v">${s.answered}</div></div>
+      <div class="metric"><div class="k">Marked helpful</div><div class="v">${s.helpful}</div></div>
+      <div class="metric"><div class="k">Marked not helpful</div><div class="v">${s.unhelpful}</div></div>
+    </div>
+    ${helperDraft ? helperEditor() : `<button class="btn" id="ha-new">Write a new answer</button>`}
+    <div class="card"><h2>Questions without a good answer (${r.open.length})</h2>
+      ${r.open.length ? r.open.map((g, i) => `<div class="list-item"><strong>${g.examples[0]}</strong> <span class="sub">asked ${g.count}×${g.unhelpful ? `, ${g.unhelpful} marked not helpful` : ""}${g.top_guess ? `, closest answer: ${g.top_guess}` : ""}</span>
+        ${g.examples.length > 1 ? `<div class="sub">Also: ${g.examples.slice(1).join(" · ")}</div>` : ""}
+        <div class="form-inline"><button class="btn small" data-ha-answer="${i}">Write an answer</button>${g.top_guess ? `<button class="btn small secondary" data-ha-extend="${i}">Add to "${g.top_guess}"</button>` : ""}<button class="btn small secondary" data-ha-resolve="${i}">Not needed</button></div></div>`).join("")
+        : emptyState("Nothing open", "Every question so far found an answer people found helpful.")}
+    </div>
+    <details class="card"><summary><strong>All answers (${r.answers.length})</strong></summary>
+      ${r.answers.map((a, i) => `<div class="list-item"><strong>${a.questions[0]}</strong> <span class="sub">${a.category} · ${a.id} · ${a.origin}${a.handler ? " · live: " + a.handler : ""}</span> <button class="btn small secondary" data-ha-edit="${i}">Edit</button></div>`).join("")}
+    </details>`;
+  const raw = (s) => { const t = document.createElement("textarea"); t.innerHTML = s; return t.value; };
+  const rawDeep = (o) => typeof o === "string" ? raw(o) : Array.isArray(o) ? o.map(rawDeep) : (o && typeof o === "object") ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, rawDeep(v)])) : o;
+  body.querySelector("#ha-new")?.addEventListener("click", () => { helperDraft = { questions: [] }; renderHelperAdminBody(); });
+  body.querySelectorAll("[data-ha-answer]").forEach(b => b.addEventListener("click", () => {
+    helperDraft = { questions: rawDeep(r.open[Number(b.dataset.haAnswer)].examples) }; renderHelperAdminBody();
+    document.getElementById("helper-editor")?.scrollIntoView({ behavior: "smooth" });
+  }));
+  body.querySelectorAll("[data-ha-extend]").forEach(b => b.addEventListener("click", () => {
+    const g = r.open[Number(b.dataset.haExtend)];
+    const base = r.answers.find(a => a.id === g.top_guess);
+    if (!base) return;
+    helperDraft = rawDeep({ ...base, questions: [...base.questions, ...g.examples] }); renderHelperAdminBody();
+    document.getElementById("helper-editor")?.scrollIntoView({ behavior: "smooth" });
+  }));
+  body.querySelectorAll("[data-ha-edit]").forEach(b => b.addEventListener("click", () => {
+    helperDraft = rawDeep(r.answers[Number(b.dataset.haEdit)]); renderHelperAdminBody();
+    document.getElementById("helper-editor")?.scrollIntoView({ behavior: "smooth" });
+  }));
+  body.querySelectorAll("[data-ha-resolve]").forEach(b => b.addEventListener("click", async () => {
+    const g = r.open[Number(b.dataset.haResolve)];
+    const res = await fetch("/api/helper/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ normalized: raw(g.normalized) }) });
+    if (res.ok) { helperReview = escDeep(await readJson(res)); renderHelperAdminBody(); }
+  }));
+  body.querySelector("#ha-cancel")?.addEventListener("click", () => { helperDraft = null; renderHelperAdminBody(); });
+  body.querySelector("#ha-save")?.addEventListener("click", async () => {
+    const lines = (id) => (document.getElementById(id).value || "").split("\n").map(x => x.trim()).filter(Boolean);
+    const navView = document.getElementById("ha-nav").value;
+    const payload = {
+      id: helperDraft && helperDraft.id ? helperDraft.id : "",
+      questions: lines("ha-questions"),
+      answer: document.getElementById("ha-answer").value,
+      category: document.getElementById("ha-category").value,
+      keywords: document.getElementById("ha-keywords").value.split(",").map(x => x.trim()).filter(Boolean),
+      handler: document.getElementById("ha-handler").value,
+      needs_job: ["draft_followup", "job_status"].includes(document.getElementById("ha-handler").value),
+      actions: navView ? [{ type: "nav", view: navView, label: "Open " + navView.charAt(0).toUpperCase() + navView.slice(1) }] : [],
+      follow_ups: lines("ha-follow"),
+    };
+    const res = await fetch("/api/helper/answers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const data = await readJson(res);
+    if (!res.ok) { toast(data.error || "Not saved."); return; }
+    helperReview = escDeep(data);
+    helperDraft = null;
+    toast("Answer saved. It works right away.");
+    renderHelperAdminBody();
+  });
+}
+
 const views = {
+  "helper-admin"() {
+    return `<h1>Helper answers</h1>
+      <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only people listed in HELPER_ADMIN_EMAILS see this page.</p>
+      <div id="helper-admin-body">Loading…</div>`;
+  },
+  inbox() {
+    const items = (state.inbox || []).filter(i => i.status === "new").slice().reverse();
+    const done = (state.inbox || []).filter(i => i.status !== "new").slice(-20).reverse();
+    const withSuggestion = items.filter(i => i.suggested_job_id).length;
+    const jobName = (id) => (state.jobs.find(j => j.id === id) || {}).name || "a job";
+    return `
+      <h1>Inbox</h1>
+      <p class="sub">Bring in photos, PDFs, saved emails, text threads and notes. Billdable suggests the job from the job code, address, name or sender; you file it with one click. Nothing is filed without you.</p>
+      <div class="dropzone" tabindex="0">
+        <strong>Drop files anywhere on this page</strong>
+        <span class="sub">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to ${MAX_UPLOAD_MB} MB each. Or <button class="linkish" data-action="pick-files">choose files</button>, or press Ctrl+V / ⌘V to paste a screenshot. On a phone, choose files opens the camera too.</span>
+      </div>
+      <div class="card">
+        <h2>Paste an email, a text thread, or notes</h2>
+        <div class="form-inline">
+          <select id="paste-source" aria-label="What are you pasting?">
+            <option value="email">An email (with or without the From/Subject lines)</option>
+            <option value="sms">Text messages</option>
+            <option value="notes">Notes: one daily record per date</option>
+            <option value="paste">Something else</option>
+          </select>
+        </div>
+        <textarea id="paste-text" rows="6" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in"></textarea>
+        <div class="form-inline"><button class="btn" data-action="import-text">Add to Inbox</button>
+        <span class="sub">Notes split at every line that starts with a date (10/12, Oct 12, 2026-10-12). Exported Apple Notes or a typed-up notebook work.</span></div>
+      </div>
+      <div class="card">
+        <div class="top"><h2>To file (${items.length})</h2>${withSuggestion > 1 ? `<button class="btn small" data-action="inbox-file-all">File all ${withSuggestion} with a suggested job</button>` : ""}</div>
+        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting", "Drop files, paste an email or notes above, or set up email and text forwarding below.")}
+      </div>
+      ${done.length ? `<details class="card"><summary><strong>Recently filed or dismissed</strong></summary>
+        ${done.map(i => `<div class="list-item">${i.status === "filed" ? `Filed to ${jobName(i.filed_job_id)} as ${RECORD_KINDS[i.filed_kind] || i.filed_kind}` : "Dismissed"}: ${i.subject || (i.text || "").slice(0, 60) || "item"} <button class="btn small secondary" data-action="inbox-undo" data-item="${i.id}">Undo</button></div>`).join("")}
+      </details>` : ""}
+      <details class="card">
+        <summary><strong>Bring emails and texts in automatically</strong></summary>
+        <h3>Email</h3>
+        <p id="email-address" class="sub">Loading…</p>
+        <p class="sub">Steps: in an email service that can post incoming mail to a web address (SendGrid Inbound Parse, Mailgun routes or Postmark inbound), set up an inbound address and point it at this private web address. Then forward or BCC job emails to that inbound address. Attachments come in as files.</p>
+        <div class="copy-row"><code id="email-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="email-webhook">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="email">Make a new address</button></div>
+        <h3>Text messages</h3>
+        <p id="sms-number" class="sub">Loading…</p>
+        <p class="sub">Steps: in Twilio, buy a number and set its incoming-message webhook to this private web address. Set TWILIO_AUTH_TOKEN on the server so Billdable checks each message really came from Twilio. Photos sent by text show as links for now; they are not downloaded.</p>
+        <div class="copy-row"><code id="sms-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="sms-webhook">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="sms">Make a new address</button></div>
+        <p class="sub">Anyone who knows these addresses can drop items in your Inbox. They are reviewed before filing. Make a new address if one leaks.</p>
+      </details>
+    `;
+  },
+  help() {
+    const glossary = [
+      ["Pay app (pay application)", "The bill for work done this period. It lists what was completed, at the contract rates, plus signed change orders, less retainage."],
+      ["Pencil copy (pencil draft)", "A draft of the pay app sent to the owner or GC to agree quantities before the formal one. It avoids \"push it to next month\"."],
+      ["Packet", "Everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate."],
+      ["Schedule of values", "The contract broken into line items with a value each. Each pay app bills a percentage of each line."],
+      ["Change order (CO)", "Extra or changed work. Bill it only after the customer signs it."],
+      ["Retainage", "A percentage (often 5 to 10) the payer holds back from every pay app until the job is closed out."],
+      ["Punch list", "Small fixes found at final inspection: a dead outlet, a loose railing. Finishing it is what releases retainage."],
+      ["Closeout packet", "The documents needed to finish the job and release retainage: punch-list signoff, final waivers, warranties."],
+      ["Lien waiver", "A document giving up lien rights for money already paid. Conditional: only if the payment clears. Unconditional: payment received. Forms are set by state law in some states."],
+      ["Pay-when-paid / pay-if-paid", "Contract terms that tie a sub's payment to the GC being paid. Pay-if-paid shifts the risk to the sub; some states limit it."],
+      ["Payer playbook", "What each customer requires, who approves, how long they take, and why they reject pay apps."],
+    ];
+    return `
+      <h1>Help</h1>
+      <p class="sub">Hover any label with an (i) to see what it means. Tap it on a phone.</p>
+      <div class="card">
+        <h2>First job, start to finish</h2>
+        <ol class="steps">
+          <li>Jobs → New job: contract amount, payer, approver, AP email, retainage percent.</li>
+          <li>Drop the contract, photos and tickets on the job record, or bring emails and texts in through the Inbox.</li>
+          <li>Progress pay app: enter completed-to-date. Billdable drafts the pay app, withholds retainage and lists the packet.</li>
+          <li>Optional: send a pencil copy so the payer agrees the numbers first.</li>
+          <li>Attach records to each packet item. Approve and send unlocks when the packet is complete.</li>
+          <li>Match the payment when it arrives, then send the waiver for that pay app.</li>
+          <li>Mark done, finish the punch list (closeout packet), ask for retainage, record it when paid, close the job.</li>
+        </ol>
+      </div>
+      <div class="card"><h2>Words you will see</h2>
+        <dl class="glossary">${glossary.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join("")}</dl>
+      </div>
+    `;
+  },
   dashboard() {
     const t = state.totals;
     const jobs = filteredJobs();
@@ -773,6 +1288,8 @@ const views = {
     const blocked = j.blockers && j.blockers.length;
     const canClose = !j.closed && (j.close_blockers || []).length === 0;
     const hasDraft = j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status));
+    const openDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
+    const pencilOut = openDraft && openDraft.pencil_status === "sent";
     const openForPay = j.invoices.filter(i => ["sent", "approved", "partial"].includes(i.status));
     const isDemo = me && me.company_id === DEMO_COMPANY_ID;
     const closeout = j.closeout_packet || [];
@@ -812,6 +1329,8 @@ const views = {
             ${j.work_status !== "complete" ? `<div class="action-row"><button class="btn secondary" data-action="toggle-form" data-form="done">Mark done</button><div><div class="blurb">Record completion and draft the final pay app.</div></div></div>` : ""}
             <div class="action-row"><button class="btn secondary" data-action="draft" data-id="${j.id}">Draft pay app</button><div class="blurb">Create a same-week pay app from unbilled completed work.</div></div>
             <div class="action-row"><button class="btn" data-action="send" data-id="${j.id}" ${blocked || !hasDraft ? "disabled" : ""}>Approve & send</button><div class="blurb">Human gate. Sends only when the packet is clean.</div></div>
+            ${hasDraft && !pencilOut ? `<div class="action-row"><button class="btn secondary" data-action="pencil" data-id="${j.id}">Send pencil copy</button><div class="blurb">Send the draft to the payer to agree quantities and change orders before the formal pay app.</div></div>` : ""}
+            ${pencilOut ? `<div class="action-row"><button class="btn secondary" data-action="pencil-agreed" data-id="${j.id}">Payer agreed to pencil</button><button class="btn secondary" data-action="pencil-changes" data-id="${j.id}">Payer wants changes</button></div>` : ""}
             ${hasDraft ? `<div class="action-row"><button class="btn secondary" data-action="void-draft" data-id="${j.id}">Void draft</button><div class="blurb">Throw away the open draft. Its work goes back to unbilled.</div></div>` : ""}
             <div class="action-row"><button class="btn secondary" data-action="follow-up" data-id="${j.id}">Follow up</button><div class="blurb">Log a follow-up on a sent pay app using the playbook cadence.</div></div>
             <div class="action-row"><button class="btn secondary" data-action="toggle-form" data-form="match">Match payment</button><div class="blurb">Record cash received (dollars). Opens the waiver gate when paid in full.</div></div>
@@ -835,11 +1354,15 @@ const views = {
       <div class="card">
         <h2>Job record</h2>
         <p class="sub">Anything associated with this job. Attach a record to a pay app packet when you draft one.</p>
-        ${(j.records || []).length ? (j.records || []).map(r => `<div class="list-item">${r.kind}: ${r.label}${r.note ? " — " + r.note : ""}</div>`).join("") : emptyState("Nothing in the record yet", "Add a note, photo, or contract reference.")}
+        ${j.closed ? "" : `<div class="dropzone small" data-job="${j.id}">
+          <strong>Drop photos, PDFs, saved emails or spreadsheets here</strong> to add them to this job.
+          <span class="sub">Or <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button>, or paste a screenshot anywhere on this page. Emails and texts: use the <button class="linkish" data-v-link="inbox" onclick="nav('inbox')">Inbox</button>.</span>
+        </div>`}
+        ${(j.records || []).length ? (j.records || []).slice().reverse().map(r => `<div class="list-item"><span class="pill">${RECORD_KINDS[r.kind] || r.kind}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source ? `<div class="sub">${r.source} · ${(r.added_at || "").slice(0, 10)}</div>` : ""}</div>`).join("") : emptyState("Nothing in the record yet", "Drop files above, add a note below, or bring in emails and texts from the Inbox.")}
         <div class="form-inline">
           <input id="rec-label" placeholder="Label" />
           <input id="rec-note" placeholder="Note" />
-          <select id="rec-kind"><option>note</option><option>photo</option><option>contract</option><option>waiver</option><option>other</option></select>
+          <select id="rec-kind">${Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select>
           <button class="btn small" data-action="add-record" data-id="${j.id}">Add to record</button>
         </div>
       </div>
@@ -848,7 +1371,8 @@ const views = {
         ${j.invoices.length ? j.invoices.map(inv => {
           const pkt = inv.packet || j.packet || [];
           const missing = pkt.filter(p => p.required && !p.present).length;
-          return `<div class="list-item">${inv.number} · ${money(inv.amount_cents)} · ${inv.status} · ${missing ? missing + " packet items missing" : "packet complete"} <button class="btn small secondary" data-action="open-payapp" data-job="${j.id}" data-inv="${inv.id}">Open</button></div>`;
+          const pencil = inv.pencil_status ? ` · pencil ${inv.pencil_status === "sent" ? "with payer" : inv.pencil_status}${inv.pencil_note ? ": " + inv.pencil_note : ""}` : "";
+          return `<div class="list-item">${inv.number} · ${money(inv.amount_cents)} · ${inv.status}${pencil} · ${missing ? missing + " packet items missing" : "packet complete"} <button class="btn small secondary" data-action="open-payapp" data-job="${j.id}" data-inv="${inv.id}">Open</button></div>`;
         }).join("") : emptyState("No pay apps yet", "Draft one after the job is marked done. The packet is created with it.")}
         ${closeout.length ? `<div class="list-item">Closeout packet (gates the retainage release) · ${closeoutMissing ? closeoutMissing + " items missing" : "complete"} <button class="btn small secondary" data-action="open-packet" data-job="${j.id}" data-inv="closeout">Open</button></div>` : ""}
       </div>
@@ -1053,7 +1577,7 @@ const views = {
       eventsByDay[d].push({ label, kind, jobId });
     };
     const today = new Date();
-    state.jobs.forEach(j => {
+    state.jobs.filter(j => calJobFilter === "all" || j.id === calJobFilter).forEach(j => {
       if (j.completed_at) add(j.completed_at, `${j.code} work complete`, "paid", j.id);
       j.invoices.forEach(inv => {
         if (inv.sent_at) add(inv.sent_at, `${inv.number} sent`, "", j.id);
@@ -1090,6 +1614,18 @@ const views = {
     return `
       <h1>Calendar</h1>
       <p class="sub">Deadlines, follow-ups, expected approvals, payments, and contractor action dates.</p>
+      <div class="filter-bar">
+        <select id="cal-filter" data-filter-for="calendar" aria-label="Job">
+          <option value="all">All jobs</option>
+          ${state.jobs.map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
+        </select>
+      </div>
+      <details class="card subscribe">
+        <summary><strong>Put these dates on your phone (Google Calendar, Apple, Outlook)</strong></summary>
+        <p class="sub">Copy this private address. In Google Calendar on a computer: Other calendars, +, From URL, paste, Add calendar. It then shows on your phone. Calendar apps refresh subscribed calendars on their own schedule, often every few hours, so new dates are not instant.</p>
+        <div class="copy-row"><code id="cal-url">Loading…</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="calendar">Make a new address</button></div>
+        <p class="sub">Anyone with this address can see the dates and job names. Make a new address if it was shared by mistake.</p>
+      </details>
       <div class="legend">
         <span><i style="background:#e5f2ea"></i> Complete / paid</span>
         <span><i style="background:#f8efd8"></i> Waiver</span>
@@ -1362,7 +1898,7 @@ const views = {
       <div class="table-wrap">
         <table>
           <tr><th>When</th><th>Kind</th><th>To</th><th>Subject</th><th>Status</th></tr>
-          ${emails.map(e => `<tr><td>${e.at.slice(0,16)}</td><td>${e.kind}</td><td>${e.to}</td><td>${e.subject}</td><td>${e.status}</td></tr>`).join("")}
+          ${emails.map(e => `<tr class="clickable" data-action="open-job" data-id="${e.job_id}" title="Open the job"><td>${e.at.slice(0,16)}</td><td>${e.kind.replace("_", " ")}</td><td>${e.to}</td><td><a href="#">${e.subject}</a><div class="sub">${e.body || ""}</div></td><td>${e.status}</td></tr>`).join("")}
         </table>
       </div>
       ${emails.length ? "" : emptyState("Outbox is empty", "Approved sends are logged here. Nothing has been sent yet.")}
@@ -1391,50 +1927,212 @@ const views = {
   },
 };
 
+// ----- Helper chat -----
+// Answers come from the prepared-answers database on the server, which reads
+// this company's jobs for questions like "what should I do today". Action
+// buttons call the same endpoints as the rest of the app, so every gate and
+// confirmation still applies.
+let helperAdmin = false;
+const helperLog = [];   // {who: "you"|"helper", text, actions, suggestions, logId, rated}
+let helperBusy = false;
+
 function updateAiContext() {
-  const replies = document.getElementById("ai-replies");
-  if (!replies || !aiOpen) return;
-  // context hint is shown in the panel subtitle via existing HTML; dynamic answers still rule-based
+  if (aiOpen) renderHelper();
+}
+
+function helperStarters() {
+  const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId);
+  if (job) return [`What's blocking ${job.name}?`, `Draft a follow-up for ${job.name}`, `Status of ${job.name}`];
+  if (currentView === "inbox") return ["How does it know which job?", "How do I import 30 days of notes?", "How do I forward emails to Billdable?"];
+  if (currentView === "retainage") return ["How do I get retainage released?", "Which jobs are holding my retainage?"];
+  return ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"];
+}
+
+function helperFormat(text) {
+  // text is escaped first; then "- " lines become a list, blank lines paragraphs.
+  const lines = esc(text || "").split("\n");
+  let html = "", inList = false;
+  for (const line of lines) {
+    if (line.startsWith("- ")) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${line.slice(2)}</li>`;
+    } else {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += line.trim() ? `<p>${line}</p>` : "";
+    }
+  }
+  return html + (inList ? "</ul>" : "");
+}
+
+function renderHelper() {
+  const box = document.getElementById("ai-replies");
+  const chips = document.getElementById("ai-chips");
+  if (!box || !chips) return;
+  const greeting = `<div class="msg helper"><p>Hi${me && me.name ? " " + me.name.split(" ")[0] : ""}. Ask me how to do something in Billdable, or about your own jobs: what to do today, who owes you, what's blocking a job.</p></div>`;
+  {
+    box.innerHTML = greeting + helperLog.map((m, idx) => m.who === "you"
+      ? `<div class="msg you">${esc(m.text)}</div>`
+      : `<div class="msg helper">${helperFormat(m.text)}
+          ${(m.actions || []).length ? `<div class="msg-actions">${m.actions.map((a, i) => `<button class="btn small ${a.type === "post" ? "" : "secondary"}" data-helper-msg="${idx}" data-helper-action="${i}">${esc(a.label)}</button>`).join("")}</div>` : ""}
+          ${m.logId ? `<div class="msg-rate">${m.rated ? (m.rated === "yes" ? "Thanks." : "Thanks, the team will improve this answer.") : `Helpful? <button class="linkish" data-helper-rate="${idx}" data-value="yes">Yes</button> <button class="linkish" data-helper-rate="${idx}" data-value="no">No</button>`}</div>` : ""}
+        </div>`).join("") + (helperBusy ? `<div class="msg helper typing" aria-label="Looking that up">Looking that up…</div>` : "");
+  }
+  const last = [...helperLog].reverse().find(m => m.who === "helper");
+  const suggestions = (last && last.suggestions && last.suggestions.length) ? last.suggestions : helperStarters();
+  chips.innerHTML = suggestions.map(s => `<button class="chip" data-helper-ask="${esc(s)}">${esc(s)}</button>`).join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+async function helperAsk(q) {
+  q = (q || "").trim();
+  if (!q || helperBusy) return;
+  helperLog.push({ who: "you", text: q });
+  helperBusy = true;
+  renderHelper();
+  let reply;
+  try {
+    const res = await fetch("/api/helper/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q, view: currentView, job_id: currentView === "job" ? currentJobId : "" }),
+    });
+    reply = await readJson(res);
+    if (res.status === 401) { helperBusy = false; me = null; state = null; renderLanding(); return; }
+    if (!res.ok) reply = { text: reply.error || "Something went wrong. Try again." };
+  } catch (_) {
+    reply = { text: "I can't reach Billdable right now. Check your connection and try again." };
+  }
+  helperBusy = false;
+  helperLog.push({ who: "helper", text: reply.text, actions: reply.actions || [], suggestions: reply.suggestions || [], logId: reply.log_id });
+  if (helperLog.length > 60) helperLog.splice(0, helperLog.length - 60);
+  renderHelper();
+}
+
+async function helperRunAction(a) {
+  if (a.type === "nav") nav(a.view);
+  else if (a.type === "job") nav("job", a.job_id);
+  else if (a.type === "packet") nav("packet-detail", a.job_id, a.inv || null);
+  else if (a.type === "ask") helperAsk(a.q);
+  else if (a.type === "copy") {
+    try { await navigator.clipboard.writeText(a.text); toast("Copied"); }
+    catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
+  } else if (a.type === "post") {
+    if (a.confirm && !confirm(a.confirm)) return;
+    await post(a.path);
+    helperLog.push({ who: "helper", text: "Done. The page is updated; the Outbox and Audit show what happened." });
+    renderHelper();
+  }
 }
 
 document.getElementById("ai-badge").addEventListener("click", () => {
   aiOpen = !aiOpen;
   document.getElementById("ai-panel").classList.toggle("open", aiOpen);
-  if (aiOpen && currentJobId) {
-    const j = state.jobs.find(x => x.id === currentJobId);
-    const replies = document.getElementById("ai-replies");
-    if (j && replies && !replies.dataset.shown) {
-      replies.innerHTML = `<div class="reply">Current job: ${j.name}. ${j.blockers && j.blockers.length ? "Blocked by: " + j.blockers.join("; ") : "Status: " + j.status_label}</div>`;
-      replies.dataset.shown = "1";
-    }
+  document.getElementById("ai-badge").setAttribute("aria-expanded", aiOpen ? "true" : "false");
+  if (aiOpen) { renderHelper(); document.getElementById("ai-input").focus(); }
+});
+document.getElementById("ai-close").addEventListener("click", () => {
+  aiOpen = false;
+  document.getElementById("ai-panel").classList.remove("open");
+  document.getElementById("ai-badge").focus();
+});
+document.getElementById("ai-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = document.getElementById("ai-input");
+  const q = input.value;
+  input.value = "";
+  helperAsk(q);
+});
+document.getElementById("ai-panel").addEventListener("click", async (e) => {
+  const askBtn = e.target.closest("[data-helper-ask]");
+  if (askBtn) { helperAsk(askBtn.textContent); return; }
+  const actBtn = e.target.closest("[data-helper-action]");
+  if (actBtn) {
+    const msg = helperLog[Number(actBtn.dataset.helperMsg)];
+    const action = msg && msg.actions[Number(actBtn.dataset.helperAction)];
+    if (action) await helperRunAction(action);
+    return;
+  }
+  const rate = e.target.closest("[data-helper-rate]");
+  if (rate) {
+    const msg = helperLog[Number(rate.dataset.helperRate)];
+    if (!msg || !msg.logId) return;
+    const helpful = rate.dataset.value === "yes";
+    let note = "";
+    if (!helpful) note = prompt("What were you looking for? (optional)") || "";
+    msg.rated = helpful ? "yes" : "no";
+    renderHelper();
+    try {
+      await fetch("/api/helper/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ log_id: msg.logId, helpful, note }) });
+    } catch (_) { /* rating is best effort */ }
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && aiOpen && document.getElementById("ai-panel").contains(document.activeElement)) {
+    aiOpen = false;
+    document.getElementById("ai-panel").classList.remove("open");
+    document.getElementById("ai-badge").focus();
   }
 });
 
-document.getElementById("ai-input").addEventListener("keydown", (e) => {
-  if (e.key !== "Enter") return;
-  const q = e.target.value.trim();
-  if (!q) return;
-  e.target.value = "";
-  const replies = document.getElementById("ai-replies");
-  replies.innerHTML += `<p><strong>You:</strong> ${esc(q)}</p>`;
-  let ans = "I answer from rules, not AI: ask what's blocking a job, for the money totals, or for a follow-up note.";
-  const lower = q.toLowerCase();
-  if (!state || !state.jobs.length) {
-    ans = "There are no jobs yet. Create one from Jobs.";
-  } else if (lower.includes("block") || lower.includes("oak")) {
-    const j = state.jobs.find(x => x.name.toLowerCase().includes("oak")) || (currentJobId && state.jobs.find(x => x.id === currentJobId)) || state.jobs[0];
-    ans = j.blockers.length ? `${j.name} is blocked by:\n- ${j.blockers.join("\n- ")}` : `${j.name} has no packet blockers. Status: ${j.status_label}`;
-  } else if (lower.includes("follow") || lower.includes("draft")) {
-    const j = state.jobs.find(x => lower.includes(x.name.toLowerCase().split(" ")[0].toLowerCase())) || state.jobs.find(x => x.invoices.some(i => i.status === "sent"));
-    if (j) {
-      ans = `Draft follow-up for ${j.name}:\n\nHi ${j.payer.approver},\n\nChecking on ${j.invoices.slice(-1)[0]?.number || "the recent pay app"} for ${j.name}. Packet is complete on our side. Usual approval is ${j.payer.usual_approval_days} days.\n\nThanks,\n${state.company.name}`;
-    }
-  } else if (lower.includes("money") || lower.includes("outstanding")) {
-    const t = state.totals;
-    ans = `Totals: unbilled ${money(t.unbilled_cents)}, outstanding ${money(t.outstanding_cents)}, retainage ${money(t.retainage_cents)}.`;
+// Drop files anywhere, or paste a screenshot, to import. On a job page they
+// go straight onto that job's record; elsewhere they land in the Inbox.
+let dragDepth = 0;
+function dropOverlay(on) {
+  let el = document.getElementById("drop-overlay");
+  if (!el && on) {
+    el = document.createElement("div");
+    el.id = "drop-overlay";
+    el.className = "drop-overlay";
+    document.body.appendChild(el);
   }
-  replies.innerHTML += `<div class="reply">${ans}</div>`;
-  replies.scrollTop = replies.scrollHeight;
+  if (!el) return;
+  const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId && !j.closed);
+  el.textContent = job ? `Drop to add to ${job.name}` : "Drop to add to the Inbox";
+  el.style.display = on ? "flex" : "none";
+}
+function importTargetJob() {
+  const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId && !j.closed);
+  return job ? job.id : "";
+}
+document.addEventListener("dragenter", (e) => {
+  if (!state || !e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
+  dragDepth++;
+  dropOverlay(true);
+});
+document.addEventListener("dragover", (e) => {
+  if (!state || !e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+document.addEventListener("dragleave", () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) dropOverlay(false);
+});
+document.addEventListener("drop", (e) => {
+  if (!state || !e.dataTransfer || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  dragDepth = 0;
+  dropOverlay(false);
+  const jobId = importTargetJob();
+  uploadFiles(e.dataTransfer.files, jobId, !!jobId);
+});
+document.addEventListener("paste", (e) => {
+  if (!state || !e.clipboardData) return;
+  const files = [...e.clipboardData.files];
+  if (!files.length) return; // plain text pastes behave normally
+  e.preventDefault();
+  const jobId = importTargetJob();
+  uploadFiles(files, jobId, !!jobId);
+});
+document.addEventListener("scroll", hideHelpTip, true);
+// One file picker for every screen ("choose files" on the Inbox or a job page).
+document.getElementById("file-input").addEventListener("change", (e) => {
+  const input = e.target;
+  const jobId = input.dataset.job || "";
+  const files = [...input.files];
+  input.value = "";
+  input.dataset.job = "";   // the next pick starts with no job unless its button sets one
+  uploadFiles(files, jobId, !!jobId);
 });
 
 window.nav = nav;

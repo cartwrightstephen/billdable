@@ -1,0 +1,1513 @@
+{
+  "version": 1,
+  "note": "Prepared answers for the in-app helper. Edit here (reviewed in Git) or add answers in the app's Helper answers page.",
+  "answers": [
+    {
+      "id": "today",
+      "category": "Your jobs",
+      "questions": [
+        "What should I do today?",
+        "What needs my attention?",
+        "What do I need to do next?",
+        "What's on my plate?",
+        "Where do I start today?",
+        "todo list"
+      ],
+      "keywords": [
+        "todo",
+        "attention",
+        "priority"
+      ],
+      "answer": "",
+      "handler": "today",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "Who owes me money?",
+        "Which follow-ups are due?"
+      ]
+    },
+    {
+      "id": "money",
+      "category": "Your jobs",
+      "questions": [
+        "How much money is outstanding?",
+        "What are my totals?",
+        "How much have I billed this month?",
+        "Show me the money",
+        "What's my cash position?"
+      ],
+      "keywords": [
+        "totals",
+        "money",
+        "cash"
+      ],
+      "answer": "",
+      "handler": "money",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "Who owes me money?",
+        "What work haven't I billed?"
+      ]
+    },
+    {
+      "id": "who-owes",
+      "category": "Your jobs",
+      "questions": [
+        "Who owes me money?",
+        "Which customers haven't paid?",
+        "What's unpaid?",
+        "Who is late paying?",
+        "Show my receivables",
+        "Who hasn't paid me yet?"
+      ],
+      "keywords": [
+        "owed",
+        "late",
+        "paid"
+      ],
+      "answer": "",
+      "handler": "who_owes",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "Which follow-ups are due?",
+        "Draft a follow-up for a job"
+      ]
+    },
+    {
+      "id": "followups-due",
+      "category": "Your jobs",
+      "questions": [
+        "Which follow-ups are due?",
+        "Who should I chase?",
+        "Who do I need to follow up with?",
+        "Any overdue pay apps?"
+      ],
+      "keywords": [
+        "followup",
+        "overdue",
+        "due"
+      ],
+      "answer": "",
+      "handler": "followups",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "Draft a follow-up for a job",
+        "How do follow-up windows work?"
+      ]
+    },
+    {
+      "id": "draft-followup",
+      "category": "Your jobs",
+      "questions": [
+        "Draft a follow-up for a job",
+        "Write a follow-up email",
+        "Write a reminder to the customer",
+        "Draft a chase note"
+      ],
+      "keywords": [
+        "draft followup",
+        "write"
+      ],
+      "answer": "",
+      "handler": "draft_followup",
+      "needs_job": true,
+      "actions": [],
+      "follow_ups": [
+        "Which follow-ups are due?"
+      ]
+    },
+    {
+      "id": "blockers",
+      "category": "Your jobs",
+      "questions": [
+        "What's blocking this job?",
+        "Why can't I send the pay app?",
+        "Why is approve and send greyed out?",
+        "What is missing on this job?",
+        "Which jobs are blocked?"
+      ],
+      "keywords": [
+        "blocker",
+        "greyed",
+        "disabled"
+      ],
+      "answer": "",
+      "handler": "blockers",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I clear a packet item?",
+        "What is a packet?"
+      ]
+    },
+    {
+      "id": "job-status",
+      "category": "Your jobs",
+      "questions": [
+        "What's the status of this job?",
+        "How is this job doing?",
+        "Where are we on this job?",
+        "Give me a summary of the job"
+      ],
+      "keywords": [
+        "status",
+        "summary"
+      ],
+      "answer": "",
+      "handler": "job_status",
+      "needs_job": true,
+      "actions": [],
+      "follow_ups": [
+        "What's blocking this job?"
+      ]
+    },
+    {
+      "id": "unbilled",
+      "category": "Your jobs",
+      "questions": [
+        "What work haven't I billed?",
+        "What's unbilled?",
+        "Is there money I forgot to bill?",
+        "What can I bill now?"
+      ],
+      "keywords": [
+        "unbilled",
+        "forgot"
+      ],
+      "answer": "",
+      "handler": "unbilled",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I bill progress on a job?"
+      ]
+    },
+    {
+      "id": "retainage-list",
+      "category": "Your jobs",
+      "questions": [
+        "Which jobs are holding my retainage?",
+        "Where is my retainage?",
+        "How much retainage is held?"
+      ],
+      "keywords": [
+        "retainage held",
+        "holding retainage"
+      ],
+      "answer": "",
+      "handler": "retainage_list",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I get retainage released?"
+      ]
+    },
+    {
+      "id": "waivers-due",
+      "category": "Your jobs",
+      "questions": [
+        "Which waivers are due?",
+        "Do I owe any waivers?",
+        "What waivers need to go out?"
+      ],
+      "keywords": [
+        "waiver due"
+      ],
+      "answer": "",
+      "handler": "waivers_due",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "What is a lien waiver?"
+      ]
+    },
+    {
+      "id": "inbox-status",
+      "category": "Your jobs",
+      "questions": [
+        "What's in my inbox?",
+        "Anything waiting to be filed?",
+        "Do I have new imports?"
+      ],
+      "keywords": [
+        "inbox"
+      ],
+      "answer": "",
+      "handler": "inbox",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I import emails and texts?"
+      ]
+    },
+    {
+      "id": "pending-cos",
+      "category": "Your jobs",
+      "questions": [
+        "Which change orders are unsigned?",
+        "What change orders are waiting?",
+        "Pending change orders"
+      ],
+      "keywords": [
+        "unsigned",
+        "pending changeorder"
+      ],
+      "answer": "",
+      "handler": "pending_cos",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do change orders work?"
+      ]
+    },
+    {
+      "id": "closeable",
+      "category": "Your jobs",
+      "questions": [
+        "Which jobs can I close?",
+        "What jobs are finished and paid?",
+        "What can I close out?"
+      ],
+      "keywords": [
+        "close"
+      ],
+      "answer": "",
+      "handler": "closeable",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I close a job?"
+      ]
+    },
+    {
+      "id": "getting-started",
+      "category": "Getting started",
+      "questions": [
+        "How do I get started?",
+        "How does Billdable work?",
+        "What does this tool do?",
+        "I'm new, where do I begin?",
+        "Walk me through it"
+      ],
+      "keywords": [
+        "start",
+        "begin",
+        "new",
+        "how work"
+      ],
+      "answer": "Billdable makes sure finished work gets billed with everything the payer needs, then follows the money until it's paid.\n- Create a job with the contract amount, payer, approver, AP email and retainage percent.\n- Put the paperwork on the job record: drop photos and PDFs, or bring in emails, texts and notes through the Inbox.\n- Record progress. Billdable drafts the pay app, withholds retainage and lists the packet the payer requires.\n- Attach records to the packet. Approve and send unlocks when nothing is missing.\n- Match the payment, send the waiver, finish the punch list, collect retainage, close the job.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "help",
+          "label": "Open Help"
+        },
+        {
+          "type": "nav",
+          "view": "jobs",
+          "label": "Go to Jobs"
+        }
+      ],
+      "follow_ups": [
+        "How do I create a job?",
+        "How do I import emails and texts?"
+      ]
+    },
+    {
+      "id": "create-job",
+      "category": "Getting started",
+      "questions": [
+        "How do I create a job?",
+        "How do I add a new job?",
+        "Where do I enter a contract?",
+        "Set up a job"
+      ],
+      "keywords": [
+        "new job",
+        "create",
+        "add job",
+        "contract amount"
+      ],
+      "answer": "Go to Jobs and click New job. Required: job name, address, customer, approver, AP email and the contract amount. Set the retainage percent if the contract holds retainage, and pick the role: Owner if you bill the property owner or homeowner, GC if you are a sub billing a general contractor. The customer's details become its payer playbook.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "jobs",
+          "label": "Go to Jobs"
+        }
+      ],
+      "follow_ups": [
+        "What does the role field mean?",
+        "How do I bill progress on a job?"
+      ]
+    },
+    {
+      "id": "edit-job",
+      "category": "Getting started",
+      "questions": [
+        "How do I edit a job?",
+        "I made a typo in the job name",
+        "How do I delete a job?",
+        "Can I change the contract amount?"
+      ],
+      "keywords": [
+        "edit",
+        "typo",
+        "delete",
+        "rename",
+        "change contract"
+      ],
+      "answer": "Editing or deleting a job isn't built yet; it is on the next build list. For now, add a note to the job record with the correction. A payer's approver, AP email and packet rules can be changed in the Payer Playbook.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "playbook",
+          "label": "Open Payer Playbook"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "role-field",
+      "category": "Getting started",
+      "questions": [
+        "What does the role field mean?",
+        "Owner or GC?",
+        "What is the role on a new job?"
+      ],
+      "keywords": [
+        "role",
+        "owner",
+        "gc"
+      ],
+      "answer": "Role says who pays you. Owner: you bill the property owner or homeowner directly. GC: you are a subcontractor billing a general contractor. GC jobs usually need a schedule of values, insurance certificate and waivers with every pay app.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "mobile",
+      "category": "Getting started",
+      "questions": [
+        "Can I use this on my phone?",
+        "Is there a mobile app?",
+        "Does it work on mobile?"
+      ],
+      "keywords": [
+        "mobile",
+        "app"
+      ],
+      "answer": "There's no separate app yet. Billdable runs in your phone's browser: sign in at the same address. On a phone, Choose files opens the camera, so you can photograph tickets straight into the Inbox or a job.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I import emails and texts?"
+      ]
+    },
+    {
+      "id": "team-users",
+      "category": "Getting started",
+      "questions": [
+        "Can I add my office manager?",
+        "How do I invite my bookkeeper?",
+        "Can more than one person log in?",
+        "Add a user"
+      ],
+      "keywords": [
+        "invite",
+        "bookkeeper",
+        "user",
+        "team",
+        "office manager"
+      ],
+      "answer": "Each company has one login today. Inviting a bookkeeper or office manager with their own login is planned, not built. Until then, don't share the password; ask the Billdable team if you need a second person on now.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "what-payapp",
+      "category": "Pay apps",
+      "questions": [
+        "What is a pay app?",
+        "What is a pay application?",
+        "What's the difference between a pay app and an invoice?"
+      ],
+      "keywords": [
+        "what payapp",
+        "define payapp"
+      ],
+      "answer": "A pay app (pay application) is the bill for work done this period. It lists what was completed at the contract rates, adds signed change orders, and subtracts retainage. Many contracts also require a packet of paperwork with it.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "What is a packet?",
+        "What is retainage?"
+      ]
+    },
+    {
+      "id": "progress",
+      "category": "Pay apps",
+      "questions": [
+        "How do I bill progress on a job?",
+        "How do I make a progress pay app?",
+        "Bill part of the job",
+        "Bill for work done this month"
+      ],
+      "keywords": [
+        "progress",
+        "completed to date",
+        "monthly"
+      ],
+      "answer": "Open the job and click Progress pay app. Enter the completed-to-date dollar amount (the total done so far, not just this month). Billdable drafts a pay app for the difference since the last one, withholds retainage, and builds the packet from the payer's playbook. The job stays in progress.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "jobs",
+          "label": "Go to Jobs"
+        }
+      ],
+      "follow_ups": [
+        "What is a packet?",
+        "What is a pencil copy?"
+      ]
+    },
+    {
+      "id": "mark-done",
+      "category": "Pay apps",
+      "questions": [
+        "How do I mark a job done?",
+        "The job is finished, what now?",
+        "Final pay app",
+        "Mark job complete"
+      ],
+      "keywords": [
+        "done",
+        "finished",
+        "final",
+        "complete"
+      ],
+      "answer": "Open the job, click Mark done, add completion notes and confirm. Billdable drafts the final pay app for everything not billed yet. If a draft is already open, send or void it first; the message names it. Jobs with retainage get a closeout packet for the punch list.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I get retainage released?"
+      ]
+    },
+    {
+      "id": "send",
+      "category": "Pay apps",
+      "questions": [
+        "How do I send a pay app?",
+        "Approve and send",
+        "Why can't I send?",
+        "Send the bill"
+      ],
+      "keywords": [
+        "send",
+        "approve"
+      ],
+      "answer": "Open the job and click Approve & send. It stays off while the packet is missing something or an unsigned change order is on the pay app; the red box lists what's missing. Email delivery isn't built yet: the send is recorded in the Outbox with the payer's AP email, and you send the documents yourself for now.",
+      "handler": "blockers",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "What is a packet?",
+        "Is email actually sent?"
+      ]
+    },
+    {
+      "id": "pencil",
+      "category": "Pay apps",
+      "questions": [
+        "What is a pencil copy?",
+        "How do I send a pencil draft?",
+        "Can the GC review before I submit?",
+        "Pencil requisition"
+      ],
+      "keywords": [
+        "pencil",
+        "review before"
+      ],
+      "answer": "A pencil copy is the draft pay app sent to the owner or GC to agree quantities and change orders before the formal one, so nothing gets pushed to next month. With a draft open, click Send pencil copy on the job. When they answer, click Payer agreed to pencil or Payer wants changes and note what they said.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I send a pay app?"
+      ]
+    },
+    {
+      "id": "void-draft",
+      "category": "Pay apps",
+      "questions": [
+        "How do I delete a draft pay app?",
+        "Cancel a pay app",
+        "Void a draft",
+        "I drafted the wrong amount"
+      ],
+      "keywords": [
+        "void",
+        "cancel",
+        "wrong amount",
+        "delete draft"
+      ],
+      "answer": "Open the job and click Void draft. The draft is kept in history as void and its work goes back to unbilled, so you can draft again. A pay app that was already sent can't be voided in Billdable.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "nothing-to-draft",
+      "category": "Pay apps",
+      "questions": [
+        "It says nothing to draft",
+        "Why can't I draft a pay app?",
+        "Draft pay app does nothing"
+      ],
+      "keywords": [
+        "nothing draft"
+      ],
+      "answer": "Nothing to draft means all completed work is already on a pay app. Record more progress (completed-to-date) or mark the job done first. If a draft is already open, Billdable says so and names it.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "sov",
+      "category": "Pay apps",
+      "questions": [
+        "What is a schedule of values?",
+        "SOV",
+        "Line items on a pay app",
+        "Can I bill by quantity and unit rate?"
+      ],
+      "keywords": [
+        "schedule values",
+        "sov",
+        "line item",
+        "unit rate",
+        "quantity"
+      ],
+      "answer": "A schedule of values breaks the contract into line items, each with a value; each pay app bills a percent of each line. Billdable bills one lump-sum line per pay app today. Line items with quantities, unit rates and overhead and profit are planned for after the first pilot.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "what-packet",
+      "category": "Packets",
+      "questions": [
+        "What is a packet?",
+        "What goes in the packet?",
+        "Why does a pay app need a packet?"
+      ],
+      "keywords": [
+        "packet"
+      ],
+      "answer": "The packet is everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate. Billdable lists the items from the payer's playbook and won't let the pay app go out until each one is in.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "packets",
+          "label": "Open Packets"
+        }
+      ],
+      "follow_ups": [
+        "How do I clear a packet item?",
+        "How do I change what a payer requires?"
+      ]
+    },
+    {
+      "id": "clear-packet",
+      "category": "Packets",
+      "questions": [
+        "How do I clear a packet item?",
+        "How do I mark something present?",
+        "How do I attach a document to the packet?",
+        "Packet item says missing"
+      ],
+      "keywords": [
+        "mark present",
+        "attach",
+        "clear"
+      ],
+      "answer": "Open the pay app's packet. For each item, either pick a record from the job record and click Attach from job record, or click Mark present and say why (for example \"emailed to the GC on 10/12\"). A reason or an attached record is required, so the audit shows how each item was satisfied.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "packets",
+          "label": "Open Packets"
+        }
+      ],
+      "follow_ups": [
+        "How do I import emails and texts?"
+      ]
+    },
+    {
+      "id": "playbook",
+      "category": "Packets",
+      "questions": [
+        "How do I change what a payer requires?",
+        "What is the payer playbook?",
+        "Edit the packet requirements",
+        "Customer rules"
+      ],
+      "keywords": [
+        "playbook",
+        "requirement",
+        "rules"
+      ],
+      "answer": "The Payer Playbook keeps each payer's rules: approver, AP email, follow-up days, usual approval days, packet items, and why they've rejected pay apps before. Packet items are separated by commas; new pay apps use the list. Teach playbook on a blocked job adds a rejection reason.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "playbook",
+          "label": "Open Payer Playbook"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "change-orders",
+      "category": "Change orders",
+      "questions": [
+        "How do change orders work?",
+        "How do I add a change order?",
+        "Extra work the customer asked for",
+        "Bill a change order"
+      ],
+      "keywords": [
+        "changeorder",
+        "extra work"
+      ],
+      "answer": "Add a change order from Change Orders (or the job's Add change order button) with a title and amount. It's pending until the customer signs: then click Approve and it's billable. Approved after the job is done? It still becomes billable on the next pay app.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "cos",
+          "label": "Open Change Orders"
+        }
+      ],
+      "follow_ups": [
+        "Can I bill an unsigned change order?",
+        "The customer won't sign the change order"
+      ]
+    },
+    {
+      "id": "unsigned-co",
+      "category": "Change orders",
+      "questions": [
+        "Can I bill an unsigned change order?",
+        "Put a change order on the pay app before it's signed",
+        "Can I bill a change order that isn't signed yet?",
+        "Change order not signed, can I bill it?"
+      ],
+      "keywords": [
+        "unsigned",
+        "before signed"
+      ],
+      "answer": "You can put a pending change order on the next pay app (Put on next pay app), so the dollars are on the draft. Approve & send stays blocked until it's signed, so an unsigned CO never goes out by accident.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "withdraw-co",
+      "category": "Change orders",
+      "questions": [
+        "The customer won't sign the change order",
+        "Remove a change order",
+        "Withdraw a change order"
+      ],
+      "keywords": [
+        "withdraw",
+        "remove",
+        "won't sign"
+      ],
+      "answer": "Click Withdraw on the pending change order. If it's on an open draft, void the draft first, then withdraw it and draft again. A withdrawn change order stays in history.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "match-payment",
+      "category": "Payments",
+      "questions": [
+        "How do I record a payment?",
+        "The customer paid, what do I do?",
+        "Match a payment",
+        "Got a check"
+      ],
+      "keywords": [
+        "payment",
+        "check",
+        "paid",
+        "deposit"
+      ],
+      "answer": "Open the job, click Match payment, pick the pay app it's for, enter the amount and the check number or QuickBooks reference. A partial payment stays partial. Paid in full opens the waiver for that pay app. The amount can't be more than what's owed, and a reference can only be used once per job.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "What is a lien waiver?",
+        "Does it connect to QuickBooks?"
+      ]
+    },
+    {
+      "id": "partial",
+      "category": "Payments",
+      "questions": [
+        "What about partial payments?",
+        "They only paid part of it",
+        "Short pay",
+        "The customer paid half",
+        "They paid only part of the pay app",
+        "Customer paid less than the bill"
+      ],
+      "keywords": [
+        "partial",
+        "short"
+      ],
+      "answer": "Record what came in. The pay app shows as partial with the rest still outstanding, and no waiver is due until it's paid in full. Follow up on the balance from Collections.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "what-waiver",
+      "category": "Waivers",
+      "questions": [
+        "What is a lien waiver?",
+        "Conditional vs unconditional waiver",
+        "Why do I need a waiver?"
+      ],
+      "keywords": [
+        "waiver",
+        "conditional",
+        "unconditional"
+      ],
+      "answer": "A lien waiver gives up your lien rights for money you've been paid. Conditional: it only takes effect if the payment clears. Unconditional: payment received. Some states require exact statutory forms, so use the form your state or the payer requires; Billdable doesn't generate it.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I send a waiver?"
+      ]
+    },
+    {
+      "id": "send-waiver",
+      "category": "Waivers",
+      "questions": [
+        "How do I send a waiver?",
+        "Waiver due",
+        "Send the lien waiver"
+      ],
+      "keywords": [
+        "send waiver"
+      ],
+      "answer": "When a pay app is paid in full, the job shows Send waiver. Click it to record the waiver for that pay app (one per paid pay app). It can't be sent before the payment is matched. Attach your signed waiver form to the job record so it's on file.",
+      "handler": "waivers_due",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "what-retainage",
+      "category": "Retainage",
+      "questions": [
+        "What is retainage?",
+        "Why is money held back?",
+        "What is retention?"
+      ],
+      "keywords": [
+        "retainage"
+      ],
+      "answer": "Retainage is a percentage (often 5 to 10) the payer keeps from every pay app until the job is closed out. Billdable withholds it on each pay app, shows it as a line, and tracks it until it's released.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I get retainage released?",
+        "Which jobs are holding my retainage?"
+      ]
+    },
+    {
+      "id": "release-retainage",
+      "category": "Retainage",
+      "questions": [
+        "How do I get retainage released?",
+        "How do I ask for retainage?",
+        "What is a punch list?",
+        "Closeout",
+        "How do I get my retainage back?",
+        "How do I get retainage paid?",
+        "When do I get my retainage?"
+      ],
+      "keywords": [
+        "release",
+        "punch",
+        "closeout"
+      ],
+      "answer": "Retainage is released at closeout. A job with retainage gets a closeout packet (punch list signoff and whatever the payer's playbook lists). Finish those items, mark the job done, then click Chase retainage to ask for release. When the money arrives, click Record retainage paid.",
+      "handler": "retainage_list",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "followup-how",
+      "category": "Collections",
+      "questions": [
+        "How do follow-up windows work?",
+        "When can I follow up?",
+        "It says follow-up not due",
+        "How often should I chase?"
+      ],
+      "keywords": [
+        "window",
+        "not due",
+        "how often"
+      ],
+      "answer": "Each payer has follow-up days in its playbook. A follow-up on a sent pay app is allowed once that many days have passed since it was sent (or since the last follow-up). If you try earlier, Billdable tells you the date it's due. Each follow-up is written to the Outbox.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "playbook",
+          "label": "Open Payer Playbook"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "collections",
+      "category": "Collections",
+      "questions": [
+        "What is the collections page?",
+        "Where do I see unpaid pay apps?"
+      ],
+      "keywords": [
+        "collections"
+      ],
+      "answer": "Collections lists every job with money outstanding, how many days since it was sent, who to contact, and buttons to follow up, email or call.",
+      "handler": "who_owes",
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "collections",
+          "label": "Open Collections"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "email-sent",
+      "category": "Collections",
+      "questions": [
+        "Is email actually sent?",
+        "Did the customer get my pay app?",
+        "Does Billdable send emails?",
+        "Outbox",
+        "Where do I see what I sent?",
+        "What did I send?"
+      ],
+      "keywords": [
+        "outbox",
+        "deliver",
+        "actually send"
+      ],
+      "answer": "Not yet. Every approved send and follow-up is recorded in the Outbox with the address it would go to, but email delivery isn't built. Send the documents from your own email for now. Real sending, behind the same approval step, is on the build list.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "outbox",
+          "label": "Open Outbox"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "voice-calls",
+      "category": "Collections",
+      "questions": [
+        "Can Billdable call my customers?",
+        "Automatic phone calls",
+        "Voice agent"
+      ],
+      "keywords": [
+        "call",
+        "voice",
+        "phone call"
+      ],
+      "answer": "No. Automated calls to customers need prior consent under federal law and are not planned before a lawyer reviews it. Collections has a Call button that opens your phone.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "import-how",
+      "category": "Importing",
+      "questions": [
+        "How do I import emails and texts?",
+        "How do I upload a document?",
+        "Can I bring in my paperwork?",
+        "How do I add files?",
+        "Import photos",
+        "How do I upload a file?",
+        "How do I upload a pdf or photo?"
+      ],
+      "keywords": [
+        "import",
+        "document",
+        "paperwork",
+        "file",
+        "photo"
+      ],
+      "answer": "Three ways:\n- Drop files anywhere (photos, PDFs, Word, Excel, CSV, saved emails). On a job page they go straight onto that job; elsewhere they land in the Inbox.\n- Paste an email, a text thread or your notes in the Inbox.\n- Forward email and texts automatically once an email service and a Twilio number are connected (Inbox, Bring emails and texts in automatically).\nThe Inbox suggests the job from the job code, address, job name or sender; you file with one click.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "inbox",
+          "label": "Open Inbox"
+        }
+      ],
+      "follow_ups": [
+        "How do I import 30 days of notes?",
+        "How does it know which job?"
+      ]
+    },
+    {
+      "id": "import-notes",
+      "category": "Importing",
+      "questions": [
+        "How do I import 30 days of notes?",
+        "Bring in my Apple Notes",
+        "Import my notebook",
+        "Bulk import daily records"
+      ],
+      "keywords": [
+        "notes",
+        "apple notes",
+        "notebook",
+        "bulk",
+        "30 days"
+      ],
+      "answer": "Copy the notes and paste them in the Inbox with \"Notes: one daily record per date\" selected. Start each day with a date (10/12, Oct 12, or 2026-10-12). Billdable splits them into one daily record per date and keeps the original date when you file them.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "inbox",
+          "label": "Open Inbox"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "import-match",
+      "category": "Importing",
+      "questions": [
+        "How does it know which job?",
+        "Wrong job suggested",
+        "Why didn't it suggest a job?"
+      ],
+      "keywords": [
+        "which job",
+        "suggest",
+        "match"
+      ],
+      "answer": "It looks for the job code (like OAK), the job address, the job name, the customer's name, or an email from the payer's AP address. If two jobs fit equally, it asks you to pick. Tip: put the job code in email subjects and texts. You can always change the job before filing, and Undo takes a filed item back off.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "import-email-setup",
+      "category": "Importing",
+      "questions": [
+        "How do I forward emails to Billdable?",
+        "Connect my email",
+        "Set up text messages",
+        "Connect my texts"
+      ],
+      "keywords": [
+        "forward",
+        "connect",
+        "twilio",
+        "gmail",
+        "outlook"
+      ],
+      "answer": "Automatic email needs an email service that posts incoming mail to a web address (SendGrid, Mailgun or Postmark); automatic texts need a Twilio number. The Inbox shows the private addresses to paste into those services. Until they're connected, save emails as .eml or paste them, and paste or screenshot texts.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "inbox",
+          "label": "Open Inbox"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "file-types",
+      "category": "Importing",
+      "questions": [
+        "What file types can I upload?",
+        "Can I upload a PDF?",
+        "File too large"
+      ],
+      "keywords": [
+        "file type",
+        "pdf",
+        "size",
+        "too large"
+      ],
+      "answer": "PDF, JPG, PNG, GIF, WEBP, HEIC, Word (.doc, .docx), Excel (.xls, .xlsx), CSV, TXT and saved emails (.eml), up to 15 MB each. Drop the file on any page (on a job page it goes straight onto that job), or use Choose files in the Inbox. Web pages and SVG files are refused for safety.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "inbox",
+          "label": "Open Inbox"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "daily-record",
+      "category": "Importing",
+      "questions": [
+        "What is a daily record?",
+        "How do I log what happened today?",
+        "Daily log"
+      ],
+      "keywords": [
+        "daily",
+        "log"
+      ],
+      "answer": "A daily record is a dated note of what happened on site: crew, work done, deliveries, problems. Add one in Daily Record, or paste many at once in the Inbox as notes. They live on the job record and can be attached to a packet as backup.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "daily",
+          "label": "Open Daily Record"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "calendar",
+      "category": "Calendar",
+      "questions": [
+        "How does the calendar work?",
+        "What's on the calendar?",
+        "Show dates for one job"
+      ],
+      "keywords": [
+        "calendar",
+        "dates"
+      ],
+      "answer": "The calendar shows work complete, pay apps sent, follow-ups due, expected approvals, payments, waivers and closeouts. Pick a job in the filter to see only that job. Click a day for its events.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "calendar",
+          "label": "Open Calendar"
+        }
+      ],
+      "follow_ups": [
+        "Can I put this on Google Calendar?"
+      ]
+    },
+    {
+      "id": "google-calendar",
+      "category": "Calendar",
+      "questions": [
+        "Can I put this on Google Calendar?",
+        "Sync with my phone calendar",
+        "Add to Outlook calendar",
+        "Calendar on my phone"
+      ],
+      "keywords": [
+        "google",
+        "sync",
+        "outlook",
+        "ical",
+        "subscribe"
+      ],
+      "answer": "Yes. In Calendar, open \"Put these dates on your phone\", copy the private address, and in Google Calendar on a computer choose Other calendars, +, From URL. Apple Calendar and Outlook can subscribe to the same address. Calendar apps refresh it on their own schedule, often every few hours.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "calendar",
+          "label": "Open Calendar"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "lien-deadlines",
+      "category": "Calendar",
+      "questions": [
+        "Does it track lien deadlines?",
+        "Notice deadlines",
+        "When do I have to file a lien?"
+      ],
+      "keywords": [
+        "lien deadline",
+        "notice",
+        "file lien"
+      ],
+      "answer": "Not yet. Lien and notice deadlines depend on the state, your role and the project type, and a wrong date can cost lien rights, so Billdable won't calculate them until they're reviewed by a lawyer for a specific state. The calendar shows billing dates only.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "export",
+      "category": "Account and data",
+      "questions": [
+        "How do I export my data?",
+        "Download my data",
+        "Backup my data",
+        "Can I get my data out?"
+      ],
+      "keywords": [
+        "export",
+        "download",
+        "backup"
+      ],
+      "answer": "Click Export data in the left rail. It downloads your company's data as a file. Keep a copy if you want your own backup.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "reset",
+      "category": "Account and data",
+      "questions": [
+        "What does reset data do?",
+        "How do I start over?",
+        "Delete everything"
+      ],
+      "keywords": [
+        "reset",
+        "start over"
+      ],
+      "answer": "Reset deletes every job, payer and record in your company. To confirm, you type your company name exactly; a snapshot is kept on the server first. On the demo account, reset puts the sample data back.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "password",
+      "category": "Account and data",
+      "questions": [
+        "I forgot my password",
+        "Reset my password",
+        "Change my password",
+        "Locked out",
+        "Too many wrong passwords"
+      ],
+      "keywords": [
+        "password",
+        "forgot",
+        "locked",
+        "login"
+      ],
+      "answer": "Password reset isn't built yet; contact the Billdable team. After 5 wrong passwords for one email, sign-in is paused for 15 minutes. New passwords need at least 10 characters.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "security",
+      "category": "Account and data",
+      "questions": [
+        "Is my data safe?",
+        "Who can see my data?",
+        "Is it secure?",
+        "Privacy"
+      ],
+      "keywords": [
+        "safe",
+        "secure",
+        "privacy",
+        "who see"
+      ],
+      "answer": "Each company's data is kept separate, and only your login can see it. Passwords are stored as one-way hashes. Billdable is still early: keep your own copies of signed documents, and use Export data for a backup. Questions you ask here are saved so the team can add better answers.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "ai",
+      "category": "Account and data",
+      "questions": [
+        "Does Billdable use AI?",
+        "Is this chat AI?",
+        "Are you a bot?"
+      ],
+      "keywords": [
+        "ai",
+        "bot",
+        "chatgpt",
+        "robot"
+      ],
+      "answer": "This helper answers from a library of prepared answers and your own job data; it isn't an AI model. When AI features arrive, you'll approve everything they send.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "quickbooks",
+      "category": "Integrations",
+      "questions": [
+        "Does it connect to QuickBooks?",
+        "QuickBooks integration",
+        "Sync with QuickBooks",
+        "Import from QuickBooks"
+      ],
+      "keywords": [
+        "qbo",
+        "sync",
+        "accounting"
+      ],
+      "answer": "Not yet. A read-only QuickBooks Online import of customers, invoices and payments is planned. Today you record payments by hand with Match payment, and you can drop exported QuickBooks reports (CSV, PDF) into the Inbox.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "other-software",
+      "category": "Integrations",
+      "questions": [
+        "Does it work with Buildertrend?",
+        "Does it work with JobTread?",
+        "Knowify",
+        "CompanyCam",
+        "Procore"
+      ],
+      "keywords": [
+        "buildertrend",
+        "jobtread",
+        "knowify",
+        "companycam",
+        "procore",
+        "contractor foreman"
+      ],
+      "answer": "There are no direct connections to other software yet. Billdable sits beside the tools you use: export reports, photos or PDFs from them and drop the files into the Inbox.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "pricing",
+      "category": "Pricing",
+      "questions": [
+        "How much does it cost?",
+        "What's the price?",
+        "Is there a free trial?",
+        "How does billing work?"
+      ],
+      "keywords": [
+        "pricing",
+        "free",
+        "charge"
+      ],
+      "answer": "Billing isn't live, so nothing is charged today. The landing page shows the planned price. Before billing starts, the Billdable team will set the trial so it covers a full payment cycle: you'll see a pay app you prepared get paid before you pay.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "contact",
+      "category": "Support",
+      "questions": [
+        "How do I contact support?",
+        "Talk to a person",
+        "I need help from a human",
+        "Report a bug"
+      ],
+      "keywords": [
+        "contact",
+        "support",
+        "human",
+        "bug"
+      ],
+      "answer": "Contact the Billdable founders directly by email for now. Tell them what you clicked and what you expected; a screenshot helps. Questions you ask here are saved, so they also see what's missing.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "dashboard",
+      "category": "Screens",
+      "questions": [
+        "What does the dashboard show?",
+        "What do the tiles mean?",
+        "What is blocked jobs?"
+      ],
+      "keywords": [
+        "dashboard",
+        "tile"
+      ],
+      "answer": "The dashboard shows billed this month, finished-but-unbilled work, outstanding, retainage held, blocked jobs and active jobs, then what needs action and every open job. Hover a label and click its (i) for what it means.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "dashboard",
+          "label": "Open Dashboard"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "statuses",
+      "category": "Screens",
+      "questions": [
+        "What do the statuses mean?",
+        "What does awaiting acknowledgment mean?",
+        "Status labels"
+      ],
+      "keywords": [
+        "status label",
+        "awaiting"
+      ],
+      "answer": "A status always names what's holding the job up, for example \"Conditional lien waiver is missing\" or \"Submitted to Ellison, awaiting Dev Patel\". It never just says pending. The next column says what to do.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    },
+    {
+      "id": "audit",
+      "category": "Screens",
+      "questions": [
+        "What is the audit page?",
+        "Who did what?",
+        "History of actions"
+      ],
+      "keywords": [
+        "audit",
+        "history action"
+      ],
+      "answer": "Audit lists every action: when, who (the signed-in person), and what changed. Filter by job.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "audit",
+          "label": "Open Audit"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "info-icons",
+      "category": "Screens",
+      "questions": [
+        "What does a field mean?",
+        "What are the little i icons?",
+        "Explain this field"
+      ],
+      "keywords": [
+        "field",
+        "mean",
+        "icon"
+      ],
+      "answer": "Hover any label, column or tile: a small (i) appears next to it. Hover or tap the (i) to see what that field means. The Help page has the full glossary.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "help",
+          "label": "Open Help"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "close-job",
+      "category": "Screens",
+      "questions": [
+        "How do I close a job?",
+        "Close for record",
+        "Why can't I close this job?"
+      ],
+      "keywords": [
+        "close",
+        "record",
+        "history"
+      ],
+      "answer": "Close for record appears when work is done and nothing is left: no open draft, no pending change order, nothing unbilled or unpaid, retainage released and waivers sent. Until then the job page lists exactly what's left. Closed jobs move to Job history and become read-only.",
+      "handler": "closeable",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
+    }
+  ]
+}

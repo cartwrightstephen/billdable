@@ -10,6 +10,9 @@ this file. Only index.html, app.js and styles.css are served from static/.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -21,10 +24,13 @@ from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse
 
 import auth
+import calendar_feed
 import domain
+import helper
+import importer
 import storage
 from seed import seed_state
 
@@ -36,6 +42,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 COOKIE = "billdable_session"
 STATE_LOCK = threading.Lock()
 MAX_BODY_BYTES = 1_000_000
+MAX_INBOUND_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 5_000
 
 # The only files served from static/. Anything else is a 404.
@@ -48,6 +55,12 @@ SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
 }
+
+
+def is_helper_admin(user: dict) -> bool:
+    """Founders who may answer helper questions: emails listed in HELPER_ADMIN_EMAILS (comma-separated)."""
+    allowed = {e.strip().lower() for e in os.environ.get("HELPER_ADMIN_EMAILS", "").split(",") if e.strip()}
+    return bool(user) and user.get("email", "").lower() in allowed
 
 
 class BadRequest(Exception):
@@ -185,6 +198,33 @@ class Handler(BaseHTTPRequestHandler):
             raise BadRequest("Request body must be a JSON object.")
         return body
 
+    def _read_raw(self, limit: int) -> bytes:
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            raise BadRequest("Content-Length must be a number.")
+        if length < 0:
+            raise BadRequest("Content-Length must be a number.")
+        if length > limit:
+            raise BadRequest(f"Upload is larger than {limit // (1024 * 1024)} MB.", 413)
+        return self.rfile.read(length) if length else b""
+
+    def _base_url(self) -> str:
+        proto = self.headers.get("X-Forwarded-Proto", "").lower() or ("https" if os.environ.get("COOKIE_SECURE") == "1" else "http")
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or f"127.0.0.1:{PORT}"
+        return f"{proto}://{host}"
+
+    def _change(self, company_id: str, fn) -> tuple:
+        """Load, change and save one company under the lock; return (status, snapshot)."""
+        try:
+            with STATE_LOCK:
+                state = load_company(company_id)
+                fn(state)
+                save_company(company_id, state)
+                return 200, domain.snapshot(state)
+        except domain.GateError as exc:
+            return 409, {"error": str(exc), "blockers": exc.blockers}
+
     def _token(self) -> str | None:
         raw = self.headers.get("Cookie", "")
         if not raw:
@@ -242,7 +282,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             with STATE_LOCK:
                 state = load_company(user["company_id"])
-            self._json(200, {"user": user, "company": state.get("company", {})})
+            self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user)})
+            return
+        if path == "/api/helper/review":
+            user = self._require_user()
+            if not user:
+                return
+            if not is_helper_admin(user):
+                self._json(403, {"error": "Only the Billdable team can review helper questions."})
+                return
+            self._json(200, helper.review())
             return
         if path == "/api/state":
             user = self._require_user()
@@ -265,6 +314,56 @@ class Handler(BaseHTTPRequestHandler):
                 "application/json",
                 {"Content-Disposition": f'attachment; filename="billdable-export-{stamp}.json"'},
             )
+            return
+        if path.startswith("/api/files/"):
+            user = self._require_user()
+            if not user:
+                return
+            file_id = path.rsplit("/", 1)[-1]
+            with STATE_LOCK:
+                state = load_company(user["company_id"])
+            meta = next((f for f in state.get("files", []) if f["id"] == file_id), None)
+            target = importer.file_path(user["company_id"], meta) if meta else None
+            if not meta or not target.is_file():
+                self._json(404, {"error": "File not found."})
+                return
+            kind, inline = importer.ALLOWED_FILES.get(meta["ext"], ("application/octet-stream", False))
+            disposition = "inline" if inline else "attachment"
+            ascii_name = meta["name"].encode("ascii", "replace").decode().replace('"', "")
+            self._send(200, target.read_bytes(), kind, {
+                "Content-Disposition": f'{disposition}; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(meta["name"])}',
+                "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+                "Cache-Control": "private, max-age=300",
+            })
+            return
+        if path == "/api/import/settings":
+            user = self._require_user()
+            if not user:
+                return
+            tokens = importer.company_tokens(user["company_id"])
+            base = self._base_url()
+            template = os.environ.get("INBOUND_EMAIL_ADDRESS_TEMPLATE", "")
+            self._json(200, {
+                "email_webhook": f"{base}/api/inbound/email/{tokens['email']}",
+                "email_address": template.replace("{token}", tokens["email"]) if "{token}" in template else "",
+                "sms_webhook": f"{base}/api/inbound/sms/{tokens['sms']}",
+                "sms_number": os.environ.get("TWILIO_NUMBER", ""),
+                "sms_signature_check": bool(os.environ.get("TWILIO_AUTH_TOKEN")),
+                "calendar_url": f"{base}/api/calendar/{tokens['calendar']}.ics",
+                "max_file_mb": importer.MAX_FILE_BYTES // (1024 * 1024),
+                "file_types": sorted(e.lstrip(".") for e in importer.ALLOWED_FILES),
+            })
+            return
+        if path.startswith("/api/calendar/") and path.endswith(".ics"):
+            token = path[len("/api/calendar/"):-len(".ics")]
+            company_id = importer.company_for_token(token, "calendar")
+            if not company_id:
+                self._json(404, {"error": "Not found"})
+                return
+            with STATE_LOCK:
+                state = load_company(company_id)
+            self._send(200, calendar_feed.render(state).encode("utf-8"), "text/calendar; charset=utf-8",
+                       {"Content-Disposition": 'inline; filename="billdable.ics"'})
             return
         if path in {"/", "/index.html"}:
             self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
@@ -319,14 +418,80 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True}, self._set_cookie(None))
             return
 
+        if path.startswith("/api/inbound/email/"):
+            self._inbound_email(path.rsplit("/", 1)[-1])
+            return
+        if path.startswith("/api/inbound/sms/"):
+            self._inbound_sms(path.rsplit("/", 1)[-1])
+            return
+
         # Everything below needs a signed-in user; check before reading the body.
         user = self._require_user()
         if not user:
             return
+        actor = user.get("name") or user.get("email") or "owner"
+        if path == "/api/import/file":
+            self._import_file(user, actor)
+            return
         body = self._read_json()
         company_id = user["company_id"]
         # The audit trail names the signed-in user. Any "actor" in the body is ignored.
-        actor = user.get("name") or user.get("email") or "owner"
+        if path == "/api/helper/ask":
+            with STATE_LOCK:
+                state = load_company(company_id)
+            try:
+                reply = helper.answer(_text(body, "q"), state, company_id, user["id"], _text(body, "view"), _text(body, "job_id"))
+            except domain.GateError as exc:
+                self._json(409, {"error": str(exc)})
+                return
+            self._json(200, reply)
+            return
+        if path == "/api/helper/feedback":
+            try:
+                helper.feedback(_text(body, "log_id"), body.get("helpful") is True, _text(body, "note"), company_id)
+            except domain.GateError as exc:
+                self._json(409, {"error": str(exc)})
+                return
+            self._json(200, {"ok": True})
+            return
+        if path in {"/api/helper/answers", "/api/helper/resolve"}:
+            if not is_helper_admin(user):
+                self._json(403, {"error": "Only the Billdable team can edit helper answers."})
+                return
+            try:
+                if path == "/api/helper/answers":
+                    saved = helper.save_answer(body, user.get("email", ""))
+                    self._json(200, {"saved": saved, **helper.review()})
+                else:
+                    helper.resolve(_text(body, "normalized"))
+                    self._json(200, helper.review())
+            except domain.GateError as exc:
+                self._json(409, {"error": str(exc)})
+            return
+        if path == "/api/import/text":
+            file_now = (parse_qs(urlparse(self.path).query).get("file") or [""])[0] == "1"
+            self._json(*self._change(company_id, lambda st: self._import_text(st, body, actor if file_now else None)))
+            return
+        if path.startswith("/api/inbox/") and len(parts) == 4:
+            item_id, verb = parts[2], parts[3]
+            if verb == "file":
+                fn = lambda st: importer.file_item(st, item_id, _text(body, "job_id"), _text(body, "kind"), actor)
+            elif verb == "dismiss":
+                fn = lambda st: importer.dismiss_item(st, item_id, actor)
+            elif verb == "undo":
+                fn = lambda st: importer.undo_item(st, item_id, actor)
+            else:
+                self._json(404, {"error": "Unknown action"})
+                return
+            self._json(*self._change(company_id, fn))
+            return
+        if path == "/api/import/rotate":
+            kind = _text(body, "kind")
+            if kind not in {"email", "sms", "calendar"}:
+                raise BadRequest("Kind must be email, sms or calendar.")
+            importer.rotate_token(company_id, kind)
+            self._json(200, {"ok": True})
+            return
 
         try:
             with STATE_LOCK:
@@ -340,6 +505,120 @@ class Handler(BaseHTTPRequestHandler):
         # The reply is written after the lock is released, so a client that
         # stops reading cannot stall every other company's requests.
         self._json(code, payload)
+
+    # ----- importing -----
+
+    def _import_file(self, user: dict, actor: str) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        job_id = (query.get("job") or [""])[0] or None
+        file_now = bool(job_id) and (query.get("file") or [""])[0] == "1"
+        filename = unquote(self.headers.get("X-Filename", "") or "upload")
+        data = self._read_raw(importer.MAX_FILE_BYTES)
+
+        def add(state: dict) -> None:
+            if filename.lower().endswith(".eml"):
+                item = self._add_email(state, user["company_id"], importer.parse_email(data), "upload", actor, job_id, raw=data, raw_name=filename)
+            else:
+                meta = importer.save_file(state, user["company_id"], filename, data, actor)
+                text = data.decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
+                item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=[meta["id"]], job_id=job_id)
+            if file_now:
+                # Dropped on a job page: the person already chose the job.
+                importer.file_item(state, item["id"], job_id, item["kind"], actor)
+
+        self._json(*self._change(user["company_id"], add))
+
+    def _import_text(self, state: dict, body: dict, file_as: str | None = None) -> None:
+        """Add pasted text to the Inbox; with file_as (a person) and a job, file it straight away."""
+        before = {i["id"] for i in state.get("inbox", [])}
+        self._import_text_items(state, body)
+        job_id = _text(body, "job_id") or None
+        if file_as and job_id:
+            for item in [i for i in state.get("inbox", []) if i["id"] not in before]:
+                importer.file_item(state, item["id"], job_id, item["kind"], file_as)
+
+    def _import_text_items(self, state: dict, body: dict) -> None:
+        text = _text(body, "text").strip()
+        source = _text(body, "source", "paste")
+        if source not in {"paste", "email", "sms", "notes"}:
+            source = "paste"
+        if not text:
+            raise domain.GateError("Paste some text first.")
+        job_id = _text(body, "job_id") or None
+        if source == "notes":
+            chunks = importer.split_notes(text)
+            if not chunks:
+                raise domain.GateError("Paste some text first.")
+            for chunk in chunks:
+                importer.add_item(state, "notes", text=chunk["text"], job_id=job_id, note_date=chunk["date"])
+            return
+        sender = ""
+        subject = ""
+        if source == "email" and text.lower().startswith(("from:", "subject:", "to:", "date:")):
+            parsed = importer.parse_email(text.encode("utf-8"))
+            sender, subject, text = parsed["from"], parsed["subject"], parsed["text"] or text
+        importer.add_item(state, source, text=text, sender=sender, subject=subject, job_id=job_id)
+
+    def _add_email(self, state: dict, company_id: str, parsed: dict, source: str, actor: str,
+                   job_id: str | None = None, raw: bytes | None = None, raw_name: str = "") -> dict:
+        file_ids, skipped = [], []
+        if raw is not None and raw_name:
+            file_ids.append(importer.save_file(state, company_id, raw_name, raw, actor)["id"])
+        for att in parsed.get("attachments", []):
+            try:
+                file_ids.append(importer.save_file(state, company_id, att["filename"], att["data"], actor)["id"])
+            except domain.GateError as exc:
+                skipped.append(str(exc))
+        return importer.add_item(
+            state, source, text=parsed.get("text", ""), sender=parsed.get("from", ""), subject=parsed.get("subject", ""),
+            file_ids=file_ids, job_id=job_id, sent_at=parsed.get("sent_at", ""),
+            extra={"skipped_attachments": skipped} if skipped else None,
+        )
+
+    def _inbound_email(self, token: str) -> None:
+        company_id = importer.company_for_token(token, "email")
+        if not company_id:
+            self._json(404, {"error": "Not found"})
+            return
+        data = self._read_raw(MAX_INBOUND_BYTES)
+        ctype = (self.headers.get("Content-Type") or "").lower()
+        parsed = _parse_inbound_email(data, ctype)
+        status, payload = self._change(company_id, lambda st: self._add_email(st, company_id, parsed, "email", "inbound email"))
+        self._json(200 if status == 200 else status, {"ok": status == 200} if status == 200 else payload)
+
+    def _inbound_sms(self, token: str) -> None:
+        company_id = importer.company_for_token(token, "sms")
+        if not company_id:
+            self._json(404, {"error": "Not found"})
+            return
+        data = self._read_raw(MAX_BODY_BYTES)
+        params = dict(parse_qsl(data.decode("utf-8", "replace"), keep_blank_values=True))
+        secret = os.environ.get("TWILIO_AUTH_TOKEN")
+        if secret:
+            url = self._base_url() + self.path
+            signed = url + "".join(k + params[k] for k in sorted(params))
+            expected = base64.b64encode(hmac.new(secret.encode(), signed.encode(), hashlib.sha1).digest()).decode()
+            if not hmac.compare_digest(expected, self.headers.get("X-Twilio-Signature", "")):
+                self._json(403, {"error": "Signature check failed."})
+                return
+        media = []
+        try:
+            count = int(params.get("NumMedia", "0") or 0)
+        except ValueError:
+            count = 0
+        for i in range(min(count, 10)):
+            if params.get(f"MediaUrl{i}"):
+                media.append({"url": params[f"MediaUrl{i}"], "type": params.get(f"MediaContentType{i}", "")})
+        text = params.get("Body", "")
+        if media:
+            text += "\n\n" + "\n".join(f"Photo or file sent by text (not downloaded): {m['url']}" for m in media)
+
+        def add(state: dict) -> None:
+            importer.add_item(state, "sms", text=text, sender=params.get("From", ""), extra={"media": media} if media else None)
+
+        status, _ = self._change(company_id, add)
+        body = b'<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+        self._send(200 if status == 200 else 409, body, "text/xml; charset=utf-8")
 
     def _mutate(self, path: str, parts: list, body: dict, company_id: str, actor: str) -> tuple:
         """Apply one change under the state lock and return (status, payload)."""
@@ -426,6 +705,10 @@ class Handler(BaseHTTPRequestHandler):
                 domain.withdraw_change_order(state, job_id, parts[4], actor)
             elif action == "void-draft":
                 domain.void_draft(state, job_id, actor)
+            elif action == "pencil":
+                domain.send_pencil(state, job_id, actor)
+            elif action == "pencil-response":
+                domain.record_pencil_response(state, job_id, body.get("agreed") is True, _text(body, "note"), actor)
             elif action == "add-evidence":
                 domain.add_evidence(state, job_id, _text(body, "label"), _text(body, "kind", "note"), actor)
             elif action == "add-record":
@@ -457,6 +740,64 @@ class Handler(BaseHTTPRequestHandler):
             save_company(company_id, state)
             return 200, domain.snapshot(state)
         return 404, {"error": "Not found"}
+
+
+def _parse_inbound_email(data: bytes, ctype: str) -> dict:
+    """Accept raw MIME, a JSON payload, or a multipart form post from an email provider.
+
+    Field names below are the common ones for SendGrid Inbound Parse, Mailgun
+    routes and Postmark inbound, from their documentation as I remember it;
+    they have not been tested against the live services.
+    """
+    if "application/json" in ctype:
+        try:
+            raw = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise BadRequest("Request body must be valid JSON.")
+        if not isinstance(raw, dict):
+            raise BadRequest("Request body must be a JSON object.")
+        low = {k.lower(): v for k, v in raw.items()}
+        if isinstance(low.get("email"), str):
+            return importer.parse_email(low["email"].encode("utf-8"))
+        text = low.get("text") or low.get("textbody") or low.get("body-plain") or low.get("stripped-text") or ""
+        if not text and (low.get("html") or low.get("htmlbody")):
+            text = importer.html_to_text(str(low.get("html") or low.get("htmlbody")))
+        attachments = []
+        for att in low.get("attachments") or []:
+            if not isinstance(att, dict):
+                continue
+            a = {k.lower(): v for k, v in att.items()}
+            content = a.get("content") or a.get("content_base64") or ""
+            try:
+                blob = base64.b64decode(content, validate=False)
+            except (ValueError, TypeError):
+                continue
+            attachments.append({"filename": a.get("name") or a.get("filename") or "attachment", "data": blob})
+        return {"from": str(low.get("from") or low.get("sender") or ""), "subject": str(low.get("subject") or ""),
+                "text": str(text), "sent_at": "", "attachments": attachments}
+    if "multipart/form-data" in ctype:
+        import email as _email
+        import email.policy as _policy
+        msg = _email.message_from_bytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + data, policy=_policy.default)
+        fields, attachments = {}, []
+        for part in msg.iter_parts():
+            name = part.get_param("name", header="content-disposition") or ""
+            filename = part.get_filename()
+            payload = part.get_payload(decode=True) or b""
+            if filename:
+                attachments.append({"filename": filename, "data": payload})
+            else:
+                fields[name.lower()] = payload.decode("utf-8", "replace")
+        if fields.get("email"):
+            parsed = importer.parse_email(fields["email"].encode("utf-8"))
+            parsed["attachments"] += attachments
+            return parsed
+        text = fields.get("text") or fields.get("body-plain") or fields.get("stripped-text") or ""
+        if not text and fields.get("html"):
+            text = importer.html_to_text(fields["html"])
+        return {"from": fields.get("from") or fields.get("sender") or "", "subject": fields.get("subject", ""),
+                "text": text, "sent_at": "", "attachments": attachments}
+    return importer.parse_email(data)
 
 
 def main() -> None:

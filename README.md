@@ -29,6 +29,43 @@ On Render, the default filesystem does not survive a deploy or restart. Attach a
 
 Set `COOKIE_SECURE=1` in production to force the `Secure` flag on the session cookie. Without it, the flag is set when the request arrives with `X-Forwarded-Proto: https`.
 
+Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_tokens.json` (the secret parts of each company's inbound email, SMS and calendar addresses), `helper_answers.json` (helper answers added in the app) and `helper_log.json` (questions asked of the helper).
+
+### Settings
+
+| Variable | What it does |
+| --- | --- |
+| `BILLDABLE_DATA_DIR` | Where all data lives (see above). |
+| `COOKIE_SECURE` | `1` forces the Secure cookie flag. |
+| `HELPER_ADMIN_EMAILS` | Comma-separated emails of the people who may review helper questions and edit answers (the founders). Nobody can, if unset. |
+| `TWILIO_AUTH_TOKEN` | When set, inbound texts must carry a valid `X-Twilio-Signature`. Set it before giving out the SMS address. |
+| `TWILIO_NUMBER` | The texting number shown to users in the Inbox. Display only. |
+| `INBOUND_EMAIL_ADDRESS_TEMPLATE` | The forwarding address shown in the Inbox, with `{token}` where the company's secret goes, e.g. `jobs+{token}@in.example.com`. Display only; the email service does the routing. |
+
+## Importing
+
+Everything comes into the Inbox, gets a suggested job (job code, address, job name, customer name, or the payer's AP email as sender), a kind (change order, waiver, pay app backup, ticket, photo, contract, daily record, note), and any dollar amounts and dates found. A person files it to the job record with one click; Undo takes it back off unless a packet uses it. No AI: the rules are in `importer.py`.
+
+- Files: drop anywhere, paste a screenshot, or choose files. On a job page they go straight onto that job. PDF, images (JPG, PNG, GIF, WEBP, HEIC), Word, Excel, CSV, TXT and `.eml`, up to 15 MB. HTML, SVG and scripts are refused. Files are served back only to the same company, with `Content-Security-Policy: sandbox`.
+- Saved emails (`.eml`): sender, subject, date, body and attachments are read with Python's email parser.
+- Pasted text: an email (with or without headers), a text thread, or notes. Notes split at every line that starts with a date (`10/12`, `Oct 12, 2026`, `2026-10-12`) and file as daily records with that date.
+- Inbound email: `POST /api/inbound/email/<token>` accepts raw MIME, a multipart form post, or JSON. The field names handled are the common ones for SendGrid Inbound Parse, Mailgun routes and Postmark inbound, written from their documentation; none has been tested against the live service.
+- Inbound SMS: `POST /api/inbound/sms/<token>` accepts Twilio's form post and answers with empty TwiML. Photos sent by text are kept as links, not downloaded (Twilio media can require Twilio credentials).
+
+## Calendar feed
+
+`GET /api/calendar/<token>.ics` is an iCalendar feed of follow-ups due, expected approvals, sends, payments, waivers and closeouts. Google Calendar, Apple Calendar and Outlook can subscribe to it; the URL carries a secret instead of a login. Calendar apps refresh subscribed feeds on their own schedule.
+
+## Helper
+
+The ? badge opens the helper. It answers from a database of prepared answers, not an AI model:
+
+- `helper/answers.json` ships with the code. Edit it in Git; `tests/test_helper.py` checks that common questions still land on the right answer.
+- People listed in `HELPER_ADMIN_EMAILS` get a Helper answers page: questions with no good answer (unmatched, or marked not helpful), grouped and counted, with a form to answer them. Saved answers go to `helper_answers.json` in the data directory and work immediately for every company; the same id replaces a shipped answer.
+- Matching is word overlap weighted by rarity, with synonyms (pay app = invoice = requisition, retainage = retention, ...), in `helper.py`.
+- Some answers read the company's own jobs: what to do today, who owes you, follow-ups due, what is blocking a job, a drafted follow-up note, unbilled work, retainage, waivers, the Inbox, unsigned change orders, jobs ready to close. Their buttons call the normal endpoints, so every gate and confirmation still applies.
+- Every question is logged with what it matched. The panel tells users that questions are saved.
+
 ## Tests
 
 ```bash
@@ -42,6 +79,9 @@ Tests write to a temporary directory, never to `data/`.
 - `domain.py`: money rules, packet gates, status labels, audit, playbook, email log
 - `auth.py`: users, password hashes, sessions, login throttling
 - `storage.py`: data directory and atomic JSON writes
+- `importer.py`: files, email parsing, notes splitting, job matching, the Inbox
+- `calendar_feed.py`: the .ics feed
+- `helper.py` and `helper/answers.json`: the helper and its answers
 - `seed.py`: Hartline Remodeling sample data
 - `server.py`: stdlib HTTP server, cookie sessions, per-company JSON
 - `static/`: `index.html`, `app.js`, `styles.css` (the only files served)
@@ -98,6 +138,15 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/jobs/{id}/close`
 - `POST /api/jobs/{id}/import-qbo`: demo company only; a hard-coded sample payment
 - `POST /api/payers/{id}/update`: playbook fields. Follow-up and approval days must be 1–365.
+- `POST /api/jobs/{id}/pencil`: send the open draft as a pencil copy; `POST /api/jobs/{id}/pencil-response`: `{agreed, note}`
+- `POST /api/jobs/{id}/void-draft`; `POST /api/jobs/{id}/withdraw-co/{co_id}`
+- `POST /api/import/file?job=<id>&file=1`: raw file body, `X-Filename` header (URL-encoded). Without `file=1` it goes to the Inbox.
+- `POST /api/import/text?file=1`: `{text, source: email|sms|notes|paste, job_id}`
+- `POST /api/inbox/{item_id}/file` `{job_id, kind}`, `/dismiss`, `/undo`
+- `GET /api/import/settings`: the company's inbound and calendar addresses; `POST /api/import/rotate` `{kind}` makes a new one
+- `GET /api/files/{file_id}`
+- `POST /api/helper/ask` `{q, view, job_id}`; `POST /api/helper/feedback` `{log_id, helpful, note}`
+- Team only: `GET /api/helper/review`, `POST /api/helper/answers`, `POST /api/helper/resolve`
 
 Gates return 409 with a list of blockers. Bad input returns 400 with a sentence. Unauthenticated calls return 401. Server errors return a JSON 500 and are logged.
 

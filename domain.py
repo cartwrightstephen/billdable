@@ -257,6 +257,10 @@ def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "billdable", 
         lines.append({"label": f"Less retainage {pct}%", "amount_cents": -retained})
     invoice_id = f"inv-{job['id']}-{len(job['invoices']) + 1}"
     packet = _packet_for_pay_app(state, job, invoice_id)
+    if retained:
+        # Show the punch-list/closeout items from the first pay app that holds
+        # retainage, so they can be collected while the job is still running.
+        _ensure_closeout_packet(state, job)
     packet_missing = [item["blocker"] for item in packet if item["required"] and not item["present"]]
     co_blockers = [
         f"Change Order {co['number']} is included in the billing amount but has not been signed."
@@ -287,6 +291,42 @@ def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "billdable", 
         + f" with a {len(packet)}-item packet. Blockers: {len(blockers)}.",
         actor,
     )
+    return job
+
+
+def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
+    """Send the open draft to the payer as a pencil copy to agree quantities before the formal pay app."""
+    job = _open_job(state, job_id)
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if not draft:
+        raise GateError("Draft a pay app first. The pencil copy is the draft sent for review.")
+    payer = _payer(state, job["payer_id"])
+    lines = "; ".join(f"{l['label']} {money(l['amount_cents'])}" for l in draft.get("lines", []))
+    subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
+    body = (
+        f"Pencil copy of {draft['number']} for {money(draft['amount_cents'])} ({lines}). "
+        f"Please confirm quantities and change orders, or send corrections, before we submit. Approved by {actor}."
+    )
+    _record_email(state, job_id, "pencil", payer["ap_email"], subject, body, actor)
+    draft["pencil_sent_at"] = utcnow()
+    draft["pencil_status"] = "sent"
+    job["external_status"] = f"Pencil copy with {payer.get('approver') or payer['name']} for review"
+    audit(state, job_id, "pencil_sent", f"{actor} sent {draft['number']} to {payer['name']} as a pencil copy.", actor)
+    return job
+
+
+def record_pencil_response(state: dict[str, Any], job_id: str, agreed: bool, note: str = "", actor: str = "owner") -> dict[str, Any]:
+    """Record what the payer said about the pencil copy. Corrections go in the note."""
+    job = _open_job(state, job_id)
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if not draft or draft.get("pencil_status") != "sent":
+        raise GateError("No pencil copy is waiting for a response.")
+    draft["pencil_status"] = "agreed" if agreed else "corrections"
+    draft["pencil_note"] = (note or "").strip()[:2000]
+    draft["pencil_answered_at"] = utcnow()
+    job["external_status"] = None
+    what = "agreed to" if agreed else "asked for corrections on"
+    audit(state, job_id, "pencil_response", f"{actor} recorded that the payer {what} the pencil copy of {draft['number']}. {draft['pencil_note']}".strip(), actor)
     return job
 
 
@@ -745,13 +785,14 @@ def close_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[
     return job
 
 
-def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str = "owner") -> dict[str, Any]:
+def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str = "owner", at: str | None = None) -> dict[str, Any]:
+    """A dated note on the job. `at` lets an import keep the day the note was written."""
     job = _job(state, job_id)
     rec = {
-        "id": f"dr-{len(state.get('daily_records', [])) + 1}",
+        "id": "dr-" + secrets.token_hex(4),
         "job_id": job_id,
         "notes": notes,
-        "at": utcnow(),
+        "at": at or utcnow(),
         "actor": actor,
         "for_history": bool(job.get("closed")),
     }
