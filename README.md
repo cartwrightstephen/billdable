@@ -2,21 +2,6 @@
 
 AI-assisted get-paid tool for small general contractors and remodelers (2–12 people, roughly $750k–$2.5M). Sits on top of QuickBooks; does not replace Jobber, Housecall Pro, or the books.
 
-## Phase 1 readiness
-
-This build supports the full core loop on the sample company with explicit human gates:
-
-- Job’s done intake (notes + evidence binder)
-- Same-week pay-app draft with packet completeness check
-- Lien-waiver guard and change-order into the bill
-- Approve-and-send (logged to Outbox; real delivery stubbed)
-- Payment match (manual or sample QBO import)
-- Retainage/closeout chase
-- Payer playbook edits that persist, plus “teach playbook” from a rejection
-- Job history, Calendar (derived from playbook cadence + dates), Audit, and Outbox
-
-Domain tests stay green. Customer source data stays external; Billdable stores operating context.
-
 ## Run locally
 
 ```bash
@@ -63,11 +48,14 @@ Company data (requires session; scoped to the signed-in company):
 - `POST /api/reset` — restore Hartline seed for the demo company, empty state for others
 - `POST /api/jobs` — create a job `{name, customer, address, contract_cents}`
 - `POST /api/jobs/{id}/done` — body `{notes, evidence}`
+- `POST /api/jobs/{id}/progress` — body `{completed_cents, notes}`
 - `POST /api/jobs/{id}/draft` / `send` / `follow-up` / `match-payment` / `waiver` / `retainage`
 - `POST /api/jobs/{id}/resolve/{item_id}`
 - `POST /api/jobs/{id}/add-co` — `{title, amount_cents}`
 - `POST /api/jobs/{id}/approve-co/{co_id}`
 - `POST /api/jobs/{id}/add-evidence` — `{label, kind}`
+- `POST /api/jobs/{id}/add-record` — `{label, kind, note}`
+- `POST /api/jobs/{id}/attach-record/{item_id}` — `{record_id}`
 - `POST /api/jobs/{id}/learn-rejection` — `{reason}`
 - `POST /api/jobs/{id}/import-qbo` — sample QuickBooks payment read
 - `POST /api/payers/{id}/update` — playbook fields
@@ -75,8 +63,6 @@ Company data (requires session; scoped to the signed-in company):
 Gates return 409 with specific blocker list. Unauthenticated API calls return 401.
 
 ## Pricing context
-
-Starter $149/mo (<$750k) · default $299/mo ($750k–$2.5M, $249 annual) · Crew $499/mo · first month $99 · unlimited users · no % of collections.
 
 ## Optional: Docker
 
@@ -86,7 +72,3 @@ docker run -p 8765:8765 billdable
 ```
 
 Local `python3 server.py` is the primary path. No external services or API keys required.
-
-## Non-goals
-
-Real QuickBooks OAuth, live email delivery, full lien filing, estimating, payroll, or autonomous money/lien actions. Adapters are usable local stubs. Auth is cookie-based and single-user-per-company for now; roles and invites come later.
