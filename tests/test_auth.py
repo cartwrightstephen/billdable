@@ -1,5 +1,6 @@
 """Auth and login throttling. Uses a temporary auth file, never data/auth.json."""
 
+import json
 import secrets
 import sys
 import tempfile
@@ -44,6 +45,26 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(loaded["company_id"], self.company)
         auth.destroy_session(token)
         self.assertIsNone(auth.session_user(token))
+
+    def test_stored_session_key_does_not_sign_in(self):  # P0-7
+        user = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        token = auth.create_session(user)
+        stored = json.loads(auth.AUTH_PATH.read_text())["sessions"]
+        self.assertNotIn(token, stored)
+        self.assertEqual(len(stored), 1)
+        self.assertIsNone(auth.session_user(next(iter(stored))))
+        self.assertIsNotNone(auth.session_user(token))
+
+    def test_raw_token_file_is_migrated(self):  # P0-7: files from before hashing keep working
+        user = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        data = json.loads(auth.AUTH_PATH.read_text())
+        data.pop("sessions_hashed", None)
+        data["sessions"] = {"old-raw-token": {"user_id": user["id"], "company_id": self.company, "expires_at": "2999-01-01T00:00:00+00:00"}}
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        self.assertEqual(auth.session_user("old-raw-token")["id"], user["id"])
+        auth.destroy_session("old-raw-token")
+        self.assertNotIn("old-raw-token", json.loads(auth.AUTH_PATH.read_text())["sessions"])
+        self.assertIsNone(auth.session_user("old-raw-token"))
 
     def test_password_min_length(self):
         with self.assertRaises(ValueError):

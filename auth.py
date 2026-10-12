@@ -1,8 +1,9 @@
 """File-backed auth for Billdable.
 
 A company has one or more users; each user belongs to one company and is an
-owner or a member. Sessions are opaque tokens stored in a cookie. Passwords
-are hashed with PBKDF2. Password-reset, email-verification and invite links
+owner or a member. Sessions are opaque tokens stored in a cookie; only their
+SHA-256 is stored, so a copy of auth.json signs nobody in. Passwords are hashed
+with PBKDF2. Password-reset, email-verification and invite links
 carry single-use tokens; only their SHA-256 is stored. No external services.
 """
 
@@ -67,8 +68,12 @@ def _load() -> dict[str, Any]:
     if AUTH_PATH.exists():
         data = json.loads(AUTH_PATH.read_text())
     else:
-        data = {"users": [], "sessions": {}}
+        data = {"users": [], "sessions": {}, "sessions_hashed": True}
     data.setdefault("tokens", {})
+    if not data.get("sessions_hashed"):
+        # Files written before session hashing hold raw tokens as keys; hash them in place.
+        data["sessions"] = {_digest(k): v for k, v in data.get("sessions", {}).items()}
+        data["sessions_hashed"] = True
     return data
 
 
@@ -183,15 +188,10 @@ def create_session(user: dict[str, Any]) -> str:
     expires = _utcnow() + timedelta(days=SESSION_DAYS)
     with LOCK:
         data = _load()
-        data["sessions"][token] = {
-            "user_id": user["id"],
-            "company_id": user["company_id"],
-            "expires_at": _iso(expires),
-        }
         # Drop expired sessions opportunistically.
         now = _iso(_utcnow())
         data["sessions"] = {k: v for k, v in data["sessions"].items() if v["expires_at"] > now}
-        data["sessions"][token] = {
+        data["sessions"][_digest(token)] = {
             "user_id": user["id"],
             "company_id": user["company_id"],
             "expires_at": _iso(expires),
@@ -201,15 +201,16 @@ def create_session(user: dict[str, Any]) -> str:
 
 
 def session_user(token: str | None) -> dict[str, Any] | None:
-    if not token:
+    if not token or not isinstance(token, str) or len(token) > 200:
         return None
+    key = _digest(token)
     with LOCK:
         data = _load()
-        entry = data["sessions"].get(token)
+        entry = data["sessions"].get(key)
         if not entry:
             return None
         if entry["expires_at"] <= _iso(_utcnow()):
-            data["sessions"].pop(token, None)
+            data["sessions"].pop(key, None)
             _save(data)
             return None
         user = next((u for u in data["users"] if u["id"] == entry["user_id"]), None)
@@ -223,7 +224,7 @@ def destroy_session(token: str | None) -> None:
         return
     with LOCK:
         data = _load()
-        data["sessions"].pop(token, None)
+        data["sessions"].pop(_digest(token), None)
         _save(data)
 
 
@@ -351,11 +352,12 @@ def change_password(user_id: str, current: Any, new: Any, keep_session: str | No
             _FAILURES.setdefault(user["email"], []).append(time.monotonic())
         raise AuthError("Current password is wrong.")
     salt, new_digest = _hash(new)
+    keep = _digest(keep_session) if keep_session else None
     with LOCK:
         data = _load()
         user = next(u for u in data["users"] if u["id"] == user_id)
         user["salt"], user["password_hash"] = salt, new_digest
-        data["sessions"] = {k: v for k, v in data["sessions"].items() if v.get("user_id") != user_id or k == keep_session}
+        data["sessions"] = {k: v for k, v in data["sessions"].items() if v.get("user_id") != user_id or k == keep}
         _save(data)
 
 
