@@ -27,7 +27,7 @@ CASES = {
     "how do i delete my account": "delete-account", "is my data backed up": "backups",
     "how do i set up a schedule of values": "sov", "can i paste my estimate from excel": "sov", "bill by unit rates": "sov",
     "why did my email fail": "email-sent", "i forgot my password": "password", "how do i invite my office manager": "team-users",
-    "i didn't get the confirmation email": "verify-email", "when does my trial end": "pricing", "can i get a pdf of the pay app": "what-payapp", "did the customer get my pay app": "email-sent", "send the email again": "email-sent",
+    "i didn't get the confirmation email": "verify-email", "do you sell my data": "terms-privacy", "where are the terms of service": "terms-privacy", "when does my trial end": "pricing", "can i get a pdf of the pay app": "what-payapp", "did the customer get my pay app": "email-sent", "send the email again": "email-sent",
 }
 
 

@@ -202,7 +202,7 @@ class MailHttpTests(unittest.TestCase):
         return res, json.loads(payload or b"{}")
 
     def company(self, email_addr, ap="ap@park.example"):
-        res, data = self.request("POST", "/api/auth/signup", {"email": email_addr, "password": PASSWORD, "name": "Pat Pine", "company_name": "Pine & Sons"})
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": email_addr, "password": PASSWORD, "name": "Pat Pine", "company_name": "Pine & Sons"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))  # sending needs a verified address
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": ap,
@@ -376,7 +376,7 @@ class MailHttpTests(unittest.TestCase):
         self.assertEqual(len(self.sink.messages), 1)
 
     def test_unicode_line_separator_in_job_name_still_sends(self):  # review finding 8
-        res, data = self.request("POST", "/api/auth/signup", {"email": "mail10@pine.example", "password": PASSWORD, "name": "Pat", "company_name": "Pine"})
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "mail10@pine.example", "password": PASSWORD, "name": "Pat", "company_name": "Pine"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))
         job = {"name": "Elm\u2028addition\x85x", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim",

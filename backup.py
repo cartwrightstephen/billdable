@@ -87,8 +87,9 @@ def make_backup(locks: dict[str, Any] | None = None) -> Path:
         companies = data_dir / "companies"
         with locks.get("companies") or nullcontext():
             if companies.exists():
-                for path in sorted(companies.glob("*.json")):
-                    members.append((f"companies/{path.name}", path.read_bytes()))
+                # Company files and the snapshots taken before a reset.
+                for path in sorted(companies.rglob("*.json")):
+                    members.append((str(path.relative_to(data_dir)), path.read_bytes()))
         for rel, key in (("inbound_tokens.json", "tokens"), ("helper_answers.json", None), ("helper_log.json", None), ("mail_sends.json", None)):
             grab(rel, locks.get(key) if key else None)
 
@@ -138,24 +139,39 @@ def _safe_members(tar: tarfile.TarFile) -> list[tarfile.TarInfo]:
 
 def restore(path: str | Path) -> Path:
     """Restore a backup into the data directory. Run with the server stopped.
-    The current data is moved to <data dir>/pre-restore-<time>/ first, never deleted."""
+
+    The archive is checked and unpacked into a staging folder first; only a complete, valid
+    backup (with auth.json and the companies folder) replaces anything. The current data is
+    moved to <data dir>/pre-restore-<time>/, never deleted."""
     data_dir = Path(storage.DATA_DIR)
     path = Path(path)
-    with tarfile.open(path, "r:gz") as tar:
-        members = _safe_members(tar)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        aside = data_dir / f"pre-restore-{stamp}"
-        aside.mkdir(parents=True)
-        for name in ("auth.json", "inbound_tokens.json", "helper_answers.json", "helper_log.json", "mail_sends.json", "companies", "uploads"):
-            if (data_dir / name).exists():
-                shutil.move(str(data_dir / name), str(aside / name))
-        for m in members:
-            target = data_dir / m.name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source = tar.extractfile(m)
-            if source is None:
-                continue
-            target.write_bytes(source.read())
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    staging = data_dir / f".restore-staging-{stamp}"
+    try:
+        with tarfile.open(path, "r:gz") as tar:
+            members = _safe_members(tar)
+            names = {m.name for m in members}
+            if "auth.json" not in names or not any(n.startswith("companies/") for n in names):
+                raise ValueError("Not a complete Billdable backup: auth.json or the companies folder is missing.")
+            staging.mkdir(parents=True)
+            for m in members:
+                target = staging / m.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source = tar.extractfile(m)
+                if source is None:
+                    raise ValueError(f"Could not read {m.name} from the backup.")
+                target.write_bytes(source.read())
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    aside = data_dir / f"pre-restore-{stamp}"
+    aside.mkdir(parents=True)
+    for name in ("auth.json", "inbound_tokens.json", "helper_answers.json", "helper_log.json", "mail_sends.json", "companies", "uploads"):
+        if (data_dir / name).exists():
+            shutil.move(str(data_dir / name), str(aside / name))
+    for item in staging.iterdir():
+        shutil.move(str(item), str(data_dir / item.name))
+    staging.rmdir()
     return aside
 
 
@@ -171,12 +187,12 @@ def start_scheduler(locks: dict[str, Any], log: Callable[[str], None] = print) -
 
     def loop() -> None:
         while True:
-            if due():
-                try:
+            try:
+                if due():
                     made = make_backup(locks)
                     log(f"backup written: {made.name}")
-                except Exception as exc:  # a failed backup must never stop the server
-                    log(f"backup failed: {exc.__class__.__name__}: {exc}")
+            except Exception as exc:  # a failed backup must never stop the backups that follow
+                log(f"backup failed: {exc.__class__.__name__}: {exc}")
             time.sleep(min(3600, hours * 3600))
 
     thread = threading.Thread(target=loop, name="backups", daemon=True)

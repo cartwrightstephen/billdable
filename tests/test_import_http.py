@@ -75,7 +75,7 @@ class ImportHttpTests(unittest.TestCase):
         return res, parsed
 
     def company(self, email):
-        res, data = self.request("POST", "/api/auth/signup", {"email": email, "password": PASSWORD, "name": "Pat Pine", "company_name": "Pine Co"})
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": email, "password": PASSWORD, "name": "Pat Pine", "company_name": "Pine Co"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
                "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC"}

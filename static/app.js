@@ -364,6 +364,7 @@ function renderLanding() {
             <input name="email" type="email" required autocomplete="username" />
             <label>Password</label>
             <input name="password" type="password" required autocomplete="${signup ? "new-password" : "current-password"}" />
+            ${signup ? `<label class="terms-check"><input type="checkbox" name="accept_terms" required> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>` : ""}
             <button class="btn" type="submit">${signup ? "Create account" : "Sign in"}</button>
             ${authError ? `<div class="auth-error">${esc(authError)}</div>` : ""}
           </form>
@@ -390,7 +391,8 @@ function renderLanding() {
           <button class="btn" id="price-start">Create your company</button>
         </div>
       </section>
-      <footer class="land-foot">Billdable works beside QuickBooks; a direct QuickBooks connection is planned, not built. It does not replace your books or your field app.</footer>
+      <footer class="land-foot">Billdable works beside QuickBooks; a direct QuickBooks connection is planned, not built. It does not replace your books or your field app.
+        <div class="land-legal"><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a></div></footer>
     </div>
   `;
   document.getElementById("auth-form").addEventListener("submit", onAuthSubmit);
@@ -422,6 +424,8 @@ async function onAuthSubmit(e) {
   if (authMode === "signup") {
     body.name = form.name.value;
     body.company_name = form.company_name.value;
+    body.accept_terms = form.accept_terms.checked;
+    if (!body.accept_terms) { authError = "To create an account, accept the Terms of Service and the Privacy Policy."; renderLanding(); return; }
   }
   let res;
   try {
@@ -642,20 +646,20 @@ function bindActions() {
       }
       if (a === "change-password") {
         const r = await postJson("/api/auth/password", { current: document.getElementById("pw-current").value, new: document.getElementById("pw-new").value });
-        toast(r.ok ? "Password changed." : (r.data.error || "That didn't work."));
+        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
         if (r.ok) render();
         return;
       }
       if (a === "team-invite") {
         const email = document.getElementById("invite-email").value;
         const data = await teamPost("/api/team/invite", { email, role: document.getElementById("invite-role").value });
-        if (data) { lastInvite = { link: data.invite_link, emailed: data.emailed, email_status: data.email_status, email }; render(); }
+        if (data) { lastInvite = { link: data.invite_link || (location.origin + data.invite_path), emailed: data.emailed, email_status: data.email_status, email }; render(); }
         return;
       }
       if (a === "team-role") { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); return; }
       if (a === "team-remove") {
         if (!confirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`)) return;
-        await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed.");
+        await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed and signed out. The inbound email, text and calendar addresses changed too: update any forwarding rule or calendar subscription.");
         return;
       }
       if (a === "team-revoke") { await teamPost(`/api/team/invites/${el.dataset.invite}/revoke`, {}, "Invite revoked."); return; }
@@ -1306,6 +1310,7 @@ function renderTokenScreen() {
       <form id="token-form">
         <label>Your name</label><input name="name" required autocomplete="name">
         <label>Choose a password (at least 10 characters)</label><input name="password" type="password" required autocomplete="new-password" minlength="10">
+        <label class="terms-check"><input type="checkbox" name="accept_terms" required> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>
         <button class="btn" type="submit">Join the team</button>
         ${s.error ? `<div class="auth-error">${esc(s.error)}</div>` : ""}
       </form>`;
@@ -1325,8 +1330,9 @@ function renderTokenScreen() {
     e.preventDefault();
     const f = e.target;
     if (f.password.value.length < 10) { s.error = "Password must be at least 10 characters."; renderTokenScreen(); return; }
+    if (s.kind === "invite" && !f.accept_terms.checked) { s.error = "To join, accept the Terms of Service and the Privacy Policy."; renderTokenScreen(); return; }
     const r = s.kind === "invite"
-      ? await postJson("/api/auth/accept-invite", { token: s.token, name: f.name.value, password: f.password.value })
+      ? await postJson("/api/auth/accept-invite", { token: s.token, name: f.name.value, password: f.password.value, accept_terms: true })
       : await postJson("/api/auth/reset", { token: s.token, password: f.password.value });
     if (!r.ok) { s.error = r.data.error || "That didn't work."; renderTokenScreen(); return; }
     tokenScreen = null;

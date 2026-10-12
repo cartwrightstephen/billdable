@@ -230,3 +230,6 @@ details.card > summary { cursor: pointer; }
 .invite-result { background: #eef3ee; border-radius: 8px; padding: 10px; margin: 8px 0; }
 .danger-zone { border-color: var(--red, #8d2d2d); }
 .btn.danger { background: var(--red, #8d2d2d); color: #fff; border-color: var(--red, #8d2d2d); }
+.terms-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 8px 0; line-height: 1.4; }
+.terms-check input { width: auto; margin-top: 2px; }
+.land-legal { margin-top: 8px; font-size: 13px; }

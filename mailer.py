@@ -234,3 +234,12 @@ def _short(exc: BaseException) -> str:
         text = exc.smtp_error.decode("utf-8", "replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
         return f"{exc.smtp_code} {text}"[:200]
     return (str(exc) or exc.__class__.__name__)[:200]
+
+
+def forget_company(company_id: str) -> None:
+    """Drop a deleted company's send counter."""
+    import storage
+    with SENDS_LOCK:
+        data = _load_sends()
+        if data.pop(company_id, None) is not None:
+            storage.write_json(_sends_path(), data)

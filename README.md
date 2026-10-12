@@ -42,6 +42,8 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `TWILIO_NUMBER` | The texting number shown to users in the Inbox. Display only. |
 | `INBOUND_EMAIL_ADDRESS_TEMPLATE` | The forwarding address shown in the Inbox, with `{token}` where the company's secret goes, e.g. `jobs+{token}@in.example.com`. Display only; the email service does the routing. |
 | `BILLDABLE_URL` | The public address, e.g. `https://billdable.onrender.com`. Password-reset, verification and invite emails use it for their links; they are not sent without it (a link built from the request's Host header could point a reset token at someone else's site). |
+| `LEGAL_ENTITY`, `LEGAL_ADDRESS`, `LEGAL_EMAIL`, `LEGAL_STATE`, `DATA_REGION` | Company details shown in the Terms of Service and Privacy Policy (`/terms`, `/privacy`). Until all are set and `LEGAL_REVIEWED=1`, both pages say they are a draft. |
+| `LEGAL_REVIEWED` | `1` once a lawyer has reviewed the text in `legal/` and the details above are filled in. |
 | `BACKUP_HOURS` | Hours between automatic backups, default 24; `0` turns them off. |
 | `BACKUP_KEEP` | How many backups to keep, default 14. |
 | `BACKUP_UPLOADS` | `0` leaves uploaded files out of backups (they can be large). Default: included. |
@@ -81,11 +83,22 @@ Approved pay apps, pencil copies, follow-ups, waivers and retainage requests are
 - Invites last 7 days. Without email set up, the owner gets the link to pass on themselves.
 - Only a SHA-256 of each reset, verification and invite token is stored. Tokens travel after `#` in links, so they never reach server logs.
 - Deleting the company (owner, password plus the typed company name) removes its users, sessions, data, uploads and inbound addresses. Backups already made still hold it until they rotate out.
+- Every team change is checked against the acting person's current role at the moment it is made, and every request re-checks the session once its body has arrived (bodies must arrive within 60 seconds), so someone removed or demoted mid-request can't finish with their old rights.
+- Removing someone also changes the company's inbound email, text and calendar addresses (they knew them), and cancels the invites they sent; demoting an owner cancels their invites.
+- Invites need a confirmed email when email is set up, and are limited to 20 a day per company; confirmation links to 3 an hour per person. These system emails count against the company's daily email limit. Invite and reset subjects are fixed text; names typed by users appear only in the body, flattened.
+- Changing a password signs out every other session and is throttled like sign-in. The demo account's password can't be changed.
+- Older unexpired reset links stay valid when another is requested (so a stranger's requests can't cancel yours); using one uses them all up. The reset request does its work in the background, so the answer takes the same time for any email; sign-in also does the same work for unknown emails.
+- Without `BILLDABLE_URL`, an invite returns only the path (`/#invite=…`); the owner's browser adds its own address.
+- Deleting a company also records it in `deleted_companies.json`, so a request that was already running can't write it back, and removes its helper questions and mail counter.
 - Not built: two-factor sign-in, single sign-on, per-job permissions.
+
+## Terms and privacy
+
+`legal/terms.html` and `legal/privacy.html`, served at `/terms` and `/privacy` with the company details from the settings above (HTML-escaped). Sign-up and accepting an invite need the box ticked; the server records the version (`legal.TERMS_VERSION`) and time on the account. The text is a draft written to match what the code does (data collected, sharing, retention, deletion, backups); **have a lawyer review it before relying on it**, then set `LEGAL_REVIEWED=1`. Change `TERMS_VERSION` when the text changes.
 
 ## Pay app PDF
 
-`GET /api/jobs/{id}/payapp/{invoice_id}.pdf`, and attached to pay-app and pencil emails. Page 1 is an application summary (lines 1–9: contract, change orders, completed to date, retainage, previous pay apps, current payment due, balance); then a continuation sheet of every schedule line (or the pay app's lines) and the packet checklist. The layout follows the G702/G703 pattern but it is Billdable's own document and says it is not an AIA form. Drafts and pencil copies are marked. Standard library only; built-in fonts. Lien waivers are not generated: their forms are set by state law.
+`GET /api/jobs/{id}/payapp/{invoice_id}.pdf`, and attached to pay-app and pencil emails (never for a pay app voided after the email was approved). Older jobs' job-level held retainage counts in lines 4 and 5; unsigned change orders billed on the pay app show as line 2a and count in the contract sum; a voided pay app is marked VOID and keeps its own figures. Page 1 is an application summary (lines 1–9: contract, change orders, completed to date, retainage, previous pay apps, current payment due, balance); then a continuation sheet of every schedule line (or the pay app's lines) and the packet checklist. The layout follows the G702/G703 pattern but it is Billdable's own document and says it is not an AIA form. Drafts and pencil copies are marked. Standard library only; built-in fonts. Lien waivers are not generated: their forms are set by state law.
 
 ## Trial
 
@@ -93,7 +106,7 @@ Approved pay apps, pencil copies, follow-ups, waivers and retainage requests are
 
 ## Backups, health and logs
 
-- `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), keeping `BACKUP_KEEP`. They are on the same disk as the data: copy them elsewhere too. `python3 backup.py now|list|restore FILE`; restore (server stopped) moves the current data aside to `pre-restore-<time>/` first and refuses archives with paths outside the data directory.
+- `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), keeping `BACKUP_KEEP`. They are on the same disk as the data: copy them elsewhere too. `python3 backup.py now|list|restore FILE`; restore (server stopped) first unpacks into a staging folder and checks the archive is complete (it must hold `auth.json` and `companies/`, with nothing outside the data directory); only then does it move the current data aside to `pre-restore-<time>/` and swap the backup in. Company snapshots taken before a reset are included.
 - `GET /healthz`: no sign-in; `ok`, whether the data directory is writable (503 if not), whether email is set up, and the time of the last backup. Point an uptime monitor at it.
 - Logs: one JSON line per request on stderr (time, method, path, status, milliseconds, request id). Query strings and the secret parts of inbound and calendar addresses are removed. A crash logs its traceback with the request id, and the user sees the same id to quote. There is no external error tracker; add one (for example Sentry) by reading these lines.
 
@@ -141,6 +154,7 @@ Tests write to a temporary directory, never to `data/`.
 - `payapp_pdf.py`: the pay app PDF
 - `trial.py`: trial status
 - `backup.py`: backups and restore
+- `legal.py`, `legal/`: the Terms of Service and Privacy Policy
 - `mailer.py`: outgoing email over SMTP
 - `seed.py`: Hartline Remodeling sample data
 - `server.py`: stdlib HTTP server, cookie sessions, per-company JSON

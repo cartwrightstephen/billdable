@@ -95,30 +95,43 @@ def _build(pages: list[_Page]) -> bytes:
 
 
 def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
-    """Lines 1-9 of the application, from the pay apps up to and including this one."""
-    live = [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE]
-    if invoice in live:
-        up_to = live[: live.index(invoice) + 1]
-    else:
-        up_to = live + [invoice]
+    """Lines 1-9 of the application, from the pay apps up to and including this one, in the order
+    they were made. A voided pay app keeps its own position, so its figures read as they were."""
+    order = job.get("invoices", [])
+    position = next((i for i, inv in enumerate(order) if inv is invoice or inv.get("id") == invoice.get("id")), len(order))
+    up_to = [inv for inv in order[:position] if inv.get("status") in LIVE] + [invoice]
     earlier = up_to[:-1]
     original = job["contract_cents"]
     net_co = sum(co["amount_cents"] for co in job.get("change_orders", []) if co.get("status") == "approved")
+    # Change orders billed while still unsigned are in the work completed, so they are shown in the
+    # contract sum too, as their own line, rather than leaving the balance short.
+    pending_ids = {co["id"] for co in job.get("change_orders", []) if co.get("status") == "pending"}
+    unsigned = {}
+    for inv in up_to:
+        for line in inv.get("lines", []):
+            if line.get("co_id") in pending_ids:
+                unsigned[line["co_id"]] = line["amount_cents"]
+    unsigned_total = sum(unsigned.values())
     gross = lambda inv: inv.get("gross_cents", inv["amount_cents"] + inv.get("retainage_cents", 0))
-    completed = sum(gross(inv) for inv in up_to)
-    retained = sum(inv.get("retainage_cents", 0) for inv in up_to)
+    # Older records hold retainage on the job rather than on each pay app.
+    legacy = int(job.get("retainage_held_cents") or 0)
+    completed = sum(gross(inv) for inv in up_to) + legacy
+    retained = sum(inv.get("retainage_cents", 0) for inv in up_to) + legacy
     earned = completed - retained
     previous = sum(inv["amount_cents"] for inv in earlier)
+    contract_to_date = original + net_co + unsigned_total
     return {
         "original": original,
         "net_co": net_co,
-        "contract_to_date": original + net_co,
+        "unsigned_co": unsigned_total,
+        "contract_to_date": contract_to_date,
         "completed": completed,
         "retainage": retained,
+        "released": int(job.get("retainage_released_cents") or 0),
         "earned": earned,
         "previous": previous,
         "due": invoice["amount_cents"],
-        "balance": original + net_co - earned,
+        "balance": contract_to_date - earned,
     }
 
 
@@ -126,7 +139,7 @@ def render(company_name: str, job: dict[str, Any], payer: dict[str, Any], invoic
     figures = summary(job, invoice)
     status = invoice.get("status", "")
     mark = {"void": "VOID", "draft": "DRAFT - not submitted", "awaiting_approval": "DRAFT - awaiting approval"}.get(status, "")
-    if mark and invoice.get("pencil_status") == "sent":
+    if status != "void" and mark and invoice.get("pencil_status") == "sent":
         mark = "PENCIL COPY - for review, not for payment"
     date = (invoice.get("sent_at") or invoice.get("created_at") or "")[:10]
     pages: list[_Page] = []
@@ -163,7 +176,11 @@ def render(company_name: str, job: dict[str, Any], payer: dict[str, Any], invoic
     rows = [
         ("1. Original contract sum", figures["original"]),
         ("2. Net change by approved change orders", figures["net_co"]),
-        ("3. Contract sum to date (1 + 2)", figures["contract_to_date"]),
+    ]
+    if figures["unsigned_co"]:
+        rows.append(("2a. Change orders billed here, not yet signed", figures["unsigned_co"]))
+    rows += [
+        ("3. Contract sum to date (1 + 2" + (" + 2a)" if figures["unsigned_co"] else ")"), figures["contract_to_date"]),
         ("4. Total completed to date", figures["completed"]),
         ("5. Retainage held to date", figures["retainage"]),
         ("6. Total earned less retainage (4 - 5)", figures["earned"]),
@@ -180,6 +197,9 @@ def render(company_name: str, job: dict[str, Any], payer: dict[str, Any], invoic
     pct = invoice.get("retainage_cents", 0)
     p.text(MARGIN + 20, y, f"This pay app: {_money(invoice.get('gross_cents', invoice['amount_cents']))} of work"
            + (f", less {_money(pct)} retainage" if pct else "") + f" = {_money(invoice['amount_cents'])}.", "F1", 9)
+    if figures["released"]:
+        y -= 14
+        p.text(MARGIN + 20, y, f"Retainage released to date, recorded separately: {_money(figures['released'])}.", "F1", 9)
     y -= 30
     p.text(MARGIN + 20, y, "Contractor signature: ____________________________________     Date: ______________", "F1", 10)
     pages.append(p)

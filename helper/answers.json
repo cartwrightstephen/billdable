@@ -1645,6 +1645,29 @@
         }
       ],
       "follow_ups": []
+    },
+    {
+      "id": "terms-privacy",
+      "category": "Account",
+      "questions": [
+        "Where are the terms of service?",
+        "What is your privacy policy?",
+        "What do you do with my data?",
+        "Do you sell my data?"
+      ],
+      "keywords": [
+        "terms",
+        "privacy",
+        "policy",
+        "sell my data"
+      ],
+      "answer": "The Terms of Service and the Privacy Policy are linked at the bottom of the sign-in page (/terms and /privacy). In short: your data is yours, we use it only to run Billdable for you, we don't sell it or use it for advertising, the app loads no tracking scripts, and an owner can export or delete everything. Both pages say if they are still a draft awaiting a lawyer's review.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "Is my data safe?"
+      ]
     }
   ]
 }

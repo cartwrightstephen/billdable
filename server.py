@@ -34,6 +34,7 @@ import calendar_feed
 import domain
 import helper
 import importer
+import legal
 import mailer
 import payapp_pdf
 import sov
@@ -52,6 +53,7 @@ STUCK_MINUTES = 30  # an email still "sending" after this long died mid-send and
 MAX_BODY_BYTES = 1_000_000
 MAX_INBOUND_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 5_000
+BODY_SECONDS = 60  # a request body must arrive within this long in total, however slowly it trickles
 
 # The only files served from static/. Anything else is a 404.
 STATIC_FILES = {
@@ -101,6 +103,24 @@ def log_json(level: str, **fields) -> None:
     sys.stderr.write(json.dumps(record, default=str) + "\n")
 
 
+_LIMITS: dict = {}
+_LIMITS_LOCK = threading.Lock()
+
+
+def _within_limit(key: str, count: int, seconds: int) -> bool:
+    """True, and counted, when fewer than `count` events happened for `key` in the last `seconds`."""
+    now = time.monotonic()
+    with _LIMITS_LOCK:
+        if len(_LIMITS) > 20_000:
+            _LIMITS.clear()
+        recent = [t for t in _LIMITS.get(key, []) if now - t < seconds]
+        if len(recent) >= count:
+            _LIMITS[key] = recent
+            return False
+        _LIMITS[key] = recent + [now]
+        return True
+
+
 class BadRequest(Exception):
     def __init__(self, message: str, code: int = 400):
         super().__init__(message)
@@ -137,7 +157,22 @@ def load_company(company_id: str) -> dict:
     return empty_state("New company")
 
 
+def _deleted_path() -> Path:
+    return storage.DATA_DIR / "deleted_companies.json"
+
+
+def deleted_companies() -> set:
+    try:
+        return set(json.loads(_deleted_path().read_text()))
+    except (OSError, ValueError):
+        return set()
+
+
 def save_company(company_id: str, state: dict) -> None:
+    # A request that was already running when its company was deleted must not write it back.
+    if company_id in deleted_companies():
+        log_json("warn", msg="write to a deleted company refused", company=company_id)
+        return
     storage.write_json(company_path(company_id), state)
 
 
@@ -248,7 +283,7 @@ class Handler(BaseHTTPRequestHandler):
             raise BadRequest("Request body is too large.", 413)
         if not length:
             return {}
-        raw = self.rfile.read(length)
+        raw = self._read_body(length)
         try:
             body = json.loads(raw.decode("utf-8") or "{}")
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -266,7 +301,32 @@ class Handler(BaseHTTPRequestHandler):
             raise BadRequest("Content-Length must be a number.")
         if length > limit:
             raise BadRequest(f"Upload is larger than {limit // (1024 * 1024)} MB.", 413)
-        return self.rfile.read(length) if length else b""
+        return self._read_body(length) if length else b""
+
+    def _read_body(self, length: int) -> bytes:
+        """Read exactly `length` bytes within BODY_SECONDS in total. The socket timeout alone is per read,
+        so a client sending one byte every few seconds could otherwise hold a request open for hours."""
+        deadline = time.monotonic() + BODY_SECONDS
+        chunks, left = [], length
+        try:
+            while left > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise BadRequest("The request took too long to arrive.", 408)
+                self.connection.settimeout(min(self.timeout, remaining))
+                chunk = self.rfile.read1(min(left, 65536))
+                if not chunk:
+                    raise BadRequest("The request body ended early.")
+                chunks.append(chunk)
+                left -= len(chunk)
+        except (TimeoutError, OSError):
+            raise BadRequest("The request took too long to arrive.", 408)
+        finally:
+            try:
+                self.connection.settimeout(self.timeout)
+            except OSError:
+                pass
+        return b"".join(chunks)
 
     def _base_url(self) -> str:
         proto = self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() or ("https" if os.environ.get("COOKIE_SECURE") == "1" else "http")
@@ -482,6 +542,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, calendar_feed.render(state).encode("utf-8"), "text/calendar; charset=utf-8",
                        {"Content-Disposition": 'inline; filename="billdable.ics"'})
             return
+        if path in {"/terms", "/privacy"}:
+            self._send(200, legal.page(path.strip("/")).encode("utf-8"), "text/html; charset=utf-8")
+            return
         if path in {"/", "/index.html"}:
             self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
             return
@@ -514,6 +577,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/signup":
             body = self._read_json()
+            if body.get("accept_terms") is not True:
+                self._json(400, {"error": "To create an account, accept the Terms of Service and the Privacy Policy."})
+                return
             try:
                 company_id = "co-" + secrets.token_hex(4)
                 user = auth.create_user(
@@ -521,6 +587,7 @@ class Handler(BaseHTTPRequestHandler):
                     _text(body, "password"),
                     _text(body, "name"),
                     company_id,
+                    terms_version=legal.TERMS_VERSION,
                 )
                 fresh = empty_state(_text(body, "company_name").strip() or "New company")
                 trial.start(fresh["company"])
@@ -544,16 +611,23 @@ class Handler(BaseHTTPRequestHandler):
             if not (mailer.configured() and url):
                 self._json(200, {"message": "Password reset by email isn't set up on this server yet. Ask the Billdable team to reset it."})
                 return
-            found = auth.password_reset_token(_text(body, "email", limit=300))
-            if found:
-                raw, account = found
-                # Sent in the background, so the answer takes the same time whether or not the account exists.
-                threading.Thread(target=self._system_email, daemon=True, args=(
-                    account["email"], "Reset your Billdable password",
-                    f"Someone asked to reset the password for {account['email']} on Billdable.\n\n"
-                    f"Choose a new password here (the link works once, for one hour):\n{url}/#reset={raw}\n\n"
-                    "If it wasn't you, ignore this email; your password stays the same.",
-                )).start()
+            requested = _text(body, "email", limit=300)
+
+            def send_reset() -> None:
+                found = auth.password_reset_token(requested)
+                if found:
+                    raw, account = found
+                    self._system_email(
+                        account["email"], "Reset your Billdable password",
+                        f"Someone asked to reset the password for {account['email']} on Billdable.\n\n"
+                        f"Choose a new password here (the link works once, for one hour):\n{url}/#reset={raw}\n\n"
+                        "If it wasn't you, ignore this email; your password stays the same.",
+                        company_id=account["company_id"],
+                    )
+
+            # All the work happens in the background, so the answer takes the same time
+            # whether or not the account exists.
+            threading.Thread(target=send_reset, daemon=True).start()
             self._json(200, {"message": "If an account exists for that email, a reset link is on its way. It works for one hour."})
             return
 
@@ -591,8 +665,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/accept-invite":
             body = self._read_json()
+            if body.get("accept_terms") is not True:
+                self._json(400, {"error": "To join, accept the Terms of Service and the Privacy Policy."})
+                return
             try:
-                user = auth.accept_invite(body.get("token"), body.get("name"), body.get("password"))
+                user = auth.accept_invite(body.get("token"), body.get("name"), body.get("password"), terms_version=legal.TERMS_VERSION)
             except auth.AuthError as exc:
                 self._json(400, {"error": str(exc)})
                 return
@@ -617,6 +694,13 @@ class Handler(BaseHTTPRequestHandler):
             self._import_file(user, actor)
             return
         body = self._read_json()
+        # Check the session again now the body is here: someone removed, demoted or signed out
+        # while their request was arriving must not finish it with their old rights.
+        user = auth.session_user(self._token())
+        if not user:
+            self._json(401, {"error": "Sign in required."})
+            return
+        actor = user.get("name") or user.get("email") or "owner"
         company_id = user["company_id"]
         # The audit trail names the signed-in user. Any "actor" in the body is ignored.
         if path == "/api/helper/ask":
@@ -666,11 +750,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/auth/password":
             try:
-                auth.change_password(user["id"], body.get("current"), body.get("new"))
+                auth.change_password(user["id"], body.get("current"), body.get("new"), keep_session=self._token())
+            except auth.RateLimited as exc:
+                self._json(429, {"error": str(exc)})
+                return
             except auth.AuthError as exc:
                 self._json(400, {"error": str(exc)})
                 return
-            self._json(200, {"ok": True})
+            self._json(200, {"ok": True, "message": "Password changed. Every other device is signed out."})
             return
         if path == "/api/onboarding/dismiss":
             self._json(*self._change(company_id, lambda st: st["company"].__setitem__("onboarding_dismissed", True)))
@@ -728,11 +815,14 @@ class Handler(BaseHTTPRequestHandler):
 
     # ----- accounts and team -----
 
-    def _system_email(self, to: str, subject: str, body: str) -> str:
-        """An email from Billdable itself (reset, verification, invite). Returns "sent" or the reason it wasn't."""
+    def _system_email(self, to: str, subject: str, body: str, company_id: str = "") -> str:
+        """An email from Billdable itself (reset, verification, invite). Returns "sent" or the reason it wasn't.
+        It counts against the company's daily limit like any other email."""
         if not mailer.configured():
             return "email delivery is not set up on this server"
         cfg = mailer.settings()
+        if company_id and mailer.sent_in_last_day(company_id) >= cfg["daily_limit"]:
+            return f"the daily limit of {cfg['daily_limit']} emails is reached; try tomorrow"
         try:
             msg, _ = mailer.build_message({"to": to, "subject": subject, "body": body}, "", "", [], cfg, sender_name="Billdable")
             error = mailer.send([msg], cfg)[0]
@@ -740,6 +830,8 @@ class Handler(BaseHTTPRequestHandler):
             error = f"{exc.__class__.__name__}: {exc}"
         if error:
             log_json("warn", msg="system email failed", reason=str(error)[:200], rid=self._rid)
+        elif company_id:
+            mailer.record_sent(company_id, 1)
         return "sent" if not error else str(error)
 
     def _send_verification(self, user: dict) -> str:
@@ -748,12 +840,15 @@ class Handler(BaseHTTPRequestHandler):
             return "the demo account isn't verified"
         if not (mailer.configured() and url):
             return "email delivery or BILLDABLE_URL is not set up on this server"
+        if not _within_limit(f"verify:{user['id']}", 3, 3600):
+            return "three links were already sent in the last hour; use the newest, or try later"
         raw = auth.verify_email_token(user["id"])
         return self._system_email(
             user["email"], "Confirm your email for Billdable",
             f"Hi {user['name']},\n\nConfirm that this is your email address (the link works for 3 days):\n{url}/#verify={raw}\n\n"
             "Billdable emails your pay apps from this address's account, with replies coming back to it, "
             "so we check it first. If you didn't sign up, ignore this email.",
+            company_id=user["company_id"],
         )
 
     def _team_action(self, path: str, parts: list, body: dict, user: dict) -> None:
@@ -767,31 +862,47 @@ class Handler(BaseHTTPRequestHandler):
         note = None
         try:
             if path == "/api/team/invite":
-                raw, invite = auth.create_invite(company_id, body.get("email"), body.get("role") or "member", user["name"])
-                link = f"{app_url() or self._base_url()}/#invite={raw}"
-                with STATE_LOCK:
-                    company_name = load_company(company_id).get("company", {}).get("name", "your company")
-                emailed = "not sent"
-                if app_url():
-                    emailed = self._system_email(
-                        invite["email"], f"{user['name']} invited you to {company_name} on Billdable",
-                        f"{user['name']} invited you to join {company_name} on Billdable as {invite['role']}.\n\n"
-                        f"Accept here (the link works for 7 days):\n{link}\n",
+                if mailer.configured() and app_url() and not user.get("email_verified"):
+                    raise auth.AuthError("Confirm your own email address before inviting people.")
+                if not _within_limit(f"invite:{company_id}", 20, 24 * 3600):
+                    raise auth.AuthError("20 invites a day is the limit. Try again tomorrow.")
+                raw, invite = auth.create_invite(company_id, body.get("email"), body.get("role") or "member", user["name"], actor_id=user["id"])
+                url = app_url()
+                note = {"invite_path": f"/#invite={raw}", "invite_link": f"{url}/#invite={raw}" if url else None, "emailed": False,
+                        "email_status": "BILLDABLE_URL is not set on this server" if not url else "not sent"}
+                if url:
+                    with STATE_LOCK:
+                        company_name = load_company(company_id).get("company", {}).get("name", "")
+                    # Names typed by users go in the body only, flattened and shortened; the subject is fixed.
+                    flat = lambda text, n: " ".join(str(text).split())[:n]
+                    status = self._system_email(
+                        invite["email"], "You're invited to a team on Billdable",
+                        f"{flat(user['name'], 80)} ({user['email']}) invited you to join the company "
+                        f"\"{flat(company_name, 80)}\" on Billdable as {invite['role']}.\n\n"
+                        f"Accept here (the link works for 7 days):\n{url}/#invite={raw}\n\n"
+                        "If you don't know this person, ignore this email.",
+                        company_id=company_id,
                     )
-                note = {"invite_link": link, "emailed": emailed == "sent", "email_status": emailed}
+                    note.update({"emailed": status == "sent", "email_status": status})
                 detail = f"{user['name']} invited {invite['email']} as {invite['role']}."
             elif len(parts) == 5 and parts[2] == "invites" and parts[4] == "revoke":
-                auth.revoke_invite(company_id, parts[3])
+                auth.revoke_invite(company_id, parts[3], actor_id=user["id"])
                 detail = f"{user['name']} revoked an invite."
             elif len(parts) == 4 and parts[3] == "role":
-                changed = auth.set_role(company_id, parts[2], body.get("role"))
+                changed = auth.set_role(company_id, parts[2], body.get("role"), actor_id=user["id"])
                 detail = f"{user['name']} made {changed['name']} {changed['role']}."
             elif len(parts) == 4 and parts[3] == "remove":
                 if parts[2] == user["id"]:
                     raise auth.AuthError("You can't remove yourself. Ask another owner.")
-                removed = auth.remove_user(company_id, parts[2])
-                detail = f"{user['name']} removed {removed['name']} ({removed['email']}) from the team."
+                removed = auth.remove_user(company_id, parts[2], actor_id=user["id"])
+                # They knew the inbound and calendar addresses, so those change too.
+                for kind in ("email", "sms", "calendar"):
+                    importer.rotate_token(company_id, kind)
+                note = {"rotated": True}
+                detail = (f"{user['name']} removed {removed['name']} ({removed['email']}) from the team. "
+                          "The inbound email, text and calendar addresses were changed.")
             elif path == "/api/account/delete":
+                auth.require_owner(company_id, user["id"])
                 self._delete_account(body, user)
                 return
             else:
@@ -815,6 +926,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         removed = auth.delete_company_users(company_id)  # every session of the company ends here
         with STATE_LOCK:
+            gone = sorted(deleted_companies() | {company_id})
+            storage.write_json(_deleted_path(), gone)
             for path in [company_path(company_id), *(COMPANIES / "snapshots").glob(f"{company_id}-*.json")]:
                 try:
                     path.unlink()
@@ -822,6 +935,8 @@ class Handler(BaseHTTPRequestHandler):
                     pass
         shutil.rmtree(importer.UPLOADS / company_id, ignore_errors=True)
         importer.forget_company(company_id)
+        helper.forget_company(company_id)
+        mailer.forget_company(company_id)
         log_json("info", msg="company deleted", company=company_id, users=removed, rid=self._rid)
         self._json(200, {"ok": True, "message": "Your company and its users were deleted. Backups that still hold it expire on their own."},
                    self._set_cookie(None))
@@ -903,6 +1018,13 @@ class Handler(BaseHTTPRequestHandler):
                     for fid in e.get("attachments", [])
                     if fid in files
                 ]
+                job_now = next((j for j in state.get("jobs", []) if j["id"] == e.get("job_id")), {})
+                inv_now = next((i for i in job_now.get("invoices", []) if i["id"] == e.get("payapp_invoice_id")), None)
+                if e.get("payapp_invoice_id") and inv_now and inv_now.get("status") == "void":
+                    # A pay app voided after this email was approved is never sent.
+                    e["status"] = "failed: the pay app was voided after this email was approved"
+                    e["failed_at"] = now.isoformat(timespec="seconds")
+                    continue
                 if e.get("payapp_invoice_id"):
                     try:
                         pdf, name = self._payapp_pdf(state, e["job_id"], e["payapp_invoice_id"])
@@ -987,6 +1109,11 @@ class Handler(BaseHTTPRequestHandler):
         file_now = bool(job_id) and (query.get("file") or [""])[0] == "1"
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
+        user = auth.session_user(self._token())  # still signed in now the upload has arrived?
+        if not user:
+            self._json(401, {"error": "Sign in required."})
+            return
+        actor = user.get("name") or user.get("email") or "owner"
         company_id = user["company_id"]
         # Check and write the file before taking the state lock, so a big upload
         # never holds up other companies; delete it again if the import is refused.
@@ -1144,7 +1271,9 @@ class Handler(BaseHTTPRequestHandler):
                     snapshots = COMPANIES / "snapshots"
                     snapshots.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(company_path(company_id), snapshots / f"{company_id}-before-reset-{stamp}.json")
+                kept = {k: v for k, v in state.get("company", {}).items() if k in ("trial", "onboarding_dismissed")}
                 state = empty_state(name)
+                state["company"].update(kept)  # a reset doesn't restart the trial
             save_company(company_id, state)
             return 200, domain.snapshot(state)
         if path == "/api/jobs" and len(parts) == 2:

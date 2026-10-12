@@ -58,7 +58,7 @@ class HttpTests(unittest.TestCase):
         return res, parsed
 
     def signup(self, email, company="Pine Builders"):
-        res, data = self.request("POST", "/api/auth/signup", {"email": email, "password": PASSWORD, "name": "Pat Pine", "company_name": company})
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": email, "password": PASSWORD, "name": "Pat Pine", "company_name": company})
         self.assertEqual(res.status, 200, data)
         return res.getheader("Set-Cookie").split(";")[0], data["user"]
 
@@ -90,7 +90,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(res.status, 400)
 
     def test_signup_password_min_length(self):
-        res, data = self.request("POST", "/api/auth/signup", {"email": "short@example.com", "password": "123456789", "name": "Pat", "company_name": "P"})
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "short@example.com", "password": "123456789", "name": "Pat", "company_name": "P"})
         self.assertEqual(res.status, 400)
         self.assertIn("10 characters", data["error"])
 

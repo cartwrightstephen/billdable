@@ -35,7 +35,8 @@ PASSWORD = "correct horse battery"
 ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "BILLDABLE_URL", "HELPER_ADMIN_USER_IDS", "BACKUP_KEEP")
 
 
-class AccountHttpTests(unittest.TestCase):
+class ServerCase(unittest.TestCase):
+    """A server on a temporary data directory, a local mail server, and request helpers."""
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -94,7 +95,7 @@ class AccountHttpTests(unittest.TestCase):
             return res, payload
 
     def signup(self, email_addr, company="Pine & Sons"):
-        res, data = self.request("POST", "/api/auth/signup", {"email": email_addr, "password": PASSWORD, "name": "Pat Pine", "company_name": company})
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": email_addr, "password": PASSWORD, "name": "Pat Pine", "company_name": company})
         self.assertEqual(res.status, 200, data)
         return res.getheader("Set-Cookie").split(";")[0], data
 
@@ -115,6 +116,8 @@ class AccountHttpTests(unittest.TestCase):
                 return
             time.sleep(0.05)
 
+
+class AccountHttpTests(ServerCase):
     # ----- password reset -----
 
     def test_forgot_without_mail_says_so(self):
@@ -206,17 +209,18 @@ class AccountHttpTests(unittest.TestCase):
         res, out = self.request("POST", "/api/team/invite", {"email": "member@team.example", "role": "member"}, cookie=owner)
         self.assertEqual(res.status, 200, out)
         self.assertFalse(out["emailed"])  # no mail on this server: the owner gets the link to pass on
-        token = out["invite_link"].split("#invite=")[1]
+        self.assertIsNone(out["invite_link"])  # no BILLDABLE_URL: only the path, never a Host-header link
+        token = out["invite_path"].split("#invite=")[1]
         res, info = self.request("POST", "/api/auth/invite-info", {"token": token})
         self.assertEqual((info["email"], info["company_name"], info["role"]), ("member@team.example", "Team Co", "member"))
-        res, joined = self.request("POST", "/api/auth/accept-invite", {"token": token, "name": "Mo Member", "password": "member password 1"})
+        res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
         self.assertEqual(res.status, 200, joined)
         member = res.getheader("Set-Cookie").split(";")[0]
         self.assertEqual(joined["user"]["company_id"], data["user"]["company_id"])
         _, state = self.request("GET", "/api/state", cookie=member)
         self.assertEqual(state["company"]["name"], "Team Co")
         self.assertTrue(any(a["action"] == "team_join" for a in state["audit"]))
-        res, _ = self.request("POST", "/api/auth/accept-invite", {"token": token, "name": "Again", "password": "member password 1"})
+        res, _ = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Again", "password": "member password 1"})
         self.assertEqual(res.status, 400)
         # Members can't manage the team, reset the company or rotate addresses.
         for path, body in (("/api/team/invite", {"email": "x@team.example"}), ("/api/reset", {"confirm": "Team Co"}),
@@ -247,18 +251,25 @@ class AccountHttpTests(unittest.TestCase):
         _, team = self.request("GET", "/api/team", cookie=owner)
         res, _ = self.request("POST", f"/api/team/invites/{team['invites'][0]['id']}/revoke", {}, cookie=owner)
         self.assertEqual(res.status, 200)
-        res, _ = self.request("POST", "/api/auth/invite-info", {"token": out["invite_link"].split("#invite=")[1]})
+        res, _ = self.request("POST", "/api/auth/invite-info", {"token": out["invite_path"].split("#invite=")[1]})
         self.assertEqual(res.status, 404)
         res, _ = self.request("POST", "/api/team/invite", {"email": "other@team.example"}, cookie=owner)
         self.assertEqual(res.status, 409)
 
     def test_invite_is_emailed_when_mail_is_ready(self):
         self.mail_on()
-        owner, _ = self.signup("owner2@team.example", "Mail Team")
+        owner, data = self.signup("owner2@team.example", "Mail Team\n\nYour account is locked. Verify at https://evil.example")
         self.wait_for_mail(1)
         self.sink.messages.clear()
+        res, out = self.request("POST", "/api/team/invite", {"email": "new@team.example", "role": "owner"}, cookie=owner)
+        self.assertEqual(res.status, 409)  # an unconfirmed address can't send invites
+        self.assertEqual(self.sink.messages, [])
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))
         _, out = self.request("POST", "/api/team/invite", {"email": "new@team.example", "role": "owner"}, cookie=owner)
-        self.assertTrue(out["emailed"])
+        self.assertTrue(out["emailed"], out)
+        msg = email.message_from_bytes(self.sink.messages[-1]["data"], policy=email.policy.default)
+        self.assertEqual(msg["Subject"], "You're invited to a team on Billdable")  # nothing typed by users in the subject
+        self.assertNotIn("\n\nYour account is locked", msg.get_body(("plain",)).get_content())  # names are flattened
         base, token = self.link_token("invite")
         self.assertEqual(base, "https://app.billdable.test")
         self.assertEqual(self.sink.messages[-1]["to"], ["new@team.example"])
@@ -434,3 +445,217 @@ class BackupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFourTests(ServerCase):
+    """Regressions for the fourth independent review."""
+
+    def raw_post(self, path, body, cookie):
+        import socket
+        data = json.dumps(body).encode()
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        sock.sendall(f"POST {path} HTTP/1.1\r\nHost: x\r\nCookie: {cookie}\r\nContent-Type: application/json\r\n"
+                     f"Content-Length: {len(data)}\r\n\r\n".encode())
+        return sock, data
+
+    def test_request_started_before_removal_is_refused(self):  # H1
+        owner, odata = self.signup("h1-owner@team.example", "H1 Co")
+        _, out = self.request("POST", "/api/team/invite", {"email": "h1-b@team.example", "role": "owner"}, cookie=owner)
+        res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": out["invite_path"].split("#invite=")[1], "name": "B", "password": "b password 123"})
+        b_cookie = res.getheader("Set-Cookie").split(";")[0]
+        sock, data = self.raw_post("/api/team/invite", {"email": "h1-b2@team.example", "role": "owner"}, b_cookie)
+        res, _ = self.request("POST", f"/api/team/{joined['user']['id']}/remove", {}, cookie=owner)
+        self.assertEqual(res.status, 200)
+        sock.sendall(data)
+        reply = sock.recv(4096).decode()
+        sock.close()
+        self.assertIn(" 401 ", reply.split("\r\n")[0])
+        _, team = self.request("GET", "/api/team", cookie=owner)
+        self.assertEqual([i["email"] for i in team["invites"]], [])
+
+    def test_body_must_arrive_within_the_deadline(self):  # H1 (slow body)
+        cookie, _ = self.signup("slow@team.example")
+        old = server.BODY_SECONDS
+        server.BODY_SECONDS = 1
+        try:
+            sock, data = self.raw_post("/api/onboarding/dismiss", {"x": "y" * 50}, cookie)
+            for i in range(4):
+                sock.sendall(data[i:i + 1])
+                time.sleep(0.4)
+            reply = sock.recv(4096).decode()
+            sock.close()
+        finally:
+            server.BODY_SECONDS = old
+        self.assertIn(" 408 ", reply.split("\r\n")[0])
+
+    def test_demo_password_cannot_change(self):  # H2
+        res, cookie = self.login(auth.DEMO_EMAIL, auth.DEMO_PASSWORD)
+        res, _ = self.request("POST", "/api/auth/password", {"current": auth.DEMO_PASSWORD, "new": "attacker owned pw"}, cookie=cookie)
+        self.assertEqual(res.status, 400)
+        res, _ = self.login(auth.DEMO_EMAIL, auth.DEMO_PASSWORD)
+        self.assertEqual(res.status, 200)
+
+    def test_removal_changes_inbound_and_calendar_addresses(self):  # M1
+        owner, _ = self.signup("m1-owner@team.example", "M1 Co")
+        _, out = self.request("POST", "/api/team/invite", {"email": "m1-mem@team.example"}, cookie=owner)
+        res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": out["invite_path"].split("#invite=")[1], "name": "Mem", "password": "member password 1"})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        _, settings = self.request("GET", "/api/import/settings", cookie=member)
+        cal = settings["calendar_url"].split("/api/calendar/")[1]
+        res, _ = self.request("GET", f"/api/calendar/{cal}")
+        self.assertEqual(res.status, 200)
+        res, out = self.request("POST", f"/api/team/{joined['user']['id']}/remove", {}, cookie=owner)
+        self.assertTrue(out["rotated"])
+        res, _ = self.request("GET", f"/api/calendar/{cal}")
+        self.assertEqual(res.status, 404)
+
+    def test_invite_and_verify_limits(self):  # M2
+        owner, _ = self.signup("m2-owner@team.example", "M2 Co")
+        codes = [self.request("POST", "/api/team/invite", {"email": f"p{i}@m2.example"}, cookie=owner)[0].status for i in range(21)]
+        self.assertEqual(codes[:20], [200] * 20)
+        self.assertEqual(codes[20], 409)
+        self.mail_on()
+        cookie, _ = self.signup("m2-verify@team.example")
+        self.wait_for_mail(1)
+        codes = [self.request("POST", "/api/auth/resend-verify", {}, cookie=cookie)[0].status for _ in range(4)]
+        self.assertEqual(codes, [200, 200, 409, 409])  # sign-up used one of the three an hour
+
+    def test_password_change_ends_other_sessions(self):  # M3
+        cookie, _ = self.signup("m3@team.example")
+        _, other = self.login("m3@team.example")
+        res, _ = self.request("POST", "/api/auth/password", {"current": PASSWORD, "new": "another long password"}, cookie=cookie)
+        self.assertEqual(res.status, 200)
+        self.assertEqual(self.request("GET", "/api/auth/me", cookie=other)[0].status, 401)
+        self.assertEqual(self.request("GET", "/api/auth/me", cookie=cookie)[0].status, 200)
+        for _ in range(5):
+            self.request("POST", "/api/auth/password", {"current": "wrong wrong wrong", "new": "x" * 12}, cookie=cookie)
+        res, _ = self.request("POST", "/api/auth/password", {"current": "another long password", "new": "x" * 12}, cookie=cookie)
+        self.assertEqual(res.status, 429)
+
+    def test_voided_pay_app_is_not_emailed(self):  # L1
+        cookie, data = self.signup("l1@team.example")
+        job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
+               "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+        _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
+        job_id = state["jobs"][0]["id"]
+        self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 500_000}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job_id}/pencil", {}, cookie=cookie)
+        email_id = state["email_log"][-1]["id"]
+        self.request("POST", f"/api/jobs/{job_id}/void-draft", {}, cookie=cookie)
+        self.mail_on()
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))
+        _, state = self.request("POST", f"/api/outbox/{email_id}/retry", {}, cookie=cookie)
+        self.assertIn("voided", state["email_log"][-1]["status"])
+        self.assertEqual([m for m in self.sink.messages if "ap@park.example" in m["to"]], [])
+
+    def test_deleted_company_stays_deleted(self):  # L2
+        cookie, data = self.signup("l2@team.example", "L2 Co")
+        company_id = data["user"]["company_id"]
+        self.request("POST", "/api/helper/ask", {"q": "how do I add a job"}, cookie=cookie)
+        mailer.record_sent(company_id, 1)
+        self.request("POST", "/api/account/delete", {"password": PASSWORD, "confirm": "L2 Co"}, cookie=cookie)
+        server.save_company(company_id, server.empty_state("ghost"))  # a request that was already running
+        self.assertFalse(server.company_path(company_id).exists())
+        log = json.loads(helper.LOG_PATH.read_text()) if helper.LOG_PATH.exists() else []
+        self.assertFalse(any(e.get("company_id") == company_id for e in log))
+        self.assertEqual(mailer.sent_in_last_day(company_id), 0)
+
+    def test_reset_keeps_the_trial(self):  # L3
+        cookie, _ = self.signup("l3@team.example", "L3 Co")
+        _, before = self.request("GET", "/api/state", cookie=cookie)
+        _, after = self.request("POST", "/api/reset", {"confirm": "L3 Co"}, cookie=cookie)
+        self.assertEqual(after["trial"]["started_at"], before["trial"]["started_at"])
+
+    def test_an_earlier_reset_link_still_works(self):  # L4
+        self.signup("l4@team.example")
+        first, _ = auth.password_reset_token("l4@team.example")
+        auth.password_reset_token("l4@team.example")  # someone else asks again
+        user = auth.reset_password(first, "a new long password")
+        self.assertEqual(user["email"], "l4@team.example")
+
+    def test_removed_owners_invites_stop_working(self):  # L6
+        owner, _ = self.signup("l6@team.example", "L6 Co")
+        _, out = self.request("POST", "/api/team/invite", {"email": "l6-b@team.example", "role": "owner"}, cookie=owner)
+        res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": out["invite_path"].split("#invite=")[1], "name": "B", "password": "b password 123"})
+        b = res.getheader("Set-Cookie").split(";")[0]
+        _, out2 = self.request("POST", "/api/team/invite", {"email": "l6-c@team.example", "role": "owner"}, cookie=b)
+        self.request("POST", f"/api/team/{joined['user']['id']}/remove", {}, cookie=owner)
+        res, _ = self.request("POST", "/api/auth/invite-info", {"token": out2["invite_path"].split("#invite=")[1]})
+        self.assertEqual(res.status, 404)
+
+    def test_terms_pages_and_signup_checkbox(self):
+        res, data = self.request("POST", "/api/auth/signup", {"email": "noterms@team.example", "password": PASSWORD, "name": "N", "company_name": "N"})
+        self.assertEqual(res.status, 400)
+        self.assertIn("Terms", data["error"])
+        _, data = self.signup("terms@team.example")
+        stored = next(u for u in json.loads(auth.AUTH_PATH.read_text())["users"] if u["email"] == "terms@team.example")
+        self.assertEqual(stored["terms_version"], server.legal.TERMS_VERSION)
+        os.environ["LEGAL_ENTITY"] = "Billdable <script>LLC"
+        try:
+            res, page = self.request("GET", "/terms")
+        finally:
+            os.environ.pop("LEGAL_ENTITY", None)
+        self.assertEqual(res.status, 200)
+        self.assertIn(b"Billdable &lt;script&gt;LLC", page)
+        self.assertIn(b"Draft", page)
+        res, page = self.request("GET", "/privacy")
+        self.assertEqual(res.status, 200)
+        self.assertNotIn(b"{{", page)
+
+
+class ReviewFourOfflineTests(unittest.TestCase):
+    def test_pdf_summary_cases(self):  # M4, M5, L1
+        import domain, payapp_pdf
+        from seed import seed_state
+        from test_money import new_job, new_state, send_open
+        for job in seed_state()["jobs"]:
+            for inv in job["invoices"]:
+                f = payapp_pdf.summary(job, inv)
+                self.assertEqual(f["earned"] - f["previous"], f["due"], job["id"])
+        st = new_state()
+        job = new_job(st, contract=1_000_000)
+        domain.record_progress(st, job["id"], 400_000)
+        send_open(st, job)
+        domain.add_change_order(st, job["id"], "Extra", 200_000)
+        domain.include_change_order(st, job["id"], job["change_orders"][-1]["id"])
+        domain.record_progress(st, job["id"], 700_000)
+        f = payapp_pdf.summary(job, job["invoices"][-1])
+        self.assertEqual((f["unsigned_co"], f["contract_to_date"], f["balance"]), (200_000, 1_200_000, 300_000))
+        domain.void_draft(st, job["id"])
+        self.assertEqual(payapp_pdf.summary(job, job["invoices"][-1])["completed"], 900_000)
+        job["invoices"][-1]["pencil_status"] = "sent"
+        pdf = payapp_pdf.render("Co", job, st["payers"][0], job["invoices"][-1])
+        self.assertIn(b"(VOID)", pdf)
+        self.assertNotIn(b"PENCIL", pdf)
+
+    def test_restore_is_all_or_nothing(self):  # L7, L8
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = storage.DATA_DIR
+            storage.DATA_DIR = Path(tmp)
+            try:
+                (Path(tmp) / "companies" / "snapshots").mkdir(parents=True)
+                (Path(tmp) / "companies" / "co-1.json").write_text('{"live": 1}')
+                (Path(tmp) / "companies" / "snapshots" / "co-1-before.json").write_text("{}")
+                (Path(tmp) / "auth.json").write_text("{}")
+                made = backup.make_backup()
+                with tarfile.open(made) as tar:
+                    self.assertIn("companies/snapshots/co-1-before.json", tar.getnames())
+                bad = Path(tmp) / "bad.tar.gz"
+                with tarfile.open(bad, "w:gz") as tar:
+                    for name, data in (("auth.json", b"{}"), ("companies/x.json", b"{}"), ("uploads", b"x"), ("uploads/co-1/f.pdf", b"%PDF")):
+                        info = tarfile.TarInfo(name)
+                        info.size = len(data)
+                        tar.addfile(info, io.BytesIO(data))
+                with self.assertRaises(Exception):
+                    backup.restore(bad)
+                self.assertEqual((Path(tmp) / "companies" / "co-1.json").read_text(), '{"live": 1}')  # untouched
+                self.assertFalse(any(p.name.startswith("pre-restore-") for p in Path(tmp).iterdir()))
+                partial = Path(tmp) / "partial.tar.gz"
+                with tarfile.open(partial, "w:gz") as tar:
+                    info = tarfile.TarInfo("companies/x.json")
+                    info.size = 2
+                    tar.addfile(info, io.BytesIO(b"{}"))
+                with self.assertRaises(ValueError):
+                    backup.restore(partial)  # no auth.json: refused
+            finally:
+                storage.DATA_DIR = orig

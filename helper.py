@@ -474,3 +474,11 @@ def resolve(normalized: str) -> None:
             if e.get("normalized") == normalized:
                 e["resolved"] = True
         storage.write_json(LOG_PATH, data)
+
+
+def forget_company(company_id: str) -> None:
+    """Remove a deleted company's questions from the log."""
+    with LOCK:
+        if LOG_PATH.exists():
+            data = json.loads(LOG_PATH.read_text())
+            storage.write_json(LOG_PATH, [e for e in data if e.get("company_id") != company_id])
