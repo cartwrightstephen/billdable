@@ -41,6 +41,12 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `TWILIO_AUTH_TOKEN` | When set, inbound texts must carry a valid `X-Twilio-Signature`. Set it before giving out the SMS address. |
 | `TWILIO_NUMBER` | The texting number shown to users in the Inbox. Display only. |
 | `INBOUND_EMAIL_ADDRESS_TEMPLATE` | The forwarding address shown in the Inbox, with `{token}` where the company's secret goes, e.g. `jobs+{token}@in.example.com`. Display only; the email service does the routing. |
+| `SMTP_HOST` | Mail server for outgoing email. Unset: approved emails stay in the Outbox as "not sent: email delivery is not set up". |
+| `SMTP_PORT` | Default 587 (465 with `SMTP_SECURITY=ssl`). |
+| `SMTP_USER`, `SMTP_PASSWORD` | Login for the mail provider, if it needs one. |
+| `SMTP_SECURITY` | `starttls` (default), `ssl`, or `none` (local testing only). |
+| `MAIL_FROM` | Sender address on a domain the provider has verified (SPF and DKIM), e.g. `billing@billdable.com`. Required with `SMTP_HOST`. |
+| `MAIL_DAILY_LIMIT` | Emails per company per 24 hours, default 50. Sign-up doesn't verify anyone, so this keeps one account from using us to send spam. |
 
 ## Importing
 
@@ -51,6 +57,25 @@ Everything comes into the Inbox, gets a suggested job (job code, address, job na
 - Pasted text: an email (with or without headers), a text thread, or notes. Notes split at every line that starts with a date (`10/12`, `Oct 12, 2026`, `2026-10-12`) and file as daily records with that date.
 - Inbound email: `POST /api/inbound/email/<token>` accepts raw MIME, a multipart form post, or JSON. The field names handled are the common ones for SendGrid Inbound Parse, Mailgun routes and Postmark inbound, written from their documentation; none has been tested against the live service.
 - Inbound SMS: `POST /api/inbound/sms/<token>` accepts Twilio's form post and answers with empty TwiML. Photos sent by text are kept as links, not downloaded (Twilio media can require Twilio credentials).
+
+## Sending email
+
+Approved pay apps, pencil copies, follow-ups, waivers and retainage requests are emailed over SMTP (`mailer.py`). Postmark, SendGrid, Mailgun, Amazon SES and Google Workspace all accept SMTP, so pick one and set the variables above. Tested only against a local test server in `tests/test_mail.py`, not against a real provider.
+
+- From is "<company> via Billdable" at `MAIL_FROM`; Reply-To is the person who approved the send, so the payer's answer goes to the contractor.
+- A pay app goes with its full text, the schedule-of-values continuation sheet when the job has one, the packet checklist, and the files behind the records attached to its packet (up to 15 MB in total; anything left off is named in the email).
+- Delivery happens after the change is saved and the state lock is released, so a slow mail server never holds up other requests. Each email shows sending, sent (with the time), failed (with the reason) or not sent in the Outbox. Failed and unsent emails have Send again (`POST /api/outbox/{id}/retry`). The approval itself stands either way.
+- The demo account never sends. Header fields are stripped of line breaks.
+
+## Schedule of values
+
+Optional per job, set before the first pay app (`sov.py`). Each line is a quantity at a unit rate (a lump sum is quantity 1, unit LS); overhead and profit is a percentage on top of the base lines. The schedule total must equal the contract; the editor shows the difference and offers to change the contract amount instead.
+
+- Rows can be pasted from Excel or Google Sheets (tabs), a CSV, or a PDF (columns separated by runs of spaces). A header row is optional. Total and markup rows are skipped and reported; an "Overhead & profit 15%" row fills in the percentage.
+- Progress is entered as quantity done to date per line (percent for lump sums). Each pay app bills the difference since the last one, line by line, plus overhead and profit on that period's base work, less retainage, and stores the lines as a G703-style continuation sheet.
+- Quantities can't exceed the line (extra scope is a change order) or drop below what was billed. The schedule is fixed once a pay app exists; voiding the only pay app unlocks it.
+- An approved change order adds its own lump-sum line at the CO amount, without markup. A CO billed while unsigned is not billed again when approved.
+- All amounts are whole cents with half-up rounding on integers; the browser repeats the same arithmetic for the live totals.
 
 ## Calendar feed
 
@@ -82,6 +107,8 @@ Tests write to a temporary directory, never to `data/`.
 - `importer.py`: files, email parsing, notes splitting, job matching, the Inbox
 - `calendar_feed.py`: the .ics feed
 - `helper.py` and `helper/answers.json`: the helper and its answers
+- `sov.py`: schedule-of-values arithmetic and the paste reader
+- `mailer.py`: outgoing email over SMTP
 - `seed.py`: Hartline Remodeling sample data
 - `server.py`: stdlib HTTP server, cookie sessions, per-company JSON
 - `static/`: `index.html`, `app.js`, `styles.css` (the only files served)
@@ -99,7 +126,7 @@ Tests write to a temporary directory, never to `data/`.
 - Follow-ups are refused before the payer's follow-up window, and each one writes an Outbox row.
 - A job closes only when work is done, nothing is drafted, unbilled, outstanding or pending, retainage is released, and waivers are sent. Closed jobs are read-only except for notes.
 - A new job for an existing payer keeps the payer's approver and AP email. Change them in the Payer Playbook.
-- Email delivery is not built. Every "send" is recorded in the Outbox as `logged (stub — not delivered)`.
+- Every approved send is written to the Outbox and emailed when email is set up (see Sending email).
 
 ## API
 
@@ -117,7 +144,11 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/reset`: demo company returns to the Hartline seed. Any other company needs `{confirm: "<exact company name>"}` and gets a snapshot first.
 - `POST /api/jobs`: create a job. Required: `name`, `address`, `customer`, `approver`, `ap_email`, `contract_cents`. Optional: `phone`, `role` (`Owner` or `GC`), `retainage_pct` (0–20), `packet_notes`, `contract_number`.
 - `POST /api/jobs/{id}/done`: `{notes}`
-- `POST /api/jobs/{id}/progress`: `{completed_cents, notes}`
+- `POST /api/jobs/{id}/progress`: `{completed_cents, notes}` (jobs without a schedule of values)
+- `POST /api/sov/parse`: `{text}` → `{lines, warnings, op_pct}`; reads pasted rows, saves nothing
+- `POST /api/jobs/{id}/sov`: `{lines: [{id?, item, description, quantity, unit, rate}], op_pct, update_contract}`; an empty list removes the schedule
+- `POST /api/jobs/{id}/sov-progress`: `{done: {line_id: quantity_to_date}, notes}`; lump sums take a fraction (0.35 = 35%)
+- `POST /api/outbox/{id}/retry`: send a failed or unsent email again
 - `POST /api/jobs/{id}/draft`: returns 409 when there is nothing to draft or a draft is already open
 - `POST /api/jobs/{id}/send`
 - `POST /api/jobs/{id}/follow-up`
@@ -157,4 +188,4 @@ docker build -t billdable .
 docker run -p 8765:8765 billdable
 ```
 
-Local `python3 server.py` is the primary path. No external services or API keys required.
+Local `python3 server.py` is the primary path. No external services or API keys are required; email, texting and inbound email are off until their settings are filled in.

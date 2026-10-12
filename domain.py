@@ -13,6 +13,8 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import sov
+
 BILLED_STATUSES = {"sent", "approved", "partial", "paid"}
 DRAFT_STATUSES = {"draft", "awaiting_approval"}
 OPEN_FOR_PAYMENT = {"sent", "approved", "partial"}
@@ -49,10 +51,14 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
     retainage_on_drafts = sum(inv.get("retainage_cents", 0) for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES)
     retainage_held = job.get("retainage_held_cents", 0) + retainage_on_billed
     retainage_released = job.get("retainage_released_cents", 0)
-    unbilled_completed = max(
-        0,
-        job.get("completed_value_cents", contract_total) - billed - draft - retainage_held - retainage_on_drafts,
-    )
+    if sov.has_sov(job):
+        # Billed line by line from the schedule of values.
+        unbilled_completed = sov.unbilled(job)
+    else:
+        unbilled_completed = max(
+            0,
+            job.get("completed_value_cents", contract_total) - billed - draft - retainage_held - retainage_on_drafts,
+        )
     outstanding = max(0, billed - collected)
     return {
         "contract_cents": job["contract_cents"],
@@ -178,6 +184,8 @@ def record_progress(
     job = _open_job(state, job_id)
     if job.get("work_status") == "complete":
         raise GateError("Job is already marked done. Draft the remaining pay app instead.")
+    if sov.has_sov(job):
+        raise GateError("This job bills from its schedule of values. Enter quantities completed on each line instead.")
     contract_total = job["contract_cents"] + sum(
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
@@ -217,6 +225,8 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     job["completed_value_cents"] = job["contract_cents"] + sum(
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
+    for line in sov.lines(job):
+        line["done_milli"] = line["qty_milli"]
     audit(state, job_id, "job_done", f"{actor} marked {job['name']} done. Notes: {notes or 'none'}.", actor)
     _ensure_closeout_packet(state, job)
     return draft_invoice(state, job_id, actor="billdable")
@@ -237,6 +247,9 @@ def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "billdable", 
         return job
     money_file = job_money(job)
     work = money_file["unbilled_completed_cents"]
+    period = sov.this_period(job) if sov.has_sov(job) else None
+    if period:
+        work = period["total_cents"]
     pending_included = unsigned_cos_in_billing(job)
     gross = work + sum(co["amount_cents"] for co in pending_included)
     if gross <= 0:
@@ -249,10 +262,15 @@ def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "billdable", 
     amount = gross - retained
     number = f"PA-{job['code']}-{len(job['invoices']) + 1:02d}"
     lines = []
-    if work:
+    if period:
+        for entry in period["lines"]:
+            lines.append({"label": sov.line_label(entry), "amount_cents": entry["amount_cents"], "sov_line_id": entry["line_id"]})
+        if period["op_cents"]:
+            lines.append({"label": f"Overhead and profit {sov.op_bp(job) / 100:g}% on this period's base work", "amount_cents": period["op_cents"]})
+    elif work:
         lines.append({"label": "Completed contract work not yet billed", "amount_cents": work})
     for co in pending_included:
-        lines.append({"label": f"CO {co['number']} — {co['title']} (unsigned)", "amount_cents": co["amount_cents"]})
+        lines.append({"label": f"CO {co['number']} — {co['title']} (unsigned)", "amount_cents": co["amount_cents"], "co_id": co["id"]})
     if retained:
         lines.append({"label": f"Less retainage {pct}%", "amount_cents": -retained})
     invoice_id = f"inv-{job['id']}-{len(job['invoices']) + 1}"
@@ -280,6 +298,9 @@ def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "billdable", 
         "approved_by": None,
         "packet": packet,
         "packet_id": invoice_id if packet is not job.get("packet") else "job-packet",
+        "sov_lines": period["lines"] if period else [],
+        "sov_sheet": period["sheet"] if period else [],
+        "op_cents": period["op_cents"] if period else 0,
     }
     job["invoices"].append(invoice)
     audit(
@@ -301,11 +322,12 @@ def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dic
     if not draft:
         raise GateError("Draft a pay app first. The pencil copy is the draft sent for review.")
     payer = _payer(state, job["payer_id"])
-    lines = "; ".join(f"{l['label']} {money(l['amount_cents'])}" for l in draft.get("lines", []))
     subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
     body = (
-        f"Pencil copy of {draft['number']} for {money(draft['amount_cents'])} ({lines}). "
-        f"Please confirm quantities and change orders, or send corrections, before we submit. Approved by {actor}."
+        f"{payer.get('approver') or payer['name']},\n\n"
+        f"Here is the pencil copy of {draft['number']} for {job['name']}. "
+        "Please confirm the quantities and change orders, or send corrections, before we submit the formal pay app.\n\n"
+        f"{pay_app_text(state, job, draft)}\n\nApproved by {actor}."
     )
     _record_email(state, job_id, "pencil", payer["ap_email"], subject, body, actor)
     draft["pencil_sent_at"] = utcnow()
@@ -361,8 +383,14 @@ def approve_and_send(state: dict[str, Any], job_id: str, actor: str = "owner") -
     payer = _payer(state, job["payer_id"])
     job["external_status"] = f"Submitted to {payer['name']}, awaiting {payer['approver']}"
     subject = f"Pay application {invoice['number']} — {job['name']}"
-    body = f"Approved by {actor}. Amount {money(invoice['amount_cents'])}. Packet complete. Please process."
-    _record_email(state, job_id, "pay_app", payer["ap_email"], subject, body, actor)
+    files = _packet_file_ids(state, job, invoice)
+    body = (
+        f"{payer.get('approver') or payer['name']},\n\n"
+        f"Please find pay application {invoice['number']} for {job['name']}. Every packet item is accounted for"
+        + (f"; {len(files)} document{'s are' if len(files) != 1 else ' is'} attached." if files else ".")
+        + f"\n\n{pay_app_text(state, job, invoice)}\n\nApproved by {actor}."
+    )
+    _record_email(state, job_id, "pay_app", payer["ap_email"], subject, body, actor, attachments=files)
     audit(
         state,
         job_id,
@@ -598,6 +626,7 @@ def snapshot(state: dict[str, Any]) -> dict[str, Any]:
         job.setdefault("closeout_packet", [])
         job.setdefault("evidence", [])
         job.setdefault("done_notes", "")
+        job["sov_view"] = _sov_view(job)
     out.setdefault("email_log", [])
     out["totals"] = {
         "unbilled_cents": sum(j["money"]["unbilled_completed_cents"] for j in out["jobs"]),
@@ -615,9 +644,19 @@ def _refresh_draft_gate(job: dict[str, Any]) -> None:
     invoice["status"] = "draft" if blocker_lines(job) else "awaiting_approval"
 
 
-def _record_email(state: dict[str, Any], job_id: str, kind: str, to: str, subject: str, body: str, actor: str) -> None:
+def _record_email(
+    state: dict[str, Any],
+    job_id: str,
+    kind: str,
+    to: str,
+    subject: str,
+    body: str,
+    actor: str,
+    attachments: list[str] | None = None,
+) -> None:
+    """Write an approved email to the Outbox. The server delivers queued emails after the change is saved."""
     state.setdefault("email_log", []).append({
-        "id": f"eml-{len(state.get('email_log', [])) + 1}",
+        "id": "eml-" + secrets.token_hex(5),
         "at": utcnow(),
         "job_id": job_id,
         "kind": kind,
@@ -625,7 +664,8 @@ def _record_email(state: dict[str, Any], job_id: str, kind: str, to: str, subjec
         "subject": subject,
         "body": body,
         "approved_by": actor,
-        "status": "logged (stub — not delivered)",
+        "attachments": list(attachments or []),
+        "status": "queued",
     })
 
 
@@ -699,6 +739,8 @@ def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
     co["status"] = "approved"
     co["included_in_billing"] = False  # no longer pending
     co["approved_at"] = utcnow()
+    if sov.has_sov(job):
+        _add_co_line(job, co)
     if job.get("work_status") == "complete":
         # Work already marked done: completed work is the whole contract plus every
         # approved CO, so the new CO becomes billable. Recompute rather than add,
@@ -1163,3 +1205,218 @@ def create_job(
         actor,
     )
     return job
+
+
+# ---------- schedule of values ----------
+
+def _add_co_line(job: dict[str, Any], co: dict[str, Any]) -> None:
+    """An approved change order becomes its own schedule line, like a CO line on a G703."""
+    if any(line.get("co_id") == co["id"] for line in sov.lines(job)):
+        return
+    billed_already = any(
+        entry.get("co_id") == co["id"] for inv in sov.live_invoices(job) for entry in inv.get("lines", [])
+    )
+    job["sov"]["lines"].append({
+        "id": f"sov-co-{co['number']}",
+        "item": f"CO{co['number']}",
+        "description": f"CO {co['number']} — {co['title']}",
+        "unit": "LS",
+        "qty_milli": 1000,
+        "rate_cents": co["amount_cents"],
+        "scheduled_cents": co["amount_cents"],
+        # Billed while unsigned, or the job is done: the work is complete.
+        "done_milli": 1000 if billed_already or job.get("work_status") == "complete" else 0,
+        "co_id": co["id"],
+    })
+
+
+def save_sov(
+    state: dict[str, Any],
+    job_id: str,
+    raw_lines: Any,
+    op_pct: Any = 0,
+    update_contract: bool = False,
+    actor: str = "owner",
+) -> dict[str, Any]:
+    """Set the job's schedule of values. Allowed until the first pay app is drafted."""
+    job = _open_job(state, job_id)
+    live = sov.live_invoices(job)
+    if live:
+        raise GateError(
+            f"The schedule of values is fixed once a pay app exists ({live[0]['number']}). "
+            "Scope changes go through change orders, which add their own lines."
+        )
+    if job.get("work_status") == "complete":
+        raise GateError("The job is marked done. A schedule of values is set before billing starts.")
+    try:
+        new_lines = sov.clean_lines(raw_lines, sov.lines(job), lambda: "sov-" + secrets.token_hex(3))
+        bp = sov.to_bp(op_pct)
+    except sov.SovError as exc:
+        raise GateError("Schedule of values not saved.", [str(exc)])
+    if not new_lines:
+        if job.get("sov"):
+            job.pop("sov", None)
+            job["completed_value_cents"] = 0
+            audit(state, job_id, "sov_removed", f"{actor} removed the schedule of values; progress is entered in dollars again.", actor)
+        return job
+    candidate = {"op_bp": bp, "lines": new_lines}
+    figures = sov.totals({"sov": candidate})
+    if figures["contract_cents"] > MAX_AMOUNT_CENTS:
+        raise GateError(f"The schedule totals more than {money(MAX_AMOUNT_CENTS)}.")
+    contract = job["contract_cents"]
+    if figures["contract_cents"] != contract:
+        if not update_contract:
+            raise GateError(
+                f"The schedule totals {money(figures['contract_cents'])}, but the contract is {money(contract)}.",
+                [
+                    f"Lines {money(figures['base_scheduled_cents'])} + overhead and profit {money(figures['op_scheduled_cents'])} = {money(figures['contract_cents'])}.",
+                    f"Difference: {money(figures['contract_cents'] - contract)}.",
+                    "Adjust a line or the overhead and profit, or save it and change the contract amount to the schedule total.",
+                ],
+            )
+        job["contract_cents"] = figures["contract_cents"]
+        audit(
+            state,
+            job_id,
+            "contract_changed",
+            f"{actor} changed the contract amount from {money(contract)} to {money(figures['contract_cents'])} to match the schedule of values.",
+            actor,
+        )
+    earlier = job.get("completed_value_cents", 0)
+    job["sov"] = candidate
+    for co in job["change_orders"]:
+        if co["status"] == "approved":
+            _add_co_line(job, co)
+    job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
+    audit(
+        state,
+        job_id,
+        "sov_saved",
+        f"{actor} saved a schedule of values: {len(new_lines)} lines, {money(figures['base_scheduled_cents'])}"
+        + (f" plus {bp / 100:g}% overhead and profit ({money(figures['op_scheduled_cents'])})" if bp else "")
+        + "."
+        + (f" The earlier completed-to-date of {money(earlier)} is replaced by quantities." if earlier and not job["completed_value_cents"] else ""),
+        actor,
+    )
+    return job
+
+
+def record_sov_progress(
+    state: dict[str, Any],
+    job_id: str,
+    done: Any,
+    notes: str = "",
+    actor: str = "owner",
+) -> dict[str, Any]:
+    """Record quantities completed to date on schedule lines and draft the progress pay app."""
+    job = _open_job(state, job_id)
+    if not sov.has_sov(job):
+        raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
+    if job.get("work_status") == "complete":
+        raise GateError("Job is already marked done. Draft the remaining pay app instead.")
+    open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if open_draft:
+        raise GateError(f"{open_draft['number']} is still a draft. Send or void it, then record more progress.")
+    if not isinstance(done, dict) or not done:
+        raise GateError("Enter the quantity completed to date on at least one line.")
+    by_id = {line["id"]: line for line in sov.lines(job)}
+    billed_qty = sov.billed(job)["qty_by_line"]
+    changes, errors = [], []
+    for line_id, value in done.items():
+        line = by_id.get(line_id)
+        if not line:
+            errors.append(f"Line {str(line_id)[:20]} is not on this job's schedule.")
+            continue
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        name = f"{line.get('item', '')}. {line['description']}".strip(". ")
+        try:
+            qty = sov.to_milli(value, name)
+        except sov.SovError as exc:
+            errors.append(str(exc))
+            continue
+        if qty < 0:
+            errors.append(f"{name}: quantity can't be negative.")
+        elif qty > line["qty_milli"]:
+            errors.append(f"{name}: {sov.fmt_qty(qty)} is more than the scheduled {sov.fmt_qty(line['qty_milli'])} {line['unit']}. Extra scope is a change order.")
+        elif qty < billed_qty.get(line_id, 0):
+            errors.append(f"{name}: {sov.fmt_qty(billed_qty[line_id])} {line['unit']} is already billed; the quantity to date can't go below that.")
+        elif qty != line["done_milli"]:
+            changes.append((line, qty))
+    if errors:
+        raise GateError("Progress not recorded.", errors)
+    if not changes:
+        raise GateError("Nothing changed. Enter quantities to date that differ from the last ones recorded.")
+    summary = []
+    for line, qty in changes:
+        summary.append(f"{line['description']} {sov.fmt_qty(line['done_milli'])} → {sov.fmt_qty(qty)} {line['unit']}")
+        line["done_milli"] = qty
+    job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
+    notes = (notes or "").strip()[:2000]
+    if notes:
+        job["progress_notes"] = notes
+    audit(
+        state,
+        job_id,
+        "record_progress",
+        f"{actor} recorded quantities to date: {'; '.join(summary)}. Completed to date {money(job['completed_value_cents'])}."
+        + (f" {notes}" if notes else ""),
+        actor,
+    )
+    return draft_invoice(state, job_id, actor="billdable")
+
+
+def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:
+    """The pay app as plain text, for the email body and the pencil copy."""
+    out = [f"{invoice['number']} — {job['name']}", job.get("address", ""), ""]
+    for line in invoice.get("lines", []):
+        out.append(f"  {line['label']}: {money(line['amount_cents'])}")
+    out.append(f"  Amount due this application: {money(invoice['amount_cents'])}")
+    sheet = sov.continuation_sheet(job, invoice)
+    if sheet:
+        out += ["", "Schedule of values (continuation sheet, dollars):", sheet]
+    packet = [p for p in invoice.get("packet") or [] if p.get("required")]
+    if packet:
+        out += ["", "Packet:"]
+        out += [f"  [{'x' if p.get('present') else ' '}] {p['label']}" for p in packet]
+    return "\n".join(out).strip()
+
+
+def _packet_file_ids(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> list[str]:
+    """Stored files behind the records attached to this pay app's packet."""
+    records = {r["id"]: r for r in job.get("records", [])}
+    ids: list[str] = []
+    for item in invoice.get("packet") or []:
+        for att in item.get("attachments", []):
+            for file_id in (records.get(att.get("record_id")) or {}).get("file_ids", []):
+                if file_id not in ids:
+                    ids.append(file_id)
+    return ids
+
+
+def _sov_view(job: dict[str, Any]) -> dict[str, Any]:
+    """What the job page shows for the schedule of values: per-line figures and whether it can be edited."""
+    editable = not job.get("closed") and job.get("work_status") != "complete" and not sov.live_invoices(job)
+    if not sov.has_sov(job):
+        return {"present": False, "editable": editable}
+    figures = sov.totals(job)
+    already = sov.billed(job)
+    rows = []
+    for line in sov.lines(job):
+        to_date = sov.line_to_date(line)
+        rows.append({
+            **line,
+            "to_date_cents": to_date,
+            "billed_cents": already["by_line"].get(line["id"], 0),
+            "billed_qty_milli": already["qty_by_line"].get(line["id"], 0),
+            "pct": (100 * to_date) // line["scheduled_cents"] if line["scheduled_cents"] else 0,
+            "lump_sum": line["unit"].upper() == "LS" and line["qty_milli"] == 1000,
+        })
+    return {
+        "present": True,
+        "editable": editable,
+        "op_bp": sov.op_bp(job),
+        "op_billed_cents": already["op_cents"],
+        "totals": figures,
+        "lines": rows,
+    }

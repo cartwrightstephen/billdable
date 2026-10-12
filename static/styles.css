@@ -201,3 +201,21 @@ details.card > summary { cursor: pointer; }
 /* In the nav, keep the (i) at the far right so a click on the label always opens the page. */
 .nav button { display: flex; align-items: center; }
 .nav button .info { margin-left: auto; }
+
+/* schedule of values */
+.sov-table td, .sov-table th { padding: 4px 6px; }
+.sov-table td.num, .sov-table th { white-space: nowrap; }
+.sov-table .sov-total td { font-weight: 600; border-top: 1px solid var(--line, #ddd); }
+.sov-in { padding: 4px 6px; font: inherit; border: 1px solid var(--line, #d8d2c8); border-radius: 6px; background: #fff; width: 100%; box-sizing: border-box; }
+.sov-in.sov-item { width: 4.5em; }
+.sov-in.sov-unit { width: 4.5em; }
+.sov-in.sov-num { width: 7em; text-align: right; }
+.sov-in.sov-desc { min-width: 14em; }
+#sov-op { width: 5em; }
+.sov-op-label { margin-left: 12px; }
+.sov-paste { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; }
+.sov-paste textarea { flex: 1; font: inherit; padding: 6px 8px; border: 1px dashed var(--line, #d8d2c8); border-radius: 8px; }
+.sov-warn { background: #f8efd8; border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 13px; display: grid; gap: 2px; }
+.sov-sums { max-width: 520px; margin: 8px 0; }
+#sov-sum-diff.ok { color: var(--green); }
+.email-body { white-space: pre-wrap; max-height: 9em; overflow: auto; }

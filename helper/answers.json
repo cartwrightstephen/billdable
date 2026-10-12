@@ -450,7 +450,7 @@
         "what payapp",
         "define payapp"
       ],
-      "answer": "A pay app (pay application) is the bill for work done this period. It lists what was completed at the contract rates, adds signed change orders, and subtracts retainage. Many contracts also require a packet of paperwork with it.",
+      "answer": "A pay app (pay application) is the bill for work done this period. It lists what was completed, line by line if the job has a schedule of values, adds signed change orders, and subtracts retainage. Many contracts also require a packet of paperwork with it.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -473,7 +473,7 @@
         "completed to date",
         "monthly"
       ],
-      "answer": "Open the job and click Progress pay app. Enter the completed-to-date dollar amount (the total done so far, not just this month). Billdable drafts a pay app for the difference since the last one, withholds retainage, and builds the packet from the payer's playbook. The job stays in progress.",
+      "answer": "Open the job and click Progress pay app. With a schedule of values, enter how much of each line is done to date; without one, enter the completed-to-date dollar amount (the total done so far, not just this month). Billdable drafts a pay app for the difference since the last one, withholds retainage, and builds the packet from the payer's playbook. The job stays in progress.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -524,13 +524,13 @@
         "send",
         "approve"
       ],
-      "answer": "Open the job and click Approve & send. It stays off while the packet is missing something or an unsigned change order is on the pay app; the red box lists what's missing. Email delivery isn't built yet: the send is recorded in the Outbox with the payer's AP email, and you send the documents yourself for now.",
+      "answer": "Open the job and click Approve & send. It stays off while the packet is missing something or an unsigned change order is on the pay app; the red box lists what's missing. When email is set up, the pay app goes to the payer's AP email with the packet documents attached, from your company name, and replies come back to you. The Outbox shows whether it was delivered.",
       "handler": "blockers",
       "needs_job": false,
       "actions": [],
       "follow_ups": [
         "What is a packet?",
-        "Is email actually sent?"
+        "Did the customer get my pay app?"
       ]
     },
     {
@@ -599,19 +599,37 @@
         "What is a schedule of values?",
         "SOV",
         "Line items on a pay app",
-        "Can I bill by quantity and unit rate?"
+        "Can I bill by quantity and unit rate?",
+        "How do I set up a schedule of values?",
+        "Bill by quantities and unit rates",
+        "Can I paste my estimate?",
+        "Import my schedule of values from Excel",
+        "Overhead and profit",
+        "G703 continuation sheet"
       ],
       "keywords": [
         "schedule values",
         "sov",
         "line item",
         "unit rate",
-        "quantity"
+        "quantity",
+        "schedule of values",
+        "quantities",
+        "line items",
+        "overhead",
+        "g703",
+        "continuation"
       ],
-      "answer": "A schedule of values breaks the contract into line items, each with a value; each pay app bills a percent of each line. Billdable bills one lump-sum line per pay app today. Line items with quantities, unit rates and overhead and profit are planned for after the first pilot.",
+      "answer": "A schedule of values breaks the contract into lines: a quantity at a unit rate (or a lump sum), with overhead and profit on top. Open the job and click Set up schedule of values, before the first pay app. Paste rows straight from Excel, Google Sheets, a CSV or your estimate PDF, or type them; the total has to equal the contract. Each progress pay app then asks how much of each line is done to date and bills the difference line by line, like an AIA G703 continuation sheet. Approved change orders add their own lines.",
       "handler": null,
       "needs_job": false,
-      "actions": [],
+      "actions": [
+        {
+          "type": "nav",
+          "view": "jobs",
+          "label": "Go to Jobs"
+        }
+      ],
       "follow_ups": []
     },
     {
@@ -900,7 +918,7 @@
         "not due",
         "how often"
       ],
-      "answer": "Each payer has follow-up days in its playbook. A follow-up on a sent pay app is allowed once that many days have passed since it was sent (or since the last follow-up). If you try earlier, Billdable tells you the date it's due. Each follow-up is written to the Outbox.",
+      "answer": "Each payer has follow-up days in its playbook. A follow-up on a sent pay app is allowed once that many days have passed since it was sent (or since the last follow-up). If you try earlier, Billdable tells you the date it's due. Each follow-up is emailed to the payer's AP contact and listed in the Outbox.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -943,14 +961,21 @@
         "Does Billdable send emails?",
         "Outbox",
         "Where do I see what I sent?",
-        "What did I send?"
+        "What did I send?",
+        "Why did my email fail?",
+        "Send the email again",
+        "Who does the email come from?"
       ],
       "keywords": [
         "outbox",
         "deliver",
-        "actually send"
+        "actually send",
+        "failed",
+        "bounced",
+        "send again",
+        "delivered"
       ],
-      "answer": "Not yet. Every approved send and follow-up is recorded in the Outbox with the address it would go to, but email delivery isn't built. Send the documents from your own email for now. Real sending, behind the same approval step, is on the build list.",
+      "answer": "The Outbox lists every approved email and what happened to it: sent (with the time), failed (with the reason, such as an address the payer's mail server refused), or not sent. A failed or unsent email has a Send again button. Pay apps go out with the packet documents attached, from \"your company via Billdable\", and the payer's reply goes to whoever approved the send. The demo account never sends real email.",
       "handler": null,
       "needs_job": false,
       "actions": [

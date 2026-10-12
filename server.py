@@ -20,7 +20,7 @@ import shutil
 import sys
 import threading
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,6 +31,8 @@ import calendar_feed
 import domain
 import helper
 import importer
+import mailer
+import sov
 import storage
 from seed import seed_state
 
@@ -359,6 +361,9 @@ class Handler(BaseHTTPRequestHandler):
                 "sms_signature_check": bool(os.environ.get("TWILIO_AUTH_TOKEN")),
                 "calendar_url": f"{base}/api/calendar/{tokens['calendar']}.ics",
                 "max_file_mb": importer.MAX_FILE_BYTES // (1024 * 1024),
+                "mail_configured": mailer.configured(),
+                "mail_from": mailer.settings()["from"] if mailer.configured() else "",
+                "mail_daily_limit": mailer.settings()["daily_limit"],
                 "file_types": sorted(e.lstrip(".") for e in importer.ALLOWED_FILES),
             })
             return
@@ -493,6 +498,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(*self._change(company_id, fn))
             return
+        if path == "/api/sov/parse":
+            # Read pasted rows; nothing is saved until the schedule itself is saved.
+            self._json(200, sov.parse_rows(_text(body, "text", limit=200_000)))
+            return
+        if path.startswith("/api/outbox/") and len(parts) == 4 and parts[3] == "retry":
+            self._retry_email(company_id, user, parts[2])
+            return
         if path == "/api/import/rotate":
             kind = _text(body, "kind")
             if kind not in {"email", "sms", "calendar"}:
@@ -510,9 +522,97 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError, TypeError, OverflowError) as exc:
             self._json(400, {"error": f"Bad request: {exc}"})
             return
+        if code == 200:
+            # Approved emails are delivered after the change is saved and the lock is released.
+            payload = self._deliver_queued(company_id, user) or payload
         # The reply is written after the lock is released, so a client that
         # stops reading cannot stall every other company's requests.
         self._json(code, payload)
+
+    # ----- email delivery -----
+
+    def _deliver_queued(self, company_id: str, user: dict, only: set | None = None) -> dict | None:
+        """Send this company's queued emails. Returns the new snapshot, or None if nothing was queued."""
+        cfg = mailer.settings()
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with STATE_LOCK:
+            state = load_company(company_id)
+            log = state.get("email_log", [])
+            queued = [e for e in log if e.get("status") == "queued" and (only is None or e["id"] in only)]
+            if not queued:
+                return None
+            if company_id == auth.DEMO_COMPANY_ID or not mailer.configured():
+                reason = mailer.DEMO if company_id == auth.DEMO_COMPANY_ID else mailer.NOT_SET_UP
+                for e in queued:
+                    e["status"] = reason
+                save_company(company_id, state)
+                return domain.snapshot(state)
+            in_flight = sum(1 for e in log if e.get("status") == "sending")
+            room = max(0, cfg["daily_limit"] - mailer.sent_in_last_day(log) - in_flight)
+            batch, over = queued[:room], queued[room:]
+            for e in over:
+                e["status"] = f"not sent: daily limit of {cfg['daily_limit']} emails reached; retry tomorrow"
+            files = {f["id"]: f for f in state.get("files", [])}
+            work = []
+            for e in batch:
+                e["status"] = "sending"
+                e["sending_at"] = now
+                e["reply_to"] = user.get("email", "")
+                attach = [
+                    (files[fid]["name"], importer.file_path(company_id, files[fid]))
+                    for fid in e.get("attachments", [])
+                    if fid in files
+                ]
+                work.append((dict(e), attach))
+            company_name = state.get("company", {}).get("name", "")
+            save_company(company_id, state)
+            if not batch:
+                return domain.snapshot(state)
+        # Outside the lock: read attachments and talk to the mail server.
+        messages, outcome = [], {}
+        for entry, attach in work:
+            try:
+                msg, left_off = mailer.build_message(entry, company_name, user.get("email", ""), attach, cfg)
+                messages.append((entry["id"], msg, left_off))
+            except ValueError as exc:
+                outcome[entry["id"]] = (f"failed: {exc}", [])
+        results = mailer.send([m for _, m, _ in messages], cfg)
+        for (entry_id, _, left_off), error in zip(messages, results):
+            outcome[entry_id] = (f"failed: {error}" if error else "sent", left_off)
+        done_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with STATE_LOCK:
+            state = load_company(company_id)
+            for e in state.get("email_log", []):
+                if e["id"] in outcome and e.get("status") == "sending":
+                    status, left_off = outcome[e["id"]]
+                    e["status"] = status
+                    if status == "sent":
+                        e["delivered_at"] = done_at
+                        if left_off:
+                            e["not_attached"] = left_off
+                    else:
+                        e["failed_at"] = done_at
+            save_company(company_id, state)
+            return domain.snapshot(state)
+
+    def _retry_email(self, company_id: str, user: dict, email_id: str) -> None:
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat(timespec="seconds")
+        with STATE_LOCK:
+            state = load_company(company_id)
+            entry = next((e for e in state.get("email_log", []) if e["id"] == email_id), None)
+            if not entry:
+                self._json(404, {"error": "Not found"})
+                return
+            status = entry.get("status", "")
+            stuck = status == "sending" and (entry.get("sending_at") or "") < stale
+            if not (status.startswith("failed") or status.startswith("not sent") or stuck):
+                self._json(409, {"error": f"This email is {status}; only a failed or unsent email can be sent again."})
+                return
+            entry["status"] = "queued"
+            entry["retried"] = entry.get("retried", 0) + 1
+            save_company(company_id, state)
+            snap = domain.snapshot(state)
+        self._json(200, self._deliver_queued(company_id, user, {email_id}) or snap)
 
     # ----- importing -----
 
@@ -709,6 +809,12 @@ class Handler(BaseHTTPRequestHandler):
                 domain.record_progress(
                     state, job_id, _whole_number(body, "completed_cents", "Completed-to-date", 0), _text(body, "notes"), actor
                 )
+            elif action == "sov":
+                domain.save_sov(
+                    state, job_id, body.get("lines"), body.get("op_pct"), body.get("update_contract") is True, actor
+                )
+            elif action == "sov-progress":
+                domain.record_sov_progress(state, job_id, body.get("done"), _text(body, "notes"), actor)
             elif action == "resolve" and len(parts) == 5:
                 domain.resolve_packet_item(state, job_id, parts[4], actor, reason=_text(body, "reason"))
             elif action == "draft":

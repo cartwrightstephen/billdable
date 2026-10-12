@@ -25,6 +25,8 @@ CASES = {
     "what is a pencil draft": "pencil", "can billdable call my customers": "voice-calls", "how to add a new job": "create-job",
     "can my bookkeeper log in": "team-users", "where do i see what i sent": "email-sent", "status of oak street": "job-status",
     "how do i delete my account": "delete-account", "is my data backed up": "backups",
+    "how do i set up a schedule of values": "sov", "can i paste my estimate from excel": "sov", "bill by unit rates": "sov",
+    "why did my email fail": "email-sent", "did the customer get my pay app": "email-sent", "send the email again": "email-sent",
 }
 
 

@@ -23,6 +23,7 @@ let toastTimer = null;
 const DEMO_COMPANY_ID = "co-hartline";
 let calJobFilter = "all";
 let importSettings = null;
+let sovDraft = null; // schedule-of-values editor: { jobId, lines: [{id,item,description,quantity,unit,rate}], op_pct, warnings } (raw text, not escaped)
 const RECORD_KINDS = {
   note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
   waiver: "Lien waiver", pay_app: "Pay app / invoice backup", ticket: "Delivery or time ticket", other: "Other",
@@ -81,7 +82,7 @@ const FIELD_HELP = {
   "closed": "Date the job was closed for the record.",
   "notes": "Completion notes, or the current status.",
   "when": "When it happened.",
-  "to": "Who it was addressed to. Email delivery is not built yet; nothing has left Billdable.",
+  "to": "Who it was addressed to: the payer's AP email from the playbook.",
   "subject": "Subject line of the logged message.",
   "actor": "The signed-in person who took the action.",
   "action": "What was done.",
@@ -102,6 +103,25 @@ const FIELD_HELP = {
   "usual approval days": "How long this payer usually takes to approve. Drives the expected-approval date on the calendar.",
   "packet": "What this payer requires with every pay app, separated by commas. New pay apps list these items.",
   "rejects when": "Why this payer has sent pay apps back before. Grows as you teach it.",
+  // schedule of values
+  "item": "The line number on the schedule of values, as the payer's form numbers it.",
+  "description": "What the line covers, in the words the payer will recognize.",
+  "qty": "How many units the line covers. A lump-sum line is 1 (unit LS).",
+  "unit": "The unit the quantity is counted in: ea, lf, sf, hr, or LS for a lump sum.",
+  "unit rate $": "Price per unit, before overhead and profit.",
+  "unit rate": "Price per unit, before overhead and profit.",
+  "scheduled value": "Quantity × unit rate: what this line is worth when finished.",
+  "done to date": "How much of the line is finished so far, counted from the start of the job.",
+  "earned to date": "The value of the work done to date on this line.",
+  "balance to finish": "What is left to bill on this line when the work is done.",
+  "overhead and profit": "A percentage added on top of the base lines, as your estimate carries it. Change orders are added at their own amount.",
+  "schedule lines": "The total of quantity × unit rate across the lines.",
+  "schedule total": "Lines plus overhead and profit. It has to equal the contract amount.",
+  "scheduled": "How much this line covers.",
+  "previous": "Billed on earlier pay apps.",
+  "this period": "Billed on this pay app: work done since the last one.",
+  "total to date": "Previous plus this period.",
+  "%": "Share of the line's scheduled value billed to date.",
   "copy": "Who to copy on pay apps for this payer.",
 };
 const NAV_HELP = {
@@ -119,7 +139,7 @@ const NAV_HELP = {
   retainage: "Money the payer holds back until closeout, and what is holding it up.",
   history: "Jobs closed for the record.",
   playbook: "What each payer requires, who approves, how long they take, and why they reject.",
-  outbox: "Every message approved to send. Email delivery is not built yet.",
+  outbox: "Every email approved to send, and whether it was delivered.",
   audit: "Every action, who took it and when.",
   help: "What the terms mean and how to start.",
   "helper-admin": "Questions the helper couldn't answer, and the answers it uses. Team only.",
@@ -246,7 +266,7 @@ function toast(msg) {
   el.textContent = msg;
   el.style.display = "block";
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.style.display = "none"; }, 2200);
+  toastTimer = setTimeout(() => { el.style.display = "none"; }, Math.min(9000, Math.max(2200, String(msg).length * 50)));
 }
 
 async function load() {
@@ -434,6 +454,7 @@ async function logout() {
 }
 
 async function post(path, body = {}) {
+  const emailsBefore = state && state.email_log ? state.email_log.length : 0;
   let res;
   try {
     res = await fetch(path, {
@@ -463,6 +484,19 @@ async function post(path, body = {}) {
     toast("Saved");
   }
   await load();
+  if (res.ok && state && state.email_log && state.email_log.length > emailsBefore) toast(emailOutcome(state.email_log.slice(emailsBefore)));
+  return { ok: res.ok, status: res.status, data };
+}
+
+// One line for the toast after an action that wrote to the Outbox.
+function emailOutcome(entries) {
+  return entries.map(e => {
+    const to = unesc(e.to), status = unesc(e.status || "");
+    if (status === "sent") return `Emailed ${to}.`;
+    if (status.startsWith("failed")) return `Saved, but the email to ${to} ${status.replace(/^failed: /, "failed: ")}. Open the Outbox to send it again.`;
+    if (status.startsWith("not sent")) return `Saved. The email to ${to} was ${status}.`;
+    return `Saved. Email to ${to}: ${status}.`;
+  }).join(" ");
 }
 
 function nav(view, jobId = null, detailId = null) {
@@ -552,7 +586,8 @@ function render() {
   document.getElementById("main").innerHTML = views[currentView] ? views[currentView]() : "<p>Unknown view</p>";
   bindActions();
   decorateHelp(document.getElementById("app"));
-  if (["inbox", "calendar"].includes(currentView)) loadImportSettings();
+  if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
+  if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin") loadHelperReview();
   updateAiContext();
 }
@@ -577,7 +612,17 @@ function bindActions() {
       e.preventDefault();
       const a = el.dataset.action;
       const id = el.dataset.id;
+      if (a === "email-retry") e.stopPropagation();
       if (a === "draft") await post(`/api/jobs/${id}/draft`);
+      else if (a === "sov-start") { sovStartEdit(state.jobs.find(x => x.id === id)); render(); }
+      else if (a === "sov-add") { sovDraft.lines.push(blankSovLine()); render(); document.querySelectorAll(".sov-desc")[sovDraft.lines.length - 1]?.focus(); }
+      else if (a === "sov-remove") { sovDraft.lines.splice(+el.dataset.row, 1); if (!sovDraft.lines.length) sovDraft.lines.push(blankSovLine()); render(); }
+      else if (a === "sov-read") await sovReadPaste();
+      else if (a === "sov-cancel") { sovDraft = null; render(); }
+      else if (a === "sov-save") await sovSave(id, false);
+      else if (a === "sov-save-contract") await sovSave(id, true);
+      else if (a === "sov-progress") await sovProgress(id);
+      else if (a === "email-retry") await post(`/api/outbox/${el.dataset.email}/retry`);
       else if (a === "send") await post(`/api/jobs/${id}/send`);
       else if (a === "progress") {
         const dollars = parseFloat(document.querySelector("#progress-amt")?.value || "0");
@@ -880,16 +925,272 @@ async function loadImportSettings() {
   } catch (_) { /* the cards keep their "loading" text; the banner covers outages */ }
 }
 
+function emailStatusHtml(e) {
+  const st = e.status || "";
+  const cls = st === "sent" ? "green" : st.startsWith("failed") ? "red" : st.startsWith("not sent") ? "amber" : "";
+  const when = st === "sent" && e.delivered_at ? `<div class="sub">${e.delivered_at.slice(0, 16).replace("T", " ")}</div>` : "";
+  const retry = (st.startsWith("failed") || st.startsWith("not sent")) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
+  return `<span class="pill ${cls}">${st}</span>${when}${retry}`;
+}
+
 function fillImportSettings() {
   const s = importSettings;
   if (!s) return;
   const set = (id, value) => { const el = document.getElementById(id); if (el) el.innerHTML = value; };
+  const isDemo = me && me.company_id === DEMO_COMPANY_ID;
+  set("outbox-mode", isDemo
+    ? "This is the demo account: nothing is emailed from it."
+    : s.mail_configured
+      ? `Approved emails are sent from <strong>${s.mail_from}</strong> with your company name, and replies go to the person who approved them. Up to ${s.mail_daily_limit} a day.`
+      : "Email delivery is not set up on this server yet, so nothing here has left Billdable. Once it is, use Send again on any row.");
   set("email-webhook", s.email_webhook);
   set("sms-webhook", s.sms_webhook);
   set("cal-url", s.calendar_url);
   set("email-address", s.email_address ? `Forward or BCC job email to <strong>${s.email_address}</strong>.` : "No forwarding address is set up yet (an email provider has to be connected first; see steps).");
   set("sms-number", s.sms_number ? `Text photos and notes to <strong>${s.sms_number}</strong>.` : "No texting number is set up yet (a Twilio number has to be connected first; see steps).");
 }
+
+// ---------- schedule of values ----------
+// Same integer arithmetic as sov.py, so the totals shown here match what the server saves.
+function sovNum(v) {
+  const t = String(v ?? "").replace(/[$,\s%]/g, "");
+  if (!t || !/^-?\d*\.?\d+$/.test(t)) return NaN;
+  return parseFloat(t);
+}
+function sovMilli(v) { const n = sovNum(v); return isNaN(n) ? NaN : Math.round(n * 1000); }
+function sovCents(v) { const n = sovNum(v); return isNaN(n) ? NaN : Math.round(n * 100); }
+function sovExtend(q, r) { return Math.floor((q * r + 500) / 1000); }
+function sovMarkup(base, bp) { return Math.floor((base * bp + 5000) / 10000); }
+function fmtQty(milli) {
+  const n = milli / 1000;
+  return n.toLocaleString("en-US", { maximumFractionDigits: 3 });
+}
+function blankSovLine() { return { id: "", item: "", description: "", quantity: "", unit: "", rate: "" }; }
+
+function sovStartEdit(j) {
+  const v = j.sov_view || {};
+  const base = (v.lines || []).filter(l => !l.co_id);
+  sovDraft = {
+    jobId: j.id,
+    lines: base.length
+      ? base.map(l => ({ id: l.id, item: unesc(l.item), description: unesc(l.description), quantity: String(l.qty_milli / 1000), unit: unesc(l.unit), rate: (l.rate_cents / 100).toFixed(2) }))
+      : [blankSovLine(), blankSovLine(), blankSovLine()],
+    op_pct: v.op_bp ? String(v.op_bp / 100) : "",
+    warnings: [],
+  };
+}
+
+function sovFilledLines() {
+  return sovDraft.lines.filter(l => [l.description, l.quantity, l.rate].some(x => String(x || "").trim()));
+}
+
+function sovDraftTotals() {
+  let base = 0, bad = 0;
+  const amounts = sovDraft.lines.map(l => {
+    const filled = [l.description, l.quantity, l.rate].some(x => String(x || "").trim());
+    if (!filled) return null;
+    const q = String(l.quantity || "").trim() ? sovMilli(l.quantity) : 1000;
+    const r = sovCents(l.rate);
+    if (!(q > 0) || !(r > 0) || !String(l.description || "").trim()) { bad++; return NaN; }
+    const a = sovExtend(q, r);
+    base += a;
+    return a;
+  });
+  const bpRaw = String(sovDraft.op_pct || "").trim();
+  const bp = bpRaw ? Math.round(sovNum(bpRaw) * 100) : 0;
+  const op = isNaN(bp) ? 0 : sovMarkup(base, bp);
+  return { amounts, base, bp, op, total: base + op, bad, badBp: isNaN(bp) || bp < 0 || bp > 5000 };
+}
+
+function updateSovTotals() {
+  if (!sovDraft) return;
+  const j = state.jobs.find(x => x.id === sovDraft.jobId);
+  if (!j) return;
+  const t = sovDraftTotals();
+  t.amounts.forEach((a, i) => {
+    const el = document.getElementById(`sov-amt-${i}`);
+    if (el) el.textContent = a === null ? "" : isNaN(a) ? "check" : money(a);
+  });
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set("sov-sum-lines", money(t.base));
+  set("sov-sum-op", t.badBp ? "check the percent" : money(t.op));
+  set("sov-sum-total", money(t.total));
+  const diff = t.total - j.contract_cents;
+  set("sov-sum-diff", diff === 0 ? "matches the contract" : `${diff > 0 ? "+" : "−"}${money(Math.abs(diff))} vs the contract`);
+  const d = document.getElementById("sov-sum-diff");
+  if (d) d.className = diff === 0 ? "ok" : "blocker";
+  const alt = document.querySelector('[data-action="sov-save-contract"]');
+  if (alt) {
+    alt.hidden = diff === 0 || t.base === 0;
+    alt.textContent = `Save and change the contract to ${money(t.total)}`;
+  }
+}
+
+function sovEditorHtml(j) {
+  const rows = sovDraft.lines.map((l, i) => `
+    <tr>
+      <td><input class="sov-in sov-item" data-sov-row="${i}" data-sov-field="item" value="${esc(l.item)}" placeholder="${i + 1}"></td>
+      <td><input class="sov-in sov-desc" data-sov-row="${i}" data-sov-field="description" value="${esc(l.description)}" placeholder="Rough-in wiring"></td>
+      <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="quantity" value="${esc(l.quantity)}" placeholder="1" inputmode="decimal"></td>
+      <td><input class="sov-in sov-unit" data-sov-row="${i}" data-sov-field="unit" value="${esc(l.unit)}" placeholder="LS"></td>
+      <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="rate" value="${esc(l.rate)}" placeholder="0.00" inputmode="decimal"></td>
+      <td class="num" id="sov-amt-${i}"></td>
+      <td><button class="btn small secondary" data-action="sov-remove" data-row="${i}" title="Remove line">×</button></td>
+    </tr>`).join("");
+  return `
+    <p class="sub">Each line is a quantity at a unit rate; a lump sum is quantity 1 (unit LS) at its amount. Overhead and profit goes on top of the base lines. Approved change orders add their own lines.</p>
+    <div class="sov-paste">
+      <textarea id="sov-paste" rows="3" placeholder="Paste rows from Excel, Google Sheets, a CSV or a PDF: description, quantity, unit, unit rate, or a lump-sum amount. A header row is optional; total rows are skipped."></textarea>
+      <button class="btn small" data-action="sov-read">Read pasted rows</button>
+    </div>
+    ${sovDraft.warnings.length ? `<div class="sov-warn">${sovDraft.warnings.map(w => `<div>${esc(w)}</div>`).join("")}</div>` : ""}
+    <div class="table-wrap"><table class="sov-table">
+      <tr><th>Item</th><th>Description</th><th>Qty</th><th>Unit</th><th>Unit rate $</th><th>Scheduled value</th><th></th></tr>
+      ${rows}
+    </table></div>
+    <div class="form-inline">
+      <button class="btn small secondary" data-action="sov-add">Add line</button>
+      <label for="sov-op" class="sov-op-label">Overhead and profit</label>
+      <input id="sov-op" class="sov-in sov-num" data-sov-field="op_pct" value="${esc(sovDraft.op_pct)}" placeholder="0" inputmode="decimal"> %
+    </div>
+    <div class="sov-sums">
+      <div class="money-row"><span class="label">Schedule lines</span><span id="sov-sum-lines"></span></div>
+      <div class="money-row"><span class="label">Overhead and profit</span><span id="sov-sum-op"></span></div>
+      <div class="money-row"><span class="label">Schedule total</span><span><strong id="sov-sum-total"></strong> · <span id="sov-sum-diff"></span></span></div>
+      <div class="money-row"><span class="label">Contract</span><span>${money(j.contract_cents)}</span></div>
+    </div>
+    <div class="form-inline">
+      <button class="btn" data-action="sov-save" data-id="${j.id}">Save schedule</button>
+      <button class="btn secondary" data-action="sov-save-contract" data-id="${j.id}" hidden>Save and change the contract</button>
+      <button class="btn secondary" data-action="sov-cancel">Cancel</button>
+    </div>`;
+}
+
+function sovCardHtml(j) {
+  const v = j.sov_view || {};
+  if (sovDraft && sovDraft.jobId === j.id) {
+    return `<div class="card" id="sov-card"><h2>Schedule of values</h2>${sovEditorHtml(j)}</div>`;
+  }
+  if (!v.present) {
+    if (!v.editable) return "";
+    return `<div class="card" id="sov-card">
+      <h2>Schedule of values</h2>
+      <p class="sub">Bill line by line, the way subs bill: quantity × unit rate plus overhead and profit. Each pay app then shows what was done on each line this period. Optional; without it, progress is entered in dollars. Set it before the first pay app.</p>
+      <button class="btn secondary" data-action="sov-start" data-id="${j.id}">Set up schedule of values</button>
+    </div>`;
+  }
+  const t = v.totals;
+  const rows = v.lines.map(l => `
+    <tr>
+      <td>${l.item}</td>
+      <td>${l.description}${l.co_id ? ' <span class="pill green">CO</span>' : ""}</td>
+      <td class="num">${l.lump_sum ? "" : fmtQty(l.qty_milli) + " " + l.unit}</td>
+      <td class="num">${l.lump_sum ? "LS" : money(l.rate_cents)}</td>
+      <td class="num">${money(l.scheduled_cents)}</td>
+      <td class="num">${l.lump_sum ? l.pct + "%" : fmtQty(l.done_milli)}</td>
+      <td class="num">${money(l.to_date_cents)}</td>
+      <td class="num">${money(l.billed_cents)}</td>
+      <td class="num">${money(l.scheduled_cents - l.to_date_cents)}</td>
+    </tr>`).join("");
+  return `<div class="card" id="sov-card">
+    <h2>Schedule of values</h2>
+    <div class="table-wrap"><table class="sov-table">
+      <tr><th>Item</th><th>Description</th><th>Qty</th><th>Unit rate</th><th>Scheduled value</th><th>Done to date</th><th>Earned to date</th><th>Billed</th><th>Balance to finish</th></tr>
+      ${rows}
+      ${v.op_bp ? `<tr><td></td><td>Overhead and profit ${v.op_bp / 100}%</td><td></td><td></td><td class="num">${money(t.op_scheduled_cents)}</td><td></td><td class="num">${money(t.op_to_date_cents)}</td><td class="num">${money(v.op_billed_cents)}</td><td class="num">${money(t.op_scheduled_cents - t.op_to_date_cents)}</td></tr>` : ""}
+      <tr class="sov-total"><td></td><td>Total</td><td></td><td></td><td class="num">${money(t.scheduled_cents)}</td><td></td><td class="num">${money(t.to_date_cents)}</td><td class="num">${money(v.lines.reduce((a, l) => a + l.billed_cents, 0) + v.op_billed_cents)}</td><td class="num">${money(t.scheduled_cents - t.to_date_cents)}</td></tr>
+    </table></div>
+    ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">Edit schedule</button>` : `<p class="sub">Fixed once the first pay app exists. Scope changes go through change orders, which add their own lines when approved.</p>`}
+  </div>`;
+}
+
+function sovProgressHtml(j) {
+  const v = j.sov_view;
+  const rows = v.lines.map(l => `
+    <tr>
+      <td>${l.item}</td><td>${l.description}</td>
+      <td class="num">${l.lump_sum ? "lump sum" : fmtQty(l.qty_milli) + " " + l.unit}</td>
+      <td><input class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" value="${l.lump_sum ? +(l.done_milli / 10).toFixed(1) : l.done_milli / 1000}" inputmode="decimal" ${l.done_milli >= l.qty_milli ? "disabled" : ""}> ${l.lump_sum ? "%" : l.unit}</td>
+      <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
+    </tr>`).join("");
+  return `<div class="card sov-progress">
+    <p class="sub">Enter how much of each line is done to date (not this period). Billdable bills the difference since the last pay app, plus overhead and profit, less retainage.</p>
+    <div class="table-wrap"><table class="sov-table">
+      <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th></th></tr>
+      ${rows}
+    </table></div>
+    <div class="form-inline"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>
+  </div>`;
+}
+
+function continuationHtml(inv) {
+  const rows = (inv.sov_sheet && inv.sov_sheet.length ? inv.sov_sheet : inv.sov_lines) || [];
+  if (!rows.length) return "";
+  return `<div class="card">
+    <h2>Continuation sheet</h2>
+    <div class="table-wrap"><table class="sov-table">
+      <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Previous</th><th>This period</th><th>Total to date</th><th>%</th><th>Balance to finish</th></tr>
+      ${rows.map(e => `<tr><td>${e.item}</td><td>${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(e.to_date_cents - e.amount_cents)}</td><td class="num">${money(e.amount_cents)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${e.scheduled_cents ? Math.floor(100 * e.to_date_cents / e.scheduled_cents) : 0}%</td><td class="num">${money(e.scheduled_cents - e.to_date_cents)}</td></tr>`).join("")}
+      ${inv.op_cents ? `<tr><td></td><td>Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td></tr>` : ""}
+    </table></div>
+  </div>`;
+}
+
+async function sovReadPaste() {
+  const box = document.getElementById("sov-paste");
+  if (!box || !sovDraft) return;
+  const text = box.value;
+  if (!text.trim()) { toast("Paste rows into the box first."); return; }
+  let res;
+  try {
+    res = await fetch("/api/sov/parse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+  } catch (_) { setNetBanner(true); toast("Can't reach Billdable."); return; }
+  const data = await readJson(res);
+  if (!res.ok) { toast(data.error || "Couldn't read the rows."); return; }
+  const kept = sovFilledLines();
+  sovDraft.lines = kept.concat((data.lines || []).map(l => ({ id: "", item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate })));
+  if (!sovDraft.lines.length) sovDraft.lines = [blankSovLine()];
+  if (data.op_pct && !String(sovDraft.op_pct || "").trim()) sovDraft.op_pct = data.op_pct;
+  sovDraft.warnings = [`Read ${(data.lines || []).length} line${(data.lines || []).length === 1 ? "" : "s"}. Check them below, then save.`].concat(data.warnings || []);
+  render();
+}
+
+async function sovSave(jobId, updateContract) {
+  const t = sovDraftTotals();
+  if (t.bad) { toast("Some lines need a description, a quantity above zero and a rate above zero."); return; }
+  const j = state.jobs.find(x => x.id === jobId);
+  if (updateContract && !confirm(`Change the contract amount from ${money(j.contract_cents)} to ${money(t.total)} to match the schedule?`)) return;
+  const lines = sovFilledLines().map(l => ({ id: l.id || undefined, item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate }));
+  const r = await post(`/api/jobs/${jobId}/sov`, { lines, op_pct: sovDraft.op_pct, update_contract: !!updateContract });
+  if (r && r.ok) { sovDraft = null; render(); }
+}
+
+async function sovProgress(jobId) {
+  const done = {};
+  document.querySelectorAll("[data-sovp]").forEach(el => {
+    if (el.disabled) return;
+    const raw = el.value.trim();
+    if (!raw) return;
+    if (el.dataset.lump === "1") {
+      const pct = sovNum(raw);
+      done[el.dataset.sovp] = isNaN(pct) ? raw : (Math.round(pct * 10) / 1000).toFixed(3);
+    } else done[el.dataset.sovp] = raw;
+  });
+  const notes = document.querySelector("#progress-notes")?.value || "";
+  const r = await post(`/api/jobs/${jobId}/sov-progress`, { done, notes });
+  if (r && r.ok) { formOpen.progress = false; render(); }
+}
+
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (!sovDraft || !el || !el.dataset || !el.dataset.sovField) return;
+  if (el.dataset.sovField === "op_pct") sovDraft.op_pct = el.value;
+  else if (sovDraft.lines[+el.dataset.sovRow]) sovDraft.lines[+el.dataset.sovRow][el.dataset.sovField] = el.value;
+  updateSovTotals();
+});
+document.addEventListener("paste", (e) => {
+  if (e.target && e.target.id === "sov-paste") setTimeout(sovReadPaste, 0);
+});
 
 function recordFiles(r) {
   return (r.file_ids || []).map(fid => {
@@ -1354,7 +1655,8 @@ const views = {
             ${canClose ? `<div class="action-row"><button class="btn" data-action="close" data-id="${j.id}">Close for record</button><div class="blurb">Move a fully settled job into Job history.</div></div>` : ""}
           </div>`}
           ${blocked ? `<div class="gate-reason">Approve & send is disabled until blockers are cleared.</div>` : ""}
-          ${formOpen.progress ? `<div class="form-inline"><input id="progress-amt" type="number" step="0.01" min="0.01" placeholder="Completed to date $"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div>` : ""}
+          ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j) : ""}
+          ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="form-inline"><input id="progress-amt" type="number" step="0.01" min="0.01" placeholder="Completed to date $"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div>` : ""}
           ${formOpen.done ? `<div class="form-inline"><input id="done-notes" placeholder="Completion notes" style="flex:1"><button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div>` : ""}
           ${formOpen.match ? (openForPay.length ? `<div class="form-inline"><select id="match-inv">${openForPay.map(i => `<option value="${i.id}">${i.number} · ${money(i.amount_cents)} · ${i.status}</option>`).join("")}</select><input id="match-amt" type="number" step="0.01" min="0.01" placeholder="Amount in dollars"><input id="match-ref" placeholder="Reference (check no., QBO id)"><button class="btn small" data-action="match" data-id="${j.id}">Match</button></div>` : `<p class="sub">No sent pay app is waiting for payment.</p>`) : ""}
           ${formOpen.retpay ? `<div class="form-inline"><input id="retpay-amt" type="number" step="0.01" min="0.01" placeholder="Retainage received $"><input id="retpay-ref" placeholder="Reference"><button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div>` : ""}
@@ -1377,6 +1679,7 @@ const views = {
           <button class="btn small" data-action="add-record" data-id="${j.id}">Add to record</button>
         </div>
       </div>
+      ${sovCardHtml(j)}
       <div class="card">
         <h2>Pay apps and packets</h2>
         ${j.invoices.length ? j.invoices.map(inv => {
@@ -1486,7 +1789,7 @@ const views = {
       <div class="card">
         <h2>Attachments</h2>
         ${(co.attachments || []).map(a => `<div class="list-item">${a.name}</div>`).join("") || "<p>None</p>"}
-        <p class="sub">File uploads are not built yet. Keep the signed change order in the job record for now.</p>
+        <p class="sub">Drop the signed change order on the job's record (or forward it to the Inbox), then attach it to the pay app packet. <button class="linkish" data-action="open-job" data-id="${j.id}">Open the job record</button></p>
       </div>
       <div class="card">
         <h2>Packet</h2>
@@ -1509,6 +1812,7 @@ const views = {
         <h2>Lines</h2>
         ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
       </div>
+      ${continuationHtml(inv)}
       <div class="card">
         <h2>Packet</h2>
         <p class="sub">This packet belongs to ${inv.number}.</p>
@@ -1899,7 +2203,8 @@ const views = {
     if (outboxJobFilter !== "all") emails = emails.filter(e => e.job_id === outboxJobFilter);
     return `
       <h1>Outbox</h1>
-      <p class="sub">Every approved send and follow-up is logged here. Email delivery is not built yet: nothing here has left Billdable.</p>
+      <p class="sub">Every approved send and follow-up is listed here with what happened to it.</p>
+      <p class="sub" id="outbox-mode"></p>
       <div class="filter-bar">
         <select id="outbox-filter" data-filter-for="outbox">
           <option value="all">All jobs</option>
@@ -1909,7 +2214,7 @@ const views = {
       <div class="table-wrap">
         <table>
           <tr><th>When</th><th>Kind</th><th>To</th><th>Subject</th><th>Status</th></tr>
-          ${emails.map(e => `<tr class="clickable" data-action="open-job" data-id="${e.job_id}" title="Open the job"><td>${e.at.slice(0,16)}</td><td>${e.kind.replace("_", " ")}</td><td>${e.to}</td><td><a href="#">${e.subject}</a><div class="sub">${e.body || ""}</div></td><td>${e.status}</td></tr>`).join("")}
+          ${emails.map(e => `<tr class="clickable" data-action="open-job" data-id="${e.job_id}" title="Open the job"><td>${e.at.slice(0,16)}</td><td>${e.kind.replace("_", " ")}</td><td>${e.to}</td><td><a href="#">${e.subject}</a><div class="sub email-body">${e.body || ""}</div>${(e.attachments || []).length ? `<div class="sub">${e.attachments.length} attachment${e.attachments.length === 1 ? "" : "s"}${(e.not_attached || []).length ? "; not attached: " + e.not_attached.join("; ") : ""}</div>` : ""}</td><td>${emailStatusHtml(e)}</td></tr>`).join("")}
         </table>
       </div>
       ${emails.length ? "" : emptyState("Outbox is empty", "Approved sends are logged here. Nothing has been sent yet.")}
