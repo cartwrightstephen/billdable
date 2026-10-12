@@ -1,4 +1,8 @@
 let state = null;
+let me = null;
+let authMode = "signup";
+let authError = "";
+let jobFormError = "";
 let currentView = "dashboard";
 let currentJobId = null;
 let currentDetailId = null; // for packet, co, payapp, waiver detail
@@ -38,8 +42,145 @@ function toast(msg) {
 
 async function load() {
   const res = await fetch("/api/state");
+  if (res.status === 401) {
+    me = null;
+    state = null;
+    renderLanding();
+    return;
+  }
   state = await res.json();
   render();
+}
+
+async function boot() {
+  const res = await fetch("/api/auth/me");
+  if (res.ok) {
+    const data = await res.json();
+    me = data.user;
+    await load();
+  } else {
+    renderLanding();
+  }
+  setAiVisible(!!me);
+}
+
+function setAiVisible(on) {
+  const badge = document.getElementById("ai-badge");
+  const panel = document.getElementById("ai-panel");
+  if (badge) badge.style.display = on ? "flex" : "none";
+  if (panel && !on) panel.classList.remove("open");
+}
+
+function renderLanding() {
+  setAiVisible(false);
+  const app = document.getElementById("app");
+  const signup = authMode === "signup";
+  app.innerHTML = `
+    <div class="landing">
+      <header class="land-bar">
+        <div class="brand">Billdable</div>
+        <div class="land-bar-actions">
+          <button class="btn secondary small" id="bar-signin">Sign in</button>
+          <button class="btn small" id="bar-start">Create account</button>
+        </div>
+      </header>
+      <section class="land-hero">
+        <div class="land-copy">
+          <p class="eyebrow">For small GCs and remodelers</p>
+          <h1>You finish the work.<br>Billdable gets it billed and collected.</h1>
+          <p class="lede">Sits on QuickBooks. Catches the missing packet, the unsigned change order, and the retainage nobody chased. You approve every send.</p>
+          <div class="land-points">
+            <div><strong>Same-week invoice</strong><span>From “job’s done” to a draft you can send.</span></div>
+            <div><strong>Packet gate</strong><span>Nothing leaves with a missing waiver or photo.</span></div>
+            <div><strong>Money file</strong><span>Contract, COs, billed, collected, retainage — one place.</span></div>
+          </div>
+        </div>
+        <div class="auth-card land-form" id="signup">
+          <h2>${signup ? "Create your company" : "Sign in"}</h2>
+          <p class="sub">${signup ? "First month $99. Your jobs stay in your company space." : "Back to your jobs, packets, and playbook."}</p>
+          <form id="auth-form">
+            ${signup ? `<label>Your name</label><input name="name" required autocomplete="name" />` : ""}
+            ${signup ? `<label>Company name</label><input name="company_name" required />` : ""}
+            <label>Email</label>
+            <input name="email" type="email" required autocomplete="username" />
+            <label>Password</label>
+            <input name="password" type="password" required autocomplete="${signup ? "new-password" : "current-password"}" />
+            <button class="btn" type="submit">${signup ? "Create account" : "Sign in"}</button>
+            ${authError ? `<div class="auth-error">${authError}</div>` : ""}
+          </form>
+          <div class="auth-toggle">
+            ${signup ? "Already have an account?" : "New company?"}
+            <button type="button" id="auth-switch">${signup ? "Sign in" : "Create one"}</button>
+          </div>
+        </div>
+      </section>
+      <section class="land-how">
+        <h2>How it works</h2>
+        <div class="land-steps">
+          <div class="card"><span class="step">1</span><h3>Mark the job done</h3><p>Notes and evidence land in the binder. The money file already knows the contract.</p></div>
+          <div class="card"><span class="step">2</span><h3>Clear the packet</h3><p>Billdable names the blocker — missing waiver, unsigned CO, thin photos — before anything is sent.</p></div>
+          <div class="card"><span class="step">3</span><h3>Approve and collect</h3><p>You approve the send. Payments match. Retainage and closeout stay on the calendar.</p></div>
+        </div>
+      </section>
+      <section class="land-price">
+        <div class="card">
+          <p class="eyebrow">Pricing</p>
+          <h2>$299<span>/mo</span></h2>
+          <p class="sub">For companies between $750k and $2.5M. First month $99. Unlimited users. No percent of collections.</p>
+          <button class="btn" id="price-start">Create your company</button>
+        </div>
+      </section>
+      <footer class="land-foot">Billdable sits on QuickBooks. It does not replace your books or your field app.</footer>
+    </div>
+  `;
+  document.getElementById("auth-form").addEventListener("submit", onAuthSubmit);
+  document.getElementById("auth-switch").addEventListener("click", () => {
+    authMode = signup ? "login" : "signup";
+    authError = "";
+    renderLanding();
+  });
+  const toSignup = () => { authMode = "signup"; authError = ""; renderLanding(); };
+  const toSignin = () => { authMode = "login"; authError = ""; renderLanding(); };
+  document.getElementById("bar-start").addEventListener("click", toSignup);
+  document.getElementById("price-start").addEventListener("click", toSignup);
+  document.getElementById("bar-signin").addEventListener("click", toSignin);
+}
+
+async function onAuthSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const body = {
+    email: form.email.value,
+    password: form.password.value,
+  };
+  if (authMode === "signup") {
+    body.name = form.name.value;
+    body.company_name = form.company_name.value;
+  }
+  const res = await fetch(authMode === "signup" ? "/api/auth/signup" : "/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    authError = data.error || "Could not sign in.";
+    renderLanding();
+    return;
+  }
+  me = data.user;
+  authError = "";
+  await load();
+  setAiVisible(true);
+}
+
+async function logout() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  me = null;
+  state = null;
+  authMode = "signup";
+  setAiVisible(false);
+  renderLanding();
 }
 
 async function post(path, body = {}) {
@@ -49,6 +190,12 @@ async function post(path, body = {}) {
     body: JSON.stringify(body),
   });
   const data = await res.json();
+  if (res.status === 401) {
+    me = null;
+    state = null;
+    renderLanding();
+    return;
+  }
   if (res.status === 409) {
     toast("Blocked: " + (data.blockers || [data.error]).join("; "));
   } else if (!res.ok) {
@@ -69,7 +216,12 @@ function nav(view, jobId = null, detailId = null) {
 
 function toggleForm(key) {
   formOpen[key] = !formOpen[key];
+  if (key === "newjob") jobFormError = "";
   render();
+}
+
+function emptyState(title, body, action = "") {
+  return `<div class="empty-state"><strong>${title}</strong><p>${body}</p>${action}</div>`;
 }
 
 function nextStep(j) {
@@ -94,7 +246,7 @@ function render() {
     <div class="shell">
       <aside class="rail">
         <div class="brand">Billdable</div>
-        <div class="company">${company.name}<br>${company.crew} people · ${company.books}</div>
+        <div class="company">${company.name}<br>${company.crew ? company.crew + " people · " : ""}${company.books || "QuickBooks"}</div>
         <nav class="nav">
           <div class="nav-section">Operations</div>
           <button class="${active("dashboard")}" data-v="dashboard">Dashboard</button>
@@ -115,7 +267,11 @@ function render() {
           <button class="${active("outbox")}" data-v="outbox">Outbox</button>
           <button class="${active("audit")}" data-v="audit">Audit</button>
         </nav>
-        <button class="reset-btn" id="reset">Reset sample data</button>
+        <button class="reset-btn" id="reset">Reset data</button>
+        <div class="user-meta">
+          ${me ? me.name : ""}<br>${me ? me.email : ""}
+          <button class="reset-btn" id="logout">Log out</button>
+        </div>
       </aside>
       <main class="main" id="main"></main>
     </div>
@@ -124,6 +280,7 @@ function render() {
     b.addEventListener("click", () => nav(b.dataset.v))
   );
   document.getElementById("reset").addEventListener("click", () => post("/api/reset"));
+  document.getElementById("logout").addEventListener("click", logout);
   document.getElementById("main").innerHTML = views[currentView] ? views[currentView]() : "<p>Unknown view</p>";
   bindActions();
   updateAiContext();
@@ -137,6 +294,13 @@ function bindActions() {
       const id = el.dataset.id;
       if (a === "draft") await post(`/api/jobs/${id}/draft`);
       else if (a === "send") await post(`/api/jobs/${id}/send`, { actor: "owner" });
+      else if (a === "progress") {
+        const dollars = parseFloat(document.querySelector("#progress-amt")?.value || "0");
+        const notes = document.querySelector("#progress-notes")?.value || "";
+        if (!(dollars > 0)) { toast("Enter completed-to-date in dollars."); return; }
+        formOpen.progress = false;
+        await post(`/api/jobs/${id}/progress`, { completed_cents: Math.round(dollars * 100), notes });
+      }
       else if (a === "done") {
         const notes = document.querySelector("#done-notes")?.value || "";
         await post(`/api/jobs/${id}/done`, { actor: "owner", notes });
@@ -173,7 +337,7 @@ function bindActions() {
         }
       }
       else if (a === "goto-packet") nav("packet-detail", id);
-      else if (a === "open-packet") nav("packet-detail", el.dataset.job);
+      else if (a === "open-packet") nav("packet-detail", el.dataset.job, el.dataset.inv);
       else if (a === "open-co") nav("co-detail", el.dataset.job, el.dataset.co);
       else if (a === "open-payapp") nav("payapp-detail", el.dataset.job, el.dataset.inv);
       else if (a === "open-waiver") nav("waiver-detail", id);
@@ -201,7 +365,68 @@ function bindActions() {
         const reason = document.querySelector("#learn-reason")?.value;
         if (reason) await post(`/api/jobs/${id}/learn-rejection`, { reason });
       }
+      else if (a === "add-record") {
+        const label = document.querySelector("#rec-label")?.value.trim();
+        const note = document.querySelector("#rec-note")?.value.trim() || "";
+        const kind = document.querySelector("#rec-kind")?.value || "note";
+        if (!label) { toast("A record needs a label."); return; }
+        await post(`/api/jobs/${id}/add-record`, { label, note, kind });
+      }
+      else if (a === "attach-record") {
+        const recordId = document.querySelector(`#attach-rec-${el.dataset.item}`)?.value;
+        if (!recordId) { toast("Pick a job record to attach."); return; }
+        await post(`/api/jobs/${id}/attach-record/${el.dataset.item}`, { record_id: recordId });
+      }
       else if (a === "open-job") nav("job", id);
+      else if (a === "create-job") {
+        const name = document.querySelector("#nj-name")?.value.trim() || "";
+        const address = document.querySelector("#nj-address")?.value.trim() || "";
+        const customer = document.querySelector("#nj-customer")?.value.trim() || "";
+        const approver = document.querySelector("#nj-approver")?.value.trim() || "";
+        const apEmail = document.querySelector("#nj-email")?.value.trim() || "";
+        const phone = document.querySelector("#nj-phone")?.value.trim() || "";
+        const role = document.querySelector("#nj-role")?.value || "Owner";
+        const contractNumber = document.querySelector("#nj-contract")?.value.trim() || "";
+        const packetNotes = document.querySelector("#nj-packet")?.value.trim() || "";
+        const dollars = parseFloat(document.querySelector("#nj-amount")?.value || "0");
+        const retainage = parseInt(document.querySelector("#nj-retainage")?.value || "0", 10);
+        const errors = [];
+        if (!name) errors.push("Job name is required.");
+        if (!address) errors.push("Address is required.");
+        if (!customer) errors.push("Customer is required.");
+        if (!approver) errors.push("Approver is required.");
+        if (!apEmail || !apEmail.includes("@")) errors.push("A real AP email is required.");
+        if (!(dollars > 0)) errors.push("Contract amount must be greater than zero.");
+        if (retainage < 0 || retainage > 20) errors.push("Retainage must be between 0 and 20.");
+        if (errors.length) {
+          jobFormError = errors.join(" ");
+          render();
+          return;
+        }
+        jobFormError = "";
+        const res = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name, address, customer, approver,
+            ap_email: apEmail, phone, role,
+            contract_number: contractNumber,
+            packet_notes: packetNotes,
+            contract_cents: Math.round(dollars * 100),
+            retainage_pct: retainage,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          jobFormError = (data.blockers || [data.error || "Could not create the job."]).join(" ");
+          render();
+          return;
+        }
+        formOpen.newjob = false;
+        state = data;
+        toast("Job saved");
+        render();
+      }
       else if (a === "toggle-form") toggleForm(el.dataset.form);
       else if (a === "dismiss-help") { helpDismissed = true; localStorage.setItem("billdable-help-dismissed", "1"); render(); }
       else if (a === "filter") { dashFilter = el.dataset.filter; render(); }
@@ -305,7 +530,8 @@ const views = {
     return `
       <h1>Dashboard</h1>
       <p class="sub">What needs attention and the money across open jobs.</p>
-      ${!helpDismissed ? `
+      ${state.jobs.length === 0 ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.") : ""}
+      ${!helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" title="Dismiss">×</button>
           <strong>How to simulate the product</strong><br>
@@ -378,16 +604,50 @@ const views = {
   },
   jobs() {
     return `
-      <h1>Jobs</h1>
+      <div class="top">
+        <h1>Jobs</h1>
+        <button class="btn" data-action="toggle-form" data-form="newjob">${formOpen.newjob ? "Cancel" : "New job"}</button>
+      </div>
       <p class="sub">Click a job for its money file, packet, and actions.</p>
-      <div class="table-wrap">
+      ${formOpen.newjob ? `
+        <div class="card">
+          <h2>New job</h2>
+          <p class="sub">Required fields are marked. Saving creates the job record. A packet is created later, with a pay app.</p>
+          ${jobFormError ? `<div class="form-error">${jobFormError}</div>` : ""}
+          <div class="form-section">Job</div>
+          <div class="form-grid">
+            <div><label>Job name <span class="req">*</span></label><input id="nj-name" required /></div>
+            <div><label>Address <span class="req">*</span></label><input id="nj-address" required /></div>
+            <div><label>Contract number</label><input id="nj-contract" /></div>
+            <div><label>Contract amount ($) <span class="req">*</span></label><input id="nj-amount" type="number" step="0.01" min="0.01" required /></div>
+            <div><label>Retainage %</label><input id="nj-retainage" type="number" min="0" max="20" value="0" /></div>
+          </div>
+          <div class="form-section">Customer</div>
+          <div class="form-grid">
+            <div><label>Customer <span class="req">*</span></label><input id="nj-customer" required /></div>
+            <div><label>Role</label><select id="nj-role"><option>Owner</option><option>GC</option></select></div>
+            <div><label>Approver <span class="req">*</span></label><input id="nj-approver" required /></div>
+            <div><label>AP email <span class="req">*</span></label><input id="nj-email" type="email" required /></div>
+            <div><label>Phone</label><input id="nj-phone" /></div>
+          </div>
+          <div class="form-section">Job record</div>
+          <div class="form-grid">
+            <div class="span-2">
+              <label>Notes for the job record</label>
+              <textarea id="nj-packet" placeholder="Contract notes, what this customer usually wants, anything to keep with the job"></textarea>
+              <p class="sub">Stored on the job. Attach these to a pay app packet when you draft one.</p>
+            </div>
+          </div>
+          <button class="btn" data-action="create-job">Save job</button>
+        </div>` : ""}
+      ${state.jobs.length ? `<div class="table-wrap">
         <table>
           <tr><th>Code</th><th>Job</th><th>Customer</th><th>Status</th><th>Outstanding</th><th>Unbilled</th><th>Retainage</th><th>Next</th></tr>
           ${state.jobs.map(j => `
             <tr>
               <td>${j.code}</td>
               <td><a href="#" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
-              <td>${j.payer.name}</td>
+              <td>${j.payer ? j.payer.name : "—"}</td>
               <td>${j.status_label}</td>
               <td>${money(j.money.outstanding_cents)}</td>
               <td>${money(j.money.unbilled_completed_cents)}</td>
@@ -395,7 +655,7 @@ const views = {
               <td class="next-action">${nextStep(j)}</td>
             </tr>`).join("")}
         </table>
-      </div>
+      </div>` : emptyState("No jobs yet", "Create a job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="toggle-form" data-form="newjob">New job</button>`)}
     `;
   },
   job() {
@@ -428,12 +688,13 @@ const views = {
           <div class="money-row"><span class="label">Collected</span><span>${money(m.collected_cents)}</span></div>
           <div class="money-row"><span class="label">Outstanding</span><span>${money(m.outstanding_cents)}</span></div>
           <div class="money-row"><span class="label">Unbilled completed</span><span>${money(m.unbilled_completed_cents)}</span></div>
-          <div class="money-row"><span class="label">Retainage open</span><span>${money(m.retainage_open_cents)}</span></div>
+          <div class="money-row"><span class="label">Retainage open</span><span>${money(m.retainage_open_cents)}${j.retainage_pct ? " · " + j.retainage_pct + "%" : ""}</span></div>
         </div>
         <div class="card">
           <h2>Actions</h2>
           <div class="actions-vert">
-            ${j.work_status !== "complete" ? `<div class="action-row"><button class="btn" data-action="toggle-form" data-form="done">Mark done</button><div><div class="blurb">Record completion notes and start the money path.</div></div></div>` : ""}
+            ${j.work_status !== "complete" ? `<div class="action-row"><button class="btn" data-action="toggle-form" data-form="progress">Progress pay app</button><div><div class="blurb">Bill completed-to-date without marking the job done.</div></div></div>` : ""}
+            ${j.work_status !== "complete" ? `<div class="action-row"><button class="btn secondary" data-action="toggle-form" data-form="done">Mark done</button><div><div class="blurb">Record completion and draft the final pay app.</div></div></div>` : ""}
             <div class="action-row"><button class="btn secondary" data-action="draft" data-id="${j.id}">Draft pay app</button><div class="blurb">Create a same-week pay app from unbilled completed work.</div></div>
             <div class="action-row"><button class="btn" data-action="send" data-id="${j.id}" ${blocked || !hasDraft ? "disabled" : ""}>Approve & send</button><div class="blurb">Human gate. Sends only when the packet is clean.</div></div>
             <div class="action-row"><button class="btn secondary" data-action="follow-up" data-id="${j.id}">Follow up</button><div class="blurb">Log a follow-up on a sent pay app using the playbook cadence.</div></div>
@@ -446,35 +707,42 @@ const views = {
             ${canClose ? `<div class="action-row"><button class="btn" data-action="close" data-id="${j.id}">Close for record</button><div class="blurb">Move a fully settled job into Job history.</div></div>` : ""}
           </div>
           ${blocked ? `<div class="gate-reason">Approve & send is disabled until blockers are cleared.</div>` : ""}
+          ${formOpen.progress ? `<div class="form-inline"><input id="progress-amt" type="number" step="0.01" min="0.01" placeholder="Completed to date $"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div>` : ""}
           ${formOpen.done ? `<div class="form-inline"><input id="done-notes" placeholder="Completion notes" style="flex:1"><button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div>` : ""}
           ${formOpen.match ? `<div class="form-inline"><input id="match-amt" type="number" step="0.01" placeholder="Amount in dollars"><input id="match-ref" placeholder="Reference" value="QBO-manual"><button class="btn small" data-action="match" data-id="${j.id}">Match</button></div>` : ""}
           <p class="sub">Send, waiver, retainage, and close require explicit approval.</p>
         </div>
       </div>
       <div class="card">
-        <h2>Evidence binder</h2>
-        ${(j.evidence || []).length ? (j.evidence || []).map(e => `<div class="list-item">${e.kind}: ${e.label} <span class="sub">${(e.added_at || "").slice(0,10)}</span></div>`).join("") : "<p>None yet.</p>"}
+        <h2>Job record</h2>
+        <p class="sub">Anything associated with this job. Attach a record to a pay app packet when you draft one.</p>
+        ${(j.records || []).length ? (j.records || []).map(r => `<div class="list-item">${r.kind}: ${r.label}${r.note ? " — " + r.note : ""}</div>`).join("") : emptyState("Nothing in the record yet", "Add a note, photo, or contract reference.")}
+        <div class="form-inline">
+          <input id="rec-label" placeholder="Label" />
+          <input id="rec-note" placeholder="Note" />
+          <select id="rec-kind"><option>note</option><option>photo</option><option>contract</option><option>waiver</option><option>other</option></select>
+          <button class="btn small" data-action="add-record" data-id="${j.id}">Add to record</button>
+        </div>
       </div>
       <div class="card">
-        <h2>Packet</h2>
-        ${j.packet.map(p => `
-          <div class="list-item">
-            ${p.present ? "✓" : "✗"} ${p.label}
-            ${!p.present ? `<button class="btn small pop" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Mark present</button>` : ""}
-            ${!p.present ? `<div class="blocker">${p.blocker}</div>` : ""}
-          </div>`).join("")}
+        <h2>Pay apps and packets</h2>
+        ${j.invoices.length ? j.invoices.map(inv => {
+          const pkt = inv.packet || j.packet || [];
+          const missing = pkt.filter(p => p.required && !p.present).length;
+          return `<div class="list-item">${inv.number} · ${money(inv.amount_cents)} · ${inv.status} · ${missing ? missing + " packet items missing" : "packet complete"} <button class="btn small secondary" data-action="open-payapp" data-job="${j.id}" data-inv="${inv.id}">Open</button></div>`;
+        }).join("") : emptyState("No pay apps yet", "Draft one after the job is marked done. The packet is created with it.")}
       </div>
       <div class="card">
         <h2>Change orders</h2>
         ${j.change_orders.length ? j.change_orders.map(co => `
           <div class="list-item">CO ${co.number} — ${co.title} · ${money(co.amount_cents)} · <span class="pill ${co.status === "approved" ? "green" : "amber"}">${co.status}</span>${co.included_in_billing ? " · in billing" : ""}
             ${co.status === "pending" ? `<button class="btn small" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Approve</button>` : ""}
-          </div>`).join("") : "<p>None</p>"}
+          </div>`).join("") : emptyState("No change orders", "Add one if the scope changed.")}
       </div>
       <div class="card">
         <h2>Invoices / pay apps</h2>
-        ${j.invoices.map(inv => `
-          <div class="list-item">${inv.number} · ${money(inv.amount_cents)} · <span class="pill ${inv.status === "paid" ? "green" : inv.status === "sent" ? "amber" : ""}">${inv.status}</span>${inv.approved_by ? " · approved by " + inv.approved_by : ""}</div>`).join("")}
+        ${j.invoices.length ? j.invoices.map(inv => `
+          <div class="list-item">${inv.number} · ${money(inv.amount_cents)} · <span class="pill ${inv.status === "paid" ? "green" : inv.status === "sent" ? "amber" : ""}">${inv.status}</span>${inv.approved_by ? " · approved by " + inv.approved_by : ""}</div>`).join("") : emptyState("No pay apps yet", "Draft one after the job is marked done.")}
       </div>
     `;
   },
@@ -483,7 +751,7 @@ const views = {
     const records = state.daily_records || [];
     return `
       <h1>Daily Record</h1>
-      <p class="sub">Blank and ready. Create a record and attach it to an ongoing job’s packet. Tick “for history” is set automatically if the job is already closed.</p>
+      <p class="sub">Saved on the job record. Attach it to a pay app packet when you draft one.</p>
       <div class="card">
         <h2>New record</h2>
         <div class="form-inline">
@@ -492,7 +760,7 @@ const views = {
             ${openJobs.map(j => `<option value="${j.id}">${j.name}</option>`).join("")}
           </select>
           <input id="daily-notes" placeholder="What happened today" style="flex:1">
-          <button class="btn" data-action="daily-save">Save & attach to packet</button>
+          <button class="btn" data-action="daily-save">Save to job record</button>
         </div>
       </div>
       <div class="card">
@@ -500,36 +768,35 @@ const views = {
         ${records.length ? records.slice().reverse().map(r => {
           const j = state.jobs.find(x => x.id === r.job_id);
           return `<div class="list-item">${r.at.slice(0,10)} · ${j ? j.name : r.job_id} · ${r.notes} ${r.for_history ? "· history" : ""}</div>`;
-        }).join("") : "<p>None yet.</p>"}
+        }).join("") : emptyState("No daily records", "Save one above. It lands in the job record, not a packet.")}
       </div>
     `;
   },
   packetDetail() {
     const j = state.jobs.find(x => x.id === currentJobId);
-    if (!j) return "<p>Select a job from Packets.</p>";
-    const records = (state.daily_records || []).filter(r => r.job_id === j.id);
+    if (!j) return "<p>Select a pay app from Packets.</p>";
+    const inv = j.invoices.find(i => i.id === currentDetailId) || [...j.invoices].reverse().find(i => i.packet) || j.invoices[j.invoices.length - 1];
+    const packet = (inv && inv.packet) || j.packet || [];
+    const jobRecords = j.records || [];
+    if (!inv && !packet.length) return emptyState("No packet yet", "Draft a pay app. The packet is created with it.");
     return `
       <div class="top"><button class="back" onclick="nav('packets')">← Packets</button></div>
-      <h1>${j.name} packet</h1>
-      <p class="sub">Daily details, attachments, and the contract field for pay applications.</p>
-      <div class="card">
-        <h2>Contract</h2>
-        <p class="sub">Field for the signed contract. No sample contract is preloaded.</p>
-        <div class="form-inline"><input placeholder="Contract file name (placeholder)" disabled style="flex:1"><button class="btn secondary" disabled>Upload</button></div>
-      </div>
+      <h1>${inv ? inv.number : j.name} packet</h1>
+      <p class="sub">${j.name}${inv ? " · " + money(inv.amount_cents) + " · " + inv.status : ""} · tied to this pay app</p>
       <div class="card">
         <h2>Required items</h2>
-        ${j.packet.map(p => `
+        ${packet.length ? packet.map(p => `
           <div class="list-item">
             ${p.present ? "✓" : "✗"} ${p.label}
+            ${!p.present ? `<span class="field-error">${p.blocker}</span>` : ""}
             ${!p.present ? `<button class="btn small pop" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Mark present</button>` : ""}
             ${(p.attachments || []).map(a => `<div class="sub">Attached: ${a.name}</div>`).join("")}
-            <div class="form-inline"><input id="attach-name" placeholder="File name"><button class="btn small" data-action="attach" data-id="${j.id}" data-item="${p.id}">Attach</button></div>
-          </div>`).join("")}
+            ${jobRecords.length ? `<div class="form-inline"><select id="attach-rec-${p.id}">${jobRecords.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small" data-action="attach-record" data-id="${j.id}" data-item="${p.id}">Attach from job record</button></div>` : ""}
+          </div>`).join("") : emptyState("No packet items", "This pay app has no packet.")}
       </div>
       <div class="card">
-        <h2>Daily records</h2>
-        ${records.length ? records.map(r => `<div class="list-item">${r.at.slice(0,10)} · ${r.notes}</div>`).join("") : "<p>None yet. Create one from Daily Record.</p>"}
+        <h2>Job record</h2>
+        ${jobRecords.length ? jobRecords.map(r => `<div class="list-item">${r.kind}: ${r.label}</div>`).join("") : emptyState("Nothing in the job record", "Add notes or files on the job, then attach them here.")}
       </div>
     `;
   },
@@ -564,7 +831,7 @@ const views = {
       </div>
       <div class="card">
         <h2>Packet</h2>
-        <button class="btn secondary" data-action="open-packet" data-job="${j.id}">Open job packet</button>
+        <button class="btn secondary" data-action="open-packet" data-job="${j.id}">Open pay app packet</button>
         <p class="sub">Copy supporting items from the packet into this change order as needed.</p>
       </div>
     `;
@@ -584,8 +851,10 @@ const views = {
         ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
       </div>
       <div class="card">
-        <h2>Packet at send</h2>
-        ${j.packet.map(p => `<div class="list-item">${p.present ? "✓" : "✗"} ${p.label}</div>`).join("")}
+        <h2>Packet</h2>
+        <p class="sub">This packet belongs to ${inv.number}.</p>
+        ${(inv.packet || j.packet || []).map(p => `<div class="list-item">${p.present ? "✓" : "✗"} ${p.label}</div>`).join("") || "<p>No packet on this pay app.</p>"}
+        <button class="btn secondary small" data-action="open-packet" data-job="${j.id}" data-inv="${inv.id}">Open packet</button>
       </div>
       <div class="card">
         <h2>Payments matched</h2>
@@ -760,30 +1029,37 @@ const views = {
             <td>${money(a.amount_cents)}</td>
             <td><span class="pill ${a.status === "paid" ? "green" : a.status === "sent" ? "amber" : ""}">${a.status}</span></td>
             <td>${a.blockers.join("; ") || "—"}</td>
-          </tr>`).join("") || "<tr><td colspan=5>None</td></tr>"}
+          </tr>`).join("")}
         </table>
       </div>
+      ${apps.length ? "" : emptyState("No pay apps", "Draft one from a job. The packet is created with the pay app.")}
     `;
   },
   packets() {
     return `
       <h1>Packets</h1>
-      <p class="sub">Critical status for each job. Click a job to open its packet — daily records, attachments, and the contract field.</p>
+      <p class="sub">A packet belongs to a pay app. Click a row to open that pay app’s packet.</p>
       <div class="table-wrap">
         <table>
-          <tr><th>Job</th><th>Missing</th><th>Daily records</th><th>Contract</th></tr>
-          ${state.jobs.map(j => {
-            const missing = j.packet.filter(p => p.required && !p.present).length;
-            const dr = (state.daily_records || []).filter(r => r.job_id === j.id).length;
-            return `<tr>
-              <td><a href="#" data-action="open-packet" data-job="${j.id}">${j.name}</a></td>
-              <td>${missing ? `<span class="pill red">${missing}</span>` : `<span class="pill green">complete</span>`}</td>
-              <td>${dr}</td>
-              <td>${j.contract_doc ? "Attached" : "—"}</td>
-            </tr>`;
-          }).join("")}
+          <tr><th>Pay app</th><th>Job</th><th>Missing</th><th>Status</th></tr>
+          ${(() => {
+            const rows = [];
+            state.jobs.forEach(j => j.invoices.forEach(inv => {
+              const pkt = inv.packet || j.packet || [];
+              if (!pkt.length && !inv.packet) return;
+              const missing = pkt.filter(p => p.required && !p.present).length;
+              rows.push(`<tr>
+                <td><a href="#" data-action="open-packet" data-job="${j.id}" data-inv="${inv.id}">${inv.number}</a></td>
+                <td>${j.name}</td>
+                <td>${missing ? `<span class="pill red">${missing}</span>` : `<span class="pill green">complete</span>`}</td>
+                <td>${inv.status}</td>
+              </tr>`);
+            }));
+            return rows.join("");
+          })()}
         </table>
       </div>
+      ${state.jobs.some(j => j.invoices.some(inv => inv.packet || (j.packet || []).length)) ? "" : emptyState("No packets yet", "Draft a pay app. The packet is created with it and stays tied to that pay app.")}
     `;
   },
   cos() {
@@ -813,9 +1089,10 @@ const views = {
             <td>${money(c.amount_cents)}</td>
             <td><span class="pill ${c.status === "approved" ? "green" : "amber"}">${c.status}</span> · ${c.waiting_on || (c.status === "pending" ? "Signature" : "—")}</td>
             <td>${c.included_in_billing ? "Yes" : "No"}</td>
-          </tr>`).join("") || "<tr><td colspan=6>None</td></tr>"}
+          </tr>`).join("")}
         </table>
       </div>
+      ${cos.length ? "" : emptyState("No change orders", "Add one once a job exists. Unsigned COs block send if they are in the billing amount.")}
     `;
   },
   collections() {
@@ -843,9 +1120,10 @@ const views = {
                 <a class="btn small secondary" href="tel:${(j.payer.phone || "").replace(/[^0-9+]/g, "")}">Call</a>
               </td>
             </tr>`;
-          }).join("") || "<tr><td colspan=6>None</td></tr>"}
+          }).join("")}
         </table>
       </div>
+      ${open.length ? "" : emptyState("Nothing to collect", "Unpaid invoices show up here after a pay app is sent.")}
     `;
   },
   payments() {
@@ -869,6 +1147,7 @@ const views = {
           }).join("")}
         </table>
       </div>
+      ${pays.length ? "" : emptyState("No payments matched", "Match a payment from a job once the payer has paid.")}
     `;
   },
   waivers() {
@@ -889,9 +1168,10 @@ const views = {
               <td>${j.waiver_sent ? "Sent" : "Due"}</td>
               <td>${!j.waiver_sent && j.waiver_due ? `<button class="btn small" data-action="waiver" data-id="${j.id}">Approve & send</button>` : "—"}</td>
             </tr>`;
-          }).join("") || "<tr><td colspan=5>None</td></tr>"}
+          }).join("") || ""}
         </table>
       </div>
+      ${due.concat(sent).length ? "" : emptyState("No waivers due", "A waiver becomes due after a payment is matched.")}
     `;
   },
   retainage() {
@@ -903,7 +1183,7 @@ const views = {
         <table>
           <tr><th>Job</th><th>Open</th><th>Holding it up</th><th>Unlock</th><th>Contact / follow up</th></tr>
           ${open.map(j => {
-            const missing = j.packet.filter(p => p.required && !p.present);
+            const missing = (j.packet || []).filter(p => p.required && !p.present);
             return `<tr>
               <td><a href="#" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
               <td>${money(j.money.retainage_open_cents)}</td>
@@ -916,16 +1196,17 @@ const views = {
                 <a class="btn small secondary" href="tel:${(j.payer.phone || "").replace(/[^0-9+]/g, "")}">Call</a>
               </td>
             </tr>`;
-          }).join("") || "<tr><td colspan=5>None</td></tr>"}
+          }).join("") || ""}
         </table>
       </div>
+      ${open.length ? "" : emptyState("No retainage open", "Retainage shows here once a job holds it. Set a retainage percent when creating the job.")}
     `;
   },
   playbook() {
     return `
       <h1>Payer Playbook</h1>
       <p class="sub">These values drive follow-up cadence and expected-approval dates on the calendar. Edits persist. Rejected packets can teach the rejects-when field.</p>
-      ${state.payers.map(p => `
+      ${state.payers.length ? state.payers.map(p => `
         <div class="card">
           <h2>${p.name} <span class="sub">${p.role}</span></h2>
           <form data-id="${p.id}">
@@ -938,7 +1219,7 @@ const views = {
             <div class="money-row"><span class="label">Copy</span><input name="copy" value="${p.copy || ""}" style="width:60%"></div>
             <button type="button" class="btn small" data-action="save-playbook" data-id="${p.id}">Save playbook</button>
           </form>
-        </div>`).join("")}
+        </div>`).join("") : emptyState("No payers yet", "A payer is created with the first job for that customer.")}
     `;
   },
   outbox() {
@@ -956,9 +1237,10 @@ const views = {
       <div class="table-wrap">
         <table>
           <tr><th>When</th><th>Kind</th><th>To</th><th>Subject</th><th>Status</th></tr>
-          ${emails.map(e => `<tr><td>${e.at.slice(0,16)}</td><td>${e.kind}</td><td>${e.to}</td><td>${e.subject}</td><td>${e.status}</td></tr>`).join("") || "<tr><td colspan=5>None yet.</td></tr>"}
+          ${emails.map(e => `<tr><td>${e.at.slice(0,16)}</td><td>${e.kind}</td><td>${e.to}</td><td>${e.subject}</td><td>${e.status}</td></tr>`).join("")}
         </table>
       </div>
+      ${emails.length ? "" : emptyState("Outbox is empty", "Approved sends are logged here. Nothing has been sent yet.")}
     `;
   },
   audit() {
@@ -979,6 +1261,7 @@ const views = {
           ${events.map(e => `<tr><td>${e.at}</td><td>${e.actor}</td><td>${e.action}</td><td>${e.detail}</td></tr>`).join("")}
         </table>
       </div>
+      ${events.length ? "" : emptyState("No audit events", "Actions on jobs will be recorded here.")}
     `;
   },
 };
@@ -1028,4 +1311,4 @@ document.getElementById("ai-input").addEventListener("keydown", (e) => {
 });
 
 window.nav = nav;
-load();
+boot();

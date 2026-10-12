@@ -100,3 +100,58 @@ table.sortable th:hover { color: var(--copper); }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--ink); color: white; padding: 10px 16px; border-radius: 8px; z-index: 2000; font-size: 14px; }
 .summary-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
 .summary-row .metric { min-width: 140px; }
+.auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.auth-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 32px 28px; width: 100%; max-width: 400px; box-shadow: 0 8px 24px rgba(28,25,21,0.04); }
+.auth-card h1 { font-size: 32px; margin: 0 0 4px; }
+.auth-card label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 4px; }
+.auth-card input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: white; }
+.auth-card .btn { width: 100%; margin-top: 18px; padding: 10px 14px; }
+.auth-toggle { margin-top: 16px; font-size: 13px; color: var(--muted); text-align: center; }
+.auth-toggle button { background: none; border: 0; color: var(--copper); cursor: pointer; font: inherit; text-decoration: underline; padding: 0; }
+.auth-error { color: var(--red); font-size: 13px; margin-top: 10px; }
+.auth-hint { font-size: 12px; color: var(--muted); margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.user-meta { font-size: 12px; color: var(--muted); margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); }
+.user-meta .reset-btn { margin-top: 8px; }
+.landing { min-height: 100vh; }
+.land-bar { display: flex; align-items: center; justify-content: space-between; padding: 18px 32px; border-bottom: 1px solid var(--line); }
+.land-bar-actions { display: flex; gap: 8px; }
+.land-hero { display: grid; grid-template-columns: 1.3fr 0.9fr; gap: 40px; padding: 56px 32px 32px; max-width: 1080px; margin: 0 auto; align-items: start; }
+.land-copy h1 { font-size: 44px; line-height: 1.15; margin: 8px 0 16px; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--copper); margin: 0 0 8px; }
+.lede { font-size: 18px; color: var(--muted); margin: 0 0 24px; max-width: 540px; }
+.land-points { display: grid; gap: 14px; }
+.land-points div { display: grid; gap: 2px; }
+.land-points strong { font-size: 15px; }
+.land-points span { font-size: 14px; color: var(--muted); }
+.land-form { margin: 0; }
+.land-form h2 { margin: 0 0 4px; font-family: Georgia, serif; font-weight: 500; }
+.land-how, .land-price { max-width: 1080px; margin: 0 auto; padding: 8px 32px 32px; }
+.land-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.land-steps .card h3 { margin: 8px 0 4px; font-size: 16px; }
+.land-steps .card p { margin: 0; color: var(--muted); font-size: 14px; }
+.step { display: inline-flex; width: 28px; height: 28px; border-radius: 50%; background: var(--copper-soft); color: var(--copper); align-items: center; justify-content: center; font-weight: 600; }
+.land-price .card { max-width: 420px; }
+.land-price h2 { font-size: 40px; margin: 0 0 4px; }
+.land-price h2 span { font-size: 18px; color: var(--muted); font-weight: 400; }
+.land-foot { padding: 24px 32px 40px; color: var(--muted); font-size: 13px; text-align: center; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.form-grid label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.form-grid input, .form-grid select, .form-grid textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: white; }
+.form-grid .span-2 { grid-column: span 2; }
+.form-section { margin: 16px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.req { color: var(--copper); }
+.form-error { background: #fff5f0; border: 1px solid var(--red); color: var(--red); padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
+.field-error { display: block; color: var(--red); font-size: 12px; margin-top: 2px; }
+.empty-state { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 28px 20px; text-align: center; color: var(--muted); margin: 12px 0; }
+.empty-state strong { display: block; color: var(--ink); margin-bottom: 6px; }
+.empty-state p { margin: 0 0 12px; }
+@media (max-width: 800px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .form-grid .span-2 { grid-column: auto; }
+}
+@media (max-width: 800px) {
+  .land-hero, .land-steps { grid-template-columns: 1fr; }
+  .land-copy h1 { font-size: 34px; }
+  .land-bar { padding: 14px 16px; }
+  .land-hero, .land-how, .land-price { padding-left: 16px; padding-right: 16px; }
+}

@@ -7,6 +7,7 @@ who approved, and whether cash matched.
 
 from __future__ import annotations
 
+import secrets
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
@@ -54,8 +55,19 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def active_packet(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """The packet that gates send: the open pay app's packet, else the job packet."""
+    open_invoice = next(
+        (inv for inv in reversed(job.get("invoices", [])) if inv.get("status") in {"draft", "awaiting_approval"}),
+        None,
+    )
+    if open_invoice and open_invoice.get("packet"):
+        return open_invoice["packet"]
+    return job.get("packet") or []
+
+
 def missing_packet(job: dict[str, Any]) -> list[dict[str, Any]]:
-    return [item for item in job["packet"] if item["required"] and not item["present"]]
+    return [item for item in active_packet(job) if item["required"] and not item["present"]]
 
 
 def unsigned_cos_in_billing(job: dict[str, Any]) -> list[dict[str, Any]]:
@@ -116,6 +128,41 @@ def audit(state: dict[str, Any], job_id: str, action: str, detail: str, actor: s
     )
 
 
+def record_progress(
+    state: dict[str, Any],
+    job_id: str,
+    completed_value_cents: int,
+    notes: str = "",
+    actor: str = "owner",
+) -> dict[str, Any]:
+    """Set completed-to-date and draft a progress pay app. Does not mark the job done."""
+    job = _job(state, job_id)
+    if job.get("closed"):
+        raise GateError("Job is closed.")
+    if job.get("work_status") == "complete":
+        raise GateError("Job is already marked done. Draft the remaining pay app instead.")
+    contract_total = job["contract_cents"] + sum(
+        co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
+    )
+    if completed_value_cents <= 0:
+        raise GateError("Completed-to-date must be greater than zero.")
+    if completed_value_cents > contract_total:
+        raise GateError("Completed-to-date cannot exceed the contract total.")
+    if completed_value_cents <= job.get("completed_value_cents", 0):
+        raise GateError("Completed-to-date must be higher than the last recorded amount.")
+    job["completed_value_cents"] = int(completed_value_cents)
+    if notes:
+        job["progress_notes"] = notes
+    audit(
+        state,
+        job_id,
+        "record_progress",
+        f"{actor} recorded completed-to-date {money(completed_value_cents)}.{' ' + notes if notes else ''}",
+        actor,
+    )
+    return draft_invoice(state, job_id, actor="billdable")
+
+
 def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: str = "", evidence: list[str] | None = None) -> dict[str, Any]:
     job = _job(state, job_id)
     job["work_status"] = "complete"
@@ -123,10 +170,9 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     job["done_notes"] = notes or job.get("done_notes", "")
     if evidence:
         job.setdefault("evidence", []).extend(evidence)
-    if job.get("completed_value_cents") is None:
-        job["completed_value_cents"] = job["contract_cents"] + sum(
-            co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
-        )
+    job["completed_value_cents"] = job["contract_cents"] + sum(
+        co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
+    )
     audit(state, job_id, "job_done", f"{actor} marked {job['name']} done. Notes: {notes or 'none'}.", actor)
     return draft_invoice(state, job_id, actor="billdable")
 
@@ -152,9 +198,16 @@ def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "billdable") 
     ]
     for co in pending_included:
         lines.append({"label": f"CO {co['number']} — {co['title']} (unsigned)", "amount_cents": co["amount_cents"]})
-    blockers = blocker_lines(job)
+    invoice_id = f"inv-{job['id']}-{len(job['invoices']) + 1}"
+    packet = _packet_for_pay_app(job, invoice_id)
+    packet_missing = [item["blocker"] for item in packet if item["required"] and not item["present"]]
+    co_blockers = [
+        f"Change Order {co['number']} is included in the billing amount but has not been signed."
+        for co in pending_included
+    ]
+    blockers = packet_missing + co_blockers
     invoice = {
-        "id": f"inv-{job['id']}-{len(job['invoices']) + 1}",
+        "id": invoice_id,
         "number": number,
         "amount_cents": amount,
         "status": "draft" if blockers else "awaiting_approval",
@@ -162,13 +215,15 @@ def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "billdable") 
         "created_at": utcnow(),
         "sent_at": None,
         "approved_by": None,
+        "packet": packet,
+        "packet_id": invoice_id if packet is not job.get("packet") else "job-packet",
     }
     job["invoices"].append(invoice)
     audit(
         state,
         job_id,
         "draft_invoice",
-        f"Drafted {number} for {money(amount)}. Blockers: {len(blockers)}.",
+        f"Drafted {number} for {money(amount)} with a {len(packet)}-item packet. Blockers: {len(blockers)}.",
         actor,
     )
     return job
@@ -176,7 +231,7 @@ def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "billdable") 
 
 def resolve_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: str = "owner") -> dict[str, Any]:
     job = _job(state, job_id)
-    item = next((i for i in job["packet"] if i["id"] == item_id), None)
+    item, _invoice = _find_packet_item(job, item_id)
     if not item:
         raise GateError("Packet item not found.")
     item["present"] = True
@@ -427,37 +482,20 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
     }
     state.setdefault("daily_records", []).append(rec)
     job.setdefault("daily_records", []).append(rec["id"])
-    # also attach as packet evidence
-    job.setdefault("packet", []).append({
-        "id": f"pkt-dr-{rec['id']}",
-        "kind": "daily",
-        "label": f"Daily record {rec['at'][:10]}",
-        "required": False,
-        "present": True,
-        "blocker": "",
-        "attachments": [{"name": "daily-note.txt", "note": notes}],
-    })
-    audit(state, job_id, "daily_record", f"{actor} added a daily record.", actor)
+    add_job_record(state, job_id, f"Daily record {rec['at'][:10]}", "daily", notes, actor)
+    audit(state, job_id, "daily_record", f"{actor} added a daily record to the job record.", actor)
     return job
 
 
 def add_packet_attachment(state: dict[str, Any], job_id: str, item_id: str, name: str, actor: str = "owner") -> dict[str, Any]:
     job = _job(state, job_id)
-    item = next((i for i in job["packet"] if i["id"] == item_id), None)
+    item, _invoice = _find_packet_item(job, item_id)
     if not item:
         raise GateError("Packet item not found.")
     item.setdefault("attachments", []).append({"name": name, "added_at": utcnow(), "added_by": actor})
     item["present"] = True
     audit(state, job_id, "packet_attachment", f"{actor} attached {name} to {item['label']}.", actor)
     _refresh_draft_gate(job)
-    return job
-    job = _job(state, job_id)
-    money = job_money(job)
-    if money["outstanding_cents"] > 0 or money["retainage_open_cents"] > 0 or (job.get("waiver_due") and not job.get("waiver_sent")):
-        raise GateError("Cannot close: outstanding balance, open retainage, or waiver still due.")
-    job["closed"] = True
-    job["closed_at"] = utcnow()
-    audit(state, job_id, "close_job", f"{actor} closed {job['name']} for the record.", actor)
     return job
 
 
@@ -487,3 +525,236 @@ def _payer(state: dict[str, Any], payer_id: str) -> dict[str, Any]:
     if not payer:
         raise GateError("Payer not found.")
     return payer
+
+
+def _find_packet_item(job: dict[str, Any], item_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    for invoice in job.get("invoices", []):
+        for item in invoice.get("packet") or []:
+            if item["id"] == item_id:
+                return item, invoice
+    for item in job.get("packet") or []:
+        if item["id"] == item_id:
+            return item, None
+    return None, None
+
+
+def _packet_for_pay_app(job: dict[str, Any], invoice_id: str) -> list[dict[str, Any]]:
+    """Reuse an existing job packet, or build one for this pay app."""
+    if job.get("packet"):
+        return job["packet"]
+    items = [
+        _packet_item(invoice_id, "contract", "Signed contract", "Signed contract is missing."),
+        _packet_item(invoice_id, "waiver", "Conditional lien waiver", "Conditional lien waiver is missing."),
+        _packet_item(invoice_id, "photo", "Completion photos", "Completion photos are missing."),
+        _packet_item(invoice_id, "backup", "Pay application backup", "Pay application backup is missing."),
+    ]
+    if job.get("payer_role") == "GC":
+        items.append(_packet_item(invoice_id, "sov", "Schedule of values", "Schedule of values is missing."))
+        items.append(_packet_item(invoice_id, "insurance", "Insurance certificate", "Insurance certificate is missing."))
+    if job.get("retainage_pct"):
+        items.append(_packet_item(invoice_id, "closeout", "Closeout / punch-list signoff", "Closeout packet is incomplete for retainage release."))
+    return items
+
+
+def _packet_item(job_id: str, kind: str, label: str, blocker: str, required: bool = True) -> dict[str, Any]:
+    return {
+        "id": f"pkt-{job_id[-6:]}-{kind}",
+        "kind": kind,
+        "label": label,
+        "required": required,
+        "present": False,
+        "blocker": blocker,
+        "attachments": [],
+    }
+
+
+def add_job_record(
+    state: dict[str, Any],
+    job_id: str,
+    label: str,
+    kind: str = "note",
+    note: str = "",
+    actor: str = "owner",
+) -> dict[str, Any]:
+    job = _job(state, job_id)
+    label = (label or "").strip()
+    if not label:
+        raise GateError("A record needs a label.")
+    rec = {
+        "id": "rec-" + secrets.token_hex(3),
+        "kind": kind or "note",
+        "label": label,
+        "note": (note or "").strip(),
+        "added_at": utcnow(),
+        "added_by": actor,
+    }
+    job.setdefault("records", []).append(rec)
+    audit(state, job_id, "add_record", f"{actor} added {kind} to the job record: {label}.", actor)
+    return job
+
+
+def attach_record_to_packet(
+    state: dict[str, Any],
+    job_id: str,
+    item_id: str,
+    record_id: str,
+    actor: str = "owner",
+) -> dict[str, Any]:
+    job = _job(state, job_id)
+    item, invoice = _find_packet_item(job, item_id)
+    record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not item:
+        raise GateError("Packet item not found.")
+    if not record:
+        raise GateError("Job record not found.")
+    item.setdefault("attachments", []).append({
+        "name": record["label"],
+        "record_id": record_id,
+        "added_at": utcnow(),
+        "added_by": actor,
+    })
+    item["present"] = True
+    item["resolved_at"] = utcnow()
+    which = invoice["number"] if invoice else "the job packet"
+    audit(state, job_id, "attach_record", f"{actor} attached {record['label']} to {item['label']} on {which}.", actor)
+    _refresh_draft_gate(job)
+    return job
+
+
+def create_job(
+    state: dict[str, Any],
+    name: str,
+    customer_name: str,
+    contract_cents: int,
+    address: str = "",
+    approver: str = "",
+    ap_email: str = "",
+    phone: str = "",
+    role: str = "Owner",
+    retainage_pct: int = 0,
+    packet_notes: str = "",
+    contract_number: str = "",
+    actor: str = "owner",
+) -> dict[str, Any]:
+    """Add a job and its record. The packet is created later, with a pay app."""
+    name = (name or "").strip()
+    customer_name = (customer_name or "").strip()
+    address = (address or "").strip()
+    approver = (approver or "").strip()
+    ap_email = (ap_email or "").strip()
+    phone = (phone or "").strip()
+    role = role if role in {"Owner", "GC"} else "Owner"
+    packet_notes = (packet_notes or "").strip()
+    contract_number = (contract_number or "").strip()
+
+    missing = []
+    if not name:
+        missing.append("Job name is required.")
+    if not address:
+        missing.append("Job address is required.")
+    if not customer_name:
+        missing.append("Customer name is required.")
+    if not approver:
+        missing.append("Approver is required.")
+    if not ap_email or "@" not in ap_email:
+        missing.append("A real AP email is required.")
+    if contract_cents <= 0:
+        missing.append("Contract amount must be greater than zero.")
+    if retainage_pct < 0 or retainage_pct > 20:
+        missing.append("Retainage must be between 0 and 20 percent.")
+    if missing:
+        raise GateError("Cannot create the job.", missing)
+
+    payer = next((p for p in state["payers"] if p["name"].lower() == customer_name.lower()), None)
+    packet_rule = packet_notes or "Signed contract, conditional waiver, completion photos, and pay-app backup."
+    if role == "GC":
+        packet_rule = packet_notes or "AIA-style pay app, schedule of values, lien waiver, insurance certificate, daily tickets."
+    if not payer:
+        payer = {
+            "id": "payer-" + secrets.token_hex(3),
+            "name": customer_name,
+            "role": role,
+            "approver": approver,
+            "ap_email": ap_email,
+            "phone": phone,
+            "packet": packet_rule,
+            "follow_up_days": 5 if role == "GC" else 7,
+            "usual_approval_days": 21 if role == "GC" else 14,
+            "rejects_when": "Missing required packet items.",
+            "copy": "",
+        }
+        state["payers"].append(payer)
+    else:
+        payer["approver"] = approver or payer.get("approver", "")
+        payer["ap_email"] = ap_email or payer.get("ap_email", "")
+        payer["phone"] = phone or payer.get("phone", "")
+        if packet_notes:
+            payer["packet"] = packet_notes
+
+    base = "".join(ch for ch in name.upper() if ch.isalnum())[:4] or "JOB"
+    code = base
+    taken = {j["code"] for j in state["jobs"]}
+    n = 2
+    while code in taken:
+        code = f"{base}{n}"
+        n += 1
+
+    job_id = "job-" + secrets.token_hex(3)
+    records = []
+    if contract_number:
+        records.append({
+            "id": "rec-" + secrets.token_hex(3),
+            "kind": "contract",
+            "label": f"Contract {contract_number}",
+            "note": "",
+            "added_at": utcnow(),
+            "added_by": actor,
+        })
+    if packet_notes:
+        records.append({
+            "id": "rec-" + secrets.token_hex(3),
+            "kind": "note",
+            "label": "Packet requirements",
+            "note": packet_notes,
+            "added_at": utcnow(),
+            "added_by": actor,
+        })
+
+    job = {
+        "id": job_id,
+        "code": code,
+        "name": name,
+        "address": address,
+        "payer_id": payer["id"],
+        "payer_role": role,
+        "work_status": "in_progress",
+        "completed_at": None,
+        "contract_cents": int(contract_cents),
+        "contract_number": contract_number,
+        "completed_value_cents": 0,
+        "external_status": None,
+        "waiver_due": False,
+        "waiver_sent": False,
+        "follow_ups": 0,
+        "retainage_pct": int(retainage_pct),
+        "retainage_held_cents": 0,
+        "retainage_released_cents": 0,
+        "retainage_chases": 0,
+        "change_orders": [],
+        "packet": [],
+        "invoices": [],
+        "payments": [],
+        "records": records,
+        "closed": False,
+        "evidence": [],
+        "done_notes": "",
+    }
+    state["jobs"].append(job)
+    audit(
+        state,
+        job["id"],
+        "create_job",
+        f"{actor} created {job['name']} for {payer['name']} ({money(job['contract_cents'])}). Packet is created with the first pay app.",
+        actor,
+    )
+    return job

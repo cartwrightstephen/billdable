@@ -9,6 +9,47 @@ from seed import seed_state
 
 
 class MoneyFileTests(unittest.TestCase):
+    def test_create_job_starts_a_record_not_a_packet(self):
+        state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = domain.create_job(
+            state,
+            "Pine kitchen",
+            "Jones Family",
+            4500000,
+            address="12 Pine St",
+            approver="Sam Jones",
+            ap_email="ap@jones.example",
+            role="Owner",
+            retainage_pct=10,
+            contract_number="C-100",
+        )
+        self.assertEqual(job["contract_cents"], 4500000)
+        self.assertEqual(job["packet"], [])
+        self.assertTrue(any(r["kind"] == "contract" for r in job["records"]))
+        self.assertEqual(state["payers"][0]["ap_email"], "ap@jones.example")
+        domain.mark_done(state, job["id"], notes="Done")
+        invoice = job["invoices"][-1]
+        self.assertEqual(invoice["packet_id"], invoice["id"])
+        self.assertGreaterEqual(len(invoice["packet"]), 5)
+        self.assertIn("closeout", [item["kind"] for item in invoice["packet"]])
+
+    def test_progress_pay_app_does_not_mark_done(self):
+        state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = domain.create_job(
+            state, "Pine kitchen", "Jones Family", 10000000,
+            address="12 Pine St", approver="Sam Jones", ap_email="ap@jones.example",
+        )
+        domain.record_progress(state, job["id"], 4000000, "Framing complete")
+        self.assertEqual(job["work_status"], "in_progress")
+        self.assertEqual(job["invoices"][-1]["amount_cents"], 4000000)
+        self.assertTrue(job["invoices"][-1]["packet"])
+
+    def test_create_job_rejects_missing_required_fields(self):
+        state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": []}
+        with self.assertRaises(domain.GateError) as raised:
+            domain.create_job(state, "", "", 0)
+        self.assertGreaterEqual(len(raised.exception.blockers), 4)
+
     def test_oak_street_money_file_separates_unsigned_change_order(self):
         job = seed_state()["jobs"][0]
         money = domain.job_money(job)
