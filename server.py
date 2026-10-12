@@ -5,12 +5,14 @@
 
 Each company has its own JSON file under <data dir>/companies/. Auth lives in
 <data dir>/auth.json. The data dir is BILLDABLE_DATA_DIR, default data/ beside
-this file. Only index.html, app.js and styles.css are served from static/.
+this file. Only index.html, app.js and styles.css are served from static/; the
+page addresses the app uses (/today, /jobs/..., /money/...) all get index.html.
 """
 
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import hmac
 import json
@@ -62,6 +64,39 @@ STATIC_FILES = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
 }
+# First path segments that belong to the browser app; each one serves index.html so
+# refresh, Back and links in emails land on the same page (the app reads the address).
+APP_SECTIONS = {"today", "jobs", "inbox", "money", "settings"}
+APP_PATH_RE = re.compile(r"^/(?:[a-z]+)(?:/[A-Za-z0-9_-]{1,64}){0,3}/?$")
+_ASSETS: dict = {}
+
+
+def asset(name: str) -> dict:
+    """A static file with its gzip copy and a short content hash, rebuilt when the file changes."""
+    path = STATIC / name
+    mtime = path.stat().st_mtime_ns
+    cached = _ASSETS.get(name)
+    if not cached or cached["mtime"] != mtime:
+        raw = path.read_bytes()
+        cached = {"mtime": mtime, "raw": raw, "gz": gzip.compress(raw, 9, mtime=0),
+                  "hash": hashlib.sha256(raw).hexdigest()[:12]}
+        _ASSETS[name] = cached
+    return cached
+
+
+def index_html() -> bytes:
+    """index.html with each script and stylesheet address carrying its content hash, so a
+    browser can keep them for a year and still gets a new copy the moment one changes."""
+    page = asset("index.html")["raw"].decode("utf-8")
+    for url, (name, _) in STATIC_FILES.items():
+        page = page.replace(f'"{url}"', f'"{url}?v={asset(name)["hash"]}"')
+    return page.encode("utf-8")
+
+
+NOT_FOUND_PAGE = b"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Page not found - Billdable</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;background:#f6f3ee;color:#1c1915;margin:0;display:grid;place-items:center;min-height:100vh}main{max-width:420px;padding:24px}h1{font:500 32px Georgia,serif;margin:0 0 8px}a{color:#8c3f1d}</style></head>
+<body><main><h1>Page not found</h1><p>There is nothing at this address.</p><p><a href="/">Go to Billdable</a></p></main></body></html>"""
+
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -593,17 +628,44 @@ class Handler(BaseHTTPRequestHandler):
         if path in {"/terms", "/privacy"}:
             self._send(200, legal.page(path.strip("/")).encode("utf-8"), "text/html; charset=utf-8")
             return
-        if path in {"/", "/index.html"}:
-            self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
+        if path in {"/", "/index.html"} or (APP_PATH_RE.match(path) and path.split("/")[1] in APP_SECTIONS):
+            self._send_compressible(200, index_html(), "text/html; charset=utf-8", {"Cache-Control": "no-cache"})
             return
         if path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
             return
         if path in STATIC_FILES:
-            name, kind = STATIC_FILES[path]
-            self._send(200, (STATIC / name).read_bytes(), kind)
+            self._static_asset(*STATIC_FILES[path])
             return
-        self._json(404, {"error": "Not found"})
+        if path.startswith("/api/"):
+            self._json(404, {"error": "Not found"})
+        else:
+            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+
+    def _accepts_gzip(self) -> bool:
+        return "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+
+    def _send_compressible(self, code: int, body: bytes, kind: str, headers: dict) -> None:
+        headers = {**headers, "Vary": "Accept-Encoding"}
+        if self._accepts_gzip():
+            body, headers["Content-Encoding"] = gzip.compress(body, 6, mtime=0), "gzip"
+        self._send(code, body, kind, headers)
+
+    def _static_asset(self, name: str, kind: str) -> None:
+        """app.js and styles.css: gzip when the browser accepts it; cached for a year when
+        asked for by the current content hash (?v=), otherwise revalidated by ETag."""
+        a = asset(name)
+        etag = '"' + a["hash"] + '"'
+        versioned = parse_qs(urlparse(self.path).query).get("v", [""])[0] == a["hash"]
+        headers = {"ETag": etag, "Vary": "Accept-Encoding",
+                   "Cache-Control": "public, max-age=31536000, immutable" if versioned else "no-cache"}
+        if self.headers.get("If-None-Match") == etag:
+            self._send(304, b"", kind, headers)
+            return
+        body = a["raw"]
+        if self._accepts_gzip():
+            body, headers["Content-Encoding"] = a["gz"], "gzip"
+        self._send(200, body, kind, headers)
 
     def _post(self) -> None:
         path = urlparse(self.path).path
@@ -1375,7 +1437,9 @@ class Handler(BaseHTTPRequestHandler):
                     invoice_id=_text(body, "invoice_id") or None,
                 )
             elif action == "waiver":
-                domain.send_waiver(state, job_id, actor, invoice_id=_text(body, "invoice_id") or None)
+                domain.send_waiver(
+                    state, job_id, actor, invoice_id=_text(body, "invoice_id") or None, kind=_text(body, "kind") or None
+                )
             elif action == "retainage":
                 domain.chase_retainage(state, job_id, actor)
             elif action == "retainage-paid":
@@ -1384,7 +1448,8 @@ class Handler(BaseHTTPRequestHandler):
                 )
             elif action == "add-co":
                 domain.add_change_order(
-                    state, job_id, _text(body, "title"), _whole_number(body, "amount_cents", "Change order amount", 0), actor
+                    state, job_id, _text(body, "title"), _whole_number(body, "amount_cents", "Change order amount", 0), actor,
+                    description=_text(body, "description"),
                 )
             elif action == "approve-co" and len(parts) == 5:
                 domain.approve_change_order(state, job_id, parts[4], actor)
@@ -1416,6 +1481,15 @@ class Handler(BaseHTTPRequestHandler):
                 domain.import_sample_qbo_payment(state, job_id, actor)
             elif action == "close":
                 domain.close_job(state, job_id, actor)
+            elif action == "edit":
+                updates = {k: _text(body, k) for k in ("name", "address", "contract_number") if k in body}
+                if "contract_cents" in body:
+                    updates["contract_cents"] = _whole_number(body, "contract_cents", "Contract amount", 0)
+                if "retainage_pct" in body:
+                    updates["retainage_pct"] = _whole_number(body, "retainage_pct", "Retainage", 0)
+                domain.edit_job(state, job_id, updates, actor)
+            elif action == "delete":
+                domain.delete_job(state, job_id, actor)
             elif action == "daily-record":
                 domain.add_daily_record(state, job_id, _text(body, "notes"), actor)
             elif action == "attach" and len(parts) == 5:

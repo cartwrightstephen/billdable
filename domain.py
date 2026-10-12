@@ -510,9 +510,32 @@ def match_payment(
     return job
 
 
-def send_waiver(state: dict[str, Any], job_id: str, actor: str = "owner", invoice_id: str | None = None) -> dict[str, Any]:
+# The four lien waiver types. Billdable records which one went out; it never writes the
+# waiver itself, because state law sets the forms (the contractor drops their signed form
+# on the job record and sending attaches it).
+WAIVER_KINDS = {
+    "conditional_progress": "Conditional waiver on progress payment",
+    "unconditional_progress": "Unconditional waiver on progress payment",
+    "conditional_final": "Conditional waiver on final payment",
+    "unconditional_final": "Unconditional waiver on final payment",
+}
+
+
+def suggested_waiver_kind(job: dict[str, Any]) -> str:
+    """Payment has been matched, so unconditional; final once the job is done and fully paid."""
+    m = job_money(job)
+    final = job.get("work_status") == "complete" and m["unbilled_completed_cents"] == 0 and m["outstanding_cents"] == 0
+    return "unconditional_final" if final else "unconditional_progress"
+
+
+def send_waiver(
+    state: dict[str, Any], job_id: str, actor: str = "owner", invoice_id: str | None = None, kind: str | None = None
+) -> dict[str, Any]:
     """One waiver per paid pay app. Older records keep a single job-level flag."""
     job = _open_job(state, job_id)
+    if kind is not None and kind not in WAIVER_KINDS:
+        raise GateError("Pick the waiver type: conditional or unconditional, progress or final.")
+    kind = kind or suggested_waiver_kind(job)
     pending = [inv for inv in job["invoices"] if inv.get("waiver_due") and not inv.get("waiver_sent")]
     if invoice_id:
         pending = [inv for inv in pending if inv["id"] == invoice_id]
@@ -529,13 +552,15 @@ def send_waiver(state: dict[str, Any], job_id: str, actor: str = "owner", invoic
         invoice = pending[0]
         invoice["waiver_sent"] = True
         invoice["waiver_sent_at"] = now
+        invoice["waiver_kind"] = kind
         which = f" for {invoice['number']}"
         detail = f"payment of {money(invoice['amount_cents'])} on {invoice['number']}"
     else:
         raise GateError("No waiver is due. Payment has not been matched.")
     job["waiver_sent_at"] = now
+    job["waiver_kind"] = WAIVER_KINDS[kind]
     job["external_status"] = "Waiver sent"
-    subject = f"Lien waiver{which} — {job['name']}"
+    subject = f"{WAIVER_KINDS[kind]}{which} — {job['name']}"
     files = _waiver_file_ids(state, job)
     body = (
         f"{payer.get('approver') or payer['name']},\n\n"
@@ -545,7 +570,7 @@ def send_waiver(state: dict[str, Any], job_id: str, actor: str = "owner", invoic
     )
     _record_email(state, job_id, "waiver", payer["ap_email"], subject, body, actor, attachments=files)
     _sync_waiver(job)
-    audit(state, job_id, "send_waiver", f"{actor} approved sending the waiver{which}.", actor)
+    audit(state, job_id, "send_waiver", f"{actor} approved sending the {WAIVER_KINDS[kind].lower()}{which}.", actor)
     return job
 
 
@@ -733,9 +758,12 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     return payer
 
 
-def add_change_order(state: dict[str, Any], job_id: str, title: str, amount_cents: int, actor: str = "owner") -> dict[str, Any]:
+def add_change_order(
+    state: dict[str, Any], job_id: str, title: str, amount_cents: int, actor: str = "owner", description: str = ""
+) -> dict[str, Any]:
     job = _open_job(state, job_id)
     title = title.strip() if isinstance(title, str) else ""
+    description = description.strip() if isinstance(description, str) else ""
     errors = []
     if not title:
         errors.append("Change order title is required.")
@@ -750,6 +778,7 @@ def add_change_order(state: dict[str, Any], job_id: str, title: str, amount_cent
         "id": f"co-{job['code'].lower()}-{number}",
         "number": number,
         "title": title,
+        "description": description,
         "amount_cents": amount_cents,
         "status": "pending",
         "included_in_billing": False,
@@ -1235,6 +1264,67 @@ def create_job(
         actor,
     )
     return job
+
+
+
+def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+    """Fix a job's name, address or contract number at any time. The contract amount and
+    retainage can change only before the first pay app, and the contract only without a
+    schedule of values (change that schedule instead). The job code never changes: emails
+    and texts are filed by it. Payer contacts are edited in the Payer Playbook."""
+    job = _open_job(state, job_id)
+    has_pay_apps = any(i.get("status") != "void" for i in job.get("invoices", []))
+    changes: list[str] = []
+    problems: list[str] = []
+
+    for key, label in (("name", "Job name"), ("address", "Job address"), ("contract_number", "Contract number")):
+        if key not in updates:
+            continue
+        value = str(updates[key] or "").strip()
+        if key != "contract_number" and not value:
+            problems.append(f"{label} can't be empty.")
+        elif value != job.get(key, ""):
+            changes.append(f"{label.lower()} from \"{job.get(key, '')}\" to \"{value}\"")
+            job[key] = value
+
+    if "contract_cents" in updates and updates["contract_cents"] != job["contract_cents"]:
+        cents = updates["contract_cents"]
+        if has_pay_apps:
+            problems.append("The contract amount can't change after the first pay app. Use a change order.")
+        elif sov.has_sov(job):
+            problems.append("This job bills from a schedule of values. Change the contract from the schedule.")
+        elif not isinstance(cents, int) or isinstance(cents, bool) or cents <= 0 or cents > MAX_AMOUNT_CENTS:
+            problems.append("Contract amount must be greater than zero.")
+        else:
+            changes.append(f"contract from {money(job['contract_cents'])} to {money(cents)}")
+            job["contract_cents"] = cents
+
+    if "retainage_pct" in updates and updates["retainage_pct"] != job.get("retainage_pct", 0):
+        pct = updates["retainage_pct"]
+        if has_pay_apps:
+            problems.append("Retainage can't change after the first pay app.")
+        elif not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 20:
+            problems.append("Retainage must be between 0 and 20 percent.")
+        else:
+            changes.append(f"retainage from {job.get('retainage_pct', 0)}% to {pct}%")
+            job["retainage_pct"] = pct
+
+    if problems:
+        raise GateError("The job was not changed.", problems)
+    if changes:
+        audit(state, job_id, "edit_job", f"{actor} changed {job['name']}: " + "; ".join(changes) + ".", actor)
+    return job
+
+
+def delete_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> None:
+    """Delete a job created by mistake. Only a job with no pay apps and no payments can go;
+    anything billed stays on the record and is closed instead."""
+    job = _job(state, job_id)
+    if job.get("invoices") or job.get("payments"):
+        raise GateError(f"{job['name']} has pay apps or payments, so it can't be deleted. Close it for the record instead.")
+    state["jobs"] = [j for j in state["jobs"] if j["id"] != job_id]
+    state["daily_records"] = [r for r in state.get("daily_records", []) if r.get("job_id") != job_id]
+    audit(state, job_id, "delete_job", f"{actor} deleted {job['name']} ({job['code']}), which had no pay apps.", actor)
 
 
 # ---------- schedule of values ----------
