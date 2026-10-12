@@ -327,6 +327,73 @@ class MailHttpTests(unittest.TestCase):
         # While it was sending, the entry showed "sending", so a second request could not send it again.
         self.assertEqual(len(self.sink.messages), 1)
 
+    def test_unexpected_error_marks_failed_not_stuck(self):  # review finding 5
+        self.mail_on(SMTP_USER="u", SMTP_PASSWORD="pässwörd")
+        cookie, job = self.company("mail7@pine.example")
+        self.ready_to_send(cookie, job)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        self.assertTrue(state["email_log"][-1]["status"].startswith("failed"), state["email_log"][-1]["status"])
+
+    def test_stuck_sending_can_be_retried_and_does_not_eat_the_limit(self):  # review finding 5
+        self.mail_on(MAIL_DAILY_LIMIT="1")
+        cookie, job = self.company("mail8@pine.example")
+        self.ready_to_send(cookie, job)
+        _, me = self.request("GET", "/api/auth/me", cookie=cookie)
+        company_id = me["user"]["company_id"]
+        path = server.company_path(company_id)
+        data = json.loads(path.read_text())
+        data["email_log"].append({"id": "eml-stuck", "at": "2026-01-01T00:00:00+00:00", "job_id": job["id"], "kind": "pay_app",
+                                  "to": "ap@park.example", "subject": "s", "body": "b", "approved_by": "Pat", "attachments": [],
+                                  "status": "sending", "sending_at": "2026-01-01T00:00:00+00:00"})
+        path.write_text(json.dumps(data))
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        self.assertEqual(state["email_log"][-1]["status"], "sent")  # the dead "sending" row didn't use up the limit of 1
+        self.mail_on(MAIL_DAILY_LIMIT="5")
+        res, state = self.request("POST", "/api/outbox/eml-stuck/retry", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual(next(e for e in state["email_log"] if e["id"] == "eml-stuck")["status"], "sent")
+
+    def test_reset_does_not_reset_the_daily_limit(self):  # review finding 6
+        self.mail_on(MAIL_DAILY_LIMIT="1")
+        cookie, job = self.company("mail9@pine.example")
+        self.ready_to_send(cookie, job)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        self.assertEqual(state["email_log"][-1]["status"], "sent")
+        res, _ = self.request("POST", "/api/reset", {"confirm": "Pine & Sons"}, cookie=cookie)
+        self.assertEqual(res.status, 200)
+        job2 = {"name": "After reset", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
+                "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+        _, state = self.request("POST", "/api/jobs", job2, cookie=cookie)
+        new_job = state["jobs"][0]
+        self.ready_to_send(cookie, new_job)
+        _, state = self.request("POST", f"/api/jobs/{new_job['id']}/send", {}, cookie=cookie)
+        self.assertIn("daily limit of 1", state["email_log"][-1]["status"])
+        self.assertEqual(len(self.sink.messages), 1)
+
+    def test_unicode_line_separator_in_job_name_still_sends(self):  # review finding 8
+        res, _ = self.request("POST", "/api/auth/signup", {"email": "mail10@pine.example", "password": PASSWORD, "name": "Pat", "company_name": "Pine"})
+        cookie = res.getheader("Set-Cookie").split(";")[0]
+        job = {"name": "Elm\u2028addition\x85x", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim",
+               "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+        _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
+        self.ready_to_send(cookie, state["jobs"][0])
+        _, state = self.request("POST", f"/api/jobs/{state['jobs'][0]['id']}/send", {}, cookie=cookie)
+        self.assertEqual(state["email_log"][-1]["status"], "sent", state["email_log"][-1]["status"])
+
+    def test_cc_and_odd_addresses(self):  # review findings 11 and 13
+        cookie, job = self.company("mail11@pine.example")
+        payer_id = job["payer_id"]
+        self.request("POST", f"/api/payers/{payer_id}/update", {"copy": "Dana <dana@park.example>, bookkeeper"}, cookie=cookie)
+        self.ready_to_send(cookie, job)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        self.assertEqual(state["email_log"][-1]["status"], "sent")
+        self.assertEqual(sorted(self.sink.messages[-1]["to"]), ["ap@park.example", "dana@park.example"])
+        self.assertEqual(parsed(self.sink.messages[-1])["Cc"], "dana@park.example")
+        for odd in ("a(b@x.com", "x@y.z]", "a:b@x.com"):
+            with self.assertRaises(ValueError):
+                mailer.build_message({"to": odd, "subject": "s", "body": "b"}, "Pine", "", [], {"from": "billing@billdable.test"})
+
     def test_sov_over_http(self):
         cookie, job = self.company("mail6@pine.example")
         res, parsed_rows = self.request("POST", "/api/sov/parse", {"text": "Rough-in wiring\t400\tea\t45\nPanel and feeders\t12000"}, cookie=cookie)

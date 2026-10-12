@@ -32,11 +32,17 @@ from __future__ import annotations
 import csv
 import io
 import re
-from decimal import Decimal, InvalidOperation
+import secrets
+from decimal import Decimal, DecimalException
 from typing import Any
 
 MAX_LINES = 300
 MAX_OP_BP = 5000  # 50%
+MAX_QTY_MILLI = 1_000_000_000_000  # one billion units
+MAX_RATE_CENTS = 10_000_000_000  # $100,000,000
+MAX_CELL = 60  # characters read from one pasted cell
+MAX_CELLS = 30  # cells read from one pasted row
+PLAIN_NUMBER_RE = re.compile(r"^-?(?:\d{1,15}(?:\.\d{0,6})?|\.\d{1,6})$")
 LIVE_STATUSES = {"draft", "awaiting_approval", "sent", "approved", "partial", "paid"}
 
 
@@ -49,18 +55,19 @@ class SovError(ValueError):
 def _decimal(value: Any, what: str) -> Decimal:
     if isinstance(value, bool) or value is None:
         raise SovError(f"{what} is missing.")
-    text = str(value).strip().replace(",", "").replace("$", "")
+    text = str(value)[:40].strip().replace(",", "").replace("$", "").replace(" ", "")
     if text.endswith("%"):
         text = text[:-1]
     if not text:
         raise SovError(f"{what} is missing.")
+    # Plain decimals only: no exponents ("1e9999"), no infinities, nothing long.
+    # Anything else is refused before Decimal sees it, so no input costs real CPU.
+    if len(str(value)) > 40 or not PLAIN_NUMBER_RE.match(text):
+        raise SovError(f"{what} must be a plain number, not {str(value)[:30]!r}.")
     try:
-        number = Decimal(text)
-    except InvalidOperation:
-        raise SovError(f"{what} must be a number, not {str(value)[:30]!r}.")
-    if not number.is_finite():
+        return Decimal(text)
+    except DecimalException:
         raise SovError(f"{what} must be a number.")
-    return number
 
 
 def to_milli(value: Any, what: str = "Quantity") -> int:
@@ -68,6 +75,8 @@ def to_milli(value: Any, what: str = "Quantity") -> int:
     number = _decimal(value, what) * 1000
     if number != number.to_integral_value():
         raise SovError(f"{what} can have at most three decimals.")
+    if abs(number) > MAX_QTY_MILLI:
+        raise SovError(f"{what} is too large.")
     return int(number)
 
 
@@ -76,6 +85,8 @@ def to_cents(value: Any, what: str = "Rate") -> int:
     number = _decimal(value, what) * 100
     if number != number.to_integral_value():
         raise SovError(f"{what} can have at most two decimals (cents).")
+    if abs(number) > MAX_RATE_CENTS:
+        raise SovError(f"{what} is too large.")
     return int(number)
 
 
@@ -255,6 +266,8 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
     if len(raw_lines) > MAX_LINES:
         raise SovError(f"A schedule can have at most {MAX_LINES} lines.")
     old = {l["id"]: l for l in existing if not l.get("co_id")}
+    # Ids must be unique: a repeated id would merge two lines' billing and under-bill the job.
+    used = {l["id"] for l in existing if l.get("co_id")}
     out, errors = [], []
     for n, raw in enumerate(raw_lines, start=1):
         if not isinstance(raw, dict):
@@ -280,8 +293,14 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
             errors.append(f"Line {n} ({str(raw.get('description') or '').strip()[:40] or 'no description'}): {str(exc).rstrip('.')}.")
             continue
         prior = old.get(raw.get("id")) if isinstance(raw.get("id"), str) else None
+        if prior and prior["id"] in used:
+            prior = None  # the same id sent twice: the second copy is a new line
+        line_id = prior["id"] if prior else new_id()
+        while line_id in used or (not prior and line_id in old):
+            line_id = new_id()
+        used.add(line_id)
         out.append({
-            "id": prior["id"] if prior else new_id(),
+            "id": line_id,
             "item": str(raw.get("item") or "").strip()[:12] or str(n),
             "description": description,
             "unit": unit,
@@ -306,29 +325,44 @@ HEADER_WORDS = {
     "rate": ("rate", "unit rate", "unit price", "price", "unit cost", "cost", "each"),
     "amount": ("amount", "total", "value", "scheduled value", "extended", "ext", "line total", "sum"),
 }
-NUMBER_RE = re.compile(r"^\(?-?\$?\s*[\d,]*\.?\d+\)?%?$")
+NUMBER_RE = re.compile(r"^\(?-?\$?(?:\d[\d,]{0,20})?(?:\.\d{1,6})?\)?%?$")
 QTY_UNIT_RE = re.compile(r"^(\d[\d,]*(?:\.\d+)?)\s+([A-Za-z]{1,6}\.?)$")
 ITEM_RE = re.compile(r"^[A-Za-z]?\d+(\.\d+)*[A-Za-z]?$")
 TOTAL_RE = re.compile(r"^(sub\s*-?\s*total|grand\s+total|total|totals|overhead|o\s*&\s*p|profit|markup|retainage)\b", re.I)
 
 
 def _split_rows(text: str) -> list[list[str]]:
+    # Bounded before any pattern runs: 2,000 lines of 2,000 characters, 30 cells of 200.
+    lines_in = [line[:2000] for line in text.splitlines()[:2000]]
     rows = []
-    if "\t" in text:
+    if any("\t" in line for line in lines_in):
         # Copied from Excel or Google Sheets.
-        rows = [[c.strip() for c in row] for row in csv.reader(io.StringIO(text), delimiter="\t")]
+        rows = list(csv.reader(lines_in, delimiter="\t"))
     else:
-        for line in text.splitlines():
+        for line in lines_in:
             if re.search(r"\S {2,}\S", line.strip()):
                 # Columns separated by runs of spaces (copied from a PDF); commas are thousands separators.
-                rows.append([c.strip() for c in re.split(r" {2,}", line.strip())])
+                rows.append(re.split(r" {2,}", line.strip()))
             else:
-                rows.extend([c.strip() for c in row] for row in csv.reader([line]))
+                rows.extend(_join_dollars(row) for row in csv.reader([line]))
+    rows = [[c.strip()[:200] for c in row[:MAX_CELLS]] for row in rows]
     return [r for r in rows if any(c for c in r)]
 
 
+def _join_dollars(row: list[str]) -> list[str]:
+    """In a typed comma row, "$12,500.00" splits into "$12" and "500.00"; put it back together."""
+    out: list[str] = []
+    for cell in row:
+        if out and re.match(r"^\s*\$\d{1,3}(,\d{3})*$", out[-1]) and re.match(r"^\d{3}(\.\d{1,2})?$", cell):
+            out[-1] = out[-1] + "," + cell
+        else:
+            out.append(cell)
+    return out
+
+
 def _is_number(cell: str) -> bool:
-    return bool(cell) and bool(NUMBER_RE.match(cell.replace(" ", "")))
+    cell = cell.replace(" ", "")
+    return 0 < len(cell) <= MAX_CELL and any(c.isdigit() for c in cell) and bool(NUMBER_RE.match(cell))
 
 
 def _header_map(row: list[str]) -> dict[str, int] | None:
@@ -390,7 +424,7 @@ def parse_rows(text: str) -> dict[str, Any]:
                 warnings.append(f"Row {n} skipped: no description.")
             continue
         if TOTAL_RE.match(description):
-            pct = re.search(r"(\d+(?:\.\d+)?)\s*%", " ".join(row))
+            pct = re.search(r"(\d{1,3}(?:\.\d{1,2})?)\s*%", " ".join(row))
             if pct and re.match(r"^(overhead|o\s*&\s*p|profit|markup)", description, re.I):
                 op_hint = pct.group(1)
                 warnings.append(f"Row {n} ({description}) read as overhead and profit of {op_hint}%; check it below.")

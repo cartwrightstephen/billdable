@@ -43,6 +43,7 @@ PORT = int(os.environ.get("PORT", "8765"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 COOKIE = "billdable_session"
 STATE_LOCK = threading.Lock()
+STUCK_MINUTES = 30  # an email still "sending" after this long died mid-send and can be retried
 MAX_BODY_BYTES = 1_000_000
 MAX_INBOUND_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 5_000
@@ -534,7 +535,8 @@ class Handler(BaseHTTPRequestHandler):
     def _deliver_queued(self, company_id: str, user: dict, only: set | None = None) -> dict | None:
         """Send this company's queued emails. Returns the new snapshot, or None if nothing was queued."""
         cfg = mailer.settings()
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        now = datetime.now(timezone.utc)
+        stale = (now - timedelta(minutes=STUCK_MINUTES)).isoformat(timespec="seconds")
         with STATE_LOCK:
             state = load_company(company_id)
             log = state.get("email_log", [])
@@ -547,8 +549,9 @@ class Handler(BaseHTTPRequestHandler):
                     e["status"] = reason
                 save_company(company_id, state)
                 return domain.snapshot(state)
-            in_flight = sum(1 for e in log if e.get("status") == "sending")
-            room = max(0, cfg["daily_limit"] - mailer.sent_in_last_day(log) - in_flight)
+            # Only recent "sending" entries are in flight; an older one died mid-send and can be retried.
+            in_flight = sum(1 for e in log if e.get("status") == "sending" and (e.get("sending_at") or "") >= stale)
+            room = max(0, cfg["daily_limit"] - mailer.sent_in_last_day(company_id) - in_flight)
             batch, over = queued[:room], queued[room:]
             for e in over:
                 e["status"] = f"not sent: daily limit of {cfg['daily_limit']} emails reached; retry tomorrow"
@@ -556,8 +559,9 @@ class Handler(BaseHTTPRequestHandler):
             work = []
             for e in batch:
                 e["status"] = "sending"
-                e["sending_at"] = now
-                e["reply_to"] = user.get("email", "")
+                e["sending_at"] = now.isoformat(timespec="seconds")
+                # Reply-To is the person who approved the send, kept even if someone else retries it.
+                e["reply_to"] = e.get("reply_to") or user.get("email", "")
                 attach = [
                     (files[fid]["name"], importer.file_path(company_id, files[fid]))
                     for fid in e.get("attachments", [])
@@ -569,16 +573,24 @@ class Handler(BaseHTTPRequestHandler):
             if not batch:
                 return domain.snapshot(state)
         # Outside the lock: read attachments and talk to the mail server.
-        messages, outcome = [], {}
-        for entry, attach in work:
-            try:
-                msg, left_off = mailer.build_message(entry, company_name, user.get("email", ""), attach, cfg)
-                messages.append((entry["id"], msg, left_off))
-            except ValueError as exc:
-                outcome[entry["id"]] = (f"failed: {exc}", [])
-        results = mailer.send([m for _, m, _ in messages], cfg)
-        for (entry_id, _, left_off), error in zip(messages, results):
-            outcome[entry_id] = (f"failed: {error}" if error else "sent", left_off)
+        outcome: dict = {}
+        try:
+            messages = []
+            for entry, attach in work:
+                try:
+                    msg, left_off = mailer.build_message(entry, company_name, entry.get("reply_to", ""), attach, cfg)
+                    messages.append((entry["id"], msg, left_off))
+                except Exception as exc:  # a bad address or file fails this email only
+                    outcome[entry["id"]] = (f"failed: {exc}"[:300], [])
+            results = mailer.send([m for _, m, _ in messages], cfg)
+            for (entry_id, _, left_off), error in zip(messages, results):
+                outcome[entry_id] = (f"failed: {error}" if error else "sent", left_off)
+        except Exception as exc:
+            traceback.print_exc()
+            for entry, _ in work:
+                outcome.setdefault(entry["id"], (f"failed: unexpected error ({exc.__class__.__name__}); see the server log", []))
+        sent = sum(1 for status, _ in outcome.values() if status == "sent")
+        mailer.record_sent(company_id, sent)
         done_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with STATE_LOCK:
             state = load_company(company_id)
@@ -596,23 +608,28 @@ class Handler(BaseHTTPRequestHandler):
             return domain.snapshot(state)
 
     def _retry_email(self, company_id: str, user: dict, email_id: str) -> None:
-        stale = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat(timespec="seconds")
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=STUCK_MINUTES)).isoformat(timespec="seconds")
+        code, payload = 200, None
         with STATE_LOCK:
             state = load_company(company_id)
             entry = next((e for e in state.get("email_log", []) if e["id"] == email_id), None)
             if not entry:
-                self._json(404, {"error": "Not found"})
-                return
-            status = entry.get("status", "")
-            stuck = status == "sending" and (entry.get("sending_at") or "") < stale
-            if not (status.startswith("failed") or status.startswith("not sent") or stuck):
-                self._json(409, {"error": f"This email is {status}; only a failed or unsent email can be sent again."})
-                return
-            entry["status"] = "queued"
-            entry["retried"] = entry.get("retried", 0) + 1
-            save_company(company_id, state)
-            snap = domain.snapshot(state)
-        self._json(200, self._deliver_queued(company_id, user, {email_id}) or snap)
+                code, payload = 404, {"error": "Not found"}
+            else:
+                status = entry.get("status", "")
+                stuck = status in {"sending", "queued"} and (entry.get("sending_at") or entry.get("at") or "") < stale
+                if not (status.startswith("failed") or status.startswith("not sent") or stuck):
+                    code, payload = 409, {"error": f"This email is {status}; only a failed or unsent email can be sent again."}
+                else:
+                    entry["status"] = "queued"
+                    entry["retried"] = entry.get("retried", 0) + 1
+                    save_company(company_id, state)
+                    payload = domain.snapshot(state)
+        # Replies are written after the lock is released.
+        if code != 200:
+            self._json(code, payload)
+            return
+        self._json(200, self._deliver_queued(company_id, user, {email_id}) or payload)
 
     # ----- importing -----
 

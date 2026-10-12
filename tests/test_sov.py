@@ -244,3 +244,99 @@ class BillingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFindingTests(unittest.TestCase):
+    """Regressions for the third independent review."""
+
+    def test_exponents_and_huge_numbers_are_refused_fast(self):  # findings 1 and 3
+        import time
+        state = new_state()
+        job = new_job(state, contract=3_450_000)
+        for bad in ("1e999990", "1e999999999", "Infinity", "NaN", "9" * 40):
+            start = time.monotonic()
+            with self.assertRaises(domain.GateError):
+                domain.save_sov(state, job["id"], [{"description": "A", "quantity": bad, "rate": "1"}], "0")
+            with self.assertRaises(domain.GateError):
+                domain.save_sov(state, job["id"], LINES, bad)
+            self.assertLess(time.monotonic() - start, 0.5)
+        state2 = new_state()
+        job2 = sov_job(state2)
+        with self.assertRaises(domain.GateError):
+            domain.record_sov_progress(state2, job2["id"], {line(job2, "1")["id"]: "1e999999999"})
+
+    def test_paste_reader_is_linear(self):  # finding 2
+        import time
+        for text in ("Desc," + "1" * 200_000 + "x", "Overhead " + "1" * 190_000 + "x %", ("A," + "9" * 30 + ",5\n") * 5000):
+            start = time.monotonic()
+            sov.parse_rows(text)
+            self.assertLess(time.monotonic() - start, 1.0)
+        out = sov.parse_rows("Description,Qty,Rate\nA,1e5000,5")
+        self.assertEqual(out["lines"], [])
+        self.assertIn("plain number", out["warnings"][0])
+
+    def test_repeated_line_ids_become_separate_lines(self):  # finding 4
+        state = new_state()
+        job = new_job(state, contract=30_000, retainage=0)
+        domain.save_sov(state, job["id"], [{"description": "A", "quantity": "1", "rate": "100"}, {"description": "B", "quantity": "1", "rate": "200"}], "0")
+        a_id = sov.lines(job)[0]["id"]
+        domain.save_sov(state, job["id"], [{"id": a_id, "description": "A", "quantity": "1", "rate": "100"}, {"id": a_id, "description": "B", "quantity": "1", "rate": "200"}], "0")
+        ids = [l["id"] for l in sov.lines(job)]
+        self.assertEqual(len(set(ids)), 2)
+        domain.record_sov_progress(state, job["id"], {a_id: "1"})
+        send_open(state, job)
+        domain.mark_done(state, job["id"], "Owner")
+        send_open(state, job)
+        self.assertEqual(gross_billed(job), 30_000)
+
+    def test_co_line_billed_unsigned_cannot_be_lowered(self):  # finding 10
+        state = new_state()
+        job = sov_job(state, retainage=0)
+        domain.add_change_order(state, job["id"], "Extra", 100_000)
+        co = job["change_orders"][-1]
+        domain.include_change_order(state, job["id"], co["id"])
+        domain.record_sov_progress(state, job["id"], {line(job, "1")["id"]: "10"})
+        domain.approve_change_order(state, job["id"], co["id"])
+        send_open(state, job)
+        co_line = next(l for l in sov.lines(job) if l.get("co_id"))
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.record_sov_progress(state, job["id"], {co_line["id"]: "0"})
+        self.assertIn("already billed", " ".join(ctx.exception.blockers))
+
+    def test_waiver_email_attaches_the_waiver_on_record(self):  # finding 9
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 500_000)
+        inv = send_open(state, job)
+        domain.match_payment(state, job["id"], inv["amount_cents"], "chk 1", "Owner", invoice_id=inv["id"])
+        domain.send_waiver(state, job["id"], "Owner")
+        self.assertIn("will follow separately", state["email_log"][-1]["body"])
+        self.assertEqual(state["email_log"][-1]["attachments"], [])
+        # With a waiver file on the record, the next waiver email carries it.
+        job["records"].append({"id": "rec-w", "kind": "waiver", "label": "Conditional waiver", "file_ids": ["file-w1"]})
+        domain.record_progress(state, job["id"], 1_000_000)
+        inv2 = send_open(state, job)
+        domain.match_payment(state, job["id"], inv2["amount_cents"], "chk 2", "Owner", invoice_id=inv2["id"])
+        domain.send_waiver(state, job["id"], "Owner")
+        self.assertEqual(state["email_log"][-1]["attachments"], ["file-w1"])
+        self.assertIn("is attached", state["email_log"][-1]["body"])
+
+    def test_retainage_requests_are_spaced(self):  # finding 9
+        state = new_state()
+        job = new_job(state, contract=1_000_000, retainage=10)
+        domain.mark_done(state, job["id"], "Owner")
+        send_open(state, job)
+        for item in job["closeout_packet"]:
+            domain.resolve_packet_item(state, job["id"], item["id"], reason="done")
+        domain.chase_retainage(state, job["id"], "Owner")
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.chase_retainage(state, job["id"], "Owner")
+        self.assertIn("next is due", str(ctx.exception))
+
+    def test_payer_copy_field_becomes_cc(self):  # finding 11
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        state["payers"][0]["copy"] = "Dana (PM) <dana@park.example>, the bookkeeper, ap@jones.example"
+        domain.record_progress(state, job["id"], 500_000)
+        send_open(state, job)
+        self.assertEqual(state["email_log"][-1]["cc"], ["dana@park.example"])

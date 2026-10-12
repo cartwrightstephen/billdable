@@ -21,10 +21,12 @@ so the payer's answer goes to the contractor, not to us.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import smtplib
 import ssl
+import threading
 from datetime import datetime, timedelta, timezone
 from email.headerregistry import Address
 from email.message import EmailMessage
@@ -32,7 +34,10 @@ from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Any, Callable
 
-EMAIL_RE = re.compile(r"^[^@\s<>,;\"']+@[^@\s<>,;\"']+\.[^@\s<>,;\"']+$")
+# Plain addresses only. Characters such as ( : ] change how a header is parsed, so the
+# address shown in the Outbox could differ from the one the mail server is given.
+EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$")
+SENDS_LOCK = threading.Lock()
 MAX_ATTACH_BYTES = 15 * 1024 * 1024
 TIMEOUT_SECONDS = 20
 NOT_SET_UP = "not sent: email delivery is not set up"
@@ -67,26 +72,46 @@ def configured() -> bool:
 
 
 def _clean_header(value: str, limit: int = 300) -> str:
-    """No line breaks in headers, ever."""
-    return re.sub(r"[\r\n\x00]+", " ", str(value or "")).strip()[:limit]
+    """No line breaks or control characters in headers, including Unicode line separators."""
+    return re.sub(r"[\x00-\x1f\x7f\x85\u2028\u2029]+", " ", str(value or "")).strip()[:limit]
 
 
-def sent_in_last_day(email_log: list[dict[str, Any]], now: datetime | None = None) -> int:
+def _sends_path() -> Path:
+    import storage  # the data directory can change in tests, so look it up each time
+    return Path(storage.DATA_DIR) / "mail_sends.json"
+
+
+def _load_sends() -> dict[str, list[str]]:
+    try:
+        data = json.loads(_sends_path().read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def sent_in_last_day(company_id: str, now: datetime | None = None) -> int:
+    """Emails this company sent in the last 24 hours. Kept outside the company's data,
+    so resetting the company doesn't reset its sending allowance."""
+    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=1)).isoformat(timespec="seconds")
+    with SENDS_LOCK:
+        return sum(1 for when in _load_sends().get(company_id, []) if when >= cutoff)
+
+
+def record_sent(company_id: str, count: int, now: datetime | None = None) -> None:
+    if count <= 0:
+        return
+    import storage
     now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=1)
-    count = 0
-    for entry in email_log:
-        if entry.get("status") != "sent" or not entry.get("delivered_at"):
-            continue
-        try:
-            when = datetime.fromisoformat(entry["delivered_at"])
-        except ValueError:
-            continue
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=timezone.utc)
-        if when >= cutoff:
-            count += 1
-    return count
+    cutoff = (now - timedelta(days=1)).isoformat(timespec="seconds")
+    stamp = now.isoformat(timespec="seconds")
+    with SENDS_LOCK:
+        data = _load_sends()
+        for key in list(data):
+            data[key] = [w for w in data[key] if isinstance(w, str) and w >= cutoff]
+            if not data[key]:
+                del data[key]
+        data.setdefault(company_id, []).extend([stamp] * count)
+        storage.write_json(_sends_path(), data)
 
 
 def build_message(
@@ -108,6 +133,10 @@ def build_message(
     reply_to = _clean_header(reply_to, 254)
     if reply_to and EMAIL_RE.match(reply_to):
         msg["Reply-To"] = reply_to
+    cc = [_clean_header(a, 254) for a in entry.get("cc") or []]
+    cc = [a for a in cc if EMAIL_RE.match(a) and a.lower() != to.lower()][:5]
+    if cc:
+        msg["Cc"] = ", ".join(cc)
     msg["Subject"] = _clean_header(entry.get("subject", ""), 250)
     msg["Date"] = formatdate(localtime=False)
     msg["Message-ID"] = make_msgid(domain=domain or None)
@@ -132,6 +161,8 @@ def build_message(
     for name, data in attached:
         maintype, subtype = _mime(name)
         msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=_clean_header(name, 120))
+    # The envelope recipients are given explicitly, never re-read from the headers.
+    msg.recipients = [to] + cc  # type: ignore[attr-defined]
     return msg, left_off
 
 
@@ -175,13 +206,13 @@ def send(messages: list[EmailMessage], cfg: dict[str, Any], connect: Callable[..
             server.login(cfg["user"], cfg["password"])
         for i, msg in enumerate(messages):
             try:
-                refused = server.send_message(msg)
+                refused = server.send_message(msg, to_addrs=getattr(msg, "recipients", None))
                 results[i] = ("refused: " + ", ".join(f"{k} ({v[0]})" for k, v in refused.items())) if refused else None
             except smtplib.SMTPRecipientsRefused as exc:
                 results[i] = "recipient refused: " + ", ".join(exc.recipients.keys())
-            except (smtplib.SMTPException, OSError) as exc:
+            except Exception as exc:  # one bad message must not stop the rest
                 results[i] = _short(exc)
-    except (smtplib.SMTPException, OSError) as exc:
+    except Exception as exc:
         # Hello, STARTTLS or login failed: nothing after that point was sent.
         reason = _short(exc)
         results = [reason if r == pending else r for r in results]

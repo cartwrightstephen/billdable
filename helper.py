@@ -251,7 +251,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None) -> tuple
             return "No follow-ups are due. Each payer's window comes from its playbook (follow-up days).", [{"type": "nav", "view": "collections", "label": "Open Collections"}]
         lines = [f"- {j['name']}: {inv['number']}, {since} days since the last contact" for j, inv, since in due]
         actions = [{"type": "post", "path": f"/api/jobs/{j['id']}/follow-up", "label": f"Follow up: {inv['number']}",
-                    "confirm": f"Log a follow-up on {inv['number']}? It goes to the Outbox; email delivery is not built yet."} for j, inv, _ in due[:4]]
+                    "confirm": f"Send a follow-up on {inv['number']} to {j['payer'].get('ap_email', 'the payer')}? It is emailed when email is set up, and listed in the Outbox either way."} for j, inv, _ in due[:4]]
         return "These follow-ups are due now:\n" + "\n".join(lines), actions
     if name == "draft_followup":
         if not job:
@@ -264,8 +264,8 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None) -> tuple
                 f"({domain.money(inv['amount_cents'])}), sent {(inv.get('sent_at') or '')[:10]}. Is anything missing on your side?\n\nThanks,\n{company}")
         actions = [{"type": "copy", "text": note, "label": "Copy note"}]
         if _followup_due(snap, job):
-            actions.append({"type": "post", "path": f"/api/jobs/{job['id']}/follow-up", "label": "Log this follow-up",
-                            "confirm": f"Log a follow-up on {inv['number']}?"})
+            actions.append({"type": "post", "path": f"/api/jobs/{job['id']}/follow-up", "label": "Send the follow-up",
+                            "confirm": f"Send a follow-up on {inv['number']} to {p.get('ap_email', 'the payer')}? It is emailed when email is set up, and listed in the Outbox either way."})
         return f"Here is a follow-up for {job['name']}:\n\n{note}", actions + [_job_btn(job)]
     if name == "blockers":
         if not job:

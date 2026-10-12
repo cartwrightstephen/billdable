@@ -46,7 +46,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `SMTP_USER`, `SMTP_PASSWORD` | Login for the mail provider, if it needs one. |
 | `SMTP_SECURITY` | `starttls` (default), `ssl`, or `none` (local testing only). |
 | `MAIL_FROM` | Sender address on a domain the provider has verified (SPF and DKIM), e.g. `billing@billdable.com`. Required with `SMTP_HOST`. |
-| `MAIL_DAILY_LIMIT` | Emails per company per 24 hours, default 50. Sign-up doesn't verify anyone, so this keeps one account from using us to send spam. |
+| `MAIL_DAILY_LIMIT` | Emails per company per 24 hours, default 50. Sign-up doesn't verify anyone, so this keeps one account from using us to send spam. Counted in `mail_sends.json`. |
 
 ## Importing
 
@@ -62,10 +62,11 @@ Everything comes into the Inbox, gets a suggested job (job code, address, job na
 
 Approved pay apps, pencil copies, follow-ups, waivers and retainage requests are emailed over SMTP (`mailer.py`). Postmark, SendGrid, Mailgun, Amazon SES and Google Workspace all accept SMTP, so pick one and set the variables above. Tested only against a local test server in `tests/test_mail.py`, not against a real provider.
 
-- From is "<company> via Billdable" at `MAIL_FROM`; Reply-To is the person who approved the send, so the payer's answer goes to the contractor.
-- A pay app goes with its full text, the schedule-of-values continuation sheet when the job has one, the packet checklist, and the files behind the records attached to its packet (up to 15 MB in total; anything left off is named in the email).
+- From is "<company> via Billdable" at `MAIL_FROM`; Reply-To is the person who approved the send (kept if someone else retries it), so the payer's answer goes to the contractor. Addresses in the payer's Copy field are copied on pay apps.
+- A pay app goes with its full text, the schedule-of-values continuation sheet when the job has one, the packet checklist, and the files behind the records attached to its packet (up to 15 MB in total; anything left off is named in the email). A waiver email attaches the newest lien waiver on the job record not sent before, and says the waiver will follow if there is none. A retainage request attaches the closeout documents and is spaced by the payer's follow-up days, like follow-ups.
 - Delivery happens after the change is saved and the state lock is released, so a slow mail server never holds up other requests. Each email shows sending, sent (with the time), failed (with the reason) or not sent in the Outbox. Failed and unsent emails have Send again (`POST /api/outbox/{id}/retry`). The approval itself stands either way.
-- The demo account never sends. Header fields are stripped of line breaks.
+- The demo account never sends. Header fields are stripped of line breaks and control characters, addresses must be plain (`name@domain.tld`), and the mail server is given the recipients directly rather than reading them back from the headers.
+- The daily limit is counted in `mail_sends.json` in the data directory, outside the company's own data, so resetting a company doesn't reset it. An email still "sending" after 30 minutes (the server stopped mid-send) can be sent again.
 
 ## Schedule of values
 
@@ -73,7 +74,7 @@ Optional per job, set before the first pay app (`sov.py`). Each line is a quanti
 
 - Rows can be pasted from Excel or Google Sheets (tabs), a CSV, or a PDF (columns separated by runs of spaces). A header row is optional. Total and markup rows are skipped and reported; an "Overhead & profit 15%" row fills in the percentage.
 - Progress is entered as quantity done to date per line (percent for lump sums). Each pay app bills the difference since the last one, line by line, plus overhead and profit on that period's base work, less retainage, and stores the lines as a G703-style continuation sheet.
-- Quantities can't exceed the line (extra scope is a change order) or drop below what was billed. The schedule is fixed once a pay app exists; voiding the only pay app unlocks it.
+- Quantities can't exceed the line (extra scope is a change order) or drop below what was billed, in quantity or in dollars. Numbers must be plain decimals (no exponents), and pasted text is read in bounded pieces. The schedule is fixed once a pay app exists; voiding the only pay app unlocks it.
 - An approved change order adds its own lump-sum line at the CO amount, without markup. A CO billed while unsigned is not billed again when approved.
 - All amounts are whole cents with half-up rounding on integers; the browser repeats the same arithmetic for the live totals.
 

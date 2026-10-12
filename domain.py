@@ -390,7 +390,7 @@ def approve_and_send(state: dict[str, Any], job_id: str, actor: str = "owner") -
         + (f"; {len(files)} document{'s are' if len(files) != 1 else ' is'} attached." if files else ".")
         + f"\n\n{pay_app_text(state, job, invoice)}\n\nApproved by {actor}."
     )
-    _record_email(state, job_id, "pay_app", payer["ap_email"], subject, body, actor, attachments=files)
+    _record_email(state, job_id, "pay_app", payer["ap_email"], subject, body, actor, attachments=files, cc=_copy_list(payer))
     audit(
         state,
         job_id,
@@ -534,11 +534,14 @@ def send_waiver(state: dict[str, Any], job_id: str, actor: str = "owner", invoic
     job["waiver_sent_at"] = now
     job["external_status"] = "Waiver sent"
     subject = f"Lien waiver{which} — {job['name']}"
+    files = _waiver_file_ids(state, job)
     body = (
-        f"Approved by {actor}. Waiver for {detail}. "
-        "The waiver document itself comes from the contractor; Billdable does not generate it."
+        f"{payer.get('approver') or payer['name']},\n\n"
+        f"Thank you for the {detail} on {job['name']}. "
+        + ("Our lien waiver for it is attached." if files else "Our signed lien waiver for it will follow separately.")
+        + f"\n\nApproved by {actor}."
     )
-    _record_email(state, job_id, "waiver", payer["ap_email"], subject, body, actor)
+    _record_email(state, job_id, "waiver", payer["ap_email"], subject, body, actor, attachments=files)
     _sync_waiver(job)
     audit(state, job_id, "send_waiver", f"{actor} approved sending the waiver{which}.", actor)
     return job
@@ -575,11 +578,30 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "billdable"
     if missing:
         raise GateError("Closeout packet incomplete.", [item["blocker"] for item in missing])
     payer = _payer(state, job["payer_id"])
+    days = _int_or(payer.get("follow_up_days"), 7)
+    last = job.get("last_retainage_chase_at")
+    if last:
+        due = datetime.fromisoformat(last) + timedelta(days=days)
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < due:
+            raise GateError(
+                f"The last retainage request went out {last[:10]}. The next is due {due.date().isoformat()} "
+                f"({payer['name']} expects {days} days between contacts)."
+            )
     job["retainage_chases"] = job.get("retainage_chases", 0) + 1
+    job["last_retainage_chase_at"] = utcnow()
     job["external_status"] = f"Retainage follow-up sent to {payer['approver']}"
     subject = f"Retainage release request — {job['name']}"
-    body = f"Please release {money(open_retainage)} retainage. Closeout packet is complete."
-    _record_email(state, job_id, "retainage", payer["ap_email"], subject, body, actor)
+    files = _packet_file_ids(state, job, {"packet": job.get("closeout_packet") or job.get("packet") or []})
+    body = (
+        f"{payer.get('approver') or payer['name']},\n\n"
+        f"The work on {job['name']} is complete and the closeout items are done. "
+        f"Please release the {money(open_retainage)} retainage held on this job."
+        + (f" The closeout documents on file are attached ({len(files)})." if files else "")
+        + f"\n\nApproved by {actor}."
+    )
+    _record_email(state, job_id, "retainage", payer["ap_email"], subject, body, actor, attachments=files)
     audit(
         state,
         job_id,
@@ -653,6 +675,7 @@ def _record_email(
     body: str,
     actor: str,
     attachments: list[str] | None = None,
+    cc: list[str] | None = None,
 ) -> None:
     """Write an approved email to the Outbox. The server delivers queued emails after the change is saved."""
     state.setdefault("email_log", []).append({
@@ -665,6 +688,7 @@ def _record_email(
         "body": body,
         "approved_by": actor,
         "attachments": list(attachments or []),
+        "cc": list(cc or []),
         "status": "queued",
     })
 
@@ -1249,7 +1273,7 @@ def save_sov(
     if job.get("work_status") == "complete":
         raise GateError("The job is marked done. A schedule of values is set before billing starts.")
     try:
-        new_lines = sov.clean_lines(raw_lines, sov.lines(job), lambda: "sov-" + secrets.token_hex(3))
+        new_lines = sov.clean_lines(raw_lines, sov.lines(job), lambda: "sov-" + secrets.token_hex(8))
         bp = sov.to_bp(op_pct)
     except sov.SovError as exc:
         raise GateError("Schedule of values not saved.", [str(exc)])
@@ -1320,7 +1344,8 @@ def record_sov_progress(
     if not isinstance(done, dict) or not done:
         raise GateError("Enter the quantity completed to date on at least one line.")
     by_id = {line["id"]: line for line in sov.lines(job)}
-    billed_qty = sov.billed(job)["qty_by_line"]
+    already = sov.billed(job)
+    billed_qty = already["qty_by_line"]
     changes, errors = [], []
     for line_id, value in done.items():
         line = by_id.get(line_id)
@@ -1341,6 +1366,8 @@ def record_sov_progress(
             errors.append(f"{name}: {sov.fmt_qty(qty)} is more than the scheduled {sov.fmt_qty(line['qty_milli'])} {line['unit']}. Extra scope is a change order.")
         elif qty < billed_qty.get(line_id, 0):
             errors.append(f"{name}: {sov.fmt_qty(billed_qty[line_id])} {line['unit']} is already billed; the quantity to date can't go below that.")
+        elif sov.line_to_date({**line, "done_milli": qty}) < already["by_line"].get(line_id, 0):
+            errors.append(f"{name}: {money(already['by_line'][line_id])} is already billed on this line; the amount to date can't go below that.")
         elif qty != line["done_milli"]:
             changes.append((line, qty))
     if errors:
@@ -1420,3 +1447,24 @@ def _sov_view(job: dict[str, Any]) -> dict[str, Any]:
         "totals": figures,
         "lines": rows,
     }
+
+
+def _copy_list(payer: dict[str, Any]) -> list[str]:
+    """Email addresses in the payer's "copy" field (who to copy on pay apps). Names without an address are skipped."""
+    found = re.findall(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", str(payer.get("copy") or ""))
+    out: list[str] = []
+    for addr in found:
+        if addr.lower() != str(payer.get("ap_email", "")).lower() and addr.lower() not in [a.lower() for a in out]:
+            out.append(addr)
+    return out[:5]
+
+
+def _waiver_file_ids(state: dict[str, Any], job: dict[str, Any]) -> list[str]:
+    """The newest waiver on the job record that hasn't gone out in an earlier waiver email."""
+    sent = {fid for e in state.get("email_log", []) if e.get("job_id") == job["id"] and e.get("kind") == "waiver" for fid in e.get("attachments", [])}
+    for record in reversed(job.get("records", [])):
+        if record.get("kind") == "waiver":
+            fresh = [fid for fid in record.get("file_ids", []) if fid not in sent]
+            if fresh:
+                return fresh
+    return []

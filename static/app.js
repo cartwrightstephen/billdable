@@ -122,7 +122,7 @@ const FIELD_HELP = {
   "this period": "Billed on this pay app: work done since the last one.",
   "total to date": "Previous plus this period.",
   "%": "Share of the line's scheduled value billed to date.",
-  "copy": "Who to copy on pay apps for this payer.",
+  "copy": "Email addresses to copy on pay apps for this payer, separated by commas. Names without an address are ignored.",
 };
 const NAV_HELP = {
   inbox: "Bring in photos, PDFs, emails, texts and notes, then file them to a job in one click.",
@@ -929,7 +929,10 @@ function emailStatusHtml(e) {
   const st = e.status || "";
   const cls = st === "sent" ? "green" : st.startsWith("failed") ? "red" : st.startsWith("not sent") ? "amber" : "";
   const when = st === "sent" && e.delivered_at ? `<div class="sub">${e.delivered_at.slice(0, 16).replace("T", " ")}</div>` : "";
-  const retry = (st.startsWith("failed") || st.startsWith("not sent")) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
+  // A row still "sending" or "queued" after 30 minutes died mid-send; the server allows a retry then.
+  const since = Date.parse(e.sending_at || e.at || "") || Date.now();
+  const stuck = (st === "sending" || st === "queued") && Date.now() - since > 30 * 60 * 1000;
+  const retry = (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
   return `<span class="pill ${cls}">${st}</span>${when}${retry}`;
 }
 
@@ -1644,10 +1647,10 @@ const views = {
             ${hasDraft && !pencilOut ? `<div class="action-row"><button class="btn secondary" data-action="pencil" data-id="${j.id}">Send pencil copy</button><div class="blurb">Send the draft to the payer to agree quantities and change orders before the formal pay app.</div></div>` : ""}
             ${pencilOut ? `<div class="action-row"><button class="btn secondary" data-action="pencil-agreed" data-id="${j.id}">Payer agreed to pencil</button><button class="btn secondary" data-action="pencil-changes" data-id="${j.id}">Payer wants changes</button></div>` : ""}
             ${hasDraft ? `<div class="action-row"><button class="btn secondary" data-action="void-draft" data-id="${j.id}">Void draft</button><div class="blurb">Throw away the open draft. Its work goes back to unbilled.</div></div>` : ""}
-            <div class="action-row"><button class="btn secondary" data-action="follow-up" data-id="${j.id}">Follow up</button><div class="blurb">Log a follow-up on a sent pay app using the playbook cadence.</div></div>
+            <div class="action-row"><button class="btn secondary" data-action="follow-up" data-id="${j.id}">Follow up</button><div class="blurb">Email a follow-up on a sent pay app, no sooner than the payer's playbook cadence allows.</div></div>
             <div class="action-row"><button class="btn secondary" data-action="toggle-form" data-form="match">Match payment</button><div class="blurb">Record cash received (dollars). Opens the waiver gate when paid in full.</div></div>
             ${isDemo ? `<div class="action-row"><button class="btn secondary" data-action="import-qbo" data-id="${j.id}">Import QBO sample</button><div class="blurb">Demo only: a stand-in for a QuickBooks payment read.</div></div>` : ""}
-            ${j.waiver_due && !j.waiver_sent ? `<div class="action-row"><button class="btn" data-action="waiver" data-id="${j.id}">Send waiver</button><div class="blurb">Human gate. One waiver per paid pay app. The waiver document comes from you.</div></div>` : ""}
+            ${j.waiver_due && !j.waiver_sent ? `<div class="action-row"><button class="btn" data-action="waiver" data-id="${j.id}">Send waiver</button><div class="blurb">Human gate. One waiver per paid pay app. Emails the payer with the newest lien waiver on the job record attached, so drop your signed waiver there first.</div></div>` : ""}
             ${m.retainage_open_cents > 0 ? `<div class="action-row"><button class="btn secondary" data-action="retainage" data-id="${j.id}">Chase retainage</button><div class="blurb">Request release once the closeout packet is complete.</div></div>` : ""}
             ${m.retainage_open_cents > 0 ? `<div class="action-row"><button class="btn secondary" data-action="toggle-form" data-form="retpay">Record retainage paid</button><div class="blurb">Record retainage the payer released.</div></div>` : ""}
             <div class="action-row"><button class="btn secondary" data-action="goto-co" data-id="${j.id}">Add change order</button><div class="blurb">Opens Change Orders to create a new CO for this job.</div></div>
