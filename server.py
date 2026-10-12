@@ -28,6 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse
 
+import alerts
 import auth
 import backup
 import calendar_feed
@@ -36,6 +37,7 @@ import helper
 import importer
 import legal
 import mailer
+import offsite
 import payapp_pdf
 import sov
 import storage
@@ -282,7 +284,12 @@ class Handler(BaseHTTPRequestHandler):
         log_json("warn", msg=redact(format % args), rid=self._rid)
 
     def _crash(self) -> None:
-        log_json("error", rid=self._rid, path=redact(urlparse(self.path).path), trace=traceback.format_exc())
+        path = redact(urlparse(self.path).path)
+        log_json("error", rid=self._rid, path=path, trace=traceback.format_exc())
+        kind = sys.exc_info()[0].__name__ if sys.exc_info()[0] else "Error"
+        # Ids in paths (job-1a2b) would make every crash look new; group by the path's shape.
+        shape = re.sub(r"/[a-z]+-[0-9a-f]{4,}", "/{id}", path)
+        alerts.notify(f"crash:{shape}:{kind}", f"server error {kind} on {self.command} {shape}, request id {self._rid}")
         self._json(500, {"error": "Something went wrong on our side. It has been logged.", "request_id": self._rid})
 
     def _send(self, code: int, body: bytes, content_type: str, headers: dict | None = None) -> None:
@@ -450,6 +457,7 @@ class Handler(BaseHTTPRequestHandler):
                 "storage": "ok" if writable else "not writable",
                 "email": "configured" if mailer.configured() else "not set up",
                 "last_backup": backup.newest_time(),
+                "offsite_backup": offsite.last_upload() if offsite.configured() else "not set up",
                 "env": "production" if production() else "development",
             })
             return

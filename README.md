@@ -49,6 +49,11 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `BACKUP_HOURS` | Hours between automatic backups, default 24; `0` turns them off. |
 | `BACKUP_KEEP` | How many backups to keep, default 14. |
 | `BACKUP_UPLOADS` | `0` leaves uploaded files out of backups (they can be large). Default: included. |
+| `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_KEY_ID`, `BACKUP_S3_SECRET` | S3-compatible storage for off-site copies, e.g. Backblaze B2 (`https://s3.us-west-004.backblazeb2.com`, region `us-west-004`). Use a write-only application key and a bucket with Object Lock. All five set turns the upload on. |
+| `BACKUP_S3_PREFIX` | Folder in the bucket, default `billdable/`. |
+| `BACKUP_AGE_RECIPIENT` | The age public key (`age1…`) backups are encrypted to before upload. Keep the private key off the server, in both founders' password managers. Without it nothing is uploaded. |
+| `BACKUP_AGE_BINARY` | Path to the `age` program, default `age` on the PATH. The Dockerfile installs it; Render's native Python runtime does not have it. |
+| `ALERT_WEBHOOK_URL` | An `https://` incoming-webhook address (Slack, Discord, Better Stack, ...). Each crash and failed backup posts one line with the request id; rate limited; no customer data. |
 | `SMTP_HOST` | Mail server for outgoing email. Unset: approved emails stay in the Outbox as "not sent: email delivery is not set up". |
 | `SMTP_PORT` | Default 587 (465 with `SMTP_SECURITY=ssl`). |
 | `SMTP_USER`, `SMTP_PASSWORD` | Login for the mail provider, if it needs one. |
@@ -108,9 +113,9 @@ Approved pay apps, pencil copies, follow-ups, waivers and retainage requests are
 
 ## Backups, health and logs
 
-- `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), keeping `BACKUP_KEEP`. They are on the same disk as the data: copy them elsewhere too. `python3 backup.py now|list|restore FILE`; restore (server stopped) first unpacks into a staging folder and checks the archive is complete (it must hold `auth.json` and `companies/`, with nothing outside the data directory); only then does it move the current data aside to `pre-restore-<time>/` and swap the backup in. Company snapshots taken before a reset are included.
-- `GET /healthz`: no sign-in; `ok`, whether the data directory is writable (503 if not), whether email is set up, and the time of the last backup. Point an uptime monitor at it.
-- Logs: one JSON line per request on stderr (time, method, path, status, milliseconds, request id). Query strings and the secret parts of inbound and calendar addresses are removed. A crash logs its traceback with the request id, and the user sees the same id to quote. There is no external error tracker; add one (for example Sentry) by reading these lines.
+- `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), keeping `BACKUP_KEEP`. They are on the same disk as the data, so when the `BACKUP_S3_*` settings are filled in, each new backup is also encrypted with age and uploaded (`offsite.py`); `python3 backup.py upload [FILE]` does one by hand. To restore an off-site copy: download the `.age` file, `age -d -i key.txt FILE.age > backup.tar.gz`, then `python3 backup.py restore backup.tar.gz`. `python3 backup.py now|list|restore FILE`; restore (server stopped) first unpacks into a staging folder and checks the archive is complete (it must hold `auth.json` and `companies/`, with nothing outside the data directory); only then does it move the current data aside to `pre-restore-<time>/` and swap the backup in. Company snapshots taken before a reset are included.
+- `GET /healthz`: no sign-in; `ok`, whether the data directory is writable (503 if not), whether email is set up, the time of the last backup and of the last off-site upload, and the env. Point an uptime monitor (for example Better Stack's free tier) at it: it is the only thing that notices the server being down.
+- Logs: one JSON line per request on stderr (time, method, path, status, milliseconds, request id). Query strings and the secret parts of inbound and calendar addresses are removed. A crash logs its traceback with the request id, and the user sees the same id to quote. With `ALERT_WEBHOOK_URL` set, each crash also posts a one-line alert (`alerts.py`).
 
 ## Schedule of values
 
@@ -156,6 +161,8 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `payapp_pdf.py`: the pay app PDF
 - `trial.py`: trial status
 - `backup.py`: backups and restore
+- `offsite.py`: encrypted off-site copies of backups (age, S3-compatible upload)
+- `alerts.py`: crash and backup-failure alerts to a webhook
 - `legal.py`, `legal/`: the Terms of Service and Privacy Policy
 - `mailer.py`: outgoing email over SMTP
 - `seed.py`: Hartline Remodeling sample data

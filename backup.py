@@ -8,13 +8,16 @@ BACKUP_UPLOADS=0) the uploaded files. The newest BACKUP_KEEP (default 14)
 are kept.
 
 These backups sit on the same disk as the data. They protect against a bad
-change or a bug, not against losing the disk; copy them off the server too.
+change or a bug, not against losing the disk. When the BACKUP_S3_* settings
+are filled in, each new backup is also encrypted and uploaded off the server
+(offsite.py).
 
 Command line (run with the server stopped for restore):
 
     python3 backup.py now              make one now
     python3 backup.py list             list backups, newest first
     python3 backup.py restore FILE     restore one; the current data is moved aside first
+    python3 backup.py upload [FILE]    encrypt and upload one off-site (default: the newest)
 """
 
 from __future__ import annotations
@@ -31,6 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import alerts
+import offsite
 import storage
 
 PREFIX = "billdable-"
@@ -191,8 +196,11 @@ def start_scheduler(locks: dict[str, Any], log: Callable[[str], None] = print) -
                 if due():
                     made = make_backup(locks)
                     log(f"backup written: {made.name}")
+                    if offsite.configured():
+                        log(f"backup uploaded off-site: {offsite.upload(made)}")
             except Exception as exc:  # a failed backup must never stop the backups that follow
                 log(f"backup failed: {exc.__class__.__name__}: {exc}")
+                alerts.notify(f"backup:{exc.__class__.__name__}", f"backup failed ({exc.__class__.__name__}); see the server log")
             time.sleep(min(3600, hours * 3600))
 
     thread = threading.Thread(target=loop, name="backups", daemon=True)
@@ -201,11 +209,17 @@ def start_scheduler(locks: dict[str, Any], log: Callable[[str], None] = print) -
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in {"now", "list", "restore"}:
+    if len(argv) < 2 or argv[1] not in {"now", "list", "restore", "upload"}:
         print(__doc__)
         return 2
     if argv[1] == "now":
         print(make_backup())
+    elif argv[1] == "upload":
+        target = Path(argv[2]) if len(argv) > 2 else (backups() or [None])[0]
+        if target is None:
+            print("No backup to upload. Make one with: python3 backup.py now")
+            return 1
+        print(f"Uploaded {target.name} as {offsite.upload(target)}")
     elif argv[1] == "list":
         for b in backups():
             print(f"{b.name}  {b.stat().st_size:,} bytes")
