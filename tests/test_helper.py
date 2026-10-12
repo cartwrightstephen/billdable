@@ -24,6 +24,7 @@ CASES = {
     "change order not signed yet can i bill it": "unsigned-co", "how do i delete a job": "edit-job", "is my data safe": "security",
     "what is a pencil draft": "pencil", "can billdable call my customers": "voice-calls", "how to add a new job": "create-job",
     "can my bookkeeper log in": "team-users", "where do i see what i sent": "email-sent", "status of oak street": "job-status",
+    "how do i delete my account": "delete-account", "is my data backed up": "backups",
 }
 
 
@@ -82,6 +83,17 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(helper.review()["open"], [])
         reply = helper.answer("is there a referral program", seed_state(), "co-x", "u-1")
         self.assertEqual(reply["text"], "Yes: one free month per referral.")
+
+    def test_notes_and_matching_edge_cases(self):
+        import importer
+        chunks = importer.split_notes("10/1 Footings poured\n3/4 inch pipe ran to the panel\n1/2 bath rough-in\nMay 2 guys out sick\n10/2: framing", 2026)
+        self.assertEqual([c["date"] for c in chunks], ["2026-10-01", "2026-10-02"])
+        self.assertIn("3/4 inch pipe", chunks[0]["text"])
+        self.assertIsNone(importer.leading_date("10/12/202 typo", 2026))
+        self.assertIsNone(importer.leading_date("mon " * 1200, 2026))
+        state = seed_state()
+        m = importer.match_job(state, "Invoice dated DEC 12 for the Oak Street kitchen job")
+        self.assertEqual(m["job_id"], "job-oak")
 
     def test_feedback_is_scoped_to_the_company(self):
         reply = helper.answer("who owes me", seed_state(), "co-x", "u-1")

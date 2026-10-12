@@ -17,7 +17,8 @@ import hashlib
 import html
 import re
 import secrets
-from datetime import date, datetime, timezone
+import threading
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,15 @@ import storage
 UPLOADS = storage.DATA_DIR / "uploads"
 MAX_FILE_BYTES = 15 * 1024 * 1024
 MAX_TEXT_CHARS = 20_000
+MAX_NEW_INBOX = 1000          # an Inbox this full refuses more until items are filed
+TOKENS_LOCK = threading.Lock()
+# Uppercase words that look like job codes but aren't: months, days, common words.
+NOT_CODES = {
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "SEPT", "OCT", "NOV", "DEC",
+    "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN", "THE", "AND", "FOR", "INC", "LLC", "USA", "NEW",
+    "OLD", "ASAP", "FYI", "PDF", "JPG", "PNG", "TOTAL", "DUE", "PAID", "CO", "PO", "GC", "AP", "SOV",
+}
+UNIT_WORDS = {"inch", "inches", "in", "ft", "foot", "feet", "yd", "yard", "lb", "lbs", "bath", "hp", "ton", "pipe", "sheet", "sheets", "mile"}
 
 # Extension -> (content type served back, shown inline in the browser?)
 # HTML, SVG and scripts are refused: they could run code when opened.
@@ -56,6 +66,7 @@ KINDS = {
     "contract": "Contract",
     "daily": "Daily record",
     "note": "Note",
+    "other": "Other",
 }
 
 _KIND_RULES = [
@@ -90,8 +101,27 @@ def safe_name(name: str) -> str:
 
 
 def save_file(state: dict[str, Any], company_id: str, filename: str, data: bytes, actor: str) -> dict[str, Any]:
-    """Store an uploaded file for this company and return its metadata."""
-    name = safe_name(filename)
+    """Store a file and register it on the company's state (for callers already holding the data)."""
+    return register_file(state, store_bytes(company_id, filename, data, actor))
+
+
+def register_file(state: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+    state.setdefault("files", []).append(meta)
+    return meta
+
+
+def discard(company_id: str, metas: list[dict[str, Any]]) -> None:
+    """Delete stored files whose import was refused, so nothing is left orphaned on disk."""
+    for meta in metas:
+        try:
+            file_path(company_id, meta).unlink()
+        except OSError:
+            pass
+
+
+def store_bytes(company_id: str, filename: str, data: bytes, actor: str) -> dict[str, Any]:
+    """Check and write a file to disk; no state is touched, so it can run outside the state lock."""
+    name = safe_name(filename if isinstance(filename, str) else "file")
     ext = Path(name).suffix.lower()
     if ext not in ALLOWED_FILES:
         allowed = ", ".join(sorted(e.lstrip(".") for e in ALLOWED_FILES))
@@ -115,7 +145,6 @@ def save_file(state: dict[str, Any], company_id: str, filename: str, data: bytes
         "added_at": utcnow(),
         "added_by": actor,
     }
-    state.setdefault("files", []).append(meta)
     return meta
 
 
@@ -176,6 +205,20 @@ def amounts(text: str) -> list[int]:
 
 
 def _to_date(groups: tuple, kind: int, default_year: int) -> date | None:
+    d = _to_date_raw(groups, kind, default_year)
+    if d is None or not 2000 <= d.year <= 2100:
+        return None
+    # No year written and the date would be in the future: it was last year's note.
+    explicit_year = (kind == 0) or (kind in (1, 2) and groups[2])
+    if not explicit_year and d > datetime.now(timezone.utc).date() + timedelta(days=7):
+        try:
+            d = d.replace(year=d.year - 1)
+        except ValueError:
+            return None
+    return d
+
+
+def _to_date_raw(groups: tuple, kind: int, default_year: int) -> date | None:
     try:
         if kind == 0:
             y, m, d = int(groups[0]), int(groups[1]), int(groups[2])
@@ -206,16 +249,27 @@ def dates(text: str, default_year: int | None = None) -> list[str]:
 
 
 def leading_date(line: str, default_year: int) -> date | None:
-    """A date at the very start of a line, e.g. '10/12', 'Oct 12, 2026:', '2026-10-12 -'."""
+    """A date at the very start of a line, e.g. '10/12', 'Oct 12, 2026:', '2026-10-12 -'.
+
+    Not a date: fractions and quantities ('3/4 inch pipe', '1/2 bath'), and 'May' used as a
+    word ('May 2 guys out sick') unless a separator or year follows.
+    """
     stripped = line.strip().lstrip("#*-• ").strip()
+    stripped = re.sub(r"^(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+", "", stripped, count=1, flags=re.I)
     for kind, pattern in enumerate(_DATE_PATTERNS):
         m = pattern.match(stripped)
-        if m:
-            return _to_date(m.groups(), kind, default_year)
-    # "Monday, October 12" style
-    m = re.match(r"(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+(.*)", stripped, re.I)
-    if m:
-        return leading_date(m.group(1), default_year)
+        if not m:
+            continue
+        rest = stripped[m.end():]
+        separated = rest == "" or bool(re.match(r"\s*[:\-–—,.)]", rest))
+        next_word = (re.findall(r"[a-z\"']+", rest.lower()) or [""])[0]
+        if kind == 1 and not m.group(3) and not separated:
+            num, den = int(m.group(1)), int(m.group(2))
+            if (num < den and den in {2, 4, 8, 16, 32, 64}) or next_word in UNIT_WORDS or next_word.startswith('"'):
+                return None
+        if kind == 2 and not m.group(3) and not separated and m.group(1).lower() == "may":
+            return None
+        return _to_date(m.groups(), kind, default_year)
     return None
 
 
@@ -269,12 +323,15 @@ def match_job(state: dict[str, Any], text: str, sender: str = "") -> dict[str, A
         if score > scores.get(job["id"], (0, ""))[0]:
             scores[job["id"]] = (score, reason)
 
-    upper_tokens = set(re.findall(r"\b[A-Z0-9]{3,8}\b", text or ""))
+    upper_tokens = set(re.findall(r"\b[A-Z0-9]{3,8}\b", text or "")) - NOT_CODES
     sender_addr = (email.utils.parseaddr(sender)[1] or sender).lower().strip()
     payers = {p["id"]: p for p in state.get("payers", [])}
     for job in jobs:
-        if job.get("code") and (job["code"] in upper_tokens or f"PA-{job['code']}-" in (text or "")):
-            bump(job, 100, f"mentions job code {job['code']}")
+        if job.get("code") and f"PA-{job['code']}-" in (text or ""):
+            bump(job, 100, f"mentions pay app PA-{job['code']}")
+        elif job.get("code") and job["code"] in upper_tokens:
+            # A bare code is weaker than the job's name or address, which are harder to hit by accident.
+            bump(job, 70, f"mentions job code {job['code']}")
         addr = _norm(job.get("address", ""))
         if addr and len(addr) >= 6 and f" {addr} " in hay_padded:
             bump(job, 90, f"mentions the address {job.get('address')}")
@@ -312,6 +369,8 @@ def add_item(
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = (text or "")[:MAX_TEXT_CHARS]
+    if len([i for i in state.get("inbox", []) if i.get("status") == "new"]) >= MAX_NEW_INBOX:
+        raise domain.GateError(f"The Inbox has {MAX_NEW_INBOX} items waiting. File or dismiss some first.")
     files = [f for f in state.get("files", []) if f["id"] in (file_ids or [])]
     names = " ".join(f["name"] for f in files)
     ext = files[0]["ext"] if files else ""
@@ -430,26 +489,28 @@ def load_tokens() -> dict[str, Any]:
 
 def company_tokens(company_id: str, create: bool = True) -> dict[str, str]:
     """The secret tokens in this company's inbound email, SMS and calendar URLs."""
-    data = load_tokens()
-    mine = {kind: tok for tok, v in data.items() if v["company_id"] == company_id for kind in [v["kind"]]}
-    changed = False
-    for kind in ("email", "sms", "calendar"):
-        if kind not in mine and create:
-            tok = secrets.token_urlsafe(18)
-            data[tok] = {"company_id": company_id, "kind": kind, "created_at": utcnow()}
-            mine[kind] = tok
-            changed = True
-    if changed:
-        storage.write_json(tokens_path(), data)
-    return mine
+    with TOKENS_LOCK:
+        data = load_tokens()
+        mine = {kind: tok for tok, v in data.items() if v["company_id"] == company_id for kind in [v["kind"]]}
+        changed = False
+        for kind in ("email", "sms", "calendar"):
+            if kind not in mine and create:
+                tok = secrets.token_urlsafe(18)
+                data[tok] = {"company_id": company_id, "kind": kind, "created_at": utcnow()}
+                mine[kind] = tok
+                changed = True
+        if changed:
+            storage.write_json(tokens_path(), data)
+        return mine
 
 
 def rotate_token(company_id: str, kind: str) -> str:
-    data = {t: v for t, v in load_tokens().items() if not (v["company_id"] == company_id and v["kind"] == kind)}
-    tok = secrets.token_urlsafe(18)
-    data[tok] = {"company_id": company_id, "kind": kind, "created_at": utcnow()}
-    storage.write_json(tokens_path(), data)
-    return tok
+    with TOKENS_LOCK:
+        data = {t: v for t, v in load_tokens().items() if not (v["company_id"] == company_id and v["kind"] == kind)}
+        tok = secrets.token_urlsafe(18)
+        data[tok] = {"company_id": company_id, "kind": kind, "created_at": utcnow()}
+        storage.write_json(tokens_path(), data)
+        return tok
 
 
 def company_for_token(token: str, kind: str) -> str | None:

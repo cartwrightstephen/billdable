@@ -37,7 +37,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | --- | --- |
 | `BILLDABLE_DATA_DIR` | Where all data lives (see above). |
 | `COOKIE_SECURE` | `1` forces the Secure cookie flag. |
-| `HELPER_ADMIN_EMAILS` | Comma-separated emails of the people who may review helper questions and edit answers (the founders). Nobody can, if unset. |
+| `HELPER_ADMIN_USER_IDS` | Comma-separated account ids of the people who may review helper questions and edit answers (the founders). Nobody can, if unset. Ids, not emails, because sign-up doesn't verify email. Each person's id is at the bottom of the Help page. |
 | `TWILIO_AUTH_TOKEN` | When set, inbound texts must carry a valid `X-Twilio-Signature`. Set it before giving out the SMS address. |
 | `TWILIO_NUMBER` | The texting number shown to users in the Inbox. Display only. |
 | `INBOUND_EMAIL_ADDRESS_TEMPLATE` | The forwarding address shown in the Inbox, with `{token}` where the company's secret goes, e.g. `jobs+{token}@in.example.com`. Display only; the email service does the routing. |
@@ -46,7 +46,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 
 Everything comes into the Inbox, gets a suggested job (job code, address, job name, customer name, or the payer's AP email as sender), a kind (change order, waiver, pay app backup, ticket, photo, contract, daily record, note), and any dollar amounts and dates found. A person files it to the job record with one click; Undo takes it back off unless a packet uses it. No AI: the rules are in `importer.py`.
 
-- Files: drop anywhere, paste a screenshot, or choose files. On a job page they go straight onto that job. PDF, images (JPG, PNG, GIF, WEBP, HEIC), Word, Excel, CSV, TXT and `.eml`, up to 15 MB. HTML, SVG and scripts are refused. Files are served back only to the same company, with `Content-Security-Policy: sandbox`.
+- Files: drop anywhere, paste a screenshot, or choose files. On a job page they go straight onto that job. PDF, images (JPG, PNG, GIF, WEBP, HEIC), Word, Excel, CSV, TXT and `.eml`, up to 15 MB. HTML, SVG and scripts are refused. Files are served back only to the same company, with `Content-Security-Policy: sandbox`, except PDFs, which are served without it so the browser's PDF viewer opens them.
 - Saved emails (`.eml`): sender, subject, date, body and attachments are read with Python's email parser.
 - Pasted text: an email (with or without headers), a text thread, or notes. Notes split at every line that starts with a date (`10/12`, `Oct 12, 2026`, `2026-10-12`) and file as daily records with that date.
 - Inbound email: `POST /api/inbound/email/<token>` accepts raw MIME, a multipart form post, or JSON. The field names handled are the common ones for SendGrid Inbound Parse, Mailgun routes and Postmark inbound, written from their documentation; none has been tested against the live service.
@@ -61,7 +61,7 @@ Everything comes into the Inbox, gets a suggested job (job code, address, job na
 The ? badge opens the helper. It answers from a database of prepared answers, not an AI model:
 
 - `helper/answers.json` ships with the code. Edit it in Git; `tests/test_helper.py` checks that common questions still land on the right answer.
-- People listed in `HELPER_ADMIN_EMAILS` get a Helper answers page: questions with no good answer (unmatched, or marked not helpful), grouped and counted, with a form to answer them. Saved answers go to `helper_answers.json` in the data directory and work immediately for every company; the same id replaces a shipped answer.
+- Accounts listed in `HELPER_ADMIN_USER_IDS` get a Helper answers page: questions with no good answer (unmatched, or marked not helpful), grouped and counted, with a form to answer them. Saved answers go to `helper_answers.json` in the data directory and work immediately for every company; the same id replaces a shipped answer.
 - Matching is word overlap weighted by rarity, with synonyms (pay app = invoice = requisition, retainage = retention, ...), in `helper.py`.
 - Some answers read the company's own jobs: what to do today, who owes you, follow-ups due, what is blocking a job, a drafted follow-up note, unbilled work, retainage, waivers, the Inbox, unsigned change orders, jobs ready to close. Their buttons call the normal endpoints, so every gate and confirmation still applies.
 - Every question is logged with what it matched. The panel tells users that questions are saved.

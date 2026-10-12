@@ -52,7 +52,7 @@ class ImportHttpTests(unittest.TestCase):
         cls.httpd.server_close()
         (auth.AUTH_PATH, server.COMPANIES, importer.UPLOADS, storage.DATA_DIR, helper.LOCAL_KB, helper.LOG_PATH) = cls._orig
         os.environ.pop("TWILIO_AUTH_TOKEN", None)
-        os.environ.pop("HELPER_ADMIN_EMAILS", None)
+        os.environ.pop("HELPER_ADMIN_USER_IDS", None)
         cls.tmp.cleanup()
 
     def request(self, method, path, body=None, cookie=None, raw=None, headers=None):
@@ -102,7 +102,11 @@ class ImportHttpTests(unittest.TestCase):
         res, body = self.request("GET", f"/api/files/{pdf['id']}", cookie=cookie)
         self.assertEqual(res.status, 200)
         self.assertEqual(res.getheader("Content-Type"), "application/pdf")
-        self.assertIn("sandbox", res.getheader("Content-Security-Policy"))
+        self.assertIsNone(res.getheader("Content-Security-Policy"))
+        eml = next(f for f in state["files"] if f["name"] == "co2 email.eml")
+        res, _ = self.request("GET", f"/api/files/{eml['id']}", cookie=cookie)
+        self.assertEqual(res.status, 200)
+        self.assertIn("sandbox", res.getheader("Content-Security-Policy") or "")
         other, _ = self.company("other-eml@example.com")
         res, _ = self.request("GET", f"/api/files/{pdf['id']}", cookie=other)
         self.assertEqual(res.status, 404)
@@ -187,13 +191,70 @@ class ImportHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 403)
         res, _ = self.request("POST", "/api/helper/answers", {"questions": ["x"], "answer": "y"}, cookie=cookie)
         self.assertEqual(res.status, 403)
-        os.environ["HELPER_ADMIN_EMAILS"] = "helper@example.com"
+        res, me = self.request("GET", "/api/auth/me", cookie=cookie)
+        os.environ["HELPER_ADMIN_USER_IDS"] = me["user"]["id"]
         res, review = self.request("GET", "/api/helper/review", cookie=cookie)
         self.assertEqual(res.status, 200)
         self.assertTrue(any("zzz" in g["examples"][0] for g in review["open"]))
         res, data = self.request("POST", "/api/helper/answers", {"questions": "not a list", "answer": "y"}, cookie=cookie)
         self.assertEqual(res.status, 409)
-        os.environ.pop("HELPER_ADMIN_EMAILS")
+        # An email that matches nothing in the setting gets nothing, whatever the address.
+        other, _ = self.company("founder-lookalike@example.com")
+        res, _ = self.request("GET", "/api/helper/review", cookie=other)
+        self.assertEqual(res.status, 403)
+        os.environ.pop("HELPER_ADMIN_USER_IDS")
+
+    def test_review_findings(self):
+        cookie, job = self.company("findings@example.com")
+        # Multipart inbound email with a mixed-case boundary (SendGrid style) keeps its fields.
+        res, settings = self.request("GET", "/api/import/settings", cookie=cookie)
+        email_path = "/api/inbound/email/" + settings["email_webhook"].rsplit("/", 1)[-1]
+        body = (b"--xYzZY\r\nContent-Disposition: form-data; name=\"from\"\r\n\r\nap@park.example\r\n"
+                b"--xYzZY\r\nContent-Disposition: form-data; name=\"subject\"\r\n\r\nElm addition question\r\n"
+                b"--xYzZY\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nHello\r\n--xYzZY--\r\n")
+        res, _ = self.request("POST", email_path, raw=body, headers={"Content-Type": "multipart/form-data; boundary=xYzZY"})
+        self.assertEqual(res.status, 200)
+        res, state = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual(state["inbox"][-1]["subject"], "Elm addition question")
+        # Malformed inbound JSON is handled, not a 500.
+        for payload in [{"attachments": 5}, {"attachments": [{"name": 5, "content": "aGk="}]}]:
+            res, _ = self.request("POST", email_path, payload)
+            self.assertIn(res.status, (200, 409), payload)
+        # Long pasted notes are accepted.
+        notes = "\n".join(f"10/{d} Elm addition crew of 4, framing and blocking, " + "x" * 200 for d in range(1, 29))
+        res, state = self.request("POST", "/api/import/text", {"text": notes, "source": "notes"}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        # A refused import leaves no file on disk.
+        before = sorted(p.name for p in (importer.UPLOADS / job["id"].split("-")[0]).glob("*")) if False else None
+        res, state = self.request("GET", "/api/state", cookie=cookie)
+        company_dir = next(importer.UPLOADS.iterdir()) if importer.UPLOADS.exists() else None
+        res, me = self.request("GET", "/api/auth/me", cookie=cookie)
+        folder = importer.UPLOADS / me["user"]["company_id"]
+        count = len(list(folder.glob("*"))) if folder.exists() else 0
+        res, _ = self.request("POST", "/api/import/file?job=job-nope&file=1", raw=b"%PDF-1.4", cookie=cookie,
+                              headers={"Content-Type": "application/pdf", "X-Filename": "a.pdf"})
+        self.assertEqual(res.status, 409)
+        self.assertEqual(len(list(folder.glob("*"))) if folder.exists() else 0, count)
+        # PDFs are served without the sandbox header so the browser's viewer opens them.
+        res, state = self.request("POST", "/api/import/file", raw=b"%PDF-1.4 x", cookie=cookie,
+                                  headers={"Content-Type": "application/pdf", "X-Filename": "ok.pdf"})
+        pdf = next(f for f in state["files"] if f["name"] == "ok.pdf")
+        res, _ = self.request("GET", f"/api/files/{pdf['id']}", cookie=cookie)
+        self.assertIsNone(res.getheader("Content-Security-Policy"))
+
+    def test_tokens_survive_concurrent_companies(self):
+        cookies = [self.company(f"race{i}@example.com")[0] for i in range(10)]
+        results = [None] * len(cookies)
+
+        def fetch(i):
+            res, data = self.request("GET", "/api/import/settings", cookie=cookies[i])
+            results[i] = data["email_webhook"].rsplit("/", 1)[-1]
+
+        threads = [threading.Thread(target=fetch, args=(i,)) for i in range(len(cookies))]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        stored = importer.load_tokens()
+        self.assertTrue(all(tok in stored for tok in results))
 
 
 if __name__ == "__main__":

@@ -1508,6 +1508,49 @@
       "needs_job": false,
       "actions": [],
       "follow_ups": []
+    },
+    {
+      "id": "delete-account",
+      "category": "Account and data",
+      "questions": [
+        "How do I delete my account?",
+        "Close my Billdable account",
+        "Delete my company and data",
+        "Cancel my account"
+      ],
+      "keywords": [
+        "delete account",
+        "cancel account",
+        "close account"
+      ],
+      "answer": "Deleting an account isn't built yet. Ask the Billdable team and they'll remove it. To clear your data yourself, use Export data first if you want a copy, then Reset data (you type your company name to confirm).",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I export my data?"
+      ]
+    },
+    {
+      "id": "backups",
+      "category": "Account and data",
+      "questions": [
+        "Is my data backed up?",
+        "Do you back up my data?",
+        "What if the server loses my data?"
+      ],
+      "keywords": [
+        "backed up",
+        "backup",
+        "lose data"
+      ],
+      "answer": "There are no automatic backups yet. Your data is written safely (a crash can't leave a half-saved file), and a reset keeps a snapshot, but keep your own copy with Export data, and keep signed documents outside Billdable too.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "How do I export my data?"
+      ]
     }
   ]
 }

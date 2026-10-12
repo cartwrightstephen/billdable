@@ -193,6 +193,14 @@ function esc(value) {
     .replace(/'/g, "&#39;");
 }
 
+// The reverse of esc(), for values from escDeep'd state that are about to be escaped again
+// (or placed with textContent). Never put its result into innerHTML without esc().
+function unesc(value) {
+  const t = document.createElement("textarea");
+  t.innerHTML = String(value);
+  return t.value;
+}
+
 function escDeep(value) {
   if (typeof value === "string") return esc(value);
   if (Array.isArray(value)) return value.map(escDeep);
@@ -629,7 +637,9 @@ function bindActions() {
       else if (a === "inbox-file-all") {
         const items = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id);
         for (const i of items) {
-          const jobId = document.querySelector(`#inb-job-${i.id}`)?.value || i.suggested_job_id;
+          const select = document.querySelector(`#inb-job-${i.id}`);
+          const jobId = select ? select.value : i.suggested_job_id;   // a row set back to "Pick a job" is skipped
+          if (!jobId) continue;
           const kind = document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind;
           await post(`/api/inbox/${i.id}/file`, { job_id: jobId, kind });
         }
@@ -978,13 +988,13 @@ function helperEditor() {
   return `<div class="card" id="helper-editor">
     <h2>${d.id ? "Edit answer" : "New answer"}</h2>
     <div class="form-grid">
-      <div class="span-2"><label for="ha-questions">Example questions, one per line</label><textarea id="ha-questions" rows="4">${(d.questions || []).join("\n")}</textarea></div>
-      <div class="span-2"><label for="ha-answer">Answer</label><textarea id="ha-answer" rows="6" placeholder="Plain words. Start a line with - for a bullet.">${d.answer || ""}</textarea></div>
-      <div><label for="ha-category">Category</label><input id="ha-category" value="${d.category || "General"}"></div>
-      <div><label for="ha-keywords">Keywords, comma separated</label><input id="ha-keywords" value="${(d.keywords || []).join(", ")}"></div>
-      <div><label for="ha-handler">Add live data from the company's jobs</label><select id="ha-handler"><option value="">None</option>${handlers.map(h => `<option ${d.handler === h ? "selected" : ""}>${h}</option>`).join("")}</select></div>
+      <div class="span-2"><label for="ha-questions">Example questions, one per line</label><textarea id="ha-questions" rows="4">${esc((d.questions || []).join("\n"))}</textarea></div>
+      <div class="span-2"><label for="ha-answer">Answer</label><textarea id="ha-answer" rows="6" placeholder="Plain words. Start a line with - for a bullet.">${esc(d.answer || "")}</textarea></div>
+      <div><label for="ha-category">Category</label><input id="ha-category" value="${esc(d.category || "General")}"></div>
+      <div><label for="ha-keywords">Keywords, comma separated</label><input id="ha-keywords" value="${esc((d.keywords || []).join(", "))}"></div>
+      <div><label for="ha-handler">Add live data from the company's jobs</label><select id="ha-handler"><option value="">None</option>${handlers.map(h => `<option ${unesc(h) === d.handler ? "selected" : ""}>${h}</option>`).join("")}</select></div>
       <div><label for="ha-nav">Button to open a page</label><select id="ha-nav"><option value="">None</option>${HELPER_VIEWS.map(v => `<option value="${v}" ${navAction && navAction.view === v ? "selected" : ""}>${v}</option>`).join("")}</select></div>
-      <div class="span-2"><label for="ha-follow">Suggested next questions, one per line</label><textarea id="ha-follow" rows="2">${(d.follow_ups || []).join("\n")}</textarea></div>
+      <div class="span-2"><label for="ha-follow">Suggested next questions, one per line</label><textarea id="ha-follow" rows="2">${esc((d.follow_ups || []).join("\n"))}</textarea></div>
     </div>
     <div class="form-inline"><button class="btn" id="ha-save">Save answer</button><button class="btn secondary" id="ha-cancel">Cancel</button>
     <span class="sub">Saved answers work right away for every company. Same id as a shipped answer replaces it.</span></div>
@@ -1013,7 +1023,7 @@ function renderHelperAdminBody() {
     <details class="card"><summary><strong>All answers (${r.answers.length})</strong></summary>
       ${r.answers.map((a, i) => `<div class="list-item"><strong>${a.questions[0]}</strong> <span class="sub">${a.category} · ${a.id} · ${a.origin}${a.handler ? " · live: " + a.handler : ""}</span> <button class="btn small secondary" data-ha-edit="${i}">Edit</button></div>`).join("")}
     </details>`;
-  const raw = (s) => { const t = document.createElement("textarea"); t.innerHTML = s; return t.value; };
+  const raw = unesc;   // values below are decoded for the editor, which escapes them again
   const rawDeep = (o) => typeof o === "string" ? raw(o) : Array.isArray(o) ? o.map(rawDeep) : (o && typeof o === "object") ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, rawDeep(v)])) : o;
   body.querySelector("#ha-new")?.addEventListener("click", () => { helperDraft = { questions: [] }; renderHelperAdminBody(); });
   body.querySelectorAll("[data-ha-answer]").forEach(b => b.addEventListener("click", () => {
@@ -1064,7 +1074,7 @@ function renderHelperAdminBody() {
 const views = {
   "helper-admin"() {
     return `<h1>Helper answers</h1>
-      <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only people listed in HELPER_ADMIN_EMAILS see this page.</p>
+      <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
       <div id="helper-admin-body">Loading…</div>`;
   },
   inbox() {
@@ -1146,6 +1156,7 @@ const views = {
       <div class="card"><h2>Words you will see</h2>
         <dl class="glossary">${glossary.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join("")}</dl>
       </div>
+      <p class="sub">Your account id: <code>${me ? me.id : ""}</code> (the Billdable team uses it to set up access).</p>
     `;
   },
   dashboard() {
@@ -1942,7 +1953,7 @@ function updateAiContext() {
 
 function helperStarters() {
   const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId);
-  if (job) return [`What's blocking ${job.name}?`, `Draft a follow-up for ${job.name}`, `Status of ${job.name}`];
+  if (job) { const n = unesc(job.name); return [`What's blocking ${n}?`, `Draft a follow-up for ${n}`, `Status of ${n}`]; }
   if (currentView === "inbox") return ["How does it know which job?", "How do I import 30 days of notes?", "How do I forward emails to Billdable?"];
   if (currentView === "retainage") return ["How do I get retainage released?", "Which jobs are holding my retainage?"];
   return ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"];
@@ -2044,7 +2055,7 @@ document.getElementById("ai-form").addEventListener("submit", (e) => {
 });
 document.getElementById("ai-panel").addEventListener("click", async (e) => {
   const askBtn = e.target.closest("[data-helper-ask]");
-  if (askBtn) { helperAsk(askBtn.textContent); return; }
+  if (askBtn) { helperAsk(askBtn.textContent); return; }   // textContent is the decoded text
   const actBtn = e.target.closest("[data-helper-action]");
   if (actBtn) {
     const msg = helperLog[Number(actBtn.dataset.helperMsg)];
@@ -2109,17 +2120,28 @@ document.addEventListener("dragleave", () => {
   if (!dragDepth) dropOverlay(false);
 });
 document.addEventListener("drop", (e) => {
-  if (!state || !e.dataTransfer || !e.dataTransfer.files.length) return;
-  e.preventDefault();
   dragDepth = 0;
   dropOverlay(false);
+  if (!state || !e.dataTransfer) return;
+  if (!e.dataTransfer.files.length) {
+    if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); toast("That item has no file to import. Save it as a file first, then drop the file."); }
+    return;
+  }
+  e.preventDefault();
   const jobId = importTargetJob();
   uploadFiles(e.dataTransfer.files, jobId, !!jobId);
 });
+window.addEventListener("blur", () => { dragDepth = 0; dropOverlay(false); });
+document.addEventListener("dragend", () => { dragDepth = 0; dropOverlay(false); });
 document.addEventListener("paste", (e) => {
   if (!state || !e.clipboardData) return;
   const files = [...e.clipboardData.files];
   if (!files.length) return; // plain text pastes behave normally
+  // Copying cells from Excel or Word puts both text and a picture on the clipboard.
+  // In a text box, the text is what the person meant.
+  const target = e.target;
+  const editable = target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable);
+  if (editable && e.clipboardData.types.includes("text/plain")) return;
   e.preventDefault();
   const jobId = importTargetJob();
   uploadFiles(files, jobId, !!jobId);

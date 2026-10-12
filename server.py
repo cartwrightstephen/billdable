@@ -58,9 +58,13 @@ SECURITY_HEADERS = {
 
 
 def is_helper_admin(user: dict) -> bool:
-    """Founders who may answer helper questions: emails listed in HELPER_ADMIN_EMAILS (comma-separated)."""
-    allowed = {e.strip().lower() for e in os.environ.get("HELPER_ADMIN_EMAILS", "").split(",") if e.strip()}
-    return bool(user) and user.get("email", "").lower() in allowed
+    """Founders who may answer helper questions: account ids in HELPER_ADMIN_USER_IDS (comma-separated).
+
+    Account ids, not emails: sign-up doesn't verify email, so anyone could register a
+    founder's address before the founder does. An id is assigned by the server.
+    """
+    allowed = {e.strip() for e in os.environ.get("HELPER_ADMIN_USER_IDS", "").split(",") if e.strip()}
+    return bool(user) and user.get("id", "") in allowed
 
 
 class BadRequest(Exception):
@@ -116,14 +120,14 @@ def ensure_demo() -> None:
         save_company(auth.DEMO_COMPANY_ID, seed_state())
 
 
-def _text(body: dict, key: str, default: str = "") -> str:
+def _text(body: dict, key: str, default: str = "", limit: int = MAX_TEXT_CHARS) -> str:
     value = body.get(key, default)
     if value is None:
         return default
     if not isinstance(value, str):
         raise BadRequest(f"{key.replace('_', ' ').capitalize()} must be text.")
-    if len(value) > MAX_TEXT_CHARS:
-        raise BadRequest(f"{key.replace('_', ' ').capitalize()} is too long (limit {MAX_TEXT_CHARS} characters).")
+    if len(value) > limit:
+        raise BadRequest(f"{key.replace('_', ' ').capitalize()} is too long (limit {limit:,} characters).")
     return value
 
 
@@ -210,8 +214,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length) if length else b""
 
     def _base_url(self) -> str:
-        proto = self.headers.get("X-Forwarded-Proto", "").lower() or ("https" if os.environ.get("COOKIE_SECURE") == "1" else "http")
-        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or f"127.0.0.1:{PORT}"
+        proto = self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() or ("https" if os.environ.get("COOKIE_SECURE") == "1" else "http")
+        host = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip() or self.headers.get("Host") or f"127.0.0.1:{PORT}"
         return f"{proto}://{host}"
 
     def _change(self, company_id: str, fn) -> tuple:
@@ -240,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
     def _secure_cookie(self) -> bool:
         if os.environ.get("COOKIE_SECURE") == "1":
             return True
-        return self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+        return self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() == "https"
 
     def _set_cookie(self, token: str | None) -> dict:
         secure = "; Secure" if self._secure_cookie() else ""
@@ -330,11 +334,15 @@ class Handler(BaseHTTPRequestHandler):
             kind, inline = importer.ALLOWED_FILES.get(meta["ext"], ("application/octet-stream", False))
             disposition = "inline" if inline else "attachment"
             ascii_name = meta["name"].encode("ascii", "replace").decode().replace('"', "")
-            self._send(200, target.read_bytes(), kind, {
+            headers = {
                 "Content-Disposition": f'{disposition}; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(meta["name"])}',
-                "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
                 "Cache-Control": "private, max-age=300",
-            })
+            }
+            if meta["ext"] != ".pdf":
+                # Browsers' PDF viewers won't open inside a sandboxed document, so PDFs go without it;
+                # every other type is an image or a download, where the sandbox costs nothing.
+                headers["Content-Security-Policy"] = "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"
+            self._send(200, target.read_bytes(), kind, headers)
             return
         if path == "/api/import/settings":
             user = self._require_user()
@@ -514,19 +522,53 @@ class Handler(BaseHTTPRequestHandler):
         file_now = bool(job_id) and (query.get("file") or [""])[0] == "1"
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
+        company_id = user["company_id"]
+        # Check and write the file before taking the state lock, so a big upload
+        # never holds up other companies; delete it again if the import is refused.
+        try:
+            if filename.lower().endswith(".eml"):
+                parsed = importer.parse_email(data)
+                stored, skipped = self._store_email_files(company_id, parsed, actor, raw=data, raw_name=filename)
+            else:
+                parsed, skipped = None, []
+                stored = [importer.store_bytes(company_id, filename, data, actor)]
+        except domain.GateError as exc:
+            self._json(409, {"error": str(exc), "blockers": exc.blockers})
+            return
 
         def add(state: dict) -> None:
-            if filename.lower().endswith(".eml"):
-                item = self._add_email(state, user["company_id"], importer.parse_email(data), "upload", actor, job_id, raw=data, raw_name=filename)
+            for meta in stored:
+                importer.register_file(state, meta)
+            ids = [m["id"] for m in stored]
+            if parsed is not None:
+                item = importer.add_item(
+                    state, "upload", text=parsed.get("text", ""), sender=parsed.get("from", ""), subject=parsed.get("subject", ""),
+                    file_ids=ids, job_id=job_id, sent_at=parsed.get("sent_at", ""),
+                    extra={"skipped_attachments": skipped} if skipped else None)
             else:
-                meta = importer.save_file(state, user["company_id"], filename, data, actor)
+                meta = stored[0]
                 text = data.decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
-                item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=[meta["id"]], job_id=job_id)
+                item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=ids, job_id=job_id)
             if file_now:
                 # Dropped on a job page: the person already chose the job.
                 importer.file_item(state, item["id"], job_id, item["kind"], actor)
 
-        self._json(*self._change(user["company_id"], add))
+        status, payload = self._change(company_id, add)
+        if status != 200:
+            importer.discard(company_id, stored)
+        self._json(status, payload)
+
+    def _store_email_files(self, company_id: str, parsed: dict, actor: str, raw: bytes | None = None, raw_name: str = "") -> tuple:
+        """Write an email's own file and its attachments to disk; refused attachment types are listed, not fatal."""
+        stored, skipped = [], []
+        if raw is not None and raw_name:
+            stored.append(importer.store_bytes(company_id, raw_name, raw, actor))
+        for att in parsed.get("attachments", []):
+            try:
+                stored.append(importer.store_bytes(company_id, att.get("filename") or "attachment", att.get("data") or b"", actor))
+            except domain.GateError as exc:
+                skipped.append(str(exc))
+        return stored, skipped
 
     def _import_text(self, state: dict, body: dict, file_as: str | None = None) -> None:
         """Add pasted text to the Inbox; with file_as (a person) and a job, file it straight away."""
@@ -538,7 +580,8 @@ class Handler(BaseHTTPRequestHandler):
                 importer.file_item(state, item["id"], job_id, item["kind"], file_as)
 
     def _import_text_items(self, state: dict, body: dict) -> None:
-        text = _text(body, "text").strip()
+        # Pasted notes or a long email thread can be long; the 1 MB body cap still applies.
+        text = _text(body, "text", limit=200_000).strip()
         source = _text(body, "source", "paste")
         if source not in {"paste", "email", "sms", "notes"}:
             source = "paste"
@@ -559,32 +602,30 @@ class Handler(BaseHTTPRequestHandler):
             sender, subject, text = parsed["from"], parsed["subject"], parsed["text"] or text
         importer.add_item(state, source, text=text, sender=sender, subject=subject, job_id=job_id)
 
-    def _add_email(self, state: dict, company_id: str, parsed: dict, source: str, actor: str,
-                   job_id: str | None = None, raw: bytes | None = None, raw_name: str = "") -> dict:
-        file_ids, skipped = [], []
-        if raw is not None and raw_name:
-            file_ids.append(importer.save_file(state, company_id, raw_name, raw, actor)["id"])
-        for att in parsed.get("attachments", []):
-            try:
-                file_ids.append(importer.save_file(state, company_id, att["filename"], att["data"], actor)["id"])
-            except domain.GateError as exc:
-                skipped.append(str(exc))
-        return importer.add_item(
-            state, source, text=parsed.get("text", ""), sender=parsed.get("from", ""), subject=parsed.get("subject", ""),
-            file_ids=file_ids, job_id=job_id, sent_at=parsed.get("sent_at", ""),
-            extra={"skipped_attachments": skipped} if skipped else None,
-        )
-
     def _inbound_email(self, token: str) -> None:
         company_id = importer.company_for_token(token, "email")
         if not company_id:
             self._json(404, {"error": "Not found"})
             return
         data = self._read_raw(MAX_INBOUND_BYTES)
-        ctype = (self.headers.get("Content-Type") or "").lower()
-        parsed = _parse_inbound_email(data, ctype)
-        status, payload = self._change(company_id, lambda st: self._add_email(st, company_id, parsed, "email", "inbound email"))
-        self._json(200 if status == 200 else status, {"ok": status == 200} if status == 200 else payload)
+        # Keep the header as sent: a multipart boundary is case-sensitive.
+        parsed = _parse_inbound_email(data, self.headers.get("Content-Type") or "")
+        stored, skipped = self._store_email_files(company_id, parsed, "inbound email")
+
+        def add(state: dict) -> None:
+            for meta in stored:
+                importer.register_file(state, meta)
+            importer.add_item(
+                state, "email", text=parsed.get("text", ""), sender=parsed.get("from", ""), subject=parsed.get("subject", ""),
+                file_ids=[m["id"] for m in stored], sent_at=parsed.get("sent_at", ""),
+                extra={"skipped_attachments": skipped} if skipped else None)
+
+        status, payload = self._change(company_id, add)
+        if status != 200:
+            importer.discard(company_id, stored)
+            self._json(status, payload)
+            return
+        self._json(200, {"ok": True})
 
     def _inbound_sms(self, token: str) -> None:
         company_id = importer.company_for_token(token, "sms")
@@ -742,13 +783,14 @@ class Handler(BaseHTTPRequestHandler):
         return 404, {"error": "Not found"}
 
 
-def _parse_inbound_email(data: bytes, ctype: str) -> dict:
+def _parse_inbound_email(data: bytes, raw_ctype: str) -> dict:
     """Accept raw MIME, a JSON payload, or a multipart form post from an email provider.
 
     Field names below are the common ones for SendGrid Inbound Parse, Mailgun
     routes and Postmark inbound, from their documentation as I remember it;
     they have not been tested against the live services.
     """
+    ctype = raw_ctype.lower()
     if "application/json" in ctype:
         try:
             raw = json.loads(data.decode("utf-8"))
@@ -763,22 +805,26 @@ def _parse_inbound_email(data: bytes, ctype: str) -> dict:
         if not text and (low.get("html") or low.get("htmlbody")):
             text = importer.html_to_text(str(low.get("html") or low.get("htmlbody")))
         attachments = []
-        for att in low.get("attachments") or []:
+        raw_atts = low.get("attachments")
+        for att in raw_atts if isinstance(raw_atts, list) else []:
             if not isinstance(att, dict):
                 continue
-            a = {k.lower(): v for k, v in att.items()}
+            a = {str(k).lower(): v for k, v in att.items()}
             content = a.get("content") or a.get("content_base64") or ""
+            if not isinstance(content, str):
+                continue
             try:
                 blob = base64.b64decode(content, validate=False)
             except (ValueError, TypeError):
                 continue
-            attachments.append({"filename": a.get("name") or a.get("filename") or "attachment", "data": blob})
-        return {"from": str(low.get("from") or low.get("sender") or ""), "subject": str(low.get("subject") or ""),
+            name = a.get("name") or a.get("filename")
+            attachments.append({"filename": name if isinstance(name, str) else "attachment", "data": blob})
+        return {"from": str(low.get("from") or low.get("sender") or "")[:300], "subject": str(low.get("subject") or "")[:300],
                 "text": str(text), "sent_at": "", "attachments": attachments}
     if "multipart/form-data" in ctype:
         import email as _email
         import email.policy as _policy
-        msg = _email.message_from_bytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + data, policy=_policy.default)
+        msg = _email.message_from_bytes(b"Content-Type: " + raw_ctype.encode("latin-1", "replace") + b"\r\n\r\n" + data, policy=_policy.default)
         fields, attachments = {}, []
         for part in msg.iter_parts():
             name = part.get_param("name", header="content-disposition") or ""
