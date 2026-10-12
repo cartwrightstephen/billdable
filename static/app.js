@@ -1,6 +1,7 @@
 let state = null;
 let me = null;
 let authMode = "signup";
+let dataNotice = false;   // server says data may be erased (no persistent disk confirmed yet)
 let authError = "";
 let jobFormError = "";
 let currentView = "dashboard";
@@ -317,6 +318,7 @@ async function boot(checkLink = true) {
     mailReady = data.mail_ready === true;
     await load();
   } else {
+    dataNotice = (await readJson(res)).data_notice === true;
     renderLanding();
   }
   setAiVisible(!!me);
@@ -336,6 +338,7 @@ function renderLanding() {
   const signup = authMode === "signup";
   app.innerHTML = `
     <div class="landing">
+      ${dataNotice ? `<p class="notice land-notice" role="status">Demo: data may be erased. Don't enter real job or customer data yet.</p>` : ""}
       <header class="land-bar">
         <div class="brand">Billdable</div>
         <div class="land-bar-actions">

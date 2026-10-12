@@ -317,7 +317,7 @@ class AccountHttpTests(ServerCase):
     def test_health_check(self):
         res, data = self.request("GET", "/healthz")
         self.assertEqual(res.status, 200)
-        self.assertEqual(set(data), {"ok", "storage", "email", "last_backup"})
+        self.assertEqual(set(data), {"ok", "storage", "email", "last_backup", "env"})
         self.assertTrue(data["ok"])
         self.assertTrue(res.getheader("X-Request-Id"))
 

@@ -84,6 +84,39 @@ def app_url() -> str | None:
     return url if re.match(r"^https?://[^\s/]+", url) else None
 
 
+def production() -> bool:
+    """BILLDABLE_ENV=production: no demo tenant, and startup refuses a half-set configuration."""
+    return (os.environ.get("BILLDABLE_ENV") or "").strip().lower() == "production"
+
+
+def demo_enabled() -> bool:
+    # The demo account's password is public, so it never exists in production.
+    return not production()
+
+
+def data_notice() -> bool:
+    """Show "data may be erased" on the landing page until someone has checked that a
+    deploy kept the data (BILLDABLE_DATA_PERSISTENT=1)."""
+    return os.environ.get("BILLDABLE_DATA_PERSISTENT") != "1"
+
+
+def config_problems() -> list[str]:
+    """What stops a production start. Empty outside production."""
+    if not production():
+        return []
+    problems = []
+    if not os.environ.get("BILLDABLE_DATA_DIR"):
+        problems.append("BILLDABLE_DATA_DIR is not set. Point it at the persistent disk.")
+    elif not storage.DATA_DIR.is_dir():
+        problems.append(f"BILLDABLE_DATA_DIR ({storage.DATA_DIR}) does not exist. Is the disk mounted?")
+    if os.environ.get("COOKIE_SECURE") != "1":
+        problems.append("COOKIE_SECURE must be 1.")
+    url = app_url()
+    if not url or not url.startswith("https://"):
+        problems.append("BILLDABLE_URL must be the site's https:// address, so emailed links work.")
+    return problems
+
+
 SECRET_PATHS = (
     (re.compile(r"(/api/inbound/(?:email|sms)/)[^/?\s]+"), r"\1[token]"),
     (re.compile(r"(/api/calendar/)[^/?\s]+?(\.ics)"), r"\1[token]\2"),
@@ -369,8 +402,14 @@ class Handler(BaseHTTPRequestHandler):
             value = f"{COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
         return {"Set-Cookie": value}
 
-    def _require_user(self) -> dict | None:
+    def _session_user(self) -> dict | None:
         user = auth.session_user(self._token())
+        if user and not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID:
+            return None
+        return user
+
+    def _require_user(self) -> dict | None:
+        user = self._session_user()
         if not user:
             self._json(401, {"error": "Sign in required."})
             return None
@@ -411,6 +450,7 @@ class Handler(BaseHTTPRequestHandler):
                 "storage": "ok" if writable else "not writable",
                 "email": "configured" if mailer.configured() else "not set up",
                 "last_backup": backup.newest_time(),
+                "env": "production" if production() else "development",
             })
             return
         if path == "/api/team":
@@ -445,9 +485,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, pdf, "application/pdf", {"Content-Disposition": f'inline; filename="{name}"'})
             return
         if path == "/api/auth/me":
-            user = auth.session_user(self._token())
+            user = self._session_user()
             if not user:
-                self._json(401, {"error": "Not signed in."})
+                self._json(401, {"error": "Not signed in.", "data_notice": data_notice()})
                 return
             with STATE_LOCK:
                 state = load_company(user["company_id"])
@@ -568,7 +608,7 @@ class Handler(BaseHTTPRequestHandler):
             except auth.RateLimited as exc:
                 self._json(429, {"error": str(exc)})
                 return
-            if not user:
+            if not user or (not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID):
                 self._json(401, {"error": "Email or password is wrong."})
                 return
             token = auth.create_session(user)
@@ -696,7 +736,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_json()
         # Check the session again now the body is here: someone removed, demoted or signed out
         # while their request was arriving must not finish it with their old rights.
-        user = auth.session_user(self._token())
+        user = self._session_user()
         if not user:
             self._json(401, {"error": "Sign in required."})
             return
@@ -1109,7 +1149,7 @@ class Handler(BaseHTTPRequestHandler):
         file_now = bool(job_id) and (query.get("file") or [""])[0] == "1"
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
-        user = auth.session_user(self._token())  # still signed in now the upload has arrived?
+        user = self._session_user()  # still signed in now the upload has arrived?
         if not user:
             self._json(401, {"error": "Sign in required."})
             return
@@ -1447,12 +1487,19 @@ def _parse_inbound_email(data: bytes, raw_ctype: str) -> dict:
 
 
 def main() -> None:
-    ensure_demo()
+    problems = config_problems()
+    if problems:
+        for problem in problems:
+            log_json("error", msg=f"Refusing to start in production: {problem}")
+        sys.exit(1)
+    if demo_enabled():
+        ensure_demo()
     server = Server((HOST, PORT), Handler)
     browse = "http://127.0.0.1" if HOST in {"0.0.0.0", ""} else f"http://{HOST}"
-    print(f"Billdable running at {browse}:{PORT}")
+    print(f"Billdable running at {browse}:{PORT}{' (production)' if production() else ''}")
     print(f"Data directory: {storage.DATA_DIR}")
-    print(f"Demo login: {auth.DEMO_EMAIL} / {auth.DEMO_PASSWORD}")
+    if demo_enabled():
+        print(f"Demo login: {auth.DEMO_EMAIL} / {auth.DEMO_PASSWORD}")
     backup.start_scheduler(
         {"companies": STATE_LOCK, "auth": auth.LOCK, "tokens": importer.TOKENS_LOCK},
         log=lambda msg: log_json("info", msg=msg),
