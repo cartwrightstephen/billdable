@@ -2239,7 +2239,8 @@ const views = {
     const selected = calSelectedDay && eventsByDay[calSelectedDay] ? eventsByDay[calSelectedDay] : [];
     return `
       <h1>Calendar</h1>
-      <p class="sub">Deadlines, follow-ups, expected approvals, payments, and contractor action dates.</p>
+      <p class="sub">Follow-ups, expected approvals, payments, and contractor action dates.</p>
+      <p class="notice" id="cal-not-legal">These are your contract and follow-up dates, not legal deadlines. Check lien and prompt-pay deadlines with your attorney.</p>
       <div class="filter-bar">
         <select id="cal-filter" data-filter-for="calendar" aria-label="Job">
           <option value="all">All jobs</option>

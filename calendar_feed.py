@@ -10,6 +10,9 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+# Shown on the Calendar page and in every feed: Billdable computes no statutory dates (LC-2).
+NOT_LEGAL = "These are your contract and follow-up dates, not legal deadlines. Check lien and prompt-pay deadlines with your attorney."
+
 
 def _esc(text: str) -> str:
     return (text or "").replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\r", "").replace("\n", "\\n")
@@ -78,6 +81,7 @@ def render(state: dict[str, Any]) -> str:
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         _fold(f"X-WR-CALNAME:{_esc(name + ' billing')}"),
+        _fold(f"X-WR-CALDESC:{_esc(NOT_LEGAL)}"),
     ]
     for e in events(state):
         lines += [
@@ -88,8 +92,9 @@ def render(state: dict[str, Any]) -> str:
             f"DTEND;VALUE=DATE:{(e['date'] + timedelta(days=1)).strftime('%Y%m%d')}",
             _fold(f"SUMMARY:{_esc(e['title'])}"),
         ]
-        if e["detail"]:
-            lines.append(_fold(f"DESCRIPTION:{_esc(e['detail'])}"))
+        # Calendar apps show an event's description, rarely the calendar's, so each event carries the label.
+        detail = f"{e['detail']}\n\n{NOT_LEGAL}" if e["detail"] else NOT_LEGAL
+        lines.append(_fold(f"DESCRIPTION:{_esc(detail)}"))
         lines.append("END:VEVENT")
     lines.append("END:VCALENDAR")
     return "\r\n".join(lines) + "\r\n"

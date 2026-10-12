@@ -177,6 +177,9 @@ class ImportHttpTests(unittest.TestCase):
         res, body = self.request("GET", f"/api/calendar/{token}")
         self.assertEqual(res.status, 200)
         self.assertTrue(body.startswith(b"BEGIN:VCALENDAR"))
+        unfolded = body.decode().replace("\r\n ", "")
+        self.assertIn("X-WR-CALDESC:These are your contract and follow-up dates\\, not legal deadlines.", unfolded)  # P0-6
+        self.assertTrue(all("not legal deadlines" in ev for ev in unfolded.split("BEGIN:VEVENT")[1:]))
         res, _ = self.request("GET", "/api/calendar/wrong.ics")
         self.assertEqual(res.status, 404)
 
