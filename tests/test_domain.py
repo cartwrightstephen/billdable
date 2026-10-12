@@ -30,8 +30,11 @@ class MoneyFileTests(unittest.TestCase):
         domain.mark_done(state, job["id"], notes="Done")
         invoice = job["invoices"][-1]
         self.assertEqual(invoice["packet_id"], invoice["id"])
-        self.assertGreaterEqual(len(invoice["packet"]), 5)
-        self.assertIn("closeout", [item["kind"] for item in invoice["packet"]])
+        # Packet items come from the payer playbook; the closeout item gates the
+        # retainage release, not the pay app (Build 2 item 1).
+        self.assertEqual(len(invoice["packet"]), 4)
+        self.assertNotIn("Closeout", " ".join(item["label"] for item in invoice["packet"]))
+        self.assertTrue(job["closeout_packet"])
 
     def test_progress_pay_app_does_not_mark_done(self):
         state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
@@ -70,8 +73,8 @@ class MoneyFileTests(unittest.TestCase):
         with self.assertRaises(domain.GateError) as raised:
             domain.approve_and_send(state, "job-oak")
         self.assertGreaterEqual(len(raised.exception.blockers), 2)
-        domain.resolve_packet_item(state, "job-oak", "pkt-oak-waiver")
-        domain.resolve_packet_item(state, "job-oak", "pkt-oak-tickets")
+        domain.resolve_packet_item(state, "job-oak", "pkt-oak-waiver", reason="Received by email")
+        domain.resolve_packet_item(state, "job-oak", "pkt-oak-tickets", reason="Received by email")
         job = domain._job(state, "job-oak")
         job["change_orders"][0]["status"] = "approved"
         job["change_orders"][0]["included_in_billing"] = False
@@ -95,7 +98,7 @@ class MoneyFileTests(unittest.TestCase):
         state = seed_state()
         with self.assertRaises(domain.GateError):
             domain.chase_retainage(state, "job-decatur")
-        domain.resolve_packet_item(state, "job-decatur", "pkt-dec-punch")
+        domain.resolve_packet_item(state, "job-decatur", "pkt-dec-punch", reason="Signed at walkthrough")
         domain.chase_retainage(state, "job-decatur")
         self.assertEqual(domain._job(state, "job-decatur")["retainage_chases"], 2)
 
@@ -117,8 +120,8 @@ class MoneyFileTests(unittest.TestCase):
 
     def test_email_log_on_send(self):
         state = seed_state()
-        domain.resolve_packet_item(state, "job-oak", "pkt-oak-waiver")
-        domain.resolve_packet_item(state, "job-oak", "pkt-oak-tickets")
+        domain.resolve_packet_item(state, "job-oak", "pkt-oak-waiver", reason="Received by email")
+        domain.resolve_packet_item(state, "job-oak", "pkt-oak-tickets", reason="Received by email")
         job = domain._job(state, "job-oak")
         job["change_orders"][0]["status"] = "approved"
         job["change_orders"][0]["included_in_billing"] = False
