@@ -356,6 +356,23 @@ def match_job(state: dict[str, Any], text: str, sender: str = "") -> dict[str, A
 
 # ---------- inbox ----------
 
+DONE_WORD_RE = re.compile(r"\b(done|finished|complete|completed|wrapped up)\b", re.IGNORECASE)
+NOT_DONE_RE = re.compile(r"\b(not|almost|nearly|until|when|once|if|before|after|will|soon|tomorrow|by)\b|n't\b", re.IGNORECASE)
+# One phase finishing ("framing done") is not the job finishing.
+PHASE_RE = re.compile(r"\b(framing|drywall|rough|rough-in|demo|demolition|tile|tiling|paint|painting|inspection|phase|"
+                      r"punch|trim|cabinets?|plumbing|electrical|hvac|roof|roofing|foundation|footings?|slab|insulation|siding)\b", re.IGNORECASE)
+
+
+def says_done(text: str) -> bool:
+    """A message saying the work is finished ("Grant Park done", "Job's done on Oak St").
+    A line with a negation or a future ("not done", "done by Friday") doesn't count; the
+    Inbox only offers a button, so a misread costs one click, never a pay app."""
+    for line in (text or "").splitlines()[:20]:
+        if DONE_WORD_RE.search(line) and not NOT_DONE_RE.search(line) and not PHASE_RE.search(line):
+            return True
+    return False
+
+
 def add_item(
     state: dict[str, Any],
     source: str,
@@ -399,8 +416,25 @@ def add_item(
     }
     if extra:
         item.update(extra)
+    # "Job's done" by text or email (P3): offer to mark the suggested job done in one click.
+    if source in {"sms", "email"} and match["job_id"] and says_done(f"{subject}\n{text}"):
+        job = next((j for j in state.get("jobs", []) if j["id"] == match["job_id"]), {})
+        if job.get("work_status") != "complete" and not job.get("closed"):
+            item["says_done_job_id"] = job["id"]
     state.setdefault("inbox", []).append(item)
     return item
+
+
+def file_and_mark_done(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]:
+    """File a "job's done" message to its job, mark the job done and draft the final pay app.
+    Sending still needs a person to approve it."""
+    item = _item(state, item_id)
+    job_id = item.get("says_done_job_id")
+    if not job_id:
+        raise domain.GateError("This item doesn't say a job is done.")
+    file_item(state, item_id, job_id, item["kind"] if item["kind"] != "daily" else "note", actor)
+    note = (item.get("text") or "").strip().splitlines()[0][:300] if item.get("text") else ""
+    return domain.mark_done(state, job_id, actor, notes=f"From {item.get('from') or 'a message'}: {note}".strip())
 
 
 def _item(state: dict[str, Any], item_id: str) -> dict[str, Any]:

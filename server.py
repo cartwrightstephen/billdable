@@ -1062,6 +1062,8 @@ class Handler(BaseHTTPRequestHandler):
                 fn = lambda st: importer.dismiss_item(st, item_id, actor)
             elif verb == "undo":
                 fn = lambda st: importer.undo_item(st, item_id, actor)
+            elif verb == "mark-done":
+                fn = lambda st: importer.file_and_mark_done(st, item_id, actor)
             else:
                 self._json(404, {"error": "Unknown action"})
                 return

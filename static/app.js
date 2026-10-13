@@ -1085,6 +1085,11 @@ function bindActions() {
         }
       }
       else if (a === "inbox-dismiss") await post(`/api/inbox/${el.dataset.item}/dismiss`);
+      else if (a === "inbox-mark-done") {
+        const r = await post(`/api/inbox/${el.dataset.item}/mark-done`);
+        const item = r && r.ok && (state.inbox || []).find(x => x.id === el.dataset.item);
+        if (item) nav("job", item.filed_job_id);
+      }
       else if (a === "inbox-undo") await post(`/api/inbox/${el.dataset.item}/undo`);
       else if (a === "copy") {
         const text = document.getElementById(el.dataset.target)?.textContent || "";
@@ -1950,6 +1955,7 @@ function inboxItemCard(i) {
     ${(i.amounts || []).length || (i.dates || []).length ? `<div class="sub">Found: ${(i.amounts || []).map(a => money(a)).join(", ")}${(i.amounts || []).length && (i.dates || []).length ? " · " : ""}${(i.dates || []).join(", ")}</div>` : ""}
     ${(i.skipped_attachments || []).length ? `<div class="field-error">${i.skipped_attachments.join(" ")}</div>` : ""}
     <div class="sub">${i.suggested_job_id ? "Suggested because it " + i.match_reason : i.match_reason}</div>
+    ${i.says_done_job_id ? `<div class="notice says-done">This says the job is done. <button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark ${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || "the job"} done and draft the pay app</button></div>` : ""}
     <div class="form-inline">
       <select id="inb-job-${i.id}" aria-label="Job">${jobs}</select>
       <select id="inb-kind-${i.id}" aria-label="Kind">${kinds}</select>
@@ -2204,6 +2210,7 @@ const views = {
     const isDemo = me && me.company_id === DEMO_COMPANY_ID;
     const open = state.jobs.filter(j => !j.closed);
     const actionJobs = open.filter(j => isBlocked(j) || (j.waiver_due && !j.waiver_sent) || j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status)));
+    const doneMessages = (state.inbox || []).filter(i => i.status === "new" && i.says_done_job_id);
     const hero = t.unbilled_cents > 0 ? "unbilled" : t.outstanding_cents > 0 ? "outstanding" : "";
     const sortHead = (key, label) => `<th data-action="sort" data-sort="${key}" aria-sort="${dashSort === key ? (dashSortDir > 0 ? "ascending" : "descending") : "none"}">${label} ${dashSort === key ? (dashSortDir > 0 ? "↑" : "↓") : ""}</th>`;
     const stage = (key, label) => `<button class="stage ${dashFilter === key ? "active" : ""}" data-action="filter" data-filter="${key}" aria-pressed="${dashFilter === key}">${label}</button>`;
@@ -2219,8 +2226,9 @@ const views = {
         </div>` : ""}
       ${state.jobs.length ? `
       <section class="card action-queue" aria-labelledby="needs-action">
-        <h2 id="needs-action">Needs you${actionJobs.length ? ` <span class="count-badge">${actionJobs.length}</span>` : ""}</h2>
-        ${actionJobs.length ? actionJobs.map(j => `
+        <h2 id="needs-action">Needs you${actionJobs.length + doneMessages.length ? ` <span class="count-badge">${actionJobs.length + doneMessages.length}</span>` : ""}</h2>
+        ${doneMessages.map(i => `<div class="action-item"><div class="action-text"><span class="pill copper">Job's done?</span> <strong>${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || ""}</strong><div class="next-action">${SOURCE_LABELS[i.source] || i.source}${i.from ? " from " + i.from : ""}: ${(i.text || i.subject || "").split("\n")[0].slice(0, 120)}</div></div><button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark done and draft</button></div>`).join("")}
+        ${actionJobs.length || doneMessages.length ? actionJobs.map(j => `
           <div class="action-item">
             <div class="action-text">${statusPill(j)} <strong>${j.name}</strong><div class="next-action">${nextStep(j)}</div></div>
             <button class="btn small" data-action="open-job" data-id="${j.id}">Open</button>
