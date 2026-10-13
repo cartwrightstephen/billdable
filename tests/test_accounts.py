@@ -219,7 +219,8 @@ class AccountHttpTests(ServerCase):
         self.assertEqual(joined["user"]["company_id"], data["user"]["company_id"])
         _, state = self.request("GET", "/api/state", cookie=member)
         self.assertEqual(state["company"]["name"], "Team Co")
-        self.assertTrue(any(a["action"] == "team_join" for a in state["audit"]))
+        _, page = self.request("GET", "/api/audit", cookie=member)
+        self.assertTrue(any(a["action"] == "team_join" for a in page["entries"]))
         res, _ = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Again", "password": "member password 1"})
         self.assertEqual(res.status, 400)
         # Members can't manage the team, reset the company or rotate addresses.

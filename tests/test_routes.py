@@ -78,5 +78,30 @@ class RouteEdgeTests(unittest.TestCase):
         self.assertIn(res.status, {400, 409})
 
 
+    def test_per_view_endpoints(self):
+        cookie, _ = self.signup("views@example.com")
+        job = {"name": "Ash", "customer": "Ash GC", "contract_cents": 100000, "address": "1 Ash St", "approver": "Al Ash", "ap_email": "ap@ashgc.com"}
+        res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
+        job_id = state["jobs"][0]["id"]
+        self.assertNotIn("payer", state["jobs"][0], "payers are sent once, not per job")
+        res, data = self.request("GET", f"/api/jobs/{job_id}", cookie=cookie)
+        self.assertEqual(res.status, 200)
+        self.assertEqual(data["job"]["payer"]["name"], "Ash GC")
+        res, data = self.request("GET", "/api/jobs/job-nope", cookie=cookie)
+        self.assertEqual(res.status, 404)
+        res, data = self.request("GET", "/api/jobs?status=open&limit=1", cookie=cookie)
+        self.assertEqual((data["total"], len(data["jobs"])), (1, 1))
+        res, data = self.request("GET", "/api/jobs?status=bogus", cookie=cookie)
+        self.assertEqual(res.status, 400)
+        res, data = self.request("GET", "/api/jobs?limit=x", cookie=cookie)
+        self.assertEqual(res.status, 400)
+        res, data = self.request("GET", f"/api/audit?job={job_id}", cookie=cookie)
+        self.assertEqual(data["entries"][0]["job_id"], job_id)
+        res, data = self.request("GET", "/api/outbox", cookie=cookie)
+        self.assertEqual((res.status, data["total"]), (200, 0))
+        res, _ = self.request("GET", "/api/outbox")
+        self.assertEqual(res.status, 401)
+
+
 if __name__ == "__main__":
     unittest.main()

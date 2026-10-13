@@ -115,7 +115,8 @@ class HttpTests(unittest.TestCase):
         job = {"name": "Oak deck", "customer": "Lee", "address": "1 Oak St", "approver": "Lee", "ap_email": "ap@lee.example", "contract_cents": 500000, "actor": "The CEO"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.assertEqual(res.status, 200, state)
-        self.assertEqual(state["audit"][-1]["actor"], "Pat Pine")
+        _, page = self.request("GET", "/api/audit?limit=1", cookie=cookie)
+        self.assertEqual(page["entries"][0]["actor"], "Pat Pine")
         res, data = self.request("POST", "/api/reset", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
         res, state = self.request("GET", "/api/state", cookie=cookie)

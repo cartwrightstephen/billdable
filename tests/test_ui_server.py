@@ -60,6 +60,10 @@ class UiServerTests(unittest.TestCase):
         conn.close()
         return res, payload
 
+    def audit(self, cookie):
+        res, body = self.get("/api/audit?limit=200", {"Cookie": cookie})
+        return list(reversed(json.loads(body)["entries"]))
+
     def company(self, email):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         conn.request("POST", "/api/auth/signup", body=json.dumps({"accept_terms": True, "email": email, "password": PASSWORD,
@@ -161,7 +165,7 @@ class UiServerTests(unittest.TestCase):
         self.assertEqual((edited["name"], edited["address"], edited["contract_cents"], edited["retainage_pct"]),
                          ("Oak St kitchen", "1 Oak Street", 1_200_000, 5))
         self.assertEqual(edited["code"], job["code"], "the code never changes: inbound mail is filed by it")
-        self.assertEqual(state["audit"][-1]["action"], "edit_job")
+        self.assertEqual(self.audit(cookie)[-1]["action"], "edit_job")
         res, body = self.post(f"/api/jobs/{job['id']}/edit", {"name": "  "}, cookie)
         self.assertEqual(res.status, 409)
         self.post(f"/api/jobs/{job['id']}/progress", {"completed_cents": 400_000}, cookie)
@@ -176,7 +180,7 @@ class UiServerTests(unittest.TestCase):
         res, state = self.post(f"/api/jobs/{job['id']}/delete", {}, cookie)
         self.assertEqual(res.status, 200)
         self.assertFalse(any(j["id"] == job["id"] for j in state["jobs"]))
-        self.assertEqual(state["audit"][-1]["action"], "delete_job")
+        self.assertEqual(self.audit(cookie)[-1]["action"], "delete_job")
         cookie2, job2 = self.company("keep@example.com")
         self.post(f"/api/jobs/{job2['id']}/progress", {"completed_cents": 400_000}, cookie2)
         res, body = self.post(f"/api/jobs/{job2['id']}/delete", {}, cookie2)

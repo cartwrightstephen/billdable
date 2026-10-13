@@ -27,6 +27,13 @@ let dashSort = "name";
 let dashSortDir = 1;
 let payappFilter = "all";
 let outboxJobFilter = "all";
+// /api/state carries open jobs in full and recently closed jobs as summaries (P2-6). A job opened
+// from history is fetched whole and kept here until the next change; long lists are paged.
+let jobDetails = {};          // job id -> the full job from /api/jobs/<id>
+let jobDetailLoading = null;  // the id being fetched
+const missingJobs = new Set();
+let listPages = {};           // outbox | audit | history -> {job, entries, total, loading, stale}
+const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api/jobs?status=closed&" };
 let auditJobFilter = "all";
 let coPreselectJob = null;
 let formOpen = {};
@@ -419,8 +426,67 @@ async function load() {
     return;
   }
   setNetBanner(false);
-  state = escDeep(await readJson(res));
+  setState(await readJson(res));
   render();
+}
+
+function withPayer(j) {
+  if (!j.payer) j.payer = (state.payers || []).find(p => p.id === j.payer_id) || { name: "—" };
+  return j;
+}
+
+function setState(data) {
+  state = escDeep(data);
+  state.jobs.forEach(withPayer);
+  Object.values(jobDetails).forEach(placeJob);
+  Object.values(listPages).forEach(p => { p.stale = true; });
+}
+
+function placeJob(full) {
+  const i = state.jobs.findIndex(j => j.id === full.id);
+  if (i >= 0) state.jobs[i] = full; else state.jobs.push(full);
+}
+
+async function loadJobDetail(id) {
+  jobDetailLoading = id;
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
+    if (res.ok) { const full = withPayer(escDeep((await readJson(res)).job)); jobDetails[id] = full; placeJob(full); }
+    else missingJobs.add(id);
+  } catch (_) { setNetBanner(true); missingJobs.add(id); }
+  jobDetailLoading = null;
+  if (currentJobId === id) render();
+}
+
+// A paged list for a view; fetched on first use, refreshed in place after changes.
+function listPage(kind, job = "all") {
+  const p = listPages[kind];
+  if (p && p.job === job) {
+    if (p.stale && !p.loading) loadListPage(kind, job, 0, Math.max(50, p.entries.length));
+    return p.entries.length || !p.loading ? p : null;
+  }
+  listPages[kind] = { job, entries: [], total: 0, loading: true };
+  loadListPage(kind, job, 0, 50);
+  return null;
+}
+
+async function loadListPage(kind, job, offset, limit) {
+  const p = listPages[kind];
+  p.loading = true;
+  try {
+    const res = await fetch(`${LIST_URLS[kind]}offset=${offset}&limit=${limit}${job !== "all" ? "&job=" + encodeURIComponent(unesc(job)) : ""}`);
+    if (!res.ok) { p.loading = false; return; }
+    const data = escDeep(await readJson(res));
+    if (listPages[kind] !== p) return;
+    const rows = (data.entries || data.jobs || []).map(r => (kind === "history" ? withPayer(r) : r));
+    Object.assign(p, { entries: offset ? p.entries.concat(rows) : rows, total: data.total, loading: false, stale: false });
+  } catch (_) { setNetBanner(true); p.loading = false; return; }
+  if (currentView === kind) render();
+}
+
+function moreButton(kind, page) {
+  return page && page.entries.length < page.total
+    ? `<p><button class="btn small secondary" data-action="list-more" data-kind="${kind}">Show older (${page.total - page.entries.length} more)</button></p>` : "";
 }
 
 async function boot(checkLink = true) {
@@ -636,7 +702,8 @@ async function logout() {
 }
 
 async function post(path, body = {}) {
-  const emailsBefore = state && state.email_log ? state.email_log.length : 0;
+  const emailsBefore = state ? state.email_log_total || 0 : 0;
+  jobDetails = {};
   let res;
   try {
     res = await fetch(path, {
@@ -666,7 +733,8 @@ async function post(path, body = {}) {
     toast("Saved");
   }
   await load();
-  if (res.ok && state && state.email_log && state.email_log.length > emailsBefore) toast(emailOutcome(state.email_log.slice(emailsBefore)));
+  const added = state ? (state.email_log_total || 0) - emailsBefore : 0;
+  if (res.ok && added > 0) toast(emailOutcome(state.email_log.slice(-added)));
   return { ok: res.ok, status: res.status, data };
 }
 
@@ -849,6 +917,8 @@ function jobActions(j) {
 function render() {
   if (!state) return;
   hideHelpTip();
+  const cj = currentJobId && state.jobs.find(j => j.id === currentJobId);
+  if (currentJobId && (!cj || cj.summary) && !jobDetails[currentJobId] && !missingJobs.has(currentJobId) && jobDetailLoading !== currentJobId) loadJobDetail(currentJobId);
   const app = document.getElementById("app");
   const company = state.company;
   const section = sectionOf(currentView);
@@ -989,7 +1059,7 @@ function bindActions() {
         const r = await postJson("/api/import/payments-apply", { payments: picks });
         if (!r.ok) { toast(r.data.error || "Nothing was recorded."); return; }
         const done = r.data.import_results.filter(x => x.ok).length, failed = r.data.import_results.filter(x => !x.ok);
-        state = escDeep(r.data); paymentImport = null;
+        setState(r.data); paymentImport = null;
         toast(`${done} payment${done === 1 ? "" : "s"} recorded.${failed.length ? " Not recorded: " + failed.map(f => `${f.reference}: ${f.error}`).join("; ") : ""}`);
         render(); return;
       }
@@ -1002,6 +1072,7 @@ function bindActions() {
       }
       if (a === "nav") { nav(el.dataset.view, el.dataset.id || null, el.dataset.detail || null); return; }
       if (a === "onb-newjob") { nav("jobs"); formOpen.newjob = true; render(); document.getElementById("nj-name")?.focus(); return; }
+      if (a === "list-more") { const k = el.dataset.kind, pg = listPages[k]; if (pg && !pg.loading) loadListPage(k, pg.job, pg.entries.length, 50); return; }
       if (a === "onb-job") { const j = state.jobs.find(x => !x.closed) || state.jobs[0]; if (j) nav("job", j.id); return; }
       if (a === "onb-dismiss") { await post("/api/onboarding/dismiss"); return; }
       if (a === "draft") await post(`/api/jobs/${id}/draft`);
@@ -1247,7 +1318,7 @@ function bindActions() {
           return;
         }
         formOpen.newjob = false;
-        state = escDeep(data);
+        setState(data);
         toast("Job saved");
         const made = state.jobs[state.jobs.length - 1];
         if (made) nav("job", made.id); else render();
@@ -1330,7 +1401,7 @@ async function uploadFiles(fileList, jobId = "", fileNow = false) {
       });
       const data = await readJson(res);
       if (res.status === 401) { me = null; state = null; renderLanding(); return; }
-      if (res.ok) { ok++; state = escDeep(data); setNetBanner(false); }
+      if (res.ok) { ok++; setState(data); setNetBanner(false); }
       else failed.push(data.error || `${name}: upload failed`);
     } catch (_) {
       setNetBanner(true);
@@ -1349,7 +1420,7 @@ async function postImport(path, body) {
   } catch (_) { setNetBanner(true); toast("Not saved: can't reach Billdable."); return false; }
   const data = await readJson(res);
   if (!res.ok) { toast(data.error || "Import failed."); return false; }
-  state = escDeep(data);
+  setState(data);
   toast(body.job_id ? "Added to the job record." : "Added to the Inbox.");
   render();
   return true;
@@ -2219,7 +2290,7 @@ const views = {
       <h1>Today</h1>
       ${trialBannerHtml()}
       ${onboardingHtml()}
-      ${state.jobs.length === 0 && (state.company.onboarding_dismissed || isDemo) ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="onb-newjob">New job</button>`) : ""}
+      ${!state.jobs.length && !state.closed_jobs_total && (state.company.onboarding_dismissed || isDemo) ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="onb-newjob">New job</button>`) : ""}
       ${isDemo && !helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
@@ -2279,7 +2350,7 @@ const views = {
   },
   jobs() {
     const open = state.jobs.filter(j => !j.closed);
-    const closed = state.jobs.length - open.length;
+    const closed = state.closed_jobs_total || 0;
     const err = (fid) => jobFormErrors[fid] ? `<span class="field-error" id="${fid}-err">${esc(jobFormErrors[fid])}</span>` : "";
     const inv = (fid) => jobFormErrors[fid] ? ` aria-invalid="true" aria-describedby="${fid}-err"` : "";
     return `
@@ -2332,12 +2403,13 @@ const views = {
               <td class="next-action">${nextStep(j)}</td>
             </tr>`).join("")}
         </table>
-      </div>` : formOpen.newjob ? "" : emptyState(state.jobs.length ? "No open jobs" : "No jobs yet", state.jobs.length ? "Every job is closed. Closed jobs are under Job history." : "Create a job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="toggle-form" data-form="newjob">New job</button>`)}
+      </div>` : formOpen.newjob ? "" : emptyState(state.jobs.length || state.closed_jobs_total ? "No open jobs" : "No jobs yet", state.jobs.length || state.closed_jobs_total ? "Every job is closed. Closed jobs are under Job history." : "Create a job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="toggle-form" data-form="newjob">New job</button>`)}
       ${closed ? `<p class="sub">${closed} closed job${closed === 1 ? " is" : "s are"} under <button class="linkish" data-action="nav" data-view="history">Job history</button>.</p>` : ""}
     `;
   },
   job() {
     const j = state.jobs.find(x => x.id === currentJobId);
+    if (!j && jobDetailLoading === currentJobId) return backButton("jobs", "Jobs") + `<p class="sub">Loading the job…</p>`;
     if (!j) return backButton("jobs", "Jobs") + emptyState("Job not found", "It may have been deleted, or the link belongs to another company.", `<button class="btn" data-action="nav" data-view="jobs">Go to Jobs</button>`);
     const m = j.money;
     const blocked = isBlocked(j);
@@ -2580,7 +2652,7 @@ const views = {
     const missing = pkt.filter(p => p.required && !p.present).length;
     const draft = ["draft", "awaiting_approval"].includes(inv.status);
     const copies = (j.payer.copy && unesc(j.payer.copy) !== "None") ? j.payer.copy : "";
-    const firstSend = draft && !state.jobs.some(x => x.payer_id === j.payer_id && x.invoices.some(i => i.sent_at));
+    const firstSend = draft && !j.payer.sent_before && !state.jobs.some(x => x.payer_id === j.payer_id && x.invoices.some(i => i.sent_at));
     return `
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
@@ -2645,13 +2717,14 @@ const views = {
   "payapp-detail": function() { return views.payappDetail(); },
   "waiver-detail": function() { return views.waiverDetail(); },
   history() {
-    const closed = state.jobs.filter(j => j.closed);
-    const totalCollected = closed.reduce((s, j) => s + j.money.collected_cents, 0);
+    const page = listPage("history");
+    const closed = page ? page.entries : [];
+    const totalCollected = state.totals.closed_collected_cents || 0;
     return `
       <h1>Job history</h1>
       <p class="sub">Closed jobs, kept for the record.</p>
       <div class="summary-row">
-        <div class="metric"><div class="k">Closed jobs</div><div class="v">${closed.length}</div></div>
+        <div class="metric"><div class="k">Closed jobs</div><div class="v">${state.closed_jobs_total || 0}</div></div>
         <div class="metric"><div class="k">Collected on closed</div><div class="v">${money(totalCollected)}</div></div>
       </div>
       ${closed.length ? `<div class="table-wrap">
@@ -2667,7 +2740,7 @@ const views = {
               <td>${j.done_notes || j.status_label}</td>
             </tr>`).join("")}
         </table>
-      </div>` : emptyState("No closed jobs yet", "Finish the money path on a job and use Close for record.")}
+      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No closed jobs yet", "Finish the money path on a job and use Close for record.")}
     `;
   },
   calendar() {
@@ -2991,8 +3064,8 @@ const views = {
     `;
   },
   outbox() {
-    let emails = [...(state.email_log || [])].reverse();
-    if (outboxJobFilter !== "all") emails = emails.filter(e => e.job_id === outboxJobFilter);
+    const page = listPage("outbox", outboxJobFilter);
+    const emails = page ? page.entries : [];
     return `
       <h1>Outbox</h1>
       <p class="sub">Every approved send and follow-up, with what happened to it.</p>
@@ -3009,12 +3082,12 @@ const views = {
           <tr><th>Subject</th><th>When</th><th>Kind</th><th>To</th><th>Status</th></tr>
           ${emails.map(e => `<tr><td><a href="${pathFor("job", e.job_id)}" data-action="open-job" data-id="${e.job_id}">${e.subject}</a><details class="email-details"><summary>Show message</summary><div class="sub email-body">${e.body || ""}</div></details>${e.payapp_invoice_id ? `<div class="sub">Pay app PDF attached</div>` : ""}${(e.attachments || []).length ? `<div class="sub">${e.attachments.length} attachment${e.attachments.length === 1 ? "" : "s"}${(e.not_attached || []).length ? "; not attached: " + e.not_attached.join("; ") : ""}</div>` : ""}</td><td>${fmtDateTime(e.at)}</td><td>${words(e.kind)}</td><td>${e.to}</td><td>${emailStatusHtml(e)}</td></tr>`).join("")}
         </table>
-      </div>` : emptyState("Outbox is empty", "Approved sends and follow-ups are listed here.")}
+      </div>${moreButton("outbox", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("Outbox is empty", "Approved sends and follow-ups are listed here.")}
     `;
   },
   audit() {
-    let events = [...(state.audit || [])].sort((a, b) => (b.at > a.at ? 1 : -1));
-    if (auditJobFilter !== "all") events = events.filter(e => e.job_id === auditJobFilter);
+    const page = listPage("audit", auditJobFilter);
+    const events = page ? page.entries : [];
     return `
       <h1>Audit</h1>
       <p class="sub">Every action: what was drafted, who approved, and when.${state.audit_chain ? ` ${state.audit_chain.ok ? "The chain of records checks out." : `<span class="blocker">The chain of records is broken at ${state.audit_chain.broken_at}.</span>`}` : ""}</p>
@@ -3030,7 +3103,7 @@ const views = {
           <tr><th>What happened</th><th>When</th><th>Who</th><th>Action</th></tr>
           ${events.map(e => `<tr><td>${e.detail}</td><td>${fmtDateTime(e.at)}</td><td>${e.actor}</td><td>${words(e.action)}</td></tr>`).join("")}
         </table>
-      </div>` : emptyState("No audit events", "Actions on jobs are recorded here.")}
+      </div>${moreButton("audit", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No audit events", "Actions on jobs are recorded here.")}
     `;
   },
 };

@@ -730,34 +730,127 @@ def record_retainage_payment(
     return job
 
 
-def snapshot(state: dict[str, Any]) -> dict[str, Any]:
-    out = deepcopy(state)
-    for job in out["jobs"]:
-        job["money"] = job_money(job)
-        job["blockers"] = blocker_lines(job)
-        job["status_label"] = status_label(job)
-        job["payer"] = _payer(out, job["payer_id"])
-        job["close_blockers"] = close_blockers(job)
-        job.setdefault("closeout_packet", [])
-        job.setdefault("evidence", [])
-        job.setdefault("done_notes", "")
-        job["sov_view"] = _sov_view(job)
-    out.setdefault("email_log", [])
-    out["audit_chain"] = check_audit(state)
-    out["trial"] = trial.status(state)
-    out["totals"] = {
-        "unbilled_cents": sum(j["money"]["unbilled_completed_cents"] for j in out["jobs"]),
-        "outstanding_cents": sum(j["money"]["outstanding_cents"] for j in out["jobs"]),
-        "retainage_cents": sum(j["money"]["retainage_open_cents"] for j in out["jobs"]),
+def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    """One job as the app shows it: the stored job plus money, blockers and labels."""
+    out = deepcopy(job)
+    out["money"] = job_money(job)
+    out["blockers"] = blocker_lines(job)
+    out["status_label"] = status_label(job)
+    out["payer"] = deepcopy(_payer(state, job["payer_id"]))
+    out["close_blockers"] = close_blockers(job)
+    out.setdefault("closeout_packet", [])
+    out.setdefault("evidence", [])
+    out.setdefault("done_notes", "")
+    out["sov_view"] = _sov_view(job)
+    return out
+
+
+def _totals(views: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "unbilled_cents": sum(j["money"]["unbilled_completed_cents"] for j in views),
+        "outstanding_cents": sum(j["money"]["outstanding_cents"] for j in views),
+        "retainage_cents": sum(j["money"]["retainage_open_cents"] for j in views),
         # Blocked once there is a draft to block or the work is done; before that the
         # blockers are what the next pay app will need (the app shows them that way too).
         "blocked_jobs": sum(
-            1 for j in out["jobs"]
+            1 for j in views
             if j["blockers"] and not j.get("closed")
             and (j.get("work_status") == "complete" or any(i.get("status") in {"draft", "awaiting_approval"} for i in j["invoices"]))
         ),
     }
+
+
+def snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    """Everything, every job in full (export, tests, the helper)."""
+    out = deepcopy(state)
+    out["jobs"] = [job_view(state, j) for j in state["jobs"]]
+    out.setdefault("email_log", [])
+    out["audit_chain"] = check_audit(state)
+    out["trial"] = trial.status(state)
+    out["totals"] = _totals(out["jobs"])
     return out
+
+
+# The app's page load (P2-6). Open jobs in full; jobs closed recently as short summaries; older
+# closed jobs, the Outbox and the Audit log are paged from their own endpoints.
+RECENT_CLOSED_DAYS = 90
+RECENT_EMAILS = 20
+# Fields a closed job's summary leaves out; /api/jobs/<id> has them.
+SUMMARY_DROPS = ("blockers", "close_blockers", "closeout_packet", "evidence", "records", "daily_records", "follow_ups",
+                 "retainage_chases", "sov", "sov_view", "contract_doc")
+
+
+def job_summary(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    """A closed job for lists: money, pay apps, payments and change orders, without the history."""
+    out = {k: deepcopy(v) for k, v in job.items() if k not in SUMMARY_DROPS}
+    out["money"] = job_money(job)
+    out["status_label"] = status_label(job)
+    out["blockers"], out["close_blockers"] = [], []
+    out.setdefault("done_notes", "")
+    for inv in out.get("invoices", []):
+        inv.pop("lines", None)
+    for co in out.get("change_orders", []):
+        co.pop("snapshot", None)
+    out["summary"] = True
+    return out
+
+
+def _closed_recently(job: dict[str, Any], since: str) -> bool:
+    return (job.get("closed_at") or job.get("completed_at") or "") >= since
+
+
+def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    """What /api/state sends: bounded by the open work, not by the company's whole history."""
+    since = ((now or datetime.now(timezone.utc)) - timedelta(days=RECENT_CLOSED_DAYS)).isoformat()
+    heavy = {"jobs", "audit", "email_log"}
+    out = {k: deepcopy(v) for k, v in state.items() if k not in heavy}
+    full, jobs = [], []
+    closed_count, closed_collected = 0, 0
+    for job in state["jobs"]:
+        if job.get("closed"):
+            closed_count += 1
+            closed_collected += job_money(job)["collected_cents"]
+            if _closed_recently(job, since):
+                jobs.append(job_summary(state, job))
+            continue
+        view = job_view(state, job)
+        view.pop("payer")  # the app joins payers by payer_id
+        jobs.append(view)
+        full.append(view)
+    out["jobs"] = jobs
+    # "First pay app to this payer" must not depend on which jobs were sent.
+    sent = {j["payer_id"] for j in state["jobs"] if any(i.get("sent_at") for i in j.get("invoices", []))}
+    for payer in out.get("payers", []):
+        payer["sent_before"] = payer["id"] in sent
+    emails = state.get("email_log", [])
+    out["email_log"] = deepcopy(emails[-RECENT_EMAILS:])
+    out["email_log_total"] = len(emails)
+    out["audit_total"] = len(state.get("audit", []))
+    out["closed_jobs_total"] = closed_count
+    out["audit_chain"] = check_audit(state)
+    out["trial"] = trial.status(state)
+    out["totals"] = {**_totals(full), "closed_collected_cents": closed_collected}
+    return out
+
+
+def page(rows: list[dict[str, Any]], offset: int, limit: int, job_id: str = "") -> dict[str, Any]:
+    """Newest first, optionally one job's rows: for the Outbox and Audit pages."""
+    picked = [r for r in reversed(rows) if not job_id or r.get("job_id") == job_id]
+    return {"entries": deepcopy(picked[offset:offset + limit]), "total": len(picked), "offset": offset, "limit": limit}
+
+
+def jobs_page(state: dict[str, Any], status: str, offset: int, limit: int, q: str = "") -> dict[str, Any]:
+    """Jobs for a list, newest first: open in full, closed as summaries."""
+    q = q.strip().lower()
+    picked = [j for j in reversed(state["jobs"])
+              if (status == "all" or bool(j.get("closed")) == (status == "closed"))
+              and (not q or q in f"{j.get('name', '')} {j.get('code', '')} {j.get('address', '')}".lower())]
+    if status == "closed":
+        picked.sort(key=lambda j: j.get("closed_at") or j.get("completed_at") or "", reverse=True)
+    rows = [job_summary(state, j) if j.get("closed") else job_view(state, j) for j in picked[offset:offset + limit]]
+    for r in rows:
+        r.pop("payer", None)
+    return {"jobs": rows, "total": len(picked), "offset": offset, "limit": limit}
 
 
 def _refresh_draft_gate(job: dict[str, Any]) -> None:

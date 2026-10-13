@@ -493,7 +493,7 @@ class Handler(BaseHTTPRequestHandler):
                 state = load_company(company_id)
                 fn(state)
                 save_company(company_id, state)
-                return 200, domain.snapshot(state)
+                return 200, domain.light_snapshot(state)
         except domain.GateError as exc:
             return 409, {"error": str(exc), "blockers": exc.blockers}
 
@@ -614,7 +614,7 @@ class Handler(BaseHTTPRequestHandler):
                 state = load_company(ctx.company_id)
                 state = handler(state, m, ctx) or state
                 save_company(ctx.company_id, state)
-                payload = domain.snapshot(state)
+                payload = domain.light_snapshot(state)
         except UnknownAction:
             self._json(404, {"error": "Unknown action"})
             return
@@ -705,7 +705,42 @@ class Handler(BaseHTTPRequestHandler):
     def _g_state(self, m, user) -> None:
         with STATE_LOCK:
             state = load_company(user["company_id"])
-        self._json(200, domain.snapshot(state))
+        self._json(200, domain.light_snapshot(state))
+
+    def _paging(self, default_limit: int = 50) -> tuple:
+        q = parse_qs(urlparse(self.path).query)
+        try:
+            offset = max(0, int((q.get("offset") or ["0"])[0]))
+            limit = min(200, max(1, int((q.get("limit") or [str(default_limit)])[0])))
+        except ValueError:
+            raise BadRequest("Offset and limit must be whole numbers.")
+        return offset, limit, q
+
+    def _g_jobs(self, m, user) -> None:
+        offset, limit, q = self._paging()
+        status = (q.get("status") or ["all"])[0]
+        if status not in {"open", "closed", "all"}:
+            raise BadRequest("Status must be open, closed or all.")
+        with STATE_LOCK:
+            state = load_company(user["company_id"])
+            self._json(200, domain.jobs_page(state, status, offset, limit, (q.get("q") or [""])[0][:100]))
+
+    def _g_job(self, m, user) -> None:
+        with STATE_LOCK:
+            state = load_company(user["company_id"])
+            job = next((j for j in state["jobs"] if j["id"] == m.group(1)), None)
+            if not job:
+                self._json(404, {"error": "Job not found."})
+                return
+            view = domain.job_view(state, job)
+        self._json(200, {"job": view})
+
+    def _g_log_page(self, m, user) -> None:
+        offset, limit, q = self._paging()
+        key = "email_log" if m.group(1) == "outbox" else "audit"
+        with STATE_LOCK:
+            state = load_company(user["company_id"])
+            self._json(200, domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0]))
 
     def _g_export(self, m, user) -> None:
         with STATE_LOCK:
@@ -1247,7 +1282,7 @@ class Handler(BaseHTTPRequestHandler):
                 for e in queued:
                     e["status"] = reason
                 save_company(company_id, state)
-                return domain.snapshot(state)
+                return domain.light_snapshot(state)
             # Only recent "sending" entries are in flight; an older one died mid-send and can be retried.
             in_flight = sum(1 for e in log if e.get("status") == "sending" and (e.get("sending_at") or "") >= stale)
             room = max(0, cfg["daily_limit"] - mailer.sent_in_last_day(company_id) - in_flight)
@@ -1290,7 +1325,7 @@ class Handler(BaseHTTPRequestHandler):
             inbound = inbound_address(company_id)
             save_company(company_id, state)
             if not work:
-                return domain.snapshot(state)
+                return domain.light_snapshot(state)
         # Outside the lock: read attachments and talk to the mail server.
         outcome: dict = {}
         try:
@@ -1324,7 +1359,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         e["failed_at"] = done_at
             save_company(company_id, state)
-            return domain.snapshot(state)
+            return domain.light_snapshot(state)
 
     def _retry_email(self, company_id: str, user: dict, email_id: str) -> None:
         stale = (datetime.now(timezone.utc) - timedelta(minutes=STUCK_MINUTES)).isoformat(timespec="seconds")
@@ -1343,7 +1378,7 @@ class Handler(BaseHTTPRequestHandler):
                     entry["status"] = "queued"
                     entry["retried"] = entry.get("retried", 0) + 1
                     save_company(company_id, state)
-                    payload = domain.snapshot(state)
+                    payload = domain.light_snapshot(state)
         # Replies are written after the lock is released.
         if code != 200:
             self._json(code, payload)
@@ -1759,6 +1794,9 @@ ROUTES = [
     # signed-in reads
     Route("GET", r"/api/auth/me", "_g_me"),
     Route("GET", r"/api/state", "_g_state", "user"),
+    Route("GET", r"/api/jobs", "_g_jobs", "user"),
+    Route("GET", r"/api/jobs/([^/]+)", "_g_job", "user"),
+    Route("GET", r"/api/(outbox|audit)", "_g_log_page", "user"),
     Route("GET", r"/api/export", "_g_export", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
     Route("GET", r"/api/metrics", "_g_metrics", "user"),
