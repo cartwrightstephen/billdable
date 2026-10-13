@@ -12,6 +12,7 @@ let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
 let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
 let metricsData = null;   // {period, data} from /api/metrics
 let metricsPeriod = "90";
+let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV
 let currentView = "dashboard";
 let currentJobId = null;
 let currentDetailId = null; // for packet, co, payapp, waiver detail
@@ -965,6 +966,25 @@ function bindActions() {
         if (r.ok) { me.two_step = false; render(); }
         return;
       }
+      if (a === "qbo-read") {
+        const text = document.getElementById("qbo-csv")?.value || "";
+        if (!text.trim()) { toast("Paste the CSV first."); return; }
+        const r = await postJson("/api/import/payments-csv", { csv: text });
+        if (!r.ok) { toast(r.data.error || "Couldn't read it."); return; }
+        paymentImport = escDeep(r.data); render(); return;
+      }
+      if (a === "qbo-apply") {
+        const picks = [...document.querySelectorAll("[data-qbo-row]:checked")].map(cb => paymentImport.rows[+cb.dataset.qboRow])
+          .map(row => ({ job_id: row.job_id, invoice_id: row.invoice_id, amount_cents: row.amount_cents, reference: unesc(row.ref), date: row.date }));
+        if (!picks.length) { toast("Tick the payments to record."); return; }
+        const r = await postJson("/api/import/payments-apply", { payments: picks });
+        if (!r.ok) { toast(r.data.error || "Nothing was recorded."); return; }
+        const done = r.data.import_results.filter(x => x.ok).length, failed = r.data.import_results.filter(x => !x.ok);
+        state = escDeep(r.data); paymentImport = null;
+        toast(`${done} payment${done === 1 ? "" : "s"} recorded.${failed.length ? " Not recorded: " + failed.map(f => `${f.reference}: ${f.error}`).join("; ") : ""}`);
+        render(); return;
+      }
+      if (a === "qbo-cancel") { paymentImport = null; render(); return; }
       if (a === "metrics-period") { metricsPeriod = el.dataset.period; metricsData = null; render(); return; }
       if (a === "metrics-email") {
         const r = await postJson("/api/metrics/summary-email", {});
@@ -2839,8 +2859,23 @@ const views = {
   payments() {
     const pays = [];
     state.jobs.forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
+    const imp = paymentImport;
+    const importCard = `<details class="card"${imp ? " open" : ""}><summary><strong>Import payments from QuickBooks (CSV)</strong></summary>
+      <p class="sub">In QuickBooks, run a report of payments received (for example Transaction List by Date, filtered to payments) and export it to CSV. Paste it here. Billdable proposes a pay app for each payment; nothing is recorded until you tick and apply. A check number already in Billdable is skipped, so importing the same file twice is safe.</p>
+      ${imp ? `${imp.warnings.length ? `<div class="sov-warn">${imp.warnings.map(w => `<div>${w}</div>`).join("")}</div>` : ""}
+        <div class="table-wrap"><table>
+          <tr><th>Record</th><th>Date</th><th>Customer</th><th>Number</th><th>Amount</th><th>Pay app</th><th>Why</th></tr>
+          ${imp.rows.map((row, n) => `<tr><td>${row.status === "match" ? `<input type="checkbox" data-qbo-row="${n}" checked aria-label="Record ${row.ref || "this payment"}">` : ""}</td>
+            <td>${row.date ? fmtDate(row.date) : "—"}</td><td>${row.customer}</td><td>${row.ref}</td><td class="num">${money(row.amount_cents)}</td>
+            <td>${row.number ? `${row.number} · ${row.job}` : `<span class="pill">${words(row.status)}</span>`}</td><td class="sub">${row.reason}</td></tr>`).join("")}
+        </table></div>
+        <div class="form-inline"><button class="btn" data-action="qbo-apply">Record the ticked payments</button><button class="btn secondary" data-action="qbo-cancel">Cancel</button></div>`
+      : `<textarea id="qbo-csv" rows="5" placeholder="Paste the CSV here" style="width:100%;font:inherit"></textarea>
+        <button class="btn small" data-action="qbo-read">Read payments</button>`}
+    </details>`;
     return `
       <h1>Payments</h1>
+      ${importCard}
       ${pays.length ? `<div class="table-wrap">
         <table>
           <tr><th>Job</th><th>Pay app</th><th>Amount</th><th>Reference</th><th>Matched</th></tr>

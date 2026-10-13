@@ -44,6 +44,7 @@ import metrics
 import migrations
 import offsite
 import payapp_pdf
+import qbo_csv
 import payer_page
 import sov
 import storage
@@ -969,6 +970,37 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
                 return
             self._json(200, {"ok": True, "message": "Password changed. Every other device is signed out."})
+            return
+        if path == "/api/import/payments-csv":
+            # Read a QuickBooks payments export and propose matches; nothing is recorded (P2-1).
+            parsed = qbo_csv.parse(_text(body, "csv", limit=2_000_000))
+            with STATE_LOCK:
+                state = load_company(company_id)
+            self._json(200, {"rows": qbo_csv.propose(state, parsed["rows"]), "warnings": parsed["warnings"]})
+            return
+        if path == "/api/import/payments-apply":
+            picks = body.get("payments")
+            if not isinstance(picks, list) or not picks or len(picks) > 500:
+                raise BadRequest("Send the payments to record.")
+            results = []
+
+            def apply(st: dict) -> None:
+                for pick in picks:
+                    if not isinstance(pick, dict):
+                        continue
+                    ref = str(pick.get("reference") or "")[:60]
+                    try:
+                        domain.match_payment(st, str(pick.get("job_id") or ""), pick.get("amount_cents"), ref,
+                                             actor, invoice_id=str(pick.get("invoice_id") or "") or None,
+                                             received_on=str(pick.get("date") or "") or None)
+                        results.append({"reference": ref, "ok": True})
+                    except domain.GateError as exc:
+                        results.append({"reference": ref, "ok": False, "error": str(exc)})
+
+            status, payload = self._change(company_id, apply)
+            if status == 200:
+                payload["import_results"] = results
+            self._json(status, payload)
             return
         if path == "/api/metrics/summary-email":
             if company_id == auth.DEMO_COMPANY_ID or not user.get("email_verified"):

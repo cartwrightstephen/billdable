@@ -136,6 +136,28 @@ class ImportHttpTests(unittest.TestCase):
         self.assertEqual(len(days), 3)
         self.assertTrue(all(d.endswith(("-01", "-02", "-03")) for d in days))
 
+    def test_quickbooks_csv_import_is_safe_to_repeat(self):  # P2-1
+        cookie, job = self.company("qbo@example.com")
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/progress", {"completed_cents": 4_000_000}, cookie=cookie)
+        inv = state["jobs"][0]["invoices"][-1]
+        for item in inv.get("packet") or []:
+            self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "sent with the email"}, cookie=cookie)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        amount = state["jobs"][0]["invoices"][-1]["amount_cents"]
+        csv_text = f"Date,Num,Customer,Amount,Memo\n10/09/2026,5521,Park GC,{amount / 100:.2f},\n"
+        res, read = self.request("POST", "/api/import/payments-csv", {"csv": csv_text}, cookie=cookie)
+        row = read["rows"][0]
+        self.assertEqual((row["status"], row["invoice_id"]), ("match", inv["id"]))
+        pick = {"job_id": row["job_id"], "invoice_id": row["invoice_id"], "amount_cents": row["amount_cents"], "reference": row["ref"], "date": row["date"]}
+        res, state = self.request("POST", "/api/import/payments-apply", {"payments": [pick]}, cookie=cookie)
+        self.assertEqual(state["import_results"], [{"reference": "5521", "ok": True}])
+        self.assertEqual(state["jobs"][0]["invoices"][-1]["status"], "paid")
+        res, state = self.request("POST", "/api/import/payments-apply", {"payments": [pick]}, cookie=cookie)
+        self.assertFalse(state["import_results"][0]["ok"], "the same check twice is refused")
+        res, read = self.request("POST", "/api/import/payments-csv", {"csv": csv_text}, cookie=cookie)
+        self.assertEqual(read["rows"][0]["status"], "already recorded")
+
     def test_reply_to_a_sent_pay_app_files_itself(self):  # P1-3
         cookie, job = self.company("reply@example.com")
         res, state = self.request("POST", f"/api/jobs/{job['id']}/progress", {"completed_cents": 4_000_000}, cookie=cookie)

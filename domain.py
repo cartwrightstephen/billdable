@@ -510,7 +510,10 @@ def match_payment(
     reference: str,
     actor: str = "billdable",
     invoice_id: str | None = None,
+    received_on: str | None = None,
 ) -> dict[str, Any]:
+    """Record money received against a pay app. `received_on` (YYYY-MM-DD) is the date the books
+    show, for imports; without it the payment is dated now."""
     job = _open_job(state, job_id)
     open_invoices = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
     if not open_invoices:
@@ -546,7 +549,7 @@ def match_payment(
         "amount_cents": amount_cents,
         "reference": reference,
         "invoice_id": invoice["id"],
-        "matched_at": utcnow(),
+        "matched_at": f"{received_on}T12:00:00+00:00" if received_on and re.fullmatch(r"\d{4}-\d{2}-\d{2}", received_on) else utcnow(),
     }
     job["payments"].append(payment)
     collected_for_invoice = sum(p["amount_cents"] for p in job["payments"] if p["invoice_id"] == invoice["id"])
