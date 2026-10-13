@@ -101,6 +101,10 @@ class RouteEdgeTests(unittest.TestCase):
         self.assertEqual((res.status, data["total"]), (200, 0))
         res, _ = self.request("GET", "/api/outbox")
         self.assertEqual(res.status, 401)
+        res, data = self.request("GET", f"/api/timeline?job={job_id}", cookie=cookie)
+        self.assertEqual((res.status, data["entries"][0]["kind"]), (200, "action"))
+        res, _ = self.request("GET", "/api/timeline?job=job-nope", cookie=cookie)
+        self.assertEqual(res.status, 404)
 
 
     def test_styles_only_from_the_site_or_the_page_s_own_style_block(self):

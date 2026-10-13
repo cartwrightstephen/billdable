@@ -846,6 +846,20 @@ def page(rows: list[dict[str, Any]], offset: int, limit: int, job_id: str = "") 
     return {"entries": deepcopy(picked[offset:offset + limit]), "total": len(picked), "offset": offset, "limit": limit}
 
 
+def timeline_page(state: dict[str, Any], job_id: str, offset: int, limit: int) -> dict[str, Any]:
+    """One job's history, newest first (UI/UX Option B): every audit row on the job, and every
+    email with its delivery status (bodies left out)."""
+    # Times are to the second, so ties are common; within a list, the later row is the newer one.
+    keyed = [((a.get("at", ""), n), {"kind": "action", "at": a.get("at", ""), "action": a.get("action", ""), "text": a.get("detail", ""), "who": a.get("actor", "")})
+             for n, a in enumerate(state.get("audit", [])) if a.get("job_id") == job_id]
+    keyed += [((e.get("at", ""), n), {**{k: v for k, v in e.items() if k not in {"body", "subject", "approved_by", "kind"}},
+               "kind": "email", "email_kind": e.get("kind", ""), "at": e.get("at", ""), "text": e.get("subject", ""), "who": e.get("approved_by", "")})
+              for n, e in enumerate(state.get("email_log", [])) if e.get("job_id") == job_id]
+    keyed.sort(key=lambda kr: kr[0], reverse=True)
+    rows = [r for _, r in keyed]
+    return {"entries": deepcopy(rows[offset:offset + limit]), "total": len(rows), "offset": offset, "limit": limit}
+
+
 def jobs_page(state: dict[str, Any], status: str, offset: int, limit: int, q: str = "") -> dict[str, Any]:
     """Jobs for a list, newest first: open in full, closed as summaries."""
     q = q.strip().lower()

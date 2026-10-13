@@ -48,7 +48,8 @@ let jobDetailLoading = null;  // the id being fetched
 const missingJobs = new Set();
 let listPages = {};           // outbox | audit | history -> {job, entries, total, loading, stale}
 const FILE_ACCEPT = document.getElementById("file-input")?.getAttribute("accept") || "";
-const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api/jobs?status=closed&" };
+const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api/jobs?status=closed&", timeline: "/api/timeline?" };
+const LIST_VIEWS = { timeline: "job" };   // the view that shows a list, where it isn't the list's own name
 let auditJobFilter = "all";
 let coPreselectJob = null;
 let formOpen = {};
@@ -233,7 +234,7 @@ async function loadListPage(kind, job, offset, limit) {
     const rows = (data.entries || data.jobs || []).map(r => (kind === "history" ? withPayer(r) : r));
     Object.assign(p, { entries: offset ? p.entries.concat(rows) : rows, total: data.total, loading: false, stale: false });
   } catch (_) { setNetBanner(true); p.loading = false; return; }
-  if (currentView === kind) render();
+  if (currentView === (LIST_VIEWS[kind] || kind)) render();
 }
 
 async function boot(checkLink = true) {
@@ -569,6 +570,64 @@ function coSignControls(j, co, extra = "") {
 
 // The job page shows ONE main button: the next step. Everything else that applies sits in a
 // secondary row, each with its explanation as a tooltip (it used to be a paragraph beside it).
+// Today's queue (UI/UX Option B): everything that needs a person, most urgent first, each with
+// the one button that does it. Nothing that emails a pay app or a waiver goes out from here: those
+// open the job, where "Before you send" shows what leaves and to whom. A follow-up names its
+// recipient on the row, and drafting or filing sends nothing.
+function todayQueue() {
+  const out = [];
+  const add = (rank, j, pill, text, button, opensJob = false) => out.push({ rank, j, pill, text, button, opensJob });
+  const tag = (word, color = "") => `<span class="pill ${color}">${word}</span>`;
+  const inbox = (state.inbox || []).filter(i => i.status === "new");
+  inbox.filter(i => i.says_done_job_id).forEach(i => {
+    const j = state.jobs.find(x => x.id === i.says_done_job_id && !x.closed);
+    if (j) add(0, j, tag("Job's done?", "copper"), `${SOURCE_LABELS[i.source] || i.source}${i.from ? " from " + i.from : ""}: ${(i.text || i.subject || "").split("\n")[0].slice(0, 120)}`,
+      `<button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark done and draft</button>`);
+  });
+  state.jobs.filter(j => !j.closed && !j.summary).forEach(j => {
+    const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
+    // One next step per job, in the job page's order (jobActions): blockers first.
+    if (isBlocked(j)) add(3, j, statusPill(j), `${j.blockers[0]}${j.blockers.length > 1 ? ` And ${j.blockers.length - 1} more.` : ""}`,
+      `<button class="btn small" data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}>Clear ${j.blockers.length} blocker${j.blockers.length === 1 ? "" : "s"}</button>`);
+    else if (draft) add(1, j, tag("Ready to send", "green"), `${draft.number} for ${money(draft.amount_cents)} to ${j.payer.approver || j.payer.name}. Check what goes out, then approve.`,
+      `<button class="btn small" data-action="open-job" data-id="${j.id}" data-focus=".send-check">Review &amp; send</button>`, true);
+    else if (j.waiver_due && !j.waiver_sent) add(2, j, tag("Waiver due", "amber"), "Paid in full: the payer is waiting for the lien waiver.",
+      `<button class="btn small" data-action="open-job" data-id="${j.id}">Review waiver</button>`, true);
+    else if (j.work_status === "complete" && j.money.unbilled_completed_cents > 0)
+      add(5, j, tag("Not billed", "copper"), `${money(j.money.unbilled_completed_cents)} of finished work has no pay app yet. Drafting sends nothing.`,
+        `<button class="btn small" data-action="draft" data-id="${j.id}">Draft pay app</button>`);
+    // A pay app already sent and unpaid past the payer's follow-up window is its own row.
+    const sent = j.invoices.find(i => ["sent", "partial"].includes(i.status));
+    if (sent) {
+      const last = toDate(sent.last_follow_up_at || sent.sent_at);
+      const days = Number(unesc(String(j.payer.follow_up_days || ""))) || 7;
+      if (last && Date.now() >= last.getTime() + days * 86400000)
+        add(4, j, tag("Follow up", "copper"), `${sent.number} was sent ${fmtDate(sent.sent_at)}${sent.last_follow_up_at ? `, last follow-up ${fmtDate(sent.last_follow_up_at)}` : ""}. Emails ${j.payer.ap_email || "the payer"}.`,
+          `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`);
+    }
+  });
+  inbox.filter(i => !i.says_done_job_id && i.suggested_job_id).forEach(i => {
+    const j = state.jobs.find(x => x.id === i.suggested_job_id && !x.closed);
+    if (j) add(6, j, tag("Inbox"), `${(i.subject || i.text || "An item").split("\n")[0].slice(0, 100)}${i.match_reason ? ` <span class="sub">(${i.match_reason})</span>` : ""}`,
+      `<button class="btn small" data-action="inbox-file-suggested" data-item="${i.id}" data-job="${j.id}">File to this job</button>`);
+  });
+  return out.sort((a, b) => a.rank - b.rank);
+}
+
+// What happened on the job, newest first (UI/UX Option B): actions from the audit trail and
+// emails with what became of them, 50 at a time.
+function jobHistoryHtml(j) {
+  const page = listPage("timeline", j.id);
+  const rows = page ? page.entries : [];
+  return `<div class="card job-history"><h2>History</h2>
+    ${rows.length ? `<ol class="timeline">${rows.map(e => `<li>
+        <span class="pill${e.kind === "email" ? " copper" : ""}">${e.kind === "email" ? "Email" : words(e.action)}</span> ${e.text}
+        <div class="sub">${fmtDateTime(e.at)}${e.who ? " · " + e.who : ""}${e.kind === "email" ? ` · to ${e.to} · ${emailStatusHtml(e)}` : ""}</div>
+      </li>`).join("")}</ol>${moreButton("timeline", page)}`
+      : !page ? `<p class="sub">Loading…</p>` : `<p class="sub">Nothing has happened on this job yet.</p>`}
+  </div>`;
+}
+
 function jobActions(j) {
   if (j.closed) return { primary: null, more: [] };
   const m = j.money;
@@ -994,7 +1053,11 @@ function bindActions() {
         if (!recordId) { toast("Pick a job record to attach."); return; }
         await post(`/api/jobs/${id}/attach-record/${el.dataset.item}`, { record_id: recordId });
       }
-      else if (a === "open-job") nav("job", id);
+      else if (a === "open-job") {
+        nav("job", id);
+        if (el.dataset.focus) requestAnimationFrame(() => document.querySelector(el.dataset.focus)?.scrollIntoView({ block: "start" }));
+      }
+      else if (a === "inbox-file-suggested") await post(`/api/inbox/${el.dataset.item}/file`, { job_id: el.dataset.job, kind: "" });
       else if (a === "create-job") {
         const name = document.querySelector("#nj-name")?.value.trim() || "";
         const address = document.querySelector("#nj-address")?.value.trim() || "";
@@ -1945,8 +2008,7 @@ const views = {
     const jobs = filteredJobs();
     const isDemo = me && me.company_id === DEMO_COMPANY_ID;
     const open = state.jobs.filter(j => !j.closed);
-    const actionJobs = open.filter(j => isBlocked(j) || (j.waiver_due && !j.waiver_sent) || j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status)));
-    const doneMessages = (state.inbox || []).filter(i => i.status === "new" && i.says_done_job_id);
+    const queue = todayQueue();
     const hero = t.unbilled_cents > 0 ? "unbilled" : t.outstanding_cents > 0 ? "outstanding" : "";
     const sortHead = (key, label) => `<th data-action="sort" data-sort="${key}" aria-sort="${dashSort === key ? (dashSortDir > 0 ? "ascending" : "descending") : "none"}">${label} ${dashSort === key ? (dashSortDir > 0 ? "↑" : "↓") : ""}</th>`;
     const stage = (key, label) => `<button class="stage ${dashFilter === key ? "active" : ""}" data-action="filter" data-filter="${key}" aria-pressed="${dashFilter === key}">${label}</button>`;
@@ -1962,13 +2024,12 @@ const views = {
         </div>` : ""}
       ${state.jobs.length ? `
       <section class="card action-queue" aria-labelledby="needs-action">
-        <h2 id="needs-action">Needs you${actionJobs.length + doneMessages.length ? ` <span class="count-badge">${actionJobs.length + doneMessages.length}</span>` : ""}</h2>
-        ${doneMessages.map(i => `<div class="action-item"><div class="action-text"><span class="pill copper">Job's done?</span> <strong>${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || ""}</strong><div class="next-action">${SOURCE_LABELS[i.source] || i.source}${i.from ? " from " + i.from : ""}: ${(i.text || i.subject || "").split("\n")[0].slice(0, 120)}</div></div><button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark done and draft</button></div>`).join("")}
-        ${actionJobs.length || doneMessages.length ? actionJobs.map(j => `
+        <h2 id="needs-action">Needs you${queue.length ? ` <span class="count-badge">${queue.length}</span>` : ""}</h2>
+        ${queue.length ? queue.map(q => `
           <div class="action-item">
-            <div class="action-text">${statusPill(j)} <strong>${j.name}</strong><div class="next-action">${nextStep(j)}</div></div>
-            <button class="btn small" data-action="open-job" data-id="${j.id}">Open</button>
-          </div>`).join("") : `<p class="sub">Nothing is waiting on you. Jobs show up here when a pay app is ready to send, a packet is blocked, or a waiver is due.</p>`}
+            <div class="action-text">${q.pill} <strong>${q.j.name}</strong><div class="next-action">${q.text}</div></div>
+            <div class="action-buttons">${q.button}${q.opensJob ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${q.j.id}">Open</button>`}</div>
+          </div>`).join("") : `<p class="sub">Nothing is waiting on you. Work shows up here when a pay app is ready to send, a packet is blocked, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.</p>`}
       </section>` : ""}
       <div class="metrics">
         <div class="metric ${hero === "unbilled" ? "highlight" : ""}"><div class="k">Unbilled completed</div><div class="v">${money(t.unbilled_cents)}</div></div>
@@ -2137,8 +2198,8 @@ const views = {
         </div>` : ""}
       ${!j.closed && j.work_status === "complete" && (j.close_blockers || []).length ? `<p class="sub">Close for record unlocks when: ${(j.close_blockers || []).join(" ")}</p>` : ""}
       <div class="detail-grid">
-        <div class="card">
-          <h2>Money file</h2>
+        <details class="card money-file"${window.innerWidth >= 800 ? " open" : ""}>
+          <summary><h2>Money file</h2><span class="sub">${money(m.contract_total_cents)} contract · ${money(m.billed_cents)} billed · ${money(m.collected_cents)} collected · ${money(m.outstanding_cents)} owed</span></summary>
           <div class="money-row"><span class="label">Contract</span><span>${money(m.contract_cents)}</span></div>
           <div class="money-row"><span class="label">Approved COs</span><span>${money(m.approved_co_cents)}</span></div>
           <div class="money-row"><span class="label">Pending COs</span><span>${money(m.pending_co_cents)}</span></div>
@@ -2150,7 +2211,7 @@ const views = {
           <div class="money-row"><span class="label">Retainage held</span><span>${money(m.retainage_held_cents)}${j.retainage_pct ? " · " + j.retainage_pct + "%" : ""}</span></div>
           <div class="money-row"><span class="label">Retainage released</span><span>${money(m.retainage_released_cents)}</span></div>
           <div class="money-row"><span class="label">Retainage open</span><span>${money(m.retainage_open_cents)}</span></div>
-        </div>
+        </details>
         <div class="card">
           <h2>Pay apps</h2>
           ${j.invoices.length ? j.invoices.map(i => {
@@ -2187,6 +2248,7 @@ const views = {
         </details>
       </div>
       ${sovCardHtml(j)}
+      ${jobHistoryHtml(j)}
     `;
   },
   results() {

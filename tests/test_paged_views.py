@@ -3,6 +3,7 @@
 import json
 import sys
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -66,6 +67,29 @@ class LightSnapshotTests(unittest.TestCase):
         self.assertTrue(all(j["summary"] for j in jobs["jobs"]))
         self.assertEqual(domain.jobs_page(state, "closed", 0, 50, q="old job 3")["total"], 1)
         self.assertEqual(domain.jobs_page(state, "open", 0, 50)["total"], sum(1 for j in state["jobs"] if not j.get("closed")))
+
+
+
+class TimelineTests(unittest.TestCase):
+    def test_one_jobs_actions_and_emails_newest_first_without_bodies(self):
+        state = seed_state()
+        job = next(j for j in state["jobs"] if j["code"] == "TRN")
+        domain.audit(state, job["id"], "note", "A later action.", "Pat")
+        domain.audit(state, "job-other", "note", "Another job.", "Pat")
+        page = domain.timeline_page(state, job["id"], 0, 50)
+        kinds = [r["kind"] for r in page["entries"]]
+        self.assertIn("email", kinds)
+        self.assertIn("action", kinds)
+        self.assertEqual([r["at"] for r in page["entries"]], sorted((r["at"] for r in page["entries"]), reverse=True))
+        email = next(r for r in page["entries"] if r["kind"] == "email")
+        self.assertEqual(email["email_kind"], "pay_app", "the email's own kind is kept under another name")
+        self.assertNotIn("body", email)
+        self.assertFalse(any("Another job" in r["text"] for r in page["entries"]))
+        self.assertEqual(domain.timeline_page(state, job["id"], 1, 1)["entries"][0], page["entries"][1])
+        with mock.patch.object(domain, "utcnow", return_value="2099-01-01T00:00:00+00:00"):
+            domain.audit(state, job["id"], "note", "First in this second.", "Pat")
+            domain.audit(state, job["id"], "note", "Second in this second.", "Pat")
+        self.assertEqual(domain.timeline_page(state, job["id"], 0, 1)["entries"][0]["text"], "Second in this second.")
 
 
 if __name__ == "__main__":

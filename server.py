@@ -951,6 +951,16 @@ class Handler(BaseHTTPRequestHandler):
         except qbo.QboError as exc:
             self._json(409, {"error": str(exc)})
 
+    def _g_timeline(self, m, user) -> None:
+        offset, limit, q = self._paging()
+        job_id = (q.get("job") or [""])[0]
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        if not any(j["id"] == job_id for j in state["jobs"]):
+            self._json(404, {"error": "Job not found."})
+            return
+        self._json(200, domain.timeline_page(state, job_id, offset, limit))
+
     def _g_export(self, m, user) -> None:
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
@@ -2007,6 +2017,7 @@ ROUTES = [
     Route("GET", r"/api/jobs", "_g_jobs", "user"),
     Route("GET", r"/api/jobs/([^/]+)", "_g_job", "user"),
     Route("GET", r"/api/(outbox|audit)", "_g_log_page", "user"),
+    Route("GET", r"/api/timeline", "_g_timeline", "user"),
     Route("GET", r"/api/export", "_g_export", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
     Route("GET", r"/api/metrics", "_g_metrics", "user"),

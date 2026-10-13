@@ -321,7 +321,7 @@ textarea { font: inherit; }
   .next-card { flex-direction: column; align-items: stretch; }
   .next-card .btn { width: 100%; }
   .job-head { flex-direction: column; }
-  .action-item { align-items: flex-start; }
+  .action-item { align-items: stretch; flex-direction: column; }
   .tabs { margin: -4px -16px 16px; padding: 0 8px; }
   /* tables become one card per row; each cell shows its column name */
   table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
@@ -371,3 +371,14 @@ textarea { font: inherit; }
 .confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .confirm-actions .btn { min-height: 44px; padding: 8px 16px; }
 .read-only-banner { font-weight: 600; }
+
+/* Today's queue: the action and Open side by side, wrapping under the text on a phone */
+.action-buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+
+/* Job page: the history, and the money file's one-line summary when it is folded */
+.timeline { list-style: none; margin: 0; padding: 0; }
+.timeline li { padding: 10px 0; border-bottom: 1px solid var(--line); line-height: 1.45; }
+.timeline li:last-child { border-bottom: 0; }
+.money-file > summary { cursor: pointer; }
+.money-file > summary h2 { display: inline; margin: 0 8px 0 0; }
+.money-file[open] > summary { margin-bottom: 8px; }

@@ -219,6 +219,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `GET /api/jobs?status=open|closed|all&offset=&limit=&q=`: jobs, newest first (closed ones as summaries, by closing date); `limit` up to 200
 - `GET /api/jobs/{id}`: one job in full, with its payer
 - `GET /api/outbox?offset=&limit=&job=` and `GET /api/audit?…`: the Outbox and the audit trail, newest first
+- `GET /api/timeline?job=&offset=&limit=`: one job's history for its page: audit rows and emails (with delivery status, without bodies), newest first
 - `GET /api/export`: download the company's data file
 - `POST /api/reset`: demo company returns to the Hartline seed. Any other company needs `{confirm: "<exact company name>"}` and gets a snapshot first.
 - `POST /api/jobs`: create a job. Required: `name`, `address`, `customer`, `approver`, `ap_email`, `contract_cents`. Optional: `phone`, `role` (`Owner` or `GC`), `retainage_pct` (0–20), `packet_notes`, `contract_number`.

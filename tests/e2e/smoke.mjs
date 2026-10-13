@@ -117,6 +117,38 @@ await step("the audit chain checks out after all that", async () => {
   await page.getByText("The chain of records checks out.").waitFor();
 });
 
+await step("Today's queue: one main button per row, and a follow-up goes in one tap", async () => {
+  await page.goto(BASE + "/today");
+  const rows = page.locator(".action-queue .action-item");
+  await rows.first().waitFor();
+  const n = await rows.count();
+  for (let i = 0; i < n; i++) {
+    assert.equal(await rows.nth(i).locator(".action-buttons .btn:not(.secondary)").count(), 1, `row ${i + 1} has one main button`);
+  }
+  const follow = () => page.locator(".action-item", { hasText: "Turner office TI" }).getByRole("button", { name: "Send follow-up" });
+  if (await follow().count()) {
+    await follow().click();
+    await follow().waitFor({ state: "detached" });  // followed up: not due again until the payer's window passes
+  }
+});
+
+await step("the job page shows what happened, newest first", async () => {
+  await page.goto(BASE + "/jobs/job-inman");
+  await page.locator(".job-history .timeline li").first().waitFor();
+  assert.ok(await page.locator(".job-history .timeline li").count() >= 4, "the money path's actions are in the history");
+  assert.match(await page.locator(".job-history .timeline li").first().innerText(), /clos/i);
+});
+
+await step("a confirmation is an in-page dialog, and Escape cancels it", async () => {
+  await page.goto(BASE + "/settings");
+  await page.locator("#reset").click();
+  await page.locator("dialog.confirm-dialog").waitFor();
+  await page.keyboard.press("Escape");
+  await page.locator("dialog.confirm-dialog").waitFor({ state: "detached" });
+  const inman = await page.evaluate(async () => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === "job-inman"));
+  assert.ok(inman && inman.closed, "nothing was reset");
+});
+
 await step("phone: no page scrolls sideways at 375 px", async () => {
   const phone = await signedInPage({ width: 375, height: 812 });
   const wide = [];
