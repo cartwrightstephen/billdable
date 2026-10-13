@@ -9,7 +9,7 @@ const BASE = process.env.BILLDABLE_URL_UNDER_TEST || "http://127.0.0.1:8765";
 const results = [];
 async function step(name, fn) {
   try { await fn(); results.push(["ok", name]); console.log(`ok    ${name}`); }
-  catch (err) { results.push(["FAIL", name]); console.log(`FAIL  ${name}\n      ${String(err.message || err).split("\n")[0]}`); }
+  catch (err) { results.push(["FAIL", name]); console.log(`FAIL  ${name}\n      ${String(err.message || err).replace(/\s+/g, " ").slice(0, 400)}`); }
 }
 
 const browser = await chromium.launch();

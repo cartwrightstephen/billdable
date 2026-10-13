@@ -92,5 +92,23 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(domain.timeline_page(state, job["id"], 0, 1)["entries"][0]["text"], "Second in this second.")
 
 
+    def test_emails_sit_beside_their_actions_within_the_same_second(self):
+        state = seed_state()
+        job = next(x for x in state["jobs"] if x["id"] == "job-inman")
+        with mock.patch.object(domain, "utcnow", return_value="2099-01-01T00:00:00+00:00"):
+            for item in job.get("packet", []):
+                if item.get("required") and not item.get("present"):
+                    domain.resolve_packet_item(state, job["id"], item["id"], "t", reason="Emailed to the payer")
+            domain.draft_invoice(state, job["id"], "t")
+            domain.approve_and_send(state, job["id"], "t")
+            inv = next(i for i in job["invoices"] if i["status"] == "sent")
+            domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1", "t", invoice_id=inv["id"])
+            domain.send_waiver(state, job["id"], "t")
+            domain.close_job(state, job["id"], "t")
+        order = [r.get("action") or r.get("email_kind") for r in domain.timeline_page(state, job["id"], 0, 7)["entries"]]
+        self.assertEqual(order[0], "close_job", "the last thing done is first, though everything shares one second")
+        self.assertEqual(order[:6], ["close_job", "send_waiver", "waiver", "match_payment", "approve_send", "pay_app"])
+
+
 if __name__ == "__main__":
     unittest.main()

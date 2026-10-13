@@ -849,12 +849,22 @@ def page(rows: list[dict[str, Any]], offset: int, limit: int, job_id: str = "") 
 def timeline_page(state: dict[str, Any], job_id: str, offset: int, limit: int) -> dict[str, Any]:
     """One job's history, newest first (UI/UX Option B): every audit row on the job, and every
     email with its delivery status (bodies left out)."""
-    # Times are to the second, so ties are common; within a list, the later row is the newer one.
-    keyed = [((a.get("at", ""), n), {"kind": "action", "at": a.get("at", ""), "action": a.get("action", ""), "text": a.get("detail", ""), "who": a.get("actor", "")})
-             for n, a in enumerate(state.get("audit", [])) if a.get("job_id") == job_id]
-    keyed += [((e.get("at", ""), n), {**{k: v for k, v in e.items() if k not in {"body", "subject", "approved_by", "kind"}},
-               "kind": "email", "email_kind": e.get("kind", ""), "at": e.get("at", ""), "text": e.get("subject", ""), "who": e.get("approved_by", "")})
-              for n, e in enumerate(state.get("email_log", [])) if e.get("job_id") == job_id]
+    # One sequence for both: an action's place is its row number in the audit trail, an email's
+    # is between the audit rows written before and after it (audit_seq). Older emails, from
+    # before audit_seq, go after every audit row of the same second or earlier. Times are only
+    # to the second, so they can't order things done in the same second.
+    audit_rows = state.get("audit", [])
+    stamps = [a.get("at", "") for a in audit_rows]
+    keyed = [((n, 0), {"kind": "action", "at": a.get("at", ""), "action": a.get("action", ""), "text": a.get("detail", ""), "who": a.get("actor", "")})
+             for n, a in enumerate(audit_rows) if a.get("job_id") == job_id]
+    for n, e in enumerate(state.get("email_log", [])):
+        if e.get("job_id") != job_id:
+            continue
+        seq = e.get("audit_seq")
+        place = seq - 0.5 if isinstance(seq, int) else sum(1 for t in stamps if t <= e.get("at", "")) - 0.5
+        keyed.append(((place, n), {**{k: v for k, v in e.items() if k not in {"body", "subject", "approved_by", "kind", "audit_seq"}},
+                                   "kind": "email", "email_kind": e.get("kind", ""), "at": e.get("at", ""), "text": e.get("subject", ""),
+                                   "who": e.get("approved_by", "")}))
     keyed.sort(key=lambda kr: kr[0], reverse=True)
     rows = [r for _, r in keyed]
     return {"entries": deepcopy(rows[offset:offset + limit]), "total": len(rows), "offset": offset, "limit": limit}
@@ -897,6 +907,8 @@ def _record_email(
     state.setdefault("email_log", []).append({
         "id": "eml-" + secrets.token_hex(5),
         "at": utcnow(),
+        # Where the email falls among the audit rows: the job's history orders by it (timeline_page).
+        "audit_seq": len(state.get("audit", [])),
         "job_id": job_id,
         "kind": kind,
         "to": to,
