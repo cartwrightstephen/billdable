@@ -116,3 +116,24 @@ Once the Intuit Developer app exists (setup doc, section 1):
 Tokens are in `qbo_connections.json` in the data directory and are not in the backups: after a restore onto a new disk,
 or when a connection expires (Intuit's refresh tokens last about 100 days unused), an
 owner presses Connect QuickBooks again. Disconnect revokes the token at Intuit.
+
+## 7. Billing with Stripe
+
+Needs the company's Stripe account (after the entity exists).
+
+1. In Stripe (test mode first): create the product and its monthly price; copy the price id
+   (`price_…`) and the secret key (`sk_test_…`).
+2. **Developers → Webhooks → Add endpoint**: `<BILLDABLE_URL>/api/stripe/webhook`, with the
+   events `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` and
+   `invoice.payment_failed`. Copy its signing secret (`whsec_…`).
+3. **Settings → Billing → Customer portal**: turn it on (update card, see invoices, cancel).
+4. On Render: `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`. Leave
+   `BILLING_ENFORCE` unset until a few test-mode subscriptions have gone through.
+5. Test: an owner presses **Subscribe**, pays with Stripe's test card 4242 4242 4242 4242, and
+   comes back to Settings showing **Trial** (or **Active**). Then, in Stripe, mark a test
+   subscription unpaid and check the company shows the read-only banner once `BILLING_ENFORCE=1`.
+
+The free trial carries over: a company that subscribes during it starts with Stripe's trial
+ending on its last day, and when its first pay app is paid Billdable ends Stripe's trial, so
+the first charge follows the business plan. Nothing is ever deleted for an unpaid bill.

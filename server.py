@@ -36,6 +36,7 @@ from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse
 import alerts
 import auth
 import backup
+import billing
 import calendar_feed
 import domain
 import helper
@@ -181,7 +182,7 @@ def demo_enabled() -> bool:
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
 DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv"}
 COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_resend_verify", "_p_team", "_p_helper_admin",
-                                             "_p_qbo_payments", "_p_qbo_disconnect"}
+                                             "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal"}
 
 
 def read_only_reason(company_id: str, state: dict | None = None) -> str:
@@ -191,7 +192,7 @@ def read_only_reason(company_id: str, state: dict | None = None) -> str:
     if state is None:
         with company_lock(company_id):
             state = load_company(company_id)
-    why = str(state.get("company", {}).get("read_only") or "").strip()
+    why = str(state.get("company", {}).get("read_only") or "").strip() or billing.standing(state)["hold"]
     return f"This company is read-only: {why}. Nothing was changed; your data is kept and can be exported from Settings." if why else ""
 
 
@@ -691,6 +692,8 @@ class Handler(BaseHTTPRequestHandler):
             with company_lock(ctx.company_id):
                 state = load_company(ctx.company_id)
                 state = handler(state, m, ctx) or state
+                # The first paid pay app ends the free trial (trial.py): tell Stripe, once.
+                end_trial = billing.trial_end_due(state) if billing.configured() else None
                 save_company(ctx.company_id, state)
                 payload = domain.light_snapshot(state)
         except UnknownAction:
@@ -702,6 +705,8 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError, TypeError, OverflowError) as exc:
             self._json(400, {"error": f"Bad request: {exc}"})
             return
+        if end_trial:
+            threading.Thread(target=self._end_stripe_trial, args=(end_trial,), daemon=True).start()
         # Approved emails are delivered after the change is saved and the lock is released;
         # the reply is written after that too, so a slow client can't stall other companies.
         self._json(200, self._deliver_queued(ctx.company_id, ctx.user) or payload)
@@ -773,7 +778,8 @@ class Handler(BaseHTTPRequestHandler):
             state = load_company(user["company_id"])
         self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
                          "mail_ready": bool(mailer.configured() and app_url()),
-                         "read_only": read_only_reason(user["company_id"], state)})
+                         "read_only": read_only_reason(user["company_id"], state),
+                         "billing": billing.standing(state)})
 
     def _g_helper_review(self, m, user) -> None:
         if not is_helper_admin(user):
@@ -820,6 +826,71 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             self._json(200, domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0]))
+
+    # ----- Billing with Stripe (billing.py) -----
+
+    def _end_stripe_trial(self, subscription_id: str) -> None:
+        try:
+            billing.end_trial_now(subscription_id)
+        except billing.BillingError as exc:
+            log_json("warn", msg="ending the Stripe trial failed", reason=str(exc)[:200])
+            alerts.notify("billing:trial-end", f"Couldn't end a Stripe trial ({subscription_id}): {exc}")
+
+    def _g_billing(self, m, user) -> None:
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        self._json(200, {**billing.standing(state), "trial": trial.status(state)})
+
+    def _p_billing_checkout(self, m, ctx: "Ctx") -> None:
+        if ctx.company_id == auth.DEMO_COMPANY_ID or not app_url():
+            self._json(409, {"error": "The demo account can't subscribe." if ctx.company_id == auth.DEMO_COMPANY_ID
+                             else "Set BILLDABLE_URL first; Stripe sends people back to it."})
+            return
+        with company_lock(ctx.company_id):
+            state = load_company(ctx.company_id)
+        try:
+            self._json(200, {"url": billing.checkout_url(state, ctx.company_id, ctx.user.get("email", ""), app_url())})
+        except billing.BillingError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _p_billing_portal(self, m, ctx: "Ctx") -> None:
+        with company_lock(ctx.company_id):
+            state = load_company(ctx.company_id)
+        try:
+            self._json(200, {"url": billing.portal_url(state, app_url() or "")})
+        except billing.BillingError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _p_stripe_webhook(self, m) -> None:
+        payload = self._read_raw(MAX_BODY_BYTES)
+        try:
+            event = billing.verify(payload, self.headers.get("Stripe-Signature", ""))
+        except billing.BillingError as exc:
+            log_json("warn", msg="stripe webhook refused", reason=str(exc), rid=self._rid)
+            self._json(400, {"error": str(exc)})
+            return
+        company_id, customer = billing.company_hint(event)
+        known = company_ids()
+        if company_id not in known:
+            company_id = ""
+            for cid in known:
+                with company_lock(cid):
+                    if customer and (load_company(cid).get("company", {}).get("billing") or {}).get("customer_id") == customer:
+                        company_id = cid
+                        break
+        if not company_id:
+            # Answer 200 anyway: Stripe would retry an error for days, and nothing here can use it.
+            log_json("info", msg="stripe event for no known company", type=event.get("type"), rid=self._rid)
+            self._json(200, {"received": True})
+            return
+
+        def apply(st: dict) -> None:
+            line = billing.apply(st, event)
+            if line:
+                domain.audit(st, "", "billing", line, "Stripe")
+
+        self._change(company_id, apply)
+        self._json(200, {"received": True})
 
     # ----- QuickBooks Online, read-only (qbo.py) -----
 
@@ -1392,6 +1463,7 @@ class Handler(BaseHTTPRequestHandler):
                 "jobs": len(state.get("jobs", [])),
                 "pay_apps_sent": sum(1 for j in state.get("jobs", []) for i in j.get("invoices", []) if i.get("sent_at")),
                 "trial": trial.status(state),
+                "billing": billing.standing(state)["status"] or ("none" if billing.configured() else ""),
                 "demo": company_id == auth.DEMO_COMPANY_ID,
             })
         return out
@@ -1937,6 +2009,7 @@ ROUTES = [
     Route("GET", r"/api/team", "_g_team", "user"),
     Route("GET", r"/api/metrics", "_g_metrics", "user"),
     Route("GET", r"/api/qbo/status", "_g_qbo_status", "user"),
+    Route("GET", r"/api/billing", "_g_billing", "user"),
     Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user"),
     Route("GET", r"/api/qbo/callback", "_g_qbo_callback"),
     Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
@@ -1959,6 +2032,7 @@ ROUTES = [
     Route("POST", r"/p/" + TOKEN_LINK + r"/received", "_p_payer_received"),
     Route("POST", r"/s/" + TOKEN_LINK + r"/sign", "_p_co_sign"),
     Route("POST", r"/share", "_p_share"),
+    Route("POST", r"/api/stripe/webhook", "_p_stripe_webhook"),
     # signed in
     Route("POST", r"/api/import/file", "_p_import_file", "user"),
     Route("POST", r"/api/helper/ask", "_p_helper_ask", "body"),
@@ -1973,6 +2047,8 @@ ROUTES = [
     Route("POST", r"/api/import/rotate", "_p_rotate", "body", owner=True),
     Route("POST", r"/api/metrics/summary-email", "_p_summary_email", "body"),
     Route("POST", r"/api/qbo/connect", "_p_qbo_connect", "body", owner=True),
+    Route("POST", r"/api/billing/checkout", "_p_billing_checkout", "body", owner=True),
+    Route("POST", r"/api/billing/portal", "_p_billing_portal", "body", owner=True),
     Route("POST", r"/api/qbo/disconnect", "_p_qbo_disconnect", "body", owner=True),
     Route("POST", r"/api/qbo/payments", "_p_qbo_payments", "body"),
     Route("POST", r"/api/onboarding/dismiss", "_p_onboarding_dismiss", "body"),

@@ -4,9 +4,9 @@ A contractor pays nothing until the first pay app sent through Billdable is
 paid in full, or for 90 days, whichever comes first. If a pay app has been
 sent but is still unpaid on day 90, the trial runs to day 120.
 
-This module only works out where a company stands. Billing isn't live, so
-nothing is charged and nothing is locked when a trial ends. The 45-day
-variant for remodelers billing homeowners is not automated.
+This module only works out where a company stands; billing.py charges for it (Stripe) and,
+with BILLING_ENFORCE=1, holds a company read-only after the trial and a grace period. The
+45-day variant for remodelers billing homeowners is not automated.
 """
 
 from __future__ import annotations

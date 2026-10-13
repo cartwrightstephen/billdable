@@ -26,6 +26,7 @@ let metricsPeriod = "90";
 let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV or the QuickBooks connection
 let qboStatus = null;      // /api/qbo/status: configured, connected, environment (escaped)
 let qboReconcile = null;   // /api/qbo/reconcile: {rows, invoices}
+const BILLING_WORDS = { trialing: "Trial", active: "Active", past_due: "Card declined", unpaid: "Unpaid", canceled: "Cancelled", incomplete: "Incomplete", incomplete_expired: "Expired", paused: "Paused" };
 const RECON_WORDS = { missing: "Not in QuickBooks", amount: "Amount differs", paid_in_qbo: "Paid in QuickBooks", open_in_qbo: "Open in QuickBooks" };
 let currentView = "dashboard";
 let currentJobId = null;
@@ -258,6 +259,7 @@ async function boot(checkLink = true) {
     helperAdmin = data.helper_admin === true;
     mailReady = data.mail_ready === true;
     readOnly = typeof data.read_only === "string" ? esc(data.read_only) : "";
+    billingInfo = escDeep(data.billing || null);
     applyLocation();
     await load();
   } else {
@@ -422,6 +424,7 @@ async function onAuthSubmit(e) {
       helperAdmin = info.helper_admin === true;
       mailReady = info.mail_ready === true;
       readOnly = typeof info.read_only === "string" ? esc(info.read_only) : "";
+      billingInfo = escDeep(info.billing || null);
     }
   } catch (_) { helperAdmin = false; }
   applyLocation();
@@ -748,6 +751,12 @@ function bindActions() {
         render(); return;
       }
       if (a === "qbo-cancel") { paymentImport = null; render(); return; }
+      if (a === "billing-checkout" || a === "billing-portal") {
+        const r = await postJson(a === "billing-checkout" ? "/api/billing/checkout" : "/api/billing/portal", {});
+        if (!r.ok) { toast(r.data.error || "Couldn't open billing."); return; }
+        if (typeof r.data.url === "string" && r.data.url.startsWith("https://")) location.assign(r.data.url);
+        return;
+      }
       if (a === "qbo-connect") {
         const r = await postJson("/api/qbo/connect", {});
         if (!r.ok) { toast(r.data.error || "Couldn't start the QuickBooks connection."); return; }
@@ -1393,6 +1402,7 @@ document.addEventListener("paste", (e) => {
 // ---------- accounts: reset, verify, invite links; Team & account ----------
 // Links in emails carry a one-time token after "#", which browsers never send to a server.
 let mailReady = false;
+let billingInfo = null;   // billing.standing from /api/auth/me: configured, status, warning (escaped)
 let readOnly = "";        // why this company can't be changed (the read-only demo, or a founder's hold), from /api/auth/me
 let teamData = null;      // { users, invites } from /api/team (escaped)
 let lastInvite = null;    // { link, emailed, email_status } after inviting
@@ -1498,6 +1508,7 @@ async function teamPost(path, body, okMessage) {
 
 function verifyBannerHtml() {
   if (readOnly) return `<div class="verify-banner read-only-banner" role="status">${readOnly}</div>`;
+  if (billingInfo && billingInfo.warning) return `<div class="verify-banner" role="status">${billingInfo.warning}${me && me.role === "owner" ? ` <button class="linkish" data-action="nav" data-view="account">Billing</button>` : ""}</div>`;
   if (!mailReady || !me || me.email_verified || me.company_id === DEMO_COMPANY_ID) return "";
   return `<div class="verify-banner">Confirm your email (${me.email}) so Billdable can send pay apps for you; replies come back to it.
     <button class="linkish" data-action="resend-verify">Send the link again</button></div>`;
@@ -1547,6 +1558,15 @@ function accountView() {
         ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
           <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}
     </div>
+    ${!isDemo && owner && billingInfo && billingInfo.configured ? `<div class="card" id="billing">
+      <h2>Billing</h2>
+      ${billingInfo.status ? `<p class="sub"><span class="pill ${["active", "trialing"].includes(billingInfo.status) ? "green" : "red"}">${BILLING_WORDS[billingInfo.status] || words(billingInfo.status)}</span>${billingInfo.period_end ? ` Next renewal ${fmtDate(new Date(billingInfo.period_end * 1000).toISOString())}.` : ""}</p>`
+        : `<p class="sub">No subscription yet. The free trial still applies: the first charge comes when it ends.</p>`}
+      ${billingInfo.warning ? `<p class="blocker">${billingInfo.warning}</p>` : ""}
+      <div class="form-inline">${billingInfo.has_customer && billingInfo.status && !["canceled", "incomplete_expired"].includes(billingInfo.status)
+        ? `<button class="btn" data-action="billing-portal">Manage billing</button>` : `<button class="btn" data-action="billing-checkout">Subscribe</button>`}</div>
+      <p class="sub">Payment by card through Stripe. Billdable never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
+    </div>` : ""}
     ${isDemo ? "" : `<div class="card" id="two-step">
       <h2>Two-step sign-in</h2>
       ${recoveryCodes ? `<div class="invite-result" role="status"><strong>Two-step sign-in is on.</strong> Save these recovery codes somewhere safe, such as your password manager. Each one signs you in once if you lose your phone. They are not shown again.
@@ -1593,10 +1613,11 @@ function trialBannerHtml() {
   const t = state.trial;
   if (!t || !t.tracked) return "";
   const day = (iso) => new Date(unesc(iso)).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const live = !!(billingInfo && billingInfo.configured);
   if (t.state === "active") {
-    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Billdable is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}. Billing isn't live yet.</div>`;
+    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Billdable is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.${live ? "" : " Billing isn't live yet."}</div>`;
   }
-  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}. Billing isn't live yet, so nothing changes for now.</div>`;
+  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : " Subscribe in Settings, Team &amp; account, Billing.") : " Billing isn't live yet, so nothing changes for now."}</div>`;
 }
 
 function onboardingHtml() {
@@ -1640,8 +1661,8 @@ function adminCompaniesHtml() {
   const trialText = (t) => !t.tracked ? "not tracked (signed up before trials)" : t.state === "active"
     ? `active until ${fmtDate(t.ends_by)}${t.extended ? " (extended)" : ""}` : `ended ${fmtDate(t.ended_at)}${t.reason === "paid" ? ` (${t.first_paid} paid)` : " (time)"}`;
   return `<div class="table-wrap"><table>
-    <tr><th>Company</th><th>Id</th><th>Signed up</th><th>Users</th><th>Jobs</th><th>Pay apps sent</th><th>Trial</th></tr>
-    ${adminCompanies.filter(c => !c.demo).map(c => `<tr><td>${c.name}</td><td><code>${c.company_id || ""}</code></td><td>${fmtDate(c.signed_up)}</td><td>${c.users}</td><td>${c.jobs}</td><td>${c.pay_apps_sent}</td><td>${trialText(c.trial)}</td></tr>`).join("")}
+    <tr><th>Company</th><th>Id</th><th>Signed up</th><th>Users</th><th>Jobs</th><th>Pay apps sent</th><th>Trial</th><th>Billing</th></tr>
+    ${adminCompanies.filter(c => !c.demo).map(c => `<tr><td>${c.name}</td><td><code>${c.company_id || ""}</code></td><td>${fmtDate(c.signed_up)}</td><td>${c.users}</td><td>${c.jobs}</td><td>${c.pay_apps_sent}</td><td>${trialText(c.trial)}</td><td>${c.billing ? (BILLING_WORDS[c.billing] || words(c.billing)) : "not set up"}</td></tr>`).join("")}
   </table></div>`;
 }
 
@@ -1832,7 +1853,7 @@ const views = {
     return `<h1>Helper answers</h1>
       <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
       <div id="helper-admin-body">Loading…</div>
-      <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial. Billing isn't live, so nothing is enforced.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
+      <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial and, once Stripe is set up, its subscription. Nothing is enforced unless BILLING_ENFORCE=1.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
   },
   inbox() {
     const items = (state.inbox || []).filter(i => i.status === "new").slice().reverse();

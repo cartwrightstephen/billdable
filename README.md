@@ -38,6 +38,8 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | --- | --- |
 | `BILLDABLE_DATA_DIR` | Where all data lives (see above). |
 | `BILLDABLE_DEMO` | `readonly` keeps the demo for prospects in production: anyone can sign in and look around, and nothing can be changed (no edits, reset, password or two-step changes). `off` removes it anywhere. The default is a writable demo outside production and none in production. |
+| `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` | Billing (billing.py). With them, owners get Settings › Team & account › Billing: Subscribe (Stripe Checkout, the free trial carried over) and Manage billing (Stripe's Customer Portal). Point a Stripe webhook at `<BILLDABLE_URL>/api/stripe/webhook`; see runbook 7. |
+| `BILLING_ENFORCE`, `BILLING_GRACE_DAYS` | `BILLING_ENFORCE=1` makes a company read-only (never deleted) when its subscription is unpaid or cancelled, or when the trial ended more than `BILLING_GRACE_DAYS` (14) ago with no subscription. A declined card that Stripe is still retrying only shows a warning. Off by default. |
 | `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | The Intuit Developer app's keys; with them, owners can connect QuickBooks (read-only) on Money › Payments. Add `<BILLDABLE_URL>/api/qbo/callback` as a redirect URI in the Intuit app. `QBO_ENV=production` for real companies; the default is the sandbox. Tokens live in `qbo_connections.json`, which backups leave out: after a restore onto a new disk, connect again. |
 | `BILLDABLE_STORAGE` | `json` keeps the one-file-per-company layout. Unset (the default) uses SQLite. |
 | `BILLDABLE_ENV` | `production` turns the demo account off unless `BILLDABLE_DEMO=readonly` (when off: not created, can't sign in, old demo sessions end) and refuses to start unless `BILLDABLE_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `BILLDABLE_URL` is an `https://` address. Unset everywhere else. |
@@ -170,6 +172,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `offsite.py`: encrypted off-site copies of backups (age, S3-compatible upload)
 - `alerts.py`: crash and backup-failure alerts to a webhook
 - `totp.py`: two-step sign-in codes (RFC 6238)
+- `billing.py`: Stripe Checkout and Customer Portal, the signed webhook, ending Stripe's trial when the first pay app is paid, and whether a company is held read-only. Stripe's names are from their documentation as remembered, checked only against a stand-in (`tests/test_billing.py`)
 - `qbo_csv.py`: payments from a QuickBooks CSV export, proposed against open pay apps
 - `qbo.py`: the QuickBooks Online connection, read-only: OAuth connect and token refresh, payments proposed with the same matcher (each recorded once, by its QuickBooks id), and a reconciliation report against QuickBooks invoices. Intuit's endpoints and field names are from their documentation as remembered, checked only against a stand-in (`tests/test_qbo.py`) until the first sandbox connection
 - `metrics.py`: the Results numbers and the monthly summary email (`python3 admin.py monthly-summaries`)
@@ -250,6 +253,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/jobs/{id}/learn-rejection`: `{reason}`
 - `POST /api/jobs/{id}/close`
 - `POST /api/jobs/{id}/import-qbo`: demo company only; a hard-coded sample payment
+- Billing: `GET /api/billing`; owners: `POST /api/billing/checkout` and `/api/billing/portal` (each returns a Stripe address); `POST /api/stripe/webhook` (Stripe-Signature checked)
 - QuickBooks: `GET /api/qbo/status`; owners: `POST /api/qbo/connect` (returns Intuit's sign-in address) and `/api/qbo/disconnect`; `GET /api/qbo/callback` (Intuit sends the owner back here); `POST /api/qbo/payments` `{days}` (proposals, records nothing); `GET /api/qbo/reconcile`
 - `POST /api/payers/{id}/update`: playbook fields. Follow-up and approval days must be 1–365.
 - `POST /api/jobs/{id}/pencil`: send the open draft as a pencil copy; `POST /api/jobs/{id}/pencil-response`: `{agreed, note}`
