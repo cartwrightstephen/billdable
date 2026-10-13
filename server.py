@@ -49,6 +49,7 @@ import payer_page
 import sov
 import storage
 import trial
+import twilio_media
 from seed import seed_state
 
 ROOT = Path(__file__).resolve().parent
@@ -1661,13 +1662,27 @@ class Handler(BaseHTTPRequestHandler):
             if params.get(f"MediaUrl{i}"):
                 media.append({"url": params[f"MediaUrl{i}"], "type": params.get(f"MediaContentType{i}", "")})
         text = params.get("Body", "")
-        if media:
-            text += "\n\n" + "\n".join(f"Photo or file sent by text (not downloaded): {m['url']}" for m in media)
+        # Download the pictures (outside the lock: it talks to Twilio); what can't be fetched stays a link.
+        downloaded, problems = twilio_media.download(media, importer.MAX_FILE_BYTES)
+        stored, skipped = self._store_email_files(company_id, {"attachments": downloaded}, "text message")
+        got = {f["url"] for f in downloaded}
+        links = [m for m in media if m["url"] not in got] if stored or downloaded else media
+        if links:
+            text += "\n\n" + "\n".join(f"Photo or file sent by text (not downloaded): {m['url']}" for m in links)
+        notes = problems + skipped
 
         def add(state: dict) -> None:
-            importer.add_item(state, "sms", text=text, sender=params.get("From", ""), extra={"media": media} if media else None)
+            for meta in stored:
+                importer.register_file(state, meta)
+            extra = {"media": media} if media else {}
+            if notes:
+                extra["skipped_attachments"] = notes
+            importer.add_item(state, "sms", text=text, sender=params.get("From", ""), file_ids=[m["id"] for m in stored],
+                              extra=extra or None)
 
         status, _ = self._change(company_id, add)
+        if status != 200:
+            importer.discard(company_id, stored)
         body = b'<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
         self._send(200 if status == 200 else 409, body, "text/xml; charset=utf-8")
 
