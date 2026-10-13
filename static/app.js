@@ -1254,7 +1254,7 @@ async function loadImportSettings() {
 
 function emailStatusHtml(e) {
   const st = e.status || "";
-  const cls = st === "sent" ? "green" : st.startsWith("failed") ? "red" : st.startsWith("not sent") ? "amber" : "";
+  const cls = st === "sent" ? "green" : (st.startsWith("failed") || st.startsWith("bounced")) ? "red" : st.startsWith("not sent") ? "amber" : "";
   const when = st === "sent" && e.delivered_at ? `<div class="sub">${fmtDateTime(e.delivered_at)}</div>` : "";
   // A row still "sending" or "queued" after 30 minutes died mid-send; the server allows a retry then.
   const since = Date.parse(e.sending_at || e.at || "") || Date.now();

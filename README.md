@@ -59,6 +59,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `SMTP_USER`, `SMTP_PASSWORD` | Login for the mail provider, if it needs one. |
 | `SMTP_SECURITY` | `starttls` (default), `ssl`, or `none` (local testing only). |
 | `MAIL_FROM` | Sender address on a domain the provider has verified (SPF and DKIM), e.g. `billing@billdable.com`. Required with `SMTP_HOST`. |
+| `MAIL_EVENTS_TOKEN` | A random secret of 16+ characters. Give the mail provider `https://<site>/api/mail-events/<this token>` as its bounce (and spam-complaint) webhook; a bounced email's Outbox row turns "bounced" and its job's status line says so. Formats: `mail_events.py`. |
 | `MAIL_DAILY_LIMIT` | Emails per company per 24 hours, default 50. Sign-up doesn't verify anyone, so this keeps one account from using us to send spam. Counted in `mail_sends.json`. |
 
 ## Importing

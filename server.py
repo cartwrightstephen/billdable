@@ -38,6 +38,7 @@ import domain
 import helper
 import importer
 import legal
+import mail_events
 import mailer
 import migrations
 import offsite
@@ -158,6 +159,7 @@ def config_problems() -> list[str]:
 SECRET_PATHS = (
     (re.compile(r"(/api/inbound/(?:email|sms)/)[^/?\s]+"), r"\1[token]"),
     (re.compile(r"(/api/calendar/)[^/?\s]+?(\.ics)"), r"\1[token]\2"),
+    (re.compile(r"(/api/mail-events/)[^/?\s]+"), r"\1[token]"),
 )
 
 
@@ -835,6 +837,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/inbound/sms/"):
             self._inbound_sms(path.rsplit("/", 1)[-1])
             return
+        if path.startswith("/api/mail-events/"):
+            self._mail_events(path.rsplit("/", 1)[-1])
+            return
 
         # Everything below needs a signed-in user; check before reading the body.
         user = self._require_user()
@@ -1360,6 +1365,31 @@ class Handler(BaseHTTPRequestHandler):
             self._json(status, payload)
             return
         self._json(200, {"ok": True})
+
+    def _mail_events(self, token: str) -> None:
+        """Bounce and complaint webhook from the mail provider (P1-4); see mail_events.py."""
+        secret = os.environ.get("MAIL_EVENTS_TOKEN", "")
+        if len(secret) < 16 or not hmac.compare_digest(token, secret):
+            self._json(404, {"error": "Not found"})
+            return
+        try:
+            body = json.loads(self._read_raw(MAX_BODY_BYTES) or b"null")
+        except ValueError:
+            raise BadRequest("Send JSON.")
+        failures = mail_events.normalize(body)
+        marked = 0
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if failures:
+            # The provider doesn't know our companies: find each address's latest sent email.
+            for path in sorted(COMPANIES.glob("*.json")) if COMPANIES.exists() else []:
+                with STATE_LOCK:
+                    state = load_company(path.stem)
+                    hit = [f for f in failures if mail_events.apply(state, f["email"], f["reason"], now)]
+                    if hit:
+                        save_company(path.stem, state)
+                        marked += len(hit)
+        log_json("info", msg="mail events", received=len(failures), marked=marked, rid=self._rid)
+        self._json(200, {"ok": True, "marked": marked})
 
     def _inbound_sms(self, token: str) -> None:
         company_id = importer.company_for_token(token, "sms")
