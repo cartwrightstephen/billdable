@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phone: packet</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1F4FD1}a:hover{color:#16389A}
+</style>
+</helmet>
+<div style="width: 390px; height: 1200px; box-sizing: border-box; background: #F5F5F3; font-family: 'IBM Plex Sans', sans-serif; color: #1B1B1B; display: flex; flex-direction: column; overflow: hidden">
+  <header style="display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: #EAEAE7; border-bottom: 1px solid #BDBDBD">
+    <a href="PhoneMenu.dc.html" aria-label="Menu" style="width: 44px; height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; display: flex; align-items: center; justify-content: center; text-decoration: none">
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="#1B1B1B" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </a>
+    <span style="font-size: 20px; font-weight: 600">Billdable</span>
+    <span style="margin-left: auto; font-size: 14px; color: #555555">Money</span>
+  </header>
+  <nav aria-label="Money" style="display: flex; gap: 4px; padding: 0 8px; border-bottom: 1px solid #BDBDBD; overflow-x: auto; white-space: nowrap">
+    <a href="#payapps" style="text-decoration: none; color: #555555; padding: 12px">Pay apps</a>
+    <a href="PhonePacket.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; padding: 12px; border-bottom: 3px solid #1B1B1B">Packets</a>
+    <a href="#cos" style="text-decoration: none; color: #555555; padding: 12px">Change orders</a>
+    <a href="#collections" style="text-decoration: none; color: #555555; padding: 12px">Collections</a>
+  </nav>
+  <div style="padding: 16px; display: flex; flex-direction: column; gap: 14px">
+    <a href="PhoneJob.dc.html" style="align-self: flex-start; text-decoration: none; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 14px; color: #1B1B1B">← Oak Street kitchen</a>
+    <h1 style="margin: 0; font-size: 26px; font-weight: 600">Packet for the next pay app</h1>
+    <p style="margin: 0; font-size: 14px; color: #555555">Oak Street kitchen · <strong style="color: #1B1B1B">2 missing</strong></p>
+    <section style="background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 12px; padding: 4px 14px; display: flex; flex-direction: column">
+      <div style="padding: 14px 0; border-bottom: 1px solid #DADADA; display: flex; flex-direction: column; gap: 10px">
+        <div style="display: flex; gap: 8px; align-items: baseline"><span aria-hidden="true" style="font-weight: 700">✗</span><strong>Conditional waiver from Atlanta Millwork</strong></div>
+        <span style="font-size: 14px">Missing conditional waiver from supplier Atlanta Millwork.</span>
+        <label for="pa1" style="font-size: 14px; color: #555555">From the job record</label>
+        <select id="pa1" style="height: 44px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 8px; font: inherit; background: #FFFFFF"><option>Atlanta Millwork waiver.pdf</option></select>
+        <button type="button" style="height: 48px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Attach</button>
+        <button type="button" style="height: 44px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Mark present…</button>
+      </div>
+      <div style="padding: 14px 0; border-bottom: 1px solid #DADADA; display: flex; flex-direction: column; gap: 10px">
+        <div style="display: flex; gap: 8px; align-items: baseline"><span aria-hidden="true" style="font-weight: 700">✗</span><strong>Daily tickets Sep 12–14</strong></div>
+        <span style="font-size: 14px">Three daily tickets from September 12–14 have not been attached.</span>
+        <button type="button" style="height: 48px; border: 2px dashed #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit; font-weight: 600">Take a photo of the tickets</button>
+        <button type="button" style="height: 44px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Mark present…</button>
+      </div>
+      <div style="padding: 14px 0; display: flex; gap: 8px; align-items: baseline"><span aria-hidden="true" style="font-weight: 700">✓</span><strong>Completion photos</strong><span style="font-size: 14px; color: #555555">present</span></div>
+    </section>
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+      <strong>Also blocking the send</strong>
+      <span style="font-size: 14px">Change Order 7, Cabinet upgrade ($6,400.00), is on the pay app but not signed.</span>
+      <a href="CoSign.dc.html" style="text-decoration: none; text-align: center; height: 44px; box-sizing: border-box; padding: 11px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B">Request signature</a>
+      <button type="button" style="height: 44px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Signed copy on the record…</button>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1200}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

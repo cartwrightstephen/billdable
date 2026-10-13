@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Payer page: one pay app</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1F4FD1}a:hover{color:#16389A}
+</style>
+</helmet>
+<div style="background: #F5F5F3; font-family: 'IBM Plex Sans', sans-serif; color: #1B1B1B; min-height: 100%; box-sizing: border-box; padding: 24px 16px 56px">
+  <main style="max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px">
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">billdable.com/p/[company].[private link] · no sign-in</div>
+    <p style="margin: 0; font-size: 15px; color: #555555">Hartline Remodeling · 2200 Peachtree, Brookhaven</p>
+    <h1 style="margin: 0; font-size: 34px; font-weight: 600">PA-BRK-01: $57,950.00</h1>
+    <p style="margin: 0; font-size: 15px; color: #555555">Brookhaven kitchen · Sent Oct 6, 2026</p>
+
+    <section style="background: #FFFFFF; border: 1.5px solid #1B1B1B; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <div style="font-size: 16px"><strong>Got it?</strong> Let Hartline Remodeling know this pay app reached you.</div>
+      <label for="who" style="font-size: 14px; color: #555555">Your name</label>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px">
+        <input id="who" placeholder="Your name" autocomplete="name" style="flex: 1 1 240px; height: 44px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+        <button type="button" style="height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Mark as received</button>
+      </div>
+    </section>
+
+    <div><a href="#pdf" style="display: inline-block; text-decoration: none; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 16px; color: #1B1B1B">Open the pay app PDF</a></div>
+
+    <h2 style="margin: 8px 0 0; font-size: 20px; font-weight: 600">Lines</h2>
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 4px 20px">
+      <div style="display: flex; justify-content: space-between; padding: 12px 0; font-size: 15px"><span>Contract less 5% retainage</span><span>$57,950.00</span></div>
+    </section>
+
+    <h2 style="margin: 8px 0 0; font-size: 20px; font-weight: 600">Packet</h2>
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 4px 20px">
+      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span><span aria-hidden="true">✓</span> Invoice</span><a href="#doc1">PA-BRK-01.pdf</a></div>
+      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; font-size: 15px"><span><span aria-hidden="true">✓</span> Conditional waiver</span><a href="#doc2">[waiver file].pdf</a></div>
+    </section>
+
+    <p style="margin: 8px 0 0; font-size: 13px; color: #555555">This page is for the people Hartline Remodeling sent this pay app to. Prepared with Billdable. Questions about the amounts go to the contractor; reply to their email.</p>
+
+    <section style="margin-top: 16px; background: #EFEFEC; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 20px; display: flex; flex-direction: column; gap: 6px">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">After Mark as received</div>
+      <div style="background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 10px; padding: 12px 16px; font-size: 15px"><strong>Received</strong> by Accounts payable on Oct 7, 2026. Thank you.</div>
+      <div style="font-size: 14px; color: #555555">In the app, the job's status line reads "Accounts payable confirmed receipt of PA-BRK-01 on Oct 7, 2026", and the Audit records it.</div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1200}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

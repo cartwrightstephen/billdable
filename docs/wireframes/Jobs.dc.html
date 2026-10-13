@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jobs</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1F4FD1}a:hover{color:#16389A}
+</style>
+</helmet>
+<div style="background: #F5F5F3; font-family: 'IBM Plex Sans', sans-serif; color: #1B1B1B; min-height: 100%; display: flex; flex-wrap: wrap">
+  <aside style="flex: 1 1 200px; max-width: 232px; box-sizing: border-box; padding: 24px 16px; background: #EAEAE7; border-right: 1px solid #BDBDBD; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-size: 22px; font-weight: 600">Billdable</div>
+    <div style="font-size: 14px; color: #555555; margin-bottom: 20px"><strong style="color: #1B1B1B">Hartline Remodeling</strong><br>6 people · QuickBooks Online</div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 4px">
+      <a href="Today.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Today</a>
+      <a href="Jobs.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 12px">Jobs</a>
+      <a href="Inbox.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px; display: flex; justify-content: space-between">Inbox <span style="background: #1B1B1B; color: #FFFFFF; border-radius: 10px; padding: 0 8px; font-size: 13px">2</span></a>
+      <a href="Money.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Money</a>
+      <a href="Settings.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Settings</a>
+    </nav>
+    <div style="margin-top: 40px; padding-top: 12px; border-top: 1px solid #BDBDBD; font-size: 13px; color: #555555">Alex Hartline<br>owner@hartline.example<br><a href="Landing.dc.html">Log out</a></div>
+  </aside>
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 20px 32px 48px; display: flex; flex-direction: column; gap: 20px; max-width: 1200px">
+    <nav aria-label="Jobs" style="display: flex; gap: 4px; border-bottom: 1px solid #BDBDBD; overflow-x: auto">
+      <a href="Jobs.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; padding: 10px 12px; border-bottom: 3px solid #1B1B1B">Open jobs</a>
+      <a href="#history" style="text-decoration: none; color: #555555; padding: 10px 12px">Job history</a>
+      <span style="margin-left: auto; align-self: center; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">/jobs</span>
+    </nav>
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px">
+      <h1 style="margin: 0; font-size: 36px; font-weight: 600">Jobs</h1>
+      <button type="button" style="height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">New job</button>
+    </div>
+    <div style="overflow-x: auto; background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px">
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px">
+        <thead><tr style="text-align: left; color: #555555; font-size: 13px">
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Job</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Code</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Customer</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Status</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Outstanding</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Unbilled</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Retainage</th>
+        </tr></thead>
+        <tbody>
+          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Oak Street kitchen</a><div style="font-size: 13px; color: #555555; margin-top: 2px">Missing conditional waiver from supplier Atlanta Millwork.</div></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; font-family: 'IBM Plex Mono', monospace">OAK</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Ellison Residential</td><td style="padding: 12px; border-bottom: 1px solid #DADADA"><span style="border: 1.5px solid #1B1B1B; border-radius: 999px; padding: 1px 10px; font-size: 13px; font-weight: 600">Blocked</span></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$44,000.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td></tr>
+          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Turner office TI</a><div style="font-size: 13px; color: #555555; margin-top: 2px">Awaiting GC signature</div></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; font-family: 'IBM Plex Mono', monospace">TRN</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Northline GC</td><td style="padding: 12px; border-bottom: 1px solid #DADADA"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px">Sent</span></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$119,700.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$6,300.00</td></tr>
+          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Ponce bath</a><div style="font-size: 13px; color: #555555; margin-top: 2px">Payment received, waiver not sent</div></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; font-family: 'IBM Plex Mono', monospace">PON</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Ponce Property Co.</td><td style="padding: 12px; border-bottom: 1px solid #DADADA"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px">Waiver due</span></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td></tr>
+          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Decatur addition</a><div style="font-size: 13px; color: #555555; margin-top: 2px">Retainage outstanding</div></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; font-family: 'IBM Plex Mono', monospace">DEC</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Ellison Residential</td><td style="padding: 12px; border-bottom: 1px solid #DADADA"><span style="border: 1.5px solid #1B1B1B; border-radius: 999px; padding: 1px 10px; font-size: 13px; font-weight: 600">Blocked</span></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$7,600.00</td></tr>
+          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Inman Park bath</a><div style="font-size: 13px; color: #555555; margin-top: 2px">Conditional waiver not yet attached.</div></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; font-family: 'IBM Plex Mono', monospace">INM</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Ellison Residential</td><td style="padding: 12px; border-bottom: 1px solid #DADADA"><span style="border: 1.5px solid #1B1B1B; border-radius: 999px; padding: 1px 10px; font-size: 13px; font-weight: 600">Blocked</span></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$42,000.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td></tr>
+          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Grant Park addition</a><div style="font-size: 13px; color: #555555; margin-top: 2px">In progress</div></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; font-family: 'IBM Plex Mono', monospace">GRT</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Northline GC</td><td style="padding: 12px; border-bottom: 1px solid #DADADA"><span style="border: 1px solid #BDBDBD; border-radius: 999px; padding: 1px 10px; font-size: 13px; color: #555555">In progress</span></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$45,000.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td></tr>
+          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Brookhaven kitchen</a><div style="font-size: 13px; color: #555555; margin-top: 2px">Submitted to Ponce Property Co., awaiting accounts payable</div></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; font-family: 'IBM Plex Mono', monospace">BRK</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Ponce Property Co.</td><td style="padding: 12px; border-bottom: 1px solid #DADADA"><span style="border: 1.5px solid #1B1B1B; border-radius: 999px; padding: 1px 10px; font-size: 13px; font-weight: 600">Blocked</span></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$57,950.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$0.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$3,050.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin: 0; font-size: 14px; color: #555555">3 closed jobs are under <a href="#history">Job history</a>.</p>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

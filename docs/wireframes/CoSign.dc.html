@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Change order signing page</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1F4FD1}a:hover{color:#16389A}
+</style>
+</helmet>
+<div style="background: #F5F5F3; font-family: 'IBM Plex Sans', sans-serif; color: #1B1B1B; min-height: 100%; box-sizing: border-box; padding: 24px 16px 56px">
+  <main style="max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px">
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">billdable.com/s/[company].[private link] · emailed to the payer · no sign-in</div>
+    <p style="margin: 0; font-size: 15px; color: #555555">Hartline Remodeling · Oak Street kitchen · 418 Oak Street, Decatur</p>
+    <h1 style="margin: 0; font-size: 34px; font-weight: 600">Change order 7: $6,400.00</h1>
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px">
+      <strong>Cabinet upgrade</strong>
+      <p style="margin: 8px 0 0; font-size: 15px; color: #555555">[Description of the change, as written on the change order]</p>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1.5px solid #1B1B1B; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px">
+      <label for="agree" style="display: flex; gap: 10px; align-items: flex-start; font-size: 15px"><input id="agree" type="checkbox" style="width: 22px; height: 22px; margin-top: 2px; flex: none"> <span>I agree to this change order. I agree to sign it electronically, and my typed name below is my signature.</span></label>
+      <label for="signer" style="font-size: 14px; color: #555555">Your full name</label>
+      <input id="signer" autocomplete="name" style="height: 44px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+      <button type="button" style="align-self: flex-start; height: 48px; padding: 0 20px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Sign change order</button>
+    </section>
+    <p style="margin: 0; font-size: 13px; color: #555555">Your name, the time, your network address and this change order as shown are kept as the record of your signature. Questions go to Hartline Remodeling; reply to their email.</p>
+
+    <section style="margin-top: 16px; background: #EFEFEC; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 20px; display: flex; flex-direction: column; gap: 8px">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">After signing</div>
+      <div style="background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 10px; padding: 12px 16px; font-size: 15px"><strong>Signed</strong> by Mara Ellison on [date]. A copy of what was signed is kept with Hartline Remodeling's records.</div>
+      <div style="font-size: 14px; color: #555555">In the app, CO 7 shows "Signed: Mara Ellison, [date and time] (online)" and can go on the next pay app. The other way to approve it is a signed paper copy on the job record; a bare "approve" button no longer exists.</div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
