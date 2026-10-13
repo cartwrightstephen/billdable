@@ -8,12 +8,20 @@
 </head>
 <body>
 <div id="app"></div>
-<button class="ai-badge" id="ai-badge" title="Talk to Billdable">✦</button>
-<div class="ai-panel" id="ai-panel">
-  <h3>Talk to Billdable</h3>
-  <p class="sub">Ask about a job, blockers, or draft a follow-up note. (Local rules — no external API.)</p>
-  <div id="ai-replies"></div>
-  <input type="text" id="ai-input" placeholder="e.g. What’s blocking Oak Street?" />
+<input type="file" id="file-input" multiple hidden accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.eml,.heic" />
+<button class="ai-badge" id="ai-badge" title="Ask Billdable" aria-label="Ask Billdable" aria-controls="ai-panel" aria-expanded="false">?</button>
+<div class="ai-panel" id="ai-panel" role="dialog" aria-label="Ask Billdable">
+  <div class="ai-head">
+    <div><h3>Ask Billdable</h3><p class="sub">Prepared answers and your own job data. Not AI.</p></div>
+    <button class="ai-close" id="ai-close" aria-label="Close">×</button>
+  </div>
+  <div id="ai-replies" class="ai-replies" aria-live="polite"></div>
+  <div id="ai-chips" class="ai-chips"></div>
+  <form id="ai-form" class="ai-form">
+    <input type="text" id="ai-input" placeholder="Ask anything, e.g. who owes me money?" autocomplete="off" aria-label="Your question" />
+    <button class="btn small" type="submit">Ask</button>
+  </form>
+  <p class="ai-note">Questions are saved so the Billdable team can add better answers.</p>
 </div>
 <script src="/app.js"></script>
 </body>

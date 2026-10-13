@@ -1,0 +1,477 @@
+"""Schedule of values: quantity x unit rate lines, plus overhead and profit.
+
+This is the way a trade sub bills (Stephen, Oct 12 call): each line is a
+quantity at a unit rate, overhead and profit goes on top, and each pay app
+bills the quantity completed since the last one, line by line, like an AIA
+G703 continuation sheet.
+
+Storage on the job:
+
+    job["sov"] = {
+        "op_bp": 1500,              # overhead and profit, basis points (15%)
+        "lines": [{
+            "id": "sov-1a2b3c", "item": "1", "description": "Rough-in",
+            "unit": "ea", "qty_milli": 400000, "rate_cents": 4500,
+            "scheduled_cents": 1800000, "done_milli": 120000,
+            "co_id": None,          # set on lines added by an approved CO
+        }],
+    }
+
+Quantities are stored in thousandths so 12.5 units is exact. Lump-sum lines
+are unit "LS" with quantity 1; their progress is a fraction of 1 (0.35 = 35%).
+Overhead and profit applies to the base contract lines only. Change-order
+lines are added when a CO is approved, at the CO amount, which already
+carries its markup.
+
+Every amount is whole cents and every rounding is half-up on integers, so the
+browser can repeat the arithmetic exactly.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import re
+import secrets
+from decimal import Decimal, DecimalException
+from typing import Any
+
+MAX_LINES = 300
+MAX_OP_BP = 5000  # 50%
+MAX_QTY_MILLI = 1_000_000_000_000  # one billion units
+MAX_RATE_CENTS = 10_000_000_000  # $100,000,000
+MAX_CELL = 60  # characters read from one pasted cell
+MAX_CELLS = 30  # cells read from one pasted row
+PLAIN_NUMBER_RE = re.compile(r"^-?(?:\d{1,15}(?:\.\d{0,6})?|\.\d{1,6})$")
+LIVE_STATUSES = {"draft", "awaiting_approval", "sent", "approved", "partial", "paid"}
+
+
+class SovError(ValueError):
+    pass
+
+
+# ---------- numbers ----------
+
+def _decimal(value: Any, what: str) -> Decimal:
+    if isinstance(value, bool) or value is None:
+        raise SovError(f"{what} is missing.")
+    text = str(value)[:40].strip().replace(",", "").replace("$", "").replace(" ", "")
+    if text.endswith("%"):
+        text = text[:-1]
+    if not text:
+        raise SovError(f"{what} is missing.")
+    # Plain decimals only: no exponents ("1e9999"), no infinities, nothing long.
+    # Anything else is refused before Decimal sees it, so no input costs real CPU.
+    if len(str(value)) > 40 or not PLAIN_NUMBER_RE.match(text):
+        raise SovError(f"{what} must be a plain number, not {str(value)[:30]!r}.")
+    try:
+        return Decimal(text)
+    except DecimalException:
+        raise SovError(f"{what} must be a number.")
+
+
+def to_milli(value: Any, what: str = "Quantity") -> int:
+    """'12.5' -> 12500. Up to three decimals."""
+    number = _decimal(value, what) * 1000
+    if number != number.to_integral_value():
+        raise SovError(f"{what} can have at most three decimals.")
+    if abs(number) > MAX_QTY_MILLI:
+        raise SovError(f"{what} is too large.")
+    return int(number)
+
+
+def to_cents(value: Any, what: str = "Rate") -> int:
+    """'$1,234.50' -> 123450. Up to two decimals."""
+    number = _decimal(value, what) * 100
+    if number != number.to_integral_value():
+        raise SovError(f"{what} can have at most two decimals (cents).")
+    if abs(number) > MAX_RATE_CENTS:
+        raise SovError(f"{what} is too large.")
+    return int(number)
+
+
+def to_bp(value: Any) -> int:
+    """'15' or '15%' -> 1500 basis points. Up to two decimals."""
+    if value in (None, ""):
+        return 0
+    number = _decimal(value, "Overhead and profit") * 100
+    if number != number.to_integral_value():
+        raise SovError("Overhead and profit can have at most two decimals.")
+    bp = int(number)
+    if bp < 0 or bp > MAX_OP_BP:
+        raise SovError("Overhead and profit must be between 0% and 50%.")
+    return bp
+
+
+def extend(qty_milli: int, rate_cents: int) -> int:
+    """Quantity x rate in cents, rounded half-up."""
+    return (qty_milli * rate_cents + 500) // 1000
+
+
+def markup(base_cents: int, op_bp: int) -> int:
+    return (base_cents * op_bp + 5000) // 10000
+
+
+def fmt_qty(milli: int) -> str:
+    whole, frac = divmod(int(milli), 1000)
+    return f"{whole:,}" if not frac else f"{whole:,}.{frac:03d}".rstrip("0")
+
+
+# ---------- reading the schedule ----------
+
+def lines(job: dict[str, Any]) -> list[dict[str, Any]]:
+    return (job.get("sov") or {}).get("lines") or []
+
+
+def has_sov(job: dict[str, Any]) -> bool:
+    return any(not line.get("co_id") for line in lines(job))
+
+
+def op_bp(job: dict[str, Any]) -> int:
+    return int((job.get("sov") or {}).get("op_bp") or 0)
+
+
+def line_to_date(line: dict[str, Any]) -> int:
+    if line["done_milli"] >= line["qty_milli"]:
+        return line["scheduled_cents"]
+    return extend(line["done_milli"], line["rate_cents"])
+
+
+def totals(job: dict[str, Any]) -> dict[str, int]:
+    base = [l for l in lines(job) if not l.get("co_id")]
+    cos = [l for l in lines(job) if l.get("co_id")]
+    bp = op_bp(job)
+    base_scheduled = sum(l["scheduled_cents"] for l in base)
+    base_to_date = sum(line_to_date(l) for l in base)
+    co_scheduled = sum(l["scheduled_cents"] for l in cos)
+    co_to_date = sum(line_to_date(l) for l in cos)
+    op_scheduled = markup(base_scheduled, bp)
+    op_to_date = markup(base_to_date, bp)
+    return {
+        "base_scheduled_cents": base_scheduled,
+        "op_scheduled_cents": op_scheduled,
+        "contract_cents": base_scheduled + op_scheduled,
+        "co_scheduled_cents": co_scheduled,
+        "scheduled_cents": base_scheduled + op_scheduled + co_scheduled,
+        "base_to_date_cents": base_to_date,
+        "op_to_date_cents": op_to_date,
+        "co_to_date_cents": co_to_date,
+        "to_date_cents": base_to_date + op_to_date + co_to_date,
+    }
+
+
+def live_invoices(job: dict[str, Any]) -> list[dict[str, Any]]:
+    return [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE_STATUSES]
+
+
+def billed(job: dict[str, Any]) -> dict[str, Any]:
+    """What earlier pay apps (sent or drafted, not void) already billed, per line."""
+    by_line: dict[str, int] = {}
+    qty_by_line: dict[str, int] = {}
+    op = 0
+    co_line = {l["co_id"]: l["id"] for l in lines(job) if l.get("co_id")}
+    for inv in live_invoices(job):
+        for entry in inv.get("sov_lines", []):
+            by_line[entry["line_id"]] = by_line.get(entry["line_id"], 0) + entry["amount_cents"]
+            qty_by_line[entry["line_id"]] = max(qty_by_line.get(entry["line_id"], 0), entry["qty_milli_to_date"])
+        op += inv.get("op_cents", 0)
+        # An unsigned CO billed before it was approved counts against its line.
+        for entry in inv.get("lines", []):
+            line_id = co_line.get(entry.get("co_id"))
+            if line_id:
+                by_line[line_id] = by_line.get(line_id, 0) + entry["amount_cents"]
+    return {"by_line": by_line, "qty_by_line": qty_by_line, "op_cents": op}
+
+
+def this_period(job: dict[str, Any]) -> dict[str, Any]:
+    """The pay-app lines for work completed since the last pay app."""
+    already = billed(job)
+    out, sheet = [], []
+    for line in lines(job):
+        to_date = line_to_date(line)
+        amount = to_date - already["by_line"].get(line["id"], 0)
+        previous_qty = already["qty_by_line"].get(line["id"], 0)
+        entry = {
+            "line_id": line["id"],
+            "item": line.get("item", ""),
+            "description": line["description"],
+            "unit": line["unit"],
+            "rate_cents": line["rate_cents"],
+            "scheduled_cents": line["scheduled_cents"],
+            "qty_milli_this": max(0, line["done_milli"] - previous_qty),
+            "qty_milli_to_date": line["done_milli"],
+            "qty_milli": line["qty_milli"],
+            "amount_cents": max(0, amount),
+            "to_date_cents": to_date,
+        }
+        # The continuation sheet lists every line, like a G703; only lines with new work are billed.
+        sheet.append(entry)
+        if amount > 0:
+            out.append(entry)
+    op_this = max(0, totals(job)["op_to_date_cents"] - already["op_cents"])
+    return {"lines": out, "sheet": sheet, "op_cents": op_this, "total_cents": sum(l["amount_cents"] for l in out) + op_this}
+
+
+def unbilled(job: dict[str, Any]) -> int:
+    return this_period(job)["total_cents"]
+
+
+def line_label(entry: dict[str, Any]) -> str:
+    item = f"{entry['item']}. " if entry.get("item") else ""
+    pct = (100 * entry["qty_milli_to_date"]) // entry["qty_milli"] if entry["qty_milli"] else 0
+    if entry["unit"].upper() == "LS" and entry["qty_milli"] == 1000:
+        return f"{item}{entry['description']} ({pct}% complete to date)"
+    return (
+        f"{item}{entry['description']}: {fmt_qty(entry['qty_milli_this'])} {entry['unit']} this period"
+        f" × ${entry['rate_cents'] / 100:,.2f} ({fmt_qty(entry['qty_milli_to_date'])} of {fmt_qty(entry['qty_milli'])}, {pct}% to date)"
+    )
+
+
+def continuation_sheet(job: dict[str, Any], invoice: dict[str, Any]) -> str:
+    """A plain-text G703-style table of an invoice's schedule-of-values lines."""
+    entries = invoice.get("sov_sheet") or invoice.get("sov_lines") or []
+    if not entries:
+        return ""
+    rows = [("Item", "Description", "Scheduled", "Previous", "This period", "To date", "%", "Balance")]
+    for e in entries:
+        previous = e["to_date_cents"] - e["amount_cents"]
+        pct = (100 * e["to_date_cents"]) // e["scheduled_cents"] if e["scheduled_cents"] else 0
+        rows.append((
+            e.get("item", ""),
+            e["description"][:40],
+            f"{e['scheduled_cents'] / 100:,.2f}",
+            f"{previous / 100:,.2f}",
+            f"{e['amount_cents'] / 100:,.2f}",
+            f"{e['to_date_cents'] / 100:,.2f}",
+            f"{pct}%",
+            f"{(e['scheduled_cents'] - e['to_date_cents']) / 100:,.2f}",
+        ))
+    widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+    text = []
+    for n, r in enumerate(rows):
+        text.append("  ".join(c.ljust(widths[i]) if i < 2 else c.rjust(widths[i]) for i, c in enumerate(r)).rstrip())
+        if n == 0:
+            text.append("-" * len(text[0]))
+    if invoice.get("op_cents"):
+        text.append(f"Overhead and profit {op_bp(job) / 100:g}% on this period's base work: {invoice['op_cents'] / 100:,.2f}")
+    return "\n".join(text)
+
+
+# ---------- building lines from input ----------
+
+def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[dict[str, Any]]:
+    """Validate lines sent by the editor. Keeps ids and progress of lines that already exist."""
+    if not isinstance(raw_lines, list):
+        raise SovError("Lines must be a list.")
+    if len(raw_lines) > MAX_LINES:
+        raise SovError(f"A schedule can have at most {MAX_LINES} lines.")
+    old = {l["id"]: l for l in existing if not l.get("co_id")}
+    # Ids must be unique: a repeated id would merge two lines' billing and under-bill the job.
+    used = {l["id"] for l in existing if l.get("co_id")}
+    out, errors = [], []
+    for n, raw in enumerate(raw_lines, start=1):
+        if not isinstance(raw, dict):
+            errors.append(f"Line {n} is not a line.")
+            continue
+        try:
+            description = str(raw.get("description") or "").strip()[:200]
+            if not description:
+                raise SovError("needs a description")
+            unit = str(raw.get("unit") or "").strip()[:12]
+            qty = to_milli(raw.get("quantity", 1) if raw.get("quantity") not in (None, "") else 1, "quantity")
+            rate = to_cents(raw.get("rate"), "rate")
+            if qty <= 0:
+                raise SovError("quantity must be more than zero")
+            if rate <= 0:
+                raise SovError("rate must be more than zero")
+            if not unit:
+                unit = "LS" if qty == 1000 else "ea"
+            scheduled = extend(qty, rate)
+            if scheduled > 10_000_000_000:
+                raise SovError("is more than $100,000,000")
+        except SovError as exc:
+            errors.append(f"Line {n} ({str(raw.get('description') or '').strip()[:40] or 'no description'}): {str(exc).rstrip('.')}.")
+            continue
+        prior = old.get(raw.get("id")) if isinstance(raw.get("id"), str) else None
+        if prior and prior["id"] in used:
+            prior = None  # the same id sent twice: the second copy is a new line
+        line_id = prior["id"] if prior else new_id()
+        while line_id in used or (not prior and line_id in old):
+            line_id = new_id()
+        used.add(line_id)
+        out.append({
+            "id": line_id,
+            "item": str(raw.get("item") or "").strip()[:12] or str(n),
+            "description": description,
+            "unit": unit,
+            "qty_milli": qty,
+            "rate_cents": rate,
+            "scheduled_cents": scheduled,
+            "done_milli": min(prior["done_milli"], qty) if prior else 0,
+            "co_id": None,
+        })
+    if errors:
+        raise SovError(" ".join(errors[:10]) + (f" And {len(errors) - 10} more." if len(errors) > 10 else ""))
+    return out
+
+
+# ---------- pasting from a spreadsheet ----------
+
+HEADER_WORDS = {
+    "description": ("description", "desc", "item description", "scope", "work", "task", "line item", "name"),
+    "item": ("item", "item no", "item #", "no", "#", "line", "code", "cost code"),
+    "quantity": ("qty", "quantity", "quantities", "count", "units"),
+    "unit": ("unit", "uom", "um", "u/m", "unit of measure"),
+    "rate": ("rate", "unit rate", "unit price", "price", "unit cost", "cost", "each"),
+    "amount": ("amount", "total", "value", "scheduled value", "extended", "ext", "line total", "sum"),
+}
+NUMBER_RE = re.compile(r"^\(?-?\$?(?:\d[\d,]{0,20})?(?:\.\d{1,6})?\)?%?$")
+QTY_UNIT_RE = re.compile(r"^(\d[\d,]*(?:\.\d+)?)\s+([A-Za-z]{1,6}\.?)$")
+ITEM_RE = re.compile(r"^[A-Za-z]?\d+(\.\d+)*[A-Za-z]?$")
+TOTAL_RE = re.compile(r"^(sub\s*-?\s*total|grand\s+total|total|totals|overhead|o\s*&\s*p|profit|markup|retainage)\b", re.I)
+
+
+def _split_rows(text: str) -> list[list[str]]:
+    # Bounded before any pattern runs: 2,000 lines of 2,000 characters, 30 cells of 200.
+    lines_in = [line[:2000] for line in text.splitlines()[:2000]]
+    rows = []
+    if any("\t" in line for line in lines_in):
+        # Copied from Excel or Google Sheets.
+        rows = list(csv.reader(lines_in, delimiter="\t"))
+    else:
+        for line in lines_in:
+            if re.search(r"\S {2,}\S", line.strip()):
+                # Columns separated by runs of spaces (copied from a PDF); commas are thousands separators.
+                rows.append(re.split(r" {2,}", line.strip()))
+            else:
+                rows.extend(_join_dollars(row) for row in csv.reader([line]))
+    rows = [[c.strip()[:200] for c in row[:MAX_CELLS]] for row in rows]
+    return [r for r in rows if any(c for c in r)]
+
+
+def _join_dollars(row: list[str]) -> list[str]:
+    """In a typed comma row, "$12,500.00" splits into "$12" and "500.00"; put it back together."""
+    out: list[str] = []
+    for cell in row:
+        if out and re.match(r"^\s*\$\d{1,3}(,\d{3})*$", out[-1]) and re.match(r"^\d{3}(\.\d{1,2})?$", cell):
+            out[-1] = out[-1] + "," + cell
+        else:
+            out.append(cell)
+    return out
+
+
+def _is_number(cell: str) -> bool:
+    cell = cell.replace(" ", "")
+    return 0 < len(cell) <= MAX_CELL and any(c.isdigit() for c in cell) and bool(NUMBER_RE.match(cell))
+
+
+def _header_map(row: list[str]) -> dict[str, int] | None:
+    found: dict[str, int] = {}
+    for i, cell in enumerate(row):
+        key = re.sub(r"[^a-z#/& ]", "", cell.lower()).strip()
+        for field, words in HEADER_WORDS.items():
+            if key in words and field not in found:
+                found[field] = i
+                break
+    if "description" in found and ({"quantity", "rate", "amount"} & set(found)):
+        return found
+    return None
+
+
+def parse_rows(text: str) -> dict[str, Any]:
+    """Read schedule-of-values rows pasted from Excel, Google Sheets, a CSV or a PDF.
+
+    With a header row, columns are taken by name. Without one: the first text
+    cell is the description, a short text cell is the unit, and the numbers are
+    quantity and rate (two numbers), quantity, rate and amount (three), or a
+    lump-sum amount (one). Total and markup rows are skipped and reported.
+    """
+    rows = _split_rows(text or "")
+    lines_out: list[dict[str, str]] = []
+    warnings: list[str] = []
+    header = _header_map(rows[0]) if rows else None
+    body = rows[1:] if header else rows
+    op_hint = ""
+    for n, row in enumerate(body, start=2 if header else 1):
+        if header:
+            cell = lambda f: row[header[f]].strip() if f in header and header[f] < len(row) else ""
+            description, unit, item = cell("description"), cell("unit"), cell("item")
+            qty, rate, amount = cell("quantity"), cell("rate"), cell("amount")
+        else:
+            # "1,200 lf" in one cell is a quantity and a unit.
+            split_row: list[str] = []
+            for c in row:
+                m = QTY_UNIT_RE.match(c)
+                split_row.extend([m.group(1), m.group(2)] if m else [c])
+            row = split_row
+            texts = [(i, c) for i, c in enumerate(row) if c and not _is_number(c)]
+            numbers = [c for c in row if _is_number(c)]
+            item = ""
+            if row and ITEM_RE.match(row[0]) and len(texts) >= 1 and texts[0][0] > 0:
+                item = row[0]
+                numbers = [c for c in row[1:] if _is_number(c)]
+            description = texts[0][1] if texts else ""
+            unit = next((c for _, c in texts[1:] if len(c) <= 8), "")
+            qty = rate = amount = ""
+            if len(numbers) == 1:
+                amount = numbers[0]
+            elif len(numbers) == 2:
+                qty, rate = numbers
+            elif len(numbers) >= 3:
+                qty, rate, amount = numbers[0], numbers[1], numbers[2]
+        if not description:
+            if any(row):
+                warnings.append(f"Row {n} skipped: no description.")
+            continue
+        if TOTAL_RE.match(description):
+            pct = re.search(r"(\d{1,3}(?:\.\d{1,2})?)\s*%", " ".join(row))
+            if pct and re.match(r"^(overhead|o\s*&\s*p|profit|markup)", description, re.I):
+                op_hint = pct.group(1)
+                warnings.append(f"Row {n} ({description}) read as overhead and profit of {op_hint}%; check it below.")
+            else:
+                warnings.append(f"Row {n} ({description}) looks like a total or markup row and was skipped.")
+            continue
+        try:
+            if qty and rate:
+                q, r = to_milli(qty, "quantity"), to_cents(rate, "rate")
+                if amount:
+                    a = to_cents(amount, "amount")
+                    if abs(extend(q, r) - a) > 100:
+                        warnings.append(
+                            f"Row {n} ({description}): quantity × rate is ${extend(q, r) / 100:,.2f}, "
+                            f"but the row says ${a / 100:,.2f}. Kept quantity and rate; check it."
+                        )
+            elif qty and amount and to_milli(qty, "quantity") > 0 and (
+                to_cents(amount, "amount") * 1000 % to_milli(qty, "quantity") == 0
+            ):
+                # Quantity and amount but no rate: the rate is amount / quantity when that is whole cents.
+                q = to_milli(qty, "quantity")
+                r = to_cents(amount, "amount") * 1000 // q
+            elif amount or rate:
+                q, r = 1000, to_cents(amount or rate, "amount")
+                unit = unit or "LS"
+                if qty:
+                    warnings.append(f"Row {n} ({description}): amount doesn't divide evenly by the quantity, so it was read as a lump sum.")
+            elif qty:
+                warnings.append(f"Row {n} ({description}) has a quantity but no rate or amount; skipped.")
+                continue
+            else:
+                warnings.append(f"Row {n} ({description}) has no numbers; skipped.")
+                continue
+        except SovError as exc:
+            warnings.append(f"Row {n} ({description}): {exc}")
+            continue
+        if q <= 0 or r <= 0:
+            warnings.append(f"Row {n} ({description}) has a zero or negative number; skipped.")
+            continue
+        lines_out.append({
+            "item": item[:12],
+            "description": description[:200],
+            "unit": unit[:12] or ("LS" if q == 1000 else "ea"),
+            "quantity": fmt_qty(q).replace(",", ""),
+            "rate": f"{r / 100:.2f}",
+        })
+        if len(lines_out) >= MAX_LINES:
+            warnings.append(f"Stopped at {MAX_LINES} lines.")
+            break
+    return {"lines": lines_out, "warnings": warnings, "op_pct": op_hint, "header": bool(header)}

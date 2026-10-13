@@ -2,8 +2,29 @@ services:
   - type: web
     name: billdable
     runtime: python
+    # A persistent disk needs a paid instance; on the free plan every deploy erases all data.
+    plan: starter
+    branch: main
     buildCommand: ""
     startCommand: python3 server.py
+    healthCheckPath: /healthz
+    disk:
+      name: billdable-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
-        value: "3.12"
+        value: "3.12.7"
+      - key: BILLDABLE_DATA_DIR
+        value: /var/data
+      # Production refuses to start without the settings below and turns the demo account off.
+      - key: BILLDABLE_ENV
+        value: production
+      - key: COOKIE_SECURE
+        value: "1"
+      # The site's https:// address; set it in the Render dashboard.
+      - key: BILLDABLE_URL
+        sync: false
+      # Set to 1 only after a deploy has been seen to keep accounts and data.
+      - key: BILLDABLE_DATA_PERSISTENT
+        sync: false

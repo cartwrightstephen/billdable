@@ -1,22 +1,48 @@
 """File-backed auth for Billdable.
 
-One user belongs to one company. Sessions are opaque tokens stored in a cookie.
-Passwords are hashed with PBKDF2. No external services.
+A company has one or more users; each user belongs to one company and is an
+owner or a member. Sessions are opaque tokens stored in a cookie; only their
+SHA-256 is stored, so a copy of auth.json signs nobody in. Passwords are hashed
+with PBKDF2. Password-reset, email-verification and invite links
+carry single-use tokens; only their SHA-256 is stored. No external services.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import threading
+import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent
-AUTH_PATH = ROOT / "data" / "auth.json"
+import storage
+
+AUTH_PATH = storage.DATA_DIR / "auth.json"
 LOCK = threading.Lock()
+
+MIN_PASSWORD = 10
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Login throttling: after LOGIN_MAX_FAILURES wrong passwords for one email
+# inside LOGIN_WINDOW_SECONDS, further attempts are refused until the window passes.
+LOGIN_MAX_FAILURES = 5
+LOGIN_WINDOW_SECONDS = 15 * 60
+_FAILURES: dict[str, list[float]] = {}
+
+
+class RateLimited(Exception):
+    pass
+
+ROLES = ("owner", "member")
+TOKEN_HOURS = {"reset": 1, "verify": 72, "invite": 7 * 24}
+RESET_MAX_PER_HOUR = 3
+_RESETS: dict[str, list[float]] = {}
+
+
+class AuthError(ValueError):
+    pass
 
 DEMO_EMAIL = "owner@hartline.example"
 DEMO_PASSWORD = "demo"
@@ -40,13 +66,19 @@ def _hash(password: str, salt: str | None = None) -> tuple[str, str]:
 
 def _load() -> dict[str, Any]:
     if AUTH_PATH.exists():
-        return json.loads(AUTH_PATH.read_text())
-    return {"users": [], "sessions": {}}
+        data = json.loads(AUTH_PATH.read_text())
+    else:
+        data = {"users": [], "sessions": {}, "sessions_hashed": True}
+    data.setdefault("tokens", {})
+    if not data.get("sessions_hashed"):
+        # Files written before session hashing hold raw tokens as keys; hash them in place.
+        data["sessions"] = {_digest(k): v for k, v in data.get("sessions", {}).items()}
+        data["sessions_hashed"] = True
+    return data
 
 
 def _save(data: dict[str, Any]) -> None:
-    AUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
-    AUTH_PATH.write_text(json.dumps(data, indent=2))
+    storage.write_json(AUTH_PATH, data)
 
 
 def has_users() -> bool:
@@ -70,28 +102,47 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "name": user["name"],
         "company_id": user["company_id"],
         "role": user.get("role", "owner"),
+        "email_verified": bool(user.get("email_verified")),
     }
 
 
-def create_user(email: str, password: str, name: str, company_id: str, role: str = "owner") -> dict[str, Any]:
+def create_user(
+    email: str,
+    password: str,
+    name: str,
+    company_id: str,
+    role: str = "owner",
+    enforce_policy: bool = True,
+    terms_version: str | None = None,
+) -> dict[str, Any]:
+    """Create a user. enforce_policy=False is only for the built-in demo account."""
+    if not isinstance(email, str) or not isinstance(password, str) or not isinstance(name, str):
+        raise ValueError("Email, password and name must be text.")
     email = email.strip().lower()
-    if not email or "@" not in email:
+    if not EMAIL_RE.match(email):
         raise ValueError("A real email is required.")
-    if len(password) < 4:
-        raise ValueError("Password must be at least 4 characters.")
+    if enforce_policy and len(password) < MIN_PASSWORD:
+        raise ValueError(f"Password must be at least {MIN_PASSWORD} characters.")
+    if not password:
+        raise ValueError("Password is required.")
     if not name.strip():
         raise ValueError("Name is required.")
+    if role not in ROLES:
+        raise ValueError("Role must be owner or member.")
     salt, digest = _hash(password)
     user = {
         "id": "user-" + secrets.token_hex(4),
         "email": email,
-        "name": name.strip(),
+        "name": name.strip()[:120],
         "company_id": company_id,
         "role": role,
         "salt": salt,
         "password_hash": digest,
         "created_at": _iso(_utcnow()),
     }
+    if terms_version:
+        user["terms_version"] = terms_version
+        user["terms_accepted_at"] = _iso(_utcnow())
     with LOCK:
         data = _load()
         if any(u["email"] == email for u in data["users"]):
@@ -102,16 +153,34 @@ def create_user(email: str, password: str, name: str, company_id: str, role: str
 
 
 def verify_login(email: str, password: str) -> dict[str, Any] | None:
+    """Return the user, None on a wrong email or password, or raise RateLimited."""
+    if not isinstance(email, str) or not isinstance(password, str):
+        return None
     email = email.strip().lower()
     with LOCK:
-        data = _load()
-        user = next((u for u in data["users"] if u["email"] == email), None)
-        if not user:
-            return None
+        now = time.monotonic()
+        if len(_FAILURES) > 10_000:
+            # Bound memory: forget emails with no failure inside the window.
+            for key in [k for k, v in _FAILURES.items() if not v or now - v[-1] >= LOGIN_WINDOW_SECONDS]:
+                _FAILURES.pop(key, None)
+        recent = [t for t in _FAILURES.get(email, []) if now - t < LOGIN_WINDOW_SECONDS]
+        _FAILURES[email] = recent
+        if len(recent) >= LOGIN_MAX_FAILURES:
+            raise RateLimited("Too many wrong passwords for this email. Try again in 15 minutes.")
+        user = next((u for u in _load()["users"] if u["email"] == email), None)
+    # Hash outside the lock so one slow login does not hold up every session check.
+    ok = False
+    if user:
         _, digest = _hash(password, user["salt"])
-        if not secrets.compare_digest(digest, user["password_hash"]):
+        ok = secrets.compare_digest(digest, user["password_hash"])
+    else:
+        _hash(password, "0" * 32)  # same work for an unknown email, so timing doesn't reveal which emails exist
+    with LOCK:
+        if not ok:
+            _FAILURES.setdefault(email, []).append(now)
             return None
-        return _public(user)
+        _FAILURES.pop(email, None)
+    return _public(user)
 
 
 def create_session(user: dict[str, Any]) -> str:
@@ -119,15 +188,10 @@ def create_session(user: dict[str, Any]) -> str:
     expires = _utcnow() + timedelta(days=SESSION_DAYS)
     with LOCK:
         data = _load()
-        data["sessions"][token] = {
-            "user_id": user["id"],
-            "company_id": user["company_id"],
-            "expires_at": _iso(expires),
-        }
         # Drop expired sessions opportunistically.
         now = _iso(_utcnow())
         data["sessions"] = {k: v for k, v in data["sessions"].items() if v["expires_at"] > now}
-        data["sessions"][token] = {
+        data["sessions"][_digest(token)] = {
             "user_id": user["id"],
             "company_id": user["company_id"],
             "expires_at": _iso(expires),
@@ -137,15 +201,16 @@ def create_session(user: dict[str, Any]) -> str:
 
 
 def session_user(token: str | None) -> dict[str, Any] | None:
-    if not token:
+    if not token or not isinstance(token, str) or len(token) > 200:
         return None
+    key = _digest(token)
     with LOCK:
         data = _load()
-        entry = data["sessions"].get(token)
+        entry = data["sessions"].get(key)
         if not entry:
             return None
         if entry["expires_at"] <= _iso(_utcnow()):
-            data["sessions"].pop(token, None)
+            data["sessions"].pop(key, None)
             _save(data)
             return None
         user = next((u for u in data["users"] if u["id"] == entry["user_id"]), None)
@@ -159,9 +224,342 @@ def destroy_session(token: str | None) -> None:
         return
     with LOCK:
         data = _load()
-        data["sessions"].pop(token, None)
+        data["sessions"].pop(_digest(token), None)
         _save(data)
 
 
 def demo_credentials() -> dict[str, str]:
     return {"email": DEMO_EMAIL, "password": DEMO_PASSWORD, "company_id": DEMO_COMPANY_ID}
+
+
+# ---------- single-use tokens (reset, verify, invite) ----------
+
+def _digest(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _prune_tokens(data: dict[str, Any]) -> None:
+    now = _iso(_utcnow())
+    data["tokens"] = {k: v for k, v in data["tokens"].items() if v.get("expires_at", "") > now}
+
+
+def _new_token(data: dict[str, Any], kind: str, **fields: Any) -> str:
+    raw = secrets.token_urlsafe(32)
+    _prune_tokens(data)
+    data["tokens"][_digest(raw)] = {
+        "kind": kind,
+        "id": f"{kind}-" + secrets.token_hex(4),
+        "created_at": _iso(_utcnow()),
+        "expires_at": _iso(_utcnow() + timedelta(hours=TOKEN_HOURS[kind])),
+        **fields,
+    }
+    return raw
+
+
+def _find_token(data: dict[str, Any], kind: str, raw: Any) -> tuple[str, dict[str, Any]] | tuple[None, None]:
+    if not isinstance(raw, str) or not raw or len(raw) > 200:
+        return None, None
+    key = _digest(raw)
+    entry = data["tokens"].get(key)
+    if not entry or entry.get("kind") != kind or entry.get("expires_at", "") <= _iso(_utcnow()):
+        return None, None
+    return key, entry
+
+
+def _check_password(password: Any) -> str:
+    if not isinstance(password, str) or len(password) < MIN_PASSWORD:
+        raise AuthError(f"Password must be at least {MIN_PASSWORD} characters.")
+    if len(password) > 1000:
+        raise AuthError("Password is too long.")
+    return password
+
+
+def _end_sessions(data: dict[str, Any], user_id: str) -> None:
+    data["sessions"] = {k: v for k, v in data["sessions"].items() if v.get("user_id") != user_id}
+
+
+def password_reset_token(email: Any) -> tuple[str, dict[str, Any]] | None:
+    """A reset token for this email, or None when there is no such account (or too many requests).
+    The caller answers the same way either way, so nobody learns which emails have accounts."""
+    if not isinstance(email, str):
+        return None
+    email = email.strip().lower()
+    now = time.monotonic()
+    with LOCK:
+        recent = [t for t in _RESETS.get(email, []) if now - t < 3600]
+        if len(recent) >= RESET_MAX_PER_HOUR:
+            _RESETS[email] = recent
+            return None
+        _RESETS[email] = recent + [now]
+        if len(_RESETS) > 10_000:
+            for key in [k for k, v in _RESETS.items() if not v or now - v[-1] >= 3600]:
+                _RESETS.pop(key, None)
+            if len(_RESETS) > 50_000:  # still too many fresh entries: drop the lot rather than grow
+                _RESETS.clear()
+        data = _load()
+        user = next((u for u in data["users"] if u["email"] == email), None)
+        if not user or user["company_id"] == DEMO_COMPANY_ID:
+            return None
+        # Older unexpired links stay valid (at most 3 exist, by the rate limit), so someone
+        # requesting resets for another person's email can't cancel the link they're using.
+        raw = _new_token(data, "reset", user_id=user["id"])
+        _save(data)
+        return raw, _public(user)
+
+
+def reset_password(raw: Any, password: Any) -> dict[str, Any]:
+    _check_password(password)
+    with LOCK:
+        data = _load()
+        key, entry = _find_token(data, "reset", raw)
+        if not key:
+            raise AuthError("This reset link is invalid or has expired. Ask for a new one.")
+        user = next((u for u in data["users"] if u["id"] == entry["user_id"]), None)
+        if not user:
+            raise AuthError("This account no longer exists.")
+    salt, digest = _hash(password)  # outside the lock: hashing is slow on purpose
+    with LOCK:
+        data = _load()
+        if _digest(raw) not in data["tokens"]:
+            raise AuthError("This reset link has already been used.")
+        user = next(u for u in data["users"] if u["id"] == entry["user_id"])
+        # Every reset link for this account is used up once one of them works.
+        data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v["kind"] == "reset" and v.get("user_id") == user["id"])}
+        user["salt"], user["password_hash"] = salt, digest
+        user["email_verified"] = True  # they received the link at this address
+        _end_sessions(data, user["id"])  # everywhere else is signed out
+        _save(data)
+        _FAILURES.pop(user["email"], None)
+        return _public(user)
+
+
+def change_password(user_id: str, current: Any, new: Any, keep_session: str | None = None) -> None:
+    """Change a password. Other sessions end; the one making the change can stay."""
+    _check_password(new)
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["id"] == user_id), None)
+        if not user:
+            raise AuthError("Current password is wrong.")
+        if user["company_id"] == DEMO_COMPANY_ID:
+            raise AuthError("The demo account's password can't be changed.")
+        now = time.monotonic()
+        recent = [t for t in _FAILURES.get(user["email"], []) if now - t < LOGIN_WINDOW_SECONDS]
+        if len(recent) >= LOGIN_MAX_FAILURES:
+            raise RateLimited("Too many wrong passwords. Try again in 15 minutes.")
+    ok = isinstance(current, str) and secrets.compare_digest(_hash(current, user["salt"])[1], user["password_hash"])
+    if not ok:
+        with LOCK:
+            _FAILURES.setdefault(user["email"], []).append(time.monotonic())
+        raise AuthError("Current password is wrong.")
+    salt, new_digest = _hash(new)
+    keep = _digest(keep_session) if keep_session else None
+    with LOCK:
+        data = _load()
+        user = next(u for u in data["users"] if u["id"] == user_id)
+        user["salt"], user["password_hash"] = salt, new_digest
+        data["sessions"] = {k: v for k, v in data["sessions"].items() if v.get("user_id") != user_id or k == keep}
+        _save(data)
+
+
+def verify_email_token(user_id: str) -> str:
+    with LOCK:
+        data = _load()
+        data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v["kind"] == "verify" and v.get("user_id") == user_id)}
+        raw = _new_token(data, "verify", user_id=user_id)
+        _save(data)
+        return raw
+
+
+def verify_email(raw: Any) -> dict[str, Any]:
+    with LOCK:
+        data = _load()
+        key, entry = _find_token(data, "verify", raw)
+        if not key:
+            raise AuthError("This verification link is invalid or has expired. Send a new one from the Team & account page.")
+        data["tokens"].pop(key, None)
+        user = next((u for u in data["users"] if u["id"] == entry["user_id"]), None)
+        if not user:
+            raise AuthError("This account no longer exists.")
+        user["email_verified"] = True
+        user["verified_at"] = _iso(_utcnow())
+        _save(data)
+        return _public(user)
+
+
+# ---------- team ----------
+
+def _require_owner(data: dict[str, Any], company_id: str, actor_id: str) -> dict[str, Any]:
+    """Checked under LOCK at the moment of the change, so a person removed or demoted a moment
+    ago can't finish a request they started while they were still an owner."""
+    actor = next((u for u in data["users"] if u["id"] == actor_id and u["company_id"] == company_id), None)
+    if not actor or actor.get("role", "owner") != "owner":
+        raise AuthError("Only an owner of this company can do that.")
+    return actor
+
+
+def require_owner(company_id: str, actor_id: str) -> None:
+    with LOCK:
+        _require_owner(_load(), company_id, actor_id)
+
+
+def team(company_id: str) -> dict[str, Any]:
+    with LOCK:
+        data = _load()
+        _prune_tokens(data)
+        users = [
+            {**_public(u), "created_at": u.get("created_at", "")}
+            for u in data["users"] if u["company_id"] == company_id
+        ]
+        invites = [
+            {"id": v["id"], "email": v["email"], "role": v["role"], "invited_by": v.get("invited_by", ""),
+             "created_at": v["created_at"], "expires_at": v["expires_at"]}
+            for v in data["tokens"].values() if v["kind"] == "invite" and v.get("company_id") == company_id
+        ]
+    return {"users": users, "invites": invites}
+
+
+def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor_id: str = "") -> tuple[str, dict[str, Any]]:
+    if not isinstance(email, str) or not EMAIL_RE.match(email.strip()):
+        raise AuthError("Enter the person's email address.")
+    if role not in ROLES:
+        raise AuthError("Role must be owner or member.")
+    email = email.strip().lower()
+    with LOCK:
+        data = _load()
+        _require_owner(data, company_id, actor_id)
+        if any(u["email"] == email for u in data["users"]):
+            raise AuthError("That email already has a Billdable account. Each person belongs to one company.")
+        pending = [v for v in data["tokens"].values() if v["kind"] == "invite" and v.get("company_id") == company_id]
+        if len(pending) >= 20:
+            raise AuthError("Too many open invites. Revoke some first.")
+        # Inviting the same address again replaces the older invite.
+        data["tokens"] = {k: v for k, v in data["tokens"].items()
+                          if not (v["kind"] == "invite" and v.get("company_id") == company_id and v.get("email") == email)}
+        raw = _new_token(data, "invite", company_id=company_id, email=email, role=role, invited_by=invited_by, invited_by_id=actor_id)
+        entry = data["tokens"][_digest(raw)]
+        _save(data)
+        return raw, {"id": entry["id"], "email": email, "role": role}
+
+
+def invite_info(raw: Any) -> dict[str, Any] | None:
+    with LOCK:
+        _, entry = _find_token(_load(), "invite", raw)
+    return {"email": entry["email"], "company_id": entry["company_id"], "role": entry["role"],
+            "invited_by": entry.get("invited_by", "")} if entry else None
+
+
+def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None = None) -> dict[str, Any]:
+    _check_password(password)
+    if not isinstance(name, str) or not name.strip():
+        raise AuthError("Your name is required.")
+    with LOCK:
+        key, entry = _find_token(_load(), "invite", raw)
+    if not key:
+        raise AuthError("This invite is invalid or has expired. Ask for a new one.")
+    salt, digest = _hash(password)
+    with LOCK:
+        data = _load()
+        if key not in data["tokens"]:
+            raise AuthError("This invite has already been used.")
+        if any(u["email"] == entry["email"] for u in data["users"]):
+            raise AuthError("That email already has a Billdable account.")
+        data["tokens"].pop(key, None)
+        user = {
+            "id": "user-" + secrets.token_hex(4),
+            "email": entry["email"],
+            "name": name.strip()[:120],
+            "company_id": entry["company_id"],
+            "role": entry["role"],
+            "salt": salt,
+            "password_hash": digest,
+            "created_at": _iso(_utcnow()),
+            "invited_by": entry.get("invited_by", ""),
+        }
+        if terms_version:
+            user["terms_version"] = terms_version
+            user["terms_accepted_at"] = _iso(_utcnow())
+        data["users"].append(user)
+        _save(data)
+        return _public(user)
+
+
+def revoke_invite(company_id: str, invite_id: str, actor_id: str = "") -> None:
+    with LOCK:
+        data = _load()
+        _require_owner(data, company_id, actor_id)
+        before = len(data["tokens"])
+        data["tokens"] = {k: v for k, v in data["tokens"].items()
+                          if not (v["kind"] == "invite" and v.get("company_id") == company_id and v["id"] == invite_id)}
+        if len(data["tokens"]) == before:
+            raise AuthError("Invite not found.")
+        _save(data)
+
+
+def _owners(data: dict[str, Any], company_id: str) -> list[dict[str, Any]]:
+    return [u for u in data["users"] if u["company_id"] == company_id and u.get("role", "owner") == "owner"]
+
+
+def _drop_invites_by(data: dict[str, Any], user_id: str) -> None:
+    """Invites someone sent stop working when they lose owner rights."""
+    data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v["kind"] == "invite" and v.get("invited_by_id") == user_id)}
+
+
+def set_role(company_id: str, user_id: str, role: Any, actor_id: str = "") -> dict[str, Any]:
+    if role not in ROLES:
+        raise AuthError("Role must be owner or member.")
+    with LOCK:
+        data = _load()
+        _require_owner(data, company_id, actor_id)
+        user = next((u for u in data["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
+        if not user:
+            raise AuthError("That person is not on this team.")
+        if role == "member" and user.get("role", "owner") == "owner" and len(_owners(data, company_id)) == 1:
+            raise AuthError("A company needs at least one owner. Make someone else an owner first.")
+        user["role"] = role
+        if role == "member":
+            _drop_invites_by(data, user_id)
+        _save(data)
+        return _public(user)
+
+
+def remove_user(company_id: str, user_id: str, actor_id: str = "") -> dict[str, Any]:
+    with LOCK:
+        data = _load()
+        _require_owner(data, company_id, actor_id)
+        user = next((u for u in data["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
+        if not user:
+            raise AuthError("That person is not on this team.")
+        if user.get("role", "owner") == "owner" and len(_owners(data, company_id)) == 1:
+            raise AuthError("A company needs at least one owner. To close the company, delete the account instead.")
+        data["users"] = [u for u in data["users"] if u["id"] != user_id]
+        data["tokens"] = {k: v for k, v in data["tokens"].items() if v.get("user_id") != user_id}
+        _drop_invites_by(data, user_id)
+        _end_sessions(data, user_id)
+        _save(data)
+        return _public(user)
+
+
+def check_password(user_id: str, password: Any) -> bool:
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["id"] == user_id), None)
+    if not user or not isinstance(password, str):
+        return False
+    _, digest = _hash(password, user["salt"])
+    return secrets.compare_digest(digest, user["password_hash"])
+
+
+def delete_company_users(company_id: str) -> int:
+    """Remove every user, session and token of a company. Returns how many users were removed."""
+    with LOCK:
+        data = _load()
+        ids = {u["id"] for u in data["users"] if u["company_id"] == company_id}
+        data["users"] = [u for u in data["users"] if u["company_id"] != company_id]
+        data["sessions"] = {k: v for k, v in data["sessions"].items() if v.get("company_id") != company_id and v.get("user_id") not in ids}
+        data["tokens"] = {k: v for k, v in data["tokens"].items() if v.get("company_id") != company_id and v.get("user_id") not in ids}
+        _save(data)
+        return len(ids)
+
+
+def all_users() -> list[dict[str, Any]]:
+    with LOCK:
+        return [{**_public(u), "created_at": u.get("created_at", "")} for u in _load()["users"]]

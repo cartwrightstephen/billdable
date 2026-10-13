@@ -10,6 +10,8 @@ venv/
 # Data
 data/
 *.json
+# The helper's prepared answers ship with the code.
+!helper/answers.json
 
 # Node (if any later)
 node_modules/

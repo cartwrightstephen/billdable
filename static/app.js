@@ -1,6 +1,7 @@
 let state = null;
 let me = null;
 let authMode = "signup";
+let dataNotice = false;   // server says data may be erased (no persistent disk confirmed yet)
 let authError = "";
 let jobFormError = "";
 let currentView = "dashboard";
@@ -15,9 +16,239 @@ let dashFilter = "all";
 let dashSort = "name";
 let dashSortDir = 1;
 let payappFilter = "all";
-let activityJobFilter = "all";
+let outboxJobFilter = "all";
+let auditJobFilter = "all";
+let coPreselectJob = null;
 let formOpen = {};
 let toastTimer = null;
+const DEMO_COMPANY_ID = "co-hartline";
+let calJobFilter = "all";
+let importSettings = null;
+let sovDraft = null; // schedule-of-values editor: { jobId, lines: [{id,item,description,quantity,unit,rate}], op_pct, warnings } (raw text, not escaped)
+const RECORD_KINDS = {
+  note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
+  waiver: "Lien waiver", pay_app: "Pay app / invoice backup", ticket: "Delivery or time ticket", other: "Other",
+};
+const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email", sms: "Text message", notes: "Notes" };
+
+// Plain-language help for every field, column, tile and section. The (i) icon
+// next to a label is hidden until the area is hovered or focused; hovering,
+// focusing or tapping the icon shows the text. Keys are the visible label,
+// lower case, without arrows or asterisks.
+const FIELD_HELP = {
+  // money file and tiles
+  "contract": "The original contract amount, before any change orders.",
+  "approved cos": "Change orders the customer has signed. They add to the contract total.",
+  "pending cos": "Change orders not signed yet. They are not billable until signed.",
+  "contract total": "Contract plus signed change orders: the most you can bill on this job.",
+  "billed": "Pay apps sent to the payer, after retainage is withheld.",
+  "collected": "Payments matched to this job's pay apps.",
+  "outstanding": "Billed but not yet paid.",
+  "unbilled completed": "Work you finished that is not on any pay app yet. This is money you can bill now.",
+  "unbilled": "Work you finished that is not on any pay app yet.",
+  "retainage held": "The percentage the payer keeps back from each pay app until closeout.",
+  "retainage released": "Retainage the payer has paid you.",
+  "retainage open": "Retainage still held. It is released after the punch list and closeout packet are done.",
+  "retainage": "Retainage still held on this job.",
+  "billed this month": "Total of pay apps sent this calendar month.",
+  "blocked jobs": "Open jobs with a missing packet item or unsigned change order that stops a pay app from going out.",
+  "active jobs": "Jobs not yet closed for the record.",
+  // tables
+  "job": "The job. Click it to open the money file, packet and actions.",
+  "customer": "Who pays this job: the owner, homeowner or general contractor.",
+  "status": "What is holding the job up right now, in words. Never just \"pending\".",
+  "next": "The next thing to do to get paid on this job.",
+  "approved cos ": "Signed change orders.",
+  "code": "Short job code. Put it in an email subject or text and the Inbox files it to this job.",
+  "number": "Pay app number: PA, the job code, then the sequence.",
+  "amount": "Amount of this pay app after retainage, or of this payment.",
+  "blockers": "What must be fixed before this pay app can be sent.",
+  "missing": "Required packet items that are not in yet.",
+  "pay app": "The pay application this packet belongs to.",
+  "co": "Change order number on this job.",
+  "summary": "What the change order covers.",
+  "status / waiting on": "Signed or not, and who it is waiting on.",
+  "in billing": "Whether this unsigned change order is on the next pay app. Send stays blocked until it is signed.",
+  "unpaid": "Pay apps sent and not fully paid.",
+  "days": "Days since the pay app was sent.",
+  "contact": "Who approves payment, and their AP email and phone.",
+  "follow up": "Send a follow-up once the payer's follow-up window has passed.",
+  "reference": "Check number or QuickBooks payment id. Each can be used once per job.",
+  "matched": "Date the payment was matched.",
+  "kind": "What type of document or message this is.",
+  "open": "Retainage still held on this job.",
+  "holding it up": "Closeout items that must be done before you can ask for retainage.",
+  "unlock": "What to do next to release the retainage.",
+  "contact / follow up": "Who to ask for the retainage, and buttons to ask.",
+  "closed": "Date the job was closed for the record.",
+  "notes": "Completion notes, or the current status.",
+  "when": "When it happened.",
+  "to": "Who it was addressed to: the payer's AP email from the playbook.",
+  "subject": "Subject line of the logged message.",
+  "actor": "The signed-in person who took the action.",
+  "action": "What was done.",
+  "detail": "What changed, in words.",
+  // new job form
+  "job name": "What you call the job, for example \"Oak Street kitchen\".",
+  "address": "The job site address. The Inbox uses it to match emails and texts to this job.",
+  "contract number": "The number on the contract, if it has one.",
+  "contract amount ($)": "The signed contract amount in dollars, before change orders.",
+  "retainage %": "Percent the payer holds back from each pay app until closeout. Commonly 5 to 10 percent; check your contract.",
+  "role": "Owner: you bill the property owner or homeowner. GC: you are a sub billing a general contractor.",
+  "approver": "The person who approves your pay app.",
+  "ap email": "Where pay apps and follow-ups go: the payer's accounts payable address.",
+  "phone": "Payer phone for follow-up calls.",
+  "notes for the job record": "Anything to keep with the job: what the customer wants in a packet, contract notes.",
+  // playbook
+  "follow-up days": "Days to wait after sending before a follow-up is allowed. Set it to the payer's normal payment window.",
+  "usual approval days": "How long this payer usually takes to approve. Drives the expected-approval date on the calendar.",
+  "packet": "What this payer requires with every pay app, separated by commas. New pay apps list these items.",
+  "rejects when": "Why this payer has sent pay apps back before. Grows as you teach it.",
+  // schedule of values
+  "item": "The line number on the schedule of values, as the payer's form numbers it.",
+  "description": "What the line covers, in the words the payer will recognize.",
+  "qty": "How many units the line covers. A lump-sum line is 1 (unit LS).",
+  "unit": "The unit the quantity is counted in: ea, lf, sf, hr, or LS for a lump sum.",
+  "unit rate $": "Price per unit, before overhead and profit.",
+  "unit rate": "Price per unit, before overhead and profit.",
+  "scheduled value": "Quantity × unit rate: what this line is worth when finished.",
+  "done to date": "How much of the line is finished so far, counted from the start of the job.",
+  "earned to date": "The value of the work done to date on this line.",
+  "balance to finish": "What is left to bill on this line when the work is done.",
+  "overhead and profit": "A percentage added on top of the base lines, as your estimate carries it. Change orders are added at their own amount.",
+  "schedule lines": "The total of quantity × unit rate across the lines.",
+  "schedule total": "Lines plus overhead and profit. It has to equal the contract amount.",
+  "scheduled": "How much this line covers.",
+  "previous": "Billed on earlier pay apps.",
+  "this period": "Billed on this pay app: work done since the last one.",
+  "total to date": "Previous plus this period.",
+  "%": "Share of the line's scheduled value billed to date.",
+  "copy": "Email addresses to copy on pay apps for this payer, separated by commas. Names without an address are ignored.",
+};
+const NAV_HELP = {
+  inbox: "Bring in photos, PDFs, emails, texts and notes, then file them to a job in one click.",
+  dashboard: "What needs attention and the money across open jobs.",
+  daily: "A dated note of what happened on site today, saved on the job record.",
+  jobs: "Every job, with its money file, packet and actions.",
+  calendar: "Follow-ups, expected approvals, payments and closeouts by date. Can be added to Google Calendar.",
+  payapps: "Pay applications: the bill for work done this period, with the paperwork the payer requires.",
+  packets: "The paperwork that must go with each pay app: waivers, tickets, photos, signed change orders.",
+  cos: "Change orders: extra or changed work. Not billable until the customer signs.",
+  collections: "What is unpaid and who to contact.",
+  payments: "Money received and matched to a pay app.",
+  waivers: "Lien waivers: you give up lien rights for amounts you have been paid. One per paid pay app.",
+  retainage: "Money the payer holds back until closeout, and what is holding it up.",
+  history: "Jobs closed for the record.",
+  playbook: "What each payer requires, who approves, how long they take, and why they reject.",
+  outbox: "Every email approved to send, and whether it was delivered.",
+  audit: "Every action, who took it and when.",
+  help: "What the terms mean and how to start.",
+  account: "Your password and email, the people on your team, and deleting the company.",
+  "helper-admin": "Questions the helper couldn't answer, and the answers it uses. Team only.",
+};
+
+function helpFor(text) {
+  const key = (text || "").replace(/[↑↓*]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  return FIELD_HELP[key];
+}
+
+let helpTip = null;
+function showHelpTip(icon) {
+  if (!helpTip) {
+    helpTip = document.createElement("div");
+    helpTip.id = "help-tip";
+    helpTip.className = "help-tip";
+    helpTip.setAttribute("role", "tooltip");
+    document.body.appendChild(helpTip);
+  }
+  helpTip.textContent = icon.dataset.help;
+  helpTip.style.display = "block";
+  const r = icon.getBoundingClientRect();
+  const w = helpTip.offsetWidth, h = helpTip.offsetHeight;
+  let left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 8) top = r.top - h - 8;
+  helpTip.style.left = left + "px";
+  helpTip.style.top = Math.max(8, top) + "px";
+  icon.setAttribute("aria-describedby", "help-tip");
+}
+function hideHelpTip() { if (helpTip) helpTip.style.display = "none"; }
+
+function addInfoIcon(labelEl, text, hostEl) {
+  if (!text || labelEl.querySelector(".info")) return;
+  const icon = document.createElement("span");
+  icon.className = "info";
+  icon.textContent = "i";
+  icon.tabIndex = 0;
+  icon.setAttribute("role", "button");
+  icon.setAttribute("aria-label", "What is this?");
+  icon.dataset.help = text;
+  icon.addEventListener("mouseenter", () => showHelpTip(icon));
+  icon.addEventListener("mouseleave", hideHelpTip);
+  icon.addEventListener("focus", () => showHelpTip(icon));
+  icon.addEventListener("blur", hideHelpTip);
+  icon.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); showHelpTip(icon); });
+  icon.addEventListener("keydown", (e) => { if (e.key === "Escape") { hideHelpTip(); icon.blur(); } });
+  labelEl.appendChild(icon);
+  (hostEl || labelEl).classList.add("has-info");
+}
+
+function decorateHelp(root) {
+  root.querySelectorAll(".money-row .label, .metric .k, th, label").forEach(el => {
+    if (el.closest(".auth-card")) return;
+    const host = el.closest(".money-row, .metric, th, .form-grid > div") || el;
+    addInfoIcon(el, helpFor(el.textContent), host);
+  });
+  root.querySelectorAll(".nav button[data-v]").forEach(b => addInfoIcon(b, NAV_HELP[b.dataset.v], b));
+}
+
+// Every string that comes from the server is HTML-escaped once, when it
+// arrives. Templates below interpolate into innerHTML, so this is what keeps
+// a job named <img onerror=...> from running as code. Never interpolate raw
+// user input; wrap it in esc().
+function esc(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// The reverse of esc(), for values from escDeep'd state that are about to be escaped again
+// (or placed with textContent). Never put its result into innerHTML without esc().
+function unesc(value) {
+  const t = document.createElement("textarea");
+  t.innerHTML = String(value);
+  return t.value;
+}
+
+function escDeep(value) {
+  if (typeof value === "string") return esc(value);
+  if (Array.isArray(value)) return value.map(escDeep);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = escDeep(v);
+    return out;
+  }
+  return value;
+}
+
+function setNetBanner(on) {
+  let el = document.getElementById("net-banner");
+  if (!el && on) {
+    el = document.createElement("div");
+    el.id = "net-banner";
+    el.className = "net-banner";
+    el.textContent = "Can't reach Billdable. Your last change may not be saved. Check your connection and try again.";
+    document.body.prepend(el);
+  }
+  if (el) el.style.display = on ? "block" : "none";
+}
+
+async function readJson(res) {
+  try { return await res.json(); } catch (_) { return {}; }
+}
 
 const money = (cents) => {
   if (cents == null) return "$0.00";
@@ -37,31 +268,61 @@ function toast(msg) {
   el.textContent = msg;
   el.style.display = "block";
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.style.display = "none"; }, 2200);
+  toastTimer = setTimeout(() => { el.style.display = "none"; }, Math.min(9000, Math.max(2200, String(msg).length * 50)));
 }
 
 async function load() {
-  const res = await fetch("/api/state");
+  let res;
+  try {
+    res = await fetch("/api/state");
+  } catch (_) {
+    setNetBanner(true);
+    return;
+  }
   if (res.status === 401) {
     me = null;
     state = null;
     renderLanding();
     return;
   }
-  state = await res.json();
+  if (!res.ok) {
+    setNetBanner(true);
+    return;
+  }
+  setNetBanner(false);
+  state = escDeep(await readJson(res));
   render();
 }
 
-async function boot() {
-  const res = await fetch("/api/auth/me");
+async function boot(checkLink = true) {
+  let linkMessage = null;
+  if (checkLink) {
+    const t = readTokenFromUrl();
+    if (t) {
+      linkMessage = await handleTokenLink(t);
+      if (tokenScreen) return;   // reset or invite form is showing
+    }
+  }
+  let res;
+  try {
+    res = await fetch("/api/auth/me");
+  } catch (_) {
+    setNetBanner(true);
+    renderLanding();
+    return;
+  }
   if (res.ok) {
-    const data = await res.json();
-    me = data.user;
+    const data = await readJson(res);
+    me = escDeep(data.user);
+    helperAdmin = data.helper_admin === true;
+    mailReady = data.mail_ready === true;
     await load();
   } else {
+    dataNotice = (await readJson(res)).data_notice === true;
     renderLanding();
   }
   setAiVisible(!!me);
+  if (linkMessage) toast(linkMessage);
 }
 
 function setAiVisible(on) {
@@ -77,6 +338,7 @@ function renderLanding() {
   const signup = authMode === "signup";
   app.innerHTML = `
     <div class="landing">
+      ${dataNotice ? `<p class="notice land-notice" role="status">Demo: data may be erased. Don't enter real job or customer data yet.</p>` : ""}
       <header class="land-bar">
         <div class="brand">Billdable</div>
         <div class="land-bar-actions">
@@ -88,7 +350,7 @@ function renderLanding() {
         <div class="land-copy">
           <p class="eyebrow">For small GCs and remodelers</p>
           <h1>You finish the work.<br>Billdable gets it billed and collected.</h1>
-          <p class="lede">Sits on QuickBooks. Catches the missing packet, the unsigned change order, and the retainage nobody chased. You approve every send.</p>
+          <p class="lede">Works beside QuickBooks. Catches the missing packet, the unsigned change order, and the retainage nobody chased. You approve every send.</p>
           <div class="land-points">
             <div><strong>Same-week invoice</strong><span>From “job’s done” to a draft you can send.</span></div>
             <div><strong>Packet gate</strong><span>Nothing leaves with a missing waiver or photo.</span></div>
@@ -97,7 +359,7 @@ function renderLanding() {
         </div>
         <div class="auth-card land-form" id="signup">
           <h2>${signup ? "Create your company" : "Sign in"}</h2>
-          <p class="sub">${signup ? "First month $99. Your jobs stay in your company space." : "Back to your jobs, packets, and playbook."}</p>
+          <p class="sub">${signup ? "Your jobs stay in your company space. Passwords need at least 10 characters." : "Back to your jobs, packets, and playbook."}</p>
           <form id="auth-form">
             ${signup ? `<label>Your name</label><input name="name" required autocomplete="name" />` : ""}
             ${signup ? `<label>Company name</label><input name="company_name" required />` : ""}
@@ -105,9 +367,11 @@ function renderLanding() {
             <input name="email" type="email" required autocomplete="username" />
             <label>Password</label>
             <input name="password" type="password" required autocomplete="${signup ? "new-password" : "current-password"}" />
+            ${signup ? `<label class="terms-check"><input type="checkbox" name="accept_terms" required> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>` : ""}
             <button class="btn" type="submit">${signup ? "Create account" : "Sign in"}</button>
-            ${authError ? `<div class="auth-error">${authError}</div>` : ""}
+            ${authError ? `<div class="auth-error">${esc(authError)}</div>` : ""}
           </form>
+          ${signup ? "" : `<div class="auth-toggle"><button type="button" id="auth-forgot">Forgot your password?</button></div>`}
           <div class="auth-toggle">
             ${signup ? "Already have an account?" : "New company?"}
             <button type="button" id="auth-switch">${signup ? "Sign in" : "Create one"}</button>
@@ -124,13 +388,14 @@ function renderLanding() {
       </section>
       <section class="land-price">
         <div class="card">
-          <p class="eyebrow">Pricing</p>
+          <p class="eyebrow">Planned pricing</p>
           <h2>$299<span>/mo</span></h2>
-          <p class="sub">For companies between $750k and $2.5M. First month $99. Unlimited users. No percent of collections.</p>
+          <p class="sub">Planned price for companies between $750k and $2.5M. No percent of collections. Billing is not live yet.</p>
           <button class="btn" id="price-start">Create your company</button>
         </div>
       </section>
-      <footer class="land-foot">Billdable sits on QuickBooks. It does not replace your books or your field app.</footer>
+      <footer class="land-foot">Billdable works beside QuickBooks; a direct QuickBooks connection is planned, not built. It does not replace your books or your field app.
+        <div class="land-legal"><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a></div></footer>
     </div>
   `;
   document.getElementById("auth-form").addEventListener("submit", onAuthSubmit);
@@ -144,11 +409,17 @@ function renderLanding() {
   document.getElementById("bar-start").addEventListener("click", toSignup);
   document.getElementById("price-start").addEventListener("click", toSignup);
   document.getElementById("bar-signin").addEventListener("click", toSignin);
+  document.getElementById("auth-forgot")?.addEventListener("click", () => renderForgot());
 }
 
 async function onAuthSubmit(e) {
   e.preventDefault();
   const form = e.target;
+  if (authMode === "signup" && form.password.value.length < 10) {
+    authError = "Password must be at least 10 characters.";
+    renderLanding();
+    return;
+  }
   const body = {
     email: form.email.value,
     password: form.password.value,
@@ -156,20 +427,37 @@ async function onAuthSubmit(e) {
   if (authMode === "signup") {
     body.name = form.name.value;
     body.company_name = form.company_name.value;
+    body.accept_terms = form.accept_terms.checked;
+    if (!body.accept_terms) { authError = "To create an account, accept the Terms of Service and the Privacy Policy."; renderLanding(); return; }
   }
-  const res = await fetch(authMode === "signup" ? "/api/auth/signup" : "/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
+  let res;
+  try {
+    res = await fetch(authMode === "signup" ? "/api/auth/signup" : "/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (_) {
+    setNetBanner(true);
+    return;
+  }
+  const data = await readJson(res);
   if (!res.ok) {
     authError = data.error || "Could not sign in.";
     renderLanding();
     return;
   }
-  me = data.user;
+  me = escDeep(data.user);
   authError = "";
+  helperLog.length = 0;
+  try {
+    const who = await fetch("/api/auth/me");
+    if (who.ok) {
+      const info = await readJson(who);
+      helperAdmin = info.helper_admin === true;
+      mailReady = info.mail_ready === true;
+    }
+  } catch (_) { helperAdmin = false; }
   await load();
   setAiVisible(true);
 }
@@ -178,18 +466,36 @@ async function logout() {
   await fetch("/api/auth/logout", { method: "POST" });
   me = null;
   state = null;
+  helperAdmin = false;
+  teamData = null;
+  lastInvite = null;
+  adminCompanies = null;
+  helperLog.length = 0;   // never show one person's questions to the next
+  document.getElementById("ai-replies").innerHTML = "";
+  document.getElementById("ai-chips").innerHTML = "";
+  aiOpen = false;
+  document.getElementById("ai-panel").classList.remove("open");
   authMode = "signup";
   setAiVisible(false);
   renderLanding();
 }
 
 async function post(path, body = {}) {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
+  const emailsBefore = state && state.email_log ? state.email_log.length : 0;
+  let res;
+  try {
+    res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (_) {
+    setNetBanner(true);
+    toast("Not saved: can't reach Billdable.");
+    return;
+  }
+  setNetBanner(false);
+  const data = await readJson(res);
   if (res.status === 401) {
     me = null;
     state = null;
@@ -197,16 +503,31 @@ async function post(path, body = {}) {
     return;
   }
   if (res.status === 409) {
-    toast("Blocked: " + (data.blockers || [data.error]).join("; "));
+    const lines = data.blockers || [data.error];
+    toast((data.error && lines[0] !== data.error ? data.error + " " : "Blocked: ") + lines.join("; "));
   } else if (!res.ok) {
-    toast(data.error || "Request failed");
+    toast((data.error || "Request failed") + (data.request_id ? ` Reference: ${data.request_id}.` : ""));
   } else {
     toast("Saved");
   }
   await load();
+  if (res.ok && state && state.email_log && state.email_log.length > emailsBefore) toast(emailOutcome(state.email_log.slice(emailsBefore)));
+  return { ok: res.ok, status: res.status, data };
+}
+
+// One line for the toast after an action that wrote to the Outbox.
+function emailOutcome(entries) {
+  return entries.map(e => {
+    const to = unesc(e.to), status = unesc(e.status || "");
+    if (status === "sent") return `Emailed ${to}.`;
+    if (status.startsWith("failed")) return `Saved, but the email to ${to} ${status.replace(/^failed: /, "failed: ")}. Open the Outbox to send it again.`;
+    if (status.startsWith("not sent")) return `Saved. The email to ${to} was ${status}.`;
+    return `Saved. Email to ${to}: ${status}.`;
+  }).join(" ");
 }
 
 function nav(view, jobId = null, detailId = null) {
+  if (view === "account") teamData = null;  // fresh team list each time the page opens
   currentView = view;
   currentJobId = jobId;
   currentDetailId = detailId;
@@ -218,6 +539,10 @@ function toggleForm(key) {
   formOpen[key] = !formOpen[key];
   if (key === "newjob") jobFormError = "";
   render();
+}
+
+function backButton(view, label) {
+  return `<div class="top"><button class="back" onclick="nav('${view}')">← ${label}</button></div>`;
 }
 
 function emptyState(title, body, action = "") {
@@ -239,6 +564,7 @@ function nextStep(j) {
 
 function render() {
   if (!state) return;
+  hideHelpTip();
   const app = document.getElementById("app");
   const company = state.company;
   const active = (v) => (currentView === v ? "active" : "");
@@ -249,6 +575,7 @@ function render() {
         <div class="company">${company.name}<br>${company.crew ? company.crew + " people · " : ""}${company.books || "QuickBooks"}</div>
         <nav class="nav">
           <div class="nav-section">Operations</div>
+          <button class="${active("inbox")}" data-v="inbox">Inbox${newInboxCount() ? ` <span class="count">${newInboxCount()}</span>` : ""}</button>
           <button class="${active("dashboard")}" data-v="dashboard">Dashboard</button>
           <button class="${active("daily")}" data-v="daily">Daily Record</button>
           <button class="${active("jobs")}" data-v="jobs">Jobs</button>
@@ -266,8 +593,12 @@ function render() {
           <button class="${active("playbook")}" data-v="playbook">Payer Playbook</button>
           <button class="${active("outbox")}" data-v="outbox">Outbox</button>
           <button class="${active("audit")}" data-v="audit">Audit</button>
+          <button class="${active("account")}" data-v="account">Team & account</button>
+          <button class="${active("help")}" data-v="help">Help</button>
+          ${helperAdmin ? `<button class="${active("helper-admin")}" data-v="helper-admin">Helper answers</button>` : ""}
         </nav>
-        <button class="reset-btn" id="reset">Reset data</button>
+        <a class="reset-btn" href="/api/export" download>Export data</a>
+        ${me && me.role === "owner" ? `<button class="reset-btn" id="reset">Reset data</button>` : ""}
         <div class="user-meta">
           ${me ? me.name : ""}<br>${me ? me.email : ""}
           <button class="reset-btn" id="logout">Log out</button>
@@ -279,11 +610,29 @@ function render() {
   document.querySelectorAll(".nav button").forEach((b) =>
     b.addEventListener("click", () => nav(b.dataset.v))
   );
-  document.getElementById("reset").addEventListener("click", () => post("/api/reset"));
+  document.getElementById("reset")?.addEventListener("click", resetData);
   document.getElementById("logout").addEventListener("click", logout);
-  document.getElementById("main").innerHTML = views[currentView] ? views[currentView]() : "<p>Unknown view</p>";
+  document.getElementById("main").innerHTML = verifyBannerHtml() + (views[currentView] ? views[currentView]() : "<p>Unknown view</p>");
   bindActions();
+  decorateHelp(document.getElementById("app"));
+  if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
+  if (sovDraft) updateSovTotals();
+  if (currentView === "helper-admin") { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
+}
+
+async function resetData() {
+  if (me && me.company_id === DEMO_COMPANY_ID) {
+    if (!confirm("Reset the demo account to its starting data?")) return;
+    await post("/api/reset");
+    return;
+  }
+  const typed = prompt(
+    "Reset deletes every job, payer and record in your company. A snapshot is kept on the server.\n\n" +
+    "Type your company name exactly as it appears in the left rail to confirm:"
+  );
+  if (typed === null) return;
+  await post("/api/reset", { confirm: typed });
 }
 
 function bindActions() {
@@ -292,8 +641,54 @@ function bindActions() {
       e.preventDefault();
       const a = el.dataset.action;
       const id = el.dataset.id;
+      if (a === "email-retry") e.stopPropagation();
+      if (a === "resend-verify") {
+        const r = await postJson("/api/auth/resend-verify", {});
+        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
+        return;
+      }
+      if (a === "change-password") {
+        const r = await postJson("/api/auth/password", { current: document.getElementById("pw-current").value, new: document.getElementById("pw-new").value });
+        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
+        if (r.ok) render();
+        return;
+      }
+      if (a === "team-invite") {
+        const email = document.getElementById("invite-email").value;
+        const data = await teamPost("/api/team/invite", { email, role: document.getElementById("invite-role").value });
+        if (data) { lastInvite = { link: data.invite_link || (location.origin + data.invite_path), emailed: data.emailed, email_status: data.email_status, email }; render(); }
+        return;
+      }
+      if (a === "team-role") { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); return; }
+      if (a === "team-remove") {
+        if (!confirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`)) return;
+        await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed and signed out. The inbound email, text and calendar addresses changed too: update any forwarding rule or calendar subscription.");
+        return;
+      }
+      if (a === "team-revoke") { await teamPost(`/api/team/invites/${el.dataset.invite}/revoke`, {}, "Invite revoked."); return; }
+      if (a === "delete-account") {
+        if (!confirm("Delete the company, every job and file, and every user? This can't be undone here.")) return;
+        const r = await postJson("/api/account/delete", { password: document.getElementById("del-password").value, confirm: document.getElementById("del-confirm").value });
+        if (!r.ok) { toast(r.data.error || "Nothing was deleted."); return; }
+        me = null; state = null; teamData = null; lastInvite = null;
+        renderLanding();
+        toast(r.data.message);
+        return;
+      }
+      if (a === "onb-newjob") { nav("jobs"); formOpen.newjob = true; render(); return; }
+      if (a === "onb-job") { const j = state.jobs.find(x => !x.closed) || state.jobs[0]; if (j) nav("job", j.id); return; }
+      if (a === "onb-dismiss") { await post("/api/onboarding/dismiss"); return; }
       if (a === "draft") await post(`/api/jobs/${id}/draft`);
-      else if (a === "send") await post(`/api/jobs/${id}/send`, { actor: "owner" });
+      else if (a === "sov-start") { sovStartEdit(state.jobs.find(x => x.id === id)); render(); }
+      else if (a === "sov-add") { sovDraft.lines.push(blankSovLine()); render(); document.querySelectorAll(".sov-desc")[sovDraft.lines.length - 1]?.focus(); }
+      else if (a === "sov-remove") { sovDraft.lines.splice(+el.dataset.row, 1); if (!sovDraft.lines.length) sovDraft.lines.push(blankSovLine()); render(); }
+      else if (a === "sov-read") await sovReadPaste();
+      else if (a === "sov-cancel") { sovDraft = null; render(); }
+      else if (a === "sov-save") await sovSave(id, false);
+      else if (a === "sov-save-contract") await sovSave(id, true);
+      else if (a === "sov-progress") await sovProgress(id);
+      else if (a === "email-retry") await post(`/api/outbox/${el.dataset.email}/retry`);
+      else if (a === "send") await post(`/api/jobs/${id}/send`);
       else if (a === "progress") {
         const dollars = parseFloat(document.querySelector("#progress-amt")?.value || "0");
         const notes = document.querySelector("#progress-notes")?.value || "";
@@ -303,35 +698,111 @@ function bindActions() {
       }
       else if (a === "done") {
         const notes = document.querySelector("#done-notes")?.value || "";
-        await post(`/api/jobs/${id}/done`, { actor: "owner", notes });
+        await post(`/api/jobs/${id}/done`, { notes });
         formOpen.done = false;
       }
-      else if (a === "resolve") await post(`/api/jobs/${id}/resolve/${el.dataset.item}`);
-      else if (a === "waiver") await post(`/api/jobs/${id}/waiver`, { actor: "owner" });
+      else if (a === "resolve") {
+        const reason = prompt("Why is this item present? For example: \"Emailed to the payer on 10/12\". Or cancel and attach a job record instead.");
+        if (reason === null) return;
+        if (!reason.trim()) { toast("Give a reason, or attach a job record instead."); return; }
+        await post(`/api/jobs/${id}/resolve/${el.dataset.item}`, { reason });
+      }
+      else if (a === "waiver") await post(`/api/jobs/${id}/waiver`, el.dataset.inv ? { invoice_id: el.dataset.inv } : {});
       else if (a === "retainage") await post(`/api/jobs/${id}/retainage`);
+      else if (a === "retainage-paid") {
+        const dollars = parseFloat(document.querySelector("#retpay-amt")?.value || "0");
+        const reference = document.querySelector("#retpay-ref")?.value || "";
+        const cents = Math.round(dollars * 100);
+        if (!(cents > 0)) { toast("Enter the retainage amount received."); return; }
+        formOpen.retpay = false;
+        await post(`/api/jobs/${id}/retainage-paid`, { amount_cents: cents, reference });
+      }
+      else if (a === "include-co") await post(`/api/jobs/${id}/include-co/${el.dataset.co}`);
+      else if (a === "pencil") await post(`/api/jobs/${id}/pencil`);
+      else if (a === "pencil-agreed") await post(`/api/jobs/${id}/pencil-response`, { agreed: true });
+      else if (a === "pencil-changes") {
+        const note = prompt("What does the payer want changed? (quantities, change orders, missing items)");
+        if (note === null) return;
+        await post(`/api/jobs/${id}/pencil-response`, { agreed: false, note });
+      }
+      else if (a === "pick-files") {
+        const input = document.getElementById("file-input");
+        if (input) { input.dataset.job = el.dataset.job || ""; input.click(); }
+      }
+      else if (a === "import-text") {
+        const text = document.querySelector("#paste-text")?.value || "";
+        const source = document.querySelector("#paste-source")?.value || "paste";
+        const jobId = el.dataset.job || "";
+        if (!text.trim()) { toast("Paste some text first."); return; }
+        const ok = await postImport("/api/import/text" + (jobId ? "?file=1" : ""), { text, source, job_id: jobId });
+        if (ok) { const box = document.querySelector("#paste-text"); if (box) box.value = ""; }
+      }
+      else if (a === "inbox-file") {
+        const itemId = el.dataset.item;
+        const jobId = document.querySelector(`#inb-job-${itemId}`)?.value || "";
+        const kind = document.querySelector(`#inb-kind-${itemId}`)?.value || "";
+        if (!jobId) { toast("Pick a job for this item."); return; }
+        await post(`/api/inbox/${itemId}/file`, { job_id: jobId, kind });
+      }
+      else if (a === "inbox-file-all") {
+        const items = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id);
+        for (const i of items) {
+          const select = document.querySelector(`#inb-job-${i.id}`);
+          const jobId = select ? select.value : i.suggested_job_id;   // a row set back to "Pick a job" is skipped
+          if (!jobId) continue;
+          const kind = document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind;
+          await post(`/api/inbox/${i.id}/file`, { job_id: jobId, kind });
+        }
+      }
+      else if (a === "inbox-dismiss") await post(`/api/inbox/${el.dataset.item}/dismiss`);
+      else if (a === "inbox-undo") await post(`/api/inbox/${el.dataset.item}/undo`);
+      else if (a === "copy") {
+        const text = document.getElementById(el.dataset.target)?.textContent || "";
+        try { await navigator.clipboard.writeText(text); toast("Copied"); }
+        catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
+      }
+      else if (a === "rotate-token") {
+        if (!confirm("Make a new address? The old one stops working right away.")) return;
+        await fetch("/api/import/rotate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: el.dataset.kind }) });
+        importSettings = null;
+        render();
+      }
+      else if (a === "withdraw-co") {
+        if (!confirm("Withdraw this change order? Use this when the customer will not sign it.")) return;
+        await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
+      }
+      else if (a === "void-draft") {
+        if (!confirm("Void the open draft pay app? Its work goes back to unbilled.")) return;
+        await post(`/api/jobs/${id}/void-draft`);
+      }
       else if (a === "follow-up") await post(`/api/jobs/${id}/follow-up`);
       else if (a === "match") {
         const dollars = parseFloat(document.querySelector("#match-amt")?.value || "0");
-        const ref = document.querySelector("#match-ref")?.value || "QBO-manual";
+        const ref = document.querySelector("#match-ref")?.value || "";
+        const invoiceId = document.querySelector("#match-inv")?.value || "";
         const cents = Math.round(dollars * 100);
-        if (cents > 0) await post(`/api/jobs/${id}/match-payment`, { amount_cents: cents, reference: ref });
+        if (!(cents > 0)) { toast("Enter the payment amount in dollars."); return; }
+        await post(`/api/jobs/${id}/match-payment`, { amount_cents: cents, reference: ref, invoice_id: invoiceId });
       }
       else if (a === "add-co") {
-        const title = document.querySelector("#co-title")?.value || "New change order";
+        const title = (document.querySelector("#co-title")?.value || "").trim();
         const dollars = parseFloat(document.querySelector("#co-amt")?.value || "0");
         const cents = Math.round(dollars * 100);
-        if (cents > 0) {
-          await post(`/api/jobs/${id}/add-co`, { title, amount_cents: cents });
-          nav("co-detail", id);
-        }
+        if (!title) { toast("Give the change order a title."); return; }
+        if (!(cents > 0)) { toast("Enter the change order amount."); return; }
+        await post(`/api/jobs/${id}/add-co`, { title, amount_cents: cents });
+        nav("co-detail", id);
       }
-      else if (a === "goto-co") nav("cos");
+      else if (a === "goto-co") { coPreselectJob = id; nav("cos"); }
       else if (a === "add-co-from-list") {
         const jobId = document.querySelector("#new-co-job")?.value;
-        const title = document.querySelector("#co-title")?.value || "New change order";
+        const title = (document.querySelector("#co-title")?.value || "").trim();
         const dollars = parseFloat(document.querySelector("#co-amt")?.value || "0");
         const cents = Math.round(dollars * 100);
-        if (jobId && cents > 0) {
+        if (!jobId) { toast("Pick a job."); return; }
+        if (!title) { toast("Give the change order a title."); return; }
+        if (!(cents > 0)) { toast("Enter the change order amount."); return; }
+        {
           await post(`/api/jobs/${jobId}/add-co`, { title, amount_cents: cents });
           nav("co-detail", jobId);
         }
@@ -351,7 +822,7 @@ function bindActions() {
         await post(`/api/jobs/${id}/attach/${el.dataset.item}`, { name });
       }
       else if (a === "import-qbo") await post(`/api/jobs/${id}/import-qbo`);
-      else if (a === "close") await post(`/api/jobs/${id}/close`, { actor: "owner" });
+      else if (a === "close") await post(`/api/jobs/${id}/close`);
       else if (a === "cal-prev") { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } calSelectedDay = null; render(); }
       else if (a === "cal-next") { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } calSelectedDay = null; render(); }
       else if (a === "cal-today") { const n = new Date(); calYear = n.getFullYear(); calMonth = n.getMonth(); calSelectedDay = null; render(); }
@@ -404,7 +875,9 @@ function bindActions() {
           return;
         }
         jobFormError = "";
-        const res = await fetch("/api/jobs", {
+        let res;
+        try {
+          res = await fetch("/api/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -415,15 +888,20 @@ function bindActions() {
             contract_cents: Math.round(dollars * 100),
             retainage_pct: retainage,
           }),
-        });
-        const data = await res.json();
+          });
+        } catch (_) {
+          setNetBanner(true);
+          toast("Not saved: can't reach Billdable.");
+          return;
+        }
+        const data = await readJson(res);
         if (!res.ok) {
           jobFormError = (data.blockers || [data.error || "Could not create the job."]).join(" ");
           render();
           return;
         }
         formOpen.newjob = false;
-        state = data;
+        state = escDeep(data);
         toast("Job saved");
         render();
       }
@@ -436,7 +914,6 @@ function bindActions() {
         render();
       }
       else if (a === "payapp-filter") { payappFilter = el.dataset.filter; render(); }
-      else if (a === "activity-filter") { activityJobFilter = el.dataset.value || document.querySelector("#activity-filter")?.value || "all"; render(); }
       else if (a === "save-playbook") {
         const form = el.closest("form");
         const updates = {};
@@ -445,9 +922,614 @@ function bindActions() {
       }
     });
   });
-  document.querySelectorAll("select[data-action='activity-filter']").forEach(s => {
-    s.addEventListener("change", () => { activityJobFilter = s.value; render(); });
+  // Filter dropdowns listen for "change" only. A click handler that re-renders
+  // destroys the open dropdown, which is why mouse selection used to fail.
+  document.querySelectorAll("select[data-filter-for]").forEach(s => {
+    s.addEventListener("change", () => {
+      if (s.dataset.filterFor === "outbox") outboxJobFilter = s.value;
+      else if (s.dataset.filterFor === "audit") auditJobFilter = s.value;
+      else if (s.dataset.filterFor === "calendar") calJobFilter = s.value;
+      render();
+    });
   });
+}
+
+function newInboxCount() {
+  return (state && state.inbox ? state.inbox.filter(i => i.status === "new").length : 0);
+}
+
+const MAX_UPLOAD_MB = 15;
+
+async function uploadFiles(fileList, jobId = "", fileNow = false) {
+  const files = [...(fileList || [])];
+  if (!files.length) return;
+  let ok = 0;
+  const failed = [];
+  for (const f of files) {
+    if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { failed.push(`${f.name}: larger than ${MAX_UPLOAD_MB} MB`); continue; }
+    const name = f.name && f.name !== "image.png" ? f.name : `Screenshot ${new Date().toISOString().slice(0, 16).replace("T", " ").replace(":", ".")}.png`;
+    const query = jobId ? `?job=${encodeURIComponent(jobId)}${fileNow ? "&file=1" : ""}` : "";
+    try {
+      const res = await fetch(`/api/import/file${query}`, {
+        method: "POST",
+        headers: { "Content-Type": f.type || "application/octet-stream", "X-Filename": encodeURIComponent(name) },
+        body: f,
+      });
+      const data = await readJson(res);
+      if (res.status === 401) { me = null; state = null; renderLanding(); return; }
+      if (res.ok) { ok++; state = escDeep(data); setNetBanner(false); }
+      else failed.push(data.error || `${name}: upload failed`);
+    } catch (_) {
+      setNetBanner(true);
+      failed.push(`${name}: can't reach Billdable`);
+    }
+  }
+  const where = fileNow ? "added to the job record" : "in the Inbox";
+  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "));
+  render();
+}
+
+async function postImport(path, body) {
+  let res;
+  try {
+    res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch (_) { setNetBanner(true); toast("Not saved: can't reach Billdable."); return false; }
+  const data = await readJson(res);
+  if (!res.ok) { toast(data.error || "Import failed."); return false; }
+  state = escDeep(data);
+  toast(body.job_id ? "Added to the job record." : "Added to the Inbox.");
+  render();
+  return true;
+}
+
+async function loadImportSettings() {
+  if (importSettings) { fillImportSettings(); return; }
+  try {
+    const res = await fetch("/api/import/settings");
+    if (res.ok) { importSettings = escDeep(await readJson(res)); fillImportSettings(); }
+  } catch (_) { /* the cards keep their "loading" text; the banner covers outages */ }
+}
+
+function emailStatusHtml(e) {
+  const st = e.status || "";
+  const cls = st === "sent" ? "green" : st.startsWith("failed") ? "red" : st.startsWith("not sent") ? "amber" : "";
+  const when = st === "sent" && e.delivered_at ? `<div class="sub">${e.delivered_at.slice(0, 16).replace("T", " ")}</div>` : "";
+  // A row still "sending" or "queued" after 30 minutes died mid-send; the server allows a retry then.
+  const since = Date.parse(e.sending_at || e.at || "") || Date.now();
+  const stuck = (st === "sending" || st === "queued") && Date.now() - since > 30 * 60 * 1000;
+  const retry = (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
+  return `<span class="pill ${cls}">${st}</span>${when}${retry}`;
+}
+
+function fillImportSettings() {
+  const s = importSettings;
+  if (!s) return;
+  const set = (id, value) => { const el = document.getElementById(id); if (el) el.innerHTML = value; };
+  const isDemo = me && me.company_id === DEMO_COMPANY_ID;
+  set("outbox-mode", isDemo
+    ? "This is the demo account: nothing is emailed from it."
+    : s.mail_configured
+      ? `Approved emails are sent from <strong>${s.mail_from}</strong> with your company name, and replies go to the person who approved them. Up to ${s.mail_daily_limit} a day.`
+      : "Email delivery is not set up on this server yet, so nothing here has left Billdable. Once it is, use Send again on any row.");
+  set("email-webhook", s.email_webhook);
+  set("sms-webhook", s.sms_webhook);
+  set("cal-url", s.calendar_url);
+  set("email-address", s.email_address ? `Forward or BCC job email to <strong>${s.email_address}</strong>.` : "No forwarding address is set up yet (an email provider has to be connected first; see steps).");
+  set("sms-number", s.sms_number ? `Text photos and notes to <strong>${s.sms_number}</strong>.` : "No texting number is set up yet (a Twilio number has to be connected first; see steps).");
+}
+
+// ---------- schedule of values ----------
+// Same integer arithmetic as sov.py, so the totals shown here match what the server saves.
+function sovNum(v) {
+  const t = String(v ?? "").replace(/[$,\s%]/g, "");
+  if (!t || !/^-?\d*\.?\d+$/.test(t)) return NaN;
+  return parseFloat(t);
+}
+function sovMilli(v) { const n = sovNum(v); return isNaN(n) ? NaN : Math.round(n * 1000); }
+function sovCents(v) { const n = sovNum(v); return isNaN(n) ? NaN : Math.round(n * 100); }
+function sovExtend(q, r) { return Math.floor((q * r + 500) / 1000); }
+function sovMarkup(base, bp) { return Math.floor((base * bp + 5000) / 10000); }
+function fmtQty(milli) {
+  const n = milli / 1000;
+  return n.toLocaleString("en-US", { maximumFractionDigits: 3 });
+}
+function blankSovLine() { return { id: "", item: "", description: "", quantity: "", unit: "", rate: "" }; }
+
+function sovStartEdit(j) {
+  const v = j.sov_view || {};
+  const base = (v.lines || []).filter(l => !l.co_id);
+  sovDraft = {
+    jobId: j.id,
+    lines: base.length
+      ? base.map(l => ({ id: l.id, item: unesc(l.item), description: unesc(l.description), quantity: String(l.qty_milli / 1000), unit: unesc(l.unit), rate: (l.rate_cents / 100).toFixed(2) }))
+      : [blankSovLine(), blankSovLine(), blankSovLine()],
+    op_pct: v.op_bp ? String(v.op_bp / 100) : "",
+    warnings: [],
+  };
+}
+
+function sovFilledLines() {
+  return sovDraft.lines.filter(l => [l.description, l.quantity, l.rate].some(x => String(x || "").trim()));
+}
+
+function sovDraftTotals() {
+  let base = 0, bad = 0;
+  const amounts = sovDraft.lines.map(l => {
+    const filled = [l.description, l.quantity, l.rate].some(x => String(x || "").trim());
+    if (!filled) return null;
+    const q = String(l.quantity || "").trim() ? sovMilli(l.quantity) : 1000;
+    const r = sovCents(l.rate);
+    if (!(q > 0) || !(r > 0) || !String(l.description || "").trim()) { bad++; return NaN; }
+    const a = sovExtend(q, r);
+    base += a;
+    return a;
+  });
+  const bpRaw = String(sovDraft.op_pct || "").trim();
+  const bp = bpRaw ? Math.round(sovNum(bpRaw) * 100) : 0;
+  const op = isNaN(bp) ? 0 : sovMarkup(base, bp);
+  return { amounts, base, bp, op, total: base + op, bad, badBp: isNaN(bp) || bp < 0 || bp > 5000 };
+}
+
+function updateSovTotals() {
+  if (!sovDraft) return;
+  const j = state.jobs.find(x => x.id === sovDraft.jobId);
+  if (!j) return;
+  const t = sovDraftTotals();
+  t.amounts.forEach((a, i) => {
+    const el = document.getElementById(`sov-amt-${i}`);
+    if (el) el.textContent = a === null ? "" : isNaN(a) ? "check" : money(a);
+  });
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set("sov-sum-lines", money(t.base));
+  set("sov-sum-op", t.badBp ? "check the percent" : money(t.op));
+  set("sov-sum-total", money(t.total));
+  const diff = t.total - j.contract_cents;
+  set("sov-sum-diff", diff === 0 ? "matches the contract" : `${diff > 0 ? "+" : "−"}${money(Math.abs(diff))} vs the contract`);
+  const d = document.getElementById("sov-sum-diff");
+  if (d) d.className = diff === 0 ? "ok" : "blocker";
+  const alt = document.querySelector('[data-action="sov-save-contract"]');
+  if (alt) {
+    alt.hidden = diff === 0 || t.base === 0;
+    alt.textContent = `Save and change the contract to ${money(t.total)}`;
+  }
+}
+
+function sovEditorHtml(j) {
+  const rows = sovDraft.lines.map((l, i) => `
+    <tr>
+      <td><input class="sov-in sov-item" data-sov-row="${i}" data-sov-field="item" value="${esc(l.item)}" placeholder="${i + 1}"></td>
+      <td><input class="sov-in sov-desc" data-sov-row="${i}" data-sov-field="description" value="${esc(l.description)}" placeholder="Rough-in wiring"></td>
+      <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="quantity" value="${esc(l.quantity)}" placeholder="1" inputmode="decimal"></td>
+      <td><input class="sov-in sov-unit" data-sov-row="${i}" data-sov-field="unit" value="${esc(l.unit)}" placeholder="LS"></td>
+      <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="rate" value="${esc(l.rate)}" placeholder="0.00" inputmode="decimal"></td>
+      <td class="num" id="sov-amt-${i}"></td>
+      <td><button class="btn small secondary" data-action="sov-remove" data-row="${i}" title="Remove line">×</button></td>
+    </tr>`).join("");
+  return `
+    <p class="sub">Each line is a quantity at a unit rate; a lump sum is quantity 1 (unit LS) at its amount. Overhead and profit goes on top of the base lines. Approved change orders add their own lines.</p>
+    <div class="sov-paste">
+      <textarea id="sov-paste" rows="3" placeholder="Paste rows from Excel, Google Sheets, a CSV or a PDF: description, quantity, unit, unit rate, or a lump-sum amount. A header row is optional; total rows are skipped."></textarea>
+      <button class="btn small" data-action="sov-read">Read pasted rows</button>
+    </div>
+    ${sovDraft.warnings.length ? `<div class="sov-warn">${sovDraft.warnings.map(w => `<div>${esc(w)}</div>`).join("")}</div>` : ""}
+    <div class="table-wrap"><table class="sov-table">
+      <tr><th>Item</th><th>Description</th><th>Qty</th><th>Unit</th><th>Unit rate $</th><th>Scheduled value</th><th></th></tr>
+      ${rows}
+    </table></div>
+    <div class="form-inline">
+      <button class="btn small secondary" data-action="sov-add">Add line</button>
+      <label for="sov-op" class="sov-op-label">Overhead and profit</label>
+      <input id="sov-op" class="sov-in sov-num" data-sov-field="op_pct" value="${esc(sovDraft.op_pct)}" placeholder="0" inputmode="decimal"> %
+    </div>
+    <div class="sov-sums">
+      <div class="money-row"><span class="label">Schedule lines</span><span id="sov-sum-lines"></span></div>
+      <div class="money-row"><span class="label">Overhead and profit</span><span id="sov-sum-op"></span></div>
+      <div class="money-row"><span class="label">Schedule total</span><span><strong id="sov-sum-total"></strong> · <span id="sov-sum-diff"></span></span></div>
+      <div class="money-row"><span class="label">Contract</span><span>${money(j.contract_cents)}</span></div>
+    </div>
+    <div class="form-inline">
+      <button class="btn" data-action="sov-save" data-id="${j.id}">Save schedule</button>
+      <button class="btn secondary" data-action="sov-save-contract" data-id="${j.id}" hidden>Save and change the contract</button>
+      <button class="btn secondary" data-action="sov-cancel">Cancel</button>
+    </div>`;
+}
+
+function sovCardHtml(j) {
+  const v = j.sov_view || {};
+  if (sovDraft && sovDraft.jobId === j.id) {
+    return `<div class="card" id="sov-card"><h2>Schedule of values</h2>${sovEditorHtml(j)}</div>`;
+  }
+  if (!v.present) {
+    if (!v.editable) return "";
+    return `<div class="card" id="sov-card">
+      <h2>Schedule of values</h2>
+      <p class="sub">Bill line by line, the way subs bill: quantity × unit rate plus overhead and profit. Each pay app then shows what was done on each line this period. Optional; without it, progress is entered in dollars. Set it before the first pay app.</p>
+      <button class="btn secondary" data-action="sov-start" data-id="${j.id}">Set up schedule of values</button>
+    </div>`;
+  }
+  const t = v.totals;
+  const rows = v.lines.map(l => `
+    <tr>
+      <td>${l.item}</td>
+      <td>${l.description}${l.co_id ? ' <span class="pill green">CO</span>' : ""}</td>
+      <td class="num">${l.lump_sum ? "" : fmtQty(l.qty_milli) + " " + l.unit}</td>
+      <td class="num">${l.lump_sum ? "LS" : money(l.rate_cents)}</td>
+      <td class="num">${money(l.scheduled_cents)}</td>
+      <td class="num">${l.lump_sum ? l.pct + "%" : fmtQty(l.done_milli)}</td>
+      <td class="num">${money(l.to_date_cents)}</td>
+      <td class="num">${money(l.billed_cents)}</td>
+      <td class="num">${money(l.scheduled_cents - l.to_date_cents)}</td>
+    </tr>`).join("");
+  return `<div class="card" id="sov-card">
+    <h2>Schedule of values</h2>
+    <div class="table-wrap"><table class="sov-table">
+      <tr><th>Item</th><th>Description</th><th>Qty</th><th>Unit rate</th><th>Scheduled value</th><th>Done to date</th><th>Earned to date</th><th>Billed</th><th>Balance to finish</th></tr>
+      ${rows}
+      ${v.op_bp ? `<tr><td></td><td>Overhead and profit ${v.op_bp / 100}%</td><td></td><td></td><td class="num">${money(t.op_scheduled_cents)}</td><td></td><td class="num">${money(t.op_to_date_cents)}</td><td class="num">${money(v.op_billed_cents)}</td><td class="num">${money(t.op_scheduled_cents - t.op_to_date_cents)}</td></tr>` : ""}
+      <tr class="sov-total"><td></td><td>Total</td><td></td><td></td><td class="num">${money(t.scheduled_cents)}</td><td></td><td class="num">${money(t.to_date_cents)}</td><td class="num">${money(v.lines.reduce((a, l) => a + l.billed_cents, 0) + v.op_billed_cents)}</td><td class="num">${money(t.scheduled_cents - t.to_date_cents)}</td></tr>
+    </table></div>
+    ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">Edit schedule</button>` : `<p class="sub">Fixed once the first pay app exists. Scope changes go through change orders, which add their own lines when approved.</p>`}
+  </div>`;
+}
+
+function sovProgressHtml(j) {
+  const v = j.sov_view;
+  const rows = v.lines.map(l => `
+    <tr>
+      <td>${l.item}</td><td>${l.description}</td>
+      <td class="num">${l.lump_sum ? "lump sum" : fmtQty(l.qty_milli) + " " + l.unit}</td>
+      <td><input class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" value="${l.lump_sum ? +(l.done_milli / 10).toFixed(1) : l.done_milli / 1000}" inputmode="decimal" ${l.done_milli >= l.qty_milli ? "disabled" : ""}> ${l.lump_sum ? "%" : l.unit}</td>
+      <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
+    </tr>`).join("");
+  return `<div class="card sov-progress">
+    <p class="sub">Enter how much of each line is done to date (not this period). Billdable bills the difference since the last pay app, plus overhead and profit, less retainage.</p>
+    <div class="table-wrap"><table class="sov-table">
+      <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th></th></tr>
+      ${rows}
+    </table></div>
+    <div class="form-inline"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>
+  </div>`;
+}
+
+function continuationHtml(inv) {
+  const rows = (inv.sov_sheet && inv.sov_sheet.length ? inv.sov_sheet : inv.sov_lines) || [];
+  if (!rows.length) return "";
+  return `<div class="card">
+    <h2>Continuation sheet</h2>
+    <div class="table-wrap"><table class="sov-table">
+      <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Previous</th><th>This period</th><th>Total to date</th><th>%</th><th>Balance to finish</th></tr>
+      ${rows.map(e => `<tr><td>${e.item}</td><td>${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(e.to_date_cents - e.amount_cents)}</td><td class="num">${money(e.amount_cents)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${e.scheduled_cents ? Math.floor(100 * e.to_date_cents / e.scheduled_cents) : 0}%</td><td class="num">${money(e.scheduled_cents - e.to_date_cents)}</td></tr>`).join("")}
+      ${inv.op_cents ? `<tr><td></td><td>Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td></tr>` : ""}
+    </table></div>
+  </div>`;
+}
+
+async function sovReadPaste() {
+  const box = document.getElementById("sov-paste");
+  if (!box || !sovDraft) return;
+  const text = box.value;
+  if (!text.trim()) { toast("Paste rows into the box first."); return; }
+  let res;
+  try {
+    res = await fetch("/api/sov/parse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+  } catch (_) { setNetBanner(true); toast("Can't reach Billdable."); return; }
+  const data = await readJson(res);
+  if (!res.ok) { toast(data.error || "Couldn't read the rows."); return; }
+  const kept = sovFilledLines();
+  sovDraft.lines = kept.concat((data.lines || []).map(l => ({ id: "", item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate })));
+  if (!sovDraft.lines.length) sovDraft.lines = [blankSovLine()];
+  if (data.op_pct && !String(sovDraft.op_pct || "").trim()) sovDraft.op_pct = data.op_pct;
+  sovDraft.warnings = [`Read ${(data.lines || []).length} line${(data.lines || []).length === 1 ? "" : "s"}. Check them below, then save.`].concat(data.warnings || []);
+  render();
+}
+
+async function sovSave(jobId, updateContract) {
+  const t = sovDraftTotals();
+  if (t.bad) { toast("Some lines need a description, a quantity above zero and a rate above zero."); return; }
+  const j = state.jobs.find(x => x.id === jobId);
+  if (updateContract && !confirm(`Change the contract amount from ${money(j.contract_cents)} to ${money(t.total)} to match the schedule?`)) return;
+  const lines = sovFilledLines().map(l => ({ id: l.id || undefined, item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate }));
+  const r = await post(`/api/jobs/${jobId}/sov`, { lines, op_pct: sovDraft.op_pct, update_contract: !!updateContract });
+  if (r && r.ok) { sovDraft = null; render(); }
+}
+
+async function sovProgress(jobId) {
+  const done = {};
+  document.querySelectorAll("[data-sovp]").forEach(el => {
+    if (el.disabled) return;
+    const raw = el.value.trim();
+    if (!raw) return;
+    if (el.dataset.lump === "1") {
+      const pct = sovNum(raw);
+      done[el.dataset.sovp] = isNaN(pct) ? raw : (Math.round(pct * 10) / 1000).toFixed(3);
+    } else done[el.dataset.sovp] = raw;
+  });
+  const notes = document.querySelector("#progress-notes")?.value || "";
+  const r = await post(`/api/jobs/${jobId}/sov-progress`, { done, notes });
+  if (r && r.ok) { formOpen.progress = false; render(); }
+}
+
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (!sovDraft || !el || !el.dataset || !el.dataset.sovField) return;
+  if (el.dataset.sovField === "op_pct") sovDraft.op_pct = el.value;
+  else if (sovDraft.lines[+el.dataset.sovRow]) sovDraft.lines[+el.dataset.sovRow][el.dataset.sovField] = el.value;
+  updateSovTotals();
+});
+document.addEventListener("paste", (e) => {
+  if (e.target && e.target.id === "sov-paste") setTimeout(sovReadPaste, 0);
+});
+
+// ---------- accounts: reset, verify, invite links; Team & account ----------
+// Links in emails carry a one-time token after "#", which browsers never send to a server.
+let mailReady = false;
+let teamData = null;      // { users, invites } from /api/team (escaped)
+let lastInvite = null;    // { link, emailed, email_status } after inviting
+let tokenScreen = null;   // { kind: "reset" | "invite", token, info }
+
+function readTokenFromUrl() {
+  const m = /^#(reset|verify|invite)=([A-Za-z0-9_-]{20,200})$/.exec(location.hash || "");
+  if (!m) return null;
+  history.replaceState(null, "", location.pathname);  // keep the token out of the address bar and history
+  return { kind: m[1], token: m[2] };
+}
+
+async function postJson(path, body) {
+  try {
+    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    return { ok: res.ok, status: res.status, data: await readJson(res), res };
+  } catch (_) {
+    setNetBanner(true);
+    return { ok: false, status: 0, data: { error: "Can't reach Billdable." } };
+  }
+}
+
+async function handleTokenLink(t) {
+  if (t.kind === "verify") {
+    const r = await postJson("/api/auth/verify", { token: t.token });
+    return r.ok ? "Your email is confirmed. Thanks." : (r.data.error || "That link didn't work.");
+  }
+  if (t.kind === "invite") {
+    const r = await postJson("/api/auth/invite-info", { token: t.token });
+    tokenScreen = { kind: "invite", token: t.token, info: r.ok ? escDeep(r.data) : null, error: r.ok ? "" : (r.data.error || "") };
+  } else {
+    tokenScreen = { kind: "reset", token: t.token, error: "" };
+  }
+  renderTokenScreen();
+  return null;
+}
+
+function renderTokenScreen() {
+  setAiVisible(false);
+  const s = tokenScreen;
+  const app = document.getElementById("app");
+  let inner;
+  if (s.kind === "invite" && !s.info) {
+    inner = `<h2>Invite not found</h2><p class="sub">${esc(s.error || "This invite is invalid or has expired. Ask for a new one.")}</p>
+      <button class="btn" id="token-done">Go to sign in</button>`;
+  } else if (s.kind === "invite") {
+    inner = `<h2>Join ${s.info.company_name}</h2>
+      <p class="sub">${s.info.invited_by ? s.info.invited_by + " invited you" : "You were invited"} as ${s.info.role}. Your sign-in email is <strong>${s.info.email}</strong>.</p>
+      <form id="token-form">
+        <label>Your name</label><input name="name" required autocomplete="name">
+        <label>Choose a password (at least 10 characters)</label><input name="password" type="password" required autocomplete="new-password" minlength="10">
+        <label class="terms-check"><input type="checkbox" name="accept_terms" required> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>
+        <button class="btn" type="submit">Join the team</button>
+        ${s.error ? `<div class="auth-error">${esc(s.error)}</div>` : ""}
+      </form>`;
+  } else {
+    inner = `<h2>Choose a new password</h2>
+      <p class="sub">At least 10 characters. Every other device is signed out when you save it.</p>
+      <form id="token-form">
+        <label>New password</label><input name="password" type="password" required autocomplete="new-password" minlength="10">
+        <button class="btn" type="submit">Save and sign in</button>
+        ${s.error ? `<div class="auth-error">${esc(s.error)}</div>` : ""}
+      </form>`;
+  }
+  app.innerHTML = `<div class="landing"><header class="land-bar"><div class="brand">Billdable</div></header>
+    <section class="land-hero"><div class="auth-card land-form" id="token-card">${inner}</div></section></div>`;
+  document.getElementById("token-done")?.addEventListener("click", () => { tokenScreen = null; authMode = "login"; renderLanding(); });
+  document.getElementById("token-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    if (f.password.value.length < 10) { s.error = "Password must be at least 10 characters."; renderTokenScreen(); return; }
+    if (s.kind === "invite" && !f.accept_terms.checked) { s.error = "To join, accept the Terms of Service and the Privacy Policy."; renderTokenScreen(); return; }
+    const r = s.kind === "invite"
+      ? await postJson("/api/auth/accept-invite", { token: s.token, name: f.name.value, password: f.password.value, accept_terms: true })
+      : await postJson("/api/auth/reset", { token: s.token, password: f.password.value });
+    if (!r.ok) { s.error = r.data.error || "That didn't work."; renderTokenScreen(); return; }
+    tokenScreen = null;
+    await boot(false);
+    toast(s.kind === "invite" ? "Welcome to the team." : "Password changed. You're signed in.");
+  });
+}
+
+function renderForgot(message = "", error = "") {
+  const card = document.getElementById("signup");
+  if (!card) return;
+  card.innerHTML = `<h2>Reset your password</h2>
+    <p class="sub">We'll email a link that works once, for one hour.</p>
+    <form id="forgot-form">
+      <label>Email</label><input name="email" type="email" required autocomplete="username">
+      <button class="btn" type="submit">Send the link</button>
+      ${message ? `<div class="sub">${esc(message)}</div>` : ""}${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
+    </form>
+    <div class="auth-toggle"><button type="button" id="forgot-back">Back to sign in</button></div>`;
+  document.getElementById("forgot-back").addEventListener("click", () => { authMode = "login"; renderLanding(); });
+  document.getElementById("forgot-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const r = await postJson("/api/auth/forgot", { email: e.target.email.value });
+    if (r.ok) renderForgot(r.data.message || "");
+    else renderForgot("", r.data.error || "That didn't work.");
+  });
+}
+
+async function loadTeam() {
+  try {
+    const res = await fetch("/api/team");
+    if (!res.ok) return;
+    teamData = escDeep(await readJson(res));
+  } catch (_) { setNetBanner(true); return; }
+  if (currentView === "account") render();
+}
+
+async function teamPost(path, body, okMessage) {
+  const r = await postJson(path, body);
+  if (!r.ok) { toast(r.data.error || "That didn't work."); return null; }
+  if (r.data.users) teamData = escDeep({ users: r.data.users, invites: r.data.invites || [] });
+  if (okMessage) toast(okMessage);
+  render();
+  return r.data;
+}
+
+function verifyBannerHtml() {
+  if (!mailReady || !me || me.email_verified || me.company_id === DEMO_COMPANY_ID) return "";
+  return `<div class="verify-banner">Confirm your email (${me.email}) so Billdable can send pay apps for you; replies come back to it.
+    <button class="linkish" data-action="resend-verify">Send the link again</button></div>`;
+}
+
+function accountView() {
+  if (!teamData) loadTeam();
+  const owner = me.role === "owner";
+  const isDemo = me.company_id === DEMO_COMPANY_ID;
+  const users = teamData ? teamData.users : [];
+  const invites = teamData ? teamData.invites : [];
+  const verified = me.email_verified
+    ? `<span class="pill green">confirmed</span>`
+    : `<span class="pill amber">not confirmed</span> ${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : `<span class="sub">Confirming needs email set up on the server.</span>`}`;
+  return `
+    <h1>Team & account</h1>
+    <div class="card">
+      <h2>You</h2>
+      <div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>
+      <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
+      <div class="money-row"><span class="label">Role</span><span>${me.role}</span></div>
+      ${isDemo ? "" : `<div class="form-inline">
+        <input id="pw-current" type="password" placeholder="Current password" autocomplete="current-password">
+        <input id="pw-new" type="password" placeholder="New password (10+ characters)" autocomplete="new-password">
+        <button class="btn small" data-action="change-password">Change password</button>
+      </div>`}
+    </div>
+    <div class="card">
+      <h2>Team</h2>
+      <p class="sub">Owners manage the team, inbound addresses, reset and deletion. Members do everything else. Every action is in the Audit with the person's name.</p>
+      <div class="table-wrap"><table>
+        <tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr>
+        ${users.map(u => `<tr><td>${u.name}${u.id === me.id ? " (you)" : ""}</td><td>${u.email}</td><td>${u.role}</td><td>${(u.created_at || "").slice(0, 10)}</td>
+          <td>${owner && !isDemo && u.id !== me.id ? `
+            <button class="btn small secondary" data-action="team-role" data-user="${u.id}" data-role="${u.role === "owner" ? "member" : "owner"}">Make ${u.role === "owner" ? "member" : "owner"}</button>
+            <button class="btn small secondary" data-action="team-remove" data-user="${u.id}" data-name="${u.name}">Remove</button>` : ""}</td></tr>`).join("")}
+      </table></div>
+      ${owner && !isDemo ? `
+        <h3>Invite someone</h3>
+        <div class="form-inline">
+          <input id="invite-email" type="email" placeholder="Their email" style="flex:1">
+          <select id="invite-role"><option value="member">Member</option><option value="owner">Owner</option></select>
+          <button class="btn small" data-action="team-invite">Invite</button>
+        </div>
+        ${lastInvite ? `<div class="invite-result">${lastInvite.emailed ? `Invite emailed to ${esc(lastInvite.email)}.` : `Not emailed (${esc(lastInvite.email_status)}). Send them this link yourself; it works once, for 7 days:`}
+          <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}
+        ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${i.expires_at.slice(0, 10)}
+          <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}
+    </div>
+    ${owner && !isDemo ? `
+    <div class="card danger-zone">
+      <h2>Delete the company</h2>
+      <p class="sub">Deletes every job, file, payer and record, and every user on this team. Export your data first if you want a copy. Server backups that already hold it expire on their own (the newest 14 are kept by default).</p>
+      <div class="form-inline">
+        <input id="del-password" type="password" placeholder="Your password" autocomplete="current-password">
+        <input id="del-confirm" placeholder="Type the company name: ${state.company.name}" style="flex:1">
+        <button class="btn small danger" data-action="delete-account">Delete everything</button>
+      </div>
+    </div>` : ""}
+  `;
+}
+
+function trialBannerHtml() {
+  const t = state.trial;
+  if (!t || !t.tracked) return "";
+  const day = (iso) => new Date(unesc(iso)).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  if (t.state === "active") {
+    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Billdable is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}. Billing isn't live yet.</div>`;
+  }
+  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}. Billing isn't live yet, so nothing changes for now.</div>`;
+}
+
+function onboardingHtml() {
+  if (!state || state.company.onboarding_dismissed || (me && me.company_id === DEMO_COMPANY_ID)) return "";
+  const jobs = state.jobs;
+  const invoices = jobs.flatMap(j => j.invoices);
+  const steps = [
+    ["Create your first job: contract amount, payer, approver, AP email, retainage.", jobs.length > 0, "onb-newjob", "New job"],
+    ["Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", jobs.some(j => (j.records || []).length), "onb-job", "Open the job"],
+    ["Optional: set up a schedule of values to bill line by line (paste it from your estimate).", jobs.some(j => j.sov_view && j.sov_view.present), "onb-job", "Open the job"],
+    ["Record progress, or mark the job done. Billdable drafts the pay app and lists the packet the payer requires.", invoices.length > 0, "onb-job", "Open the job"],
+    ["Clear the packet, then Approve & send.", invoices.some(i => i.sent_at), "onb-job", "Open the job"],
+  ];
+  if (steps[4][1]) return "";
+  const OPTIONAL = 2;  // the schedule of values is optional, so it doesn't count toward "done"
+  const required = steps.filter((s, i) => i !== OPTIONAL);
+  const done = required.filter(s => s[1]).length;
+  const next = steps.findIndex((s, i) => i !== OPTIONAL && !s[1]);
+  return `<div class="card onboarding">
+    <button class="help-dismiss" data-action="onb-dismiss" title="Hide this">×</button>
+    <h2>Get your first pay app out</h2>
+    <p class="sub">${done} of ${required.length} done. The Help page explains every term.</p>
+    <ol class="onb-steps">${steps.map((s, i) => `<li class="${s[1] ? "done" : i === next ? "next" : ""}">${s[1] ? "✓ " : ""}${s[0]}
+      ${i === next && (i === 0 || jobs.length) ? ` <button class="btn small" data-action="${s[2]}">${s[3]}</button>` : ""}</li>`).join("")}</ol>
+  </div>`;
+}
+
+let adminCompanies = null;
+async function loadAdminCompanies() {
+  try {
+    const res = await fetch("/api/admin/companies");
+    if (!res.ok) return;
+    adminCompanies = escDeep((await readJson(res)).companies);
+  } catch (_) { return; }
+  const el = document.getElementById("admin-companies");
+  if (el) el.innerHTML = adminCompaniesHtml();
+}
+
+function adminCompaniesHtml() {
+  if (!adminCompanies) return "Loading…";
+  const trialText = (t) => !t.tracked ? "not tracked (signed up before trials)" : t.state === "active"
+    ? `active until ${t.ends_by.slice(0, 10)}${t.extended ? " (extended)" : ""}` : `ended ${t.ended_at.slice(0, 10)}${t.reason === "paid" ? ` (${t.first_paid} paid)` : " (time)"}`;
+  return `<div class="table-wrap"><table>
+    <tr><th>Company</th><th>Signed up</th><th>Users</th><th>Jobs</th><th>Pay apps sent</th><th>Trial</th></tr>
+    ${adminCompanies.filter(c => !c.demo).map(c => `<tr><td>${c.name}</td><td>${c.signed_up.slice(0, 10)}</td><td>${c.users}</td><td>${c.jobs}</td><td>${c.pay_apps_sent}</td><td>${trialText(c.trial)}</td></tr>`).join("")}
+  </table></div>`;
+}
+
+function recordFiles(r) {
+  return (r.file_ids || []).map(fid => {
+    const f = (state.files || []).find(x => x.id === fid);
+    return f ? `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>` : "";
+  }).filter(Boolean).join(" · ");
+}
+
+function inboxItemCard(i) {
+  const openJobs = state.jobs.filter(j => !j.closed);
+  const files = (i.file_ids || []).map(fid => (state.files || []).find(x => x.id === fid)).filter(Boolean);
+  const title = i.subject || (files[0] && files[0].name) || (i.text || "").split("\n")[0].slice(0, 80) || "Untitled";
+  const preview = (i.text || "").slice(0, 600);
+  const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? "selected" : ""}>${v}</option>`).join("");
+  const jobs = `<option value="">Pick a job…</option>` + openJobs.map(j => `<option value="${j.id}" ${i.suggested_job_id === j.id ? "selected" : ""}>${j.name} (${j.code})</option>`).join("");
+  return `<div class="inbox-item">
+    <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${title}</strong>
+      <span class="sub">${i.from ? "from " + i.from + " · " : ""}${(i.sent_at || i.received_at || "").slice(0, 10)}${i.note_date ? " · dated " + i.note_date : ""}</span></div>
+    ${preview ? `<details><summary>${preview.slice(0, 140)}${preview.length > 140 ? "…" : ""}</summary><pre class="inbox-text">${preview}</pre></details>` : ""}
+    ${files.length ? `<div class="sub">Files: ${files.map(f => `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>`).join(" · ")}</div>` : ""}
+    ${(i.amounts || []).length || (i.dates || []).length ? `<div class="sub">Found: ${(i.amounts || []).map(a => money(a)).join(", ")}${(i.amounts || []).length && (i.dates || []).length ? " · " : ""}${(i.dates || []).join(", ")}</div>` : ""}
+    ${(i.skipped_attachments || []).length ? `<div class="field-error">${i.skipped_attachments.join(" ")}</div>` : ""}
+    <div class="sub">${i.suggested_job_id ? "Suggested because it " + i.match_reason : i.match_reason}</div>
+    <div class="form-inline">
+      <select id="inb-job-${i.id}" aria-label="Job">${jobs}</select>
+      <select id="inb-kind-${i.id}" aria-label="Kind">${kinds}</select>
+      <button class="btn small" data-action="inbox-file" data-item="${i.id}">File to job record</button>
+      <button class="btn small secondary" data-action="inbox-dismiss" data-item="${i.id}">Dismiss</button>
+    </div>
+  </div>`;
 }
 
 function filteredJobs() {
@@ -461,7 +1543,7 @@ function filteredJobs() {
     jobs = jobs.filter(j => j.work_status === "complete" && thisMonth(j.completed_at));
   } else if (dashFilter === "sent") {
     jobs = jobs.filter(j => j.invoices.some(i => i.status === "sent"));
-  } else if (dashFilter === "blocked") jobs = jobs.filter(j => j.blockers && j.blockers.length);
+  } else if (dashFilter === "blocked") jobs = jobs.filter(j => j.blockers && j.blockers.length && !j.closed);
   else if (dashFilter === "draft") jobs = jobs.filter(j => j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status)));
   else if (dashFilter === "waiver") jobs = jobs.filter(j => j.waiver_due && !j.waiver_sent);
   const key = dashSort;
@@ -493,36 +1575,202 @@ function billedThisMonth() {
   return total;
 }
 
-function chasedDown() {
-  // revenue that had a follow-up or was previously blocked and is now billed/collected
-  let total = 0;
-  state.jobs.forEach(j => {
-    if ((j.follow_ups || 0) > 0) total += j.money.collected_cents;
-    else if (j.money.billed_cents > 0 && j.blockers.length === 0) total += Math.min(j.money.billed_cents, j.money.collected_cents || j.money.billed_cents * 0.3);
-  });
-  return total;
+let helperReview = null;
+let helperDraft = null;   // the answer being written or edited
+const HELPER_VIEWS = ["inbox", "dashboard", "daily", "jobs", "calendar", "payapps", "packets", "cos", "collections", "payments", "waivers", "retainage", "history", "playbook", "outbox", "audit", "help"];
+
+async function loadHelperReview() {
+  const body = document.getElementById("helper-admin-body");
+  if (!body) return;
+  try {
+    const res = await fetch("/api/helper/review");
+    const data = await readJson(res);
+    if (!res.ok) { body.textContent = data.error || "Could not load."; return; }
+    helperReview = escDeep(data);
+  } catch (_) { setNetBanner(true); return; }
+  renderHelperAdminBody();
 }
 
-function paidOnTimeDelta() {
-  // average days faster than playbook usual_approval_days
-  let deltas = [];
-  state.jobs.forEach(j => {
-    const usual = j.payer.usual_approval_days || 14;
-    j.invoices.forEach(inv => {
-      if (inv.sent_at && inv.status === "paid") {
-        const pay = j.payments.find(p => p.invoice_id === inv.id);
-        if (pay) {
-          const days = (new Date(pay.matched_at) - new Date(inv.sent_at)) / 86400000;
-          deltas.push(usual - days);
-        }
-      }
-    });
+function helperEditor() {
+  const d = helperDraft || {};
+  const handlers = (helperReview && helperReview.handlers) || [];
+  const navAction = (d.actions || []).find(a => a.type === "nav");
+  return `<div class="card" id="helper-editor">
+    <h2>${d.id ? "Edit answer" : "New answer"}</h2>
+    <div class="form-grid">
+      <div class="span-2"><label for="ha-questions">Example questions, one per line</label><textarea id="ha-questions" rows="4">${esc((d.questions || []).join("\n"))}</textarea></div>
+      <div class="span-2"><label for="ha-answer">Answer</label><textarea id="ha-answer" rows="6" placeholder="Plain words. Start a line with - for a bullet.">${esc(d.answer || "")}</textarea></div>
+      <div><label for="ha-category">Category</label><input id="ha-category" value="${esc(d.category || "General")}"></div>
+      <div><label for="ha-keywords">Keywords, comma separated</label><input id="ha-keywords" value="${esc((d.keywords || []).join(", "))}"></div>
+      <div><label for="ha-handler">Add live data from the company's jobs</label><select id="ha-handler"><option value="">None</option>${handlers.map(h => `<option ${unesc(h) === d.handler ? "selected" : ""}>${h}</option>`).join("")}</select></div>
+      <div><label for="ha-nav">Button to open a page</label><select id="ha-nav"><option value="">None</option>${HELPER_VIEWS.map(v => `<option value="${v}" ${navAction && navAction.view === v ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div class="span-2"><label for="ha-follow">Suggested next questions, one per line</label><textarea id="ha-follow" rows="2">${esc((d.follow_ups || []).join("\n"))}</textarea></div>
+    </div>
+    <div class="form-inline"><button class="btn" id="ha-save">Save answer</button><button class="btn secondary" id="ha-cancel">Cancel</button>
+    <span class="sub">Saved answers work right away for every company. Same id as a shipped answer replaces it.</span></div>
+  </div>`;
+}
+
+function renderHelperAdminBody() {
+  const body = document.getElementById("helper-admin-body");
+  if (!body || !helperReview) return;
+  const r = helperReview;
+  const s = r.stats;
+  body.innerHTML = `
+    <div class="metrics">
+      <div class="metric"><div class="k">Questions asked</div><div class="v">${s.questions}</div></div>
+      <div class="metric"><div class="k">Answered</div><div class="v">${s.answered}</div></div>
+      <div class="metric"><div class="k">Marked helpful</div><div class="v">${s.helpful}</div></div>
+      <div class="metric"><div class="k">Marked not helpful</div><div class="v">${s.unhelpful}</div></div>
+    </div>
+    ${helperDraft ? helperEditor() : `<button class="btn" id="ha-new">Write a new answer</button>`}
+    <div class="card"><h2>Questions without a good answer (${r.open.length})</h2>
+      ${r.open.length ? r.open.map((g, i) => `<div class="list-item"><strong>${g.examples[0]}</strong> <span class="sub">asked ${g.count}×${g.unhelpful ? `, ${g.unhelpful} marked not helpful` : ""}${g.top_guess ? `, closest answer: ${g.top_guess}` : ""}</span>
+        ${g.examples.length > 1 ? `<div class="sub">Also: ${g.examples.slice(1).join(" · ")}</div>` : ""}
+        <div class="form-inline"><button class="btn small" data-ha-answer="${i}">Write an answer</button>${g.top_guess ? `<button class="btn small secondary" data-ha-extend="${i}">Add to "${g.top_guess}"</button>` : ""}<button class="btn small secondary" data-ha-resolve="${i}">Not needed</button></div></div>`).join("")
+        : emptyState("Nothing open", "Every question so far found an answer people found helpful.")}
+    </div>
+    <details class="card"><summary><strong>All answers (${r.answers.length})</strong></summary>
+      ${r.answers.map((a, i) => `<div class="list-item"><strong>${a.questions[0]}</strong> <span class="sub">${a.category} · ${a.id} · ${a.origin}${a.handler ? " · live: " + a.handler : ""}</span> <button class="btn small secondary" data-ha-edit="${i}">Edit</button></div>`).join("")}
+    </details>`;
+  const raw = unesc;   // values below are decoded for the editor, which escapes them again
+  const rawDeep = (o) => typeof o === "string" ? raw(o) : Array.isArray(o) ? o.map(rawDeep) : (o && typeof o === "object") ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, rawDeep(v)])) : o;
+  body.querySelector("#ha-new")?.addEventListener("click", () => { helperDraft = { questions: [] }; renderHelperAdminBody(); });
+  body.querySelectorAll("[data-ha-answer]").forEach(b => b.addEventListener("click", () => {
+    helperDraft = { questions: rawDeep(r.open[Number(b.dataset.haAnswer)].examples) }; renderHelperAdminBody();
+    document.getElementById("helper-editor")?.scrollIntoView({ behavior: "smooth" });
+  }));
+  body.querySelectorAll("[data-ha-extend]").forEach(b => b.addEventListener("click", () => {
+    const g = r.open[Number(b.dataset.haExtend)];
+    const base = r.answers.find(a => a.id === g.top_guess);
+    if (!base) return;
+    helperDraft = rawDeep({ ...base, questions: [...base.questions, ...g.examples] }); renderHelperAdminBody();
+    document.getElementById("helper-editor")?.scrollIntoView({ behavior: "smooth" });
+  }));
+  body.querySelectorAll("[data-ha-edit]").forEach(b => b.addEventListener("click", () => {
+    helperDraft = rawDeep(r.answers[Number(b.dataset.haEdit)]); renderHelperAdminBody();
+    document.getElementById("helper-editor")?.scrollIntoView({ behavior: "smooth" });
+  }));
+  body.querySelectorAll("[data-ha-resolve]").forEach(b => b.addEventListener("click", async () => {
+    const g = r.open[Number(b.dataset.haResolve)];
+    const res = await fetch("/api/helper/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ normalized: raw(g.normalized) }) });
+    if (res.ok) { helperReview = escDeep(await readJson(res)); renderHelperAdminBody(); }
+  }));
+  body.querySelector("#ha-cancel")?.addEventListener("click", () => { helperDraft = null; renderHelperAdminBody(); });
+  body.querySelector("#ha-save")?.addEventListener("click", async () => {
+    const lines = (id) => (document.getElementById(id).value || "").split("\n").map(x => x.trim()).filter(Boolean);
+    const navView = document.getElementById("ha-nav").value;
+    const payload = {
+      id: helperDraft && helperDraft.id ? helperDraft.id : "",
+      questions: lines("ha-questions"),
+      answer: document.getElementById("ha-answer").value,
+      category: document.getElementById("ha-category").value,
+      keywords: document.getElementById("ha-keywords").value.split(",").map(x => x.trim()).filter(Boolean),
+      handler: document.getElementById("ha-handler").value,
+      needs_job: ["draft_followup", "job_status"].includes(document.getElementById("ha-handler").value),
+      actions: navView ? [{ type: "nav", view: navView, label: "Open " + navView.charAt(0).toUpperCase() + navView.slice(1) }] : [],
+      follow_ups: lines("ha-follow"),
+    };
+    const res = await fetch("/api/helper/answers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const data = await readJson(res);
+    if (!res.ok) { toast(data.error || "Not saved."); return; }
+    helperReview = escDeep(data);
+    helperDraft = null;
+    toast("Answer saved. It works right away.");
+    renderHelperAdminBody();
   });
-  if (!deltas.length) return 4; // demo default
-  return Math.round(deltas.reduce((a, b) => a + b, 0) / deltas.length);
 }
 
 const views = {
+  account() { return accountView(); },
+  "helper-admin"() {
+    return `<h1>Helper answers</h1>
+      <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
+      <div id="helper-admin-body">Loading…</div>
+      <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial. Billing isn't live, so nothing is enforced.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
+  },
+  inbox() {
+    const items = (state.inbox || []).filter(i => i.status === "new").slice().reverse();
+    const done = (state.inbox || []).filter(i => i.status !== "new").slice(-20).reverse();
+    const withSuggestion = items.filter(i => i.suggested_job_id).length;
+    const jobName = (id) => (state.jobs.find(j => j.id === id) || {}).name || "a job";
+    return `
+      <h1>Inbox</h1>
+      <p class="sub">Bring in photos, PDFs, saved emails, text threads and notes. Billdable suggests the job from the job code, address, name or sender; you file it with one click. Nothing is filed without you.</p>
+      <div class="dropzone" tabindex="0">
+        <strong>Drop files anywhere on this page</strong>
+        <span class="sub">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to ${MAX_UPLOAD_MB} MB each. Or <button class="linkish" data-action="pick-files">choose files</button>, or press Ctrl+V / ⌘V to paste a screenshot. On a phone, choose files opens the camera too.</span>
+      </div>
+      <div class="card">
+        <h2>Paste an email, a text thread, or notes</h2>
+        <div class="form-inline">
+          <select id="paste-source" aria-label="What are you pasting?">
+            <option value="email">An email (with or without the From/Subject lines)</option>
+            <option value="sms">Text messages</option>
+            <option value="notes">Notes: one daily record per date</option>
+            <option value="paste">Something else</option>
+          </select>
+        </div>
+        <textarea id="paste-text" rows="6" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in"></textarea>
+        <div class="form-inline"><button class="btn" data-action="import-text">Add to Inbox</button>
+        <span class="sub">Notes split at every line that starts with a date (10/12, Oct 12, 2026-10-12). Exported Apple Notes or a typed-up notebook work.</span></div>
+      </div>
+      <div class="card">
+        <div class="top"><h2>To file (${items.length})</h2>${withSuggestion > 1 ? `<button class="btn small" data-action="inbox-file-all">File all ${withSuggestion} with a suggested job</button>` : ""}</div>
+        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting", "Drop files, paste an email or notes above, or set up email and text forwarding below.")}
+      </div>
+      ${done.length ? `<details class="card"><summary><strong>Recently filed or dismissed</strong></summary>
+        ${done.map(i => `<div class="list-item">${i.status === "filed" ? `Filed to ${jobName(i.filed_job_id)} as ${RECORD_KINDS[i.filed_kind] || i.filed_kind}` : "Dismissed"}: ${i.subject || (i.text || "").slice(0, 60) || "item"} <button class="btn small secondary" data-action="inbox-undo" data-item="${i.id}">Undo</button></div>`).join("")}
+      </details>` : ""}
+      <details class="card">
+        <summary><strong>Bring emails and texts in automatically</strong></summary>
+        <h3>Email</h3>
+        <p id="email-address" class="sub">Loading…</p>
+        <p class="sub">Steps: in an email service that can post incoming mail to a web address (SendGrid Inbound Parse, Mailgun routes or Postmark inbound), set up an inbound address and point it at this private web address. Then forward or BCC job emails to that inbound address. Attachments come in as files.</p>
+        <div class="copy-row"><code id="email-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="email-webhook">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="email">Make a new address</button></div>
+        <h3>Text messages</h3>
+        <p id="sms-number" class="sub">Loading…</p>
+        <p class="sub">Steps: in Twilio, buy a number and set its incoming-message webhook to this private web address. Set TWILIO_AUTH_TOKEN on the server so Billdable checks each message really came from Twilio. Photos sent by text show as links for now; they are not downloaded.</p>
+        <div class="copy-row"><code id="sms-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="sms-webhook">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="sms">Make a new address</button></div>
+        <p class="sub">Anyone who knows these addresses can drop items in your Inbox. They are reviewed before filing. Make a new address if one leaks.</p>
+      </details>
+    `;
+  },
+  help() {
+    const glossary = [
+      ["Pay app (pay application)", "The bill for work done this period. It lists what was completed, at the contract rates, plus signed change orders, less retainage."],
+      ["Pencil copy (pencil draft)", "A draft of the pay app sent to the owner or GC to agree quantities before the formal one. It avoids \"push it to next month\"."],
+      ["Packet", "Everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate."],
+      ["Schedule of values", "The contract broken into line items with a value each. Each pay app bills a percentage of each line."],
+      ["Change order (CO)", "Extra or changed work. Bill it only after the customer signs it."],
+      ["Retainage", "A percentage (often 5 to 10) the payer holds back from every pay app until the job is closed out."],
+      ["Punch list", "Small fixes found at final inspection: a dead outlet, a loose railing. Finishing it is what releases retainage."],
+      ["Closeout packet", "The documents needed to finish the job and release retainage: punch-list signoff, final waivers, warranties."],
+      ["Lien waiver", "A document giving up lien rights for money already paid. Conditional: only if the payment clears. Unconditional: payment received. Forms are set by state law in some states."],
+      ["Pay-when-paid / pay-if-paid", "Contract terms that tie a sub's payment to the GC being paid. Pay-if-paid shifts the risk to the sub; some states limit it."],
+      ["Payer playbook", "What each customer requires, who approves, how long they take, and why they reject pay apps."],
+    ];
+    return `
+      <h1>Help</h1>
+      <p class="sub">Hover any label with an (i) to see what it means. Tap it on a phone.</p>
+      <div class="card">
+        <h2>First job, start to finish</h2>
+        <ol class="steps">
+          <li>Jobs → New job: contract amount, payer, approver, AP email, retainage percent.</li>
+          <li>Drop the contract, photos and tickets on the job record, or bring emails and texts in through the Inbox.</li>
+          <li>Progress pay app: enter completed-to-date. Billdable drafts the pay app, withholds retainage and lists the packet.</li>
+          <li>Optional: send a pencil copy so the payer agrees the numbers first.</li>
+          <li>Attach records to each packet item. Approve and send unlocks when the packet is complete.</li>
+          <li>Match the payment when it arrives, then send the waiver for that pay app.</li>
+          <li>Mark done, finish the punch list (closeout packet), ask for retainage, record it when paid, close the job.</li>
+        </ol>
+      </div>
+      <div class="card"><h2>Words you will see</h2>
+        <dl class="glossary">${glossary.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join("")}</dl>
+      </div>
+      <p class="sub">Your account id: <code>${me ? me.id : ""}</code> (the Billdable team uses it to set up access).</p>
+    `;
+  },
   dashboard() {
     const t = state.totals;
     const jobs = filteredJobs();
@@ -530,7 +1778,9 @@ const views = {
     return `
       <h1>Dashboard</h1>
       <p class="sub">What needs attention and the money across open jobs.</p>
-      ${state.jobs.length === 0 ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.") : ""}
+      ${trialBannerHtml()}
+      ${onboardingHtml()}
+      ${state.jobs.length === 0 && (state.company.onboarding_dismissed || (me && me.company_id === DEMO_COMPANY_ID)) ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.") : ""}
       ${!helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" title="Dismiss">×</button>
@@ -545,8 +1795,6 @@ const views = {
         <div class="metric"><div class="k">Retainage open</div><div class="v">${money(t.retainage_cents)}</div></div>
       </div>
       <div class="metrics">
-        <div class="metric highlight"><div class="k">Billdable revenue chased down</div><div class="v">${money(chasedDown())}</div></div>
-        <div class="metric highlight"><div class="k">Billdable revenue paid on time</div><div class="v">${paidOnTimeDelta()} days faster</div></div>
         <div class="metric"><div class="k">Blocked jobs</div><div class="v">${t.blocked_jobs}</div></div>
         <div class="metric"><div class="k">Active jobs</div><div class="v">${state.jobs.filter(j => !j.closed).length}</div></div>
       </div>
@@ -613,7 +1861,7 @@ const views = {
         <div class="card">
           <h2>New job</h2>
           <p class="sub">Required fields are marked. Saving creates the job record. A packet is created later, with a pay app.</p>
-          ${jobFormError ? `<div class="form-error">${jobFormError}</div>` : ""}
+          ${jobFormError ? `<div class="form-error">${esc(jobFormError)}</div>` : ""}
           <div class="form-section">Job</div>
           <div class="form-grid">
             <div><label>Job name <span class="req">*</span></label><input id="nj-name" required /></div>
@@ -663,10 +1911,16 @@ const views = {
     if (!j) return "<p>Job not found</p>";
     const m = j.money;
     const blocked = j.blockers && j.blockers.length;
-    const canClose = !j.closed && m.outstanding_cents === 0 && m.retainage_open_cents === 0 && (!j.waiver_due || j.waiver_sent);
+    const canClose = !j.closed && (j.close_blockers || []).length === 0;
     const hasDraft = j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status));
+    const openDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
+    const pencilOut = openDraft && openDraft.pencil_status === "sent";
+    const openForPay = j.invoices.filter(i => ["sent", "approved", "partial"].includes(i.status));
+    const isDemo = me && me.company_id === DEMO_COMPANY_ID;
+    const closeout = j.closeout_packet || [];
+    const closeoutMissing = closeout.filter(p => p.required && !p.present).length;
     return `
-      <div class="top"><button class="back" onclick="nav('jobs')">← Jobs</button></div>
+      ${backButton("jobs", "Jobs")}
       <h1>${j.name}</h1>
       <p class="sub">${j.address} · ${j.payer.name} · ${j.work_status}${j.done_notes ? " · " + j.done_notes : ""}</p>
       <div class="next-step"><strong>Next:</strong> ${nextStep(j)}</div>
@@ -688,55 +1942,74 @@ const views = {
           <div class="money-row"><span class="label">Collected</span><span>${money(m.collected_cents)}</span></div>
           <div class="money-row"><span class="label">Outstanding</span><span>${money(m.outstanding_cents)}</span></div>
           <div class="money-row"><span class="label">Unbilled completed</span><span>${money(m.unbilled_completed_cents)}</span></div>
-          <div class="money-row"><span class="label">Retainage open</span><span>${money(m.retainage_open_cents)}${j.retainage_pct ? " · " + j.retainage_pct + "%" : ""}</span></div>
+          <div class="money-row"><span class="label">Retainage held</span><span>${money(m.retainage_held_cents)}${j.retainage_pct ? " · " + j.retainage_pct + "%" : ""}</span></div>
+          <div class="money-row"><span class="label">Retainage released</span><span>${money(m.retainage_released_cents)}</span></div>
+          <div class="money-row"><span class="label">Retainage open</span><span>${money(m.retainage_open_cents)}</span></div>
         </div>
         <div class="card">
           <h2>Actions</h2>
+          ${j.closed ? `<p class="sub">This job is closed. Its money record is read-only; you can still add notes to the job record.</p>` : `
           <div class="actions-vert">
             ${j.work_status !== "complete" ? `<div class="action-row"><button class="btn" data-action="toggle-form" data-form="progress">Progress pay app</button><div><div class="blurb">Bill completed-to-date without marking the job done.</div></div></div>` : ""}
             ${j.work_status !== "complete" ? `<div class="action-row"><button class="btn secondary" data-action="toggle-form" data-form="done">Mark done</button><div><div class="blurb">Record completion and draft the final pay app.</div></div></div>` : ""}
             <div class="action-row"><button class="btn secondary" data-action="draft" data-id="${j.id}">Draft pay app</button><div class="blurb">Create a same-week pay app from unbilled completed work.</div></div>
             <div class="action-row"><button class="btn" data-action="send" data-id="${j.id}" ${blocked || !hasDraft ? "disabled" : ""}>Approve & send</button><div class="blurb">Human gate. Sends only when the packet is clean.</div></div>
-            <div class="action-row"><button class="btn secondary" data-action="follow-up" data-id="${j.id}">Follow up</button><div class="blurb">Log a follow-up on a sent pay app using the playbook cadence.</div></div>
+            ${hasDraft && !pencilOut ? `<div class="action-row"><button class="btn secondary" data-action="pencil" data-id="${j.id}">Send pencil copy</button><div class="blurb">Send the draft to the payer to agree quantities and change orders before the formal pay app.</div></div>` : ""}
+            ${pencilOut ? `<div class="action-row"><button class="btn secondary" data-action="pencil-agreed" data-id="${j.id}">Payer agreed to pencil</button><button class="btn secondary" data-action="pencil-changes" data-id="${j.id}">Payer wants changes</button></div>` : ""}
+            ${hasDraft ? `<div class="action-row"><button class="btn secondary" data-action="void-draft" data-id="${j.id}">Void draft</button><div class="blurb">Throw away the open draft. Its work goes back to unbilled.</div></div>` : ""}
+            <div class="action-row"><button class="btn secondary" data-action="follow-up" data-id="${j.id}">Follow up</button><div class="blurb">Email a follow-up on a sent pay app, no sooner than the payer's playbook cadence allows.</div></div>
             <div class="action-row"><button class="btn secondary" data-action="toggle-form" data-form="match">Match payment</button><div class="blurb">Record cash received (dollars). Opens the waiver gate when paid in full.</div></div>
-            <div class="action-row"><button class="btn secondary" data-action="import-qbo" data-id="${j.id}">Import QBO sample</button><div class="blurb">Local stand-in for a QuickBooks payment read.</div></div>
-            ${j.waiver_due && !j.waiver_sent ? `<div class="action-row"><button class="btn" data-action="waiver" data-id="${j.id}">Send waiver</button><div class="blurb">Human gate. Sends the conditional waiver after payment.</div></div>` : ""}
+            ${isDemo ? `<div class="action-row"><button class="btn secondary" data-action="import-qbo" data-id="${j.id}">Import QBO sample</button><div class="blurb">Demo only: a stand-in for a QuickBooks payment read.</div></div>` : ""}
+            ${j.waiver_due && !j.waiver_sent ? `<div class="action-row"><button class="btn" data-action="waiver" data-id="${j.id}">Send waiver</button><div class="blurb">Human gate. One waiver per paid pay app. Emails the payer with the newest lien waiver on the job record attached, so drop your signed waiver there first.</div></div>` : ""}
             ${m.retainage_open_cents > 0 ? `<div class="action-row"><button class="btn secondary" data-action="retainage" data-id="${j.id}">Chase retainage</button><div class="blurb">Request release once the closeout packet is complete.</div></div>` : ""}
+            ${m.retainage_open_cents > 0 ? `<div class="action-row"><button class="btn secondary" data-action="toggle-form" data-form="retpay">Record retainage paid</button><div class="blurb">Record retainage the payer released.</div></div>` : ""}
             <div class="action-row"><button class="btn secondary" data-action="goto-co" data-id="${j.id}">Add change order</button><div class="blurb">Opens Change Orders to create a new CO for this job.</div></div>
             <div class="action-row"><button class="btn secondary" data-action="goto-packet" data-id="${j.id}">Add evidence to packet</button><div class="blurb">Opens this job’s packet to attach daily records and files.</div></div>
             ${canClose ? `<div class="action-row"><button class="btn" data-action="close" data-id="${j.id}">Close for record</button><div class="blurb">Move a fully settled job into Job history.</div></div>` : ""}
-          </div>
+          </div>`}
           ${blocked ? `<div class="gate-reason">Approve & send is disabled until blockers are cleared.</div>` : ""}
-          ${formOpen.progress ? `<div class="form-inline"><input id="progress-amt" type="number" step="0.01" min="0.01" placeholder="Completed to date $"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div>` : ""}
+          ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j) : ""}
+          ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="form-inline"><input id="progress-amt" type="number" step="0.01" min="0.01" placeholder="Completed to date $"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div>` : ""}
           ${formOpen.done ? `<div class="form-inline"><input id="done-notes" placeholder="Completion notes" style="flex:1"><button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div>` : ""}
-          ${formOpen.match ? `<div class="form-inline"><input id="match-amt" type="number" step="0.01" placeholder="Amount in dollars"><input id="match-ref" placeholder="Reference" value="QBO-manual"><button class="btn small" data-action="match" data-id="${j.id}">Match</button></div>` : ""}
+          ${formOpen.match ? (openForPay.length ? `<div class="form-inline"><select id="match-inv">${openForPay.map(i => `<option value="${i.id}">${i.number} · ${money(i.amount_cents)} · ${i.status}</option>`).join("")}</select><input id="match-amt" type="number" step="0.01" min="0.01" placeholder="Amount in dollars"><input id="match-ref" placeholder="Reference (check no., QBO id)"><button class="btn small" data-action="match" data-id="${j.id}">Match</button></div>` : `<p class="sub">No sent pay app is waiting for payment.</p>`) : ""}
+          ${formOpen.retpay ? `<div class="form-inline"><input id="retpay-amt" type="number" step="0.01" min="0.01" placeholder="Retainage received $"><input id="retpay-ref" placeholder="Reference"><button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div>` : ""}
+          ${!j.closed && !canClose && j.work_status === "complete" ? `<p class="sub">Close for record is available when: ${(j.close_blockers || []).join(" ")}</p>` : ""}
           <p class="sub">Send, waiver, retainage, and close require explicit approval.</p>
         </div>
       </div>
       <div class="card">
         <h2>Job record</h2>
         <p class="sub">Anything associated with this job. Attach a record to a pay app packet when you draft one.</p>
-        ${(j.records || []).length ? (j.records || []).map(r => `<div class="list-item">${r.kind}: ${r.label}${r.note ? " — " + r.note : ""}</div>`).join("") : emptyState("Nothing in the record yet", "Add a note, photo, or contract reference.")}
+        ${j.closed ? "" : `<div class="dropzone small" data-job="${j.id}">
+          <strong>Drop photos, PDFs, saved emails or spreadsheets here</strong> to add them to this job.
+          <span class="sub">Or <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button>, or paste a screenshot anywhere on this page. Emails and texts: use the <button class="linkish" data-v-link="inbox" onclick="nav('inbox')">Inbox</button>.</span>
+        </div>`}
+        ${(j.records || []).length ? (j.records || []).slice().reverse().map(r => `<div class="list-item"><span class="pill">${RECORD_KINDS[r.kind] || r.kind}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source ? `<div class="sub">${r.source} · ${(r.added_at || "").slice(0, 10)}</div>` : ""}</div>`).join("") : emptyState("Nothing in the record yet", "Drop files above, add a note below, or bring in emails and texts from the Inbox.")}
         <div class="form-inline">
           <input id="rec-label" placeholder="Label" />
           <input id="rec-note" placeholder="Note" />
-          <select id="rec-kind"><option>note</option><option>photo</option><option>contract</option><option>waiver</option><option>other</option></select>
+          <select id="rec-kind">${Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select>
           <button class="btn small" data-action="add-record" data-id="${j.id}">Add to record</button>
         </div>
       </div>
+      ${sovCardHtml(j)}
       <div class="card">
         <h2>Pay apps and packets</h2>
         ${j.invoices.length ? j.invoices.map(inv => {
           const pkt = inv.packet || j.packet || [];
           const missing = pkt.filter(p => p.required && !p.present).length;
-          return `<div class="list-item">${inv.number} · ${money(inv.amount_cents)} · ${inv.status} · ${missing ? missing + " packet items missing" : "packet complete"} <button class="btn small secondary" data-action="open-payapp" data-job="${j.id}" data-inv="${inv.id}">Open</button></div>`;
+          const pencil = inv.pencil_status ? ` · pencil ${inv.pencil_status === "sent" ? "with payer" : inv.pencil_status}${inv.pencil_note ? ": " + inv.pencil_note : ""}` : "";
+          return `<div class="list-item">${inv.number} · ${money(inv.amount_cents)} · ${inv.status}${pencil} · ${missing ? missing + " packet items missing" : "packet complete"} <button class="btn small secondary" data-action="open-payapp" data-job="${j.id}" data-inv="${inv.id}">Open</button></div>`;
         }).join("") : emptyState("No pay apps yet", "Draft one after the job is marked done. The packet is created with it.")}
+        ${closeout.length ? `<div class="list-item">Closeout packet (gates the retainage release) · ${closeoutMissing ? closeoutMissing + " items missing" : "complete"} <button class="btn small secondary" data-action="open-packet" data-job="${j.id}" data-inv="closeout">Open</button></div>` : ""}
       </div>
       <div class="card">
         <h2>Change orders</h2>
         ${j.change_orders.length ? j.change_orders.map(co => `
           <div class="list-item">CO ${co.number} — ${co.title} · ${money(co.amount_cents)} · <span class="pill ${co.status === "approved" ? "green" : "amber"}">${co.status}</span>${co.included_in_billing ? " · in billing" : ""}
-            ${co.status === "pending" ? `<button class="btn small" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Approve</button>` : ""}
+            ${co.status === "pending" && !j.closed ? `<button class="btn small" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Approve</button>` : ""}
+            ${co.status === "pending" && !j.closed ? `<button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>` : ""}
+            ${co.status === "pending" && !co.included_in_billing && !j.closed && !hasDraft ? `<button class="btn small secondary" data-action="include-co" data-id="${j.id}" data-co="${co.id}" title="Bill it on the next pay app; send stays blocked until it is signed">Put on next pay app</button>` : ""}
           </div>`).join("") : emptyState("No change orders", "Add one if the scope changed.")}
       </div>
       <div class="card">
@@ -775,21 +2048,23 @@ const views = {
   packetDetail() {
     const j = state.jobs.find(x => x.id === currentJobId);
     if (!j) return "<p>Select a pay app from Packets.</p>";
-    const inv = j.invoices.find(i => i.id === currentDetailId) || [...j.invoices].reverse().find(i => i.packet) || j.invoices[j.invoices.length - 1];
-    const packet = (inv && inv.packet) || j.packet || [];
+    const isCloseout = currentDetailId === "closeout";
+    const inv = isCloseout ? null : (j.invoices.find(i => i.id === currentDetailId) || [...j.invoices].reverse().find(i => i.packet) || j.invoices[j.invoices.length - 1]);
+    const packet = isCloseout ? (j.closeout_packet || []) : ((inv && inv.packet) || j.packet || []);
     const jobRecords = j.records || [];
-    if (!inv && !packet.length) return emptyState("No packet yet", "Draft a pay app. The packet is created with it.");
+    if (!inv && !packet.length) return backButton("job", "Back") + emptyState("No packet yet", "Draft a pay app. The packet is created with it, from this payer's playbook. Until then, add notes and files to the job record.", `<button class="btn" data-action="open-job" data-id="${j.id}">Back to ${j.name}</button>`);
     return `
-      <div class="top"><button class="back" onclick="nav('packets')">← Packets</button></div>
-      <h1>${inv ? inv.number : j.name} packet</h1>
-      <p class="sub">${j.name}${inv ? " · " + money(inv.amount_cents) + " · " + inv.status : ""} · tied to this pay app</p>
+      ${backButton("packets", "Packets")}
+      <h1>${isCloseout ? j.name + " closeout" : (inv ? inv.number : j.name)} packet</h1>
+      <p class="sub">${j.name}${inv ? " · " + money(inv.amount_cents) + " · " + inv.status + " · tied to this pay app" : ""}${isCloseout ? " · must be complete before asking for retainage" : ""}</p>
       <div class="card">
         <h2>Required items</h2>
         ${packet.length ? packet.map(p => `
           <div class="list-item">
             ${p.present ? "✓" : "✗"} ${p.label}
             ${!p.present ? `<span class="field-error">${p.blocker}</span>` : ""}
-            ${!p.present ? `<button class="btn small pop" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Mark present</button>` : ""}
+            ${!p.present ? `<button class="btn small pop" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Mark present…</button>` : ""}
+            ${p.present && p.present_reason ? `<div class="sub">Marked present: ${p.present_reason}</div>` : ""}
             ${(p.attachments || []).map(a => `<div class="sub">Attached: ${a.name}</div>`).join("")}
             ${jobRecords.length ? `<div class="form-inline"><select id="attach-rec-${p.id}">${jobRecords.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small" data-action="attach-record" data-id="${j.id}" data-item="${p.id}">Attach from job record</button></div>` : ""}
           </div>`).join("") : emptyState("No packet items", "This pay app has no packet.")}
@@ -827,7 +2102,7 @@ const views = {
       <div class="card">
         <h2>Attachments</h2>
         ${(co.attachments || []).map(a => `<div class="list-item">${a.name}</div>`).join("") || "<p>None</p>"}
-        <div class="form-inline"><input placeholder="File name" id="co-attach"><button class="btn small secondary" onclick="alert('Attached locally for demo')">Attach</button></div>
+        <p class="sub">Drop the signed change order on the job's record (or forward it to the Inbox), then attach it to the pay app packet. <button class="linkish" data-action="open-job" data-id="${j.id}">Open the job record</button></p>
       </div>
       <div class="card">
         <h2>Packet</h2>
@@ -846,10 +2121,12 @@ const views = {
       <div class="top"><button class="back" onclick="nav('payapps')">← Pay Apps</button></div>
       <h1>${inv.number}</h1>
       <p class="sub">${j.name} · ${money(inv.amount_cents)} · ${inv.status}</p>
+      <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a> <span class="sub">The same PDF goes with the email when the pay app is sent.</span></p>
       <div class="card">
         <h2>Lines</h2>
         ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
       </div>
+      ${continuationHtml(inv)}
       <div class="card">
         <h2>Packet</h2>
         <p class="sub">This packet belongs to ${inv.number}.</p>
@@ -929,7 +2206,7 @@ const views = {
       eventsByDay[d].push({ label, kind, jobId });
     };
     const today = new Date();
-    state.jobs.forEach(j => {
+    state.jobs.filter(j => calJobFilter === "all" || j.id === calJobFilter).forEach(j => {
       if (j.completed_at) add(j.completed_at, `${j.code} work complete`, "paid", j.id);
       j.invoices.forEach(inv => {
         if (inv.sent_at) add(inv.sent_at, `${inv.number} sent`, "", j.id);
@@ -965,7 +2242,20 @@ const views = {
     const selected = calSelectedDay && eventsByDay[calSelectedDay] ? eventsByDay[calSelectedDay] : [];
     return `
       <h1>Calendar</h1>
-      <p class="sub">Deadlines, follow-ups, expected approvals, payments, and contractor action dates.</p>
+      <p class="sub">Follow-ups, expected approvals, payments, and contractor action dates.</p>
+      <p class="notice" id="cal-not-legal">These are your contract and follow-up dates, not legal deadlines. Check lien and prompt-pay deadlines with your attorney.</p>
+      <div class="filter-bar">
+        <select id="cal-filter" data-filter-for="calendar" aria-label="Job">
+          <option value="all">All jobs</option>
+          ${state.jobs.map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
+        </select>
+      </div>
+      <details class="card subscribe">
+        <summary><strong>Put these dates on your phone (Google Calendar, Apple, Outlook)</strong></summary>
+        <p class="sub">Copy this private address. In Google Calendar on a computer: Other calendars, +, From URL, paste, Add calendar. It then shows on your phone. Calendar apps refresh subscribed calendars on their own schedule, often every few hours, so new dates are not instant.</p>
+        <div class="copy-row"><code id="cal-url">Loading…</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="calendar">Make a new address</button></div>
+        <p class="sub">Anyone with this address can see the dates and job names. Make a new address if it was shared by mistake.</p>
+      </details>
       <div class="legend">
         <span><i style="background:#e5f2ea"></i> Complete / paid</span>
         <span><i style="background:#f8efd8"></i> Waiver</span>
@@ -1072,7 +2362,7 @@ const views = {
         <h2>New change order</h2>
         <div class="form-inline">
           <select id="new-co-job">
-            ${state.jobs.filter(j => !j.closed).map(j => `<option value="${j.id}">${j.name}</option>`).join("")}
+            ${state.jobs.filter(j => !j.closed).map(j => `<option value="${j.id}" ${coPreselectJob === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
           </select>
           <input id="co-title" placeholder="Title">
           <input id="co-amt" type="number" step="0.01" placeholder="Amount in dollars">
@@ -1160,7 +2450,7 @@ const views = {
         <table>
           <tr><th>Job</th><th>Kind</th><th>Amount</th><th>Status</th><th>Action</th></tr>
           ${due.concat(sent).map(j => {
-            const paid = j.invoices.find(i => i.status === "paid");
+            const paid = j.invoices.find(i => i.waiver_due && !i.waiver_sent) || [...j.invoices].reverse().find(i => i.status === "paid");
             return `<tr>
               <td><a href="#" data-action="open-waiver" data-id="${j.id}">${j.name}</a></td>
               <td>${j.waiver_kind || "Conditional on progress"}</td>
@@ -1183,12 +2473,13 @@ const views = {
         <table>
           <tr><th>Job</th><th>Open</th><th>Holding it up</th><th>Unlock</th><th>Contact / follow up</th></tr>
           ${open.map(j => {
-            const missing = (j.packet || []).filter(p => p.required && !p.present);
+            const closeoutItems = (j.closeout_packet && j.closeout_packet.length) ? j.closeout_packet : (j.packet || []);
+            const missing = closeoutItems.filter(p => p.required && !p.present);
             return `<tr>
               <td><a href="#" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
               <td>${money(j.money.retainage_open_cents)}</td>
-              <td>${missing.length ? missing.map(m => m.label).join(", ") : "Nothing in packet"}</td>
-              <td>${missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}">Open packet</button>` : `<button class="btn small" data-action="retainage" data-id="${j.id}">Chase</button>`}</td>
+              <td>${missing.length ? missing.map(m => m.label).join(", ") : (j.work_status === "complete" ? "Closeout packet complete" : "Job still in progress")}</td>
+              <td>${j.work_status !== "complete" ? "Released at closeout: mark the job done first" : missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}" ${j.closeout_packet && j.closeout_packet.length ? `data-inv="closeout"` : ""}>Open packet</button>` : `<button class="btn small" data-action="retainage" data-id="${j.id}">Chase</button>`}</td>
               <td>
                 ${j.payer.approver}<br>
                 <button class="btn small" data-action="retainage" data-id="${j.id}">Auto follow-up</button>
@@ -1224,20 +2515,21 @@ const views = {
   },
   outbox() {
     let emails = [...(state.email_log || [])].reverse();
-    if (activityJobFilter !== "all") emails = emails.filter(e => e.job_id === activityJobFilter);
+    if (outboxJobFilter !== "all") emails = emails.filter(e => e.job_id === outboxJobFilter);
     return `
       <h1>Outbox</h1>
-      <p class="sub">Every approved send is logged here. Real delivery is stubbed; the human gate still fired.</p>
+      <p class="sub">Every approved send and follow-up is listed here with what happened to it.</p>
+      <p class="sub" id="outbox-mode"></p>
       <div class="filter-bar">
-        <select id="activity-filter" data-action="activity-filter">
+        <select id="outbox-filter" data-filter-for="outbox">
           <option value="all">All jobs</option>
-          ${state.jobs.map(j => `<option value="${j.id}" ${activityJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
+          ${state.jobs.map(j => `<option value="${j.id}" ${outboxJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
         </select>
       </div>
       <div class="table-wrap">
         <table>
           <tr><th>When</th><th>Kind</th><th>To</th><th>Subject</th><th>Status</th></tr>
-          ${emails.map(e => `<tr><td>${e.at.slice(0,16)}</td><td>${e.kind}</td><td>${e.to}</td><td>${e.subject}</td><td>${e.status}</td></tr>`).join("")}
+          ${emails.map(e => `<tr class="clickable" data-action="open-job" data-id="${e.job_id}" title="Open the job"><td>${e.at.slice(0,16)}</td><td>${e.kind.replace("_", " ")}</td><td>${e.to}</td><td><a href="#">${e.subject}</a><div class="sub email-body">${e.body || ""}</div>${e.payapp_invoice_id ? `<div class="sub">Pay app PDF attached</div>` : ""}${(e.attachments || []).length ? `<div class="sub">${e.attachments.length} attachment${e.attachments.length === 1 ? "" : "s"}${(e.not_attached || []).length ? "; not attached: " + e.not_attached.join("; ") : ""}</div>` : ""}</td><td>${emailStatusHtml(e)}</td></tr>`).join("")}
         </table>
       </div>
       ${emails.length ? "" : emptyState("Outbox is empty", "Approved sends are logged here. Nothing has been sent yet.")}
@@ -1245,14 +2537,14 @@ const views = {
   },
   audit() {
     let events = [...(state.audit || [])].sort((a, b) => (b.at > a.at ? 1 : -1));
-    if (activityJobFilter !== "all") events = events.filter(e => e.job_id === activityJobFilter);
+    if (auditJobFilter !== "all") events = events.filter(e => e.job_id === auditJobFilter);
     return `
       <h1>Audit</h1>
       <p class="sub">Every action: what was seen, what was drafted, who approved.</p>
       <div class="filter-bar">
-        <select id="activity-filter" data-action="activity-filter">
+        <select id="audit-filter" data-filter-for="audit">
           <option value="all">All jobs</option>
-          ${state.jobs.map(j => `<option value="${j.id}" ${activityJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
+          ${state.jobs.map(j => `<option value="${j.id}" ${auditJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
         </select>
       </div>
       <div class="table-wrap">
@@ -1266,48 +2558,234 @@ const views = {
   },
 };
 
+// ----- Helper chat -----
+// Answers come from the prepared-answers database on the server, which reads
+// this company's jobs for questions like "what should I do today". Action
+// buttons call the same endpoints as the rest of the app, so every gate and
+// confirmation still applies.
+let helperAdmin = false;
+const helperLog = [];   // {who: "you"|"helper", text, actions, suggestions, logId, rated}
+let helperBusy = false;
+
 function updateAiContext() {
-  const replies = document.getElementById("ai-replies");
-  if (!replies || !aiOpen) return;
-  // context hint is shown in the panel subtitle via existing HTML; dynamic answers still rule-based
+  if (aiOpen) renderHelper();
+}
+
+function helperStarters() {
+  const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId);
+  if (job) { const n = unesc(job.name); return [`What's blocking ${n}?`, `Draft a follow-up for ${n}`, `Status of ${n}`]; }
+  if (currentView === "inbox") return ["How does it know which job?", "How do I import 30 days of notes?", "How do I forward emails to Billdable?"];
+  if (currentView === "retainage") return ["How do I get retainage released?", "Which jobs are holding my retainage?"];
+  return ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"];
+}
+
+function helperFormat(text) {
+  // text is escaped first; then "- " lines become a list, blank lines paragraphs.
+  const lines = esc(text || "").split("\n");
+  let html = "", inList = false;
+  for (const line of lines) {
+    if (line.startsWith("- ")) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${line.slice(2)}</li>`;
+    } else {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += line.trim() ? `<p>${line}</p>` : "";
+    }
+  }
+  return html + (inList ? "</ul>" : "");
+}
+
+function renderHelper() {
+  const box = document.getElementById("ai-replies");
+  const chips = document.getElementById("ai-chips");
+  if (!box || !chips) return;
+  const greeting = `<div class="msg helper"><p>Hi${me && me.name ? " " + me.name.split(" ")[0] : ""}. Ask me how to do something in Billdable, or about your own jobs: what to do today, who owes you, what's blocking a job.</p></div>`;
+  {
+    box.innerHTML = greeting + helperLog.map((m, idx) => m.who === "you"
+      ? `<div class="msg you">${esc(m.text)}</div>`
+      : `<div class="msg helper">${helperFormat(m.text)}
+          ${(m.actions || []).length ? `<div class="msg-actions">${m.actions.map((a, i) => `<button class="btn small ${a.type === "post" ? "" : "secondary"}" data-helper-msg="${idx}" data-helper-action="${i}">${esc(a.label)}</button>`).join("")}</div>` : ""}
+          ${m.logId ? `<div class="msg-rate">${m.rated ? (m.rated === "yes" ? "Thanks." : "Thanks, the team will improve this answer.") : `Helpful? <button class="linkish" data-helper-rate="${idx}" data-value="yes">Yes</button> <button class="linkish" data-helper-rate="${idx}" data-value="no">No</button>`}</div>` : ""}
+        </div>`).join("") + (helperBusy ? `<div class="msg helper typing" aria-label="Looking that up">Looking that up…</div>` : "");
+  }
+  const last = [...helperLog].reverse().find(m => m.who === "helper");
+  const suggestions = (last && last.suggestions && last.suggestions.length) ? last.suggestions : helperStarters();
+  chips.innerHTML = suggestions.map(s => `<button class="chip" data-helper-ask="${esc(s)}">${esc(s)}</button>`).join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+async function helperAsk(q) {
+  q = (q || "").trim();
+  if (!q || helperBusy) return;
+  helperLog.push({ who: "you", text: q });
+  helperBusy = true;
+  renderHelper();
+  let reply;
+  try {
+    const res = await fetch("/api/helper/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q, view: currentView, job_id: currentView === "job" ? currentJobId : "" }),
+    });
+    reply = await readJson(res);
+    if (res.status === 401) { helperBusy = false; me = null; state = null; renderLanding(); return; }
+    if (!res.ok) reply = { text: reply.error || "Something went wrong. Try again." };
+  } catch (_) {
+    reply = { text: "I can't reach Billdable right now. Check your connection and try again." };
+  }
+  helperBusy = false;
+  helperLog.push({ who: "helper", text: reply.text, actions: reply.actions || [], suggestions: reply.suggestions || [], logId: reply.log_id });
+  if (helperLog.length > 60) helperLog.splice(0, helperLog.length - 60);
+  renderHelper();
+}
+
+async function helperRunAction(a) {
+  if (a.type === "nav") nav(a.view);
+  else if (a.type === "job") nav("job", a.job_id);
+  else if (a.type === "packet") nav("packet-detail", a.job_id, a.inv || null);
+  else if (a.type === "ask") helperAsk(a.q);
+  else if (a.type === "copy") {
+    try { await navigator.clipboard.writeText(a.text); toast("Copied"); }
+    catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
+  } else if (a.type === "post") {
+    if (a.confirm && !confirm(a.confirm)) return;
+    await post(a.path);
+    helperLog.push({ who: "helper", text: "Done. The page is updated; the Outbox and Audit show what happened." });
+    renderHelper();
+  }
 }
 
 document.getElementById("ai-badge").addEventListener("click", () => {
   aiOpen = !aiOpen;
   document.getElementById("ai-panel").classList.toggle("open", aiOpen);
-  if (aiOpen && currentJobId) {
-    const j = state.jobs.find(x => x.id === currentJobId);
-    const replies = document.getElementById("ai-replies");
-    if (j && replies && !replies.dataset.shown) {
-      replies.innerHTML = `<div class="reply">Current job: ${j.name}. ${j.blockers && j.blockers.length ? "Blocked by: " + j.blockers.join("; ") : "Status: " + j.status_label}</div>`;
-      replies.dataset.shown = "1";
-    }
+  document.getElementById("ai-badge").setAttribute("aria-expanded", aiOpen ? "true" : "false");
+  if (aiOpen) { renderHelper(); document.getElementById("ai-input").focus(); }
+});
+document.getElementById("ai-close").addEventListener("click", () => {
+  aiOpen = false;
+  document.getElementById("ai-panel").classList.remove("open");
+  document.getElementById("ai-badge").focus();
+});
+document.getElementById("ai-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = document.getElementById("ai-input");
+  const q = input.value;
+  input.value = "";
+  helperAsk(q);
+});
+document.getElementById("ai-panel").addEventListener("click", async (e) => {
+  const askBtn = e.target.closest("[data-helper-ask]");
+  if (askBtn) { helperAsk(askBtn.textContent); return; }   // textContent is the decoded text
+  const actBtn = e.target.closest("[data-helper-action]");
+  if (actBtn) {
+    const msg = helperLog[Number(actBtn.dataset.helperMsg)];
+    const action = msg && msg.actions[Number(actBtn.dataset.helperAction)];
+    if (action) await helperRunAction(action);
+    return;
+  }
+  const rate = e.target.closest("[data-helper-rate]");
+  if (rate) {
+    const msg = helperLog[Number(rate.dataset.helperRate)];
+    if (!msg || !msg.logId) return;
+    const helpful = rate.dataset.value === "yes";
+    let note = "";
+    if (!helpful) note = prompt("What were you looking for? (optional)") || "";
+    msg.rated = helpful ? "yes" : "no";
+    renderHelper();
+    try {
+      await fetch("/api/helper/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ log_id: msg.logId, helpful, note }) });
+    } catch (_) { /* rating is best effort */ }
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && aiOpen && document.getElementById("ai-panel").contains(document.activeElement)) {
+    aiOpen = false;
+    document.getElementById("ai-panel").classList.remove("open");
+    document.getElementById("ai-badge").focus();
   }
 });
 
-document.getElementById("ai-input").addEventListener("keydown", (e) => {
-  if (e.key !== "Enter") return;
-  const q = e.target.value.trim();
-  if (!q) return;
-  e.target.value = "";
-  const replies = document.getElementById("ai-replies");
-  replies.innerHTML += `<p><strong>You:</strong> ${q}</p>`;
-  let ans = "I can help with blockers, money files, or drafting a short follow-up note. Try “what’s blocking Oak” or “draft follow-up for Turner”.";
-  const lower = q.toLowerCase();
-  if (lower.includes("block") || lower.includes("oak")) {
-    const j = state.jobs.find(x => x.name.toLowerCase().includes("oak")) || (currentJobId && state.jobs.find(x => x.id === currentJobId)) || state.jobs[0];
-    ans = j.blockers.length ? `${j.name} is blocked by:\n- ${j.blockers.join("\n- ")}` : `${j.name} has no packet blockers. Status: ${j.status_label}`;
-  } else if (lower.includes("follow") || lower.includes("draft")) {
-    const j = state.jobs.find(x => lower.includes(x.name.toLowerCase().split(" ")[0].toLowerCase())) || state.jobs.find(x => x.invoices.some(i => i.status === "sent"));
-    if (j) {
-      ans = `Draft follow-up for ${j.name}:\n\nHi ${j.payer.approver},\n\nChecking on ${j.invoices.slice(-1)[0]?.number || "the recent pay app"} for ${j.name}. Packet is complete on our side. Usual approval is ${j.payer.usual_approval_days} days.\n\nThanks,\nHartline`;
-    }
-  } else if (lower.includes("money") || lower.includes("outstanding")) {
-    const t = state.totals;
-    ans = `Totals: unbilled ${money(t.unbilled_cents)}, outstanding ${money(t.outstanding_cents)}, retainage ${money(t.retainage_cents)}.`;
+// Drop files anywhere, or paste a screenshot, to import. On a job page they
+// go straight onto that job's record; elsewhere they land in the Inbox.
+let dragDepth = 0;
+function dropOverlay(on) {
+  let el = document.getElementById("drop-overlay");
+  if (!el && on) {
+    el = document.createElement("div");
+    el.id = "drop-overlay";
+    el.className = "drop-overlay";
+    document.body.appendChild(el);
   }
-  replies.innerHTML += `<div class="reply">${ans}</div>`;
-  replies.scrollTop = replies.scrollHeight;
+  if (!el) return;
+  const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId && !j.closed);
+  el.textContent = job ? `Drop to add to ${job.name}` : "Drop to add to the Inbox";
+  el.style.display = on ? "flex" : "none";
+}
+function importTargetJob() {
+  const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId && !j.closed);
+  return job ? job.id : "";
+}
+document.addEventListener("dragenter", (e) => {
+  if (!state || !e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
+  dragDepth++;
+  dropOverlay(true);
+});
+document.addEventListener("dragover", (e) => {
+  if (!state || !e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+document.addEventListener("dragleave", () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) dropOverlay(false);
+});
+document.addEventListener("drop", (e) => {
+  dragDepth = 0;
+  dropOverlay(false);
+  if (!state || !e.dataTransfer) return;
+  if (!e.dataTransfer.files.length) {
+    if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); toast("That item has no file to import. Save it as a file first, then drop the file."); }
+    return;
+  }
+  e.preventDefault();
+  const jobId = importTargetJob();
+  uploadFiles(e.dataTransfer.files, jobId, !!jobId);
+});
+window.addEventListener("blur", () => { dragDepth = 0; dropOverlay(false); });
+document.addEventListener("dragend", () => { dragDepth = 0; dropOverlay(false); });
+document.addEventListener("paste", (e) => {
+  if (!state || !e.clipboardData) return;
+  const files = [...e.clipboardData.files];
+  if (!files.length) return; // plain text pastes behave normally
+  // Copying cells from Excel or Word puts both text and a picture on the clipboard.
+  // In a text box, the text is what the person meant.
+  const target = e.target;
+  const editable = target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable);
+  if (editable && e.clipboardData.types.includes("text/plain")) return;
+  e.preventDefault();
+  const jobId = importTargetJob();
+  uploadFiles(files, jobId, !!jobId);
+});
+document.addEventListener("scroll", hideHelpTip, true);
+// One file picker for every screen ("choose files" on the Inbox or a job page).
+document.getElementById("file-input").addEventListener("change", (e) => {
+  const input = e.target;
+  const jobId = input.dataset.job || "";
+  const files = [...input.files];
+  input.value = "";
+  input.dataset.job = "";   // the next pick starts with no job unless its button sets one
+  uploadFiles(files, jobId, !!jobId);
+});
+
+// A reset, verify or invite link opened in a tab that already has Billdable loaded only changes
+// the part after "#", which doesn't reload the page; handle it here too.
+window.addEventListener("hashchange", async () => {
+  const t = readTokenFromUrl();
+  if (!t) return;
+  const message = await handleTokenLink(t);
+  if (tokenScreen) return;
+  await boot(false);
+  if (message) toast(message);
 });
 
 window.nav = nav;
