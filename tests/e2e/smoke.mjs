@@ -87,7 +87,7 @@ await step("money path: the main button walks a job from blocked to closed", asy
         await btn.click();
         await page.fill(`#resolve-reason-${item}`, "Emailed to the payer on 10/12");
         await page.click(`[data-action="resolve"][data-item="${item}"]`);
-        await page.waitForFunction((id) => !document.getElementById(`resolve-reason-${id}`), item);
+        await page.locator(`#resolve-reason-${item}`).waitFor({ state: "detached" });
       }
       await page.goto(BASE + "/jobs/job-inman");
     } else if (label === "Match payment") {
@@ -96,11 +96,16 @@ await step("money path: the main button walks a job from blocked to closed", asy
       await page.fill("#match-amt", option.match(/\$([\d,]+\.\d\d)/)[1].replace(/,/g, ""));
       await page.fill("#match-ref", "CHK-2201");
       await page.click('[data-action="match"]');
-      await page.waitForFunction(() => !document.getElementById("match-inv"));
+      await page.locator("#match-inv").waitFor({ state: "detached" });
     } else {
       await main.click();
-      await page.waitForFunction((was) => (document.querySelector(".next-card .btn")?.innerText || "").trim() !== was
-        || document.querySelector(".job-head .pill")?.innerText === "Closed", label);
+      // The page's CSP forbids evaluating strings, so poll from here rather than with waitForFunction.
+      for (let t = 0; t < 100; t++) {
+        if (await page.locator(".job-head .pill", { hasText: "Closed" }).count()) break;
+        const now = (await page.locator(".next-card .btn").innerText().catch(() => "")).trim();
+        if (now && now !== label) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
     }
   }
   for (const want of ["Approve & send", "Match payment", "Send waiver", "Close for record"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
