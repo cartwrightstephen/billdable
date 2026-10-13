@@ -232,6 +232,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `GET /api/jobs/{id}/payapp/{invoice_id}.pdf`: the pay app as a PDF
 - `POST /api/auth/forgot` `{email}`; `POST /api/auth/reset` `{token, password}`; `POST /api/auth/verify` `{token}`; `POST /api/auth/resend-verify`; `POST /api/auth/password` `{current, new}`
 - `POST /api/auth/invite-info` `{token}`; `POST /api/auth/accept-invite` `{token, name, password}`
+- `POST /api/auth/name` `{name}`: your own name; owners: `POST /api/company` `{name, address, phone, license}` (on every pay app's From block)
 - `GET /api/team`; owners: `POST /api/team/invite` `{email, role}`, `/api/team/{user_id}/role` `{role}`, `/api/team/{user_id}/remove`, `/api/team/invites/{id}/revoke`, `/api/account/delete` `{password, confirm}`
 - `POST /api/onboarding/dismiss`; team only: `GET /api/admin/companies`
 - `GET /healthz`

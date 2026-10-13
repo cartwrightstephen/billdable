@@ -135,7 +135,10 @@ def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def render(company_name: str, job: dict[str, Any], payer: dict[str, Any], invoice: dict[str, Any]) -> bytes:
+def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, Any], invoice: dict[str, Any]) -> bytes:
+    """`company` is the company record (name, address, phone, license) or, for older callers, its name."""
+    company = {"name": company} if isinstance(company, str) else (company or {})
+    company_name = company.get("name", "")
     figures = summary(job, invoice)
     status = invoice.get("status", "")
     mark = {"void": "VOID", "draft": "DRAFT - not submitted", "awaiting_approval": "DRAFT - awaiting approval"}.get(status, "")
@@ -161,7 +164,9 @@ def render(company_name: str, job: dict[str, Any], payer: dict[str, Any], invoic
     y -= 26
     blocks = [
         ("TO", [payer.get("name", ""), payer.get("approver", ""), payer.get("ap_email", "")]),
-        ("FROM", [company_name, f"Approved by {invoice['approved_by']}" if invoice.get("approved_by") else ""]),
+        ("FROM", [company_name, company.get("address", ""),
+                  " · ".join(x for x in [company.get("phone", ""), f"Lic. {company['license']}" if company.get("license") else ""] if x)
+                  or (f"Approved by {invoice['approved_by']}" if invoice.get("approved_by") else "")]),
         ("PROJECT", [job.get("name", ""), job.get("address", ""), f"Contract {job['contract_number']}" if job.get("contract_number") else ""]),
     ]
     col = (PAGE_W - 2 * MARGIN) / 3

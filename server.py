@@ -181,7 +181,7 @@ def demo_enabled() -> bool:
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
 DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv"}
-COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_resend_verify", "_p_team", "_p_helper_admin",
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_team", "_p_helper_admin",
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal"}
 
 
@@ -1453,7 +1453,7 @@ class Handler(BaseHTTPRequestHandler):
             return None, None
         payer = next((p for p in state.get("payers", []) if p["id"] == job["payer_id"]), {})
         name = re.sub(r"[^A-Za-z0-9._-]", "-", invoice["number"]) + ".pdf"
-        return payapp_pdf.render(state.get("company", {}).get("name", ""), job, payer, invoice), name
+        return payapp_pdf.render(state.get("company", {}), job, payer, invoice), name
 
     def _company_overview(self) -> list:
         users = auth.all_users()
@@ -1972,6 +1972,17 @@ class Handler(BaseHTTPRequestHandler):
     def _m_payer_suggestion(self, state: dict, m, ctx: "Ctx") -> None:
         domain.answer_packet_suggestion(state, m.group(1), m.group(2), m.group(3) == "add", ctx.actor)
 
+    def _m_company_update(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.update_company(state, ctx.body, ctx.actor)
+
+    def _p_my_name(self, m, ctx: "Ctx") -> None:
+        try:
+            user = auth.update_name(ctx.user["id"], ctx.body.get("name"))
+        except auth.AuthError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._json(200, {"user": user})
+
     def _m_payer_update(self, state: dict, m, ctx: "Ctx") -> None:
         domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
 
@@ -2075,6 +2086,8 @@ ROUTES = [
     Route("POST", r"/api/jobs/([^/]+)/([a-z-]+)(?:/([^/]+))?", "_m_job_action", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
+    Route("POST", r"/api/company", "_m_company_update", "mutate", owner=True),
+    Route("POST", r"/api/auth/name", "_p_my_name", "body"),
 ]
 
 

@@ -58,6 +58,30 @@ checked against the chosen provider.
 | Lien and prompt-pay dates for one state | **Not built, on purpose.** Needs counsel to review the table first |
 | Postgres and a second instance | **Not needed.** Measured on Oct 13 (`docs/benchmark.md`): far beyond a pilot on one box |
 
+## Stephen's 15 features (from his messages and the Oct 12 calls)
+
+| # | Feature | Status |
+|---|---|---|
+| 1 | Job record | Built: manual entry, edit and delete, and the Inbox (files, emails, texts, notes, photos) |
+| 2 | User / client profile | Built: your own name; the company's name, address, phone and licence on every pay app; payers in the playbook |
+| 3 | Daily records: manual, mass import, AI | Built except AI: manual, and pasted notes split into one record per date |
+| 4 | Packet check | Built, from the payer's playbook, which learns from rejections |
+| 5 | Invoice draft; unsigned CO refused unless flagged; upload and AI-verify | Built except the AI check: draft with retainage, unsigned COs block send, uploads on the record |
+| 6 | Approval and send | Built (needs a mail provider to send for real) |
+| 7 | Status that names the blocker | Built |
+| 8 | Payment match from QuickBooks; partial stays partial | Built: by hand, CSV, or the QuickBooks connection (needs the Intuit keys) |
+| 9 | Waiver guard after payment | Built, with waiver types; Billdable never writes the waiver form |
+| 10 | Follow-up by the payer's window | Built, and on Today in one tap |
+| 11 | Change order to billable; signature | Built: signing link or signed copy |
+| 12 | Payer playbook read by packet and follow-up | Built, and it learns |
+| 13 | Evidence binder | Built |
+| 14 | Retainage and closeout | Built |
+| 15 | Deadline calendar | Built for contract dates: follow-ups, approvals, the payer's monthly pay-app cutoff (playbook), with a Google Calendar feed. Lien and prompt-pay deadlines not built: they are state law and need counsel |
+
+From the calls, not built: voice follow-up agents (deferred until counsel; consent rules), AI
+filing (shelved for cost, as both founders agreed on the call). Decisions still open: 50/50 terms,
+the free period, competitor sizes.
+
 ## UI/UX plan
 
 - Option A (A1–A8): built.

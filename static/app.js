@@ -586,6 +586,13 @@ function todayQueue() {
   });
   state.jobs.filter(j => !j.closed && !j.summary).forEach(j => {
     const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
+    // The payer's monthly cutoff (playbook): within five days, and nothing billed since the last one.
+    const nextDue = toDate(j.payer.payapp_due_next), prevDue = toDate(j.payer.payapp_due_prev);
+    const billedThisCycle = prevDue && j.invoices.some(i => i.status !== "void" && (toDate(i.created_at || i.sent_at) || 0) > prevDue);
+    const mayBill = j.work_status !== "complete" || j.money.unbilled_completed_cents > 0;
+    const dueSoon = nextDue && mayBill && !billedThisCycle && (nextDue - new Date(new Date().toDateString())) <= 5 * 86400000;
+    const dueText = dueSoon ? ` Pay app due to ${j.payer.name} by ${fmtDate(j.payer.payapp_due_next)}.` : "";
+    const before = out.length;
     // One next step per job, in the job page's order (jobActions): blockers first.
     if (isBlocked(j)) add(3, j, statusPill(j), `${j.blockers[0]}${j.blockers.length > 1 ? ` And ${j.blockers.length - 1} more.` : ""}`,
       `<button class="btn small" data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}>Clear ${j.blockers.length} blocker${j.blockers.length === 1 ? "" : "s"}</button>`);
@@ -596,6 +603,10 @@ function todayQueue() {
     else if (j.work_status === "complete" && j.money.unbilled_completed_cents > 0)
       add(5, j, tag("Not billed", "copper"), `${money(j.money.unbilled_completed_cents)} of finished work has no pay app yet. Drafting sends nothing.`,
         `<button class="btn small" data-action="draft" data-id="${j.id}">Draft pay app</button>`);
+    else if (dueSoon) add(2.5, j, tag("Due soon", "amber"), `Record this month's progress and draft the pay app.`,
+      `<button class="btn small" data-action="open-job" data-id="${j.id}">Bill progress</button>`, true);
+    // A cutoff makes the job's row more urgent, and says so.
+    if (dueSoon && out.length > before) { const row = out[out.length - 1]; row.text += row.text.includes("Pay app due to") ? "" : dueText; row.rank = Math.min(row.rank, 1.5); }
     // A pay app already sent and unpaid past the payer's follow-up window is its own row.
     const sent = j.invoices.find(i => ["sent", "partial"].includes(i.status));
     if (sent) {
@@ -813,6 +824,16 @@ function bindActions() {
         render(); return;
       }
       if (a === "qbo-cancel") { paymentImport = null; render(); return; }
+      if (a === "save-company") {
+        const v = (k) => document.getElementById(k)?.value || "";
+        await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license") });
+        return;
+      }
+      if (a === "save-my-name") {
+        const r = await postJson("/api/auth/name", { name: document.getElementById("my-name")?.value || "" });
+        if (!r.ok) { toast(r.data.error || "Not saved."); return; }
+        me = escDeep(r.data.user); toast("Saved"); render(); return;
+      }
       if (a === "billing-checkout" || a === "billing-portal") {
         const r = await postJson(a === "billing-checkout" ? "/api/billing/checkout" : "/api/billing/portal", {});
         if (!r.ok) { toast(r.data.error || "Couldn't open billing."); return; }
@@ -1154,7 +1175,8 @@ function bindActions() {
       else if (a === "save-playbook") {
         const form = el.closest("form");
         const updates = {};
-        new FormData(form).forEach((v, k) => { if (v !== "") updates[k] = isNaN(v) ? v : Number(v); });
+        // Blank skips a field, except the cutoff day, where blank means "no cutoff".
+        new FormData(form).forEach((v, k) => { if (v !== "") updates[k] = isNaN(v) ? v : Number(v); else if (k === "payapp_due_day") updates[k] = ""; });
         await post(`/api/payers/${id}/update`, updates);
       }
     });
@@ -1593,7 +1615,7 @@ function accountView() {
     <h1>Team & account</h1>
     <div class="card">
       <h2>You</h2>
-      <div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>
+      ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-inline"><label for="my-name" class="inline-label">Name</label><input id="my-name" value="${me.name}" autocomplete="name" class="grow"><button class="btn small secondary" data-action="save-my-name">Save name</button></div>`}
       <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
       <div class="money-row"><span class="label">Role</span><span>${words(me.role)}</span></div>
       ${isDemo ? "" : `<div class="form-inline">
@@ -1601,6 +1623,17 @@ function accountView() {
         <input id="pw-new" type="password" placeholder="New password (10+ characters)" autocomplete="new-password">
         <button class="btn small" data-action="change-password">Change password</button>
       </div>`}
+    </div>
+    <div class="card" id="company-card">
+      <h2>Company</h2>
+      <p class="sub">On every pay app and its PDF, in the From block.${owner ? "" : " Owners can change these."}</p>
+      <div class="form-grid">
+        <div><label for="co-name">Company name</label><input id="co-name" value="${state.company.name || ""}"${owner ? "" : " disabled"}></div>
+        <div><label for="co-phone">Phone</label><input id="co-phone" value="${state.company.phone || ""}" inputmode="tel" autocomplete="tel"${owner ? "" : " disabled"}></div>
+        <div class="span-2"><label for="co-address">Address</label><input id="co-address" value="${state.company.address || ""}" placeholder="Street, city, state ZIP" autocomplete="street-address"${owner ? "" : " disabled"}></div>
+        <div><label for="co-license">Contractor licence number</label><input id="co-license" value="${state.company.license || ""}"${owner ? "" : " disabled"}></div>
+      </div>
+      ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
     <div class="card">
       <h2>Team</h2>
@@ -2500,6 +2533,9 @@ const views = {
       if (j.waiver_sent_at) add(j.waiver_sent_at, `${j.code} waiver sent`, "waiver", j.id);
       if (j.waiver_due && !j.waiver_sent) add(todayKey, `${j.code} waiver ready`, "waiver", j.id);
       if (j.closed_at) add(j.closed_at, `${j.code} closed`, "paid", j.id);
+      const dueDay = Number(unesc(String(j.payer.payapp_due_day || "")));
+      if (dueDay && !j.closed && (j.work_status !== "complete" || j.money.unbilled_completed_cents > 0))
+        add(localDay(new Date(calYear, calMonth, Math.min(dueDay, daysInMonth))), `${j.code} pay app due to ${j.payer.name}`, "", j.id);
     });
     const cells = [];
     for (let i = 0; i < startDow; i++) cells.push({ other: true });
@@ -2793,6 +2829,7 @@ const views = {
             <div><label>Approver</label><input name="approver" value="${clean(p.approver)}"></div>
             <div><label>AP email</label><input name="ap_email" type="email" value="${clean(p.ap_email)}"></div>
             <div><label>Follow-up days</label><input name="follow_up_days" type="number" min="1" inputmode="numeric" value="${p.follow_up_days || 7}"></div>
+            <div><label>Pay apps due by (day of the month)</label><input name="payapp_due_day" type="number" min="1" max="31" inputmode="numeric" value="${p.payapp_due_day || ""}" placeholder="e.g. 25"></div>
             <div><label>Usual approval days</label><input name="usual_approval_days" type="number" min="1" inputmode="numeric" value="${p.usual_approval_days || 14}"></div>
             <div class="span-2"><label>Packet</label><textarea name="packet" rows="2">${clean(p.packet)}</textarea></div>
             <div class="span-2"><label>Rejects when</label><textarea name="rejects_when" rows="2">${clean(p.rejects_when)}</textarea></div>

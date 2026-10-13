@@ -12,7 +12,7 @@ import json
 import re
 import secrets
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import sov
@@ -829,6 +829,9 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     sent = {j["payer_id"] for j in state["jobs"] if any(i.get("sent_at") for i in j.get("invoices", []))}
     for payer in out.get("payers", []):
         payer["sent_before"] = payer["id"] in sent
+        due = payapp_due(payer, (now or datetime.now(timezone.utc)).date())
+        if due:
+            payer["payapp_due_next"], payer["payapp_due_prev"] = due[0].isoformat(), due[1].isoformat()
     emails = state.get("email_log", [])
     out["email_log"] = deepcopy(emails[-RECENT_EMAILS:])
     out["email_log_total"] = len(emails)
@@ -930,6 +933,14 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     clean: dict[str, Any] = {}
     errors = []
     for k, v in updates.items():
+        if k == "payapp_due_day":
+            # The payer's cutoff for this month's pay app (a contract date, not a legal one); blank clears it.
+            day = None if v in (None, "") else _int_or(v, 0)
+            if day is not None and not 1 <= day <= 31:
+                errors.append("Pay apps due by must be a day of the month from 1 to 31, or blank.")
+                continue
+            clean[k] = day
+            continue
         if v is None:
             continue
         if k in text_fields:
@@ -951,10 +962,68 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
         raise GateError("Playbook not saved.", errors)
     changed = []
     for k, v in clean.items():
-        payer[k] = v
+        if v is None:
+            payer.pop(k, None)
+        else:
+            payer[k] = v
         changed.append(k)
     audit(state, "", "playbook_update", f"{actor} updated {payer['name']}: {', '.join(changed) or 'no change'}.", actor)
     return payer
+
+
+def payapp_due(payer: dict[str, Any], today: date | None = None) -> tuple[date, date] | None:
+    """(the next cutoff, the one before it) for a payer with "pay apps due by day N", or None.
+    A day past the month's end means its last day (31 in April is April 30)."""
+    day = _int_or(payer.get("payapp_due_day"), 0)
+    if not 1 <= day <= 31:
+        return None
+    today = today or datetime.now(timezone.utc).date()
+
+    def cutoff(year: int, month: int) -> date:
+        last = (date(year + month // 12, month % 12 + 1, 1) - timedelta(days=1)).day
+        return date(year, month, min(day, last))
+
+    this = cutoff(today.year, today.month)
+    if today <= this:
+        before_m = today.month - 1 or 12
+        return this, cutoff(today.year - (today.month == 1), before_m)
+    nxt_m = today.month % 12 + 1
+    return cutoff(today.year + (today.month == 12), nxt_m), this
+
+
+COMPANY_FIELDS = {"name": 120, "address": 200, "phone": 40, "license": 60}
+
+
+def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+    """The company's own details: its name, and the address, phone and licence number that go on
+    every pay app. Blank clears a field; the name can't be blank."""
+    company = state.setdefault("company", {})
+    clean, errors = {}, []
+    for k, limit in COMPANY_FIELDS.items():
+        if k not in updates:
+            continue
+        v = updates[k]
+        if not isinstance(v, str):
+            errors.append(f"{k.capitalize()} must be text.")
+            continue
+        v = " ".join(v.split())
+        if len(v) > limit:
+            errors.append(f"{k.capitalize()} is too long (limit {limit} characters).")
+        elif k == "name" and not v:
+            errors.append("The company name can't be empty.")
+        else:
+            clean[k] = v
+    if errors:
+        raise GateError("Company details not saved.", errors)
+    changed = [k for k, v in clean.items() if (company.get(k) or "") != v]
+    for k in changed:
+        if clean[k]:
+            company[k] = clean[k]
+        else:
+            company.pop(k, None)
+    if changed:
+        audit(state, "", "company_update", f"{actor} updated the company's {', '.join(changed)}.", actor)
+    return company
 
 
 # ---------- payer playbook learning (P3) ----------

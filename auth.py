@@ -417,6 +417,23 @@ def reset_password(raw: Any, password: Any) -> dict[str, Any]:
         return _public(user)
 
 
+def update_name(user_id: str, name: Any) -> dict[str, Any]:
+    """A user changes the name the audit trail and the team list show."""
+    if not isinstance(name, str) or not " ".join(name.split()):
+        raise AuthError("Your name can't be empty.")
+    name = " ".join(name.split())
+    if len(name) > 80:
+        raise AuthError("Your name is too long (limit 80 characters).")
+    with LOCK:
+        data = _load()
+        user = next((u for u in data["users"] if u["id"] == user_id), None)
+        if not user:
+            raise AuthError("Account not found.")
+        user["name"] = name
+        _save(data)
+        return _public(user)
+
+
 def change_password(user_id: str, current: Any, new: Any, keep_session: str | None = None) -> None:
     """Change a password. Other sessions end; the one making the change can stay."""
     _check_password(new)
