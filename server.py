@@ -374,6 +374,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         for k, v in SECURITY_HEADERS.items():
+            # PDFs go without the page policy (it stops browsers' PDF viewers), and a response
+            # that sets its own policy (an uploaded file's sandbox) keeps only that one.
+            if k == "Content-Security-Policy" and (content_type == "application/pdf" or k in (headers or {})):
+                continue
             self.send_header(k, v)
         if self._rid:
             self.send_header("X-Request-Id", self._rid)
