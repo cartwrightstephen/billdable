@@ -739,6 +739,31 @@ function nextStep(j) {
   return "Draft a pay app for unbilled completed work.";
 }
 
+// Change orders are approved by a signature: online through a link the payer opens,
+// or a signed copy on the job record (P2-3). There is no bare "approve" any more.
+function coSignControls(j, co, extra = "") {
+  if (co.status !== "pending" || j.closed) return "";
+  const key = `cosign-${co.id}`;
+  const records = j.records || [];
+  return `<div class="form-inline">
+      <button class="btn small" data-action="request-co-signature" data-id="${j.id}" data-co="${co.id}">${co.sign_token ? "Send the signing link again" : "Request signature"}</button>
+      <button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="${!!formOpen[key]}">Signed on paper…</button>
+      <button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>
+      ${extra}
+    </div>
+    ${co.sign_token ? `<p class="sub">Signing page: <a href="/s/${me.company_id}.${co.sign_token}" target="_blank" rel="noopener">open it</a>${co.signature_requested_at ? ` · requested ${fmtDate(co.signature_requested_at)}` : ""}</p>` : ""}
+    ${formOpen[key] ? (records.length
+      ? `<div class="form-inline"><label for="cosign-rec-${co.id}" class="inline-label">Signed copy</label><select id="cosign-rec-${co.id}">${records.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Save as signed</button></div>`
+      : `<p class="sub">Add the signed copy to the <button class="linkish" data-action="open-job" data-id="${j.id}">job record</button> first (a photo or PDF), then pick it here.</p>`) : ""}`;
+}
+
+function coSignature(co) {
+  if (co.signature) return `<div class="money-row"><span class="label">Signed</span><span>${co.signature.name}, ${fmtDateTime(co.signature.at)} (online)</span></div>
+    <p class="sub">Kept with it: the consent they agreed to, their network address and browser, and a fingerprint of what they saw (${String(co.signature.snapshot_sha256).slice(0, 12)}…).</p>`;
+  if (co.signed_evidence) return `<div class="money-row"><span class="label">Signed</span><span>Paper copy on the job record: ${co.signed_evidence.label} (recorded by ${co.signed_evidence.by}, ${fmtDate(co.signed_evidence.at)})</span></div>`;
+  return "";
+}
+
 const WAIVER_KINDS = {
   conditional_progress: "Conditional, progress payment",
   unconditional_progress: "Unconditional, progress payment",
@@ -1062,7 +1087,12 @@ function bindActions() {
         render();
         document.getElementById("day-detail")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
-      else if (a === "approve-co") await post(`/api/jobs/${id}/approve-co/${el.dataset.co}`);
+      else if (a === "approve-co") {
+        const recordId = document.getElementById(`cosign-rec-${el.dataset.co}`)?.value || "";
+        const r = await post(`/api/jobs/${id}/approve-co/${el.dataset.co}`, { record_id: recordId });
+        if (r && r.ok) { formOpen[`cosign-${el.dataset.co}`] = false; render(); }
+      }
+      else if (a === "request-co-signature") await post(`/api/jobs/${id}/request-co-signature/${el.dataset.co}`);
       else if (a === "add-evidence") {
         const label = document.querySelector("#ev-label")?.value;
         if (label) await post(`/api/jobs/${id}/add-evidence`, { label, kind: "note" });
@@ -2284,11 +2314,7 @@ const views = {
           <h2 class="h2-gap">Change orders</h2>
           ${j.change_orders.length ? j.change_orders.map(co => `
             <div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${words(co.status)}</span>${co.included_in_billing ? ` <span class="sub">on a pay app</span>` : ""}
-              ${co.status === "pending" && !j.closed ? `<div class="form-inline">
-                <button class="btn small" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Mark signed</button>
-                <button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>
-                ${!co.included_in_billing && !openDraft ? `<button class="btn small secondary" data-action="include-co" data-id="${j.id}" data-co="${co.id}" title="Bill it on the next pay app; send stays blocked until it is signed">Put on next pay app</button>` : ""}
-              </div>` : ""}
+              ${coSignControls(j, co, !co.included_in_billing && !openDraft ? `<button class="btn small secondary" data-action="include-co" data-id="${j.id}" data-co="${co.id}" title="Bill it on the next pay app; send stays blocked until it is signed">Put on next pay app</button>` : "")}
             </div>`).join("") : `<p class="sub">No change orders. Add one if the scope changed.</p>`}
         </div>
       </div>
@@ -2389,7 +2415,8 @@ const views = {
         ${co.description ? `<p>${co.description}</p>` : ""}
         <div class="money-row"><span class="label">Waiting on</span><span>${co.waiting_on || (co.status === "pending" ? "Customer signature" : "Nothing")}</span></div>
         <div class="money-row"><span class="label">On a pay app</span><span>${co.included_in_billing ? "Yes" : "No"}</span></div>
-        ${co.status === "pending" && !j.closed ? `<div class="form-inline"><button class="btn small" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Mark signed</button><button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button></div>` : ""}
+        ${coSignature(co)}
+        ${coSignControls(j, co)}
       </div>
       <div class="card">
         <h2>Signed copy</h2>

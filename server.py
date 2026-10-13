@@ -166,7 +166,7 @@ SECRET_PATHS = (
     (re.compile(r"(/api/inbound/(?:email|sms)/)[^/?\s]+"), r"\1[token]"),
     (re.compile(r"(/api/calendar/)[^/?\s]+?(\.ics)"), r"\1[token]\2"),
     (re.compile(r"(/api/mail-events/)[^/?\s]+"), r"\1[token]"),
-    (re.compile(r"(/p/[a-z0-9-]+\.)[A-Za-z0-9_-]+"), r"\1[token]"),
+    (re.compile(r"(/[ps]/[a-z0-9-]+\.)[A-Za-z0-9_-]+"), r"\1[token]"),
 )
 
 
@@ -633,6 +633,10 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             self._payer_page_get(m.group(1), m.group(2), m.group(3) or "")
             return
+        m = re.match(r"^/s/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})$", path)
+        if m:
+            self._co_sign_page(m.group(1), m.group(2), "")
+            return
         if path == "/api/import/settings":
             user = self._require_user()
             if not user:
@@ -842,6 +846,10 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/p/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})/received$", path)
         if m:
             self._payer_received(m.group(1), m.group(2))
+            return
+        m = re.match(r"^/s/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})/sign$", path)
+        if m:
+            self._co_sign_post(m.group(1), m.group(2))
             return
 
         # Everything below needs a signed-in user; check before reading the body.
@@ -1461,6 +1469,42 @@ class Handler(BaseHTTPRequestHandler):
         self._change(company_id, mark)
         self._send(303, b"", "text/plain", {"Location": f"/p/{company_id}.{token}"})
 
+    def _co_lookup(self, company_id: str, token: str) -> tuple:
+        if company_id in deleted_companies() or not company_path(company_id).exists():
+            return None, None, None
+        with STATE_LOCK:
+            state = load_company(company_id)
+        job, co = payer_page.find_co(state, token)
+        return (state, job, co) if co else (None, None, None)
+
+    def _co_sign_page(self, company_id: str, token: str, error: str) -> None:
+        """The change-order signing page (P2-3); the link is the key."""
+        state, job, co = self._co_lookup(company_id, token)
+        if not co:
+            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            return
+        page = payer_page.render_co(state, job, co, f"/s/{company_id}.{token}", error)
+        self._send_compressible(200 if not error else 400, page.encode("utf-8"), "text/html; charset=utf-8",
+                                {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+    def _co_sign_post(self, company_id: str, token: str) -> None:
+        state, job, co = self._co_lookup(company_id, token)
+        if not co:
+            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            return
+        form = dict(parse_qsl(self._read_raw(4_000).decode("utf-8", "replace")))
+        ip, agent = self._client_ip(), self.headers.get("User-Agent", "")
+
+        def sign(st: dict) -> None:
+            j, c = payer_page.find_co(st, token)
+            domain.sign_change_order(st, j, c, form.get("name", ""), form.get("agree") == "yes", ip, agent)
+
+        status, payload = self._change(company_id, sign)
+        if status != 200:
+            self._co_sign_page(company_id, token, payload.get("error", "Not signed."))
+            return
+        self._send(303, b"", "text/plain", {"Location": f"/s/{company_id}.{token}"})
+
     def _inbound_sms(self, token: str) -> None:
         company_id = importer.company_for_token(token, "sms")
         if not company_id:
@@ -1584,7 +1628,11 @@ class Handler(BaseHTTPRequestHandler):
                     description=_text(body, "description"),
                 )
             elif action == "approve-co" and len(parts) == 5:
-                domain.approve_change_order(state, job_id, parts[4], actor)
+                # A change order is approved by a signature: online (request-co-signature) or a
+                # signed copy on the job record. A bare status flip is not accepted (P2-3).
+                domain.mark_co_signed(state, job_id, parts[4], _text(body, "record_id"), actor)
+            elif action == "request-co-signature" and len(parts) == 5:
+                domain.request_co_signature(state, job_id, parts[4], actor, link_base=app_url(), company_id=company_id)
             elif action == "include-co" and len(parts) == 5:
                 domain.include_change_order(state, job_id, parts[4], actor)
             elif action == "withdraw-co" and len(parts) == 5:

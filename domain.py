@@ -879,6 +879,97 @@ def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
     return job
 
 
+# ---------- signed change orders (P2-3) ----------
+# Draft consent wording, written to describe what the code does; counsel should check it
+# against ESIGN and the state's rules before real customers rely on it.
+CO_CONSENT = (
+    "I agree to this change order. I agree to sign it electronically, and my typed name below is my signature."
+)
+
+
+def co_snapshot(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any]) -> dict[str, Any]:
+    """Exactly what the signer saw; its SHA-256 is kept with the signature."""
+    return {
+        "contractor": state.get("company", {}).get("name", ""),
+        "job": job["name"],
+        "address": job.get("address", ""),
+        "change_order": co["number"],
+        "title": co["title"],
+        "description": co.get("description", ""),
+        "amount_cents": co["amount_cents"],
+        "consent": CO_CONSENT,
+    }
+
+
+def snapshot_sha256(snapshot: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _pending_co(state: dict[str, Any], job_id: str, co_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    job = _open_job(state, job_id)
+    co = next((c for c in job["change_orders"] if c["id"] == co_id), None)
+    if not co:
+        raise GateError("Change order not found.")
+    if co["status"] != "pending":
+        raise GateError(f"CO {co['number']} is {co['status']}; only a pending change order can be signed.")
+    return job, co
+
+
+def request_co_signature(
+    state: dict[str, Any], job_id: str, co_id: str, actor: str = "owner", link_base: str | None = None, company_id: str = ""
+) -> str:
+    """Make the change order's signing link and, with a site address, email it to the payer. Returns the link."""
+    job, co = _pending_co(state, job_id, co_id)
+    if not link_base or not company_id:
+        raise GateError("Signing links need the site's address (BILLDABLE_URL) set on the server.")
+    co["sign_token"] = co.get("sign_token") or secrets.token_urlsafe(24)
+    co["signature_requested_at"] = utcnow()
+    link = f"{link_base.rstrip('/')}/s/{company_id}.{co['sign_token']}"
+    payer = _payer(state, job["payer_id"])
+    if payer.get("ap_email"):
+        body = (
+            f"{payer.get('approver') or payer['name']},\n\nPlease review and sign change order {co['number']} for {job['name']}: "
+            f"{co['title']}, {money(co['amount_cents'])}."
+            + (f"\n\n{co['description']}" if co.get("description") else "")
+            + f"\n\nSign it here (type your name; nothing to print):\n{link}\n\nRequested by {actor}."
+        )
+        _record_email(state, job_id, "co_signature", payer["ap_email"], f"Please sign change order {co['number']} — {job['name']}",
+                      body, actor, cc=_copy_list(payer))
+    audit(state, job_id, "request_co_signature", f"{actor} asked {payer.get('ap_email') or payer['name']} to sign CO {co['number']}.", actor)
+    return link
+
+
+def sign_change_order(
+    state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], name: Any, agreed: bool, ip: str, user_agent: str
+) -> dict[str, Any]:
+    """The payer signs on the signing page: typed name, consent, time, IP and what they saw."""
+    name = " ".join(str(name or "").split())[:120]
+    if co.get("status") != "pending":
+        raise GateError(f"CO {co['number']} is already {co['status']}.")
+    if len(name) < 2:
+        raise GateError("Type your full name to sign.")
+    if not agreed:
+        raise GateError("Tick the box to agree to the change order and to signing electronically.")
+    snap = co_snapshot(state, job, co)
+    co["signature"] = {
+        "name": name, "at": utcnow(), "ip": str(ip)[:64], "user_agent": str(user_agent)[:200],
+        "consent": CO_CONSENT, "snapshot": snap, "snapshot_sha256": snapshot_sha256(snap),
+    }
+    approve_change_order(state, job["id"], co["id"], actor=f"{name} (signed online)")
+    return co
+
+
+def mark_co_signed(state: dict[str, Any], job_id: str, co_id: str, record_id: str, actor: str = "owner") -> dict[str, Any]:
+    """Approve a change order signed on paper: the job record must hold the signed copy."""
+    job, co = _pending_co(state, job_id, co_id)
+    record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not record:
+        raise GateError("Pick the job record that holds the signed change order, or request an online signature.")
+    co["signed_evidence"] = {"record_id": record_id, "label": record.get("label", ""), "by": actor, "at": utcnow()}
+    approve_change_order(state, job_id, co_id, actor)
+    return job
+
+
 def withdraw_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: str = "owner") -> dict[str, Any]:
     """A pending CO the customer will not sign. Its dollars leave any open draft's blockers."""
     job = _open_job(state, job_id)

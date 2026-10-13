@@ -114,3 +114,41 @@ def mark_received(state: dict[str, Any], job: dict[str, Any], invoice: dict[str,
         job["external_status"] = f"{who} confirmed receipt of {invoice['number']} on {_date(now)}"
     domain.audit(state, job["id"], "payer_received", f"{who} marked {invoice['number']} as received on the payer page.", "payer")
     return True
+
+
+def find_co(state: dict[str, Any], token: str) -> tuple[dict | None, dict | None]:
+    """The job and change order a signing link belongs to, or (None, None)."""
+    for job in state.get("jobs", []):
+        for co in job.get("change_orders", []):
+            stored = co.get("sign_token")
+            if stored and isinstance(token, str) and secrets.compare_digest(stored, token):
+                return job, co
+    return None, None
+
+
+def render_co(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], base: str, error: str = "") -> str:
+    """The signing page for one change order (P2-3)."""
+    company = state.get("company", {}).get("name", "") or "Your contractor"
+    title = f"Change order {co['number']} — {job['name']}"
+    head = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<meta name="robots" content="noindex"><title>{_e(title)}</title><style>{PAGE_STYLE}</style></head><body><main>')
+    summary = (f'<p class="sub">{_e(company)} · {_e(job["name"])} · {_e(job.get("address", ""))}</p>'
+               f"<h1>Change order {_e(co['number'])}: {_e(domain.money(co['amount_cents']))}</h1>"
+               f'<div class="card"><strong>{_e(co["title"])}</strong>'
+               + (f"<p>{_e(co['description'])}</p>" if co.get("description") else "") + "</div>")
+    sig = co.get("signature")
+    if sig:
+        return (head + summary + f'<div class="card received"><strong>Signed</strong> by {_e(sig["name"])} on {_e(_date(sig["at"]))}. '
+                f"A copy of what was signed is kept with {_e(company)}'s records.</div>"
+                + '<p class="foot">Prepared with Billdable.</p></main></body></html>')
+    if co.get("status") != "pending":
+        return head + summary + f"<p>This change order is {_e(co.get('status'))} and can no longer be signed here.</p></main></body></html>"
+    return (head + summary
+            + (f'<div class="card" role="alert" style="border-color:#8d2d2d"><span class="no">{_e(error)}</span></div>' if error else "")
+            + f'<div class="card"><form method="post" action="{_e(base)}/sign" style="flex-direction:column;align-items:stretch">'
+            + f'<label style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" name="agree" value="yes" style="flex:none;margin-top:4px;min-width:auto"> '
+            + f"<span>{_e(domain.CO_CONSENT)}</span></label>"
+            + '<label for="signer" class="sub">Your full name</label><input id="signer" name="name" maxlength="120" autocomplete="name" required style="flex:none">'
+            + '<button class="btn" type="submit">Sign change order</button></form></div>'
+            + f'<p class="foot">Your name, the time, your network address and this change order as shown are kept as the record of your signature. '
+            + f"Questions go to {_e(company)}; reply to their email.</p></main></body></html>")
