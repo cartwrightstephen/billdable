@@ -1474,8 +1474,11 @@ def record_sov_progress(
     done: Any,
     notes: str = "",
     actor: str = "owner",
+    stored: Any = None,
 ) -> dict[str, Any]:
-    """Record quantities completed to date on schedule lines and draft the progress pay app."""
+    """Record quantities completed to date, and materials stored, on schedule lines; draft the
+    progress pay app. `done` maps line id -> quantity to date; `stored` maps line id -> dollars of
+    materials on site and not yet installed (G703 column F)."""
     job = _open_job(state, job_id)
     if not sov.has_sov(job):
         raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
@@ -1484,43 +1487,55 @@ def record_sov_progress(
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft:
         raise GateError(f"{open_draft['number']} is still a draft. Send or void it, then record more progress.")
-    if not isinstance(done, dict) or not done:
+    done = done if isinstance(done, dict) else {}
+    stored = stored if isinstance(stored, dict) else {}
+    if not done and not stored:
         raise GateError("Enter the quantity completed to date on at least one line.")
     by_id = {line["id"]: line for line in sov.lines(job)}
     already = sov.billed(job)
     billed_qty = already["qty_by_line"]
     changes, errors = [], []
-    for line_id, value in done.items():
+    blank = lambda v: v is None or (isinstance(v, str) and not v.strip())
+    for line_id in list(dict.fromkeys(list(done) + list(stored))):
         line = by_id.get(line_id)
         if not line:
             errors.append(f"Line {str(line_id)[:20]} is not on this job's schedule.")
             continue
-        if value is None or (isinstance(value, str) and not value.strip()):
-            continue
         name = f"{line.get('item', '')}. {line['description']}".strip(". ")
+        qty, store = line["done_milli"], int(line.get("stored_cents") or 0)
         try:
-            qty = sov.to_milli(value, name)
+            if not blank(done.get(line_id)):
+                qty = sov.to_milli(done[line_id], name)
+            if not blank(stored.get(line_id)):
+                store = sov.to_cents(stored[line_id], f"{name}: stored materials")
         except sov.SovError as exc:
             errors.append(str(exc))
             continue
-        if qty < 0:
-            errors.append(f"{name}: quantity can't be negative.")
+        trial_line = {**line, "done_milli": qty, "stored_cents": store}
+        if qty < 0 or store < 0:
+            errors.append(f"{name}: quantity and stored materials can't be negative.")
         elif qty > line["qty_milli"]:
             errors.append(f"{name}: {sov.fmt_qty(qty)} is more than the scheduled {sov.fmt_qty(line['qty_milli'])} {line['unit']}. Extra scope is a change order.")
         elif qty < billed_qty.get(line_id, 0):
             errors.append(f"{name}: {sov.fmt_qty(billed_qty[line_id])} {line['unit']} is already billed; the quantity to date can't go below that.")
-        elif sov.line_to_date({**line, "done_milli": qty}) < already["by_line"].get(line_id, 0):
-            errors.append(f"{name}: {money(already['by_line'][line_id])} is already billed on this line; the amount to date can't go below that.")
-        elif qty != line["done_milli"]:
-            changes.append((line, qty))
+        elif sov.line_completed(trial_line) + store > line["scheduled_cents"]:
+            errors.append(f"{name}: work done plus {money(store)} stored is more than the line's {money(line['scheduled_cents'])}. Lower the stored materials as they are installed.")
+        elif sov.line_to_date(trial_line) < already["by_line"].get(line_id, 0):
+            errors.append(f"{name}: {money(already['by_line'][line_id])} is already billed on this line; work done plus stored materials can't go below that.")
+        elif qty != line["done_milli"] or store != int(line.get("stored_cents") or 0):
+            changes.append((line, qty, store))
     if errors:
         raise GateError("Progress not recorded.", errors)
     if not changes:
-        raise GateError("Nothing changed. Enter quantities to date that differ from the last ones recorded.")
+        raise GateError("Nothing changed. Enter quantities to date or stored materials that differ from the last ones recorded.")
     summary = []
-    for line, qty in changes:
-        summary.append(f"{line['description']} {sov.fmt_qty(line['done_milli'])} → {sov.fmt_qty(qty)} {line['unit']}")
+    for line, qty, store in changes:
+        part = f"{line['description']} {sov.fmt_qty(line['done_milli'])} → {sov.fmt_qty(qty)} {line['unit']}"
+        if store != int(line.get("stored_cents") or 0):
+            part += f", stored {money(int(line.get('stored_cents') or 0))} → {money(store)}"
+        summary.append(part)
         line["done_milli"] = qty
+        line["stored_cents"] = store
     job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
     notes = (notes or "").strip()[:2000]
     if notes:
@@ -1529,7 +1544,7 @@ def record_sov_progress(
         state,
         job_id,
         "record_progress",
-        f"{actor} recorded quantities to date: {'; '.join(summary)}. Completed to date {money(job['completed_value_cents'])}."
+        f"{actor} recorded progress to date: {'; '.join(summary)}. Completed and stored to date {money(job['completed_value_cents'])}."
         + (f" {notes}" if notes else ""),
         actor,
     )

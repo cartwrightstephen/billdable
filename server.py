@@ -1430,7 +1430,7 @@ class Handler(BaseHTTPRequestHandler):
                     state, job_id, body.get("lines"), body.get("op_pct"), body.get("update_contract") is True, actor
                 )
             elif action == "sov-progress":
-                domain.record_sov_progress(state, job_id, body.get("done"), _text(body, "notes"), actor)
+                domain.record_sov_progress(state, job_id, body.get("done"), _text(body, "notes"), actor, stored=body.get("stored"))
             elif action == "resolve" and len(parts) == 5:
                 domain.resolve_packet_item(state, job_id, parts[4], actor, reason=_text(body, "reason"))
             elif action == "draft":
