@@ -11,6 +11,8 @@ page addresses the app uses (/today, /jobs/..., /money/...) all get index.html.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import base64
 import gzip
 import hashlib
@@ -557,174 +559,212 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self._crash()
 
-    def _get(self) -> None:
+    # ----- routing (P2-7): one table, one handler per route -----
+    # Access levels: "public" (no sign-in), "user" (signed in; the handler reads its own body,
+    # if any), "body" (signed in, JSON body read, session checked again after the body
+    # arrives), "mutate" (as body, then the handler changes the company's state under the
+    # lock; it is saved, approved emails are delivered and the snapshot returned).
+
+    def _dispatch(self, method: str) -> None:
         path = urlparse(self.path).path
-        if path == "/healthz":
-            # For an uptime monitor: no sign-in, no secrets, 503 when data can't be written.
-            writable = True
-            try:
-                probe = storage.DATA_DIR / f".health-{secrets.token_hex(4)}"
-                storage.DATA_DIR.mkdir(parents=True, exist_ok=True)
-                probe.write_text("ok")
-                probe.unlink()
-            except OSError:
-                writable = False
-            self._json(200 if writable else 503, {
-                "ok": writable,
-                "storage": "ok" if writable else "not writable",
-                "email": "configured" if mailer.configured() else "not set up",
-                "last_backup": backup.newest_time(),
-                "offsite_backup": offsite.last_upload() if offsite.configured() else "not set up",
-                "env": "production" if production() else "development",
-            })
-            return
-        if path == "/api/team":
-            user = self._require_user()
-            if not user:
+        for route in ROUTES:
+            if route.method != method:
+                continue
+            m = route.regex.fullmatch(path)
+            if m:
+                self._run(route, m)
                 return
-            data = auth.team(user["company_id"])
-            if user["role"] != "owner":
-                data["invites"] = []
-            self._json(200, data)
-            return
-        if path == "/api/admin/companies":
-            user = self._require_user()
-            if not user:
-                return
-            if not is_helper_admin(user):
-                self._json(403, {"error": "Only the Billdable team can see this."})
-                return
-            self._json(200, {"companies": self._company_overview()})
-            return
-        m = re.match(r"^/api/jobs/([^/]+)/payapp/([^/]+)\.pdf$", path)
-        if m:
-            user = self._require_user()
-            if not user:
-                return
-            with STATE_LOCK:
-                state = load_company(user["company_id"])
-            pdf, name = self._payapp_pdf(state, m.group(1), m.group(2))
-            if not pdf:
-                self._json(404, {"error": "Pay app not found."})
-                return
-            self._send(200, pdf, "application/pdf", {"Content-Disposition": f'inline; filename="{name}"'})
-            return
-        if path == "/api/auth/me":
-            user = self._session_user()
-            if not user:
-                self._json(401, {"error": "Not signed in.", "data_notice": data_notice()})
-                return
-            with STATE_LOCK:
-                state = load_company(user["company_id"])
-            self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
-                             "mail_ready": bool(mailer.configured() and app_url())})
-            return
-        if path == "/api/helper/review":
-            user = self._require_user()
-            if not user:
-                return
-            if not is_helper_admin(user):
-                self._json(403, {"error": "Only the Billdable team can review helper questions."})
-                return
-            self._json(200, helper.review())
-            return
-        if path == "/api/state":
-            user = self._require_user()
-            if not user:
-                return
-            with STATE_LOCK:
-                state = load_company(user["company_id"])
-            self._json(200, domain.snapshot(state))
-            return
-        if path == "/api/export":
-            user = self._require_user()
-            if not user:
-                return
-            with STATE_LOCK:
-                state = load_company(user["company_id"])
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
-            self._send(
-                200,
-                json.dumps(state, indent=2).encode(),
-                "application/json",
-                {"Content-Disposition": f'attachment; filename="billdable-export-{stamp}.json"'},
-            )
-            return
-        if path.startswith("/api/files/"):
-            user = self._require_user()
-            if not user:
-                return
-            file_id = path.rsplit("/", 1)[-1]
-            with STATE_LOCK:
-                state = load_company(user["company_id"])
-            self._serve_file(user["company_id"], state, file_id)
-            return
-        m = re.match(r"^/p/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})(/pdf|/file/[A-Za-z0-9_-]{1,64})?$", path)
-        if m:
-            self._payer_page_get(m.group(1), m.group(2), m.group(3) or "")
-            return
-        m = re.match(r"^/s/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})$", path)
-        if m:
-            self._co_sign_page(m.group(1), m.group(2), "")
-            return
-        if path == "/api/metrics":
-            user = self._require_user()
-            if not user:
-                return
-            period = (parse_qs(urlparse(self.path).query).get("period") or ["90"])[0]
-            since = None if period == "all" else datetime.now(timezone.utc).date() - timedelta(days=90)
-            with STATE_LOCK:
-                state = load_company(user["company_id"])
-            self._json(200, metrics.compute(state, since=since))
-            return
-        if path == "/api/import/settings":
-            user = self._require_user()
-            if not user:
-                return
-            tokens = importer.company_tokens(user["company_id"])
-            base = self._base_url()
-            template = os.environ.get("INBOUND_EMAIL_ADDRESS_TEMPLATE", "")
-            self._json(200, {
-                "email_webhook": f"{base}/api/inbound/email/{tokens['email']}",
-                "email_address": template.replace("{token}", tokens["email"]) if "{token}" in template else "",
-                "sms_webhook": f"{base}/api/inbound/sms/{tokens['sms']}",
-                "sms_number": os.environ.get("TWILIO_NUMBER", ""),
-                "sms_signature_check": bool(os.environ.get("TWILIO_AUTH_TOKEN")),
-                "calendar_url": f"{base}/api/calendar/{tokens['calendar']}.ics",
-                "max_file_mb": importer.MAX_FILE_BYTES // (1024 * 1024),
-                "mail_configured": mailer.configured(),
-                "mail_from": mailer.settings()["from"] if mailer.configured() else "",
-                "mail_daily_limit": mailer.settings()["daily_limit"],
-                "file_types": sorted(e.lstrip(".") for e in importer.ALLOWED_FILES),
-            })
-            return
-        if path.startswith("/api/calendar/") and path.endswith(".ics"):
-            token = path[len("/api/calendar/"):-len(".ics")]
-            company_id = importer.company_for_token(token, "calendar")
-            if not company_id:
+        if method == "GET":
+            self._get_fallback(path)
+        elif path.startswith("/api/"):
+            # Unknown API calls answer like before: sign in first, then "Not found".
+            if self._require_user():
                 self._json(404, {"error": "Not found"})
-                return
+        else:
+            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+
+    def _run(self, route: "Route", m: "re.Match") -> None:
+        handler = getattr(self, route.handler)
+        if route.access == "public":
+            handler(m)
+            return
+        user = self._require_user()
+        if not user:
+            return
+        if route.access == "user":
+            handler(m, user)
+            return
+        body = self._read_json()
+        # Check the session again now the body is here: someone removed, demoted or signed out
+        # while their request was arriving must not finish it with their old rights.
+        user = self._session_user()
+        if not user:
+            self._json(401, {"error": "Sign in required."})
+            return
+        if route.owner and user["role"] != "owner":
+            self._json(403, {"error": "Only an owner can do that."})
+            return
+        # The audit trail names the signed-in user. Any "actor" in the body is ignored.
+        ctx = Ctx(user=user, body=body, company_id=user["company_id"], actor=user.get("name") or user.get("email") or "owner")
+        if route.access == "body":
+            handler(m, ctx)
+            return
+        try:
             with STATE_LOCK:
-                state = load_company(company_id)
-            self._send(200, calendar_feed.render(state).encode("utf-8"), "text/calendar; charset=utf-8",
-                       {"Content-Disposition": 'inline; filename="billdable.ics"'})
+                state = load_company(ctx.company_id)
+                state = handler(state, m, ctx) or state
+                save_company(ctx.company_id, state)
+                payload = domain.snapshot(state)
+        except UnknownAction:
+            self._json(404, {"error": "Unknown action"})
             return
-        if path in {"/terms", "/privacy"}:
-            self._send(200, legal.page(path.strip("/")).encode("utf-8"), "text/html; charset=utf-8")
+        except domain.GateError as exc:
+            self._json(409, {"error": str(exc), "blockers": exc.blockers})
             return
+        except (KeyError, ValueError, TypeError, OverflowError) as exc:
+            self._json(400, {"error": f"Bad request: {exc}"})
+            return
+        # Approved emails are delivered after the change is saved and the lock is released;
+        # the reply is written after that too, so a slow client can't stall other companies.
+        self._json(200, self._deliver_queued(ctx.company_id, ctx.user) or payload)
+
+    def _get(self) -> None:
+        self._dispatch("GET")
+
+    def _post(self) -> None:
+        self._dispatch("POST")
+
+    def _get_fallback(self, path: str) -> None:
         if path in {"/", "/index.html"} or (APP_PATH_RE.match(path) and path.split("/")[1] in APP_SECTIONS):
             self._send_compressible(200, index_html(), "text/html; charset=utf-8", {"Cache-Control": "no-cache"})
-            return
-        if path == "/favicon.ico":
-            self._send(204, b"", "image/x-icon")
-            return
-        if path in STATIC_FILES:
+        elif path in STATIC_FILES:
             self._static_asset(*STATIC_FILES[path])
-            return
-        if path.startswith("/api/"):
+        elif path.startswith("/api/"):
             self._json(404, {"error": "Not found"})
         else:
             self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+
+    # ----- GET handlers -----
+
+    def _g_healthz(self, m) -> None:
+        # For an uptime monitor: no sign-in, no secrets, 503 when data can't be written.
+        writable = True
+        try:
+            probe = storage.DATA_DIR / f".health-{secrets.token_hex(4)}"
+            storage.DATA_DIR.mkdir(parents=True, exist_ok=True)
+            probe.write_text("ok")
+            probe.unlink()
+        except OSError:
+            writable = False
+        self._json(200 if writable else 503, {
+            "ok": writable,
+            "storage": "ok" if writable else "not writable",
+            "email": "configured" if mailer.configured() else "not set up",
+            "last_backup": backup.newest_time(),
+            "offsite_backup": offsite.last_upload() if offsite.configured() else "not set up",
+            "env": "production" if production() else "development",
+        })
+
+    def _g_team(self, m, user) -> None:
+        data = auth.team(user["company_id"])
+        if user["role"] != "owner":
+            data["invites"] = []
+        self._json(200, data)
+
+    def _g_admin_companies(self, m, user) -> None:
+        if not is_helper_admin(user):
+            self._json(403, {"error": "Only the Billdable team can see this."})
+            return
+        self._json(200, {"companies": self._company_overview()})
+
+    def _g_payapp_pdf(self, m, user) -> None:
+        with STATE_LOCK:
+            state = load_company(user["company_id"])
+        pdf, name = self._payapp_pdf(state, m.group(1), m.group(2))
+        if not pdf:
+            self._json(404, {"error": "Pay app not found."})
+            return
+        self._send(200, pdf, "application/pdf", {"Content-Disposition": f'inline; filename="{name}"'})
+
+    def _g_me(self, m) -> None:
+        user = self._session_user()
+        if not user:
+            self._json(401, {"error": "Not signed in.", "data_notice": data_notice()})
+            return
+        with STATE_LOCK:
+            state = load_company(user["company_id"])
+        self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
+                         "mail_ready": bool(mailer.configured() and app_url())})
+
+    def _g_helper_review(self, m, user) -> None:
+        if not is_helper_admin(user):
+            self._json(403, {"error": "Only the Billdable team can review helper questions."})
+            return
+        self._json(200, helper.review())
+
+    def _g_state(self, m, user) -> None:
+        with STATE_LOCK:
+            state = load_company(user["company_id"])
+        self._json(200, domain.snapshot(state))
+
+    def _g_export(self, m, user) -> None:
+        with STATE_LOCK:
+            state = load_company(user["company_id"])
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+        self._send(200, json.dumps(state, indent=2).encode(), "application/json",
+                   {"Content-Disposition": f'attachment; filename="billdable-export-{stamp}.json"'})
+
+    def _g_file(self, m, user) -> None:
+        with STATE_LOCK:
+            state = load_company(user["company_id"])
+        self._serve_file(user["company_id"], state, m.group(1))
+
+    def _g_payer_page(self, m) -> None:
+        self._payer_page_get(m.group(1), m.group(2), m.group(3) or "")
+
+    def _g_co_sign(self, m) -> None:
+        self._co_sign_page(m.group(1), m.group(2), "")
+
+    def _g_metrics(self, m, user) -> None:
+        period = (parse_qs(urlparse(self.path).query).get("period") or ["90"])[0]
+        since = None if period == "all" else datetime.now(timezone.utc).date() - timedelta(days=90)
+        with STATE_LOCK:
+            state = load_company(user["company_id"])
+        self._json(200, metrics.compute(state, since=since))
+
+    def _g_import_settings(self, m, user) -> None:
+        tokens = importer.company_tokens(user["company_id"])
+        base = self._base_url()
+        template = os.environ.get("INBOUND_EMAIL_ADDRESS_TEMPLATE", "")
+        self._json(200, {
+            "email_webhook": f"{base}/api/inbound/email/{tokens['email']}",
+            "email_address": template.replace("{token}", tokens["email"]) if "{token}" in template else "",
+            "sms_webhook": f"{base}/api/inbound/sms/{tokens['sms']}",
+            "sms_number": os.environ.get("TWILIO_NUMBER", ""),
+            "sms_signature_check": bool(os.environ.get("TWILIO_AUTH_TOKEN")),
+            "calendar_url": f"{base}/api/calendar/{tokens['calendar']}.ics",
+            "max_file_mb": importer.MAX_FILE_BYTES // (1024 * 1024),
+            "mail_configured": mailer.configured(),
+            "mail_from": mailer.settings()["from"] if mailer.configured() else "",
+            "mail_daily_limit": mailer.settings()["daily_limit"],
+            "file_types": sorted(e.lstrip(".") for e in importer.ALLOWED_FILES),
+        })
+
+    def _g_calendar(self, m) -> None:
+        company_id = importer.company_for_token(m.group(1), "calendar")
+        if not company_id:
+            self._json(404, {"error": "Not found"})
+            return
+        with STATE_LOCK:
+            state = load_company(company_id)
+        self._send(200, calendar_feed.render(state).encode("utf-8"), "text/calendar; charset=utf-8",
+                   {"Content-Disposition": 'inline; filename="billdable.ics"'})
+
+    def _g_legal(self, m) -> None:
+        self._send(200, legal.page(m.group(1)).encode("utf-8"), "text/html; charset=utf-8")
+
+    def _g_favicon(self, m) -> None:
+        self._send(204, b"", "image/x-icon")
 
     def _accepts_gzip(self) -> bool:
         return "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
@@ -751,354 +791,303 @@ class Handler(BaseHTTPRequestHandler):
             body, headers["Content-Encoding"] = a["gz"], "gzip"
         self._send(200, body, kind, headers)
 
-    def _post(self) -> None:
-        path = urlparse(self.path).path
-        parts = [p for p in path.split("/") if p]
+    # ----- POST handlers: signing in and public links -----
 
-        if path == "/api/auth/login":
-            body = self._read_json()
-            try:
-                user = auth.verify_login(_text(body, "email"), _text(body, "password"), ip=self._client_ip())
-            except auth.RateLimited as exc:
-                self._json(429, {"error": str(exc)})
-                return
-            if not user or (not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID):
-                self._json(401, {"error": "Email or password is wrong."})
-                return
-            if user.get("two_step"):
-                code = _text(body, "code", limit=40)
-                if not code:
-                    self._json(401, {"error": "Enter the 6-digit code from your authenticator app.", "needs_code": True})
-                    return
-                try:
-                    ok = auth.totp_check(user["id"], code, self._client_ip())
-                except auth.RateLimited as exc:
-                    self._json(429, {"error": str(exc), "needs_code": True})
-                    return
-                if not ok:
-                    self._json(401, {"error": "That code didn't work. Codes change every 30 seconds; a recovery code works once.", "needs_code": True})
-                    return
-            token = auth.create_session(user)
-            self._json(200, {"user": user}, self._set_cookie(token))
-            return
-
-        if path == "/api/auth/signup":
-            body = self._read_json()
-            if body.get("accept_terms") is not True:
-                self._json(400, {"error": "To create an account, accept the Terms of Service and the Privacy Policy."})
-                return
-            try:
-                company_id = "co-" + secrets.token_hex(4)
-                user = auth.create_user(
-                    _text(body, "email"),
-                    _text(body, "password"),
-                    _text(body, "name"),
-                    company_id,
-                    terms_version=legal.TERMS_VERSION,
-                )
-                fresh = empty_state(_text(body, "company_name").strip() or "New company")
-                trial.start(fresh["company"])
-                with STATE_LOCK:
-                    save_company(company_id, fresh)
-                token = auth.create_session(user)
-                verification = self._send_verification(user)
-                self._json(200, {"user": user, "verification": verification}, self._set_cookie(token))
-            except ValueError as exc:
-                self._json(400, {"error": str(exc)})
-            return
-
-        if path == "/api/auth/logout":
-            auth.destroy_session(self._token())
-            self._json(200, {"ok": True}, self._set_cookie(None))
-            return
-
-        if path == "/api/auth/forgot":
-            body = self._read_json()
-            url = app_url()
-            if not (mailer.configured() and url):
-                contact = (os.environ.get("LEGAL_EMAIL") or "").strip()
-                self._json(200, {"message": "Password reset by email isn't set up on this server yet. "
-                                 + (f"Email {contact} to reset it." if contact else "Ask the Billdable team to reset it.")})
-                return
-            requested = _text(body, "email", limit=300)
-
-            def send_reset() -> None:
-                found = auth.password_reset_token(requested)
-                if found:
-                    raw, account = found
-                    self._system_email(
-                        account["email"], "Reset your Billdable password",
-                        f"Someone asked to reset the password for {account['email']} on Billdable.\n\n"
-                        f"Choose a new password here (the link works once, for one hour):\n{url}/#reset={raw}\n\n"
-                        "If it wasn't you, ignore this email; your password stays the same.",
-                        company_id=account["company_id"],
-                    )
-
-            # All the work happens in the background, so the answer takes the same time
-            # whether or not the account exists.
-            threading.Thread(target=send_reset, daemon=True).start()
-            self._json(200, {"message": "If an account exists for that email, a reset link is on its way. It works for one hour."})
-            return
-
-        if path == "/api/auth/reset":
-            body = self._read_json()
-            try:
-                user = auth.reset_password(body.get("token"), body.get("password"))
-            except auth.AuthError as exc:
-                self._json(400, {"error": str(exc)})
-                return
-            self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
-            return
-
-        if path == "/api/auth/verify":
-            body = self._read_json()
-            try:
-                user = auth.verify_email(body.get("token"))
-            except auth.AuthError as exc:
-                self._json(400, {"error": str(exc)})
-                return
-            self._json(200, {"user": user})
-            return
-
-        if path == "/api/auth/invite-info":
-            body = self._read_json()
-            info = auth.invite_info(body.get("token"))
-            if not info:
-                self._json(404, {"error": "This invite is invalid or has expired. Ask for a new one."})
-                return
-            with STATE_LOCK:
-                company = load_company(info["company_id"]).get("company", {})
-            self._json(200, {"email": info["email"], "role": info["role"], "company_name": company.get("name", ""),
-                             "invited_by": info["invited_by"]})
-            return
-
-        if path == "/api/auth/accept-invite":
-            body = self._read_json()
-            if body.get("accept_terms") is not True:
-                self._json(400, {"error": "To join, accept the Terms of Service and the Privacy Policy."})
-                return
-            try:
-                user = auth.accept_invite(body.get("token"), body.get("name"), body.get("password"), terms_version=legal.TERMS_VERSION)
-            except auth.AuthError as exc:
-                self._json(400, {"error": str(exc)})
-                return
-            self._change(user["company_id"], lambda st: domain.audit(
-                st, "", "team_join", f"{user['name']} ({user['email']}) joined the team as {user['role']}.", user["name"]))
-            self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
-            return
-
-        if path.startswith("/api/inbound/email/"):
-            self._inbound_email(path.rsplit("/", 1)[-1])
-            return
-        if path.startswith("/api/inbound/sms/"):
-            self._inbound_sms(path.rsplit("/", 1)[-1])
-            return
-        if path.startswith("/api/mail-events/"):
-            self._mail_events(path.rsplit("/", 1)[-1])
-            return
-        m = re.match(r"^/p/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})/received$", path)
-        if m:
-            self._payer_received(m.group(1), m.group(2))
-            return
-        m = re.match(r"^/s/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})/sign$", path)
-        if m:
-            self._co_sign_post(m.group(1), m.group(2))
-            return
-        if path == "/share":
-            self._share_target()
-            return
-
-        # Everything below needs a signed-in user; check before reading the body.
-        user = self._require_user()
-        if not user:
-            return
-        actor = user.get("name") or user.get("email") or "owner"
-        if path == "/api/import/file":
-            self._import_file(user, actor)
-            return
+    def _p_login(self, m) -> None:
         body = self._read_json()
-        # Check the session again now the body is here: someone removed, demoted or signed out
-        # while their request was arriving must not finish it with their old rights.
-        user = self._session_user()
-        if not user:
-            self._json(401, {"error": "Sign in required."})
-            return
-        actor = user.get("name") or user.get("email") or "owner"
-        company_id = user["company_id"]
-        # The audit trail names the signed-in user. Any "actor" in the body is ignored.
-        if path == "/api/helper/ask":
-            with STATE_LOCK:
-                state = load_company(company_id)
-            try:
-                reply = helper.answer(_text(body, "q"), state, company_id, user["id"], _text(body, "view"), _text(body, "job_id"))
-            except domain.GateError as exc:
-                self._json(409, {"error": str(exc)})
-                return
-            self._json(200, reply)
-            return
-        if path == "/api/helper/feedback":
-            try:
-                helper.feedback(_text(body, "log_id"), body.get("helpful") is True, _text(body, "note"), company_id)
-            except domain.GateError as exc:
-                self._json(409, {"error": str(exc)})
-                return
-            self._json(200, {"ok": True})
-            return
-        if path in {"/api/helper/answers", "/api/helper/resolve"}:
-            if not is_helper_admin(user):
-                self._json(403, {"error": "Only the Billdable team can edit helper answers."})
-                return
-            try:
-                if path == "/api/helper/answers":
-                    saved = helper.save_answer(body, user.get("email", ""))
-                    self._json(200, {"saved": saved, **helper.review()})
-                else:
-                    helper.resolve(_text(body, "normalized"))
-                    self._json(200, helper.review())
-            except domain.GateError as exc:
-                self._json(409, {"error": str(exc)})
-            return
-        if path in {"/api/reset", "/api/import/rotate"} and user["role"] != "owner":
-            self._json(403, {"error": "Only an owner can do that."})
-            return
-        if path == "/api/auth/resend-verify":
-            if user.get("email_verified"):
-                self._json(409, {"error": "Your email is already verified."})
-                return
-            result = self._send_verification(user)
-            if result != "sent":
-                self._json(409, {"error": f"No verification email was sent: {result}."})
-                return
-            self._json(200, {"ok": True, "message": f"A verification link is on its way to {user['email']}."})
-            return
-        if path == "/api/auth/password":
-            try:
-                auth.change_password(user["id"], body.get("current"), body.get("new"), keep_session=self._token())
-            except auth.RateLimited as exc:
-                self._json(429, {"error": str(exc)})
-                return
-            except auth.AuthError as exc:
-                self._json(400, {"error": str(exc)})
-                return
-            self._json(200, {"ok": True, "message": "Password changed. Every other device is signed out."})
-            return
-        if path == "/api/import/payments-csv":
-            # Read a QuickBooks payments export and propose matches; nothing is recorded (P2-1).
-            parsed = qbo_csv.parse(_text(body, "csv", limit=2_000_000))
-            with STATE_LOCK:
-                state = load_company(company_id)
-            self._json(200, {"rows": qbo_csv.propose(state, parsed["rows"]), "warnings": parsed["warnings"]})
-            return
-        if path == "/api/import/payments-apply":
-            picks = body.get("payments")
-            if not isinstance(picks, list) or not picks or len(picks) > 500:
-                raise BadRequest("Send the payments to record.")
-            results = []
-
-            def apply(st: dict) -> None:
-                for pick in picks:
-                    if not isinstance(pick, dict):
-                        continue
-                    ref = str(pick.get("reference") or "")[:60]
-                    try:
-                        domain.match_payment(st, str(pick.get("job_id") or ""), pick.get("amount_cents"), ref,
-                                             actor, invoice_id=str(pick.get("invoice_id") or "") or None,
-                                             received_on=str(pick.get("date") or "") or None)
-                        results.append({"reference": ref, "ok": True})
-                    except domain.GateError as exc:
-                        results.append({"reference": ref, "ok": False, "error": str(exc)})
-
-            status, payload = self._change(company_id, apply)
-            if status == 200:
-                payload["import_results"] = results
-            self._json(status, payload)
-            return
-        if path == "/api/metrics/summary-email":
-            if company_id == auth.DEMO_COMPANY_ID or not user.get("email_verified"):
-                self._json(409, {"error": "Confirm your email address first (Team & account)." if company_id != auth.DEMO_COMPANY_ID
-                                 else "The demo account doesn't send email."})
-                return
-            first = datetime.now(timezone.utc).date().replace(day=1) - timedelta(days=1)
-            with STATE_LOCK:
-                state = load_company(company_id)
-            subject, text = metrics.month_summary(state, first.year, first.month)
-            result = self._system_email(user["email"], subject, text, company_id)
-            if result != "sent":
-                self._json(409, {"error": f"Not sent: {result}."})
-                return
-            self._json(200, {"ok": True, "message": f"Last month's summary is on its way to {user['email']}."})
-            return
-        if path in {"/api/auth/2fa/begin", "/api/auth/2fa/enable", "/api/auth/2fa/disable"}:
-            try:
-                if path.endswith("begin"):
-                    self._json(200, auth.totp_begin(user["id"]))
-                elif path.endswith("enable"):
-                    codes = auth.totp_enable(user["id"], _text(body, "code", limit=40))
-                    self._json(200, {"ok": True, "recovery_codes": codes,
-                                     "message": "Two-step sign-in is on. Keep the recovery codes somewhere safe; each works once."})
-                else:
-                    auth.totp_disable(user["id"], body.get("password"), _text(body, "code", limit=40))
-                    self._json(200, {"ok": True, "message": "Two-step sign-in is off."})
-            except auth.RateLimited as exc:
-                self._json(429, {"error": str(exc)})
-            except auth.AuthError as exc:
-                self._json(400, {"error": str(exc)})
-            return
-        if path == "/api/onboarding/dismiss":
-            self._json(*self._change(company_id, lambda st: st["company"].__setitem__("onboarding_dismissed", True)))
-            return
-        if path.startswith("/api/team/") or path == "/api/account/delete":
-            self._team_action(path, parts, body, user)
-            return
-        if path == "/api/import/text":
-            file_now = (parse_qs(urlparse(self.path).query).get("file") or [""])[0] == "1"
-            self._json(*self._change(company_id, lambda st: self._import_text(st, body, actor if file_now else None)))
-            return
-        if path.startswith("/api/inbox/") and len(parts) == 4:
-            item_id, verb = parts[2], parts[3]
-            if verb == "file":
-                fn = lambda st: importer.file_item(st, item_id, _text(body, "job_id"), _text(body, "kind"), actor)
-            elif verb == "dismiss":
-                fn = lambda st: importer.dismiss_item(st, item_id, actor)
-            elif verb == "undo":
-                fn = lambda st: importer.undo_item(st, item_id, actor)
-            elif verb == "mark-done":
-                fn = lambda st: importer.file_and_mark_done(st, item_id, actor)
-            else:
-                self._json(404, {"error": "Unknown action"})
-                return
-            self._json(*self._change(company_id, fn))
-            return
-        if path == "/api/sov/parse":
-            # Read pasted rows; nothing is saved until the schedule itself is saved.
-            self._json(200, sov.parse_rows(_text(body, "text", limit=200_000)))
-            return
-        if path.startswith("/api/outbox/") and len(parts) == 4 and parts[3] == "retry":
-            self._retry_email(company_id, user, parts[2])
-            return
-        if path == "/api/import/rotate":
-            kind = _text(body, "kind")
-            if kind not in {"email", "sms", "calendar"}:
-                raise BadRequest("Kind must be email, sms or calendar.")
-            importer.rotate_token(company_id, kind)
-            self._json(200, {"ok": True})
-            return
-
         try:
+            user = auth.verify_login(_text(body, "email"), _text(body, "password"), ip=self._client_ip())
+        except auth.RateLimited as exc:
+            self._json(429, {"error": str(exc)})
+            return
+        if not user or (not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID):
+            self._json(401, {"error": "Email or password is wrong."})
+            return
+        if user.get("two_step"):
+            code = _text(body, "code", limit=40)
+            if not code:
+                self._json(401, {"error": "Enter the 6-digit code from your authenticator app.", "needs_code": True})
+                return
+            try:
+                ok = auth.totp_check(user["id"], code, self._client_ip())
+            except auth.RateLimited as exc:
+                self._json(429, {"error": str(exc), "needs_code": True})
+                return
+            if not ok:
+                self._json(401, {"error": "That code didn't work. Codes change every 30 seconds; a recovery code works once.", "needs_code": True})
+                return
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+
+    def _p_signup(self, m) -> None:
+        body = self._read_json()
+        if body.get("accept_terms") is not True:
+            self._json(400, {"error": "To create an account, accept the Terms of Service and the Privacy Policy."})
+            return
+        try:
+            company_id = "co-" + secrets.token_hex(4)
+            user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
+                                    terms_version=legal.TERMS_VERSION)
+            fresh = empty_state(_text(body, "company_name").strip() or "New company")
+            trial.start(fresh["company"])
             with STATE_LOCK:
-                code, payload = self._mutate(path, parts, body, company_id, actor)
+                save_company(company_id, fresh)
+            token = auth.create_session(user)
+            verification = self._send_verification(user)
+            self._json(200, {"user": user, "verification": verification}, self._set_cookie(token))
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+
+    def _p_logout(self, m) -> None:
+        auth.destroy_session(self._token())
+        self._json(200, {"ok": True}, self._set_cookie(None))
+
+    def _p_forgot(self, m) -> None:
+        body = self._read_json()
+        url = app_url()
+        if not (mailer.configured() and url):
+            contact = (os.environ.get("LEGAL_EMAIL") or "").strip()
+            self._json(200, {"message": "Password reset by email isn't set up on this server yet. "
+                             + (f"Email {contact} to reset it." if contact else "Ask the Billdable team to reset it.")})
+            return
+        requested = _text(body, "email", limit=300)
+
+        def send_reset() -> None:
+            found = auth.password_reset_token(requested)
+            if found:
+                raw, account = found
+                self._system_email(
+                    account["email"], "Reset your Billdable password",
+                    f"Someone asked to reset the password for {account['email']} on Billdable.\n\n"
+                    f"Choose a new password here (the link works once, for one hour):\n{url}/#reset={raw}\n\n"
+                    "If it wasn't you, ignore this email; your password stays the same.",
+                    company_id=account["company_id"],
+                )
+
+        # All the work happens in the background, so the answer takes the same time
+        # whether or not the account exists.
+        threading.Thread(target=send_reset, daemon=True).start()
+        self._json(200, {"message": "If an account exists for that email, a reset link is on its way. It works for one hour."})
+
+    def _p_reset_password(self, m) -> None:
+        body = self._read_json()
+        try:
+            user = auth.reset_password(body.get("token"), body.get("password"))
+        except auth.AuthError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+
+    def _p_verify(self, m) -> None:
+        body = self._read_json()
+        try:
+            user = auth.verify_email(body.get("token"))
+        except auth.AuthError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._json(200, {"user": user})
+
+    def _p_invite_info(self, m) -> None:
+        body = self._read_json()
+        info = auth.invite_info(body.get("token"))
+        if not info:
+            self._json(404, {"error": "This invite is invalid or has expired. Ask for a new one."})
+            return
+        with STATE_LOCK:
+            company = load_company(info["company_id"]).get("company", {})
+        self._json(200, {"email": info["email"], "role": info["role"], "company_name": company.get("name", ""),
+                         "invited_by": info["invited_by"]})
+
+    def _p_accept_invite(self, m) -> None:
+        body = self._read_json()
+        if body.get("accept_terms") is not True:
+            self._json(400, {"error": "To join, accept the Terms of Service and the Privacy Policy."})
+            return
+        try:
+            user = auth.accept_invite(body.get("token"), body.get("name"), body.get("password"), terms_version=legal.TERMS_VERSION)
+        except auth.AuthError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._change(user["company_id"], lambda st: domain.audit(
+            st, "", "team_join", f"{user['name']} ({user['email']}) joined the team as {user['role']}.", user["name"]))
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+
+    def _p_inbound_email(self, m) -> None:
+        self._inbound_email(m.group(1))
+
+    def _p_inbound_sms(self, m) -> None:
+        self._inbound_sms(m.group(1))
+
+    def _p_mail_events(self, m) -> None:
+        self._mail_events(m.group(1))
+
+    def _p_payer_received(self, m) -> None:
+        self._payer_received(m.group(1), m.group(2))
+
+    def _p_co_sign(self, m) -> None:
+        self._co_sign_post(m.group(1), m.group(2))
+
+    def _p_share(self, m) -> None:
+        self._share_target()
+
+    # ----- POST handlers: signed in -----
+
+    def _p_import_file(self, m, user) -> None:
+        self._import_file(user, user.get("name") or user.get("email") or "owner")
+
+    def _p_helper_ask(self, m, ctx: "Ctx") -> None:
+        with STATE_LOCK:
+            state = load_company(ctx.company_id)
+        try:
+            reply = helper.answer(_text(ctx.body, "q"), state, ctx.company_id, ctx.user["id"], _text(ctx.body, "view"), _text(ctx.body, "job_id"))
         except domain.GateError as exc:
-            self._json(409, {"error": str(exc), "blockers": exc.blockers})
+            self._json(409, {"error": str(exc)})
             return
-        except (KeyError, ValueError, TypeError, OverflowError) as exc:
-            self._json(400, {"error": f"Bad request: {exc}"})
+        self._json(200, reply)
+
+    def _p_helper_feedback(self, m, ctx: "Ctx") -> None:
+        try:
+            helper.feedback(_text(ctx.body, "log_id"), ctx.body.get("helpful") is True, _text(ctx.body, "note"), ctx.company_id)
+        except domain.GateError as exc:
+            self._json(409, {"error": str(exc)})
             return
-        if code == 200:
-            # Approved emails are delivered after the change is saved and the lock is released.
-            payload = self._deliver_queued(company_id, user) or payload
-        # The reply is written after the lock is released, so a client that
-        # stops reading cannot stall every other company's requests.
-        self._json(code, payload)
+        self._json(200, {"ok": True})
+
+    def _p_helper_admin(self, m, ctx: "Ctx") -> None:
+        if not is_helper_admin(ctx.user):
+            self._json(403, {"error": "Only the Billdable team can edit helper answers."})
+            return
+        try:
+            if m.group(1) == "answers":
+                saved = helper.save_answer(ctx.body, ctx.user.get("email", ""))
+                self._json(200, {"saved": saved, **helper.review()})
+            else:
+                helper.resolve(_text(ctx.body, "normalized"))
+                self._json(200, helper.review())
+        except domain.GateError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _p_resend_verify(self, m, ctx: "Ctx") -> None:
+        user = ctx.user
+        if user.get("email_verified"):
+            self._json(409, {"error": "Your email is already verified."})
+            return
+        result = self._send_verification(user)
+        if result != "sent":
+            self._json(409, {"error": f"No verification email was sent: {result}."})
+            return
+        self._json(200, {"ok": True, "message": f"A verification link is on its way to {user['email']}."})
+
+    def _p_password(self, m, ctx: "Ctx") -> None:
+        try:
+            auth.change_password(ctx.user["id"], ctx.body.get("current"), ctx.body.get("new"), keep_session=self._token())
+        except auth.RateLimited as exc:
+            self._json(429, {"error": str(exc)})
+            return
+        except auth.AuthError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._json(200, {"ok": True, "message": "Password changed. Every other device is signed out."})
+
+    def _p_payments_csv(self, m, ctx: "Ctx") -> None:
+        # Read a QuickBooks payments export and propose matches; nothing is recorded (P2-1).
+        parsed = qbo_csv.parse(_text(ctx.body, "csv", limit=2_000_000))
+        with STATE_LOCK:
+            state = load_company(ctx.company_id)
+        self._json(200, {"rows": qbo_csv.propose(state, parsed["rows"]), "warnings": parsed["warnings"]})
+
+    def _p_payments_apply(self, m, ctx: "Ctx") -> None:
+        picks = ctx.body.get("payments")
+        if not isinstance(picks, list) or not picks or len(picks) > 500:
+            raise BadRequest("Send the payments to record.")
+        results = []
+
+        def apply(st: dict) -> None:
+            for pick in picks:
+                if not isinstance(pick, dict):
+                    continue
+                ref = str(pick.get("reference") or "")[:60]
+                try:
+                    domain.match_payment(st, str(pick.get("job_id") or ""), pick.get("amount_cents"), ref,
+                                         ctx.actor, invoice_id=str(pick.get("invoice_id") or "") or None,
+                                         received_on=str(pick.get("date") or "") or None)
+                    results.append({"reference": ref, "ok": True})
+                except domain.GateError as exc:
+                    results.append({"reference": ref, "ok": False, "error": str(exc)})
+
+        status, payload = self._change(ctx.company_id, apply)
+        if status == 200:
+            payload["import_results"] = results
+        self._json(status, payload)
+
+    def _p_summary_email(self, m, ctx: "Ctx") -> None:
+        if ctx.company_id == auth.DEMO_COMPANY_ID or not ctx.user.get("email_verified"):
+            self._json(409, {"error": "Confirm your email address first (Team & account)." if ctx.company_id != auth.DEMO_COMPANY_ID
+                             else "The demo account doesn't send email."})
+            return
+        first = datetime.now(timezone.utc).date().replace(day=1) - timedelta(days=1)
+        with STATE_LOCK:
+            state = load_company(ctx.company_id)
+        subject, text = metrics.month_summary(state, first.year, first.month)
+        result = self._system_email(ctx.user["email"], subject, text, ctx.company_id)
+        if result != "sent":
+            self._json(409, {"error": f"Not sent: {result}."})
+            return
+        self._json(200, {"ok": True, "message": f"Last month's summary is on its way to {ctx.user['email']}."})
+
+    def _p_two_step(self, m, ctx: "Ctx") -> None:
+        step = m.group(1)
+        try:
+            if step == "begin":
+                self._json(200, auth.totp_begin(ctx.user["id"]))
+            elif step == "enable":
+                codes = auth.totp_enable(ctx.user["id"], _text(ctx.body, "code", limit=40))
+                self._json(200, {"ok": True, "recovery_codes": codes,
+                                 "message": "Two-step sign-in is on. Keep the recovery codes somewhere safe; each works once."})
+            else:
+                auth.totp_disable(ctx.user["id"], ctx.body.get("password"), _text(ctx.body, "code", limit=40))
+                self._json(200, {"ok": True, "message": "Two-step sign-in is off."})
+        except auth.RateLimited as exc:
+            self._json(429, {"error": str(exc)})
+        except auth.AuthError as exc:
+            self._json(400, {"error": str(exc)})
+
+    def _p_onboarding_dismiss(self, m, ctx: "Ctx") -> None:
+        self._json(*self._change(ctx.company_id, lambda st: st["company"].__setitem__("onboarding_dismissed", True)))
+
+    def _p_team(self, m, ctx: "Ctx") -> None:
+        path = urlparse(self.path).path
+        self._team_action(path, [p for p in path.split("/") if p], ctx.body, ctx.user)
+
+    def _p_import_text(self, m, ctx: "Ctx") -> None:
+        file_now = (parse_qs(urlparse(self.path).query).get("file") or [""])[0] == "1"
+        self._json(*self._change(ctx.company_id, lambda st: self._import_text(st, ctx.body, ctx.actor if file_now else None)))
+
+    def _p_inbox(self, m, ctx: "Ctx") -> None:
+        item_id, verb, body, actor = m.group(1), m.group(2), ctx.body, ctx.actor
+        actions = {
+            "file": lambda st: importer.file_item(st, item_id, _text(body, "job_id"), _text(body, "kind"), actor),
+            "dismiss": lambda st: importer.dismiss_item(st, item_id, actor),
+            "undo": lambda st: importer.undo_item(st, item_id, actor),
+            "mark-done": lambda st: importer.file_and_mark_done(st, item_id, actor),
+        }
+        if verb not in actions:
+            self._json(404, {"error": "Unknown action"})
+            return
+        self._json(*self._change(ctx.company_id, actions[verb]))
+
+    def _p_sov_parse(self, m, ctx: "Ctx") -> None:
+        # Read pasted rows; nothing is saved until the schedule itself is saved.
+        self._json(200, sov.parse_rows(_text(ctx.body, "text", limit=200_000)))
+
+    def _p_outbox_retry(self, m, ctx: "Ctx") -> None:
+        self._retry_email(ctx.company_id, ctx.user, m.group(1))
+
+    def _p_rotate(self, m, ctx: "Ctx") -> None:
+        kind = _text(ctx.body, "kind")
+        if kind not in {"email", "sms", "calendar"}:
+            raise BadRequest("Kind must be email, sms or calendar.")
+        importer.rotate_token(ctx.company_id, kind)
+        self._json(200, {"ok": True})
 
     # ----- accounts and team -----
 
@@ -1688,155 +1677,193 @@ class Handler(BaseHTTPRequestHandler):
         body = b'<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
         self._send(200 if status == 200 else 409, body, "text/xml; charset=utf-8")
 
-    def _mutate(self, path: str, parts: list, body: dict, company_id: str, actor: str) -> tuple:
-        """Apply one change under the state lock and return (status, payload)."""
-        state = load_company(company_id)
-        if path == "/api/reset":
-            if company_id == auth.DEMO_COMPANY_ID:
-                state = seed_state()
-            else:
-                name = state.get("company", {}).get("name", "New company")
-                if _text(body, "confirm").strip() != name:
-                    raise domain.GateError(
-                        "Reset not done. Type your company name exactly to confirm.",
-                        ["Reset deletes every job, payer and record in this company."],
-                    )
-                if company_path(company_id).exists():
-                    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                    snapshots = COMPANIES / "snapshots"
-                    snapshots.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(company_path(company_id), snapshots / f"{company_id}-before-reset-{stamp}.json")
-                kept = {k: v for k, v in state.get("company", {}).items() if k in ("trial", "onboarding_dismissed")}
-                state = empty_state(name)
-                state["company"].update(kept)  # a reset doesn't restart the trial
-            save_company(company_id, state)
-            return 200, domain.snapshot(state)
-        if path == "/api/jobs" and len(parts) == 2:
-            domain.create_job(
-                state,
-                _text(body, "name"),
-                _text(body, "customer"),
-                _whole_number(body, "contract_cents", "Contract amount", 0),
-                address=_text(body, "address"),
-                approver=_text(body, "approver"),
-                ap_email=_text(body, "ap_email"),
-                phone=_text(body, "phone"),
-                role=_text(body, "role", "Owner"),
-                retainage_pct=_whole_number(body, "retainage_pct", "Retainage", 0),
-                packet_notes=_text(body, "packet_notes"),
-                contract_number=_text(body, "contract_number"),
-                actor=actor,
-            )
-            save_company(company_id, state)
-            return 200, domain.snapshot(state)
-        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "jobs":
-            job_id = parts[2]
-            action = parts[3]
-            if action == "done":
-                domain.mark_done(state, job_id, actor, _text(body, "notes"))
-            elif action == "progress":
-                domain.record_progress(
-                    state, job_id, _whole_number(body, "completed_cents", "Completed-to-date", 0), _text(body, "notes"), actor
-                )
-            elif action == "sov":
-                domain.save_sov(
-                    state, job_id, body.get("lines"), body.get("op_pct"), body.get("update_contract") is True, actor
-                )
-            elif action == "sov-progress":
-                domain.record_sov_progress(state, job_id, body.get("done"), _text(body, "notes"), actor, stored=body.get("stored"))
-            elif action == "resolve" and len(parts) == 5:
-                domain.resolve_packet_item(state, job_id, parts[4], actor, reason=_text(body, "reason"))
-            elif action == "draft":
-                domain.draft_invoice(state, job_id, actor=actor, strict=True)
-            elif action == "send":
-                domain.approve_and_send(state, job_id, actor, link_base=app_url(), company_id=company_id)
-            elif action == "follow-up":
-                domain.record_follow_up(state, job_id, actor, link_base=app_url(), company_id=company_id)
-            elif action == "match-payment":
-                domain.match_payment(
-                    state,
-                    job_id,
-                    _whole_number(body, "amount_cents", "Payment amount"),
-                    _text(body, "reference"),
-                    actor,
-                    invoice_id=_text(body, "invoice_id") or None,
-                )
-            elif action == "waiver":
-                domain.send_waiver(
-                    state, job_id, actor, invoice_id=_text(body, "invoice_id") or None, kind=_text(body, "kind") or None
-                )
-            elif action == "retainage":
-                domain.chase_retainage(state, job_id, actor)
-            elif action == "retainage-paid":
-                domain.record_retainage_payment(
-                    state, job_id, _whole_number(body, "amount_cents", "Retainage amount"), _text(body, "reference"), actor
-                )
-            elif action == "add-co":
-                domain.add_change_order(
-                    state, job_id, _text(body, "title"), _whole_number(body, "amount_cents", "Change order amount", 0), actor,
-                    description=_text(body, "description"),
-                )
-            elif action == "approve-co" and len(parts) == 5:
-                # A change order is approved by a signature: online (request-co-signature) or a
-                # signed copy on the job record. A bare status flip is not accepted (P2-3).
-                domain.mark_co_signed(state, job_id, parts[4], _text(body, "record_id"), actor)
-            elif action == "request-co-signature" and len(parts) == 5:
-                domain.request_co_signature(state, job_id, parts[4], actor, link_base=app_url(), company_id=company_id)
-            elif action == "include-co" and len(parts) == 5:
-                domain.include_change_order(state, job_id, parts[4], actor)
-            elif action == "withdraw-co" and len(parts) == 5:
-                domain.withdraw_change_order(state, job_id, parts[4], actor)
-            elif action == "void-draft":
-                domain.void_draft(state, job_id, actor)
-            elif action == "pencil":
-                domain.send_pencil(state, job_id, actor)
-            elif action == "pencil-response":
-                domain.record_pencil_response(state, job_id, body.get("agreed") is True, _text(body, "note"), actor)
-            elif action == "add-evidence":
-                domain.add_evidence(state, job_id, _text(body, "label"), _text(body, "kind", "note"), actor)
-            elif action == "add-record":
-                domain.add_job_record(
-                    state, job_id, _text(body, "label"), _text(body, "kind", "note"), _text(body, "note"), actor
-                )
-            elif action == "attach-record" and len(parts) == 5:
-                domain.attach_record_to_packet(state, job_id, parts[4], _text(body, "record_id"), actor)
-            elif action == "learn-rejection":
-                domain.learn_rejection(state, job_id, _text(body, "reason"), actor)
-            elif action == "import-qbo":
-                if company_id != auth.DEMO_COMPANY_ID:
-                    raise domain.GateError(
-                        "QuickBooks import is not built yet. The sample import only runs on the demo account."
-                    )
-                domain.import_sample_qbo_payment(state, job_id, actor)
-            elif action == "close":
-                domain.close_job(state, job_id, actor)
-            elif action == "edit":
-                updates = {k: _text(body, k) for k in ("name", "address", "contract_number") if k in body}
-                if "contract_cents" in body:
-                    updates["contract_cents"] = _whole_number(body, "contract_cents", "Contract amount", 0)
-                if "retainage_pct" in body:
-                    updates["retainage_pct"] = _whole_number(body, "retainage_pct", "Retainage", 0)
-                domain.edit_job(state, job_id, updates, actor)
-            elif action == "delete":
-                domain.delete_job(state, job_id, actor)
-            elif action == "daily-record":
-                domain.add_daily_record(state, job_id, _text(body, "notes"), actor)
-            elif action == "attach" and len(parts) == 5:
-                domain.add_packet_attachment(state, job_id, parts[4], _text(body, "name", "attachment"), actor)
-            else:
-                return 404, {"error": "Unknown action"}
-            save_company(company_id, state)
-            return 200, domain.snapshot(state)
-        if len(parts) == 6 and parts[0] == "api" and parts[1] == "payers" and parts[3] == "suggestion" and parts[5] in {"add", "dismiss"}:
-            domain.answer_packet_suggestion(state, parts[2], parts[4], parts[5] == "add", actor)
-            save_company(company_id, state)
-            return 200, domain.snapshot(state)
-        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "payers" and parts[3] == "update":
-            domain.update_payer(state, parts[2], body, actor)
-            save_company(company_id, state)
-            return 200, domain.snapshot(state)
-        return 404, {"error": "Not found"}
+    # ----- state-changing handlers ("mutate": run under the lock, saved, snapshot returned) -----
 
+    def _m_reset(self, state: dict, m, ctx: "Ctx") -> dict:
+        company_id = ctx.company_id
+        if company_id == auth.DEMO_COMPANY_ID:
+            return seed_state()
+        name = state.get("company", {}).get("name", "New company")
+        if _text(ctx.body, "confirm").strip() != name:
+            raise domain.GateError("Reset not done. Type your company name exactly to confirm.",
+                                   ["Reset deletes every job, payer and record in this company."])
+        if company_path(company_id).exists():
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            snapshots = COMPANIES / "snapshots"
+            snapshots.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(company_path(company_id), snapshots / f"{company_id}-before-reset-{stamp}.json")
+        kept = {k: v for k, v in state.get("company", {}).items() if k in ("trial", "onboarding_dismissed")}
+        fresh = empty_state(name)
+        fresh["company"].update(kept)  # a reset doesn't restart the trial
+        return fresh
+
+    def _m_create_job(self, state: dict, m, ctx: "Ctx") -> None:
+        body = ctx.body
+        domain.create_job(
+            state, _text(body, "name"), _text(body, "customer"), _whole_number(body, "contract_cents", "Contract amount", 0),
+            address=_text(body, "address"), approver=_text(body, "approver"), ap_email=_text(body, "ap_email"),
+            phone=_text(body, "phone"), role=_text(body, "role", "Owner"),
+            retainage_pct=_whole_number(body, "retainage_pct", "Retainage", 0), packet_notes=_text(body, "packet_notes"),
+            contract_number=_text(body, "contract_number"), actor=ctx.actor,
+        )
+
+    def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:
+        job_id, action, item = m.group(1), m.group(2), m.group(3)
+        entry = JOB_ACTIONS.get(action)
+        if not entry or entry[0] != (item is not None):
+            raise UnknownAction()
+        entry[1](self, state, job_id, item, ctx)
+
+    def _m_payer_suggestion(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.answer_packet_suggestion(state, m.group(1), m.group(2), m.group(3) == "add", ctx.actor)
+
+    def _m_payer_update(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
+
+
+
+class UnknownAction(Exception):
+    """A job action the route table doesn't know: answered with 404."""
+
+
+@dataclass
+class Ctx:
+    """A signed-in request with its JSON body."""
+    user: dict
+    body: dict
+    company_id: str
+    actor: str
+
+
+@dataclass
+class Route:
+    method: str
+    pattern: str
+    handler: str
+    access: str = "public"
+    owner: bool = False
+
+    def __post_init__(self) -> None:
+        self.regex = re.compile(self.pattern)
+
+
+TOKEN_LINK = r"([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})"
+ROUTES = [
+    # pages and feeds
+    Route("GET", r"/healthz", "_g_healthz"),
+    Route("GET", r"/(terms|privacy)", "_g_legal"),
+    Route("GET", r"/favicon\.ico", "_g_favicon"),
+    Route("GET", r"/api/calendar/([^/]+?)\.ics", "_g_calendar"),
+    Route("GET", r"/p/" + TOKEN_LINK + r"(/pdf|/file/[A-Za-z0-9_-]{1,64})?", "_g_payer_page"),
+    Route("GET", r"/s/" + TOKEN_LINK, "_g_co_sign"),
+    # signed-in reads
+    Route("GET", r"/api/auth/me", "_g_me"),
+    Route("GET", r"/api/state", "_g_state", "user"),
+    Route("GET", r"/api/export", "_g_export", "user"),
+    Route("GET", r"/api/team", "_g_team", "user"),
+    Route("GET", r"/api/metrics", "_g_metrics", "user"),
+    Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
+    Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.pdf", "_g_payapp_pdf", "user"),
+    Route("GET", r"/api/helper/review", "_g_helper_review", "user"),
+    Route("GET", r"/api/admin/companies", "_g_admin_companies", "user"),
+    # signing in, and links people outside the company use
+    Route("POST", r"/api/auth/login", "_p_login"),
+    Route("POST", r"/api/auth/signup", "_p_signup"),
+    Route("POST", r"/api/auth/logout", "_p_logout"),
+    Route("POST", r"/api/auth/forgot", "_p_forgot"),
+    Route("POST", r"/api/auth/reset", "_p_reset_password"),
+    Route("POST", r"/api/auth/verify", "_p_verify"),
+    Route("POST", r"/api/auth/invite-info", "_p_invite_info"),
+    Route("POST", r"/api/auth/accept-invite", "_p_accept_invite"),
+    Route("POST", r"/api/inbound/email/([^/]+)", "_p_inbound_email"),
+    Route("POST", r"/api/inbound/sms/([^/]+)", "_p_inbound_sms"),
+    Route("POST", r"/api/mail-events/([^/]+)", "_p_mail_events"),
+    Route("POST", r"/p/" + TOKEN_LINK + r"/received", "_p_payer_received"),
+    Route("POST", r"/s/" + TOKEN_LINK + r"/sign", "_p_co_sign"),
+    Route("POST", r"/share", "_p_share"),
+    # signed in
+    Route("POST", r"/api/import/file", "_p_import_file", "user"),
+    Route("POST", r"/api/helper/ask", "_p_helper_ask", "body"),
+    Route("POST", r"/api/helper/feedback", "_p_helper_feedback", "body"),
+    Route("POST", r"/api/helper/(answers|resolve)", "_p_helper_admin", "body"),
+    Route("POST", r"/api/auth/resend-verify", "_p_resend_verify", "body"),
+    Route("POST", r"/api/auth/password", "_p_password", "body"),
+    Route("POST", r"/api/auth/2fa/(begin|enable|disable)", "_p_two_step", "body"),
+    Route("POST", r"/api/import/payments-csv", "_p_payments_csv", "body"),
+    Route("POST", r"/api/import/payments-apply", "_p_payments_apply", "body"),
+    Route("POST", r"/api/import/text", "_p_import_text", "body"),
+    Route("POST", r"/api/import/rotate", "_p_rotate", "body", owner=True),
+    Route("POST", r"/api/metrics/summary-email", "_p_summary_email", "body"),
+    Route("POST", r"/api/onboarding/dismiss", "_p_onboarding_dismiss", "body"),
+    Route("POST", r"/api/team/.+|/api/account/delete", "_p_team", "body"),
+    Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_p_inbox", "body"),
+    Route("POST", r"/api/sov/parse", "_p_sov_parse", "body"),
+    Route("POST", r"/api/outbox/([^/]+)/retry", "_p_outbox_retry", "body"),
+    # changes to the company's state
+    Route("POST", r"/api/reset", "_m_reset", "mutate", owner=True),
+    Route("POST", r"/api/jobs", "_m_create_job", "mutate"),
+    Route("POST", r"/api/jobs/([^/]+)/([a-z-]+)(?:/([^/]+))?", "_m_job_action", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
+]
+
+
+def _co_args(ctx: Ctx) -> dict:
+    return {"link_base": app_url(), "company_id": ctx.company_id}
+
+
+def _import_qbo(h, st, j, i, c):
+    if c.company_id != auth.DEMO_COMPANY_ID:
+        raise domain.GateError("QuickBooks import is not built yet. The sample import only runs on the demo account.")
+    domain.import_sample_qbo_payment(st, j, c.actor)
+
+
+def _edit_job(h, st, j, i, c):
+    body = c.body
+    updates = {k: _text(body, k) for k in ("name", "address", "contract_number") if k in body}
+    if "contract_cents" in body:
+        updates["contract_cents"] = _whole_number(body, "contract_cents", "Contract amount", 0)
+    if "retainage_pct" in body:
+        updates["retainage_pct"] = _whole_number(body, "retainage_pct", "Retainage", 0)
+    domain.edit_job(st, j, updates, c.actor)
+
+
+# /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
+JOB_ACTIONS = {
+    "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"))),
+    "progress": (False, lambda h, st, j, i, c: domain.record_progress(st, j, _whole_number(c.body, "completed_cents", "Completed-to-date", 0), _text(c.body, "notes"), c.actor)),
+    "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, c.body.get("lines"), c.body.get("op_pct"), c.body.get("update_contract") is True, c.actor)),
+    "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"))),
+    "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
+    "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
+    "send": (False, lambda h, st, j, i, c: domain.approve_and_send(st, j, c.actor, **_co_args(c))),
+    "follow-up": (False, lambda h, st, j, i, c: domain.record_follow_up(st, j, c.actor, **_co_args(c))),
+    "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _whole_number(c.body, "amount_cents", "Payment amount"), _text(c.body, "reference"), c.actor, invoice_id=_text(c.body, "invoice_id") or None)),
+    "waiver": (False, lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None)),
+    "retainage": (False, lambda h, st, j, i, c: domain.chase_retainage(st, j, c.actor)),
+    "retainage-paid": (False, lambda h, st, j, i, c: domain.record_retainage_payment(st, j, _whole_number(c.body, "amount_cents", "Retainage amount"), _text(c.body, "reference"), c.actor)),
+    "add-co": (False, lambda h, st, j, i, c: domain.add_change_order(st, j, _text(c.body, "title"), _whole_number(c.body, "amount_cents", "Change order amount", 0), c.actor, description=_text(c.body, "description"))),
+    # A change order is approved by a signature: online (request-co-signature) or a signed
+    # copy on the job record. A bare status flip is not accepted (P2-3).
+    "approve-co": (True, lambda h, st, j, i, c: domain.mark_co_signed(st, j, i, _text(c.body, "record_id"), c.actor)),
+    "request-co-signature": (True, lambda h, st, j, i, c: domain.request_co_signature(st, j, i, c.actor, **_co_args(c))),
+    "include-co": (True, lambda h, st, j, i, c: domain.include_change_order(st, j, i, c.actor)),
+    "withdraw-co": (True, lambda h, st, j, i, c: domain.withdraw_change_order(st, j, i, c.actor)),
+    "void-draft": (False, lambda h, st, j, i, c: domain.void_draft(st, j, c.actor)),
+    "pencil": (False, lambda h, st, j, i, c: domain.send_pencil(st, j, c.actor)),
+    "pencil-response": (False, lambda h, st, j, i, c: domain.record_pencil_response(st, j, c.body.get("agreed") is True, _text(c.body, "note"), c.actor)),
+    "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), c.actor)),
+    "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
+    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor)),
+    "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _text(c.body, "reason"), c.actor)),
+    "import-qbo": (False, _import_qbo),
+    "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),
+    "edit": (False, _edit_job),
+    "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
+    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _text(c.body, "notes"), c.actor)),
+    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name", "attachment"), c.actor)),
+}
 
 def _parse_share(data: bytes, raw_ctype: str) -> dict:
     """The multipart form a phone's share menu posts to /share: title, text, url and files."""
