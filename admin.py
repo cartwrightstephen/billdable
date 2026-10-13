@@ -5,6 +5,9 @@
     python3 admin.py delete-company COMPANY_ID     delete a company on request (asks to confirm)
     python3 admin.py end-sessions COMPANY_ID       sign every user of a company out
     python3 admin.py monthly-summaries [YYYY-MM]   email each company's owners last month's summary
+    python3 admin.py read-only COMPANY_ID REASON   stop changes (for example "payment is past due");
+                                                   the data stays, sign-in and export still work
+    python3 admin.py writable COMPANY_ID           undo read-only
 
 Every command acts on BILLDABLE_DATA_DIR, like the server. See docs/runbooks.md.
 """
@@ -15,6 +18,7 @@ import json
 import sys
 
 import auth
+import domain
 import server
 
 
@@ -66,6 +70,22 @@ def main(argv: list[str]) -> int:
             for u in auth.all_users():
                 if u["company_id"] == c["id"] and u.get("role") == "owner" and u.get("email_verified"):
                     print(f"{c['id']}  {u['email']}: {server.send_system_email(u['email'], subject, body, c['id'])}")
+    elif cmd in {"read-only", "writable"} and args and (cmd == "writable" or len(args) > 1):
+        if args[0] not in server.company_ids():
+            print("No company with that id. Run: python3 admin.py companies")
+            return 1
+        reason = " ".join(args[1:]).strip()[:200] if cmd == "read-only" else ""
+        with server.company_lock(args[0]):
+            state = server.load_company(args[0])
+            company = state.setdefault("company", {})
+            if reason:
+                company["read_only"] = reason
+            else:
+                company.pop("read_only", None)
+            domain.audit(state, "", "read_only" if reason else "writable",
+                         f"Billdable set the company read-only: {reason}." if reason else "Billdable made the company writable again.", "Billdable")
+            server.save_company(args[0], state)
+        print(f"{args[0]} is now {'read-only: ' + reason if reason else 'writable'}.")
     elif cmd == "end-sessions" and args:
         with auth.LOCK:
             data = auth._load()

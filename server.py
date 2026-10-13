@@ -161,9 +161,35 @@ def production() -> bool:
     return (os.environ.get("BILLDABLE_ENV") or "").strip().lower() == "production"
 
 
+def demo_mode() -> str:
+    """BILLDABLE_DEMO: "on" (the default outside production), "readonly" or "off" (the default
+    in production). The demo's password is public, so production allows it only read-only:
+    visitors can look around, and nothing can be changed, reset or locked."""
+    value = (os.environ.get("BILLDABLE_DEMO") or "").strip().lower()
+    if value in {"off", "readonly"}:
+        return value
+    return "off" if production() else "on"
+
+
 def demo_enabled() -> bool:
-    # The demo account's password is public, so it never exists in production.
-    return not production()
+    return demo_mode() != "off"
+
+
+# What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
+# read-only demo allows less: no password, two-step or team changes, or the demo locks.
+DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv"}
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_resend_verify", "_p_team", "_p_helper_admin"}
+
+
+def read_only_reason(company_id: str, state: dict | None = None) -> str:
+    """Why this company can't be changed right now, or "" when it can."""
+    if company_id == auth.DEMO_COMPANY_ID and demo_mode() == "readonly":
+        return "This is the read-only demo. Create your own company to try changes."
+    if state is None:
+        with company_lock(company_id):
+            state = load_company(company_id)
+    why = str(state.get("company", {}).get("read_only") or "").strip()
+    return f"This company is read-only: {why}. Nothing was changed; your data is kept and can be exported from Settings." if why else ""
 
 
 def data_notice() -> bool:
@@ -633,6 +659,13 @@ class Handler(BaseHTTPRequestHandler):
         user = self._require_user()
         if not user:
             return
+        if route.method == "POST":
+            allowed = DEMO_READ_ONLY_OK if user["company_id"] == auth.DEMO_COMPANY_ID and demo_mode() == "readonly" else COMPANY_READ_ONLY_OK
+            if route.handler not in allowed:
+                why = read_only_reason(user["company_id"])
+                if why:
+                    self._json(403, {"error": why, "read_only": True})
+                    return
         if route.access == "user":
             handler(m, user)
             return
@@ -736,7 +769,8 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
-                         "mail_ready": bool(mailer.configured() and app_url())})
+                         "mail_ready": bool(mailer.configured() and app_url()),
+                         "read_only": read_only_reason(user["company_id"], state)})
 
     def _g_helper_review(self, m, user) -> None:
         if not is_helper_admin(user):

@@ -70,6 +70,17 @@ can't (they lost access, or asked by email):
 5. Tell them it is done, and that copies in backups expire on their own: local backups after
    `BACKUP_KEEP` days, off-site copies after the bucket's retention (about 35 days).
 
+## 4a. Put a company on hold (read-only)
+
+For a payment that is past due, or while a dispute is sorted out. Nothing is deleted: the team
+can still sign in, see everything and use **Export data**, change passwords and two-step
+sign-in, manage the team and delete the company. Every change to jobs, money and the Inbox is
+refused with the reason, and the app shows it in a banner.
+
+1. `python3 admin.py read-only <company id> payment is past due` (the words after the id are
+   the reason they see).
+2. To undo: `python3 admin.py writable <company id>`. Both are written to the company's Audit.
+
 ## 5. Incident
 
 Something is down, data looks wrong, or a leak is suspected.

@@ -37,8 +37,9 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | Variable | What it does |
 | --- | --- |
 | `BILLDABLE_DATA_DIR` | Where all data lives (see above). |
+| `BILLDABLE_DEMO` | `readonly` keeps the demo for prospects in production: anyone can sign in and look around, and nothing can be changed (no edits, reset, password or two-step changes). `off` removes it anywhere. The default is a writable demo outside production and none in production. |
 | `BILLDABLE_STORAGE` | `json` keeps the one-file-per-company layout. Unset (the default) uses SQLite. |
-| `BILLDABLE_ENV` | `production` turns the demo account off (not created, can't sign in, old demo sessions end) and refuses to start unless `BILLDABLE_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `BILLDABLE_URL` is an `https://` address. Unset everywhere else. |
+| `BILLDABLE_ENV` | `production` turns the demo account off unless `BILLDABLE_DEMO=readonly` (when off: not created, can't sign in, old demo sessions end) and refuses to start unless `BILLDABLE_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `BILLDABLE_URL` is an `https://` address. Unset everywhere else. |
 | `BILLDABLE_DATA_PERSISTENT` | `1` once a deploy has been seen to keep the data. Until then the landing page says "Demo: data may be erased". |
 | `COOKIE_SECURE` | `1` forces the Secure cookie flag. |
 | `HELPER_ADMIN_USER_IDS` | Comma-separated account ids of the people who may review helper questions and edit answers (the founders). Nobody can, if unset. Ids, not emails, because sign-up doesn't verify email. Each person's id is at the bottom of the Help page. |

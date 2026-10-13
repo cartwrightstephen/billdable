@@ -6,7 +6,7 @@ import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine,
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
 import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js";
-import { labelTables, moreButton } from "./js/dom.js";
+import { labelTables, moreButton, askConfirm } from "./js/dom.js";
 
 let state = null;
 let me = null;
@@ -43,6 +43,7 @@ let jobDetails = {};          // job id -> the full job from /api/jobs/<id>
 let jobDetailLoading = null;  // the id being fetched
 const missingJobs = new Set();
 let listPages = {};           // outbox | audit | history -> {job, entries, total, loading, stale}
+const FILE_ACCEPT = document.getElementById("file-input")?.getAttribute("accept") || "";
 const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api/jobs?status=closed&" };
 let auditJobFilter = "all";
 let coPreselectJob = null;
@@ -253,6 +254,7 @@ async function boot(checkLink = true) {
     me = escDeep(data.user);
     helperAdmin = data.helper_admin === true;
     mailReady = data.mail_ready === true;
+    readOnly = typeof data.read_only === "string" ? esc(data.read_only) : "";
     applyLocation();
     await load();
   } else {
@@ -416,6 +418,7 @@ async function onAuthSubmit(e) {
       const info = await readJson(who);
       helperAdmin = info.helper_admin === true;
       mailReady = info.mail_ready === true;
+      readOnly = typeof info.read_only === "string" ? esc(info.read_only) : "";
     }
   } catch (_) { helperAdmin = false; }
   applyLocation();
@@ -651,7 +654,7 @@ function render() {
 
 async function resetData() {
   if (me && me.company_id === DEMO_COMPANY_ID) {
-    if (!confirm("Reset the demo account to its starting data?")) return;
+    if (!(await askConfirm("Reset the demo account to its starting data?", "Reset the demo", true))) return;
     await post("/api/reset");
     return;
   }
@@ -686,13 +689,13 @@ function bindActions() {
       }
       if (a === "team-role") { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); return; }
       if (a === "team-remove") {
-        if (!confirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`)) return;
+        if (!(await askConfirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`, "Remove", true))) return;
         await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed and signed out. The inbound email, text and calendar addresses changed too: update any forwarding rule or calendar subscription.");
         return;
       }
       if (a === "team-revoke") { await teamPost(`/api/team/invites/${el.dataset.invite}/revoke`, {}, "Invite revoked."); return; }
       if (a === "delete-account") {
-        if (!confirm("Delete the company, every job and file, and every user? This can't be undone here.")) return;
+        if (!(await askConfirm("Delete the company, every job and file, and every user? This can't be undone here.", "Delete everything", true))) return;
         const r = await postJson("/api/account/delete", { password: document.getElementById("del-password").value, confirm: document.getElementById("del-confirm").value });
         if (!r.ok) { toast(r.data.error || "Nothing was deleted."); return; }
         me = null; state = null; teamData = null; lastInvite = null;
@@ -805,7 +808,13 @@ function bindActions() {
       }
       else if (a === "pick-files") {
         const input = document.getElementById("file-input");
-        if (input) { input.dataset.job = el.dataset.job || ""; input.click(); }
+        if (input) {
+          input.dataset.job = el.dataset.job || "";
+          // "Take a photo" opens the rear camera directly; "choose files" offers every source.
+          if (el.dataset.capture) { input.setAttribute("capture", "environment"); input.setAttribute("accept", "image/*"); }
+          else { input.removeAttribute("capture"); input.setAttribute("accept", FILE_ACCEPT); }
+          input.click();
+        }
       }
       else if (a === "import-text") {
         const text = document.querySelector("#paste-text")?.value || "";
@@ -845,17 +854,17 @@ function bindActions() {
         catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
       }
       else if (a === "rotate-token") {
-        if (!confirm("Make a new address? The old one stops working right away.")) return;
+        if (!(await askConfirm("Make a new address? The old one stops working right away.", "Make a new address"))) return;
         await fetch("/api/import/rotate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: el.dataset.kind }) });
         importSettings = null;
         render();
       }
       else if (a === "withdraw-co") {
-        if (!confirm("Withdraw this change order? Use this when the customer will not sign it.")) return;
+        if (!(await askConfirm("Withdraw this change order? Use this when the customer will not sign it.", "Withdraw", true))) return;
         await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
       }
       else if (a === "void-draft") {
-        if (!confirm("Void the open draft pay app? Its work goes back to unbilled.")) return;
+        if (!(await askConfirm("Void the open draft pay app? Its work goes back to unbilled.", "Void the draft", true))) return;
         await post(`/api/jobs/${id}/void-draft`);
       }
       else if (a === "follow-up") await post(`/api/jobs/${id}/follow-up`);
@@ -1021,7 +1030,7 @@ function bindActions() {
         if (r && r.ok) { formOpen.editjob = false; jobFormErrors = {}; render(); }
       }
       else if (a === "delete-job") {
-        if (!confirm(`Delete ${unesc(el.dataset.name || "this job")}? It has no pay apps, so nothing billed is lost. Its record and notes go too.`)) return;
+        if (!(await askConfirm(`Delete ${unesc(el.dataset.name || "this job")}? It has no pay apps, so nothing billed is lost. Its record and notes go too.`, "Delete the job", true))) return;
         const r = await post(`/api/jobs/${id}/delete`);
         if (r && r.ok) nav("jobs");
       }
@@ -1298,7 +1307,7 @@ async function sovSave(jobId, updateContract) {
   const t = sovDraftTotals();
   if (t.bad) { toast("Some lines need a description, a quantity above zero and a rate above zero."); return; }
   const j = state.jobs.find(x => x.id === jobId);
-  if (updateContract && !confirm(`Change the contract amount from ${money(j.contract_cents)} to ${money(t.total)} to match the schedule?`)) return;
+  if (updateContract && !(await askConfirm(`Change the contract amount from ${money(j.contract_cents)} to ${money(t.total)} to match the schedule?`, "Change the contract"))) return;
   const lines = sovFilledLines().map(l => ({ id: l.id || undefined, item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate }));
   const r = await post(`/api/jobs/${jobId}/sov`, { lines, op_pct: sovDraft.op_pct, update_contract: !!updateContract });
   if (r && r.ok) { sovDraft = null; render(); }
@@ -1342,6 +1351,7 @@ document.addEventListener("paste", (e) => {
 // ---------- accounts: reset, verify, invite links; Team & account ----------
 // Links in emails carry a one-time token after "#", which browsers never send to a server.
 let mailReady = false;
+let readOnly = "";        // why this company can't be changed (the read-only demo, or a founder's hold), from /api/auth/me
 let teamData = null;      // { users, invites } from /api/team (escaped)
 let lastInvite = null;    // { link, emailed, email_status } after inviting
 let tokenScreen = null;   // { kind: "reset" | "invite", token, info }
@@ -1445,6 +1455,7 @@ async function teamPost(path, body, okMessage) {
 }
 
 function verifyBannerHtml() {
+  if (readOnly) return `<div class="verify-banner read-only-banner" role="status">${readOnly}</div>`;
   if (!mailReady || !me || me.email_verified || me.company_id === DEMO_COMPANY_ID) return "";
   return `<div class="verify-banner">Confirm your email (${me.email}) so Billdable can send pay apps for you; replies come back to it.
     <button class="linkish" data-action="resend-verify">Send the link again</button></div>`;
@@ -2097,7 +2108,7 @@ const views = {
         <h2>Job record</h2>
         ${j.closed ? "" : `<div class="dropzone small" data-job="${j.id}">
           <strong>${(j.records || []).length ? "Add photos, PDFs, saved emails or spreadsheets" : "Nothing in the record yet. Add the contract, photos and tickets"}</strong>
-          <span class="sub">Drop files here, <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button> (opens the camera on a phone), or paste a screenshot. Emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
+          <span class="sub">Drop files here, <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button>, <button class="linkish" data-action="pick-files" data-job="${j.id}" data-capture="1">take a photo</button>, or paste a screenshot. Emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
         </div>`}
         ${(j.records || []).slice().reverse().map(r => `<div class="list-item"><span class="pill">${RECORD_KINDS[r.kind] || r.kind}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.added_at)}</div>` : ""}</div>`).join("")}
         <details class="add-record"${(j.records || []).length ? "" : " open"}><summary>Add a note to the record</summary>
@@ -2770,7 +2781,7 @@ async function helperRunAction(a) {
     try { await navigator.clipboard.writeText(a.text); toast("Copied"); }
     catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
   } else if (a.type === "post") {
-    if (a.confirm && !confirm(a.confirm)) return;
+    if (a.confirm && !(await askConfirm(unesc(a.confirm), "Go ahead"))) return;
     await post(a.path);
     helperLog.push({ who: "helper", text: "Done. The page is updated; the Outbox and Audit show what happened." });
     renderHelper();
