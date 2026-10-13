@@ -444,6 +444,12 @@ class Handler(BaseHTTPRequestHandler):
             value = f"{COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
         return {"Set-Cookie": value}
 
+    def _client_ip(self) -> str:
+        """The caller's address. Behind Render's proxy it is the last X-Forwarded-For entry,
+        the one the proxy added; earlier entries come from the client and can be made up."""
+        forwarded = [p.strip() for p in (self.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]
+        return forwarded[-1] if forwarded else self.client_address[0]
+
     def _session_user(self) -> dict | None:
         user = auth.session_user(self._token())
         if user and not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID:
@@ -674,7 +680,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/auth/login":
             body = self._read_json()
             try:
-                user = auth.verify_login(_text(body, "email"), _text(body, "password"))
+                user = auth.verify_login(_text(body, "email"), _text(body, "password"), ip=self._client_ip())
             except auth.RateLimited as exc:
                 self._json(429, {"error": str(exc)})
                 return

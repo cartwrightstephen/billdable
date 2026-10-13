@@ -36,7 +36,7 @@ class HttpTests(unittest.TestCase):
         cls.tmp.cleanup()
 
     def setUp(self):
-        auth._FAILURES.clear()
+        auth._FAILURES.clear(); auth._IP_FAILURES.clear()
 
     def request(self, method, path, body=None, cookie=None, raw=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
@@ -96,7 +96,7 @@ class HttpTests(unittest.TestCase):
 
     def test_login_rate_limited(self):
         self.signup("rate@example.com")
-        for _ in range(auth.LOGIN_MAX_FAILURES):
+        for _ in range(auth.LOGIN_FREE_FAILURES):
             res, _ = self.request("POST", "/api/auth/login", {"email": "rate@example.com", "password": "wrong password"})
             self.assertEqual(res.status, 401)
         res, _ = self.request("POST", "/api/auth/login", {"email": "rate@example.com", "password": PASSWORD})

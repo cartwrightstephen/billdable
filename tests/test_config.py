@@ -93,7 +93,7 @@ class ProductionHttpTests(unittest.TestCase):
         cls.tmp.cleanup()
 
     def setUp(self):
-        auth._FAILURES.clear()
+        auth._FAILURES.clear(); auth._IP_FAILURES.clear()
 
     def request(self, method, path, body=None, cookie=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
