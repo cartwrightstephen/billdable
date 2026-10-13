@@ -827,8 +827,12 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     out["jobs"] = jobs
     # "First pay app to this payer" must not depend on which jobs were sent.
     sent = {j["payer_id"] for j in state["jobs"] if any(i.get("sent_at") for i in j.get("invoices", []))}
+    timings = payer_timing(state)
     for payer in out.get("payers", []):
         payer["sent_before"] = payer["id"] in sent
+        timing = timings.get(payer["id"])
+        if timing:
+            payer["paid_days_avg"], payer["paid_count"] = timing
         due = payapp_due(payer, (now or datetime.now(timezone.utc)).date())
         if due:
             payer["payapp_due_next"], payer["payapp_due_prev"] = due[0].isoformat(), due[1].isoformat()
@@ -992,6 +996,26 @@ def payapp_due(payer: dict[str, Any], today: date | None = None) -> tuple[date, 
 
 
 COMPANY_FIELDS = {"name": 120, "address": 200, "phone": 40, "license": 60}
+BILLING_STYLES = {"pay_apps", "draws"}
+
+
+def payer_timing(state: dict[str, Any]) -> dict[str, tuple[float, int]]:
+    """{payer id: (average days from sent to paid, pay apps paid)}, from the company's own history:
+    what each payer actually does, for the playbook to compare with what it says (Results uses
+    the same rule)."""
+    out: dict[str, list[int]] = {}
+    for job in state.get("jobs", []):
+        for inv in job.get("invoices", []):
+            if inv.get("status") != "paid" or not inv.get("sent_at"):
+                continue
+            paid = [p.get("matched_at", "") for p in job.get("payments", []) if p.get("invoice_id") == inv["id"]]
+            try:
+                days = (datetime.fromisoformat(max(paid)).date() - datetime.fromisoformat(inv["sent_at"]).date()).days if paid else None
+            except ValueError:
+                days = None
+            if days is not None and days >= 0:
+                out.setdefault(job.get("payer_id", ""), []).append(days)
+    return {k: (round(sum(v) / len(v), 1), len(v)) for k, v in out.items()}
 
 
 def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
@@ -999,6 +1023,13 @@ def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = 
     every pay app. Blank clears a field; the name can't be blank."""
     company = state.setdefault("company", {})
     clean, errors = {}, []
+    if "billing_style" in updates:
+        # How the company bills: pay apps to GCs or owners, or draws from homeowners. It sets the
+        # free trial's length (trial.py: 90 days, or 45 for draws).
+        if updates["billing_style"] not in BILLING_STYLES:
+            errors.append("How you bill must be pay apps or draws.")
+        else:
+            clean["billing_style"] = updates["billing_style"]
     for k, limit in COMPANY_FIELDS.items():
         if k not in updates:
             continue
@@ -1015,14 +1046,15 @@ def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = 
             clean[k] = v
     if errors:
         raise GateError("Company details not saved.", errors)
-    changed = [k for k, v in clean.items() if (company.get(k) or "") != v]
+    changed = [k for k, v in clean.items() if (company.get(k) or ("pay_apps" if k == "billing_style" else "")) != v]
     for k in changed:
         if clean[k]:
             company[k] = clean[k]
         else:
             company.pop(k, None)
     if changed:
-        audit(state, "", "company_update", f"{actor} updated the company's {', '.join(changed)}.", actor)
+        names = {"billing_style": f"billing style ({'draws' if clean.get('billing_style') == 'draws' else 'pay apps'})"}
+        audit(state, "", "company_update", f"{actor} updated the company's {', '.join(names.get(k, k) for k in changed)}.", actor)
     return company
 
 

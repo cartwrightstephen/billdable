@@ -210,7 +210,9 @@ class BillingHttpTests(unittest.TestCase):
                 break
             time.sleep(0.05)
         call = next(c for c in FakeStripe.calls if c[0] == "/v1/subscriptions/sub_7")
-        self.assertEqual(call[1], {"trial_end": "now"})
+        ends = datetime.fromtimestamp(int(call[1]["trial_end"]), timezone.utc)
+        self.assertEqual((ends.day, ends.hour), (5, 12), "the first charge lands on the billing day (the 5th), not at once")
+        self.assertTrue(now < ends <= now + timedelta(days=32))
         self.assertTrue(server.load_company(cid)["company"]["billing"]["trial_end_requested_at"], "sent once")
 
 

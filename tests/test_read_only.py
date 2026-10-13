@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import admin
 import auth
 import helper
+import importer
 import server
 import storage
 
@@ -94,6 +95,12 @@ class ReadOnlyHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 400, "sign-in security still works; this fails only on the wrong password")
         res, me = self.request("GET", "/api/auth/me", cookie=cookie)
         self.assertIn("payment is past due", me["read_only"])
+        conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
+        body = b"--b\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nshared note\r\n--b--\r\n"
+        conn.request("POST", "/share", body=body, headers={"Cookie": cookie, "Content-Type": "multipart/form-data; boundary=b"})
+        res = conn.getresponse(); res.read(); conn.close()
+        self.assertEqual(res.status, 303)
+        self.assertEqual(server.load_company(user["company_id"]).get("inbox", []), [], "sharing to a held company stores nothing")
 
         with mock.patch("builtins.print"):
             self.assertEqual(admin.main(["admin.py", "writable", user["company_id"]]), 0)
@@ -122,6 +129,13 @@ class ReadOnlyHttpTests(unittest.TestCase):
             self.assertEqual(res.status, 200, "the helper still answers")
             res, me = self.request("GET", "/api/auth/me", cookie=cookie)
             self.assertIn("read-only demo", me["read_only"])
+            # Its inbound addresses are visible to every visitor: what arrives there is ignored.
+            tokens = importer.company_tokens(auth.DEMO_COMPANY_ID)
+            inbox_before = len(server.load_company(auth.DEMO_COMPANY_ID).get("inbox", []))
+            for path in (f"/api/inbound/email/{tokens['email']}", f"/api/inbound/sms/{tokens['sms']}"):
+                res, data = self.request("POST", path, {"from": "x@example.com", "text": "spam"})
+                self.assertEqual((res.status, data.get("ignored")), (200, "the demo is read-only"), path)
+            self.assertEqual(len(server.load_company(auth.DEMO_COMPANY_ID).get("inbox", [])), inbox_before)
         with mock.patch.dict("os.environ", {"BILLDABLE_ENV": "production", "BILLDABLE_DEMO": ""}):
             res, _ = self.request("GET", "/api/state", cookie=cookie)
             self.assertEqual(res.status, 401, "with the demo off, its sessions stop working")

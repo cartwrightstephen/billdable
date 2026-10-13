@@ -82,6 +82,16 @@ From the calls, not built: voice follow-up agents (deferred until counsel; conse
 filing (shelved for cost, as both founders agreed on the call). Decisions still open: 50/50 terms,
 the free period, competitor sizes.
 
+## The business plan's billing rules
+
+- Trial: one paid pay app or 90 days (120 if a sent pay app is unpaid at day 90); 45 days or the
+  first paid draw for companies that bill homeowners in draws. Built (`trial.py`).
+- Charge after the cutoff, on the 5th; prorate the first month. Built (`billing.py`, `BILLING_DAY`).
+- Up to 3 design partners at $99 a month. Built (`STRIPE_PARTNER_PRICE_ID`, `admin.py partner`).
+- Activation measured as days from signup to the first paid pay app. Built (founders' Companies page).
+- Annual plan after the first paid cycle, priced as 10 months: a second Stripe price offered in the
+  Customer Portal; no code needed. The money-back promise is a founders' process.
+
 ## UI/UX plan
 
 - Option A (A1–A8): built.

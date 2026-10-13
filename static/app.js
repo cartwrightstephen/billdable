@@ -26,6 +26,7 @@ let metricsPeriod = "90";
 let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV or the QuickBooks connection
 let qboStatus = null;      // /api/qbo/status: configured, connected, environment (escaped)
 let qboReconcile = null;   // /api/qbo/reconcile: {rows, invoices}
+const ordinal = (n) => n + ([11, 12, 13].includes(n % 100) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"));
 const BILLING_WORDS = { trialing: "Trial", active: "Active", past_due: "Card declined", unpaid: "Unpaid", canceled: "Cancelled", incomplete: "Incomplete", incomplete_expired: "Expired", paused: "Paused" };
 const RECON_WORDS = { missing: "Not in QuickBooks", amount: "Amount differs", paid_in_qbo: "Paid in QuickBooks", open_in_qbo: "Open in QuickBooks" };
 let currentView = "dashboard";
@@ -824,9 +825,10 @@ function bindActions() {
         render(); return;
       }
       if (a === "qbo-cancel") { paymentImport = null; render(); return; }
+      if (a === "use-approval-days") { await post(`/api/payers/${id}/update`, { usual_approval_days: Number(el.dataset.days) }); return; }
       if (a === "save-company") {
         const v = (k) => document.getElementById(k)?.value || "";
-        await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license") });
+        await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license"), billing_style: v("co-style") || "pay_apps" });
         return;
       }
       if (a === "save-my-name") {
@@ -1632,6 +1634,10 @@ function accountView() {
         <div><label for="co-phone">Phone</label><input id="co-phone" value="${state.company.phone || ""}" inputmode="tel" autocomplete="tel"${owner ? "" : " disabled"}></div>
         <div class="span-2"><label for="co-address">Address</label><input id="co-address" value="${state.company.address || ""}" placeholder="Street, city, state ZIP" autocomplete="street-address"${owner ? "" : " disabled"}></div>
         <div><label for="co-license">Contractor licence number</label><input id="co-license" value="${state.company.license || ""}"${owner ? "" : " disabled"}></div>
+        <div><label for="co-style">How you bill</label><select id="co-style"${owner ? "" : " disabled"}>
+          <option value="pay_apps"${state.company.billing_style === "draws" ? "" : " selected"}>Pay apps to GCs or owners</option>
+          <option value="draws"${state.company.billing_style === "draws" ? " selected" : ""}>Draws from homeowners</option></select>
+          <span class="sub">Sets the free trial: 90 days, or 45 for draws. Either ends when the first one sent through Billdable is paid.</span></div>
       </div>
       ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
@@ -1664,7 +1670,8 @@ function accountView() {
       ${billingInfo.warning ? `<p class="blocker">${billingInfo.warning}</p>` : ""}
       <div class="form-inline">${billingInfo.has_customer && billingInfo.status && !["canceled", "incomplete_expired"].includes(billingInfo.status)
         ? `<button class="btn" data-action="billing-portal">Manage billing</button>` : `<button class="btn" data-action="billing-checkout">Subscribe</button>`}</div>
-      <p class="sub">Payment by card through Stripe. Billdable never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
+      ${billingInfo.partner ? `<p class="sub"><span class="pill copper">Design partner</span> The design-partner price applies.</p>` : ""}
+      <p class="sub">Charged on the ${ordinal(Number(billingInfo.billing_day) || 5)} of each month, after your own pay apps are out. Payment by card through Stripe. Billdable never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
     </div>` : ""}
     ${isDemo ? "" : `<div class="card" id="two-step">
       <h2>Two-step sign-in</h2>
@@ -1760,8 +1767,8 @@ function adminCompaniesHtml() {
   const trialText = (t) => !t.tracked ? "not tracked (signed up before trials)" : t.state === "active"
     ? `active until ${fmtDate(t.ends_by)}${t.extended ? " (extended)" : ""}` : `ended ${fmtDate(t.ended_at)}${t.reason === "paid" ? ` (${t.first_paid} paid)` : " (time)"}`;
   return `<div class="table-wrap"><table>
-    <tr><th>Company</th><th>Id</th><th>Signed up</th><th>Users</th><th>Jobs</th><th>Pay apps sent</th><th>Trial</th><th>Billing</th></tr>
-    ${adminCompanies.filter(c => !c.demo).map(c => `<tr><td>${c.name}</td><td><code>${c.company_id || ""}</code></td><td>${fmtDate(c.signed_up)}</td><td>${c.users}</td><td>${c.jobs}</td><td>${c.pay_apps_sent}</td><td>${trialText(c.trial)}</td><td>${c.billing ? (BILLING_WORDS[c.billing] || words(c.billing)) : "not set up"}</td></tr>`).join("")}
+    <tr><th>Company</th><th>Id</th><th>Signed up</th><th>Users</th><th>Jobs</th><th>Pay apps sent</th><th>Trial</th><th>Billing</th><th>Days to first paid</th></tr>
+    ${adminCompanies.filter(c => !c.demo).map(c => `<tr><td>${c.name}</td><td><code>${c.company_id || ""}</code></td><td>${fmtDate(c.signed_up)}</td><td>${c.users}</td><td>${c.jobs}</td><td>${c.pay_apps_sent}</td><td>${trialText(c.trial)}</td><td>${c.billing ? (BILLING_WORDS[c.billing] || words(c.billing)) : "not set up"}</td><td class="num">${c.activation_days ?? "—"}</td></tr>`).join("")}
   </table></div>`;
 }
 
@@ -2825,6 +2832,12 @@ const views = {
             <div><strong>Add to the packet?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
             <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to packet</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
           </div>`).join("")}
+          ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${Math.round(Number(unesc(String(p.paid_days_avg))))} days after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
+            const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
+            return p.paid_count >= 2 && Math.abs(avg - set) >= 2
+              ? `The playbook says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} days</button>`
+              : "The playbook agrees.";
+          })()}</p>` : ""}
           <form data-id="${p.id}" class="form-grid">
             <div><label>Approver</label><input name="approver" value="${clean(p.approver)}"></div>
             <div><label>AP email</label><input name="ap_email" type="email" value="${clean(p.ap_email)}"></div>

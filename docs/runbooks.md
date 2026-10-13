@@ -47,7 +47,9 @@ From the off-site copy (disk lost, or the local backups are bad):
 python3 backup.py drill
 ```
 
-It unpacks the newest backup into a temporary folder and checks that the accounts file reads,
+The server also runs it by itself once a month and posts an alert if it fails
+(`monthly_jobs.json` in the data directory records the last run). By hand, it unpacks the newest
+backup into a temporary folder and checks that the accounts file reads,
 every user's company is there, every company opens with its audit chain intact, and every
 uploaded file it refers to is in the backup. It prints PASS or each problem (exit code 1).
 Do the same with a downloaded off-site copy: decrypt it as above, then
@@ -149,4 +151,11 @@ Needs the company's Stripe account (after the entity exists).
 
 The free trial carries over: a company that subscribes during it starts with Stripe's trial
 ending on its last day, and when its first pay app is paid Billdable ends Stripe's trial, so
-the first charge follows the business plan. Nothing is ever deleted for an unpaid bill.
+the first charge follows the business plan. Charges land on the 5th (`BILLING_DAY`), after the
+contractor's own pay apps are out: a trial ends on the next 5th, and a subscription started after
+the trial is anchored to the 5th with the first part-month prorated. A company that bills
+homeowners in draws (Settings, Company, How you bill) gets a 45-day trial instead of 90.
+
+Design partners: make a second price at $99 a month, set `STRIPE_PARTNER_PRICE_ID`, and mark each
+partner with `python3 admin.py partner <company id> on` before they subscribe. The plan caps them
+at 3; the command says how many there are. Nothing is ever deleted for an unpaid bill.

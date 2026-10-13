@@ -3,7 +3,13 @@
 - Subscribe: a Stripe Checkout page for the one plan (STRIPE_PRICE_ID). While the free trial
   runs (trial.py), the subscription starts with Stripe's trial ending on the trial's last day.
 - The business plan ends the trial when the first pay app sent through Billdable is paid, which
-  is an event, not a date: when that happens, Billdable asks Stripe to end the trial now.
+  is an event, not a date: when that happens, Billdable moves Stripe's trial end to the next
+  billing day.
+- Charges land on BILLING_DAY (the 5th by default), after the contractor's own 1st-of-the-month
+  pay app is out, not on the signup date: a trial ends on a billing day, and a subscription
+  started after the trial is anchored to one, with the first part-month prorated.
+- Design partners (up to 3, the business plan's $99 a month) pay STRIPE_PARTNER_PRICE_ID; a
+  founder marks a company with "admin.py partner COMPANY_ID on".
 - Manage billing: Stripe's Customer Portal (card, invoices, cancel).
 - Stripe tells Billdable what happened through a signed webhook (STRIPE_WEBHOOK_SECRET); the
   subscription's status is kept on the company.
@@ -49,9 +55,15 @@ def settings() -> dict[str, Any]:
         grace = max(0, int(os.environ.get("BILLING_GRACE_DAYS") or 14))
     except ValueError:
         grace = 14
+    try:
+        day = min(28, max(1, int(os.environ.get("BILLING_DAY") or 5)))
+    except ValueError:
+        day = 5
     return {
         "key": (os.environ.get("STRIPE_SECRET_KEY") or "").strip(),
         "price": (os.environ.get("STRIPE_PRICE_ID") or "").strip(),
+        "partner_price": (os.environ.get("STRIPE_PARTNER_PRICE_ID") or "").strip(),
+        "billing_day": day,
         "webhook_secret": (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip(),
         "api_base": (os.environ.get("STRIPE_API_BASE") or API_BASE).strip().rstrip("/"),
         "enforce": os.environ.get("BILLING_ENFORCE") == "1",
@@ -104,6 +116,21 @@ def record(state: dict[str, Any]) -> dict[str, Any]:
 
 # ----- what the owner can do -----
 
+def billing_moment(on_or_after: datetime) -> datetime:
+    """Noon UTC on the first billing day (BILLING_DAY of a month) on or after this moment."""
+    day = settings()["billing_day"]
+    d = on_or_after.date()
+    target = d.replace(day=day)
+    if target < d or datetime(target.year, target.month, target.day, 12, tzinfo=timezone.utc) < on_or_after:
+        target = (d.replace(day=1) + timedelta(days=32)).replace(day=day)
+    return datetime(target.year, target.month, target.day, 12, tzinfo=timezone.utc)
+
+
+def price_for(state: dict[str, Any]) -> str:
+    s = settings()
+    return s["partner_price"] if record(state).get("partner") and s["partner_price"] else s["price"]
+
+
 def checkout_url(state: dict[str, Any], company_id: str, email: str, base_url: str, now: datetime | None = None) -> str:
     now = now or datetime.now(timezone.utc)
     if not configured():
@@ -113,7 +140,7 @@ def checkout_url(state: dict[str, Any], company_id: str, email: str, base_url: s
         raise BillingError("This company already has a subscription. Use Manage billing.")
     data: dict[str, Any] = {
         "mode": "subscription",
-        "line_items": [{"price": settings()["price"], "quantity": 1}],
+        "line_items": [{"price": price_for(state), "quantity": 1}],
         "success_url": f"{base_url}/settings?billing=done",
         "cancel_url": f"{base_url}/settings",
         "client_reference_id": company_id,
@@ -125,9 +152,13 @@ def checkout_url(state: dict[str, Any], company_id: str, email: str, base_url: s
         data["customer_email"] = email
     t = trial.status(state, now)
     if t.get("state") == "active":
-        ends = datetime.fromisoformat(t["ends_by"])
-        if (ends - now).total_seconds() >= MIN_TRIAL_SECONDS:
-            data["subscription_data"]["trial_end"] = int(ends.timestamp())
+        # Free until the trial ends, and then until the next billing day.
+        ends = billing_moment(max(datetime.fromisoformat(t["ends_by"]), now + timedelta(seconds=MIN_TRIAL_SECONDS)))
+        data["subscription_data"]["trial_end"] = int(ends.timestamp())
+    else:
+        # After the trial: charge the part-month now, then every month on the billing day.
+        data["subscription_data"]["billing_cycle_anchor"] = int(billing_moment(now + timedelta(days=1)).timestamp())
+        data["subscription_data"]["proration_behavior"] = "create_prorations"
     session = _post("/v1/checkout/sessions", data)
     if not str(session.get("url", "")).startswith("https://"):
         raise BillingError("Stripe didn't return a checkout page.")
@@ -144,8 +175,10 @@ def portal_url(state: dict[str, Any], base_url: str) -> str:
     return session["url"]
 
 
-def end_trial_now(subscription_id: str) -> None:
-    _post(f"/v1/subscriptions/{parse.quote(subscription_id)}", {"trial_end": "now"})
+def end_trial(subscription_id: str, now: datetime | None = None) -> None:
+    """End Stripe's trial at the next billing day: the first charge after the first paid pay app."""
+    now = now or datetime.now(timezone.utc)
+    _post(f"/v1/subscriptions/{parse.quote(subscription_id)}", {"trial_end": int(billing_moment(now + timedelta(hours=1)).timestamp())})
 
 
 def trial_end_due(state: dict[str, Any], now: datetime | None = None) -> str | None:
@@ -246,6 +279,7 @@ def standing(state: dict[str, Any], now: datetime | None = None) -> dict[str, An
     b = (state.get("company") or {}).get("billing") or {}
     status = b.get("status") or ""
     out = {"configured": configured(), "enforced": bool(configured() and s["enforce"]), "status": status,
+           "partner": bool(b.get("partner")), "billing_day": s["billing_day"],
            "period_end": b.get("period_end"), "has_customer": bool(b.get("customer_id")), "hold": "", "warning": ""}
     if not out["configured"]:
         return out

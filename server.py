@@ -185,6 +185,12 @@ COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_my
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal"}
 
 
+def demo_locked(company_id: str) -> bool:
+    """The read-only demo also ignores writes from outside: its inbound addresses are visible to
+    every visitor, so mail, texts, "Mark as received" and signatures sent to it change nothing."""
+    return company_id == auth.DEMO_COMPANY_ID and demo_mode() == "readonly"
+
+
 def read_only_reason(company_id: str, state: dict | None = None) -> str:
     """Why this company can't be changed right now, or "" when it can."""
     if company_id == auth.DEMO_COMPANY_ID and demo_mode() == "readonly":
@@ -388,6 +394,82 @@ def save_company(company_id: str, state: dict) -> None:
         log_json("warn", msg="write to a deleted company refused", company=company_id)
         return
     company_store().save(company_id, state)
+
+
+def activation_days(state: dict) -> int | None:
+    """The business plan's activation measure: days from signup to the first paid pay app sent
+    through Billdable (None until then)."""
+    t = trial.status(state)
+    if t.get("reason") != "paid":
+        return None
+    return (datetime.fromisoformat(t["ended_at"]).date() - datetime.fromisoformat(t["started_at"]).date()).days
+
+
+def send_monthly_summaries(year: int, month: int) -> list:
+    """Email each company's owners (confirmed addresses) their summary of that month. Returns
+    one line per email for the log: "company  address: result"."""
+    lines = []
+    users = auth.all_users()
+    for company_id in company_ids():
+        if company_id == auth.DEMO_COMPANY_ID:
+            continue
+        with company_lock(company_id):
+            state = load_company(company_id)
+        subject, body = metrics.month_summary(state, year, month)
+        for u in users:
+            if u["company_id"] == company_id and u.get("role") == "owner" and u.get("email_verified"):
+                lines.append(f"{company_id}  {u['email']}: {send_system_email(u['email'], subject, body, company_id)}")
+    return lines
+
+
+MONTHLY_PATH_NAME = "monthly_jobs.json"
+
+
+def run_monthly_jobs(now: datetime | None = None) -> list:
+    """Once a month, recorded in <data dir>/monthly_jobs.json so a restart doesn't repeat them:
+    the restore drill on the newest backup (an alert when it fails), and, with
+    MONTHLY_SUMMARY_EMAILS=1 and email set up, last month's summary to each owner (on the 1st
+    to the 3rd). Returns what it did, for the log."""
+    now = now or datetime.now(timezone.utc)
+    month = now.strftime("%Y-%m")
+    path = storage.DATA_DIR / MONTHLY_PATH_NAME
+    try:
+        done = json.loads(path.read_text())
+    except (OSError, ValueError):
+        done = {}
+    did = []
+    newest = (backup.backups() or [None])[0]
+    if done.get("drill") != month and newest is not None:
+        report, problems = backup.drill(newest)
+        did.append(f"restore drill of {newest.name}: " + ("PASS" if not problems else f"FAIL ({len(problems)} problems)"))
+        if problems:
+            alerts.notify("drill", f"the monthly restore drill of {newest.name} failed: {problems[0]}")
+        done["drill"] = month
+    if (os.environ.get("MONTHLY_SUMMARY_EMAILS") == "1" and mailer.configured() and now.day <= 3
+            and done.get("summaries") != month):
+        last = now.date().replace(day=1) - timedelta(days=1)
+        lines = send_monthly_summaries(last.year, last.month)
+        did.append(f"monthly summaries for {last:%Y-%m}: {len(lines)} sent or tried")
+        done["summaries"] = month
+    if did:
+        storage.write_json(path, done)
+    return did
+
+
+def start_monthly_jobs() -> threading.Thread:
+    def loop() -> None:
+        while True:
+            try:
+                for line in run_monthly_jobs():
+                    log_json("info", msg=line)
+            except Exception as exc:  # a failure is logged and alerted; the loop keeps going
+                log_json("error", msg=f"monthly jobs failed: {exc.__class__.__name__}: {exc}")
+                alerts.notify("monthly-jobs", f"monthly jobs failed ({exc.__class__.__name__}); see the server log")
+            time.sleep(3600)
+
+    thread = threading.Thread(target=loop, name="monthly-jobs", daemon=True)
+    thread.start()
+    return thread
 
 
 def ensure_demo() -> None:
@@ -833,7 +915,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _end_stripe_trial(self, subscription_id: str) -> None:
         try:
-            billing.end_trial_now(subscription_id)
+            billing.end_trial(subscription_id)
         except billing.BillingError as exc:
             log_json("warn", msg="ending the Stripe trial failed", reason=str(exc)[:200])
             alerts.notify("billing:trial-end", f"Couldn't end a Stripe trial ({subscription_id}): {exc}")
@@ -1476,6 +1558,7 @@ class Handler(BaseHTTPRequestHandler):
                 "pay_apps_sent": sum(1 for j in state.get("jobs", []) for i in j.get("invoices", []) if i.get("sent_at")),
                 "trial": trial.status(state),
                 "billing": billing.standing(state)["status"] or ("none" if billing.configured() else ""),
+                "activation_days": activation_days(state),
                 "demo": company_id == auth.DEMO_COMPANY_ID,
             })
         return out
@@ -1706,6 +1789,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "Not found"})
             return
         data = self._read_raw(MAX_INBOUND_BYTES)
+        if demo_locked(company_id):
+            self._json(200, {"ok": True, "ignored": "the demo is read-only"})
+            return
         # Keep the header as sent: a multipart boundary is case-sensitive.
         parsed = _parse_inbound_email(data, self.headers.get("Content-Type") or "")
         stored, skipped = self._store_email_files(company_id, parsed, "inbound email")
@@ -1808,6 +1894,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
             return
         raw = self._read_raw(4_000)
+        if demo_locked(company_id):
+            self._send(303, b"", "text/plain", {"Location": f"/p/{company_id}.{token}"})
+            return
         name = dict(parse_qsl(raw.decode("utf-8", "replace"))).get("name", "")
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1828,6 +1917,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         company_id = user["company_id"]
         data = self._read_raw(MAX_INBOUND_BYTES)
+        if read_only_reason(company_id):
+            # The Inbox page shows why; nothing is stored.
+            self._send(303, b"", "text/plain", {"Location": "/inbox"})
+            return
         parsed = _parse_share(data, self.headers.get("Content-Type") or "")
         stored, skipped = [], []
         for f in parsed["files"]:
@@ -1874,6 +1967,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
             return
         form = dict(parse_qsl(self._read_raw(4_000).decode("utf-8", "replace")))
+        if demo_locked(company_id):
+            self._send(303, b"", "text/plain", {"Location": f"/s/{company_id}.{token}"})
+            return
         ip, agent = self._client_ip(), self.headers.get("User-Agent", "")
 
         def sign(st: dict) -> None:
@@ -1892,6 +1988,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "Not found"})
             return
         data = self._read_raw(MAX_BODY_BYTES)
+        if demo_locked(company_id):
+            self._json(200, {"ok": True, "ignored": "the demo is read-only"})
+            return
         params = dict(parse_qsl(data.decode("utf-8", "replace"), keep_blank_values=True))
         secret = os.environ.get("TWILIO_AUTH_TOKEN")
         if secret:
@@ -2250,6 +2349,7 @@ def main() -> None:
         {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK},
         log=lambda msg: log_json("info", msg=msg),
     )
+    start_monthly_jobs()
     server.serve_forever()
 
 
