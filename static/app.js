@@ -1286,6 +1286,7 @@ function bindActions() {
         render();
       }
       else if (a === "payapp-filter") { payappFilter = el.dataset.filter; render(); }
+      else if (a === "sug-add" || a === "sug-dismiss") await post(`/api/payers/${id}/suggestion/${el.dataset.sug}/${a === "sug-add" ? "add" : "dismiss"}`);
       else if (a === "save-playbook") {
         const form = el.closest("form");
         const updates = {};
@@ -2970,8 +2971,12 @@ const views = {
       <h1>Payer playbook</h1>
       <p class="sub">What each payer requires, who approves, how long they take, and why they reject. These values set follow-up timing and the calendar.</p>
       ${state.payers.length ? state.payers.map(p => `
-        <details class="card playbook-card">
-          <summary><strong>${p.name}</strong> <span class="sub">${p.role} · ${p.approver || "no approver"} · ${p.ap_email || "no AP email"}</span></summary>
+        <details class="card playbook-card"${(p.packet_suggestions || []).some(x => x.status === "open") ? " open" : ""}>
+          <summary><strong>${p.name}</strong> <span class="sub">${p.role} · ${p.approver || "no approver"} · ${p.ap_email || "no AP email"}</span>${(p.packet_suggestions || []).some(x => x.status === "open") ? ` <span class="pill copper">${p.packet_suggestions.filter(x => x.status === "open").length} suggested</span>` : ""}</summary>
+          ${(p.packet_suggestions || []).filter(x => x.status === "open").map(x => `<div class="list-item suggestion">
+            <div><strong>Add to the packet?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
+            <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to packet</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
+          </div>`).join("")}
           <form data-id="${p.id}" class="form-grid">
             <div><label>Approver</label><input name="approver" value="${clean(p.approver)}"></div>
             <div><label>AP email</label><input name="ap_email" type="email" value="${clean(p.ap_email)}"></div>

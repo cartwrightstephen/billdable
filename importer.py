@@ -527,6 +527,8 @@ def capture_reply(state: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]
         item["auto_filed"] = True
         job["external_status"] = f"{payer.get('name') or sender} replied {when.strftime('%b')} {when.day}: {summary}"
         job["last_reply"] = {"from": sender, "at": utcnow(), "subject": item.get("subject", ""), "summary": summary, "inbox_id": item["id"]}
+        if re.search(r"\b(need|needs|missing|required|require|attach|send us|please send)\b", summary, re.IGNORECASE):
+            domain.suggest_packet_item(state, job.get("payer_id", ""), summary, "a reply", job["name"])
         domain.audit(state, job["id"], "reply_captured",
                      f"A reply from {sender} to {', '.join(sorted(numbers))} was filed to the job record: {summary}", "billdable")
         return job

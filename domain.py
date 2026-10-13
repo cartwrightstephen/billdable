@@ -388,6 +388,8 @@ def record_pencil_response(state: dict[str, Any], job_id: str, agreed: bool, not
     draft["pencil_note"] = (note or "").strip()[:2000]
     draft["pencil_answered_at"] = utcnow()
     job["external_status"] = None
+    if not agreed and draft["pencil_note"]:
+        suggest_packet_item(state, job["payer_id"], draft["pencil_note"], "pencil-copy changes", job["name"])
     what = "agreed to" if agreed else "asked for corrections on"
     audit(state, job_id, "pencil_response", f"{actor} recorded that the payer {what} the pencil copy of {draft['number']}. {draft['pencil_note']}".strip(), actor)
     return job
@@ -829,6 +831,41 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     return payer
 
 
+# ---------- payer playbook learning (P3) ----------
+MAX_SUGGESTIONS = 10
+
+
+def suggest_packet_item(state: dict[str, Any], payer_id: str, text: str, source: str, job_name: str = "") -> dict | None:
+    """Remember what a payer asked for, as a proposed addition to their packet. A person adds
+    it or dismisses it on the Payer playbook; nothing changes the packet by itself."""
+    text = " ".join(str(text or "").split())[:200]
+    payer = next((p for p in state.get("payers", []) if p["id"] == payer_id), None)
+    if not payer or len(text) < 4:
+        return None
+    if text.lower() in str(payer.get("packet", "")).lower():
+        return None
+    open_items = [s for s in payer.setdefault("packet_suggestions", []) if s.get("status") == "open"]
+    if any(s["text"].lower() == text.lower() for s in open_items) or len(open_items) >= MAX_SUGGESTIONS:
+        return None
+    suggestion = {"id": "sug-" + secrets.token_hex(4), "text": text, "source": source, "job": job_name, "at": utcnow(), "status": "open"}
+    payer["packet_suggestions"].append(suggestion)
+    return suggestion
+
+
+def answer_packet_suggestion(state: dict[str, Any], payer_id: str, suggestion_id: str, accept: bool, actor: str = "owner") -> dict[str, Any]:
+    payer = _payer(state, payer_id)
+    sug = next((s for s in payer.get("packet_suggestions", []) if s["id"] == suggestion_id and s.get("status") == "open"), None)
+    if not sug:
+        raise GateError("That suggestion was already answered.")
+    sug["status"] = "added" if accept else "dismissed"
+    sug["answered_by"], sug["answered_at"] = actor, utcnow()
+    if accept:
+        packet = str(payer.get("packet", "")).strip().rstrip(".")
+        payer["packet"] = f"{packet}, {sug['text']}" if packet else sug["text"]
+        audit(state, "", "playbook_learned", f"{actor} added \"{sug['text']}\" to {payer['name']}'s packet ({sug['source']}).", actor)
+    return payer
+
+
 def add_change_order(
     state: dict[str, Any], job_id: str, title: str, amount_cents: int, actor: str = "owner", description: str = ""
 ) -> dict[str, Any]:
@@ -1033,6 +1070,7 @@ def learn_rejection(state: dict[str, Any], job_id: str, reason: str, actor: str 
     current = payer.get("rejects_when", "")
     if reason and reason not in current:
         payer["rejects_when"] = (current + "; " + reason).strip("; ")
+    suggest_packet_item(state, payer["id"], reason, "a rejection", job["name"])
     audit(state, job_id, "learn_rejection", f"{actor} taught playbook: {payer['name']} rejects when {reason}.", actor)
     return job
 

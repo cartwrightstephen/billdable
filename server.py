@@ -1827,6 +1827,10 @@ class Handler(BaseHTTPRequestHandler):
                 return 404, {"error": "Unknown action"}
             save_company(company_id, state)
             return 200, domain.snapshot(state)
+        if len(parts) == 6 and parts[0] == "api" and parts[1] == "payers" and parts[3] == "suggestion" and parts[5] in {"add", "dismiss"}:
+            domain.answer_packet_suggestion(state, parts[2], parts[4], parts[5] == "add", actor)
+            save_company(company_id, state)
+            return 200, domain.snapshot(state)
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "payers" and parts[3] == "update":
             domain.update_payer(state, parts[2], body, actor)
             save_company(company_id, state)
