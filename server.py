@@ -39,6 +39,7 @@ import helper
 import importer
 import legal
 import mailer
+import migrations
 import offsite
 import payapp_pdf
 import sov
@@ -204,12 +205,13 @@ def empty_state(company_name: str) -> dict:
             "city": "",
             "crew": 0,
             "revenue_band": "",
-            "books": "QuickBooks Online",
+            "books": "",
         },
         "payers": [],
         "jobs": [],
         "audit": [],
         "email_log": [],
+        "schema_version": migrations.SCHEMA_VERSION,
     }
 
 
@@ -220,7 +222,9 @@ def company_path(company_id: str) -> Path:
 def load_company(company_id: str) -> dict:
     path = company_path(company_id)
     if path.exists():
-        return json.loads(path.read_text())
+        state = json.loads(path.read_text())
+        migrations.migrate(state)  # the next save writes the current shape back
+        return state
     # A signed-in user whose company file is gone means data was lost
     # (for example a deploy without a persistent disk). Say so in the log.
     print(f"WARNING: company file missing for {company_id} at {path}; serving a blank company.", file=sys.stderr)
@@ -1582,6 +1586,7 @@ def main() -> None:
         for problem in problems:
             log_json("error", msg=f"Refusing to start in production: {problem}")
         sys.exit(1)
+    auth.upgrade_file()
     if demo_enabled():
         ensure_demo()
     server = Server((HOST, PORT), Handler)

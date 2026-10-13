@@ -1,0 +1,39 @@
+"""Schema versions for a company file, and the steps between them (P1-12).
+
+Every company file carries schema_version. load_company() runs migrate() on what it
+reads, so code only ever sees the current shape; the next save writes it back. To change
+the shape of the data: add a step at the end of STEPS that turns version N into N + 1,
+and a test that loads a version-N file. Steps must be safe to run on any file of their
+version, including ones written by hand.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable
+
+import domain
+
+
+def _v1_to_v2(state: dict[str, Any]) -> None:
+    """Fill lists older files lack, and seal the existing audit rows into a hash chain."""
+    for key in ("payers", "jobs", "audit", "email_log", "daily_records", "inbox", "files"):
+        state.setdefault(key, [])
+    state.setdefault("company", {})
+    domain.seal_audit(state)
+
+
+STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2]
+SCHEMA_VERSION = len(STEPS) + 1
+
+
+def migrate(state: dict[str, Any]) -> bool:
+    """Bring a company file to SCHEMA_VERSION in place. Returns whether anything ran.
+    A file from newer code is refused rather than guessed at."""
+    version = int(state.get("schema_version") or 1)
+    if version > SCHEMA_VERSION:
+        raise ValueError(f"Company file is schema {version}; this code only knows up to {SCHEMA_VERSION}. Deploy the newer code.")
+    for step in STEPS[version - 1:]:
+        step(state)
+    changed = version != SCHEMA_VERSION
+    state["schema_version"] = SCHEMA_VERSION
+    return changed

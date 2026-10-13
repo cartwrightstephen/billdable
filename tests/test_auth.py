@@ -67,6 +67,18 @@ class AuthTests(unittest.TestCase):
         self.assertNotIn("old-raw-token", json.loads(auth.AUTH_PATH.read_text())["sessions"])
         self.assertIsNone(auth.session_user("old-raw-token"))
 
+    def test_upgrade_file_writes_hashed_sessions_once(self):
+        user = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        data = json.loads(auth.AUTH_PATH.read_text())
+        data.pop("sessions_hashed", None)
+        data["sessions"] = {"raw-token-2": {"user_id": user["id"], "company_id": self.company, "expires_at": "2999-01-01T00:00:00+00:00"}}
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        auth.upgrade_file()
+        stored = json.loads(auth.AUTH_PATH.read_text())
+        self.assertTrue(stored["sessions_hashed"])
+        self.assertNotIn("raw-token-2", stored["sessions"])
+        self.assertEqual(auth.session_user("raw-token-2")["id"], user["id"])
+
     def test_password_min_length(self):
         with self.assertRaises(ValueError):
             auth.create_user(self.email, "123456789", "Test Owner", self.company)

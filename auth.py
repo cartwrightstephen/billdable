@@ -132,6 +132,14 @@ def _save(data: dict[str, Any]) -> None:
     storage.write_json(AUTH_PATH, data)
 
 
+def upgrade_file() -> None:
+    """Called at start-up: write back a file from before session hashing once, so _load()
+    stops re-hashing its session keys on every request."""
+    with LOCK:
+        if AUTH_PATH.exists() and not json.loads(AUTH_PATH.read_text()).get("sessions_hashed"):
+            _save(_load())
+
+
 def has_users() -> bool:
     with LOCK:
         return bool(_load()["users"])

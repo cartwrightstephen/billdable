@@ -6,6 +6,8 @@ connection is live.
 
 from __future__ import annotations
 
+import migrations
+
 
 def seed_state() -> dict:
     state = _seed()
@@ -31,6 +33,7 @@ def seed_state() -> dict:
         if inv.get("sent_at")
     ]
     state["email_log"].sort(key=lambda e: e["at"])
+    migrations.migrate(state)
     return state
 
 
