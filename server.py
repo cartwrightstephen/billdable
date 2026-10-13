@@ -242,6 +242,14 @@ def deleted_companies() -> set:
         return set()
 
 
+def inbound_address(company_id: str) -> str:
+    """The company's inbound email address, when INBOUND_EMAIL_ADDRESS_TEMPLATE is set; else ""."""
+    template = os.environ.get("INBOUND_EMAIL_ADDRESS_TEMPLATE", "")
+    if "{token}" not in template:
+        return ""
+    return template.replace("{token}", importer.company_tokens(company_id)["email"])
+
+
 def delete_company_data(company_id: str) -> int:
     """Remove a company: its users and sessions, company file, reset snapshots, uploads, inbound
     and calendar addresses, helper and mail records. Backups that hold it expire on their own.
@@ -1170,6 +1178,7 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                 work.append((dict(e), attach))
             company_name = state.get("company", {}).get("name", "")
+            inbound = inbound_address(company_id)
             save_company(company_id, state)
             if not work:
                 return domain.snapshot(state)
@@ -1179,7 +1188,7 @@ class Handler(BaseHTTPRequestHandler):
             messages = []
             for entry, attach in work:
                 try:
-                    msg, left_off = mailer.build_message(entry, company_name, entry.get("reply_to", ""), attach, cfg)
+                    msg, left_off = mailer.build_message(entry, company_name, entry.get("reply_to", ""), attach, cfg, inbound=inbound)
                     messages.append((entry["id"], msg, left_off))
                 except Exception as exc:  # a bad address or file fails this email only
                     outcome[entry["id"]] = (f"failed: {exc}"[:300], [])
@@ -1338,10 +1347,12 @@ class Handler(BaseHTTPRequestHandler):
         def add(state: dict) -> None:
             for meta in stored:
                 importer.register_file(state, meta)
-            importer.add_item(
+            item = importer.add_item(
                 state, "email", text=parsed.get("text", ""), sender=parsed.get("from", ""), subject=parsed.get("subject", ""),
                 file_ids=[m["id"] for m in stored], sent_at=parsed.get("sent_at", ""),
                 extra={"skipped_attachments": skipped} if skipped else None)
+            # A payer answering a pay app we sent files itself to that job (P1-3).
+            importer.capture_reply(state, item)
 
         status, payload = self._change(company_id, add)
         if status != 200:

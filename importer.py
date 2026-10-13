@@ -445,6 +445,60 @@ def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor
     return item
 
 
+PAYAPP_NUMBER_RE = re.compile(r"\bPA-[A-Z0-9]{1,12}-\d{1,4}\b")
+QUOTE_START_RE = re.compile(r"^(On .{0,200} wrote:|-{2,} ?Original Message ?-{2,}|From: )", re.IGNORECASE)
+
+
+def _reply_summary(text: str) -> str:
+    """The first line the payer wrote, above the quoted original."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if QUOTE_START_RE.match(line):
+            break
+        if line and not line.startswith(">"):
+            return line[:140]
+    return "(no text above the quoted message)"
+
+
+def capture_reply(state: dict[str, Any], item: dict[str, Any]) -> dict[str, Any] | None:
+    """File an inbound email to its job when it answers a pay app this company emailed (P1-3).
+
+    Only when the subject names a pay app (PA-XXX-N) whose email went out, and the sender is the
+    address it went to, someone copied on it, or someone at the same domain. Anything else stays
+    in the Inbox for a person to file. The job's status line then says who replied, when and the
+    first line of what they wrote. Undo in the Inbox takes it back off, status line included."""
+    if item.get("source") != "email" or item.get("status") != "new":
+        return None
+    numbers = set(PAYAPP_NUMBER_RE.findall(item.get("subject") or ""))
+    if not numbers:
+        return None
+    sender = (email.utils.parseaddr(item.get("from") or "")[1] or "").lower()
+    if "@" not in sender:
+        return None
+    for entry in reversed(state.get("email_log", [])):
+        if entry.get("status") != "sent" or not numbers & set(PAYAPP_NUMBER_RE.findall(entry.get("subject") or "")):
+            continue
+        sent_to = [str(entry.get("to") or "").lower()] + [str(c).lower() for c in entry.get("cc") or []]
+        domains = {a.rsplit("@", 1)[-1] for a in sent_to if "@" in a}
+        if sender not in sent_to and sender.rsplit("@", 1)[-1] not in domains:
+            continue
+        job = next((j for j in state.get("jobs", []) if j["id"] == entry.get("job_id") and not j.get("closed")), None)
+        if not job:
+            return None
+        payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
+        file_item(state, item["id"], job["id"], "note", "billdable")
+        when = datetime.now(timezone.utc)
+        summary = _reply_summary(item.get("text", ""))
+        item["prev_external_status"] = job.get("external_status")
+        item["auto_filed"] = True
+        job["external_status"] = f"{payer.get('name') or sender} replied {when.strftime('%b')} {when.day}: {summary}"
+        job["last_reply"] = {"from": sender, "at": utcnow(), "subject": item.get("subject", ""), "summary": summary, "inbox_id": item["id"]}
+        domain.audit(state, job["id"], "reply_captured",
+                     f"A reply from {sender} to {', '.join(sorted(numbers))} was filed to the job record: {summary}", "billdable")
+        return job
+    return None
+
+
 def dismiss_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]:
     item = _item(state, item_id)
     if item["status"] != "new":
@@ -470,6 +524,12 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]
     dr_ids = {d["id"] for d in state.get("daily_records", []) if d.get("import_inbox_id") == item_id}
     state["daily_records"] = [d for d in state.get("daily_records", []) if d["id"] not in dr_ids]
     job["daily_records"] = [d for d in job.get("daily_records", []) if d not in dr_ids]
+    if item.get("auto_filed"):
+        # A captured reply also changed the status line; put it back.
+        job["external_status"] = item.pop("prev_external_status", None)
+        if (job.get("last_reply") or {}).get("inbox_id") == item_id:
+            job.pop("last_reply", None)
+        item["auto_filed"] = False
     item.update({"status": "new", "record_ids": [], "filed_job_id": None})
     domain.audit(state, job["id"], "import_undone", f"{actor} took an imported item back off the job record.", actor)
     return item
