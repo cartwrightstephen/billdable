@@ -40,6 +40,19 @@ From the off-site copy (disk lost, or the local backups are bad):
    `BILLDABLE_DATA_DIR=/tmp/check python3 backup.py restore backup.tar.gz`), then follow the
    local steps above.
 
+**Monthly drill.** A backup nobody has restored is a guess. Once a month, in the Shell tab
+(the server can keep running; nothing live is touched):
+
+```bash
+python3 backup.py drill
+```
+
+It unpacks the newest backup into a temporary folder and checks that the accounts file reads,
+every user's company is there, every company opens with its audit chain intact, and every
+uploaded file it refers to is in the backup. It prints PASS or each problem (exit code 1).
+Do the same with a downloaded off-site copy: decrypt it as above, then
+`python3 backup.py drill backup.tar.gz`.
+
 ## 3. Rotate a secret
 
 Change the value at the provider first, then in Render (**Environment**), then save; Render

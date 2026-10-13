@@ -696,6 +696,8 @@ class Handler(BaseHTTPRequestHandler):
                 end_trial = billing.trial_end_due(state) if billing.configured() else None
                 save_company(ctx.company_id, state)
                 payload = domain.light_snapshot(state)
+                # Most changes queue no email: don't load the company again just to find that out.
+                queued = any(e.get("status") == "queued" for e in state.get("email_log", []))
         except UnknownAction:
             self._json(404, {"error": "Unknown action"})
             return
@@ -709,7 +711,7 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=self._end_stripe_trial, args=(end_trial,), daemon=True).start()
         # Approved emails are delivered after the change is saved and the lock is released;
         # the reply is written after that too, so a slow client can't stall other companies.
-        self._json(200, self._deliver_queued(ctx.company_id, ctx.user) or payload)
+        self._json(200, (self._deliver_queued(ctx.company_id, ctx.user) if queued else None) or payload)
 
     def _get(self) -> None:
         self._dispatch("GET")

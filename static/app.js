@@ -484,7 +484,10 @@ async function post(path, body = {}) {
   } else {
     toast("Saved");
   }
-  await load();
+  // A change answers with the company's updated state (the same shape as /api/state): use it
+  // rather than asking again. Anything else (an error) reloads, so the page shows what is true.
+  if (res.ok && data && Array.isArray(data.jobs)) { setState(data); render(); }
+  else await load();
   const added = state ? (state.email_log_total || 0) - emailsBefore : 0;
   if (res.ok && added > 0) toast(emailOutcome(state.email_log.slice(-added)));
   return { ok: res.ok, status: res.status, data };
