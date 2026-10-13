@@ -143,6 +143,49 @@ class BillingTests(unittest.TestCase):
         self.assertEqual(inv2["sov_lines"][0]["qty_milli_this"], 150_000)
         self.assertIn("50% complete to date", inv2["lines"][1]["label"])
 
+    def test_stored_materials_are_billed_once(self):  # P1-5: G703 column F
+        state = new_state()
+        job = sov_job(state)
+        rough = line(job, "1")["id"]
+        # Wire for the whole floor delivered: $3,000 stored, 100 ea installed.
+        domain.record_sov_progress(state, job["id"], {rough: "100"}, stored={rough: "3000"})
+        inv = job["invoices"][-1]
+        entry = inv["sov_lines"][0]
+        self.assertEqual((entry["work_this_cents"], entry["stored_cents"], entry["amount_cents"]), (450_000, 300_000, 750_000))
+        self.assertEqual(inv["op_cents"], 112_500, "O&P applies to stored materials on base lines too")
+        cols = sov.sheet_columns(entry, job["retainage_pct"])
+        self.assertEqual((cols["previous"], cols["this_period"], cols["stored"], cols["to_date"]), (0, 450_000, 300_000, 750_000))
+        self.assertEqual(cols["retainage"], 75_000)
+        send_open(state, job)
+        # 50 more installed from what was stored ($2,250 of it): the total to date is unchanged,
+        # so nothing new is billed and no pay app is drafted.
+        count = len(job["invoices"])
+        domain.record_sov_progress(state, job["id"], {rough: "150"}, stored={rough: "750"})
+        self.assertEqual(len(job["invoices"]), count, "installing stored materials bills nothing new")
+        self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 0)
+        # Then the rest of the stored wire goes in, plus 33 ea more: only the new work is billed.
+        domain.record_sov_progress(state, job["id"], {rough: "200"}, stored={rough: "0"})
+        entry3 = job["invoices"][-1]["sov_lines"][0]
+        cols = sov.sheet_columns(entry3, job["retainage_pct"])
+        self.assertEqual(entry3["amount_cents"], 900_000 - 750_000)
+        self.assertEqual((cols["previous"], cols["this_period"], cols["stored"], cols["to_date"]), (450_000, 450_000, 0, 900_000))
+        self.assertEqual(cols["previous"] + cols["this_period"] + cols["stored"], cols["to_date"])
+
+    def test_stored_materials_are_checked(self):
+        state = new_state()
+        job = sov_job(state)
+        rough = line(job, "1")["id"]
+        with self.assertRaises(domain.GateError) as err:
+            domain.record_sov_progress(state, job["id"], {rough: "300"}, stored={rough: "5000"})
+        self.assertIn("more than the line", " ".join(err.exception.blockers))
+        with self.assertRaises(domain.GateError):
+            domain.record_sov_progress(state, job["id"], {}, stored={rough: "-5"})
+        domain.record_sov_progress(state, job["id"], {}, stored={rough: "2000"})
+        send_open(state, job)
+        with self.assertRaises(domain.GateError) as err:
+            domain.record_sov_progress(state, job["id"], {}, stored={rough: "0"})
+        self.assertIn("already billed", " ".join(err.exception.blockers))
+
     def test_quantities_are_checked(self):
         state = new_state()
         job = sov_job(state)

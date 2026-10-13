@@ -1,0 +1,26 @@
+{
+  "name": "Billdable",
+  "short_name": "Billdable",
+  "description": "Get finished work billed and collected.",
+  "start_url": "/today",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f3ee",
+  "theme_color": "#8c3f1d",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [{"name": "files", "accept": ["image/*", "application/pdf", ".pdf", ".heic", ".eml", ".csv", ".xlsx", ".docx"]}]
+    }
+  }
+}

@@ -136,6 +136,51 @@ class ImportHttpTests(unittest.TestCase):
         self.assertEqual(len(days), 3)
         self.assertTrue(all(d.endswith(("-01", "-02", "-03")) for d in days))
 
+    def test_quickbooks_csv_import_is_safe_to_repeat(self):  # P2-1
+        cookie, job = self.company("qbo@example.com")
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/progress", {"completed_cents": 4_000_000}, cookie=cookie)
+        inv = state["jobs"][0]["invoices"][-1]
+        for item in inv.get("packet") or []:
+            self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "sent with the email"}, cookie=cookie)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        amount = state["jobs"][0]["invoices"][-1]["amount_cents"]
+        csv_text = f"Date,Num,Customer,Amount,Memo\n10/09/2026,5521,Park GC,{amount / 100:.2f},\n"
+        res, read = self.request("POST", "/api/import/payments-csv", {"csv": csv_text}, cookie=cookie)
+        row = read["rows"][0]
+        self.assertEqual((row["status"], row["invoice_id"]), ("match", inv["id"]))
+        pick = {"job_id": row["job_id"], "invoice_id": row["invoice_id"], "amount_cents": row["amount_cents"], "reference": row["ref"], "date": row["date"]}
+        res, state = self.request("POST", "/api/import/payments-apply", {"payments": [pick]}, cookie=cookie)
+        self.assertEqual(state["import_results"], [{"reference": "5521", "ok": True}])
+        self.assertEqual(state["jobs"][0]["invoices"][-1]["status"], "paid")
+        res, state = self.request("POST", "/api/import/payments-apply", {"payments": [pick]}, cookie=cookie)
+        self.assertFalse(state["import_results"][0]["ok"], "the same check twice is refused")
+        res, read = self.request("POST", "/api/import/payments-csv", {"csv": csv_text}, cookie=cookie)
+        self.assertEqual(read["rows"][0]["status"], "already recorded")
+
+    def test_reply_to_a_sent_pay_app_files_itself(self):  # P1-3
+        cookie, job = self.company("reply@example.com")
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/progress", {"completed_cents": 4_000_000}, cookie=cookie)
+        number = state["jobs"][0]["invoices"][-1]["number"]
+        company_id = state["company_id"] if "company_id" in state else next(
+            c for c in server.company_ids() if any(j["id"] == job["id"] for j in server.load_company(c)["jobs"]))
+        with server.company_lock(company_id):  # as if the pay app email had gone out
+            st = server.load_company(company_id)
+            st.setdefault("email_log", []).append({"id": "eml-t", "job_id": job["id"], "kind": "pay_app", "to": "ap@park.example",
+                                                   "cc": [], "subject": f"Pay application {number} — Elm addition", "status": "sent"})
+            server.save_company(company_id, st)
+        res, settings = self.request("GET", "/api/import/settings", cookie=cookie)
+        email_path = "/api/inbound/email/" + settings["email_webhook"].rsplit("/", 1)[-1]
+        res, _ = self.request("POST", email_path, {"from": "Kim <ap@park.example>", "subject": f"RE: Pay application {number} — Elm addition",
+                                                    "text": "Approved, check goes out Friday."})
+        self.assertEqual(res.status, 200)
+        res, state = self.request("GET", "/api/state", cookie=cookie)
+        item = state["inbox"][-1]
+        self.assertEqual((item["status"], item["filed_job_id"], item["auto_filed"]), ("filed", job["id"], True))
+        # Shown as the status line once the pay app is sent (here it is still a draft in the test).
+        self.assertTrue(state["jobs"][0]["external_status"].startswith("Park GC replied "))
+        self.assertIn("Approved, check goes out Friday.", state["jobs"][0]["external_status"])
+
     def test_inbound_email_json_and_sms_with_signature(self):
         cookie, job = self.company("inbound@example.com")
         res, settings = self.request("GET", "/api/import/settings", cookie=cookie)

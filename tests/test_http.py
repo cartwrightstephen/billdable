@@ -36,7 +36,7 @@ class HttpTests(unittest.TestCase):
         cls.tmp.cleanup()
 
     def setUp(self):
-        auth._FAILURES.clear()
+        auth._FAILURES.clear(); auth._IP_FAILURES.clear()
 
     def request(self, method, path, body=None, cookie=None, raw=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
@@ -72,6 +72,9 @@ class HttpTests(unittest.TestCase):
         res, _ = self.request("GET", "/styles.css")
         self.assertTrue(res.getheader("Content-Type").startswith("text/css"))
         self.assertEqual(res.getheader("X-Content-Type-Options"), "nosniff")
+        csp = res.getheader("Content-Security-Policy")
+        self.assertIn("script-src 'self';", csp)
+        self.assertNotIn("unsafe-eval", csp)
         res, _ = self.request("GET", "/favicon.ico")
         self.assertEqual(res.status, 204)
 
@@ -96,7 +99,7 @@ class HttpTests(unittest.TestCase):
 
     def test_login_rate_limited(self):
         self.signup("rate@example.com")
-        for _ in range(auth.LOGIN_MAX_FAILURES):
+        for _ in range(auth.LOGIN_FREE_FAILURES):
             res, _ = self.request("POST", "/api/auth/login", {"email": "rate@example.com", "password": "wrong password"})
             self.assertEqual(res.status, 401)
         res, _ = self.request("POST", "/api/auth/login", {"email": "rate@example.com", "password": PASSWORD})
@@ -112,7 +115,8 @@ class HttpTests(unittest.TestCase):
         job = {"name": "Oak deck", "customer": "Lee", "address": "1 Oak St", "approver": "Lee", "ap_email": "ap@lee.example", "contract_cents": 500000, "actor": "The CEO"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.assertEqual(res.status, 200, state)
-        self.assertEqual(state["audit"][-1]["actor"], "Pat Pine")
+        _, page = self.request("GET", "/api/audit?limit=1", cookie=cookie)
+        self.assertEqual(page["entries"][0]["actor"], "Pat Pine")
         res, data = self.request("POST", "/api/reset", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
         res, state = self.request("GET", "/api/state", cookie=cookie)

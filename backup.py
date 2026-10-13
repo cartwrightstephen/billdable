@@ -37,6 +37,7 @@ from typing import Any, Callable
 import alerts
 import offsite
 import storage
+import store
 
 PREFIX = "billdable-"
 SUFFIX = ".tar.gz"
@@ -76,7 +77,9 @@ def newest_time() -> str | None:
 
 def make_backup(locks: dict[str, Any] | None = None) -> Path:
     """Write one backup. JSON files are read under the lock that guards them, one lock at a time
-    (never nested, so a backup can't deadlock with a request); uploads never change once written."""
+    (never nested, so a backup can't deadlock with a request); company files are replaced whole
+    by a rename and the SQLite database is copied with its own backup API, so neither needs a
+    lock; uploads never change once written."""
     locks = locks or {}
     data_dir = Path(storage.DATA_DIR)
     with _RUN_LOCK:
@@ -90,11 +93,12 @@ def make_backup(locks: dict[str, Any] | None = None) -> Path:
 
         grab("auth.json", locks.get("auth"))
         companies = data_dir / "companies"
-        with locks.get("companies") or nullcontext():
-            if companies.exists():
-                # Company files and the snapshots taken before a reset.
-                for path in sorted(companies.rglob("*.json")):
-                    members.append((str(path.relative_to(data_dir)), path.read_bytes()))
+        if companies.exists():
+            # Company files (the JSON layout, and the snapshots taken before a reset) and the database.
+            for path in sorted(companies.rglob("*.json")):
+                members.append((str(path.relative_to(data_dir)), path.read_bytes()))
+            if (companies / store.DB_NAME).exists():
+                members.extend(store.SqliteStore(companies).backup_members())
         for rel, key in (("inbound_tokens.json", "tokens"), ("helper_answers.json", None), ("helper_log.json", None), ("mail_sends.json", None)):
             grab(rel, locks.get(key) if key else None)
 

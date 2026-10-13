@@ -15,3 +15,7 @@ jobs:
           python-version: "3.12"
       - name: Unit and HTTP tests
         run: python3 -m unittest discover -s tests -v
+      - name: Same tests on the JSON storage layout
+        run: python3 -m unittest discover -s tests
+        env:
+          BILLDABLE_STORAGE: json

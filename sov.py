@@ -13,9 +13,15 @@ Storage on the job:
             "id": "sov-1a2b3c", "item": "1", "description": "Rough-in",
             "unit": "ea", "qty_milli": 400000, "rate_cents": 4500,
             "scheduled_cents": 1800000, "done_milli": 120000,
+            "stored_cents": 0,      # materials presently stored, not yet installed (G703 column F)
             "co_id": None,          # set on lines added by an approved CO
         }],
     }
+
+Like a G703, the total to date on a line (column G) is work completed plus
+materials stored, never more than the line's scheduled value. Each pay app
+bills the change in that total, so stored materials are billed when they
+arrive and not again when they are installed.
 
 Quantities are stored in thousandths so 12.5 units is exact. Lump-sum lines
 are unit "LS" with quantity 1; their progress is a fraction of 1 (0.35 = 35%).
@@ -131,10 +137,45 @@ def op_bp(job: dict[str, Any]) -> int:
     return int((job.get("sov") or {}).get("op_bp") or 0)
 
 
-def line_to_date(line: dict[str, Any]) -> int:
+def line_completed(line: dict[str, Any]) -> int:
+    """Value of the work completed on a line (G703 D + E)."""
     if line["done_milli"] >= line["qty_milli"]:
         return line["scheduled_cents"]
     return extend(line["done_milli"], line["rate_cents"])
+
+
+def line_stored(line: dict[str, Any]) -> int:
+    """Materials presently stored on a line (G703 F), within what the line has left."""
+    return max(0, min(int(line.get("stored_cents") or 0), line["scheduled_cents"] - line_completed(line)))
+
+
+def line_to_date(line: dict[str, Any]) -> int:
+    """Total completed and stored to date (G703 G)."""
+    return line_completed(line) + line_stored(line)
+
+
+def retainage_on(cents: int, pct: int) -> int:
+    """Retainage at a whole percent, half-up, for display beside a line."""
+    return (cents * pct + 50) // 100
+
+
+def sheet_columns(entry: dict[str, Any], retainage_pct: int = 0) -> dict[str, int]:
+    """The G703 columns for one continuation-sheet entry. Entries from before stored
+    materials have no work/stored split: all of their billing is work."""
+    to_date = entry["to_date_cents"]
+    stored = int(entry.get("stored_cents") or 0)
+    work_this = entry.get("work_this_cents", entry["amount_cents"])
+    previous = entry.get("prev_work_cents", to_date - entry["amount_cents"] - stored)
+    return {
+        "scheduled": entry["scheduled_cents"],
+        "previous": previous,
+        "this_period": work_this,
+        "stored": stored,
+        "to_date": to_date,
+        "pct": (100 * to_date) // entry["scheduled_cents"] if entry["scheduled_cents"] else 0,
+        "balance": entry["scheduled_cents"] - to_date,
+        "retainage": retainage_on(to_date, retainage_pct),
+    }
 
 
 def totals(job: dict[str, Any]) -> dict[str, int]:
@@ -168,19 +209,23 @@ def billed(job: dict[str, Any]) -> dict[str, Any]:
     """What earlier pay apps (sent or drafted, not void) already billed, per line."""
     by_line: dict[str, int] = {}
     qty_by_line: dict[str, int] = {}
+    work_by_line: dict[str, int] = {}
     op = 0
     co_line = {l["co_id"]: l["id"] for l in lines(job) if l.get("co_id")}
     for inv in live_invoices(job):
         for entry in inv.get("sov_lines", []):
             by_line[entry["line_id"]] = by_line.get(entry["line_id"], 0) + entry["amount_cents"]
             qty_by_line[entry["line_id"]] = max(qty_by_line.get(entry["line_id"], 0), entry["qty_milli_to_date"])
+        for entry in inv.get("sov_sheet") or inv.get("sov_lines", []):
+            work = entry.get("work_to_date_cents", entry["to_date_cents"])
+            work_by_line[entry["line_id"]] = max(work_by_line.get(entry["line_id"], 0), work)
         op += inv.get("op_cents", 0)
         # An unsigned CO billed before it was approved counts against its line.
         for entry in inv.get("lines", []):
             line_id = co_line.get(entry.get("co_id"))
             if line_id:
                 by_line[line_id] = by_line.get(line_id, 0) + entry["amount_cents"]
-    return {"by_line": by_line, "qty_by_line": qty_by_line, "op_cents": op}
+    return {"by_line": by_line, "qty_by_line": qty_by_line, "work_by_line": work_by_line, "op_cents": op}
 
 
 def this_period(job: dict[str, Any]) -> dict[str, Any]:
@@ -191,6 +236,8 @@ def this_period(job: dict[str, Any]) -> dict[str, Any]:
         to_date = line_to_date(line)
         amount = to_date - already["by_line"].get(line["id"], 0)
         previous_qty = already["qty_by_line"].get(line["id"], 0)
+        completed = line_completed(line)
+        prev_work = min(already["work_by_line"].get(line["id"], 0), completed)
         entry = {
             "line_id": line["id"],
             "item": line.get("item", ""),
@@ -203,6 +250,10 @@ def this_period(job: dict[str, Any]) -> dict[str, Any]:
             "qty_milli": line["qty_milli"],
             "amount_cents": max(0, amount),
             "to_date_cents": to_date,
+            "work_to_date_cents": completed,
+            "prev_work_cents": prev_work,
+            "work_this_cents": completed - prev_work,
+            "stored_cents": line_stored(line),
         }
         # The continuation sheet lists every line, like a G703; only lines with new work are billed.
         sheet.append(entry)
@@ -232,19 +283,17 @@ def continuation_sheet(job: dict[str, Any], invoice: dict[str, Any]) -> str:
     entries = invoice.get("sov_sheet") or invoice.get("sov_lines") or []
     if not entries:
         return ""
-    rows = [("Item", "Description", "Scheduled", "Previous", "This period", "To date", "%", "Balance")]
+    pct_ret = int(job.get("retainage_pct") or 0)
+    rows = [("Item", "Description", "Scheduled", "Previous", "This period", "Stored", "To date", "%", "Balance", "Retainage")]
     for e in entries:
-        previous = e["to_date_cents"] - e["amount_cents"]
-        pct = (100 * e["to_date_cents"]) // e["scheduled_cents"] if e["scheduled_cents"] else 0
+        c = sheet_columns(e, pct_ret)
         rows.append((
             e.get("item", ""),
             e["description"][:40],
-            f"{e['scheduled_cents'] / 100:,.2f}",
-            f"{previous / 100:,.2f}",
-            f"{e['amount_cents'] / 100:,.2f}",
-            f"{e['to_date_cents'] / 100:,.2f}",
-            f"{pct}%",
-            f"{(e['scheduled_cents'] - e['to_date_cents']) / 100:,.2f}",
+            *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored", "to_date")),
+            f"{c['pct']}%",
+            f"{c['balance'] / 100:,.2f}",
+            f"{c['retainage'] / 100:,.2f}",
         ))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     text = []
