@@ -7,6 +7,9 @@ let jobFormErrors = {};   // new-job or edit-job field id -> message
 let drawerOpen = false;   // the phone menu
 let pendingPath = null;   // a page address opened while signed out, opened after sign-in
 let lastToastAt = 0;
+let loginCode = null;     // {email, password} while the sign-in asks for a two-step code
+let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
+let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
 let currentView = "dashboard";
 let currentJobId = null;
 let currentDetailId = null; // for packet, co, payapp, waiver detail
@@ -483,7 +486,14 @@ function renderLanding() {
         <div class="auth-card land-form" id="signup">
           <h2>${signup ? "Create your company" : "Sign in"}</h2>
           <p class="sub">${signup ? "Your jobs stay in your company space. Passwords need at least 10 characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, packets, and playbook."}</p>
-          <form id="auth-form">
+          ${!signup && loginCode ? `<form id="auth-form">
+            <label for="login-code">Code from your authenticator app</label>
+            <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" placeholder="123456" />
+            <p class="sub">Lost your phone? Type one of your recovery codes instead.</p>
+            <button class="btn" type="submit">Sign in</button>
+            ${authError ? `<div class="auth-error" role="alert">${esc(authError)}</div>` : ""}
+            <div class="auth-toggle"><button type="button" id="code-back">Back</button></div>
+          </form>` : `<form id="auth-form">
             ${signup ? `<label>Your name</label><input name="name" required autocomplete="name" />` : ""}
             ${signup ? `<label>Company name</label><input name="company_name" required />` : ""}
             <label>Email</label>
@@ -493,7 +503,7 @@ function renderLanding() {
             ${signup ? `<label class="terms-check"><input type="checkbox" name="accept_terms" required> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>` : ""}
             <button class="btn" type="submit">${signup ? "Create account" : "Sign in"}</button>
             ${authError ? `<div class="auth-error">${esc(authError)}</div>` : ""}
-          </form>
+          </form>`}
           ${signup ? "" : `<div class="auth-toggle"><button type="button" id="auth-forgot">Forgot your password?</button></div>`}
           <div class="auth-toggle">
             ${signup ? "Already have an account?" : "New company?"}
@@ -522,6 +532,8 @@ function renderLanding() {
     </div>
   `;
   document.getElementById("auth-form").addEventListener("submit", onAuthSubmit);
+  document.getElementById("code-back")?.addEventListener("click", () => { loginCode = null; authError = ""; renderLanding(); });
+  document.getElementById("login-code")?.focus();
   document.getElementById("auth-switch").addEventListener("click", () => {
     authMode = signup ? "login" : "signup";
     authError = "";
@@ -543,10 +555,9 @@ async function onAuthSubmit(e) {
     renderLanding();
     return;
   }
-  const body = {
-    email: form.email.value,
-    password: form.password.value,
-  };
+  const body = loginCode && authMode === "login"
+    ? { ...loginCode, code: form.code.value }
+    : { email: form.email.value, password: form.password.value };
   if (authMode === "signup") {
     body.name = form.name.value;
     body.company_name = form.company_name.value;
@@ -566,10 +577,16 @@ async function onAuthSubmit(e) {
   }
   const data = await readJson(res);
   if (!res.ok) {
-    authError = data.error || "Could not sign in.";
+    if (data.needs_code && authMode === "login") {
+      authError = loginCode ? (data.error || "That code didn't work.") : "";
+      loginCode = { email: body.email, password: body.password };
+    } else {
+      authError = data.error || "Could not sign in.";
+    }
     renderLanding();
     return;
   }
+  loginCode = null;
   me = escDeep(data.user);
   authError = "";
   helperLog.length = 0;
@@ -590,6 +607,7 @@ async function logout() {
   await fetch("/api/auth/logout", { method: "POST" });
   me = null;
   state = null;
+  twoStepSetup = null; recoveryCodes = null; loginCode = null;
   helperAdmin = false;
   teamData = null;
   lastInvite = null;
@@ -924,6 +942,23 @@ function bindActions() {
         me = null; state = null; teamData = null; lastInvite = null;
         renderLanding();
         toast(r.data.message);
+        return;
+      }
+      if (a === "2fa-begin") {
+        const r = await postJson("/api/auth/2fa/begin", {});
+        if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
+        twoStepSetup = escDeep(r.data); render(); document.getElementById("2fa-code")?.focus(); return;
+      }
+      if (a === "2fa-enable") {
+        const r = await postJson("/api/auth/2fa/enable", { code: document.getElementById("2fa-code")?.value || "" });
+        if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
+        twoStepSetup = null; recoveryCodes = escDeep(r.data.recovery_codes); me.two_step = true; render(); return;
+      }
+      if (a === "2fa-done") { recoveryCodes = null; render(); return; }
+      if (a === "2fa-disable") {
+        const r = await postJson("/api/auth/2fa/disable", { password: document.getElementById("2fa-off-pw")?.value || "", code: document.getElementById("2fa-off-code")?.value || "" });
+        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
+        if (r.ok) { me.two_step = false; render(); }
         return;
       }
       if (a === "nav") { nav(el.dataset.view, el.dataset.id || null, el.dataset.detail || null); return; }
@@ -1745,6 +1780,23 @@ function accountView() {
         ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
           <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}
     </div>
+    ${isDemo ? "" : `<div class="card" id="two-step">
+      <h2>Two-step sign-in</h2>
+      ${recoveryCodes ? `<div class="invite-result" role="status"><strong>Two-step sign-in is on.</strong> Save these recovery codes somewhere safe, such as your password manager. Each one signs you in once if you lose your phone. They are not shown again.
+        <div class="copy-row"><code id="recovery-codes">${recoveryCodes.join("  ")}</code><button class="btn small secondary" data-action="copy" data-target="recovery-codes">Copy</button><button class="btn small" data-action="2fa-done">I saved them</button></div></div>`
+      : me.two_step ? `<p class="sub"><span class="pill green">On</span> Signing in asks for a code from your authenticator app.</p>
+        <details><summary>Turn it off</summary><div class="form-inline">
+          <input id="2fa-off-pw" type="password" placeholder="Your password" autocomplete="current-password">
+          <input id="2fa-off-code" placeholder="Code from the app" autocomplete="one-time-code" inputmode="numeric">
+          <button class="btn small secondary" data-action="2fa-disable">Turn off</button></div></details>`
+      : twoStepSetup ? `<ol class="steps">
+          <li>In an authenticator app (Google Authenticator, 1Password, Authy, Microsoft Authenticator), add an account and choose to enter a key. ${/Mobi|Android|iPhone/.test(navigator.userAgent) ? `Or <a href="${esc(unesc(twoStepSetup.uri))}">open it in the app</a>.` : ""}</li>
+          <li>Key: <code id="2fa-key">${twoStepSetup.secret.match(/.{1,4}/g).join(" ")}</code> <button class="btn small secondary" data-action="copy" data-target="2fa-key">Copy</button></li>
+          <li>Type the 6-digit code the app shows: <span class="form-inline"><input id="2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"><button class="btn small" data-action="2fa-enable">Turn on</button></span></li>
+        </ol>`
+      : `<p class="sub"><span class="pill">Off</span> Add a code from your phone to every sign-in, so a stolen password isn't enough. Owners should turn this on before billing goes live.</p>
+        <button class="btn small" data-action="2fa-begin">Set up two-step sign-in</button>`}
+    </div>`}
     <div class="card">
       <h2>Your data</h2>
       <p class="sub">Download everything in your company as one file, or start over.</p>

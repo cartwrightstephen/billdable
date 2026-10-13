@@ -725,6 +725,19 @@ class Handler(BaseHTTPRequestHandler):
             if not user or (not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID):
                 self._json(401, {"error": "Email or password is wrong."})
                 return
+            if user.get("two_step"):
+                code = _text(body, "code", limit=40)
+                if not code:
+                    self._json(401, {"error": "Enter the 6-digit code from your authenticator app.", "needs_code": True})
+                    return
+                try:
+                    ok = auth.totp_check(user["id"], code, self._client_ip())
+                except auth.RateLimited as exc:
+                    self._json(429, {"error": str(exc), "needs_code": True})
+                    return
+                if not ok:
+                    self._json(401, {"error": "That code didn't work. Codes change every 30 seconds; a recovery code works once.", "needs_code": True})
+                    return
             token = auth.create_session(user)
             self._json(200, {"user": user}, self._set_cookie(token))
             return
@@ -925,6 +938,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
                 return
             self._json(200, {"ok": True, "message": "Password changed. Every other device is signed out."})
+            return
+        if path in {"/api/auth/2fa/begin", "/api/auth/2fa/enable", "/api/auth/2fa/disable"}:
+            try:
+                if path.endswith("begin"):
+                    self._json(200, auth.totp_begin(user["id"]))
+                elif path.endswith("enable"):
+                    codes = auth.totp_enable(user["id"], _text(body, "code", limit=40))
+                    self._json(200, {"ok": True, "recovery_codes": codes,
+                                     "message": "Two-step sign-in is on. Keep the recovery codes somewhere safe; each works once."})
+                else:
+                    auth.totp_disable(user["id"], body.get("password"), _text(body, "code", limit=40))
+                    self._json(200, {"ok": True, "message": "Two-step sign-in is off."})
+            except auth.RateLimited as exc:
+                self._json(429, {"error": str(exc)})
+            except auth.AuthError as exc:
+                self._json(400, {"error": str(exc)})
             return
         if path == "/api/onboarding/dismiss":
             self._json(*self._change(company_id, lambda st: st["company"].__setitem__("onboarding_dismissed", True)))

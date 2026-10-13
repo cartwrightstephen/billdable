@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import storage
+import totp
 
 AUTH_PATH = storage.DATA_DIR / "auth.json"
 LOCK = threading.Lock()
@@ -162,6 +163,7 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "company_id": user["company_id"],
         "role": user.get("role", "owner"),
         "email_verified": bool(user.get("email_verified")),
+        "two_step": bool(user.get("totp_enabled")),
     }
 
 
@@ -240,8 +242,11 @@ def verify_login(email: str, password: str, ip: str | None = None) -> dict[str, 
             if stored and stored["password_hash"] == user["password_hash"]:
                 _set_password(stored, salt, digest)
                 _save(data)
-    with LOCK:
-        _FAILURES.pop(email, None)
+    if not user.get("totp_enabled"):
+        # With two-step sign-in, only a right code clears the count (totp_check), so a known
+        # password can't be used to reset the throttle on guessing codes.
+        with LOCK:
+            _FAILURES.pop(email, None)
     return _public(user)
 
 
@@ -623,3 +628,88 @@ def delete_company_users(company_id: str) -> int:
 def all_users() -> list[dict[str, Any]]:
     with LOCK:
         return [{**_public(u), "created_at": u.get("created_at", "")} for u in _load()["users"]]
+
+
+# ---------- two-step sign-in (P2-9) ----------
+
+RECOVERY_CODES = 8
+
+
+def _user(data: dict[str, Any], user_id: str) -> dict[str, Any]:
+    user = next((u for u in data["users"] if u["id"] == user_id), None)
+    if not user:
+        raise AuthError("Account not found.")
+    return user
+
+
+def totp_begin(user_id: str) -> dict[str, str]:
+    """A new key, not yet in force: it starts working once a code from it is confirmed."""
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        if user["company_id"] == DEMO_COMPANY_ID:
+            raise AuthError("The demo account can't use two-step sign-in.")
+        if user.get("totp_enabled"):
+            raise AuthError("Two-step sign-in is already on.")
+        user["totp_pending"] = totp.new_secret()
+        _save(data)
+        return {"secret": user["totp_pending"], "uri": totp.uri(user["totp_pending"], user["email"])}
+
+
+def totp_enable(user_id: str, code: Any) -> list[str]:
+    """Confirm the new key with a code from the app. Returns recovery codes, shown once."""
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        pending = user.get("totp_pending")
+        if not pending:
+            raise AuthError("Start setup first.")
+        counter = totp.verify(pending, code)
+        if counter is None:
+            raise AuthError("That code didn't match. Check the phone's clock and type the code showing now.")
+        codes = [f"{secrets.token_hex(2)}-{secrets.token_hex(2)}" for _ in range(RECOVERY_CODES)]
+        user.update(totp_secret=pending, totp_enabled=True, totp_last=counter, totp_recovery=[_digest(c) for c in codes])
+        user.pop("totp_pending", None)
+        _save(data)
+        return codes
+
+
+def totp_check(user_id: str, code: Any, ip: str | None = None) -> bool:
+    """At sign-in: a current code (each one once) or an unused recovery code. Wrong codes count
+    toward the same throttle as wrong passwords."""
+    now = time.monotonic()
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        _throttle(user["email"], ip, now)
+        if not user.get("totp_enabled"):
+            return True
+        raw = str(code or "").strip().lower()
+        counter = totp.verify(user["totp_secret"], raw, int(user.get("totp_last", -1)))
+        if counter is not None:
+            user["totp_last"] = counter
+            _save(data)
+            _FAILURES.pop(user["email"], None)
+            return True
+        digest = _digest(raw)
+        if digest in user.get("totp_recovery", []):
+            user["totp_recovery"] = [d for d in user["totp_recovery"] if d != digest]
+            _save(data)
+            _FAILURES.pop(user["email"], None)
+            return True
+        _failed(user["email"], ip, now)
+        return False
+
+
+def totp_disable(user_id: str, password: Any, code: Any) -> None:
+    """Turn two-step sign-in off: needs the password and a current code (or a recovery code)."""
+    if not check_password(user_id, password):
+        raise AuthError("Password is wrong.")
+    if not totp_check(user_id, code):
+        raise AuthError("That code didn't work.")
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        for key in ("totp_secret", "totp_enabled", "totp_last", "totp_recovery", "totp_pending"):
+            user.pop(key, None)
+        _save(data)
