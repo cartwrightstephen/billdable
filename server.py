@@ -40,6 +40,7 @@ import importer
 import legal
 import mail_events
 import mailer
+import metrics
 import migrations
 import offsite
 import payapp_pdf
@@ -249,6 +250,26 @@ def deleted_companies() -> set:
         return set(json.loads(_deleted_path().read_text()))
     except (OSError, ValueError):
         return set()
+
+
+def send_system_email(to: str, subject: str, body: str, company_id: str = "", rid: str = "") -> str:
+    """An email from Billdable itself (reset, verification, invite, monthly summary). Returns "sent"
+    or the reason it wasn't. It counts against the company's daily limit like any other email."""
+    if not mailer.configured():
+        return "email delivery is not set up on this server"
+    cfg = mailer.settings()
+    if company_id and mailer.sent_in_last_day(company_id) >= cfg["daily_limit"]:
+        return f"the daily limit of {cfg['daily_limit']} emails is reached; try tomorrow"
+    try:
+        msg, _ = mailer.build_message({"to": to, "subject": subject, "body": body}, "", "", [], cfg, sender_name="Billdable")
+        error = mailer.send([msg], cfg)[0]
+    except Exception as exc:
+        error = f"{exc.__class__.__name__}: {exc}"
+    if error:
+        log_json("warn", msg="system email failed", reason=str(error)[:200], rid=rid)
+    elif company_id:
+        mailer.record_sent(company_id, 1)
+    return "sent" if not error else str(error)
 
 
 def inbound_address(company_id: str) -> str:
@@ -637,6 +658,16 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             self._co_sign_page(m.group(1), m.group(2), "")
             return
+        if path == "/api/metrics":
+            user = self._require_user()
+            if not user:
+                return
+            period = (parse_qs(urlparse(self.path).query).get("period") or ["90"])[0]
+            since = None if period == "all" else datetime.now(timezone.utc).date() - timedelta(days=90)
+            with STATE_LOCK:
+                state = load_company(user["company_id"])
+            self._json(200, metrics.compute(state, since=since))
+            return
         if path == "/api/import/settings":
             user = self._require_user()
             if not user:
@@ -939,6 +970,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, {"ok": True, "message": "Password changed. Every other device is signed out."})
             return
+        if path == "/api/metrics/summary-email":
+            if company_id == auth.DEMO_COMPANY_ID or not user.get("email_verified"):
+                self._json(409, {"error": "Confirm your email address first (Team & account)." if company_id != auth.DEMO_COMPANY_ID
+                                 else "The demo account doesn't send email."})
+                return
+            first = datetime.now(timezone.utc).date().replace(day=1) - timedelta(days=1)
+            with STATE_LOCK:
+                state = load_company(company_id)
+            subject, text = metrics.month_summary(state, first.year, first.month)
+            result = self._system_email(user["email"], subject, text, company_id)
+            if result != "sent":
+                self._json(409, {"error": f"Not sent: {result}."})
+                return
+            self._json(200, {"ok": True, "message": f"Last month's summary is on its way to {user['email']}."})
+            return
         if path in {"/api/auth/2fa/begin", "/api/auth/2fa/enable", "/api/auth/2fa/disable"}:
             try:
                 if path.endswith("begin"):
@@ -1012,23 +1058,7 @@ class Handler(BaseHTTPRequestHandler):
     # ----- accounts and team -----
 
     def _system_email(self, to: str, subject: str, body: str, company_id: str = "") -> str:
-        """An email from Billdable itself (reset, verification, invite). Returns "sent" or the reason it wasn't.
-        It counts against the company's daily limit like any other email."""
-        if not mailer.configured():
-            return "email delivery is not set up on this server"
-        cfg = mailer.settings()
-        if company_id and mailer.sent_in_last_day(company_id) >= cfg["daily_limit"]:
-            return f"the daily limit of {cfg['daily_limit']} emails is reached; try tomorrow"
-        try:
-            msg, _ = mailer.build_message({"to": to, "subject": subject, "body": body}, "", "", [], cfg, sender_name="Billdable")
-            error = mailer.send([msg], cfg)[0]
-        except Exception as exc:
-            error = f"{exc.__class__.__name__}: {exc}"
-        if error:
-            log_json("warn", msg="system email failed", reason=str(error)[:200], rid=self._rid)
-        elif company_id:
-            mailer.record_sent(company_id, 1)
-        return "sent" if not error else str(error)
+        return send_system_email(to, subject, body, company_id, self._rid)
 
     def _send_verification(self, user: dict) -> str:
         url = app_url()

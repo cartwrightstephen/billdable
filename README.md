@@ -165,6 +165,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `offsite.py`: encrypted off-site copies of backups (age, S3-compatible upload)
 - `alerts.py`: crash and backup-failure alerts to a webhook
 - `totp.py`: two-step sign-in codes (RFC 6238)
+- `metrics.py`: the Results numbers and the monthly summary email (`python3 admin.py monthly-summaries`)
 - `payer_page.py`: the payer's page for a pay app (`/p/...`) and the change-order signing page (`/s/...`)
 - `mail_events.py`: bounce and spam-complaint webhooks from the mail provider
 - `migrations.py`: the company-file schema version and the steps between versions, run on load

@@ -120,7 +120,7 @@ await step("the audit chain checks out after all that", async () => {
 await step("phone: no page scrolls sideways at 375 px", async () => {
   const phone = await signedInPage({ width: 375, height: 812 });
   const wide = [];
-  for (const path of ["/today", "/today/calendar", "/today/daily", "/jobs", "/jobs/job-oak", "/inbox", "/money", "/money/packets",
+  for (const path of ["/today", "/today/results", "/today/calendar", "/today/daily", "/jobs", "/jobs/job-oak", "/inbox", "/money", "/money/packets",
                       "/money/change-orders", "/money/collections", "/money/payments", "/money/waivers", "/money/retainage",
                       "/money/outbox", "/settings", "/settings/playbook", "/settings/audit", "/settings/help"]) {
     await phone.goto(BASE + path);

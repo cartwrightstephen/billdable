@@ -10,6 +10,8 @@ let lastToastAt = 0;
 let loginCode = null;     // {email, password} while the sign-in asks for a two-step code
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
 let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
+let metricsData = null;   // {period, data} from /api/metrics
+let metricsPeriod = "90";
 let currentView = "dashboard";
 let currentJobId = null;
 let currentDetailId = null; // for packet, co, payapp, waiver detail
@@ -140,6 +142,7 @@ const NAV_HELP = {
   daily: "A dated note of what happened on site today, saved on the job record.",
   jobs: "Every job, with its money file, packet and actions.",
   calendar: "Follow-ups, expected approvals, payments and closeouts by date. Can be added to Google Calendar.",
+  results: "How fast work turns into pay apps and pay apps into money, from your own records.",
   payapps: "Pay applications: the bill for work done this period, with the paperwork the payer requires.",
   packets: "The paperwork that must go with each pay app: waivers, tickets, photos, signed change orders.",
   cos: "Change orders: extra or changed work. Not billable until the customer signs.",
@@ -336,7 +339,7 @@ function companyLine(c) {
 
 // ---------- navigation: five destinations with tabs; every page has its own address ----------
 const SECTIONS = [
-  { key: "today", label: "Today", views: [["dashboard", "Overview"], ["calendar", "Calendar"], ["daily", "Daily record"]] },
+  { key: "today", label: "Today", views: [["dashboard", "Overview"], ["results", "Results"], ["calendar", "Calendar"], ["daily", "Daily record"]] },
   { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["history", "Job history"]] },
   { key: "inbox", label: "Inbox", views: [["inbox", "Inbox"]] },
   { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["packets", "Packets"], ["cos", "Change orders"], ["collections", "Collections"], ["payments", "Payments"], ["waivers", "Waivers"], ["retainage", "Retainage"], ["outbox", "Outbox"]] },
@@ -344,7 +347,7 @@ const SECTIONS = [
 ];
 const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-detail": "packets", "co-detail": "cos", "waiver-detail": "waivers" };
 const VIEW_PATHS = {
-  dashboard: "/today", calendar: "/today/calendar", daily: "/today/daily",
+  dashboard: "/today", results: "/today/results", calendar: "/today/calendar", daily: "/today/daily",
   jobs: "/jobs", history: "/jobs/history", inbox: "/inbox",
   payapps: "/money", packets: "/money/packets", cos: "/money/change-orders", collections: "/money/collections",
   payments: "/money/payments", waivers: "/money/waivers", retainage: "/money/retainage", outbox: "/money/outbox",
@@ -885,6 +888,7 @@ function render() {
   decorateHelp(document.getElementById("app"));
   a11yPass(document.getElementById("app"));
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
+  if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin") { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
@@ -959,6 +963,12 @@ function bindActions() {
         const r = await postJson("/api/auth/2fa/disable", { password: document.getElementById("2fa-off-pw")?.value || "", code: document.getElementById("2fa-off-code")?.value || "" });
         toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
         if (r.ok) { me.two_step = false; render(); }
+        return;
+      }
+      if (a === "metrics-period") { metricsPeriod = el.dataset.period; metricsData = null; render(); return; }
+      if (a === "metrics-email") {
+        const r = await postJson("/api/metrics/summary-email", {});
+        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
         return;
       }
       if (a === "nav") { nav(el.dataset.view, el.dataset.id || null, el.dataset.detail || null); return; }
@@ -1307,6 +1317,16 @@ async function postImport(path, body) {
   toast(body.job_id ? "Added to the job record." : "Added to the Inbox.");
   render();
   return true;
+}
+
+async function loadMetrics() {
+  const period = metricsPeriod;
+  try {
+    const res = await fetch(`/api/metrics?period=${period}`);
+    if (!res.ok) return;
+    metricsData = { period, data: escDeep(await readJson(res)) };
+  } catch (_) { setNetBanner(true); return; }
+  if (currentView === "results") render();
 }
 
 async function loadImportSettings() {
@@ -2387,6 +2407,37 @@ const views = {
         </details>
       </div>
       ${sovCardHtml(j)}
+    `;
+  },
+  results() {
+    const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
+    const head = `<h1>Results</h1>
+      <p class="sub">What Billdable recorded for your company, counted from your own pay apps and payments. Nothing here is estimated.</p>
+      <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}
+        <button class="btn small secondary" data-action="metrics-email">Email me last month's summary</button></div>`;
+    if (!metricsData || metricsData.period !== metricsPeriod) return head + `<p class="sub">Loading…</p>`;
+    const m = metricsData.data;
+    const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
+    return head + `
+      <div class="metrics">
+        <div class="metric"><div class="k">Work done to pay app sent</div><div class="v">${days(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
+        <div class="metric"><div class="k">Pay app sent to paid</div><div class="v">${days(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${days(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
+        <div class="metric"><div class="k">Follow-ups per pay app</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} pay apps sent</div></div>
+        <div class="metric"><div class="k">Sent back by the payer</div><div class="v">${m.sent_back}</div><div class="sub row-sub">rejections taught to the playbook and pencil changes</div></div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} pay apps</div></div>
+        <div class="metric"><div class="k">Paid</div><div class="v">${money(m.paid_cents)}</div><div class="sub row-sub">${m.pay_apps_paid} pay apps</div></div>
+        <div class="metric"><div class="k">Change orders billed</div><div class="v">${money(m.change_orders_billed_cents)}</div><div class="sub row-sub">signed, all time</div></div>
+        <div class="metric"><div class="k">Retainage collected</div><div class="v">${money(m.retainage_collected_cents)}</div><div class="sub row-sub">all time</div></div>
+      </div>
+      <div class="card"><h2>Done but not billed</h2>
+        ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">Every finished job has a pay app out.</p>`}
+      </div>
+      ${m.by_payer.length ? `<div class="table-wrap"><table>
+        <tr><th>Payer</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
+        ${m.by_payer.map(r => `<tr><td>${r.payer}</td><td class="num">${r.average_days}</td><td class="num">${r.paid}</td></tr>`).join("")}
+      </table></div>` : ""}
     `;
   },
   daily() {
