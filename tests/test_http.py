@@ -72,6 +72,9 @@ class HttpTests(unittest.TestCase):
         res, _ = self.request("GET", "/styles.css")
         self.assertTrue(res.getheader("Content-Type").startswith("text/css"))
         self.assertEqual(res.getheader("X-Content-Type-Options"), "nosniff")
+        csp = res.getheader("Content-Security-Policy")
+        self.assertIn("script-src 'self';", csp)
+        self.assertNotIn("unsafe-eval", csp)
         res, _ = self.request("GET", "/favicon.ico")
         self.assertEqual(res.status, 204)
 
