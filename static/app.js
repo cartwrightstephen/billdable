@@ -23,7 +23,10 @@ let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
 let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
 let metricsData = null;   // {period, data} from /api/metrics
 let metricsPeriod = "90";
-let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV
+let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV or the QuickBooks connection
+let qboStatus = null;      // /api/qbo/status: configured, connected, environment (escaped)
+let qboReconcile = null;   // /api/qbo/reconcile: {rows, invoices}
+const RECON_WORDS = { missing: "Not in QuickBooks", amount: "Amount differs", paid_in_qbo: "Paid in QuickBooks", open_in_qbo: "Open in QuickBooks" };
 let currentView = "dashboard";
 let currentJobId = null;
 let currentDetailId = null; // for packet, co, payapp, waiver detail
@@ -346,7 +349,7 @@ function renderLanding() {
           <button class="btn" id="price-start">Create your company</button>
         </div>
       </section>
-      <footer class="land-foot">Billdable works beside QuickBooks; a direct QuickBooks connection is planned, not built. It does not replace your books or your field app.
+      <footer class="land-foot">Billdable works beside QuickBooks and never changes your books: it reads payments from a QuickBooks export today, and a direct QuickBooks connection is coming. It does not replace your books or your field app.
         <div class="land-legal"><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a></div></footer>
     </div>
   `;
@@ -647,6 +650,7 @@ function render() {
   a11yPass(document.getElementById("app"));
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
   if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
+  if (currentView === "payments" && !qboStatus) loadQboStatus();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin") { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
@@ -734,7 +738,7 @@ function bindActions() {
       }
       if (a === "qbo-apply") {
         const picks = [...document.querySelectorAll("[data-qbo-row]:checked")].map(cb => paymentImport.rows[+cb.dataset.qboRow])
-          .map(row => ({ job_id: row.job_id, invoice_id: row.invoice_id, amount_cents: row.amount_cents, reference: unesc(row.ref), date: row.date }));
+          .map(row => ({ job_id: row.job_id, invoice_id: row.invoice_id, amount_cents: row.amount_cents, reference: unesc(row.ref), date: row.date, qbo_id: row.qbo_id ? unesc(row.qbo_id) : undefined }));
         if (!picks.length) { toast("Tick the payments to record."); return; }
         const r = await postJson("/api/import/payments-apply", { payments: picks });
         if (!r.ok) { toast(r.data.error || "Nothing was recorded."); return; }
@@ -744,6 +748,34 @@ function bindActions() {
         render(); return;
       }
       if (a === "qbo-cancel") { paymentImport = null; render(); return; }
+      if (a === "qbo-connect") {
+        const r = await postJson("/api/qbo/connect", {});
+        if (!r.ok) { toast(r.data.error || "Couldn't start the QuickBooks connection."); return; }
+        if (typeof r.data.url === "string" && r.data.url.startsWith("https://")) location.assign(r.data.url);
+        return;
+      }
+      if (a === "qbo-sync") {
+        toast("Reading payments from QuickBooks…");
+        const r = await postJson("/api/qbo/payments", { days: 90 });
+        if (!r.ok) { toast(r.data.error || "Couldn't read QuickBooks."); qboStatus = null; render(); return; }
+        paymentImport = escDeep(r.data); render(); return;
+      }
+      if (a === "qbo-reconcile") {
+        try {
+          const res = await fetch("/api/qbo/reconcile");
+          const data = await readJson(res);
+          if (!res.ok) { toast(data.error || "Couldn't read QuickBooks."); qboStatus = null; render(); return; }
+          qboReconcile = escDeep(data);
+        } catch (_) { setNetBanner(true); return; }
+        render(); return;
+      }
+      if (a === "qbo-disconnect") {
+        if (!(await askConfirm("Disconnect QuickBooks? Payments already recorded stay. An owner can connect it again any time.", "Disconnect"))) return;
+        const r = await postJson("/api/qbo/disconnect", {});
+        if (r.ok) { qboStatus = escDeep(r.data); qboReconcile = null; }
+        toast(r.ok ? "QuickBooks is disconnected." : (r.data.error || "That didn't work."));
+        render(); return;
+      }
       if (a === "metrics-period") { metricsPeriod = el.dataset.period; metricsData = null; render(); return; }
       if (a === "metrics-email") {
         const r = await postJson("/api/metrics/summary-email", {});
@@ -1120,6 +1152,16 @@ async function loadMetrics() {
     metricsData = { period, data: escDeep(await readJson(res)) };
   } catch (_) { setNetBanner(true); return; }
   if (currentView === "results") render();
+}
+
+async function loadQboStatus() {
+  qboStatus = { loading: true };
+  try {
+    const res = await fetch("/api/qbo/status");
+    if (!res.ok) { qboStatus = null; return; }
+    qboStatus = escDeep(await readJson(res));
+  } catch (_) { qboStatus = null; setNetBanner(true); return; }
+  if (currentView === "payments") render();
 }
 
 async function loadImportSettings() {
@@ -2568,8 +2610,21 @@ const views = {
       : `<textarea id="qbo-csv" rows="5" placeholder="Paste the CSV here" class="full-input"></textarea>
         <button class="btn small" data-action="qbo-read">Read payments</button>`}
     </details>`;
+    const q = qboStatus;
+    const owner = me && me.role === "owner";
+    const qboCard = !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
+      !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Billdable's Intuit app. Until then, use the CSV import below.</p>`
+      : !q.connected ? (owner
+        ? `<p class="sub">Read-only: Billdable reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
+        : `<p class="sub">An owner of this company can connect QuickBooks here.</p>`)
+      : `<p class="sub"><span class="pill green">Connected</span> ${q.environment === "sandbox" ? "Sandbox company. " : ""}Since ${fmtDate(q.connected_at)}${q.connected_by ? ", by " + q.connected_by : ""}. Read-only.</p>
+        <div class="form-inline"><button class="btn" data-action="qbo-sync">Read payments from QuickBooks</button><button class="btn secondary" data-action="qbo-reconcile">Check against QuickBooks</button>${owner ? `<button class="btn secondary" data-action="qbo-disconnect">Disconnect</button>` : ""}</div>
+        ${qboReconcile ? (qboReconcile.rows.length
+          ? `<h3>Where Billdable and QuickBooks differ</h3>${qboReconcile.rows.map(r => `<div class="list-item"><span class="pill">${RECON_WORDS[r.kind] || words(r.kind)}</span> <a href="${pathFor("job", r.job_id)}" data-action="open-job" data-id="${r.job_id}">${r.job}</a>: ${r.detail}</div>`).join("")}`
+          : `<p class="sub">Billdable and QuickBooks agree on every sent pay app (${qboReconcile.invoices} QuickBooks invoices checked).</p>`) : ""}`}</div>`;
     return `
       <h1>Payments</h1>
+      ${qboCard}
       ${importCard}
       ${pays.length ? `<div class="table-wrap">
         <table>

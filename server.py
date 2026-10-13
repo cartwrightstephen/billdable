@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from html import escape as html_escape
 from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse
 
 import alerts
@@ -46,6 +47,7 @@ import metrics
 import migrations
 import offsite
 import payapp_pdf
+import qbo
 import qbo_csv
 import payer_page
 import sov
@@ -178,7 +180,8 @@ def demo_enabled() -> bool:
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
 DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv"}
-COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_resend_verify", "_p_team", "_p_helper_admin"}
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_resend_verify", "_p_team", "_p_helper_admin",
+                                             "_p_qbo_payments", "_p_qbo_disconnect"}
 
 
 def read_only_reason(company_id: str, state: dict | None = None) -> str:
@@ -818,6 +821,63 @@ class Handler(BaseHTTPRequestHandler):
             state = load_company(user["company_id"])
             self._json(200, domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0]))
 
+    # ----- QuickBooks Online, read-only (qbo.py) -----
+
+    def _qbo_redirect_uri(self) -> str:
+        return f"{app_url() or ''}/api/qbo/callback"
+
+    def _g_qbo_status(self, m, user) -> None:
+        self._json(200, qbo.status(user["company_id"]))
+
+    def _g_qbo_callback(self, m) -> None:
+        q = parse_qs(urlparse(self.path).query)
+        arg = lambda k: (q.get(k) or [""])[0][:200]
+        try:
+            if arg("error"):
+                raise qbo.QboError("QuickBooks wasn't connected." + (" You cancelled it." if arg("error") == "access_denied" else ""))
+            company_id = qbo.finish(arg("state"), arg("code"), arg("realmId"), self._qbo_redirect_uri())
+        except qbo.QboError as exc:
+            page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+                    f'<title>QuickBooks - Billdable</title></head><body><main><h1>QuickBooks</h1><p>{html_escape(str(exc))}</p>'
+                    f'<p><a href="/money/payments">Back to Payments</a></p></main></body></html>')
+            self._send(400, page.encode("utf-8"), "text/html; charset=utf-8")
+            return
+        self._change(company_id, lambda st: domain.audit(st, "", "qbo_connected", "QuickBooks was connected (read-only).", "QuickBooks"))
+        self._send(303, b"", "text/plain", {"Location": "/money/payments"})
+
+    def _g_qbo_reconcile(self, m, user) -> None:
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        try:
+            invoices = qbo.query(user["company_id"], "Invoice")
+        except qbo.QboError as exc:
+            self._json(409, {"error": str(exc)})
+            return
+        self._json(200, {"rows": qbo.reconcile(state, invoices), "invoices": len(invoices)})
+
+    def _p_qbo_connect(self, m, ctx: "Ctx") -> None:
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The demo account can't connect QuickBooks. Use the sample import on a job instead."})
+            return
+        try:
+            self._json(200, {"url": qbo.authorize_url(ctx.company_id, ctx.actor, self._qbo_redirect_uri())})
+        except qbo.QboError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _p_qbo_disconnect(self, m, ctx: "Ctx") -> None:
+        qbo.disconnect(ctx.company_id)
+        self._change(ctx.company_id, lambda st: domain.audit(st, "", "qbo_disconnected", f"{ctx.actor} disconnected QuickBooks.", ctx.actor))
+        self._json(200, qbo.status(ctx.company_id))
+
+    def _p_qbo_payments(self, m, ctx: "Ctx") -> None:
+        days = _whole_number(ctx.body, "days", "Days", 1) if "days" in ctx.body else 90
+        with company_lock(ctx.company_id):
+            state = load_company(ctx.company_id)
+        try:
+            self._json(200, qbo.read_payments(ctx.company_id, state, days))
+        except qbo.QboError as exc:
+            self._json(409, {"error": str(exc)})
+
     def _g_export(self, m, user) -> None:
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
@@ -1122,7 +1182,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     domain.match_payment(st, str(pick.get("job_id") or ""), pick.get("amount_cents"), ref,
                                          ctx.actor, invoice_id=str(pick.get("invoice_id") or "") or None,
-                                         received_on=str(pick.get("date") or "") or None)
+                                         received_on=str(pick.get("date") or "") or None,
+                                         qbo_payment_id=str(pick.get("qbo_id") or "") or None)
                     results.append({"reference": ref, "ok": True})
                 except domain.GateError as exc:
                     results.append({"reference": ref, "ok": False, "error": str(exc)})
@@ -1875,6 +1936,9 @@ ROUTES = [
     Route("GET", r"/api/export", "_g_export", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
     Route("GET", r"/api/metrics", "_g_metrics", "user"),
+    Route("GET", r"/api/qbo/status", "_g_qbo_status", "user"),
+    Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user"),
+    Route("GET", r"/api/qbo/callback", "_g_qbo_callback"),
     Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
     Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.pdf", "_g_payapp_pdf", "user"),
@@ -1908,6 +1972,9 @@ ROUTES = [
     Route("POST", r"/api/import/text", "_p_import_text", "body"),
     Route("POST", r"/api/import/rotate", "_p_rotate", "body", owner=True),
     Route("POST", r"/api/metrics/summary-email", "_p_summary_email", "body"),
+    Route("POST", r"/api/qbo/connect", "_p_qbo_connect", "body", owner=True),
+    Route("POST", r"/api/qbo/disconnect", "_p_qbo_disconnect", "body", owner=True),
+    Route("POST", r"/api/qbo/payments", "_p_qbo_payments", "body"),
     Route("POST", r"/api/onboarding/dismiss", "_p_onboarding_dismiss", "body"),
     Route("POST", r"/api/team/.+|/api/account/delete", "_p_team", "body"),
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_p_inbox", "body"),

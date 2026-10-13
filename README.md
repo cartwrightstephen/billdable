@@ -1,6 +1,6 @@
 # Billdable
 
-Rule-based get-paid tool for small contractors (2–12 people, roughly $750k–$2.5M). It works beside QuickBooks; a direct QuickBooks connection is planned, not built. It does not replace Jobber, Housecall Pro, or the books. There is no AI in the product yet.
+Rule-based get-paid tool for small contractors (2–12 people, roughly $750k–$2.5M). It works beside QuickBooks and reads from it (read-only): payments from a CSV export, or through the QuickBooks Online connection once the Intuit app's keys are set. It does not replace Jobber, Housecall Pro, or the books. There is no AI in the product yet.
 
 ## Run locally
 
@@ -38,6 +38,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | --- | --- |
 | `BILLDABLE_DATA_DIR` | Where all data lives (see above). |
 | `BILLDABLE_DEMO` | `readonly` keeps the demo for prospects in production: anyone can sign in and look around, and nothing can be changed (no edits, reset, password or two-step changes). `off` removes it anywhere. The default is a writable demo outside production and none in production. |
+| `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | The Intuit Developer app's keys; with them, owners can connect QuickBooks (read-only) on Money › Payments. Add `<BILLDABLE_URL>/api/qbo/callback` as a redirect URI in the Intuit app. `QBO_ENV=production` for real companies; the default is the sandbox. Tokens live in `qbo_connections.json`, which backups leave out: after a restore onto a new disk, connect again. |
 | `BILLDABLE_STORAGE` | `json` keeps the one-file-per-company layout. Unset (the default) uses SQLite. |
 | `BILLDABLE_ENV` | `production` turns the demo account off unless `BILLDABLE_DEMO=readonly` (when off: not created, can't sign in, old demo sessions end) and refuses to start unless `BILLDABLE_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `BILLDABLE_URL` is an `https://` address. Unset everywhere else. |
 | `BILLDABLE_DATA_PERSISTENT` | `1` once a deploy has been seen to keep the data. Until then the landing page says "Demo: data may be erased". |
@@ -170,6 +171,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `alerts.py`: crash and backup-failure alerts to a webhook
 - `totp.py`: two-step sign-in codes (RFC 6238)
 - `qbo_csv.py`: payments from a QuickBooks CSV export, proposed against open pay apps
+- `qbo.py`: the QuickBooks Online connection, read-only: OAuth connect and token refresh, payments proposed with the same matcher (each recorded once, by its QuickBooks id), and a reconciliation report against QuickBooks invoices. Intuit's endpoints and field names are from their documentation as remembered, checked only against a stand-in (`tests/test_qbo.py`) until the first sandbox connection
 - `metrics.py`: the Results numbers and the monthly summary email (`python3 admin.py monthly-summaries`)
 - `payer_page.py`: the payer's page for a pay app (`/p/...`) and the change-order signing page (`/s/...`)
 - `mail_events.py`: bounce and spam-complaint webhooks from the mail provider
@@ -248,6 +250,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/jobs/{id}/learn-rejection`: `{reason}`
 - `POST /api/jobs/{id}/close`
 - `POST /api/jobs/{id}/import-qbo`: demo company only; a hard-coded sample payment
+- QuickBooks: `GET /api/qbo/status`; owners: `POST /api/qbo/connect` (returns Intuit's sign-in address) and `/api/qbo/disconnect`; `GET /api/qbo/callback` (Intuit sends the owner back here); `POST /api/qbo/payments` `{days}` (proposals, records nothing); `GET /api/qbo/reconcile`
 - `POST /api/payers/{id}/update`: playbook fields. Follow-up and approval days must be 1–365.
 - `POST /api/jobs/{id}/pencil`: send the open draft as a pencil copy; `POST /api/jobs/{id}/pencil-response`: `{agreed, note}`
 - `POST /api/jobs/{id}/void-draft`; `POST /api/jobs/{id}/withdraw-co/{co_id}`

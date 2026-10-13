@@ -96,3 +96,23 @@ Something is down, data looks wrong, or a leak is suspected.
 6. **Write it down** within two days: what happened, when, who was affected, what was done, and
    what stops it happening again. If customer data may have been exposed, ask the lawyer what
    notice the law and the Privacy Policy require before telling customers.
+
+## 6. QuickBooks Online (read-only)
+
+Once the Intuit Developer app exists (setup doc, section 1):
+
+1. In the Intuit app's settings, add the redirect URI `<BILLDABLE_URL>/api/qbo/callback`, for
+   example `https://billdable.onrender.com/api/qbo/callback`, for both Development and Production.
+2. On Render, set `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET` (the Development keys first) and keep
+   `QBO_ENV` unset: that is the sandbox.
+3. An owner opens **Money → Payments → Connect QuickBooks**, signs in to Intuit and picks the
+   sandbox company. **Read payments from QuickBooks** proposes matches; nothing is recorded until
+   they are ticked. **Check against QuickBooks** lists pay apps missing from QuickBooks, totals
+   that differ, and pay apps paid on one side only.
+4. Check the first sandbox read against what the sandbox shows. The endpoints and field names in
+   `qbo.py` were written from Intuit's documentation and tested only against a stand-in.
+5. For real companies: Intuit's production keys (after their app review), `QBO_ENV=production`.
+
+Tokens are in `qbo_connections.json` in the data directory and are not in the backups: after a restore onto a new disk,
+or when a connection expires (Intuit's refresh tokens last about 100 days unused), an
+owner presses Connect QuickBooks again. Disconnect revokes the token at Intuit.

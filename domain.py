@@ -513,10 +513,15 @@ def match_payment(
     actor: str = "billdable",
     invoice_id: str | None = None,
     received_on: str | None = None,
+    qbo_payment_id: str | None = None,
 ) -> dict[str, Any]:
     """Record money received against a pay app. `received_on` (YYYY-MM-DD) is the date the books
-    show, for imports; without it the payment is dated now."""
+    show, for imports; without it the payment is dated now. `qbo_payment_id` is QuickBooks' id
+    for the payment (qbo.py): one QuickBooks payment is recorded once in the whole company."""
     job = _open_job(state, job_id)
+    qbo_payment_id = str(qbo_payment_id or "").strip()[:40] or None
+    if qbo_payment_id and any(p.get("qbo_payment_id") == qbo_payment_id for j in state["jobs"] for p in j.get("payments", [])):
+        raise GateError("This QuickBooks payment is already recorded.")
     open_invoices = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
     if not open_invoices:
         raise GateError("No open invoice to match.")
@@ -553,6 +558,8 @@ def match_payment(
         "invoice_id": invoice["id"],
         "matched_at": f"{received_on}T12:00:00+00:00" if received_on and re.fullmatch(r"\d{4}-\d{2}-\d{2}", received_on) else utcnow(),
     }
+    if qbo_payment_id:
+        payment["qbo_payment_id"] = qbo_payment_id
     job["payments"].append(payment)
     collected_for_invoice = sum(p["amount_cents"] for p in job["payments"] if p["invoice_id"] == invoice["id"])
     if collected_for_invoice >= invoice["amount_cents"]:
