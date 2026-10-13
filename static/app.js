@@ -3279,5 +3279,9 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && drawerOpen) { drawerOpen = false; render(); document.getElementById("menu-btn")?.focus(); }
 });
 
+// Installable on a phone (manifest + a service worker that caches nothing), so photos and
+// PDFs can be shared straight to Billdable from the share menu.
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+
 window.nav = nav;
 boot();

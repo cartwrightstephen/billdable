@@ -68,6 +68,13 @@ BODY_SECONDS = 60  # a request body must arrive within this long in total, howev
 STATIC_FILES = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
+    # Installable app (P3): manifest, icons, and a service worker that caches nothing.
+    "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+    "/sw.js": ("sw.js", "text/javascript; charset=utf-8"),
+    "/icon-192.png": ("icon-192.png", "image/png"),
+    "/icon-512.png": ("icon-512.png", "image/png"),
+    "/icon-maskable-512.png": ("icon-maskable-512.png", "image/png"),
+    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
 }
 # First path segments that belong to the browser app; each one serves index.html so
 # refresh, Back and links in emails land on the same page (the app reads the address).
@@ -739,7 +746,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(304, b"", kind, headers)
             return
         body = a["raw"]
-        if self._accepts_gzip():
+        if self._accepts_gzip() and not kind.startswith("image/"):  # PNGs are compressed already
             body, headers["Content-Encoding"] = a["gz"], "gzip"
         self._send(200, body, kind, headers)
 
@@ -895,6 +902,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/s/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})/sign$", path)
         if m:
             self._co_sign_post(m.group(1), m.group(2))
+            return
+        if path == "/share":
+            self._share_target()
             return
 
         # Everything below needs a signed-in user; check before reading the body.
@@ -1560,6 +1570,37 @@ class Handler(BaseHTTPRequestHandler):
         self._change(company_id, mark)
         self._send(303, b"", "text/plain", {"Location": f"/p/{company_id}.{token}"})
 
+    def _share_target(self) -> None:
+        """Photos, PDFs and text shared to the installed app from the phone's share menu (P3).
+        They land in the Inbox like any upload; nothing is filed without a person."""
+        user = self._session_user()
+        if not user:
+            self._send(303, b"", "text/plain", {"Location": "/inbox"})
+            return
+        company_id = user["company_id"]
+        data = self._read_raw(MAX_INBOUND_BYTES)
+        parsed = _parse_share(data, self.headers.get("Content-Type") or "")
+        stored, skipped = [], []
+        for f in parsed["files"]:
+            try:
+                stored.append(importer.store_bytes(company_id, f["filename"] or "shared file", f["data"], "share"))
+            except domain.GateError as exc:
+                skipped.append(str(exc))
+        text = "\n".join(x for x in (parsed["text"], parsed["url"]) if x).strip()
+
+        def add(state: dict) -> None:
+            for meta in stored:
+                importer.register_file(state, meta)
+                importer.add_item(state, "upload", subject=parsed["title"] or meta["name"], text=text, file_ids=[meta["id"]],
+                                  extra={"skipped_attachments": skipped} if skipped else None)
+            if not stored and text:
+                importer.add_item(state, "paste", subject=parsed["title"], text=text)
+
+        status, _ = self._change(company_id, add)
+        if status != 200:
+            importer.discard(company_id, stored)
+        self._send(303, b"", "text/plain", {"Location": "/inbox"})
+
     def _co_lookup(self, company_id: str, token: str) -> tuple:
         if company_id in deleted_companies() or not company_path(company_id).exists():
             return None, None, None
@@ -1774,6 +1815,27 @@ class Handler(BaseHTTPRequestHandler):
             save_company(company_id, state)
             return 200, domain.snapshot(state)
         return 404, {"error": "Not found"}
+
+
+def _parse_share(data: bytes, raw_ctype: str) -> dict:
+    """The multipart form a phone's share menu posts to /share: title, text, url and files."""
+    out = {"title": "", "text": "", "url": "", "files": []}
+    if "multipart/form-data" not in raw_ctype.lower():
+        return out
+    import email as _email
+    import email.policy as _policy
+    msg = _email.message_from_bytes(b"Content-Type: " + raw_ctype.encode("latin-1", "replace") + b"\r\n\r\n" + data, policy=_policy.default)
+    for part in msg.iter_parts():
+        name = part.get_param("name", header="content-disposition") or ""
+        filename = part.get_filename()
+        payload = part.get_payload(decode=True) or b""
+        if filename or name == "files":
+            if payload:
+                out["files"].append({"filename": filename or "shared file", "data": payload})
+        elif name in {"title", "text", "url"}:
+            out[name] = payload.decode("utf-8", "replace")[:5000]
+    out["files"] = out["files"][:20]
+    return out
 
 
 def _parse_inbound_email(data: bytes, raw_ctype: str) -> dict:

@@ -14,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
 import domain
+import importer
 import server
+import storage
 from seed import seed_state
 
 PASSWORD = "correct horse battery"
@@ -24,9 +26,9 @@ class UiServerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        cls._orig = (auth.AUTH_PATH, server.COMPANIES)
-        auth.AUTH_PATH = Path(cls.tmp.name) / "auth.json"
-        server.COMPANIES = Path(cls.tmp.name) / "companies"
+        cls._orig = (auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR, importer.UPLOADS)
+        root = Path(cls.tmp.name)
+        auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR, importer.UPLOADS = root / "auth.json", root / "companies", root, root / "uploads"
         cls.httpd = server.Server(("127.0.0.1", 0), server.Handler)
         cls.port = cls.httpd.server_address[1]
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
@@ -35,7 +37,7 @@ class UiServerTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.httpd.shutdown()
         cls.httpd.server_close()
-        auth.AUTH_PATH, server.COMPANIES = cls._orig
+        auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR, importer.UPLOADS = cls._orig
         cls.tmp.cleanup()
 
     def setUp(self):
@@ -105,6 +107,48 @@ class UiServerTests(unittest.TestCase):
         self.assertEqual(body, (server.STATIC / "app.js").read_bytes())
         res, _ = self.get("/styles.css", {"If-None-Match": f'"{server.asset("styles.css")["hash"]}"'})
         self.assertEqual(res.status, 304)
+
+    def test_installable_app_files(self):  # P3: PWA
+        res, body = self.get("/manifest.webmanifest")
+        self.assertEqual((res.status, res.getheader("Content-Type")), (200, "application/manifest+json"))
+        manifest = json.loads(body)
+        self.assertEqual(manifest["share_target"]["action"], "/share")
+        for icon in manifest["icons"]:
+            res, png = self.get(icon["src"])
+            self.assertEqual((res.status, png[:4]), (200, b"\x89PNG"), icon["src"])
+        res, body = self.get("/sw.js", {"Accept-Encoding": "gzip"})
+        self.assertEqual(res.getheader("Cache-Control"), "no-cache", "the worker must never be stuck in a cache")
+        self.assertIn(b"fetch(event.request)", gzip.decompress(body))
+        _, page = self.get("/")
+        self.assertIn(b'rel="manifest"', page)
+
+    def share(self, cookie=None):
+        boundary = "----billdable"
+        parts = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nOak tickets\r\n"
+                 f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"ticket.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n").encode()
+        body = parts + b"\xff\xd8fakejpeg" + f"\r\n--{boundary}--\r\n".encode()
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        headers = {"Content-Type": f"multipart/form-data; boundary={boundary}", "Content-Length": str(len(body))}
+        if cookie:
+            headers["Cookie"] = cookie
+        conn.request("POST", "/share", body=body, headers=headers)
+        res = conn.getresponse()
+        res.read()
+        conn.close()
+        return res
+
+    def test_share_from_the_phone_lands_in_the_inbox(self):  # P3: share target
+        res = self.share()
+        self.assertEqual((res.status, res.getheader("Location")), (303, "/inbox"), "signed out: sent to sign in, nothing stored")
+        cookie, _ = self.company("share@example.com")
+        res = self.share(cookie)
+        self.assertEqual(res.status, 303)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/api/state", headers={"Cookie": cookie})
+        state = json.loads(conn.getresponse().read())
+        conn.close()
+        item = state["inbox"][-1]
+        self.assertEqual((item["subject"], item["status"], len(item["file_ids"])), ("Oak tickets", "new", 1))
 
     # ----- job edit and delete -----
 
