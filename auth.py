@@ -133,6 +133,23 @@ def _save(data: dict[str, Any]) -> None:
     storage.write_json(AUTH_PATH, data)
 
 
+_READ_CACHE: dict[str, Any] = {}
+
+
+def _read() -> dict[str, Any]:
+    """The file as last parsed, for lookups that change nothing: every request checks its
+    session here, so the file is parsed again only when it changes (a save renames a new file
+    into place, which changes the inode). Callers must not modify what this returns."""
+    try:
+        st = AUTH_PATH.stat()
+    except FileNotFoundError:
+        return _load()
+    key = (str(AUTH_PATH), st.st_ino, st.st_mtime_ns, st.st_size)
+    if _READ_CACHE.get("key") != key:
+        _READ_CACHE.update(key=key, data=_load())
+    return _READ_CACHE["data"]
+
+
 def upgrade_file() -> None:
     """Called at start-up: write back a file from before session hashing once, so _load()
     stops re-hashing its session keys on every request."""
@@ -272,15 +289,15 @@ def session_user(token: str | None) -> dict[str, Any] | None:
         return None
     key = _digest(token)
     with LOCK:
-        data = _load()
-        entry = data["sessions"].get(key)
+        entry = _read()["sessions"].get(key)
         if not entry:
             return None
         if entry["expires_at"] <= _iso(_utcnow()):
+            data = _load()
             data["sessions"].pop(key, None)
             _save(data)
             return None
-        user = next((u for u in data["users"] if u["id"] == entry["user_id"]), None)
+        user = next((u for u in _read()["users"] if u["id"] == entry["user_id"]), None)
         if not user:
             return None
         return _public(user)
@@ -397,6 +414,23 @@ def reset_password(raw: Any, password: Any) -> dict[str, Any]:
         _end_sessions(data, user["id"])  # everywhere else is signed out
         _save(data)
         _FAILURES.pop(user["email"], None)
+        return _public(user)
+
+
+def update_name(user_id: str, name: Any) -> dict[str, Any]:
+    """A user changes the name the audit trail and the team list show."""
+    if not isinstance(name, str) or not " ".join(name.split()):
+        raise AuthError("Your name can't be empty.")
+    name = " ".join(name.split())
+    if len(name) > 80:
+        raise AuthError("Your name is too long (limit 80 characters).")
+    with LOCK:
+        data = _load()
+        user = next((u for u in data["users"] if u["id"] == user_id), None)
+        if not user:
+            raise AuthError("Account not found.")
+        user["name"] = name
+        _save(data)
         return _public(user)
 
 

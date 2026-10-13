@@ -40,6 +40,21 @@ From the off-site copy (disk lost, or the local backups are bad):
    `BILLDABLE_DATA_DIR=/tmp/check python3 backup.py restore backup.tar.gz`), then follow the
    local steps above.
 
+**Monthly drill.** A backup nobody has restored is a guess. Once a month, in the Shell tab
+(the server can keep running; nothing live is touched):
+
+```bash
+python3 backup.py drill
+```
+
+The server also runs it by itself once a month and posts an alert if it fails
+(`monthly_jobs.json` in the data directory records the last run). By hand, it unpacks the newest
+backup into a temporary folder and checks that the accounts file reads,
+every user's company is there, every company opens with its audit chain intact, and every
+uploaded file it refers to is in the backup. It prints PASS or each problem (exit code 1).
+Do the same with a downloaded off-site copy: decrypt it as above, then
+`python3 backup.py drill backup.tar.gz`.
+
 ## 3. Rotate a secret
 
 Change the value at the provider first, then in Render (**Environment**), then save; Render
@@ -70,6 +85,17 @@ can't (they lost access, or asked by email):
 5. Tell them it is done, and that copies in backups expire on their own: local backups after
    `BACKUP_KEEP` days, off-site copies after the bucket's retention (about 35 days).
 
+## 4a. Put a company on hold (read-only)
+
+For a payment that is past due, or while a dispute is sorted out. Nothing is deleted: the team
+can still sign in, see everything and use **Export data**, change passwords and two-step
+sign-in, manage the team and delete the company. Every change to jobs, money and the Inbox is
+refused with the reason, and the app shows it in a banner.
+
+1. `python3 admin.py read-only <company id> payment is past due` (the words after the id are
+   the reason they see).
+2. To undo: `python3 admin.py writable <company id>`. Both are written to the company's Audit.
+
 ## 5. Incident
 
 Something is down, data looks wrong, or a leak is suspected.
@@ -85,3 +111,51 @@ Something is down, data looks wrong, or a leak is suspected.
 6. **Write it down** within two days: what happened, when, who was affected, what was done, and
    what stops it happening again. If customer data may have been exposed, ask the lawyer what
    notice the law and the Privacy Policy require before telling customers.
+
+## 6. QuickBooks Online (read-only)
+
+Once the Intuit Developer app exists (setup doc, section 1):
+
+1. In the Intuit app's settings, add the redirect URI `<BILLDABLE_URL>/api/qbo/callback`, for
+   example `https://billdable.onrender.com/api/qbo/callback`, for both Development and Production.
+2. On Render, set `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET` (the Development keys first) and keep
+   `QBO_ENV` unset: that is the sandbox.
+3. An owner opens **Money → Payments → Connect QuickBooks**, signs in to Intuit and picks the
+   sandbox company. **Read payments from QuickBooks** proposes matches; nothing is recorded until
+   they are ticked. **Check against QuickBooks** lists pay apps missing from QuickBooks, totals
+   that differ, and pay apps paid on one side only.
+4. Check the first sandbox read against what the sandbox shows. The endpoints and field names in
+   `qbo.py` were written from Intuit's documentation and tested only against a stand-in.
+5. For real companies: Intuit's production keys (after their app review), `QBO_ENV=production`.
+
+Tokens are in `qbo_connections.json` in the data directory and are not in the backups: after a restore onto a new disk,
+or when a connection expires (Intuit's refresh tokens last about 100 days unused), an
+owner presses Connect QuickBooks again. Disconnect revokes the token at Intuit.
+
+## 7. Billing with Stripe
+
+Needs the company's Stripe account (after the entity exists).
+
+1. In Stripe (test mode first): create the product and its monthly price; copy the price id
+   (`price_…`) and the secret key (`sk_test_…`).
+2. **Developers → Webhooks → Add endpoint**: `<BILLDABLE_URL>/api/stripe/webhook`, with the
+   events `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` and
+   `invoice.payment_failed`. Copy its signing secret (`whsec_…`).
+3. **Settings → Billing → Customer portal**: turn it on (update card, see invoices, cancel).
+4. On Render: `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`. Leave
+   `BILLING_ENFORCE` unset until a few test-mode subscriptions have gone through.
+5. Test: an owner presses **Subscribe**, pays with Stripe's test card 4242 4242 4242 4242, and
+   comes back to Settings showing **Trial** (or **Active**). Then, in Stripe, mark a test
+   subscription unpaid and check the company shows the read-only banner once `BILLING_ENFORCE=1`.
+
+The free trial carries over: a company that subscribes during it starts with Stripe's trial
+ending on its last day, and when its first pay app is paid Billdable ends Stripe's trial, so
+the first charge follows the business plan. Charges land on the 5th (`BILLING_DAY`), after the
+contractor's own pay apps are out: a trial ends on the next 5th, and a subscription started after
+the trial is anchored to the 5th with the first part-month prorated. A company that bills
+homeowners in draws (Settings, Company, How you bill) gets a 45-day trial instead of 90.
+
+Design partners: make a second price at $99 a month, set `STRIPE_PARTNER_PRICE_ID`, and mark each
+partner with `python3 admin.py partner <company id> on` before they subscribe. The plan caps them
+at 3; the command says how many there are. Nothing is ever deleted for an unpaid bill.
