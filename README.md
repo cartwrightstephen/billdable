@@ -181,7 +181,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `seed.py`: Hartline Remodeling sample data
 - `server.py`: stdlib HTTP server and cookie sessions. Every URL is one line in its `ROUTES` table, naming the handler and who may call it (public, signed in, or a change to the company's data, which runs under that company's lock and returns the updated state)
 - `store.py`: company storage, SQLite or JSON files (see Data)
-- `static/`: `index.html`, `app.js`, `styles.css` (the only files served)
+- `static/`: `index.html`, `styles.css` and the app, an ES module (`app.js`, which holds the views, imports the helpers in `static/js/`: formatting, job status, schedule of values, routes, help text, network and DOM helpers; no bundler). The only files served. The page's Content-Security-Policy allows scripts and styles only from these files: no inline scripts, `onclick=` or `style=""`; server-written pages allow their own `<style>` block by its hash.
 - `tests/`: domain, auth and HTTP tests
 
 ## Money rules

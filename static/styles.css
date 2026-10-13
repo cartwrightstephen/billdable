@@ -359,3 +359,7 @@ textarea { font: inherit; }
 }
 .ai-why { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
 .ai-why input { flex: 1 1 160px; padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; }
+
+/* Layout helpers instead of style="" attributes, which the page's CSP doesn't allow (P2-8). */
+.grow, .form-inline > .grow { flex: 1; }
+.full-input { width: 100%; font: inherit; }

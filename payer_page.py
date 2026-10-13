@@ -16,6 +16,8 @@ from typing import Any
 import domain
 
 PAGE_STYLE = """
+.card.alert{border-color:#8d2d2d}.sign-form{flex-direction:column;align-items:stretch}
+.agree{display:flex;gap:10px;align-items:flex-start}.agree input{flex:none;margin-top:4px;min-width:auto}.signer{flex:none}
 body{font:16px/1.55 -apple-system,"Segoe UI",system-ui,sans-serif;color:#1c1915;background:#f6f3ee;margin:0}
 main{max-width:760px;margin:0 auto;padding:28px 18px 56px}
 h1{font:500 30px/1.2 Georgia,serif;margin:4px 0 6px}h2{font-size:18px;margin:26px 0 8px}
@@ -144,11 +146,11 @@ def render_co(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], ba
     if co.get("status") != "pending":
         return head + summary + f"<p>This change order is {_e(co.get('status'))} and can no longer be signed here.</p></main></body></html>"
     return (head + summary
-            + (f'<div class="card" role="alert" style="border-color:#8d2d2d"><span class="no">{_e(error)}</span></div>' if error else "")
-            + f'<div class="card"><form method="post" action="{_e(base)}/sign" style="flex-direction:column;align-items:stretch">'
-            + f'<label style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" name="agree" value="yes" style="flex:none;margin-top:4px;min-width:auto"> '
+            + (f'<div class="card alert" role="alert"><span class="no">{_e(error)}</span></div>' if error else "")
+            + f'<div class="card"><form class="sign-form" method="post" action="{_e(base)}/sign">'
+            + f'<label class="agree"><input type="checkbox" name="agree" value="yes"> '
             + f"<span>{_e(domain.CO_CONSENT)}</span></label>"
-            + '<label for="signer" class="sub">Your full name</label><input id="signer" name="name" maxlength="120" autocomplete="name" required style="flex:none">'
+            + '<label for="signer" class="sub">Your full name</label><input id="signer" name="name" maxlength="120" autocomplete="name" required class="signer">'
             + '<button class="btn" type="submit">Sign change order</button></form></div>'
             + f'<p class="foot">Your name, the time, your network address and this change order as shown are kept as the record of your signature. '
             + f"Questions go to {_e(company)}; reply to their email.</p></main></body></html>")

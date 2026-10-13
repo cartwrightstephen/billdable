@@ -90,6 +90,9 @@ STATIC_FILES = {
     "/icon-maskable-512.png": ("icon-maskable-512.png", "image/png"),
     "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
 }
+# The app's ES modules (P2-8): app.js imports them from /js/; no bundler.
+STATIC_FILES.update({f"/js/{p.name}": (f"js/{p.name}", "text/javascript; charset=utf-8")
+                     for p in sorted((STATIC / "js").glob("*.js"))})
 # First path segments that belong to the browser app; each one serves index.html so
 # refresh, Back and links in emails land on the same page (the app reads the address).
 APP_SECTIONS = {"today", "jobs", "inbox", "money", "settings"}
@@ -127,9 +130,10 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
-    # Scripts only from this site's own files: an injected <script> or onerror= never runs.
-    # Inline styles stay allowed (the page templates use style=""). Part of P2-8.
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    # Scripts and styles only from this site's own files: an injected <script>, onerror= or
+    # style="" never applies. Pages the server writes with a <style> block get that block's
+    # hash added (_csp). P2-8.
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; "
                                "img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; "
                                "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 }
@@ -245,6 +249,16 @@ def empty_state(company_name: str) -> dict:
         "email_log": [],
         "schema_version": migrations.SCHEMA_VERSION,
     }
+
+
+STYLE_BLOCK_RE = re.compile(rb"<style>(.*?)</style>", re.S)
+
+
+def _csp(policy: str, body: bytes) -> str:
+    """Allow exactly the <style> blocks this page carries, by their SHA-256."""
+    hashes = sorted({"'sha256-" + base64.b64encode(hashlib.sha256(m.group(1)).digest()).decode() + "'"
+                     for m in STYLE_BLOCK_RE.finditer(body)})
+    return policy.replace("style-src 'self'", "style-src 'self' " + " ".join(hashes), 1) if hashes else policy
 
 
 def company_store():
@@ -436,6 +450,8 @@ class Handler(BaseHTTPRequestHandler):
             # that sets its own policy (an uploaded file's sandbox) keeps only that one.
             if k == "Content-Security-Policy" and (content_type == "application/pdf" or k in (headers or {})):
                 continue
+            if k == "Content-Security-Policy" and content_type.startswith("text/html"):
+                v = _csp(v, body)
             self.send_header(k, v)
         if self._rid:
             self.send_header("X-Request-Id", self._rid)
@@ -832,6 +848,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_compressible(self, code: int, body: bytes, kind: str, headers: dict) -> None:
         headers = {**headers, "Vary": "Accept-Encoding"}
+        if kind.startswith("text/html") and "Content-Security-Policy" not in headers:
+            headers["Content-Security-Policy"] = _csp(SECURITY_HEADERS["Content-Security-Policy"], body)  # before gzip hides the <style>
         if self._accepts_gzip():
             body, headers["Content-Encoding"] = gzip.compress(body, 6, mtime=0), "gzip"
         self._send(code, body, kind, headers)

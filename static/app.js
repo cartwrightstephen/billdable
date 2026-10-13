@@ -1,3 +1,13 @@
+// Billdable's browser app, loaded as an ES module (no bundler). Shared helpers live in
+// static/js/; the views, which share the page's state, stay here.
+import { esc, unesc, escDeep, money, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm } from "./js/jobs.js";
+import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
+import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
+import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
+import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js";
+import { labelTables, moreButton } from "./js/dom.js";
+
 let state = null;
 let me = null;
 let authMode = "signup";
@@ -42,136 +52,6 @@ const DEMO_COMPANY_ID = "co-hartline";
 let calJobFilter = "all";
 let importSettings = null;
 let sovDraft = null; // schedule-of-values editor: { jobId, lines: [{id,item,description,quantity,unit,rate}], op_pct, warnings } (raw text, not escaped)
-const RECORD_KINDS = {
-  note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
-  waiver: "Lien waiver", pay_app: "Pay app / invoice backup", ticket: "Delivery or time ticket", other: "Other",
-};
-const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email", sms: "Text message", notes: "Notes" };
-
-// Plain-language help for every field, column, tile and section. The (i) icon
-// next to a label is hidden until the area is hovered or focused; hovering,
-// focusing or tapping the icon shows the text. Keys are the visible label,
-// lower case, without arrows or asterisks.
-const FIELD_HELP = {
-  // money file and tiles
-  "contract": "The original contract amount, before any change orders.",
-  "approved cos": "Change orders the customer has signed. They add to the contract total.",
-  "pending cos": "Change orders not signed yet. They are not billable until signed.",
-  "contract total": "Contract plus signed change orders: the most you can bill on this job.",
-  "billed": "Pay apps sent to the payer, after retainage is withheld.",
-  "collected": "Payments matched to this job's pay apps.",
-  "outstanding": "Billed but not yet paid.",
-  "unbilled completed": "Work you finished that is not on any pay app yet. This is money you can bill now.",
-  "unbilled": "Work you finished that is not on any pay app yet.",
-  "retainage held": "The percentage the payer keeps back from each pay app until closeout.",
-  "retainage released": "Retainage the payer has paid you.",
-  "retainage open": "Retainage still held. It is released after the punch list and closeout packet are done.",
-  "retainage": "Retainage still held on this job.",
-  "billed this month": "Total of pay apps sent this calendar month.",
-  "blocked jobs": "Open jobs with a missing packet item or unsigned change order that stops a pay app from going out.",
-  "active jobs": "Jobs not yet closed for the record.",
-  // tables
-  "job": "The job. Click it to open the money file, packet and actions.",
-  "customer": "Who pays this job: the owner, homeowner or general contractor.",
-  "status": "What is holding the job up right now, in words. Never just \"pending\".",
-  "next": "The next thing to do to get paid on this job.",
-  "approved cos ": "Signed change orders.",
-  "code": "Short job code. Put it in an email subject or text and the Inbox files it to this job.",
-  "number": "Pay app number: PA, the job code, then the sequence.",
-  "amount": "Amount of this pay app after retainage, or of this payment.",
-  "blockers": "What must be fixed before this pay app can be sent.",
-  "missing": "Required packet items that are not in yet.",
-  "pay app": "The pay application this packet belongs to.",
-  "co": "Change order number on this job.",
-  "summary": "What the change order covers.",
-  "status / waiting on": "Signed or not, and who it is waiting on.",
-  "in billing": "Whether this unsigned change order is on the next pay app. Send stays blocked until it is signed.",
-  "unpaid": "Pay apps sent and not fully paid.",
-  "days": "Days since the pay app was sent.",
-  "contact": "Who approves payment, and their AP email and phone.",
-  "follow up": "Send a follow-up once the payer's follow-up window has passed.",
-  "reference": "Check number or QuickBooks payment id. Each can be used once per job.",
-  "matched": "Date the payment was matched.",
-  "kind": "What type of document or message this is.",
-  "open": "Retainage still held on this job.",
-  "holding it up": "Closeout items that must be done before you can ask for retainage.",
-  "unlock": "What to do next to release the retainage.",
-  "contact / follow up": "Who to ask for the retainage, and buttons to ask.",
-  "closed": "Date the job was closed for the record.",
-  "notes": "Completion notes, or the current status.",
-  "when": "When it happened.",
-  "to": "Who it was addressed to: the payer's AP email from the playbook.",
-  "subject": "Subject line of the logged message.",
-  "actor": "The signed-in person who took the action.",
-  "action": "What was done.",
-  "detail": "What changed, in words.",
-  // new job form
-  "job name": "What you call the job, for example \"Oak Street kitchen\".",
-  "address": "The job site address. The Inbox uses it to match emails and texts to this job.",
-  "contract number": "The number on the contract, if it has one.",
-  "contract amount ($)": "The signed contract amount in dollars, before change orders.",
-  "retainage %": "Percent the payer holds back from each pay app until closeout. Commonly 5 to 10 percent; check your contract.",
-  "role": "Owner: you bill the property owner or homeowner. GC: you are a sub billing a general contractor.",
-  "approver": "The person who approves your pay app.",
-  "ap email": "Where pay apps and follow-ups go: the payer's accounts payable address.",
-  "phone": "Payer phone for follow-up calls.",
-  "notes for the job record": "Anything to keep with the job: what the customer wants in a packet, contract notes.",
-  // playbook
-  "follow-up days": "Days to wait after sending before a follow-up is allowed. Set it to the payer's normal payment window.",
-  "usual approval days": "How long this payer usually takes to approve. Drives the expected-approval date on the calendar.",
-  "packet": "What this payer requires with every pay app, separated by commas. New pay apps list these items.",
-  "rejects when": "Why this payer has sent pay apps back before. Grows as you teach it.",
-  // schedule of values
-  "item": "The line number on the schedule of values, as the payer's form numbers it.",
-  "description": "What the line covers, in the words the payer will recognize.",
-  "qty": "How many units the line covers. A lump-sum line is 1 (unit LS).",
-  "unit": "The unit the quantity is counted in: ea, lf, sf, hr, or LS for a lump sum.",
-  "unit rate $": "Price per unit, before overhead and profit.",
-  "unit rate": "Price per unit, before overhead and profit.",
-  "scheduled value": "Quantity × unit rate: what this line is worth when finished.",
-  "done to date": "How much of the line is finished so far, counted from the start of the job.",
-  "earned to date": "The value of the work done to date on this line.",
-  "balance to finish": "What is left to bill on this line when the work is done.",
-  "overhead and profit": "A percentage added on top of the base lines, as your estimate carries it. Change orders are added at their own amount.",
-  "schedule lines": "The total of quantity × unit rate across the lines.",
-  "schedule total": "Lines plus overhead and profit. It has to equal the contract amount.",
-  "scheduled": "How much this line covers.",
-  "previous": "Billed on earlier pay apps.",
-  "this period": "Billed on this pay app: work done since the last one.",
-  "total to date": "Previous plus this period.",
-  "%": "Share of the line's scheduled value billed to date.",
-  "copy": "Email addresses to copy on pay apps for this payer, separated by commas. Names without an address are ignored.",
-};
-const NAV_HELP = {
-  today: "What needs you today, the money across open jobs, the calendar and the daily record.",
-  money: "Pay apps, packets, change orders, collections, payments, waivers, retainage and the Outbox.",
-  settings: "Your team and account, the payer playbook, the audit trail and help.",
-  inbox: "Bring in photos, PDFs, emails, texts and notes, then file them to a job in one click.",
-  dashboard: "What needs attention and the money across open jobs.",
-  daily: "A dated note of what happened on site today, saved on the job record.",
-  jobs: "Every job, with its money file, packet and actions.",
-  calendar: "Follow-ups, expected approvals, payments and closeouts by date. Can be added to Google Calendar.",
-  results: "How fast work turns into pay apps and pay apps into money, from your own records.",
-  payapps: "Pay applications: the bill for work done this period, with the paperwork the payer requires.",
-  packets: "The paperwork that must go with each pay app: waivers, tickets, photos, signed change orders.",
-  cos: "Change orders: extra or changed work. Not billable until the customer signs.",
-  collections: "What is unpaid and who to contact.",
-  payments: "Money received and matched to a pay app.",
-  waivers: "Lien waivers: you give up lien rights for amounts you have been paid. One per paid pay app.",
-  retainage: "Money the payer holds back until closeout, and what is holding it up.",
-  history: "Jobs closed for the record.",
-  playbook: "What each payer requires, who approves, how long they take, and why they reject.",
-  outbox: "Every email approved to send, and whether it was delivered.",
-  audit: "Every action, who took it and when.",
-  help: "What the terms mean and how to start.",
-  account: "Your password and email, the people on your team, and deleting the company.",
-  "helper-admin": "Questions the helper couldn't answer, and the answers it uses. Team only.",
-};
-
-function helpFor(text) {
-  const key = (text || "").replace(/[↑↓*]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
-  return FIELD_HELP[key];
-}
 
 let helpTip = null;
 function showHelpTip(icon) {
@@ -223,61 +103,6 @@ function decorateHelp(root) {
   root.querySelectorAll(".nav button[data-section]").forEach(b => addInfoIcon(b, NAV_HELP[b.dataset.section], b));
 }
 
-// Every string that comes from the server is HTML-escaped once, when it
-// arrives. Templates below interpolate into innerHTML, so this is what keeps
-// a job named <img onerror=...> from running as code. Never interpolate raw
-// user input; wrap it in esc().
-function esc(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-// The reverse of esc(), for values from escDeep'd state that are about to be escaped again
-// (or placed with textContent). Never put its result into innerHTML without esc().
-function unesc(value) {
-  const t = document.createElement("textarea");
-  t.innerHTML = String(value);
-  return t.value;
-}
-
-function escDeep(value) {
-  if (typeof value === "string") return esc(value);
-  if (Array.isArray(value)) return value.map(escDeep);
-  if (value && typeof value === "object") {
-    const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = escDeep(v);
-    return out;
-  }
-  return value;
-}
-
-function setNetBanner(on) {
-  let el = document.getElementById("net-banner");
-  if (!el && on) {
-    el = document.createElement("div");
-    el.id = "net-banner";
-    el.className = "net-banner";
-    el.textContent = "Can't reach Billdable. Your last change may not be saved. Check your connection and try again.";
-    document.body.prepend(el);
-  }
-  if (el) el.style.display = on ? "block" : "none";
-}
-
-async function readJson(res) {
-  try { return await res.json(); } catch (_) { return {}; }
-}
-
-const money = (cents) => {
-  if (cents == null) return "$0.00";
-  const sign = cents < 0 ? "-" : "";
-  const abs = Math.abs(cents);
-  return `${sign}$${(abs / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-
 function toast(msg) {
   let el = document.getElementById("toast");
   if (!el) {
@@ -296,56 +121,6 @@ function toast(msg) {
 }
 function hideToast() { const el = document.getElementById("toast"); if (el) el.style.display = "none"; }
 
-// ---------- dates and words people read ----------
-// Server values arrive escaped; dates are plain ISO strings, so unesc() is only a safety net.
-function toDate(iso) {
-  const raw = unesc(iso || "");
-  if (!raw) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) { const [y, m, d] = raw.split("-").map(Number); return new Date(y, m - 1, d); }
-  const t = Date.parse(raw);
-  return isNaN(t) ? null : new Date(t);
-}
-function fmtDate(iso) {
-  const d = toDate(iso);
-  return d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
-}
-function fmtDateTime(iso) {
-  const d = toDate(iso);
-  if (!d) return "—";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(unesc(iso))) return fmtDate(iso);
-  return d.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-}
-// "in_progress" -> "In progress"; the result is escaped again because it goes into HTML.
-function words(code) {
-  const text = unesc(code || "").replace(/_/g, " ").trim();
-  return esc(text.charAt(0).toUpperCase() + text.slice(1));
-}
-const INVOICE_WORDS = { draft: "Draft", awaiting_approval: "Ready to send", sent: "Sent", approved: "Approved", partial: "Partly paid", paid: "Paid", void: "Void" };
-function invoicePill(inv) {
-  const st = unesc(inv.status || "");
-  const colour = st === "paid" ? "green" : ["sent", "approved", "partial"].includes(st) ? "amber" : st === "void" ? "" : "copper";
-  return `<span class="pill ${colour}">${INVOICE_WORDS[st] || words(st)}</span>`;
-}
-// One short word for where a job stands; the full sentence (status_label) goes on the line below it.
-function jobStatus(j) {
-  const inv = j.invoices || [];
-  if (j.closed) return ["Closed", "green"];
-  if (isBlocked(j)) return ["Blocked", "red"];
-  if (inv.some(i => ["draft", "awaiting_approval"].includes(i.status))) return ["Ready to send", "copper"];
-  if (j.waiver_due && !j.waiver_sent) return ["Waiver due", "amber"];
-  if (inv.some(i => i.status === "partial")) return ["Partly paid", "amber"];
-  if (inv.some(i => ["sent", "approved"].includes(i.status))) return ["Sent", "amber"];
-  if (j.work_status !== "complete") return ["In progress", ""];
-  if (j.money.unbilled_completed_cents > 0) return ["Ready to bill", "copper"];
-  if (j.money.retainage_open_cents > 0) return ["Retainage open", "amber"];
-  if (inv.length && j.money.outstanding_cents === 0) return ["Paid", "green"];
-  return ["Done", ""];
-}
-function statusPill(j) { const [w, c] = jobStatus(j); return `<span class="pill ${c}">${w}</span>`; }
-function companyLine(c) {
-  return [c.crew ? `${c.crew} people` : "", c.books || ""].filter(Boolean).join(" · ");
-}
-
 // ---------- navigation: five destinations with tabs; every page has its own address ----------
 const SECTIONS = [
   { key: "today", label: "Today", views: [["dashboard", "Overview"], ["results", "Results"], ["calendar", "Calendar"], ["daily", "Daily record"]] },
@@ -354,15 +129,6 @@ const SECTIONS = [
   { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["packets", "Packets"], ["cos", "Change orders"], ["collections", "Collections"], ["payments", "Payments"], ["waivers", "Waivers"], ["retainage", "Retainage"], ["outbox", "Outbox"]] },
   { key: "settings", label: "Settings", views: [["account", "Team & account"], ["playbook", "Payer playbook"], ["audit", "Audit"], ["help", "Help"], ["helper-admin", "Helper answers"]] },
 ];
-const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-detail": "packets", "co-detail": "cos", "waiver-detail": "waivers" };
-const VIEW_PATHS = {
-  dashboard: "/today", results: "/today/results", calendar: "/today/calendar", daily: "/today/daily",
-  jobs: "/jobs", history: "/jobs/history", inbox: "/inbox",
-  payapps: "/money", packets: "/money/packets", cos: "/money/change-orders", collections: "/money/collections",
-  payments: "/money/payments", waivers: "/money/waivers", retainage: "/money/retainage", outbox: "/money/outbox",
-  account: "/settings", playbook: "/settings/playbook", audit: "/settings/audit", help: "/settings/help", "helper-admin": "/settings/helper-answers",
-};
-const DETAIL_PATHS = { "payapp-detail": "/money/pay-app", "packet-detail": "/money/packet", "co-detail": "/money/change-order", "waiver-detail": "/money/waiver" };
 
 function sectionOf(view) {
   const v = DETAIL_PARENT[view] || view;
@@ -371,25 +137,6 @@ function sectionOf(view) {
 function tabLabel(view) {
   for (const s of SECTIONS) for (const [k, label] of s.views) if (k === view) return label;
   return "";
-}
-function pathFor(view, jobId, detailId) {
-  const seg = (x) => encodeURIComponent(unesc(String(x)));
-  if (view === "job" && jobId) return `/jobs/${seg(jobId)}`;
-  if (DETAIL_PATHS[view] && jobId) return [DETAIL_PATHS[view], seg(jobId)].concat(detailId ? [seg(detailId)] : []).join("/");
-  return VIEW_PATHS[view] || "/today";
-}
-function routeFromPath(path) {
-  let parts;
-  try { parts = path.split("/").filter(Boolean).map(decodeURIComponent); } catch (_) { return null; }
-  if (!parts.length) return { view: "dashboard" };
-  const joined = "/" + parts.join("/");
-  for (const [v, p] of Object.entries(VIEW_PATHS)) if (p === joined) return { view: v };
-  if (parts[0] === "jobs" && parts.length === 2) return { view: "job", jobId: parts[1] };
-  for (const [v, p] of Object.entries(DETAIL_PATHS)) {
-    const base = p.split("/").filter(Boolean);
-    if (parts.length >= 3 && parts.length <= 4 && parts[0] === base[0] && parts[1] === base[1]) return { view: v, jobId: parts[2], detailId: parts[3] || null };
-  }
-  return null;
 }
 function pageTitle() {
   if (!state) return "Billdable";
@@ -484,11 +231,6 @@ async function loadListPage(kind, job, offset, limit) {
   if (currentView === kind) render();
 }
 
-function moreButton(kind, page) {
-  return page && page.entries.length < page.total
-    ? `<p><button class="btn small secondary" data-action="list-more" data-kind="${kind}">Show older (${page.total - page.entries.length} more)</button></p>` : "";
-}
-
 async function boot(checkLink = true) {
   let linkMessage = null;
   if (checkLink) {
@@ -530,6 +272,7 @@ function setAiVisible(on) {
 }
 
 function renderLanding() {
+  document.title = "Billdable";
   if (!authError) authErrorField = "";
   setAiVisible(false);
   const app = document.getElementById("app");
@@ -738,17 +481,6 @@ async function post(path, body = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
-// One line for the toast after an action that wrote to the Outbox.
-function emailOutcome(entries) {
-  return entries.map(e => {
-    const to = unesc(e.to), status = unesc(e.status || "");
-    if (status === "sent") return `Emailed ${to}.`;
-    if (status.startsWith("failed")) return `Saved, but the email to ${to} ${status.replace(/^failed: /, "failed: ")}. Open the Outbox to send it again.`;
-    if (status.startsWith("not sent")) return `Saved. The email to ${to} was ${status}.`;
-    return `Saved. Email to ${to}: ${status}.`;
-  }).join(" ");
-}
-
 // opts.fromHistory: Back/Forward already changed the address; opts.replace: don't add a history entry.
 function nav(view, jobId = null, detailId = null, opts = {}) {
   if (view === "account") teamData = null;  // fresh team list each time the page opens
@@ -782,18 +514,6 @@ function backButton(view, label, jobId = null) {
   return `<div class="top"><button class="back" data-action="nav" data-view="${view}"${jobId ? ` data-id="${jobId}"` : ""}>← ${label}</button></div>`;
 }
 
-// Tables become cards on a phone: each cell carries its column's name for the CSS to show.
-function labelTables(root) {
-  root.querySelectorAll(".main table:not(.sov-table)").forEach(t => {
-    const head = t.rows[0];
-    if (!head || !head.querySelector("th")) return;
-    t.classList.add("stack");
-    head.classList.add("head-row");
-    const labels = [...head.cells].map(c => c.textContent.replace(/[↑↓]/g, "").trim());
-    [...t.rows].slice(1).forEach(r => [...r.cells].forEach((c, i) => { if (labels[i] && r.cells.length > 1) c.dataset.label = labels[i]; }));
-  });
-}
-
 // Every field gets an accessible name: its <label> when there is one, else its placeholder.
 let fieldSeq = 0;
 function a11yPass(root) {
@@ -817,25 +537,6 @@ function emptyState(title, body, action = "") {
   return `<div class="empty-state"><strong>${title}</strong><p>${body}</p>${action}</div>`;
 }
 
-// Blockers count once there is a pay app to block (a draft) or the work is done; before that
-// they are what the next pay app will need.
-function isBlocked(j) {
-  return !!(j.blockers && j.blockers.length && (j.work_status === "complete" || j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status))));
-}
-
-function nextStep(j) {
-  if (j.closed) return "Closed for the record.";
-  if (isBlocked(j)) return "Clear blockers: " + j.blockers[0];
-  const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
-  if (draft) return "Pay app is ready. Review it, then Approve & send.";
-  if (j.waiver_due && !j.waiver_sent) return "Payment received. Approve and send the waiver.";
-  if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the payer. Follow up or match a payment.";
-  if (j.work_status !== "complete") return "Record progress, or mark the job done." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
-  if (j.money.retainage_open_cents > 0) return "Chase retainage once the closeout packet is complete.";
-  if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before closing: " + j.close_blockers[0] : "Ready to close for the record.";
-  return "Draft a pay app for unbilled completed work.";
-}
-
 // Change orders are approved by a signature: online through a link the payer opens,
 // or a signed copy on the job record (P2-3). There is no bare "approve" any more.
 function coSignControls(j, co, extra = "") {
@@ -852,30 +553,6 @@ function coSignControls(j, co, extra = "") {
     ${formOpen[key] ? (records.length
       ? `<div class="form-inline"><label for="cosign-rec-${co.id}" class="inline-label">Signed copy</label><select id="cosign-rec-${co.id}">${records.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Save as signed</button></div>`
       : `<p class="sub">Add the signed copy to the <button class="linkish" data-action="open-job" data-id="${j.id}">job record</button> first (a photo or PDF), then pick it here.</p>`) : ""}`;
-}
-
-function coSignature(co) {
-  if (co.signature) return `<div class="money-row"><span class="label">Signed</span><span>${co.signature.name}, ${fmtDateTime(co.signature.at)} (online)</span></div>
-    <p class="sub">Kept with it: the consent they agreed to, their network address and browser, and a fingerprint of what they saw (${String(co.signature.snapshot_sha256).slice(0, 12)}…).</p>`;
-  if (co.signed_evidence) return `<div class="money-row"><span class="label">Signed</span><span>Paper copy on the job record: ${co.signed_evidence.label} (recorded by ${co.signed_evidence.by}, ${fmtDate(co.signed_evidence.at)})</span></div>`;
-  return "";
-}
-
-const WAIVER_KINDS = {
-  conditional_progress: "Conditional, progress payment",
-  unconditional_progress: "Unconditional, progress payment",
-  conditional_final: "Conditional, final payment",
-  unconditional_final: "Unconditional, final payment",
-};
-function waiverKindLabel(code) { return WAIVER_KINDS[unesc(code)] || code; }
-function waiverSendForm(j, inv) {
-  const key = inv ? inv.id : "job";
-  const final = j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0;
-  const pick = final ? "unconditional_final" : "unconditional_progress";
-  return `<div class="form-inline">
-    <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}>${v}</option>`).join("")}</select>
-    <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}>Approve & send</button>
-  </div>`;
 }
 
 // The job page shows ONE main button: the next step. Everything else that applies sits in a
@@ -1444,17 +1121,6 @@ async function loadImportSettings() {
   } catch (_) { /* the cards keep their "loading" text; the banner covers outages */ }
 }
 
-function emailStatusHtml(e) {
-  const st = e.status || "";
-  const cls = st === "sent" ? "green" : (st.startsWith("failed") || st.startsWith("bounced")) ? "red" : st.startsWith("not sent") ? "amber" : "";
-  const when = st === "sent" && e.delivered_at ? `<div class="sub">${fmtDateTime(e.delivered_at)}</div>` : "";
-  // A row still "sending" or "queued" after 30 minutes died mid-send; the server allows a retry then.
-  const since = Date.parse(e.sending_at || e.at || "") || Date.now();
-  const stuck = (st === "sending" || st === "queued") && Date.now() - since > 30 * 60 * 1000;
-  const retry = (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
-  return `<span class="pill ${cls}">${words(st)}</span>${when}${retry}`;
-}
-
 function fillImportSettings() {
   const s = importSettings;
   if (!s) return;
@@ -1471,23 +1137,6 @@ function fillImportSettings() {
   set("email-address", s.email_address ? `Forward or BCC job email to <strong>${s.email_address}</strong>.` : "No forwarding address is set up yet (an email provider has to be connected first; see steps).");
   set("sms-number", s.sms_number ? `Text photos and notes to <strong>${s.sms_number}</strong>.` : "No texting number is set up yet (a Twilio number has to be connected first; see steps).");
 }
-
-// ---------- schedule of values ----------
-// Same integer arithmetic as sov.py, so the totals shown here match what the server saves.
-function sovNum(v) {
-  const t = String(v ?? "").replace(/[$,\s%]/g, "");
-  if (!t || !/^-?\d*\.?\d+$/.test(t)) return NaN;
-  return parseFloat(t);
-}
-function sovMilli(v) { const n = sovNum(v); return isNaN(n) ? NaN : Math.round(n * 1000); }
-function sovCents(v) { const n = sovNum(v); return isNaN(n) ? NaN : Math.round(n * 100); }
-function sovExtend(q, r) { return Math.floor((q * r + 500) / 1000); }
-function sovMarkup(base, bp) { return Math.floor((base * bp + 5000) / 10000); }
-function fmtQty(milli) {
-  const n = milli / 1000;
-  return n.toLocaleString("en-US", { maximumFractionDigits: 3 });
-}
-function blankSovLine() { return { id: "", item: "", description: "", quantity: "", unit: "", rate: "" }; }
 
 function sovStartEdit(j) {
   const v = j.sov_view || {};
@@ -1626,51 +1275,6 @@ function sovCardHtml(j) {
   </div>`;
 }
 
-function sovProgressHtml(j) {
-  const v = j.sov_view;
-  const rows = v.lines.map(l => `
-    <tr>
-      <td>${l.item}</td><td>${l.description}</td>
-      <td class="num">${l.lump_sum ? "lump sum" : fmtQty(l.qty_milli) + " " + l.unit}</td>
-      <td><input class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" value="${l.lump_sum ? +(l.done_milli / 10).toFixed(1) : l.done_milli / 1000}" inputmode="decimal" aria-label="${l.description}: done to date" ${l.done_milli >= l.qty_milli ? "disabled" : ""}> ${l.lump_sum ? "%" : l.unit}</td>
-      <td><input class="sov-in sov-num" data-sovs="${l.id}" value="${l.stored_cents ? (l.stored_cents / 100).toFixed(2) : ""}" placeholder="0.00" inputmode="decimal" aria-label="${l.description}: materials stored, dollars" ${l.done_milli >= l.qty_milli ? "disabled" : ""}></td>
-      <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
-    </tr>`).join("");
-  return `<div class="card sov-progress">
-    <p class="sub">Enter how much of each line is done to date (not this period), and the dollars of materials delivered and stored on site but not yet installed. Billdable bills the difference since the last pay app, plus overhead and profit, less retainage. Lower the stored amount as materials are installed.</p>
-    <div class="table-wrap"><table class="sov-table">
-      <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th>Stored materials $</th><th></th></tr>
-      ${rows}
-    </table></div>
-    <div class="form-inline"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>
-  </div>`;
-}
-
-// The same G703 columns as sov.sheet_columns(); entries from before stored materials
-// have no work/stored split, so all of their billing counts as work.
-function sheetColumns(e, retPct) {
-  const stored = e.stored_cents || 0;
-  const thisPeriod = e.work_this_cents ?? e.amount_cents;
-  const previous = e.prev_work_cents ?? (e.to_date_cents - e.amount_cents - stored);
-  return { previous, thisPeriod, stored, pct: e.scheduled_cents ? Math.floor(100 * e.to_date_cents / e.scheduled_cents) : 0,
-           balance: e.scheduled_cents - e.to_date_cents, retainage: Math.floor((e.to_date_cents * retPct + 50) / 100) };
-}
-
-function continuationHtml(inv, job) {
-  const rows = (inv.sov_sheet && inv.sov_sheet.length ? inv.sov_sheet : inv.sov_lines) || [];
-  if (!rows.length) return "";
-  const retPct = (job && job.retainage_pct) || 0;
-  return `<div class="card">
-    <h2>Continuation sheet</h2>
-    <div class="table-wrap"><table class="sov-table">
-      <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Previous</th><th>This period</th><th>Stored</th><th>Total to date</th><th>%</th><th>Balance to finish</th>${retPct ? `<th>Retainage ${retPct}%</th>` : ""}</tr>
-      ${rows.map(e => { const c = sheetColumns(e, retPct); return `<tr><td>${e.item}</td><td>${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(c.previous)}</td><td class="num">${money(c.thisPeriod)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(c.stored)}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${c.pct}%</td><td class="num">${money(c.balance)}</td>${retPct ? `<td class="num">${money(c.retainage)}</td>` : ""}</tr>`; }).join("")}
-      ${inv.op_cents ? `<tr><td></td><td>Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td><td></td>${retPct ? "<td></td>" : ""}</tr>` : ""}
-    </table></div>
-    ${retPct ? `<p class="sub">The retainage column is ${retPct}% of each line's total to date, for reference.</p>` : ""}
-  </div>`;
-}
-
 async function sovReadPaste() {
   const box = document.getElementById("sov-paste");
   if (!box || !sovDraft) return;
@@ -1741,23 +1345,6 @@ let mailReady = false;
 let teamData = null;      // { users, invites } from /api/team (escaped)
 let lastInvite = null;    // { link, emailed, email_status } after inviting
 let tokenScreen = null;   // { kind: "reset" | "invite", token, info }
-
-function readTokenFromUrl() {
-  const m = /^#(reset|verify|invite)=([A-Za-z0-9_-]{20,200})$/.exec(location.hash || "");
-  if (!m) return null;
-  history.replaceState(null, "", location.pathname);  // keep the token out of the address bar and history
-  return { kind: m[1], token: m[2] };
-}
-
-async function postJson(path, body) {
-  try {
-    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
-    return { ok: res.ok, status: res.status, data: await readJson(res), res };
-  } catch (_) {
-    setNetBanner(true);
-    return { ok: false, status: 0, data: { error: "Can't reach Billdable." } };
-  }
-}
 
 async function handleTokenLink(t) {
   if (t.kind === "verify") {
@@ -1898,7 +1485,7 @@ function accountView() {
       ${owner && !isDemo ? `
         <h3>Invite someone</h3>
         <div class="form-inline">
-          <input id="invite-email" type="email" placeholder="Their email" style="flex:1">
+          <input id="invite-email" type="email" placeholder="Their email" class="grow">
           <select id="invite-role"><option value="member">Member</option><option value="owner">Owner</option></select>
           <button class="btn small" data-action="team-invite">Invite</button>
         </div>
@@ -1933,7 +1520,7 @@ function accountView() {
       </div>
       ${formOpen.reset && !isDemo ? `<div class="form-inline">
         <label for="reset-confirm" class="inline-label">Reset deletes every job, payer and record; a snapshot is kept on the server. Type the company name to confirm:</label>
-        <input id="reset-confirm" placeholder="${state.company.name}" style="flex:1">
+        <input id="reset-confirm" placeholder="${state.company.name}" class="grow">
         <button class="btn small danger" data-action="reset-confirm">Reset everything</button></div>` : ""}
     </div>
     ${owner && !isDemo ? `
@@ -1942,7 +1529,7 @@ function accountView() {
       <p class="sub">Deletes every job, file, payer and record, and every user on this team. Export your data first if you want a copy. Server backups that already hold it expire on their own (the newest 14 are kept by default).</p>
       <div class="form-inline">
         <input id="del-password" type="password" placeholder="Your password" autocomplete="current-password">
-        <input id="del-confirm" placeholder="Type the company name: ${state.company.name}" style="flex:1">
+        <input id="del-confirm" placeholder="Type the company name: ${state.company.name}" class="grow">
         <button class="btn small danger" data-action="delete-account">Delete everything</button>
       </div>
     </div>` : ""}
@@ -2455,16 +2042,16 @@ const views = {
         <ul class="blocker-list">${j.blockers.map(b => `<li>${b}</li>`).join("")}</ul>
         <details><summary>Payer sent a pay app back? Teach the playbook why.</summary>
           <div class="form-inline">
-            <input id="learn-reason" placeholder="For example: needs a revised schedule of values" style="flex:1">
+            <input id="learn-reason" placeholder="For example: needs a revised schedule of values" class="grow">
             <button class="btn small secondary" data-action="learn" data-id="${j.id}">Save to playbook</button>
           </div>
           <p class="sub">The reason is kept in this payer's playbook and shown before the next send.</p>
         </details>
       </div>` : ""}
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j) : ""}
-      ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="card form-card"><h2>Progress pay app</h2><div class="form-inline"><input id="progress-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Completed to date $"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div></div>` : ""}
-      ${formOpen.pencilchanges ? `<div class="card form-card"><h2>Payer wants changes</h2><div class="form-inline"><input id="pencil-note" placeholder="What to change: quantities, change orders, missing items" style="flex:1"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
-      ${formOpen.done ? `<div class="card form-card"><h2>Mark done</h2><div class="form-inline"><input id="done-notes" placeholder="Completion notes" style="flex:1"><button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div></div>` : ""}
+      ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="card form-card"><h2>Progress pay app</h2><div class="form-inline"><input id="progress-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Completed to date $"><input id="progress-notes" placeholder="What was completed" class="grow"><button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div></div>` : ""}
+      ${formOpen.pencilchanges ? `<div class="card form-card"><h2>Payer wants changes</h2><div class="form-inline"><input id="pencil-note" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
+      ${formOpen.done ? `<div class="card form-card"><h2>Mark done</h2><div class="form-inline"><input id="done-notes" placeholder="Completion notes" class="grow"><button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div></div>` : ""}
       ${formOpen.match ? `<div class="card form-card"><h2>Match payment</h2>${openForPay.length ? `<div class="form-inline"><select id="match-inv" aria-label="Pay app">${openForPay.map(i => `<option value="${i.id}">${i.number} · ${money(i.amount_cents)} · ${INVOICE_WORDS[i.status] || i.status}</option>`).join("")}</select><input id="match-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Amount in dollars"><input id="match-ref" placeholder="Reference (check no., QBO id)"><button class="btn small" data-action="match" data-id="${j.id}">Match</button></div>` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
       ${formOpen.retpay ? `<div class="card form-card"><h2>Record retainage paid</h2><div class="form-inline"><input id="retpay-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Retainage received $"><input id="retpay-ref" placeholder="Reference"><button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div></div>` : ""}
       ${j.closed ? `<p class="sub">This job is closed. Its money record is read-only; you can still add notes to the job record.</p>` : more.length ? `
@@ -2605,7 +2192,7 @@ const views = {
               ${jobRecords.length ? `<select id="attach-rec-${p.id}" aria-label="Job record to attach">${jobRecords.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small" data-action="attach-record" data-id="${j.id}" data-item="${p.id}">Attach</button>` : `<span class="sub">Add the document to the <button class="linkish" data-action="open-job" data-id="${j.id}">job record</button> first.</span>`}
               <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">Mark present…</button>
             </div>
-            ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Why it is present, e.g. emailed to the payer on 10/12" style="flex:1"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save reason</button></div>` : ""}` : ""}
+            ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Why it is present, e.g. emailed to the payer on 10/12" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save reason</button></div>` : ""}` : ""}
           </div>`).join("") : `<p class="sub">This pay app has no packet items.</p>`}
       </div>
     `;
@@ -2621,7 +2208,7 @@ const views = {
         <div class="form-inline">
           <input id="co-title" placeholder="Title">
           <input id="co-amt" type="number" step="0.01" inputmode="decimal" placeholder="Amount in dollars">
-          <input id="co-desc" placeholder="What changed (optional)" style="flex:1">
+          <input id="co-desc" placeholder="What changed (optional)" class="grow">
           <button class="btn" data-action="add-co" data-id="${j.id}">Create</button>
         </div>`;
     }
@@ -2967,7 +2554,7 @@ const views = {
             <td>${row.number ? `${row.number} · ${row.job}` : `<span class="pill">${words(row.status)}</span>`}</td><td class="sub">${row.reason}</td></tr>`).join("")}
         </table></div>
         <div class="form-inline"><button class="btn" data-action="qbo-apply">Record the ticked payments</button><button class="btn secondary" data-action="qbo-cancel">Cancel</button></div>`
-      : `<textarea id="qbo-csv" rows="5" placeholder="Paste the CSV here" style="width:100%;font:inherit"></textarea>
+      : `<textarea id="qbo-csv" rows="5" placeholder="Paste the CSV here" class="full-input"></textarea>
         <button class="btn small" data-action="qbo-read">Read payments</button>`}
     </details>`;
     return `
@@ -3127,22 +2714,6 @@ function helperStarters() {
   if (currentView === "inbox") return ["How does it know which job?", "How do I import 30 days of notes?", "How do I forward emails to Billdable?"];
   if (currentView === "retainage") return ["How do I get retainage released?", "Which jobs are holding my retainage?"];
   return ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"];
-}
-
-function helperFormat(text) {
-  // text is escaped first; then "- " lines become a list, blank lines paragraphs.
-  const lines = esc(text || "").split("\n");
-  let html = "", inList = false;
-  for (const line of lines) {
-    if (line.startsWith("- ")) {
-      if (!inList) { html += "<ul>"; inList = true; }
-      html += `<li>${line.slice(2)}</li>`;
-    } else {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += line.trim() ? `<p>${line}</p>` : "";
-    }
-  }
-  return html + (inList ? "</ul>" : "");
 }
 
 function renderHelper() {

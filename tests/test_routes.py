@@ -103,5 +103,45 @@ class RouteEdgeTests(unittest.TestCase):
         self.assertEqual(res.status, 401)
 
 
+    def test_styles_only_from_the_site_or_the_page_s_own_style_block(self):
+        import base64, hashlib, re
+        for path in ["/", "/terms", "/nope"]:
+            conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
+            conn.request("GET", path, headers={"Accept-Encoding": "gzip"} if path == "/" else {})
+            res = conn.getresponse()
+            body = res.read()
+            conn.close()
+            csp = res.getheader("Content-Security-Policy")
+            self.assertNotIn("unsafe-inline", csp, path)
+            if path != "/":
+                for block in re.findall(rb"<style>(.*?)</style>", body, re.S):
+                    self.assertIn(base64.b64encode(hashlib.sha256(block).digest()).decode(), csp, path)
+                self.assertNotIn(b'style="', body, path)
+        app = (Path(server.__file__).parent / "static" / "app.js").read_text()
+        self.assertNotIn('style="', app, "style attributes are blocked by the CSP; use a class")
+
+
+    def test_app_is_a_module_and_its_imports_are_served(self):
+        import re
+        conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
+        conn.request("GET", "/")
+        page = conn.getresponse().read().decode()
+        conn.close()
+        self.assertIn('<script type="module" src="/app.js?v=', page)
+        static = Path(server.__file__).parent / "static"
+        imports = set(re.findall(r'from "\./(js/[a-z]+\.js)"', (static / "app.js").read_text()))
+        for module in sorted((static / "js").glob("*.js")):
+            imports |= {"js/" + m for m in re.findall(r'from "\./([a-z]+\.js)"', module.read_text())}
+        self.assertGreaterEqual(len(imports), 6)
+        for rel in sorted(imports):
+            conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
+            conn.request("GET", "/" + rel)
+            res = conn.getresponse()
+            res.read()
+            conn.close()
+            self.assertEqual(res.status, 200, rel)
+            self.assertTrue(res.getheader("Content-Type").startswith("text/javascript"), rel)
+
+
 if __name__ == "__main__":
     unittest.main()
