@@ -163,8 +163,8 @@ class ImportHttpTests(unittest.TestCase):
         res, state = self.request("POST", f"/api/jobs/{job['id']}/progress", {"completed_cents": 4_000_000}, cookie=cookie)
         number = state["jobs"][0]["invoices"][-1]["number"]
         company_id = state["company_id"] if "company_id" in state else next(
-            p.stem for p in server.COMPANIES.glob("*.json") if any(j["id"] == job["id"] for j in server.load_company(p.stem)["jobs"]))
-        with server.STATE_LOCK:  # as if the pay app email had gone out
+            c for c in server.company_ids() if any(j["id"] == job["id"] for j in server.load_company(c)["jobs"]))
+        with server.company_lock(company_id):  # as if the pay app email had gone out
             st = server.load_company(company_id)
             st.setdefault("email_log", []).append({"id": "eml-t", "job_id": job["id"], "kind": "pay_app", "to": "ap@park.example",
                                                    "cc": [], "subject": f"Pay application {number} — Elm addition", "status": "sent"})

@@ -19,13 +19,14 @@ The public landing page is the front door. Create a company there, or sign in.
 
 All data lives in one directory, set by the `BILLDABLE_DATA_DIR` environment variable. The default is `data/` beside `server.py`.
 
-- `companies/<company_id>.json`: one file per company
-- `companies/snapshots/`: a copy of a company file taken before each confirmed reset
+- `companies/billdable.db`: every company, in one SQLite database (WAL mode). Each job, audit row, email, inbox item, daily record and file is its own row, so a save writes only what changed, and companies don't wait on each other (each has its own lock). Schema migrations are in `store.py`.
+- `companies/<company_id>.json`: the older one-file-per-company layout, used when `BILLDABLE_STORAGE=json`. On its first start the SQLite store imports any such files and moves them to `companies/imported-json-<time>/`; it never deletes them.
+- `companies/snapshots/`: a copy of a company taken before each confirmed reset
 - `auth.json`: users, password hashes, and the SHA-256 of each session token (a copy of the file signs nobody in)
 
-Writes go to a temp file and are renamed into place, so a crash never leaves half a file. Backups are described under "Backups, health and logs". `GET /api/export` downloads the signed-in company's file.
+JSON files are written to a temp file and renamed into place, and SQLite commits each save as one transaction, so a crash never leaves half a write. Backups are described under "Backups, health and logs". `GET /api/export` downloads the signed-in company's data as JSON, whichever layout is in use.
 
-On Render, the default filesystem does not survive a deploy or restart. `render.yaml` builds the Dockerfile (which installs `age` for off-site backups), attaches a 1 GB persistent disk at `/var/data` (this needs a paid instance) and sets `BILLDABLE_DATA_DIR` to it. It also defines `billdable-staging`, a free service that deploys `dev` with throwaway data and no email; without a disk every deploy starts with no accounts. After the first deploy with the disk, deploy a second time, check that `/healthz` shows the same `last_backup` and that an account still signs in, then set `BILLDABLE_DATA_PERSISTENT=1` to remove the landing page's "data may be erased" notice. When a signed-in user's company file is missing, the server logs a `WARNING: company file missing` line.
+On Render, the default filesystem does not survive a deploy or restart. `render.yaml` builds the Dockerfile (which installs `age` for off-site backups), attaches a 1 GB persistent disk at `/var/data` (this needs a paid instance) and sets `BILLDABLE_DATA_DIR` to it. It also defines `billdable-staging`, a free service that deploys `dev` with throwaway data and no email; without a disk every deploy starts with no accounts. After the first deploy with the disk, deploy a second time, check that `/healthz` shows the same `last_backup` and that an account still signs in, then set `BILLDABLE_DATA_PERSISTENT=1` to remove the landing page's "data may be erased" notice. When a signed-in user's company is missing, the server logs a `WARNING: company data missing` line.
 
 Set `COOKIE_SECURE=1` in production to force the `Secure` flag on the session cookie. Without it, the flag is set when the request arrives with `X-Forwarded-Proto: https`.
 
@@ -36,6 +37,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | Variable | What it does |
 | --- | --- |
 | `BILLDABLE_DATA_DIR` | Where all data lives (see above). |
+| `BILLDABLE_STORAGE` | `json` keeps the one-file-per-company layout. Unset (the default) uses SQLite. |
 | `BILLDABLE_ENV` | `production` turns the demo account off (not created, can't sign in, old demo sessions end) and refuses to start unless `BILLDABLE_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `BILLDABLE_URL` is an `https://` address. Unset everywhere else. |
 | `BILLDABLE_DATA_PERSISTENT` | `1` once a deploy has been seen to keep the data. Until then the landing page says "Demo: data may be erased". |
 | `COOKIE_SECURE` | `1` forces the Secure cookie flag. |
@@ -177,7 +179,8 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `legal.py`, `legal/`: the Terms of Service and Privacy Policy
 - `mailer.py`: outgoing email over SMTP
 - `seed.py`: Hartline Remodeling sample data
-- `server.py`: stdlib HTTP server, cookie sessions, per-company JSON
+- `server.py`: stdlib HTTP server and cookie sessions. Every URL is one line in its `ROUTES` table, naming the handler and who may call it (public, signed in, or a change to the company's data, which runs under that company's lock and returns the updated state)
+- `store.py`: company storage, SQLite or JSON files (see Data)
 - `static/`: `index.html`, `app.js`, `styles.css` (the only files served)
 - `tests/`: domain, auth and HTTP tests
 
@@ -206,7 +209,10 @@ Auth (cookie session):
 
 Company data (requires a session; scoped to the signed-in company). The audit trail always names the signed-in user; an `actor` field in a request body is ignored.
 
-- `GET /api/state`: full snapshot
+- `GET /api/state`: what the app needs on load: open jobs in full, jobs closed in the last 90 days as summaries, payers, the latest 20 emails, and counts (`closed_jobs_total`, `email_log_total`, `audit_total`). It doesn't grow with the company's history.
+- `GET /api/jobs?status=open|closed|all&offset=&limit=&q=`: jobs, newest first (closed ones as summaries, by closing date); `limit` up to 200
+- `GET /api/jobs/{id}`: one job in full, with its payer
+- `GET /api/outbox?offset=&limit=&job=` and `GET /api/audit?…`: the Outbox and the audit trail, newest first
 - `GET /api/export`: download the company's data file
 - `POST /api/reset`: demo company returns to the Hartline seed. Any other company needs `{confirm: "<exact company name>"}` and gets a snapshot first.
 - `POST /api/jobs`: create a job. Required: `name`, `address`, `customer`, `approver`, `ap_email`, `contract_cents`. Optional: `phone`, `role` (`Owner` or `GC`), `retainage_pct` (0–20), `packet_notes`, `contract_number`.

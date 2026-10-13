@@ -49,10 +49,10 @@ class AdminTests(unittest.TestCase):
     def test_delete_company_needs_the_id_typed(self):
         code, out = self.run_admin("delete-company", "co-pine", typed="yes")
         self.assertEqual(code, 1)
-        self.assertTrue(server.company_path("co-pine").exists())
+        self.assertTrue(server.company_exists("co-pine"))
         code, out = self.run_admin("delete-company", "co-pine", typed="co-pine")
         self.assertEqual(code, 0)
-        self.assertFalse(server.company_path("co-pine").exists())
+        self.assertFalse(server.company_exists("co-pine"))
         self.assertIsNone(auth.user_by_email("owner@pine.example"))
 
 

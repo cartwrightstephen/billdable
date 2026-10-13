@@ -50,6 +50,7 @@ import qbo_csv
 import payer_page
 import sov
 import storage
+import store
 import trial
 import twilio_media
 from seed import seed_state
@@ -60,7 +61,17 @@ COMPANIES = storage.DATA_DIR / "companies"
 PORT = int(os.environ.get("PORT", "8765"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 COOKIE = "billdable_session"
-STATE_LOCK = threading.Lock()
+_COMPANY_LOCKS: dict = {}
+_COMPANY_LOCKS_GUARD = threading.Lock()
+_DELETED_LOCK = threading.Lock()
+
+
+def company_lock(company_id: str) -> threading.Lock:
+    """One lock per company: a change loads, edits and saves under it. Companies don't wait on each other."""
+    with _COMPANY_LOCKS_GUARD:
+        return _COMPANY_LOCKS.setdefault(company_id, threading.Lock())
+
+
 STUCK_MINUTES = 30  # an email still "sending" after this long died mid-send and can be retried
 MAX_BODY_BYTES = 1_000_000
 MAX_INBOUND_BYTES = 25 * 1024 * 1024
@@ -236,19 +247,32 @@ def empty_state(company_name: str) -> dict:
     }
 
 
+def company_store():
+    """SQLite by default, the JSON files with BILLDABLE_STORAGE=json (store.py, P2-5)."""
+    return store.open_store(COMPANIES)
+
+
 def company_path(company_id: str) -> Path:
+    """The JSON layout's file for a company (BILLDABLE_STORAGE=json)."""
     return COMPANIES / f"{company_id}.json"
 
 
+def company_exists(company_id: str) -> bool:
+    return company_store().exists(company_id)
+
+
+def company_ids() -> list:
+    return company_store().ids() if COMPANIES.exists() else []
+
+
 def load_company(company_id: str) -> dict:
-    path = company_path(company_id)
-    if path.exists():
-        state = json.loads(path.read_text())
+    state = company_store().load(company_id)
+    if state is not None:
         migrations.migrate(state)  # the next save writes the current shape back
         return state
-    # A signed-in user whose company file is gone means data was lost
+    # A signed-in user whose company is gone means data was lost
     # (for example a deploy without a persistent disk). Say so in the log.
-    print(f"WARNING: company file missing for {company_id} at {path}; serving a blank company.", file=sys.stderr)
+    print(f"WARNING: company data missing for {company_id} in {COMPANIES}; serving a blank company.", file=sys.stderr)
     return empty_state("New company")
 
 
@@ -297,10 +321,12 @@ def delete_company_data(company_id: str) -> int:
     Used by the owner's Delete the company and by admin.py for a deletion request. Returns how
     many users were removed."""
     removed = auth.delete_company_users(company_id)  # every session of the company ends here
-    with STATE_LOCK:
-        gone = sorted(deleted_companies() | {company_id})
-        storage.write_json(_deleted_path(), gone)
-        for path in [company_path(company_id), *(COMPANIES / "snapshots").glob(f"{company_id}-*.json")]:
+    with company_lock(company_id):
+        with _DELETED_LOCK:
+            gone = sorted(deleted_companies() | {company_id})
+            storage.write_json(_deleted_path(), gone)
+        company_store().delete(company_id)
+        for path in (COMPANIES / "snapshots").glob(f"{company_id}-*.json"):
             try:
                 path.unlink()
             except OSError:
@@ -317,7 +343,7 @@ def save_company(company_id: str, state: dict) -> None:
     if company_id in deleted_companies():
         log_json("warn", msg="write to a deleted company refused", company=company_id)
         return
-    storage.write_json(company_path(company_id), state)
+    company_store().save(company_id, state)
 
 
 def ensure_demo() -> None:
@@ -329,7 +355,7 @@ def ensure_demo() -> None:
             auth.DEMO_COMPANY_ID,
             enforce_policy=False,
         )
-    if not company_path(auth.DEMO_COMPANY_ID).exists():
+    if not company_exists(auth.DEMO_COMPANY_ID):
         save_company(auth.DEMO_COMPANY_ID, seed_state())
 
 
@@ -489,7 +515,7 @@ class Handler(BaseHTTPRequestHandler):
     def _change(self, company_id: str, fn) -> tuple:
         """Load, change and save one company under the lock; return (status, snapshot)."""
         try:
-            with STATE_LOCK:
+            with company_lock(company_id):
                 state = load_company(company_id)
                 fn(state)
                 save_company(company_id, state)
@@ -610,7 +636,7 @@ class Handler(BaseHTTPRequestHandler):
             handler(m, ctx)
             return
         try:
-            with STATE_LOCK:
+            with company_lock(ctx.company_id):
                 state = load_company(ctx.company_id)
                 state = handler(state, m, ctx) or state
                 save_company(ctx.company_id, state)
@@ -678,7 +704,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"companies": self._company_overview()})
 
     def _g_payapp_pdf(self, m, user) -> None:
-        with STATE_LOCK:
+        with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         pdf, name = self._payapp_pdf(state, m.group(1), m.group(2))
         if not pdf:
@@ -691,7 +717,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             self._json(401, {"error": "Not signed in.", "data_notice": data_notice()})
             return
-        with STATE_LOCK:
+        with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
                          "mail_ready": bool(mailer.configured() and app_url())})
@@ -703,7 +729,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, helper.review())
 
     def _g_state(self, m, user) -> None:
-        with STATE_LOCK:
+        with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         self._json(200, domain.light_snapshot(state))
 
@@ -721,12 +747,12 @@ class Handler(BaseHTTPRequestHandler):
         status = (q.get("status") or ["all"])[0]
         if status not in {"open", "closed", "all"}:
             raise BadRequest("Status must be open, closed or all.")
-        with STATE_LOCK:
+        with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             self._json(200, domain.jobs_page(state, status, offset, limit, (q.get("q") or [""])[0][:100]))
 
     def _g_job(self, m, user) -> None:
-        with STATE_LOCK:
+        with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             job = next((j for j in state["jobs"] if j["id"] == m.group(1)), None)
             if not job:
@@ -738,19 +764,19 @@ class Handler(BaseHTTPRequestHandler):
     def _g_log_page(self, m, user) -> None:
         offset, limit, q = self._paging()
         key = "email_log" if m.group(1) == "outbox" else "audit"
-        with STATE_LOCK:
+        with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             self._json(200, domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0]))
 
     def _g_export(self, m, user) -> None:
-        with STATE_LOCK:
+        with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
         self._send(200, json.dumps(state, indent=2).encode(), "application/json",
                    {"Content-Disposition": f'attachment; filename="billdable-export-{stamp}.json"'})
 
     def _g_file(self, m, user) -> None:
-        with STATE_LOCK:
+        with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         self._serve_file(user["company_id"], state, m.group(1))
 
@@ -763,7 +789,7 @@ class Handler(BaseHTTPRequestHandler):
     def _g_metrics(self, m, user) -> None:
         period = (parse_qs(urlparse(self.path).query).get("period") or ["90"])[0]
         since = None if period == "all" else datetime.now(timezone.utc).date() - timedelta(days=90)
-        with STATE_LOCK:
+        with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         self._json(200, metrics.compute(state, since=since))
 
@@ -790,7 +816,7 @@ class Handler(BaseHTTPRequestHandler):
         if not company_id:
             self._json(404, {"error": "Not found"})
             return
-        with STATE_LOCK:
+        with company_lock(company_id):
             state = load_company(company_id)
         self._send(200, calendar_feed.render(state).encode("utf-8"), "text/calendar; charset=utf-8",
                    {"Content-Disposition": 'inline; filename="billdable.ics"'})
@@ -864,7 +890,7 @@ class Handler(BaseHTTPRequestHandler):
                                     terms_version=legal.TERMS_VERSION)
             fresh = empty_state(_text(body, "company_name").strip() or "New company")
             trial.start(fresh["company"])
-            with STATE_LOCK:
+            with company_lock(company_id):
                 save_company(company_id, fresh)
             token = auth.create_session(user)
             verification = self._send_verification(user)
@@ -927,7 +953,7 @@ class Handler(BaseHTTPRequestHandler):
         if not info:
             self._json(404, {"error": "This invite is invalid or has expired. Ask for a new one."})
             return
-        with STATE_LOCK:
+        with company_lock(info["company_id"]):
             company = load_company(info["company_id"]).get("company", {})
         self._json(200, {"email": info["email"], "role": info["role"], "company_name": company.get("name", ""),
                          "invited_by": info["invited_by"]})
@@ -970,7 +996,7 @@ class Handler(BaseHTTPRequestHandler):
         self._import_file(user, user.get("name") or user.get("email") or "owner")
 
     def _p_helper_ask(self, m, ctx: "Ctx") -> None:
-        with STATE_LOCK:
+        with company_lock(ctx.company_id):
             state = load_company(ctx.company_id)
         try:
             reply = helper.answer(_text(ctx.body, "q"), state, ctx.company_id, ctx.user["id"], _text(ctx.body, "view"), _text(ctx.body, "job_id"))
@@ -1026,7 +1052,7 @@ class Handler(BaseHTTPRequestHandler):
     def _p_payments_csv(self, m, ctx: "Ctx") -> None:
         # Read a QuickBooks payments export and propose matches; nothing is recorded (P2-1).
         parsed = qbo_csv.parse(_text(ctx.body, "csv", limit=2_000_000))
-        with STATE_LOCK:
+        with company_lock(ctx.company_id):
             state = load_company(ctx.company_id)
         self._json(200, {"rows": qbo_csv.propose(state, parsed["rows"]), "warnings": parsed["warnings"]})
 
@@ -1060,7 +1086,7 @@ class Handler(BaseHTTPRequestHandler):
                              else "The demo account doesn't send email."})
             return
         first = datetime.now(timezone.utc).date().replace(day=1) - timedelta(days=1)
-        with STATE_LOCK:
+        with company_lock(ctx.company_id):
             state = load_company(ctx.company_id)
         subject, text = metrics.month_summary(state, first.year, first.month)
         result = self._system_email(ctx.user["email"], subject, text, ctx.company_id)
@@ -1166,7 +1192,7 @@ class Handler(BaseHTTPRequestHandler):
                 note = {"invite_path": f"/#invite={raw}", "invite_link": f"{url}/#invite={raw}" if url else None, "emailed": False,
                         "email_status": "BILLDABLE_URL is not set on this server" if not url else "not sent"}
                 if url:
-                    with STATE_LOCK:
+                    with company_lock(company_id):
                         company_name = load_company(company_id).get("company", {}).get("name", "")
                     # Names typed by users go in the body only, flattened and shortened; the subject is fixed.
                     flat = lambda text, n: " ".join(str(text).split())[:n]
@@ -1214,7 +1240,7 @@ class Handler(BaseHTTPRequestHandler):
         if not auth.check_password(user["id"], body.get("password")):
             self._json(409, {"error": "Password is wrong. Nothing was deleted."})
             return
-        with STATE_LOCK:
+        with company_lock(company_id):
             name = load_company(company_id).get("company", {}).get("name", "")
         if _text(body, "confirm").strip() != name:
             self._json(409, {"error": "Type your company name exactly to confirm. Nothing was deleted."})
@@ -1236,9 +1262,8 @@ class Handler(BaseHTTPRequestHandler):
     def _company_overview(self) -> list:
         users = auth.all_users()
         out = []
-        for path in sorted(COMPANIES.glob("*.json")) if COMPANIES.exists() else []:
-            company_id = path.stem
-            with STATE_LOCK:
+        for company_id in company_ids():
+            with company_lock(company_id):
                 try:
                     state = load_company(company_id)
                 except (OSError, ValueError):
@@ -1265,7 +1290,7 @@ class Handler(BaseHTTPRequestHandler):
         cfg = mailer.settings()
         now = datetime.now(timezone.utc)
         stale = (now - timedelta(minutes=STUCK_MINUTES)).isoformat(timespec="seconds")
-        with STATE_LOCK:
+        with company_lock(company_id):
             state = load_company(company_id)
             log = state.get("email_log", [])
             queued = [e for e in log if e.get("status") == "queued" and (only is None or e["id"] in only)]
@@ -1346,7 +1371,7 @@ class Handler(BaseHTTPRequestHandler):
         sent = sum(1 for status, _ in outcome.values() if status == "sent")
         mailer.record_sent(company_id, sent)
         done_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        with STATE_LOCK:
+        with company_lock(company_id):
             state = load_company(company_id)
             for e in state.get("email_log", []):
                 if e["id"] in outcome and e.get("status") == "sending":
@@ -1364,7 +1389,7 @@ class Handler(BaseHTTPRequestHandler):
     def _retry_email(self, company_id: str, user: dict, email_id: str) -> None:
         stale = (datetime.now(timezone.utc) - timedelta(minutes=STUCK_MINUTES)).isoformat(timespec="seconds")
         code, payload = 200, None
-        with STATE_LOCK:
+        with company_lock(company_id):
             state = load_company(company_id)
             entry = next((e for e in state.get("email_log", []) if e["id"] == email_id), None)
             if not entry:
@@ -1520,12 +1545,12 @@ class Handler(BaseHTTPRequestHandler):
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if failures:
             # The provider doesn't know our companies: find each address's latest sent email.
-            for path in sorted(COMPANIES.glob("*.json")) if COMPANIES.exists() else []:
-                with STATE_LOCK:
-                    state = load_company(path.stem)
+            for company_id in company_ids():
+                with company_lock(company_id):
+                    state = load_company(company_id)
                     hit = [f for f in failures if mail_events.apply(state, f["email"], f["reason"], now)]
                     if hit:
-                        save_company(path.stem, state)
+                        save_company(company_id, state)
                         marked += len(hit)
         log_json("info", msg="mail events", received=len(failures), marked=marked, rid=self._rid)
         self._json(200, {"ok": True, "marked": marked})
@@ -1551,9 +1576,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _payer_lookup(self, company_id: str, token: str) -> tuple:
         """(state, job, invoice) for a payer link, or Nones. Deleted companies have no links."""
-        if company_id in deleted_companies() or not company_path(company_id).exists():
+        if company_id in deleted_companies() or not company_exists(company_id):
             return None, None, None
-        with STATE_LOCK:
+        with company_lock(company_id):
             state = load_company(company_id)
         job, invoice = payer_page.find(state, token)
         return (state, job, invoice) if invoice else (None, None, None)
@@ -1629,9 +1654,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(303, b"", "text/plain", {"Location": "/inbox"})
 
     def _co_lookup(self, company_id: str, token: str) -> tuple:
-        if company_id in deleted_companies() or not company_path(company_id).exists():
+        if company_id in deleted_companies() or not company_exists(company_id):
             return None, None, None
-        with STATE_LOCK:
+        with company_lock(company_id):
             state = load_company(company_id)
         job, co = payer_page.find_co(state, token)
         return (state, job, co) if co else (None, None, None)
@@ -1722,11 +1747,9 @@ class Handler(BaseHTTPRequestHandler):
         if _text(ctx.body, "confirm").strip() != name:
             raise domain.GateError("Reset not done. Type your company name exactly to confirm.",
                                    ["Reset deletes every job, payer and record in this company."])
-        if company_path(company_id).exists():
+        if company_exists(company_id):
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            snapshots = COMPANIES / "snapshots"
-            snapshots.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(company_path(company_id), snapshots / f"{company_id}-before-reset-{stamp}.json")
+            storage.write_json(COMPANIES / "snapshots" / f"{company_id}-before-reset-{stamp}.json", state)
         kept = {k: v for k, v in state.get("company", {}).items() if k in ("trial", "onboarding_dismissed")}
         fresh = empty_state(name)
         fresh["company"].update(kept)  # a reset doesn't restart the trial
@@ -2003,7 +2026,7 @@ def main() -> None:
     if demo_enabled():
         print(f"Demo login: {auth.DEMO_EMAIL} / {auth.DEMO_PASSWORD}")
     backup.start_scheduler(
-        {"companies": STATE_LOCK, "auth": auth.LOCK, "tokens": importer.TOKENS_LOCK},
+        {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK},
         log=lambda msg: log_json("info", msg=msg),
     )
     server.serve_forever()

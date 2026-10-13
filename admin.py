@@ -21,10 +21,10 @@ import server
 def _companies() -> list[dict]:
     users = auth.all_users()
     out = []
-    for path in sorted(server.COMPANIES.glob("*.json")) if server.COMPANIES.exists() else []:
-        state = json.loads(path.read_text())
-        out.append({"id": path.stem, "name": state.get("company", {}).get("name", ""),
-                    "users": sum(1 for u in users if u["company_id"] == path.stem), "jobs": len(state.get("jobs", []))})
+    for company_id in server.company_ids():
+        state = server.load_company(company_id)
+        out.append({"id": company_id, "name": state.get("company", {}).get("name", ""),
+                    "users": sum(1 for u in users if u["company_id"] == company_id), "jobs": len(state.get("jobs", []))})
     return out
 
 

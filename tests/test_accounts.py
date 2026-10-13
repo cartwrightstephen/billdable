@@ -289,10 +289,10 @@ class AccountHttpTests(ServerCase):
         self.assertEqual(res.status, 409)
         res, _ = self.request("POST", "/api/account/delete", {"password": PASSWORD, "confirm": "Gone"}, cookie=cookie)
         self.assertEqual(res.status, 409)
-        self.assertTrue(server.company_path(company_id).exists())
+        self.assertTrue(server.company_exists(company_id))
         res, data = self.request("POST", "/api/account/delete", {"password": PASSWORD, "confirm": "Gone Co"}, cookie=cookie)
         self.assertEqual(res.status, 200, data)
-        self.assertFalse(server.company_path(company_id).exists())
+        self.assertFalse(server.company_exists(company_id))
         self.assertFalse((importer.UPLOADS / company_id).exists())
         self.assertEqual(importer.company_tokens(company_id, create=False), {})
         res, _ = self.request("GET", "/api/state", cookie=cookie)
@@ -556,7 +556,7 @@ class ReviewFourTests(ServerCase):
         mailer.record_sent(company_id, 1)
         self.request("POST", "/api/account/delete", {"password": PASSWORD, "confirm": "L2 Co"}, cookie=cookie)
         server.save_company(company_id, server.empty_state("ghost"))  # a request that was already running
-        self.assertFalse(server.company_path(company_id).exists())
+        self.assertFalse(server.company_exists(company_id))
         log = json.loads(helper.LOG_PATH.read_text()) if helper.LOG_PATH.exists() else []
         self.assertFalse(any(e.get("company_id") == company_id for e in log))
         self.assertEqual(mailer.sent_in_last_day(company_id), 0)
