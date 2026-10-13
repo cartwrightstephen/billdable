@@ -3,6 +3,7 @@ let me = null;
 let authMode = "signup";
 let dataNotice = false;   // server says data may be erased (no persistent disk confirmed yet)
 let authError = "";
+let authErrorField = "";  // "password" | "terms" when the error belongs to one field
 let jobFormErrors = {};   // new-job or edit-job field id -> message
 let drawerOpen = false;   // the phone menu
 let pendingPath = null;   // a page address opened while signed out, opened after sign-in
@@ -463,6 +464,7 @@ function setAiVisible(on) {
 }
 
 function renderLanding() {
+  if (!authError) authErrorField = "";
   setAiVisible(false);
   const app = document.getElementById("app");
   const signup = authMode === "signup";
@@ -503,10 +505,12 @@ function renderLanding() {
             <label>Email</label>
             <input name="email" type="email" required autocomplete="username" />
             <label>Password</label>
-            <input name="password" type="password" required autocomplete="${signup ? "new-password" : "current-password"}" />
-            ${signup ? `<label class="terms-check"><input type="checkbox" name="accept_terms" required> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>` : ""}
+            <input name="password" type="password" required autocomplete="${signup ? "new-password" : "current-password"}"${authErrorField === "password" ? ' aria-invalid="true" aria-describedby="auth-field-error"' : ""} />
+            ${authErrorField === "password" ? `<span class="field-error" id="auth-field-error">${esc(authError)}</span>` : ""}
+            ${signup ? `<label class="terms-check"><input type="checkbox" name="accept_terms" required${authErrorField === "terms" ? ' aria-invalid="true" aria-describedby="auth-field-error"' : ""}> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>` : ""}
+            ${authErrorField === "terms" ? `<span class="field-error" id="auth-field-error">${esc(authError)}</span>` : ""}
             <button class="btn" type="submit">${signup ? "Create account" : "Sign in"}</button>
-            ${authError ? `<div class="auth-error">${esc(authError)}</div>` : ""}
+            ${authError && !authErrorField ? `<div class="auth-error" role="alert">${esc(authError)}</div>` : ""}
           </form>`}
           ${signup ? "" : `<div class="auth-toggle"><button type="button" id="auth-forgot">Forgot your password?</button></div>`}
           <div class="auth-toggle">
@@ -554,9 +558,12 @@ function renderLanding() {
 async function onAuthSubmit(e) {
   e.preventDefault();
   const form = e.target;
+  authErrorField = "";
   if (authMode === "signup" && form.password.value.length < 10) {
     authError = "Password must be at least 10 characters.";
+    authErrorField = "password";
     renderLanding();
+    document.querySelector('#auth-form input[name="password"]')?.focus();
     return;
   }
   const body = loginCode && authMode === "login"
@@ -566,7 +573,7 @@ async function onAuthSubmit(e) {
     body.name = form.name.value;
     body.company_name = form.company_name.value;
     body.accept_terms = form.accept_terms.checked;
-    if (!body.accept_terms) { authError = "To create an account, accept the Terms of Service and the Privacy Policy."; renderLanding(); return; }
+    if (!body.accept_terms) { authError = "To create an account, accept the Terms of Service and the Privacy Policy."; authErrorField = "terms"; renderLanding(); return; }
   }
   let res;
   try {
@@ -827,7 +834,7 @@ function jobActions(j) {
   if (m.retainage_open_cents > 0) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "Emails the request once the closeout packet is complete.");
   if (draft && !pencilOut) add("pencil", "Send pencil copy", `data-action="pencil" data-id="${j.id}"`, "Send the draft so the payer agrees quantities first.");
   if (pencilOut) add("pencil-ok", "Payer agreed to pencil", `data-action="pencil-agreed" data-id="${j.id}"`, "Record that the payer agreed to the pencil copy.");
-  if (pencilOut) add("pencil-no", "Payer wants changes", `data-action="pencil-changes" data-id="${j.id}"`, "Record what the payer wants changed.");
+  if (pencilOut) add("pencil-no", "Payer wants changes", `data-action="toggle-form" data-form="pencilchanges"`, "Record what the payer wants changed.");
   if (waitingPay) add("follow", "Follow up", `data-action="follow-up" data-id="${j.id}"`, "Email a follow-up, no sooner than the payer's playbook allows.");
   if (m.retainage_open_cents > 0) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "Record retainage the payer released.");
   add("co", "Add change order", `data-action="goto-co" data-id="${j.id}"`, "Create a change order for this job.");
@@ -901,12 +908,9 @@ async function resetData() {
     await post("/api/reset");
     return;
   }
-  const typed = prompt(
-    "Reset deletes every job, payer and record in your company. A snapshot is kept on the server.\n\n" +
-    "Type your company name exactly as it appears in the left rail to confirm:"
-  );
-  if (typed === null) return;
-  await post("/api/reset", { confirm: typed });
+  formOpen.reset = !formOpen.reset;
+  render();
+  document.getElementById("reset-confirm")?.focus();
 }
 
 function bindActions() {
@@ -947,6 +951,11 @@ function bindActions() {
         me = null; state = null; teamData = null; lastInvite = null;
         renderLanding();
         toast(r.data.message);
+        return;
+      }
+      if (a === "reset-confirm") {
+        const r = await post("/api/reset", { confirm: document.getElementById("reset-confirm")?.value || "" });
+        if (r && r.ok) { formOpen.reset = false; render(); }
         return;
       }
       if (a === "2fa-begin") {
@@ -1041,8 +1050,9 @@ function bindActions() {
       else if (a === "pencil") await post(`/api/jobs/${id}/pencil`);
       else if (a === "pencil-agreed") await post(`/api/jobs/${id}/pencil-response`, { agreed: true });
       else if (a === "pencil-changes") {
-        const note = prompt("What does the payer want changed? (quantities, change orders, missing items)");
-        if (note === null) return;
+        const note = (document.getElementById("pencil-note")?.value || "").trim();
+        if (!note) { toast("Say what the payer wants changed."); document.getElementById("pencil-note")?.focus(); return; }
+        formOpen.pencilchanges = false;
         await post(`/api/jobs/${id}/pencil-response`, { agreed: false, note });
       }
       else if (a === "pick-files") {
@@ -1842,8 +1852,12 @@ function accountView() {
       <p class="sub">Download everything in your company as one file, or start over.</p>
       <div class="form-inline">
         <a class="btn small secondary" href="/api/export" download>Export data</a>
-        ${owner ? `<button class="btn small secondary" id="reset">${isDemo ? "Reset the demo" : "Reset data"}</button>` : ""}
+        ${owner ? `<button class="btn small secondary" id="reset" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>` : ""}
       </div>
+      ${formOpen.reset && !isDemo ? `<div class="form-inline">
+        <label for="reset-confirm" class="inline-label">Reset deletes every job, payer and record; a snapshot is kept on the server. Type the company name to confirm:</label>
+        <input id="reset-confirm" placeholder="${state.company.name}" style="flex:1">
+        <button class="btn small danger" data-action="reset-confirm">Reset everything</button></div>` : ""}
     </div>
     ${owner && !isDemo ? `
     <div class="card danger-zone">
@@ -2368,6 +2382,7 @@ const views = {
       </div>` : ""}
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j) : ""}
       ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="card form-card"><h2>Progress pay app</h2><div class="form-inline"><input id="progress-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Completed to date $"><input id="progress-notes" placeholder="What was completed" style="flex:1"><button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div></div>` : ""}
+      ${formOpen.pencilchanges ? `<div class="card form-card"><h2>Payer wants changes</h2><div class="form-inline"><input id="pencil-note" placeholder="What to change: quantities, change orders, missing items" style="flex:1"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
       ${formOpen.done ? `<div class="card form-card"><h2>Mark done</h2><div class="form-inline"><input id="done-notes" placeholder="Completion notes" style="flex:1"><button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div></div>` : ""}
       ${formOpen.match ? `<div class="card form-card"><h2>Match payment</h2>${openForPay.length ? `<div class="form-inline"><select id="match-inv" aria-label="Pay app">${openForPay.map(i => `<option value="${i.id}">${i.number} · ${money(i.amount_cents)} · ${INVOICE_WORDS[i.status] || i.status}</option>`).join("")}</select><input id="match-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Amount in dollars"><input id="match-ref" placeholder="Reference (check no., QBO id)"><button class="btn small" data-action="match" data-id="${j.id}">Match</button></div>` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
       ${formOpen.retpay ? `<div class="card form-card"><h2>Record retainage paid</h2><div class="form-inline"><input id="retpay-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Retainage received $"><input id="retpay-ref" placeholder="Reference"><button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div></div>` : ""}
@@ -3054,7 +3069,8 @@ function renderHelper() {
       ? `<div class="msg you">${esc(m.text)}</div>`
       : `<div class="msg helper">${helperFormat(m.text)}
           ${(m.actions || []).length ? `<div class="msg-actions">${m.actions.map((a, i) => `<button class="btn small ${a.type === "post" ? "" : "secondary"}" data-helper-msg="${idx}" data-helper-action="${i}">${esc(a.label)}</button>`).join("")}</div>` : ""}
-          ${m.logId ? `<div class="msg-rate">${m.rated ? (m.rated === "yes" ? "Thanks." : "Thanks, the team will improve this answer.") : `Helpful? <button class="linkish" data-helper-rate="${idx}" data-value="yes">Yes</button> <button class="linkish" data-helper-rate="${idx}" data-value="no">No</button>`}</div>` : ""}
+          ${m.logId ? `<div class="msg-rate">${m.rated === "asking" ? `<form class="ai-why" data-helper-why="${idx}"><label for="why-${idx}">What were you looking for? (optional)</label><input id="why-${idx}" maxlength="300"><button class="btn small" type="submit">Send</button></form>`
+            : m.rated ? (m.rated === "yes" ? "Thanks." : "Thanks, the team will improve this answer.") : `Helpful? <button class="linkish" data-helper-rate="${idx}" data-value="yes">Yes</button> <button class="linkish" data-helper-rate="${idx}" data-value="no">No</button>`}</div>` : ""}
         </div>`).join("") + (helperBusy ? `<div class="msg helper typing" aria-label="Looking that up">Looking that up…</div>` : "");
   }
   const last = [...helperLog].reverse().find(m => m.who === "helper");
@@ -3136,16 +3152,32 @@ document.getElementById("ai-panel").addEventListener("click", async (e) => {
   if (rate) {
     const msg = helperLog[Number(rate.dataset.helperRate)];
     if (!msg || !msg.logId) return;
-    const helpful = rate.dataset.value === "yes";
-    let note = "";
-    if (!helpful) note = prompt("What were you looking for? (optional)") || "";
-    msg.rated = helpful ? "yes" : "no";
+    if (rate.dataset.value === "no") {   // ask why, inline, before sending
+      msg.rated = "asking";
+      renderHelper();
+      document.getElementById(`why-${rate.dataset.helperRate}`)?.focus();
+      return;
+    }
+    msg.rated = "yes";
     renderHelper();
-    try {
-      await fetch("/api/helper/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ log_id: msg.logId, helpful, note }) });
-    } catch (_) { /* rating is best effort */ }
+    sendHelperFeedback(msg, true, "");
   }
 });
+document.getElementById("ai-panel").addEventListener("submit", (e) => {
+  const form = e.target.closest("[data-helper-why]");
+  if (!form) return;
+  e.preventDefault();
+  const msg = helperLog[Number(form.dataset.helperWhy)];
+  const note = form.querySelector("input").value || "";
+  msg.rated = "no";
+  renderHelper();
+  sendHelperFeedback(msg, false, note);
+});
+async function sendHelperFeedback(msg, helpful, note) {
+  try {
+    await fetch("/api/helper/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ log_id: msg.logId, helpful, note }) });
+  } catch (_) { /* rating is best effort */ }
+}
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && aiOpen && document.getElementById("ai-panel").contains(document.activeElement)) {
     aiOpen = false;

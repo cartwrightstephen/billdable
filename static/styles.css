@@ -357,3 +357,5 @@ textarea { font: inherit; }
   .info { width: 24px; height: 24px; font-size: 14px; }
   .help-dismiss, .ai-close { min-width: 44px; min-height: 44px; }
 }
+.ai-why { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.ai-why input { flex: 1 1 160px; padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; }
