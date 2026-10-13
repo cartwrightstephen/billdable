@@ -68,29 +68,42 @@ await step("refresh keeps the page", async () => {
   await page.getByRole("heading", { name: "Collections" }).waitFor();
 });
 
-await step("money path: clear blockers, send, match payment, send waiver, close", async () => {
+await step("money path: the main button walks a job from blocked to closed", async () => {
+  // Follow the one main button, whatever it says, until the job is closed.
+  const seen = [];
   await page.goto(BASE + "/jobs/job-inman");
-  await page.locator(".next-card .btn", { hasText: /Clear 1 blocker/ }).click();
-  await page.getByRole("heading", { name: /packet/i }).waitFor();
-  while (await page.locator('[data-form^="resolve-"]').count()) {
-    const btn = page.locator('[data-form^="resolve-"]').first();
-    const item = (await btn.getAttribute("data-form")).slice("resolve-".length);
-    await btn.click();
-    await page.fill(`#resolve-reason-${item}`, "Emailed to the payer on 10/12");
-    await page.click(`[data-action="resolve"][data-item="${item}"]`);
-    await page.waitForFunction((id) => !document.getElementById(`resolve-reason-${id}`), item);
+  for (let n = 0; n < 12; n++) {
+    await page.getByRole("heading", { name: "Inman Park bath" }).waitFor();
+    if (await page.locator(".job-head .pill", { hasText: "Closed" }).count()) break;
+    const main = page.locator(".next-card .btn");
+    const label = (await main.innerText()).trim();
+    seen.push(label);
+    if (/^Clear \d+ blocker/.test(label)) {
+      await main.click();
+      await page.getByRole("heading", { name: /packet/i }).waitFor();
+      while (await page.locator('[data-form^="resolve-"]').count()) {
+        const btn = page.locator('[data-form^="resolve-"]').first();
+        const item = (await btn.getAttribute("data-form")).slice("resolve-".length);
+        await btn.click();
+        await page.fill(`#resolve-reason-${item}`, "Emailed to the payer on 10/12");
+        await page.click(`[data-action="resolve"][data-item="${item}"]`);
+        await page.waitForFunction((id) => !document.getElementById(`resolve-reason-${id}`), item);
+      }
+      await page.goto(BASE + "/jobs/job-inman");
+    } else if (label === "Match payment") {
+      await main.click();
+      const option = await page.locator("#match-inv option").first().innerText();
+      await page.fill("#match-amt", option.match(/\$([\d,]+\.\d\d)/)[1].replace(/,/g, ""));
+      await page.fill("#match-ref", "CHK-2201");
+      await page.click('[data-action="match"]');
+      await page.waitForFunction(() => !document.getElementById("match-inv"));
+    } else {
+      await main.click();
+      await page.waitForFunction((was) => (document.querySelector(".next-card .btn")?.innerText || "").trim() !== was
+        || document.querySelector(".job-head .pill")?.innerText === "Closed", label);
+    }
   }
-  const main = page.locator(".next-card .btn");
-  await page.goto(BASE + "/jobs/job-inman");
-  await main.filter({ hasText: "Approve & send" }).click();
-  await main.filter({ hasText: "Match payment" }).click();
-  const amount = await page.locator("#match-inv option").first().innerText();
-  const dollars = amount.match(/\$([\d,]+\.\d\d)/)[1].replace(/,/g, "");
-  await page.fill("#match-amt", dollars);
-  await page.fill("#match-ref", "CHK-2201");
-  await page.click('[data-action="match"]');
-  await main.filter({ hasText: "Send waiver" }).click();
-  await main.filter({ hasText: "Close for record" }).click();
+  for (const want of ["Approve & send", "Match payment", "Send waiver", "Close for record"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
   await page.locator(".job-head .pill", { hasText: "Closed" }).waitFor();
 });
 
