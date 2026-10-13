@@ -52,11 +52,15 @@ a{color:#1F4FD1}a:hover{color:#16389A}
           <button type="button" style="height: 44px; padding: 0 16px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Dismiss</button>
         </div>
       </div>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 14px; color: #555555">
+        <span>Pays in about 16 days after a pay app is sent, on average (4 paid). The playbook says 12.</span>
+        <button type="button" style="height: 40px; padding: 0 14px; border: 1px solid #1F4FD1; border-radius: 8px; background: #FFFFFF; color: #1F4FD1; font: inherit; font-weight: 600">Use 16 days</button>
+      </div>
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px">
         <div style="display: flex; flex-direction: column; gap: 4px"><label for="pb-appr" style="font-size: 13px; color: #555555">Approver</label><input id="pb-appr" value="Mara Ellison" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"></div>
         <div style="display: flex; flex-direction: column; gap: 4px"><label for="pb-ap" style="font-size: 13px; color: #555555">AP email</label><input id="pb-ap" type="email" value="ap@ellisonresidential.example" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"></div>
         <div style="display: flex; flex-direction: column; gap: 4px"><label for="pb-fu" style="font-size: 13px; color: #555555">Follow-up days</label><input id="pb-fu" type="number" value="7" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"></div>
-        <div style="display: flex; flex-direction: column; gap: 4px"><label for="pb-ua" style="font-size: 13px; color: #555555">Usual approval days</label><input id="pb-ua" type="number" value="14" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"></div>
+        <div style="display: flex; flex-direction: column; gap: 4px"><label for="pb-ua" style="font-size: 13px; color: #555555">Usual approval days</label><input id="pb-ua" type="number" value="12" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"></div>
         <div style="display: flex; flex-direction: column; gap: 4px"><label for="pb-due" style="font-size: 13px; color: #555555">Pay apps due by (day of the month)</label><input id="pb-due" type="number" placeholder="e.g. 25" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"><span style="font-size: 12px; color: #555555">The payer's cutoff for each month's pay app. Shown on the calendar and Today. Blank: none.</span></div>
       </div>
       <div style="display: flex; flex-direction: column; gap: 4px"><label for="pb-pk" style="font-size: 13px; color: #555555">Packet</label><textarea id="pb-pk" rows="2" style="border: 1px solid #8C8C8C; border-radius: 8px; padding: 8px 10px; font: inherit">Invoice, before photos, after photos, signed change orders, conditional waiver on payment.</textarea></div>
@@ -75,7 +79,7 @@ a{color:#1F4FD1}a:hover{color:#16389A}
   </main>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1230}}'>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1290}}'>
 class Component extends DCLogic {
   renderVals() {
     return {};
