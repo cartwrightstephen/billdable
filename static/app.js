@@ -735,7 +735,7 @@ function nextStep(j) {
   if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the payer. Follow up or match a payment.";
   if (j.work_status !== "complete") return "Record progress, or mark the job done." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
   if (j.money.retainage_open_cents > 0) return "Chase retainage once the closeout packet is complete.";
-  if (j.money.outstanding_cents === 0) return "Ready to close for the record.";
+  if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before closing: " + j.close_blockers[0] : "Ready to close for the record.";
   return "Draft a pay app for unbilled completed work.";
 }
 
@@ -773,7 +773,7 @@ function jobActions(j) {
   if (draft) add("send", "Approve & send", `data-action="send" data-id="${j.id}" ${blocked ? "disabled" : ""}`, blocked ? "Unlocks when the blockers are cleared." : "You approve; Billdable emails the pay app, its PDF and the packet.");
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Send waiver", `data-action="waiver" data-id="${j.id}"`, "Emails the payer the newest lien waiver on the job record. Drop your signed waiver there first.");
   if (waitingPay) add("match", "Match payment", `data-action="toggle-form" data-form="match"`, "Record money received. Paid in full opens the waiver step.");
-  if (j.work_status === "complete" && !draft) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the unbilled completed work.");
+  if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the unbilled completed work.");
   if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "Bill completed-to-date without marking the job done.");
   if (j.work_status !== "complete") add("done", "Mark done", `data-action="toggle-form" data-form="done"`, "Record completion and draft the final pay app.");
   if (canClose) add("close", "Close for record", `data-action="close" data-id="${j.id}"`, "Moves the settled job to Job history.");
