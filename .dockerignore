@@ -1,0 +1,10 @@
+# Never bake local data, secrets or history into the image.
+data/
+.git/
+.github/
+.env
+.env.*
+**/__pycache__/
+tests/
+*.pyc
+.DS_Store

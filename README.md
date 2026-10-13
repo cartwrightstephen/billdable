@@ -25,7 +25,7 @@ All data lives in one directory, set by the `BILLDABLE_DATA_DIR` environment var
 
 Writes go to a temp file and are renamed into place, so a crash never leaves half a file. Backups are described under "Backups, health and logs". `GET /api/export` downloads the signed-in company's file.
 
-On Render, the default filesystem does not survive a deploy or restart. `render.yaml` attaches a 1 GB persistent disk at `/var/data` (this needs a paid instance) and sets `BILLDABLE_DATA_DIR` to it; without a disk every deploy starts with no accounts. After the first deploy with the disk, deploy a second time, check that `/healthz` shows the same `last_backup` and that an account still signs in, then set `BILLDABLE_DATA_PERSISTENT=1` to remove the landing page's "data may be erased" notice. When a signed-in user's company file is missing, the server logs a `WARNING: company file missing` line.
+On Render, the default filesystem does not survive a deploy or restart. `render.yaml` builds the Dockerfile (which installs `age` for off-site backups), attaches a 1 GB persistent disk at `/var/data` (this needs a paid instance) and sets `BILLDABLE_DATA_DIR` to it. It also defines `billdable-staging`, a free service that deploys `dev` with throwaway data and no email; without a disk every deploy starts with no accounts. After the first deploy with the disk, deploy a second time, check that `/healthz` shows the same `last_backup` and that an account still signs in, then set `BILLDABLE_DATA_PERSISTENT=1` to remove the landing page's "data may be erased" notice. When a signed-in user's company file is missing, the server logs a `WARNING: company file missing` line.
 
 Set `COOKIE_SECURE=1` in production to force the `Secure` flag on the session cookie. Without it, the flag is set when the request arrives with `X-Forwarded-Proto: https`.
 
@@ -52,7 +52,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_KEY_ID`, `BACKUP_S3_SECRET` | S3-compatible storage for off-site copies, e.g. Backblaze B2 (`https://s3.us-west-004.backblazeb2.com`, region `us-west-004`). Use a write-only application key and a bucket with Object Lock. All five set turns the upload on. |
 | `BACKUP_S3_PREFIX` | Folder in the bucket, default `billdable/`. |
 | `BACKUP_AGE_RECIPIENT` | The age public key (`age1…`) backups are encrypted to before upload. Keep the private key off the server, in both founders' password managers. Without it nothing is uploaded. |
-| `BACKUP_AGE_BINARY` | Path to the `age` program, default `age` on the PATH. The Dockerfile installs it; Render's native Python runtime does not have it. |
+| `BACKUP_AGE_BINARY` | Path to the `age` program, default `age` on the PATH. The Dockerfile installs it, and `render.yaml` deploys with the Dockerfile. |
 | `ALERT_WEBHOOK_URL` | An `https://` incoming-webhook address (Slack, Discord, Better Stack, ...). Each crash and failed backup posts one line with the request id; rate limited; no customer data. |
 | `SMTP_HOST` | Mail server for outgoing email. Unset: approved emails stay in the Outbox as "not sent: email delivery is not set up". |
 | `SMTP_PORT` | Default 587 (465 with `SMTP_SECURITY=ssl`). |
@@ -163,6 +163,10 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `backup.py`: backups and restore
 - `offsite.py`: encrypted off-site copies of backups (age, S3-compatible upload)
 - `alerts.py`: crash and backup-failure alerts to a webhook
+- `migrations.py`: the company-file schema version and the steps between versions, run on load
+- `audit_check.py`: checks every company's audit hash chain (run nightly)
+- `admin.py`: founder shell commands: list companies, find an email, delete a company on request, end sessions
+- `docs/runbooks.md`: deploy, restore, rotate a secret, delete a company, incident
 - `legal.py`, `legal/`: the Terms of Service and Privacy Policy
 - `mailer.py`: outgoing email over SMTP
 - `seed.py`: Hartline Remodeling sample data

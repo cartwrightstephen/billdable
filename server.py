@@ -242,6 +242,27 @@ def deleted_companies() -> set:
         return set()
 
 
+def delete_company_data(company_id: str) -> int:
+    """Remove a company: its users and sessions, company file, reset snapshots, uploads, inbound
+    and calendar addresses, helper and mail records. Backups that hold it expire on their own.
+    Used by the owner's Delete the company and by admin.py for a deletion request. Returns how
+    many users were removed."""
+    removed = auth.delete_company_users(company_id)  # every session of the company ends here
+    with STATE_LOCK:
+        gone = sorted(deleted_companies() | {company_id})
+        storage.write_json(_deleted_path(), gone)
+        for path in [company_path(company_id), *(COMPANIES / "snapshots").glob(f"{company_id}-*.json")]:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+    shutil.rmtree(importer.UPLOADS / company_id, ignore_errors=True)
+    importer.forget_company(company_id)
+    helper.forget_company(company_id)
+    mailer.forget_company(company_id)
+    return removed
+
+
 def save_company(company_id: str, state: dict) -> None:
     # A request that was already running when its company was deleted must not write it back.
     if company_id in deleted_companies():
@@ -1046,19 +1067,7 @@ class Handler(BaseHTTPRequestHandler):
         if _text(body, "confirm").strip() != name:
             self._json(409, {"error": "Type your company name exactly to confirm. Nothing was deleted."})
             return
-        removed = auth.delete_company_users(company_id)  # every session of the company ends here
-        with STATE_LOCK:
-            gone = sorted(deleted_companies() | {company_id})
-            storage.write_json(_deleted_path(), gone)
-            for path in [company_path(company_id), *(COMPANIES / "snapshots").glob(f"{company_id}-*.json")]:
-                try:
-                    path.unlink()
-                except OSError:
-                    pass
-        shutil.rmtree(importer.UPLOADS / company_id, ignore_errors=True)
-        importer.forget_company(company_id)
-        helper.forget_company(company_id)
-        mailer.forget_company(company_id)
+        removed = delete_company_data(company_id)
         log_json("info", msg="company deleted", company=company_id, users=removed, rid=self._rid)
         self._json(200, {"ok": True, "message": "Your company and its users were deleted. Backups that still hold it expire on their own."},
                    self._set_cookie(None))
