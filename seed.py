@@ -6,8 +6,38 @@ connection is live.
 
 from __future__ import annotations
 
+import migrations
+
 
 def seed_state() -> dict:
+    state = _seed()
+    # The demo's sent pay apps belong in its Outbox too, or the Outbox says nothing was ever sent.
+    payers = {p["id"]: p for p in state["payers"]}
+    state["email_log"] = [
+        {
+            "id": f"eml-{inv['id']}",
+            "at": inv["sent_at"],
+            "job_id": job["id"],
+            "kind": "pay_app",
+            "to": payers.get(job["payer_id"], {}).get("ap_email", ""),
+            "subject": f"Pay application {inv['number']} — {job['name']}",
+            "body": "Sample pay app from the demo data.",
+            "approved_by": inv.get("approved_by", "owner"),
+            "attachments": [],
+            "cc": [],
+            "payapp_invoice_id": inv["id"],
+            "status": "not sent: demo account",
+        }
+        for job in state["jobs"]
+        for inv in job["invoices"]
+        if inv.get("sent_at")
+    ]
+    state["email_log"].sort(key=lambda e: e["at"])
+    migrations.migrate(state)
+    return state
+
+
+def _seed() -> dict:
     return {
         "company": {
             "name": "Hartline Remodeling",

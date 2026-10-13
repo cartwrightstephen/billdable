@@ -345,12 +345,11 @@ class MailHttpTests(unittest.TestCase):
         self.ready_to_send(cookie, job)
         _, me = self.request("GET", "/api/auth/me", cookie=cookie)
         company_id = me["user"]["company_id"]
-        path = server.company_path(company_id)
-        data = json.loads(path.read_text())
+        data = server.load_company(company_id)
         data["email_log"].append({"id": "eml-stuck", "at": "2026-01-01T00:00:00+00:00", "job_id": job["id"], "kind": "pay_app",
                                   "to": "ap@park.example", "subject": "s", "body": "b", "approved_by": "Pat", "attachments": [],
                                   "status": "sending", "sending_at": "2026-01-01T00:00:00+00:00"})
-        path.write_text(json.dumps(data))
+        server.save_company(company_id, data)
         _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
         self.assertEqual(state["email_log"][-1]["status"], "sent")  # the dead "sending" row didn't use up the limit of 1
         self.mail_on(MAIL_DAILY_LIMIT="5")

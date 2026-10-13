@@ -356,6 +356,23 @@ def match_job(state: dict[str, Any], text: str, sender: str = "") -> dict[str, A
 
 # ---------- inbox ----------
 
+DONE_WORD_RE = re.compile(r"\b(done|finished|complete|completed|wrapped up)\b", re.IGNORECASE)
+NOT_DONE_RE = re.compile(r"\b(not|almost|nearly|until|when|once|if|before|after|will|soon|tomorrow|by)\b|n't\b", re.IGNORECASE)
+# One phase finishing ("framing done") is not the job finishing.
+PHASE_RE = re.compile(r"\b(framing|drywall|rough|rough-in|demo|demolition|tile|tiling|paint|painting|inspection|phase|"
+                      r"punch|trim|cabinets?|plumbing|electrical|hvac|roof|roofing|foundation|footings?|slab|insulation|siding)\b", re.IGNORECASE)
+
+
+def says_done(text: str) -> bool:
+    """A message saying the work is finished ("Grant Park done", "Job's done on Oak St").
+    A line with a negation or a future ("not done", "done by Friday") doesn't count; the
+    Inbox only offers a button, so a misread costs one click, never a pay app."""
+    for line in (text or "").splitlines()[:20]:
+        if DONE_WORD_RE.search(line) and not NOT_DONE_RE.search(line) and not PHASE_RE.search(line):
+            return True
+    return False
+
+
 def add_item(
     state: dict[str, Any],
     source: str,
@@ -399,8 +416,25 @@ def add_item(
     }
     if extra:
         item.update(extra)
+    # "Job's done" by text or email (P3): offer to mark the suggested job done in one click.
+    if source in {"sms", "email"} and match["job_id"] and says_done(f"{subject}\n{text}"):
+        job = next((j for j in state.get("jobs", []) if j["id"] == match["job_id"]), {})
+        if job.get("work_status") != "complete" and not job.get("closed"):
+            item["says_done_job_id"] = job["id"]
     state.setdefault("inbox", []).append(item)
     return item
+
+
+def file_and_mark_done(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]:
+    """File a "job's done" message to its job, mark the job done and draft the final pay app.
+    Sending still needs a person to approve it."""
+    item = _item(state, item_id)
+    job_id = item.get("says_done_job_id")
+    if not job_id:
+        raise domain.GateError("This item doesn't say a job is done.")
+    file_item(state, item_id, job_id, item["kind"] if item["kind"] != "daily" else "note", actor)
+    note = (item.get("text") or "").strip().splitlines()[0][:300] if item.get("text") else ""
+    return domain.mark_done(state, job_id, actor, notes=f"From {item.get('from') or 'a message'}: {note}".strip())
 
 
 def _item(state: dict[str, Any], item_id: str) -> dict[str, Any]:
@@ -445,6 +479,62 @@ def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor
     return item
 
 
+PAYAPP_NUMBER_RE = re.compile(r"\bPA-[A-Z0-9]{1,12}-\d{1,4}\b")
+QUOTE_START_RE = re.compile(r"^(On .{0,200} wrote:|-{2,} ?Original Message ?-{2,}|From: )", re.IGNORECASE)
+
+
+def _reply_summary(text: str) -> str:
+    """The first line the payer wrote, above the quoted original."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if QUOTE_START_RE.match(line):
+            break
+        if line and not line.startswith(">"):
+            return line[:140]
+    return "(no text above the quoted message)"
+
+
+def capture_reply(state: dict[str, Any], item: dict[str, Any]) -> dict[str, Any] | None:
+    """File an inbound email to its job when it answers a pay app this company emailed (P1-3).
+
+    Only when the subject names a pay app (PA-XXX-N) whose email went out, and the sender is the
+    address it went to, someone copied on it, or someone at the same domain. Anything else stays
+    in the Inbox for a person to file. The job's status line then says who replied, when and the
+    first line of what they wrote. Undo in the Inbox takes it back off, status line included."""
+    if item.get("source") != "email" or item.get("status") != "new":
+        return None
+    numbers = set(PAYAPP_NUMBER_RE.findall(item.get("subject") or ""))
+    if not numbers:
+        return None
+    sender = (email.utils.parseaddr(item.get("from") or "")[1] or "").lower()
+    if "@" not in sender:
+        return None
+    for entry in reversed(state.get("email_log", [])):
+        if entry.get("status") != "sent" or not numbers & set(PAYAPP_NUMBER_RE.findall(entry.get("subject") or "")):
+            continue
+        sent_to = [str(entry.get("to") or "").lower()] + [str(c).lower() for c in entry.get("cc") or []]
+        domains = {a.rsplit("@", 1)[-1] for a in sent_to if "@" in a}
+        if sender not in sent_to and sender.rsplit("@", 1)[-1] not in domains:
+            continue
+        job = next((j for j in state.get("jobs", []) if j["id"] == entry.get("job_id") and not j.get("closed")), None)
+        if not job:
+            return None
+        payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
+        file_item(state, item["id"], job["id"], "note", "billdable")
+        when = datetime.now(timezone.utc)
+        summary = _reply_summary(item.get("text", ""))
+        item["prev_external_status"] = job.get("external_status")
+        item["auto_filed"] = True
+        job["external_status"] = f"{payer.get('name') or sender} replied {when.strftime('%b')} {when.day}: {summary}"
+        job["last_reply"] = {"from": sender, "at": utcnow(), "subject": item.get("subject", ""), "summary": summary, "inbox_id": item["id"]}
+        if re.search(r"\b(need|needs|missing|required|require|attach|send us|please send)\b", summary, re.IGNORECASE):
+            domain.suggest_packet_item(state, job.get("payer_id", ""), summary, "a reply", job["name"])
+        domain.audit(state, job["id"], "reply_captured",
+                     f"A reply from {sender} to {', '.join(sorted(numbers))} was filed to the job record: {summary}", "billdable")
+        return job
+    return None
+
+
 def dismiss_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]:
     item = _item(state, item_id)
     if item["status"] != "new":
@@ -470,6 +560,12 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]
     dr_ids = {d["id"] for d in state.get("daily_records", []) if d.get("import_inbox_id") == item_id}
     state["daily_records"] = [d for d in state.get("daily_records", []) if d["id"] not in dr_ids]
     job["daily_records"] = [d for d in job.get("daily_records", []) if d not in dr_ids]
+    if item.get("auto_filed"):
+        # A captured reply also changed the status line; put it back.
+        job["external_status"] = item.pop("prev_external_status", None)
+        if (job.get("last_reply") or {}).get("inbox_id") == item_id:
+            job.pop("last_reply", None)
+        item["auto_filed"] = False
     item.update({"status": "new", "record_ids": [], "filed_job_id": None})
     domain.audit(state, job["id"], "import_undone", f"{actor} took an imported item back off the job record.", actor)
     return item

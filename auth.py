@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import secrets
 import threading
@@ -19,17 +20,28 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import storage
+import totp
 
 AUTH_PATH = storage.DATA_DIR / "auth.json"
 LOCK = threading.Lock()
 
 MIN_PASSWORD = 10
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-# Login throttling: after LOGIN_MAX_FAILURES wrong passwords for one email
-# inside LOGIN_WINDOW_SECONDS, further attempts are refused until the window passes.
-LOGIN_MAX_FAILURES = 5
+# Login throttling. Per email: LOGIN_FREE_FAILURES wrong passwords inside LOGIN_WINDOW_SECONDS
+# cost nothing; each one after that doubles a wait (2, 4, 8 ... up to LOGIN_MAX_DELAY seconds)
+# before the next try. A short, growing wait rather than a lockout, so nobody can lock
+# someone else out of their account by typing wrong passwords. Per network address:
+# IP_MAX_FAILURES wrong passwords inside the window and that address is refused until it passes.
+LOGIN_FREE_FAILURES = 3
+LOGIN_MAX_DELAY = 60
 LOGIN_WINDOW_SECONDS = 15 * 60
+IP_MAX_FAILURES = 20
 _FAILURES: dict[str, list[float]] = {}
+_IP_FAILURES: dict[str, list[float]] = {}
+# PBKDF2-HMAC-SHA256 rounds: OWASP's 2023 figure (from training, not re-checked). Each user
+# record keeps the count it was hashed with; older ones (120,000) are rehashed at sign-in.
+KDF_ITERATIONS = 600_000
+LEGACY_ITERATIONS = 120_000
 
 
 class RateLimited(Exception):
@@ -58,10 +70,50 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
-def _hash(password: str, salt: str | None = None) -> tuple[str, str]:
+def _hash(password: str, salt: str | None = None, iterations: int = KDF_ITERATIONS) -> tuple[str, str]:
     salt = salt or secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120_000)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations)
     return salt, digest.hex()
+
+
+def _matches(user: dict[str, Any], password: str) -> bool:
+    _, digest = _hash(password, user["salt"], int(user.get("kdf_iterations") or LEGACY_ITERATIONS))
+    return secrets.compare_digest(digest, user["password_hash"])
+
+
+def _set_password(user: dict[str, Any], salt: str, digest: str) -> None:
+    user["salt"], user["password_hash"], user["kdf_iterations"] = salt, digest, KDF_ITERATIONS
+
+
+def _prune(table: dict[str, list[float]], now: float) -> None:
+    """Bound memory: forget keys with no failure inside the window."""
+    if len(table) > 10_000:
+        for key in [k for k, v in table.items() if not v or now - v[-1] >= LOGIN_WINDOW_SECONDS]:
+            table.pop(key, None)
+
+
+def _throttle(email: str, ip: str | None, now: float) -> None:
+    """Raise RateLimited when this email must wait, or this address has failed too often. Call under LOCK."""
+    _prune(_FAILURES, now)
+    _prune(_IP_FAILURES, now)
+    if ip:
+        recent_ip = [t for t in _IP_FAILURES.get(ip, []) if now - t < LOGIN_WINDOW_SECONDS]
+        _IP_FAILURES[ip] = recent_ip
+        if len(recent_ip) >= IP_MAX_FAILURES:
+            raise RateLimited("Too many wrong passwords from this network. Try again in 15 minutes.")
+    recent = [t for t in _FAILURES.get(email, []) if now - t < LOGIN_WINDOW_SECONDS]
+    _FAILURES[email] = recent
+    if len(recent) >= LOGIN_FREE_FAILURES:
+        wait = min(LOGIN_MAX_DELAY, 2 ** (len(recent) - LOGIN_FREE_FAILURES + 1))
+        left = wait - (now - recent[-1])
+        if left > 0:
+            raise RateLimited(f"Too many wrong passwords. Try again in {math.ceil(left)} second{'' if math.ceil(left) == 1 else 's'}.")
+
+
+def _failed(email: str, ip: str | None, now: float) -> None:
+    _FAILURES.setdefault(email, []).append(now)
+    if ip:
+        _IP_FAILURES.setdefault(ip, []).append(now)
 
 
 def _load() -> dict[str, Any]:
@@ -79,6 +131,14 @@ def _load() -> dict[str, Any]:
 
 def _save(data: dict[str, Any]) -> None:
     storage.write_json(AUTH_PATH, data)
+
+
+def upgrade_file() -> None:
+    """Called at start-up: write back a file from before session hashing once, so _load()
+    stops re-hashing its session keys on every request."""
+    with LOCK:
+        if AUTH_PATH.exists() and not json.loads(AUTH_PATH.read_text()).get("sessions_hashed"):
+            _save(_load())
 
 
 def has_users() -> bool:
@@ -103,6 +163,7 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "company_id": user["company_id"],
         "role": user.get("role", "owner"),
         "email_verified": bool(user.get("email_verified")),
+        "two_step": bool(user.get("totp_enabled")),
     }
 
 
@@ -138,6 +199,7 @@ def create_user(
         "role": role,
         "salt": salt,
         "password_hash": digest,
+        "kdf_iterations": KDF_ITERATIONS,
         "created_at": _iso(_utcnow()),
     }
     if terms_version:
@@ -152,34 +214,39 @@ def create_user(
     return _public(user)
 
 
-def verify_login(email: str, password: str) -> dict[str, Any] | None:
+def verify_login(email: str, password: str, ip: str | None = None) -> dict[str, Any] | None:
     """Return the user, None on a wrong email or password, or raise RateLimited."""
     if not isinstance(email, str) or not isinstance(password, str):
         return None
     email = email.strip().lower()
     with LOCK:
         now = time.monotonic()
-        if len(_FAILURES) > 10_000:
-            # Bound memory: forget emails with no failure inside the window.
-            for key in [k for k, v in _FAILURES.items() if not v or now - v[-1] >= LOGIN_WINDOW_SECONDS]:
-                _FAILURES.pop(key, None)
-        recent = [t for t in _FAILURES.get(email, []) if now - t < LOGIN_WINDOW_SECONDS]
-        _FAILURES[email] = recent
-        if len(recent) >= LOGIN_MAX_FAILURES:
-            raise RateLimited("Too many wrong passwords for this email. Try again in 15 minutes.")
+        _throttle(email, ip, now)
         user = next((u for u in _load()["users"] if u["email"] == email), None)
     # Hash outside the lock so one slow login does not hold up every session check.
-    ok = False
     if user:
-        _, digest = _hash(password, user["salt"])
-        ok = secrets.compare_digest(digest, user["password_hash"])
+        ok = _matches(user, password)
     else:
+        ok = False
         _hash(password, "0" * 32)  # same work for an unknown email, so timing doesn't reveal which emails exist
-    with LOCK:
-        if not ok:
-            _FAILURES.setdefault(email, []).append(now)
-            return None
-        _FAILURES.pop(email, None)
+    if not ok:
+        with LOCK:
+            _failed(email, ip, now)
+        return None
+    if int(user.get("kdf_iterations") or LEGACY_ITERATIONS) < KDF_ITERATIONS:
+        salt, digest = _hash(password)
+        with LOCK:
+            data = _load()
+            stored = next((u for u in data["users"] if u["id"] == user["id"]), None)
+            # Only if the password didn't change while we were hashing.
+            if stored and stored["password_hash"] == user["password_hash"]:
+                _set_password(stored, salt, digest)
+                _save(data)
+    if not user.get("totp_enabled"):
+        # With two-step sign-in, only a right code clears the count (totp_check), so a known
+        # password can't be used to reset the throttle on guessing codes.
+        with LOCK:
+            _FAILURES.pop(email, None)
     return _public(user)
 
 
@@ -325,7 +392,7 @@ def reset_password(raw: Any, password: Any) -> dict[str, Any]:
         user = next(u for u in data["users"] if u["id"] == entry["user_id"])
         # Every reset link for this account is used up once one of them works.
         data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v["kind"] == "reset" and v.get("user_id") == user["id"])}
-        user["salt"], user["password_hash"] = salt, digest
+        _set_password(user, salt, digest)
         user["email_verified"] = True  # they received the link at this address
         _end_sessions(data, user["id"])  # everywhere else is signed out
         _save(data)
@@ -343,20 +410,18 @@ def change_password(user_id: str, current: Any, new: Any, keep_session: str | No
         if user["company_id"] == DEMO_COMPANY_ID:
             raise AuthError("The demo account's password can't be changed.")
         now = time.monotonic()
-        recent = [t for t in _FAILURES.get(user["email"], []) if now - t < LOGIN_WINDOW_SECONDS]
-        if len(recent) >= LOGIN_MAX_FAILURES:
-            raise RateLimited("Too many wrong passwords. Try again in 15 minutes.")
-    ok = isinstance(current, str) and secrets.compare_digest(_hash(current, user["salt"])[1], user["password_hash"])
+        _throttle(user["email"], None, now)
+    ok = isinstance(current, str) and _matches(user, current)
     if not ok:
         with LOCK:
-            _FAILURES.setdefault(user["email"], []).append(time.monotonic())
+            _failed(user["email"], None, now)
         raise AuthError("Current password is wrong.")
     salt, new_digest = _hash(new)
     keep = _digest(keep_session) if keep_session else None
     with LOCK:
         data = _load()
         user = next(u for u in data["users"] if u["id"] == user_id)
-        user["salt"], user["password_hash"] = salt, new_digest
+        _set_password(user, salt, new_digest)
         data["sessions"] = {k: v for k, v in data["sessions"].items() if v.get("user_id") != user_id or k == keep}
         _save(data)
 
@@ -472,6 +537,7 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
             "role": entry["role"],
             "salt": salt,
             "password_hash": digest,
+            "kdf_iterations": KDF_ITERATIONS,
             "created_at": _iso(_utcnow()),
             "invited_by": entry.get("invited_by", ""),
         }
@@ -544,8 +610,7 @@ def check_password(user_id: str, password: Any) -> bool:
         user = next((u for u in _load()["users"] if u["id"] == user_id), None)
     if not user or not isinstance(password, str):
         return False
-    _, digest = _hash(password, user["salt"])
-    return secrets.compare_digest(digest, user["password_hash"])
+    return _matches(user, password)
 
 
 def delete_company_users(company_id: str) -> int:
@@ -563,3 +628,88 @@ def delete_company_users(company_id: str) -> int:
 def all_users() -> list[dict[str, Any]]:
     with LOCK:
         return [{**_public(u), "created_at": u.get("created_at", "")} for u in _load()["users"]]
+
+
+# ---------- two-step sign-in (P2-9) ----------
+
+RECOVERY_CODES = 8
+
+
+def _user(data: dict[str, Any], user_id: str) -> dict[str, Any]:
+    user = next((u for u in data["users"] if u["id"] == user_id), None)
+    if not user:
+        raise AuthError("Account not found.")
+    return user
+
+
+def totp_begin(user_id: str) -> dict[str, str]:
+    """A new key, not yet in force: it starts working once a code from it is confirmed."""
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        if user["company_id"] == DEMO_COMPANY_ID:
+            raise AuthError("The demo account can't use two-step sign-in.")
+        if user.get("totp_enabled"):
+            raise AuthError("Two-step sign-in is already on.")
+        user["totp_pending"] = totp.new_secret()
+        _save(data)
+        return {"secret": user["totp_pending"], "uri": totp.uri(user["totp_pending"], user["email"])}
+
+
+def totp_enable(user_id: str, code: Any) -> list[str]:
+    """Confirm the new key with a code from the app. Returns recovery codes, shown once."""
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        pending = user.get("totp_pending")
+        if not pending:
+            raise AuthError("Start setup first.")
+        counter = totp.verify(pending, code)
+        if counter is None:
+            raise AuthError("That code didn't match. Check the phone's clock and type the code showing now.")
+        codes = [f"{secrets.token_hex(2)}-{secrets.token_hex(2)}" for _ in range(RECOVERY_CODES)]
+        user.update(totp_secret=pending, totp_enabled=True, totp_last=counter, totp_recovery=[_digest(c) for c in codes])
+        user.pop("totp_pending", None)
+        _save(data)
+        return codes
+
+
+def totp_check(user_id: str, code: Any, ip: str | None = None) -> bool:
+    """At sign-in: a current code (each one once) or an unused recovery code. Wrong codes count
+    toward the same throttle as wrong passwords."""
+    now = time.monotonic()
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        _throttle(user["email"], ip, now)
+        if not user.get("totp_enabled"):
+            return True
+        raw = str(code or "").strip().lower()
+        counter = totp.verify(user["totp_secret"], raw, int(user.get("totp_last", -1)))
+        if counter is not None:
+            user["totp_last"] = counter
+            _save(data)
+            _FAILURES.pop(user["email"], None)
+            return True
+        digest = _digest(raw)
+        if digest in user.get("totp_recovery", []):
+            user["totp_recovery"] = [d for d in user["totp_recovery"] if d != digest]
+            _save(data)
+            _FAILURES.pop(user["email"], None)
+            return True
+        _failed(user["email"], ip, now)
+        return False
+
+
+def totp_disable(user_id: str, password: Any, code: Any) -> None:
+    """Turn two-step sign-in off: needs the password and a current code (or a recovery code)."""
+    if not check_password(user_id, password):
+        raise AuthError("Password is wrong.")
+    if not totp_check(user_id, code):
+        raise AuthError("That code didn't work.")
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        for key in ("totp_secret", "totp_enabled", "totp_last", "totp_recovery", "totp_pending"):
+            user.pop(key, None)
+        _save(data)

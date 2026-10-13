@@ -7,6 +7,8 @@ who approved, and whether cash matched.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import secrets
 from copy import deepcopy
@@ -161,17 +163,55 @@ def status_label(job: dict[str, Any]) -> str:
     return open_invoice["status"].replace("_", " ").capitalize()
 
 
+# ---------- audit trail: a hash chain (P1-11) ----------
+# Each row carries hash = sha256(previous row's hash + this row's fields). Changing, removing
+# or reordering any row breaks every hash after it, which check_audit() reports. The chain
+# shows the file was not edited after the fact; it is not a signature, so someone with the
+# file and this code could rebuild it. The nightly check and off-site backups are what make
+# a quiet rebuild visible.
+AUDIT_FIELDS = ("id", "at", "job_id", "actor", "action", "detail")
+
+
+def _audit_hash(prev: str, row: dict[str, Any]) -> str:
+    body = json.dumps({k: row.get(k, "") for k in AUDIT_FIELDS}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256((prev + "\n" + body).encode("utf-8")).hexdigest()
+
+
+def seal_audit(state: dict[str, Any]) -> None:
+    """Chain rows that have no hash yet (rows written before the chain existed)."""
+    prev = ""
+    for row in state.get("audit", []):
+        if not row.get("hash"):
+            row["prev"] = prev
+            row["hash"] = _audit_hash(prev, row)
+        prev = row["hash"]
+
+
+def check_audit(state: dict[str, Any]) -> dict[str, Any]:
+    """{"ok", "rows", "broken_at"}: broken_at is the id of the first row that doesn't match."""
+    prev = ""
+    rows = state.get("audit", [])
+    for row in rows:
+        if row.get("prev") != prev or row.get("hash") != _audit_hash(prev, row):
+            return {"ok": False, "rows": len(rows), "broken_at": row.get("id", "?")}
+        prev = row["hash"]
+    return {"ok": True, "rows": len(rows), "broken_at": None}
+
+
 def audit(state: dict[str, Any], job_id: str, action: str, detail: str, actor: str = "billdable") -> None:
-    state["audit"].append(
-        {
-            "id": f"aud-{len(state['audit']) + 1}",
-            "at": utcnow(),
-            "job_id": job_id,
-            "actor": actor,
-            "action": action,
-            "detail": detail,
-        }
-    )
+    rows = state.setdefault("audit", [])
+    prev = rows[-1].get("hash", "") if rows else ""
+    row = {
+        "id": f"aud-{len(rows) + 1}",
+        "at": utcnow(),
+        "job_id": job_id,
+        "actor": actor,
+        "action": action,
+        "detail": detail,
+        "prev": prev,
+    }
+    row["hash"] = _audit_hash(prev, row)
+    rows.append(row)
 
 
 def record_progress(
@@ -348,6 +388,8 @@ def record_pencil_response(state: dict[str, Any], job_id: str, agreed: bool, not
     draft["pencil_note"] = (note or "").strip()[:2000]
     draft["pencil_answered_at"] = utcnow()
     job["external_status"] = None
+    if not agreed and draft["pencil_note"]:
+        suggest_packet_item(state, job["payer_id"], draft["pencil_note"], "pencil-copy changes", job["name"])
     what = "agreed to" if agreed else "asked for corrections on"
     audit(state, job_id, "pencil_response", f"{actor} recorded that the payer {what} the pencil copy of {draft['number']}. {draft['pencil_note']}".strip(), actor)
     return job
@@ -370,7 +412,18 @@ def resolve_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor:
     return job
 
 
-def approve_and_send(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
+def payer_link(invoice: dict[str, Any], link_base: str | None, company_id: str) -> str:
+    """The pay app's private page for the payer (P2-4), made the first time it is needed."""
+    if not link_base or not company_id:
+        return ""
+    if not invoice.get("payer_token"):
+        invoice["payer_token"] = secrets.token_urlsafe(24)
+    return f"{link_base.rstrip('/')}/p/{company_id}.{invoice['payer_token']}"
+
+
+def approve_and_send(
+    state: dict[str, Any], job_id: str, actor: str = "owner", link_base: str | None = None, company_id: str = ""
+) -> dict[str, Any]:
     job = _open_job(state, job_id)
     blockers = blocker_lines(job)
     if blockers:
@@ -389,8 +442,12 @@ def approve_and_send(state: dict[str, Any], job_id: str, actor: str = "owner") -
         f"{payer.get('approver') or payer['name']},\n\n"
         f"Please find pay application {invoice['number']} for {job['name']} attached as a PDF. Every packet item is accounted for"
         + (f"; {len(files)} packet document{'s are' if len(files) != 1 else ' is'} attached too." if files else ".")
-        + f"\n\n{pay_app_text(state, job, invoice)}\n\nApproved by {actor}."
+        + f"\n\n{pay_app_text(state, job, invoice)}"
     )
+    link = payer_link(invoice, link_base, company_id)
+    if link:
+        body += f"\n\nSee this pay app, its packet and documents, and tell us it reached you:\n{link}"
+    body += f"\n\nApproved by {actor}."
     _record_email(state, job_id, "pay_app", payer["ap_email"], subject, body, actor, attachments=files, cc=_copy_list(payer),
                   payapp_invoice_id=invoice["id"])
     audit(
@@ -403,7 +460,9 @@ def approve_and_send(state: dict[str, Any], job_id: str, actor: str = "owner") -
     return job
 
 
-def record_follow_up(state: dict[str, Any], job_id: str, actor: str = "billdable") -> dict[str, Any]:
+def record_follow_up(
+    state: dict[str, Any], job_id: str, actor: str = "billdable", link_base: str | None = None, company_id: str = ""
+) -> dict[str, Any]:
     """Draft a follow-up on the oldest unpaid pay app once the payer's window has passed."""
     job = _open_job(state, job_id)
     invoice = next((inv for inv in job["invoices"] if inv["status"] in {"sent", "partial"}), None)
@@ -429,8 +488,12 @@ def record_follow_up(state: dict[str, Any], job_id: str, actor: str = "billdable
     body = (
         f"Hi {payer.get('approver') or payer['name']}, checking on {invoice['number']} for {job['name']} "
         f"({money(invoice['amount_cents'])}), sent {(invoice.get('sent_at') or '')[:10]}. "
-        f"Is anything missing on your side? Approved by {actor}."
+        f"Is anything missing on your side?"
     )
+    link = payer_link(invoice, link_base, company_id)
+    if link:
+        body += f"\n\nThe pay app, its packet and documents: {link}"
+    body += f"\n\nApproved by {actor}."
     _record_email(state, job_id, "follow_up", payer["ap_email"], subject, body, actor)
     audit(
         state,
@@ -449,7 +512,10 @@ def match_payment(
     reference: str,
     actor: str = "billdable",
     invoice_id: str | None = None,
+    received_on: str | None = None,
 ) -> dict[str, Any]:
+    """Record money received against a pay app. `received_on` (YYYY-MM-DD) is the date the books
+    show, for imports; without it the payment is dated now."""
     job = _open_job(state, job_id)
     open_invoices = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
     if not open_invoices:
@@ -485,7 +551,7 @@ def match_payment(
         "amount_cents": amount_cents,
         "reference": reference,
         "invoice_id": invoice["id"],
-        "matched_at": utcnow(),
+        "matched_at": f"{received_on}T12:00:00+00:00" if received_on and re.fullmatch(r"\d{4}-\d{2}-\d{2}", received_on) else utcnow(),
     }
     job["payments"].append(payment)
     collected_for_invoice = sum(p["amount_cents"] for p in job["payments"] if p["invoice_id"] == invoice["id"])
@@ -510,9 +576,32 @@ def match_payment(
     return job
 
 
-def send_waiver(state: dict[str, Any], job_id: str, actor: str = "owner", invoice_id: str | None = None) -> dict[str, Any]:
+# The four lien waiver types. Billdable records which one went out; it never writes the
+# waiver itself, because state law sets the forms (the contractor drops their signed form
+# on the job record and sending attaches it).
+WAIVER_KINDS = {
+    "conditional_progress": "Conditional waiver on progress payment",
+    "unconditional_progress": "Unconditional waiver on progress payment",
+    "conditional_final": "Conditional waiver on final payment",
+    "unconditional_final": "Unconditional waiver on final payment",
+}
+
+
+def suggested_waiver_kind(job: dict[str, Any]) -> str:
+    """Payment has been matched, so unconditional; final once the job is done and fully paid."""
+    m = job_money(job)
+    final = job.get("work_status") == "complete" and m["unbilled_completed_cents"] == 0 and m["outstanding_cents"] == 0
+    return "unconditional_final" if final else "unconditional_progress"
+
+
+def send_waiver(
+    state: dict[str, Any], job_id: str, actor: str = "owner", invoice_id: str | None = None, kind: str | None = None
+) -> dict[str, Any]:
     """One waiver per paid pay app. Older records keep a single job-level flag."""
     job = _open_job(state, job_id)
+    if kind is not None and kind not in WAIVER_KINDS:
+        raise GateError("Pick the waiver type: conditional or unconditional, progress or final.")
+    kind = kind or suggested_waiver_kind(job)
     pending = [inv for inv in job["invoices"] if inv.get("waiver_due") and not inv.get("waiver_sent")]
     if invoice_id:
         pending = [inv for inv in pending if inv["id"] == invoice_id]
@@ -529,13 +618,15 @@ def send_waiver(state: dict[str, Any], job_id: str, actor: str = "owner", invoic
         invoice = pending[0]
         invoice["waiver_sent"] = True
         invoice["waiver_sent_at"] = now
+        invoice["waiver_kind"] = kind
         which = f" for {invoice['number']}"
         detail = f"payment of {money(invoice['amount_cents'])} on {invoice['number']}"
     else:
         raise GateError("No waiver is due. Payment has not been matched.")
     job["waiver_sent_at"] = now
+    job["waiver_kind"] = WAIVER_KINDS[kind]
     job["external_status"] = "Waiver sent"
-    subject = f"Lien waiver{which} — {job['name']}"
+    subject = f"{WAIVER_KINDS[kind]}{which} — {job['name']}"
     files = _waiver_file_ids(state, job)
     body = (
         f"{payer.get('approver') or payer['name']},\n\n"
@@ -545,7 +636,7 @@ def send_waiver(state: dict[str, Any], job_id: str, actor: str = "owner", invoic
     )
     _record_email(state, job_id, "waiver", payer["ap_email"], subject, body, actor, attachments=files)
     _sync_waiver(job)
-    audit(state, job_id, "send_waiver", f"{actor} approved sending the waiver{which}.", actor)
+    audit(state, job_id, "send_waiver", f"{actor} approved sending the {WAIVER_KINDS[kind].lower()}{which}.", actor)
     return job
 
 
@@ -639,27 +730,127 @@ def record_retainage_payment(
     return job
 
 
-def snapshot(state: dict[str, Any]) -> dict[str, Any]:
-    out = deepcopy(state)
-    for job in out["jobs"]:
-        job["money"] = job_money(job)
-        job["blockers"] = blocker_lines(job)
-        job["status_label"] = status_label(job)
-        job["payer"] = _payer(out, job["payer_id"])
-        job["close_blockers"] = close_blockers(job)
-        job.setdefault("closeout_packet", [])
-        job.setdefault("evidence", [])
-        job.setdefault("done_notes", "")
-        job["sov_view"] = _sov_view(job)
-    out.setdefault("email_log", [])
-    out["trial"] = trial.status(state)
-    out["totals"] = {
-        "unbilled_cents": sum(j["money"]["unbilled_completed_cents"] for j in out["jobs"]),
-        "outstanding_cents": sum(j["money"]["outstanding_cents"] for j in out["jobs"]),
-        "retainage_cents": sum(j["money"]["retainage_open_cents"] for j in out["jobs"]),
-        "blocked_jobs": sum(1 for j in out["jobs"] if j["blockers"] and not j.get("closed")),
-    }
+def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    """One job as the app shows it: the stored job plus money, blockers and labels."""
+    out = deepcopy(job)
+    out["money"] = job_money(job)
+    out["blockers"] = blocker_lines(job)
+    out["status_label"] = status_label(job)
+    out["payer"] = deepcopy(_payer(state, job["payer_id"]))
+    out["close_blockers"] = close_blockers(job)
+    out.setdefault("closeout_packet", [])
+    out.setdefault("evidence", [])
+    out.setdefault("done_notes", "")
+    out["sov_view"] = _sov_view(job)
     return out
+
+
+def _totals(views: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "unbilled_cents": sum(j["money"]["unbilled_completed_cents"] for j in views),
+        "outstanding_cents": sum(j["money"]["outstanding_cents"] for j in views),
+        "retainage_cents": sum(j["money"]["retainage_open_cents"] for j in views),
+        # Blocked once there is a draft to block or the work is done; before that the
+        # blockers are what the next pay app will need (the app shows them that way too).
+        "blocked_jobs": sum(
+            1 for j in views
+            if j["blockers"] and not j.get("closed")
+            and (j.get("work_status") == "complete" or any(i.get("status") in {"draft", "awaiting_approval"} for i in j["invoices"]))
+        ),
+    }
+
+
+def snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    """Everything, every job in full (export, tests, the helper)."""
+    out = deepcopy(state)
+    out["jobs"] = [job_view(state, j) for j in state["jobs"]]
+    out.setdefault("email_log", [])
+    out["audit_chain"] = check_audit(state)
+    out["trial"] = trial.status(state)
+    out["totals"] = _totals(out["jobs"])
+    return out
+
+
+# The app's page load (P2-6). Open jobs in full; jobs closed recently as short summaries; older
+# closed jobs, the Outbox and the Audit log are paged from their own endpoints.
+RECENT_CLOSED_DAYS = 90
+RECENT_EMAILS = 20
+# Fields a closed job's summary leaves out; /api/jobs/<id> has them.
+SUMMARY_DROPS = ("blockers", "close_blockers", "closeout_packet", "evidence", "records", "daily_records", "follow_ups",
+                 "retainage_chases", "sov", "sov_view", "contract_doc")
+
+
+def job_summary(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    """A closed job for lists: money, pay apps, payments and change orders, without the history."""
+    out = {k: deepcopy(v) for k, v in job.items() if k not in SUMMARY_DROPS}
+    out["money"] = job_money(job)
+    out["status_label"] = status_label(job)
+    out["blockers"], out["close_blockers"] = [], []
+    out.setdefault("done_notes", "")
+    for inv in out.get("invoices", []):
+        inv.pop("lines", None)
+    for co in out.get("change_orders", []):
+        co.pop("snapshot", None)
+    out["summary"] = True
+    return out
+
+
+def _closed_recently(job: dict[str, Any], since: str) -> bool:
+    return (job.get("closed_at") or job.get("completed_at") or "") >= since
+
+
+def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    """What /api/state sends: bounded by the open work, not by the company's whole history."""
+    since = ((now or datetime.now(timezone.utc)) - timedelta(days=RECENT_CLOSED_DAYS)).isoformat()
+    heavy = {"jobs", "audit", "email_log"}
+    out = {k: deepcopy(v) for k, v in state.items() if k not in heavy}
+    full, jobs = [], []
+    closed_count, closed_collected = 0, 0
+    for job in state["jobs"]:
+        if job.get("closed"):
+            closed_count += 1
+            closed_collected += job_money(job)["collected_cents"]
+            if _closed_recently(job, since):
+                jobs.append(job_summary(state, job))
+            continue
+        view = job_view(state, job)
+        view.pop("payer")  # the app joins payers by payer_id
+        jobs.append(view)
+        full.append(view)
+    out["jobs"] = jobs
+    # "First pay app to this payer" must not depend on which jobs were sent.
+    sent = {j["payer_id"] for j in state["jobs"] if any(i.get("sent_at") for i in j.get("invoices", []))}
+    for payer in out.get("payers", []):
+        payer["sent_before"] = payer["id"] in sent
+    emails = state.get("email_log", [])
+    out["email_log"] = deepcopy(emails[-RECENT_EMAILS:])
+    out["email_log_total"] = len(emails)
+    out["audit_total"] = len(state.get("audit", []))
+    out["closed_jobs_total"] = closed_count
+    out["audit_chain"] = check_audit(state)
+    out["trial"] = trial.status(state)
+    out["totals"] = {**_totals(full), "closed_collected_cents": closed_collected}
+    return out
+
+
+def page(rows: list[dict[str, Any]], offset: int, limit: int, job_id: str = "") -> dict[str, Any]:
+    """Newest first, optionally one job's rows: for the Outbox and Audit pages."""
+    picked = [r for r in reversed(rows) if not job_id or r.get("job_id") == job_id]
+    return {"entries": deepcopy(picked[offset:offset + limit]), "total": len(picked), "offset": offset, "limit": limit}
+
+
+def jobs_page(state: dict[str, Any], status: str, offset: int, limit: int, q: str = "") -> dict[str, Any]:
+    """Jobs for a list, newest first: open in full, closed as summaries."""
+    q = q.strip().lower()
+    picked = [j for j in reversed(state["jobs"])
+              if (status == "all" or bool(j.get("closed")) == (status == "closed"))
+              and (not q or q in f"{j.get('name', '')} {j.get('code', '')} {j.get('address', '')}".lower())]
+    if status == "closed":
+        picked.sort(key=lambda j: j.get("closed_at") or j.get("completed_at") or "", reverse=True)
+    rows = [job_summary(state, j) if j.get("closed") else job_view(state, j) for j in picked[offset:offset + limit]]
+    for r in rows:
+        r.pop("payer", None)
+    return {"jobs": rows, "total": len(picked), "offset": offset, "limit": limit}
 
 
 def _refresh_draft_gate(job: dict[str, Any]) -> None:
@@ -733,9 +924,47 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     return payer
 
 
-def add_change_order(state: dict[str, Any], job_id: str, title: str, amount_cents: int, actor: str = "owner") -> dict[str, Any]:
+# ---------- payer playbook learning (P3) ----------
+MAX_SUGGESTIONS = 10
+
+
+def suggest_packet_item(state: dict[str, Any], payer_id: str, text: str, source: str, job_name: str = "") -> dict | None:
+    """Remember what a payer asked for, as a proposed addition to their packet. A person adds
+    it or dismisses it on the Payer playbook; nothing changes the packet by itself."""
+    text = " ".join(str(text or "").split())[:200]
+    payer = next((p for p in state.get("payers", []) if p["id"] == payer_id), None)
+    if not payer or len(text) < 4:
+        return None
+    if text.lower() in str(payer.get("packet", "")).lower():
+        return None
+    open_items = [s for s in payer.setdefault("packet_suggestions", []) if s.get("status") == "open"]
+    if any(s["text"].lower() == text.lower() for s in open_items) or len(open_items) >= MAX_SUGGESTIONS:
+        return None
+    suggestion = {"id": "sug-" + secrets.token_hex(4), "text": text, "source": source, "job": job_name, "at": utcnow(), "status": "open"}
+    payer["packet_suggestions"].append(suggestion)
+    return suggestion
+
+
+def answer_packet_suggestion(state: dict[str, Any], payer_id: str, suggestion_id: str, accept: bool, actor: str = "owner") -> dict[str, Any]:
+    payer = _payer(state, payer_id)
+    sug = next((s for s in payer.get("packet_suggestions", []) if s["id"] == suggestion_id and s.get("status") == "open"), None)
+    if not sug:
+        raise GateError("That suggestion was already answered.")
+    sug["status"] = "added" if accept else "dismissed"
+    sug["answered_by"], sug["answered_at"] = actor, utcnow()
+    if accept:
+        packet = str(payer.get("packet", "")).strip().rstrip(".")
+        payer["packet"] = f"{packet}, {sug['text']}" if packet else sug["text"]
+        audit(state, "", "playbook_learned", f"{actor} added \"{sug['text']}\" to {payer['name']}'s packet ({sug['source']}).", actor)
+    return payer
+
+
+def add_change_order(
+    state: dict[str, Any], job_id: str, title: str, amount_cents: int, actor: str = "owner", description: str = ""
+) -> dict[str, Any]:
     job = _open_job(state, job_id)
     title = title.strip() if isinstance(title, str) else ""
+    description = description.strip() if isinstance(description, str) else ""
     errors = []
     if not title:
         errors.append("Change order title is required.")
@@ -750,6 +979,7 @@ def add_change_order(state: dict[str, Any], job_id: str, title: str, amount_cent
         "id": f"co-{job['code'].lower()}-{number}",
         "number": number,
         "title": title,
+        "description": description,
         "amount_cents": amount_cents,
         "status": "pending",
         "included_in_billing": False,
@@ -779,6 +1009,97 @@ def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
         job["completed_value_cents"] = max(job.get("completed_value_cents", 0), contract_total)
     audit(state, job_id, "approve_co", f"{actor} approved CO {co['number']} — {co['title']}.", actor)
     _refresh_draft_gate(job)
+    return job
+
+
+# ---------- signed change orders (P2-3) ----------
+# Draft consent wording, written to describe what the code does; counsel should check it
+# against ESIGN and the state's rules before real customers rely on it.
+CO_CONSENT = (
+    "I agree to this change order. I agree to sign it electronically, and my typed name below is my signature."
+)
+
+
+def co_snapshot(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any]) -> dict[str, Any]:
+    """Exactly what the signer saw; its SHA-256 is kept with the signature."""
+    return {
+        "contractor": state.get("company", {}).get("name", ""),
+        "job": job["name"],
+        "address": job.get("address", ""),
+        "change_order": co["number"],
+        "title": co["title"],
+        "description": co.get("description", ""),
+        "amount_cents": co["amount_cents"],
+        "consent": CO_CONSENT,
+    }
+
+
+def snapshot_sha256(snapshot: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _pending_co(state: dict[str, Any], job_id: str, co_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    job = _open_job(state, job_id)
+    co = next((c for c in job["change_orders"] if c["id"] == co_id), None)
+    if not co:
+        raise GateError("Change order not found.")
+    if co["status"] != "pending":
+        raise GateError(f"CO {co['number']} is {co['status']}; only a pending change order can be signed.")
+    return job, co
+
+
+def request_co_signature(
+    state: dict[str, Any], job_id: str, co_id: str, actor: str = "owner", link_base: str | None = None, company_id: str = ""
+) -> str:
+    """Make the change order's signing link and, with a site address, email it to the payer. Returns the link."""
+    job, co = _pending_co(state, job_id, co_id)
+    if not link_base or not company_id:
+        raise GateError("Signing links need the site's address (BILLDABLE_URL) set on the server.")
+    co["sign_token"] = co.get("sign_token") or secrets.token_urlsafe(24)
+    co["signature_requested_at"] = utcnow()
+    link = f"{link_base.rstrip('/')}/s/{company_id}.{co['sign_token']}"
+    payer = _payer(state, job["payer_id"])
+    if payer.get("ap_email"):
+        body = (
+            f"{payer.get('approver') or payer['name']},\n\nPlease review and sign change order {co['number']} for {job['name']}: "
+            f"{co['title']}, {money(co['amount_cents'])}."
+            + (f"\n\n{co['description']}" if co.get("description") else "")
+            + f"\n\nSign it here (type your name; nothing to print):\n{link}\n\nRequested by {actor}."
+        )
+        _record_email(state, job_id, "co_signature", payer["ap_email"], f"Please sign change order {co['number']} — {job['name']}",
+                      body, actor, cc=_copy_list(payer))
+    audit(state, job_id, "request_co_signature", f"{actor} asked {payer.get('ap_email') or payer['name']} to sign CO {co['number']}.", actor)
+    return link
+
+
+def sign_change_order(
+    state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], name: Any, agreed: bool, ip: str, user_agent: str
+) -> dict[str, Any]:
+    """The payer signs on the signing page: typed name, consent, time, IP and what they saw."""
+    name = " ".join(str(name or "").split())[:120]
+    if co.get("status") != "pending":
+        raise GateError(f"CO {co['number']} is already {co['status']}.")
+    if len(name) < 2:
+        raise GateError("Type your full name to sign.")
+    if not agreed:
+        raise GateError("Tick the box to agree to the change order and to signing electronically.")
+    snap = co_snapshot(state, job, co)
+    co["signature"] = {
+        "name": name, "at": utcnow(), "ip": str(ip)[:64], "user_agent": str(user_agent)[:200],
+        "consent": CO_CONSENT, "snapshot": snap, "snapshot_sha256": snapshot_sha256(snap),
+    }
+    approve_change_order(state, job["id"], co["id"], actor=f"{name} (signed online)")
+    return co
+
+
+def mark_co_signed(state: dict[str, Any], job_id: str, co_id: str, record_id: str, actor: str = "owner") -> dict[str, Any]:
+    """Approve a change order signed on paper: the job record must hold the signed copy."""
+    job, co = _pending_co(state, job_id, co_id)
+    record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not record:
+        raise GateError("Pick the job record that holds the signed change order, or request an online signature.")
+    co["signed_evidence"] = {"record_id": record_id, "label": record.get("label", ""), "by": actor, "at": utcnow()}
+    approve_change_order(state, job_id, co_id, actor)
     return job
 
 
@@ -842,6 +1163,7 @@ def learn_rejection(state: dict[str, Any], job_id: str, reason: str, actor: str 
     current = payer.get("rejects_when", "")
     if reason and reason not in current:
         payer["rejects_when"] = (current + "; " + reason).strip("; ")
+    suggest_packet_item(state, payer["id"], reason, "a rejection", job["name"])
     audit(state, job_id, "learn_rejection", f"{actor} taught playbook: {payer['name']} rejects when {reason}.", actor)
     return job
 
@@ -1237,6 +1559,67 @@ def create_job(
     return job
 
 
+
+def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+    """Fix a job's name, address or contract number at any time. The contract amount and
+    retainage can change only before the first pay app, and the contract only without a
+    schedule of values (change that schedule instead). The job code never changes: emails
+    and texts are filed by it. Payer contacts are edited in the Payer Playbook."""
+    job = _open_job(state, job_id)
+    has_pay_apps = any(i.get("status") != "void" for i in job.get("invoices", []))
+    changes: list[str] = []
+    problems: list[str] = []
+
+    for key, label in (("name", "Job name"), ("address", "Job address"), ("contract_number", "Contract number")):
+        if key not in updates:
+            continue
+        value = str(updates[key] or "").strip()
+        if key != "contract_number" and not value:
+            problems.append(f"{label} can't be empty.")
+        elif value != job.get(key, ""):
+            changes.append(f"{label.lower()} from \"{job.get(key, '')}\" to \"{value}\"")
+            job[key] = value
+
+    if "contract_cents" in updates and updates["contract_cents"] != job["contract_cents"]:
+        cents = updates["contract_cents"]
+        if has_pay_apps:
+            problems.append("The contract amount can't change after the first pay app. Use a change order.")
+        elif sov.has_sov(job):
+            problems.append("This job bills from a schedule of values. Change the contract from the schedule.")
+        elif not isinstance(cents, int) or isinstance(cents, bool) or cents <= 0 or cents > MAX_AMOUNT_CENTS:
+            problems.append("Contract amount must be greater than zero.")
+        else:
+            changes.append(f"contract from {money(job['contract_cents'])} to {money(cents)}")
+            job["contract_cents"] = cents
+
+    if "retainage_pct" in updates and updates["retainage_pct"] != job.get("retainage_pct", 0):
+        pct = updates["retainage_pct"]
+        if has_pay_apps:
+            problems.append("Retainage can't change after the first pay app.")
+        elif not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 20:
+            problems.append("Retainage must be between 0 and 20 percent.")
+        else:
+            changes.append(f"retainage from {job.get('retainage_pct', 0)}% to {pct}%")
+            job["retainage_pct"] = pct
+
+    if problems:
+        raise GateError("The job was not changed.", problems)
+    if changes:
+        audit(state, job_id, "edit_job", f"{actor} changed {job['name']}: " + "; ".join(changes) + ".", actor)
+    return job
+
+
+def delete_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> None:
+    """Delete a job created by mistake. Only a job with no pay apps and no payments can go;
+    anything billed stays on the record and is closed instead."""
+    job = _job(state, job_id)
+    if job.get("invoices") or job.get("payments"):
+        raise GateError(f"{job['name']} has pay apps or payments, so it can't be deleted. Close it for the record instead.")
+    state["jobs"] = [j for j in state["jobs"] if j["id"] != job_id]
+    state["daily_records"] = [r for r in state.get("daily_records", []) if r.get("job_id") != job_id]
+    audit(state, job_id, "delete_job", f"{actor} deleted {job['name']} ({job['code']}), which had no pay apps.", actor)
+
+
 # ---------- schedule of values ----------
 
 def _add_co_line(job: dict[str, Any], co: dict[str, Any]) -> None:
@@ -1337,8 +1720,11 @@ def record_sov_progress(
     done: Any,
     notes: str = "",
     actor: str = "owner",
+    stored: Any = None,
 ) -> dict[str, Any]:
-    """Record quantities completed to date on schedule lines and draft the progress pay app."""
+    """Record quantities completed to date, and materials stored, on schedule lines; draft the
+    progress pay app. `done` maps line id -> quantity to date; `stored` maps line id -> dollars of
+    materials on site and not yet installed (G703 column F)."""
     job = _open_job(state, job_id)
     if not sov.has_sov(job):
         raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
@@ -1347,43 +1733,55 @@ def record_sov_progress(
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft:
         raise GateError(f"{open_draft['number']} is still a draft. Send or void it, then record more progress.")
-    if not isinstance(done, dict) or not done:
+    done = done if isinstance(done, dict) else {}
+    stored = stored if isinstance(stored, dict) else {}
+    if not done and not stored:
         raise GateError("Enter the quantity completed to date on at least one line.")
     by_id = {line["id"]: line for line in sov.lines(job)}
     already = sov.billed(job)
     billed_qty = already["qty_by_line"]
     changes, errors = [], []
-    for line_id, value in done.items():
+    blank = lambda v: v is None or (isinstance(v, str) and not v.strip())
+    for line_id in list(dict.fromkeys(list(done) + list(stored))):
         line = by_id.get(line_id)
         if not line:
             errors.append(f"Line {str(line_id)[:20]} is not on this job's schedule.")
             continue
-        if value is None or (isinstance(value, str) and not value.strip()):
-            continue
         name = f"{line.get('item', '')}. {line['description']}".strip(". ")
+        qty, store = line["done_milli"], int(line.get("stored_cents") or 0)
         try:
-            qty = sov.to_milli(value, name)
+            if not blank(done.get(line_id)):
+                qty = sov.to_milli(done[line_id], name)
+            if not blank(stored.get(line_id)):
+                store = sov.to_cents(stored[line_id], f"{name}: stored materials")
         except sov.SovError as exc:
             errors.append(str(exc))
             continue
-        if qty < 0:
-            errors.append(f"{name}: quantity can't be negative.")
+        trial_line = {**line, "done_milli": qty, "stored_cents": store}
+        if qty < 0 or store < 0:
+            errors.append(f"{name}: quantity and stored materials can't be negative.")
         elif qty > line["qty_milli"]:
             errors.append(f"{name}: {sov.fmt_qty(qty)} is more than the scheduled {sov.fmt_qty(line['qty_milli'])} {line['unit']}. Extra scope is a change order.")
         elif qty < billed_qty.get(line_id, 0):
             errors.append(f"{name}: {sov.fmt_qty(billed_qty[line_id])} {line['unit']} is already billed; the quantity to date can't go below that.")
-        elif sov.line_to_date({**line, "done_milli": qty}) < already["by_line"].get(line_id, 0):
-            errors.append(f"{name}: {money(already['by_line'][line_id])} is already billed on this line; the amount to date can't go below that.")
-        elif qty != line["done_milli"]:
-            changes.append((line, qty))
+        elif sov.line_completed(trial_line) + store > line["scheduled_cents"]:
+            errors.append(f"{name}: work done plus {money(store)} stored is more than the line's {money(line['scheduled_cents'])}. Lower the stored materials as they are installed.")
+        elif sov.line_to_date(trial_line) < already["by_line"].get(line_id, 0):
+            errors.append(f"{name}: {money(already['by_line'][line_id])} is already billed on this line; work done plus stored materials can't go below that.")
+        elif qty != line["done_milli"] or store != int(line.get("stored_cents") or 0):
+            changes.append((line, qty, store))
     if errors:
         raise GateError("Progress not recorded.", errors)
     if not changes:
-        raise GateError("Nothing changed. Enter quantities to date that differ from the last ones recorded.")
+        raise GateError("Nothing changed. Enter quantities to date or stored materials that differ from the last ones recorded.")
     summary = []
-    for line, qty in changes:
-        summary.append(f"{line['description']} {sov.fmt_qty(line['done_milli'])} → {sov.fmt_qty(qty)} {line['unit']}")
+    for line, qty, store in changes:
+        part = f"{line['description']} {sov.fmt_qty(line['done_milli'])} → {sov.fmt_qty(qty)} {line['unit']}"
+        if store != int(line.get("stored_cents") or 0):
+            part += f", stored {money(int(line.get('stored_cents') or 0))} → {money(store)}"
+        summary.append(part)
         line["done_milli"] = qty
+        line["stored_cents"] = store
     job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
     notes = (notes or "").strip()[:2000]
     if notes:
@@ -1392,7 +1790,7 @@ def record_sov_progress(
         state,
         job_id,
         "record_progress",
-        f"{actor} recorded quantities to date: {'; '.join(summary)}. Completed to date {money(job['completed_value_cents'])}."
+        f"{actor} recorded progress to date: {'; '.join(summary)}. Completed and stored to date {money(job['completed_value_cents'])}."
         + (f" {notes}" if notes else ""),
         actor,
     )

@@ -77,9 +77,10 @@ class ProductionHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        cls._orig = (auth.AUTH_PATH, server.COMPANIES)
+        cls._orig = (auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR)
         auth.AUTH_PATH = Path(cls.tmp.name) / "auth.json"
         server.COMPANIES = Path(cls.tmp.name) / "companies"
+        storage.DATA_DIR = Path(cls.tmp.name)  # /healthz writes a probe file here
         server.ensure_demo()
         cls.httpd = server.Server(("127.0.0.1", 0), server.Handler)
         cls.port = cls.httpd.server_address[1]
@@ -89,11 +90,11 @@ class ProductionHttpTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.httpd.shutdown()
         cls.httpd.server_close()
-        auth.AUTH_PATH, server.COMPANIES = cls._orig
+        auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR = cls._orig
         cls.tmp.cleanup()
 
     def setUp(self):
-        auth._FAILURES.clear()
+        auth._FAILURES.clear(); auth._IP_FAILURES.clear()
 
     def request(self, method, path, body=None, cookie=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)

@@ -16,7 +16,9 @@ Settings (environment):
     MAIL_DAILY_LIMIT  emails per company per 24 hours, default 50
 
 The From name is "<company> via Billdable" and Reply-To is the signed-in user,
-so the payer's answer goes to the contractor, not to us.
+so the payer's answer goes to the contractor, not to us. When the company has an
+inbound address (INBOUND_EMAIL_ADDRESS_TEMPLATE), Reply-To lists it too, so the
+answer also lands in Billdable and is filed to the job it answers.
 """
 
 from __future__ import annotations
@@ -122,6 +124,7 @@ def build_message(
     files: list[tuple[str, Any]],
     cfg: dict[str, Any],
     sender_name: str | None = None,
+    inbound: str = "",
 ) -> tuple[EmailMessage, list[str]]:
     """Return the message and a list of attachments left off (with the reason)."""
     to = _clean_header(entry.get("to", ""), 254)
@@ -132,9 +135,9 @@ def build_message(
     local, _, domain = cfg["from"].partition("@")
     msg["From"] = Address(display_name=sender_name, username=local, domain=domain)
     msg["To"] = to
-    reply_to = _clean_header(reply_to, 254)
-    if reply_to and EMAIL_RE.match(reply_to):
-        msg["Reply-To"] = reply_to
+    replies = [a for a in (_clean_header(reply_to, 254), _clean_header(inbound, 254)) if a and EMAIL_RE.match(a)]
+    if replies:
+        msg["Reply-To"] = ", ".join(dict.fromkeys(replies))
     cc = [_clean_header(a, 254) for a in entry.get("cc") or []]
     cc = [a for a in cc if EMAIL_RE.match(a) and a.lower() != to.lower()][:5]
     if cc:

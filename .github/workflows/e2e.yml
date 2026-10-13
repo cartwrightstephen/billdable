@@ -1,0 +1,33 @@
+name: browser
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 7 * * *"   # nightly, so a broken page shows up even without a push
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-save playwright@1.47.2
+          npx playwright install --with-deps chromium
+      - name: Start a server on a fresh data directory
+        run: |
+          BILLDABLE_DATA_DIR="$RUNNER_TEMP/data" BACKUP_HOURS=0 HOST=127.0.0.1 PORT=8765 python3 server.py > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8765/healthz > /dev/null && break; sleep 1; done
+      - name: Browser smoke test
+        run: BILLDABLE_URL_UNDER_TEST=http://127.0.0.1:8765 node tests/e2e/smoke.mjs
+      - name: Server log
+        if: always()
+        run: tail -n 80 "$RUNNER_TEMP/server.log"
