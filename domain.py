@@ -410,7 +410,18 @@ def resolve_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor:
     return job
 
 
-def approve_and_send(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
+def payer_link(invoice: dict[str, Any], link_base: str | None, company_id: str) -> str:
+    """The pay app's private page for the payer (P2-4), made the first time it is needed."""
+    if not link_base or not company_id:
+        return ""
+    if not invoice.get("payer_token"):
+        invoice["payer_token"] = secrets.token_urlsafe(24)
+    return f"{link_base.rstrip('/')}/p/{company_id}.{invoice['payer_token']}"
+
+
+def approve_and_send(
+    state: dict[str, Any], job_id: str, actor: str = "owner", link_base: str | None = None, company_id: str = ""
+) -> dict[str, Any]:
     job = _open_job(state, job_id)
     blockers = blocker_lines(job)
     if blockers:
@@ -429,8 +440,12 @@ def approve_and_send(state: dict[str, Any], job_id: str, actor: str = "owner") -
         f"{payer.get('approver') or payer['name']},\n\n"
         f"Please find pay application {invoice['number']} for {job['name']} attached as a PDF. Every packet item is accounted for"
         + (f"; {len(files)} packet document{'s are' if len(files) != 1 else ' is'} attached too." if files else ".")
-        + f"\n\n{pay_app_text(state, job, invoice)}\n\nApproved by {actor}."
+        + f"\n\n{pay_app_text(state, job, invoice)}"
     )
+    link = payer_link(invoice, link_base, company_id)
+    if link:
+        body += f"\n\nSee this pay app, its packet and documents, and tell us it reached you:\n{link}"
+    body += f"\n\nApproved by {actor}."
     _record_email(state, job_id, "pay_app", payer["ap_email"], subject, body, actor, attachments=files, cc=_copy_list(payer),
                   payapp_invoice_id=invoice["id"])
     audit(
@@ -443,7 +458,9 @@ def approve_and_send(state: dict[str, Any], job_id: str, actor: str = "owner") -
     return job
 
 
-def record_follow_up(state: dict[str, Any], job_id: str, actor: str = "billdable") -> dict[str, Any]:
+def record_follow_up(
+    state: dict[str, Any], job_id: str, actor: str = "billdable", link_base: str | None = None, company_id: str = ""
+) -> dict[str, Any]:
     """Draft a follow-up on the oldest unpaid pay app once the payer's window has passed."""
     job = _open_job(state, job_id)
     invoice = next((inv for inv in job["invoices"] if inv["status"] in {"sent", "partial"}), None)
@@ -469,8 +486,12 @@ def record_follow_up(state: dict[str, Any], job_id: str, actor: str = "billdable
     body = (
         f"Hi {payer.get('approver') or payer['name']}, checking on {invoice['number']} for {job['name']} "
         f"({money(invoice['amount_cents'])}), sent {(invoice.get('sent_at') or '')[:10]}. "
-        f"Is anything missing on your side? Approved by {actor}."
+        f"Is anything missing on your side?"
     )
+    link = payer_link(invoice, link_base, company_id)
+    if link:
+        body += f"\n\nThe pay app, its packet and documents: {link}"
+    body += f"\n\nApproved by {actor}."
     _record_email(state, job_id, "follow_up", payer["ap_email"], subject, body, actor)
     audit(
         state,

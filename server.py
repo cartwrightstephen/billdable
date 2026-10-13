@@ -43,6 +43,7 @@ import mailer
 import migrations
 import offsite
 import payapp_pdf
+import payer_page
 import sov
 import storage
 import trial
@@ -165,6 +166,7 @@ SECRET_PATHS = (
     (re.compile(r"(/api/inbound/(?:email|sms)/)[^/?\s]+"), r"\1[token]"),
     (re.compile(r"(/api/calendar/)[^/?\s]+?(\.ics)"), r"\1[token]\2"),
     (re.compile(r"(/api/mail-events/)[^/?\s]+"), r"\1[token]"),
+    (re.compile(r"(/p/[a-z0-9-]+\.)[A-Za-z0-9_-]+"), r"\1[token]"),
 )
 
 
@@ -621,23 +623,11 @@ class Handler(BaseHTTPRequestHandler):
             file_id = path.rsplit("/", 1)[-1]
             with STATE_LOCK:
                 state = load_company(user["company_id"])
-            meta = next((f for f in state.get("files", []) if f["id"] == file_id), None)
-            target = importer.file_path(user["company_id"], meta) if meta else None
-            if not meta or not target.is_file():
-                self._json(404, {"error": "File not found."})
-                return
-            kind, inline = importer.ALLOWED_FILES.get(meta["ext"], ("application/octet-stream", False))
-            disposition = "inline" if inline else "attachment"
-            ascii_name = meta["name"].encode("ascii", "replace").decode().replace('"', "")
-            headers = {
-                "Content-Disposition": f'{disposition}; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(meta["name"])}',
-                "Cache-Control": "private, max-age=300",
-            }
-            if meta["ext"] != ".pdf":
-                # Browsers' PDF viewers won't open inside a sandboxed document, so PDFs go without it;
-                # every other type is an image or a download, where the sandbox costs nothing.
-                headers["Content-Security-Policy"] = "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"
-            self._send(200, target.read_bytes(), kind, headers)
+            self._serve_file(user["company_id"], state, file_id)
+            return
+        m = re.match(r"^/p/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})(/pdf|/file/[A-Za-z0-9_-]{1,64})?$", path)
+        if m:
+            self._payer_page_get(m.group(1), m.group(2), m.group(3) or "")
             return
         if path == "/api/import/settings":
             user = self._require_user()
@@ -844,6 +834,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/mail-events/"):
             self._mail_events(path.rsplit("/", 1)[-1])
+            return
+        m = re.match(r"^/p/([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})/received$", path)
+        if m:
+            self._payer_received(m.group(1), m.group(2))
             return
 
         # Everything below needs a signed-in user; check before reading the body.
@@ -1396,6 +1390,73 @@ class Handler(BaseHTTPRequestHandler):
         log_json("info", msg="mail events", received=len(failures), marked=marked, rid=self._rid)
         self._json(200, {"ok": True, "marked": marked})
 
+    def _serve_file(self, company_id: str, state: dict, file_id: str) -> None:
+        meta = next((f for f in state.get("files", []) if f["id"] == file_id), None)
+        target = importer.file_path(company_id, meta) if meta else None
+        if not meta or not target.is_file():
+            self._json(404, {"error": "File not found."})
+            return
+        kind, inline = importer.ALLOWED_FILES.get(meta["ext"], ("application/octet-stream", False))
+        disposition = "inline" if inline else "attachment"
+        ascii_name = meta["name"].encode("ascii", "replace").decode().replace('"', "")
+        headers = {
+            "Content-Disposition": f'{disposition}; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(meta["name"])}',
+            "Cache-Control": "private, max-age=300",
+        }
+        if meta["ext"] != ".pdf":
+            # Browsers' PDF viewers won't open inside a sandboxed document, so PDFs go without it;
+            # every other type is an image or a download, where the sandbox costs nothing.
+            headers["Content-Security-Policy"] = "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"
+        self._send(200, target.read_bytes(), kind, headers)
+
+    def _payer_lookup(self, company_id: str, token: str) -> tuple:
+        """(state, job, invoice) for a payer link, or Nones. Deleted companies have no links."""
+        if company_id in deleted_companies() or not company_path(company_id).exists():
+            return None, None, None
+        with STATE_LOCK:
+            state = load_company(company_id)
+        job, invoice = payer_page.find(state, token)
+        return (state, job, invoice) if invoice else (None, None, None)
+
+    def _payer_page_get(self, company_id: str, token: str, rest: str) -> None:
+        """The payer's page for one pay app (P2-4); no account, the link is the key."""
+        state, job, invoice = self._payer_lookup(company_id, token)
+        if not invoice:
+            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            return
+        private = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"}
+        if rest == "/pdf" and invoice.get("status") != "void":
+            pdf, name = self._payapp_pdf(state, job["id"], invoice["id"])
+            self._send(200, pdf, "application/pdf", {**private, "Content-Disposition": f'inline; filename="{name}"'})
+        elif rest.startswith("/file/") and invoice.get("status") != "void":
+            file_id = rest.rsplit("/", 1)[-1]
+            if file_id not in payer_page.file_ids(state, job, invoice):
+                self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+                return
+            self._serve_file(company_id, state, file_id)
+        elif rest:
+            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+        else:
+            page = payer_page.render(state, job, invoice, f"/p/{company_id}.{token}")
+            self._send_compressible(200, page.encode("utf-8"), "text/html; charset=utf-8", private)
+
+    def _payer_received(self, company_id: str, token: str) -> None:
+        state, job, invoice = self._payer_lookup(company_id, token)
+        if not invoice:
+            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            return
+        raw = self._read_raw(4_000)
+        name = dict(parse_qsl(raw.decode("utf-8", "replace"))).get("name", "")
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        def mark(st: dict) -> None:
+            j, inv = payer_page.find(st, token)
+            if inv:
+                payer_page.mark_received(st, j, inv, name, now)
+
+        self._change(company_id, mark)
+        self._send(303, b"", "text/plain", {"Location": f"/p/{company_id}.{token}"})
+
     def _inbound_sms(self, token: str) -> None:
         company_id = importer.company_for_token(token, "sms")
         if not company_id:
@@ -1491,9 +1552,9 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "draft":
                 domain.draft_invoice(state, job_id, actor=actor, strict=True)
             elif action == "send":
-                domain.approve_and_send(state, job_id, actor)
+                domain.approve_and_send(state, job_id, actor, link_base=app_url(), company_id=company_id)
             elif action == "follow-up":
-                domain.record_follow_up(state, job_id, actor)
+                domain.record_follow_up(state, job_id, actor, link_base=app_url(), company_id=company_id)
             elif action == "match-payment":
                 domain.match_payment(
                     state,
