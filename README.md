@@ -1,6 +1,6 @@
 # Billdable
 
-Rule-based get-paid tool for small contractors (2–12 people, roughly $750k–$2.5M). It works beside QuickBooks; a direct QuickBooks connection is planned, not built. It does not replace Jobber, Housecall Pro, or the books. There is no AI in the product yet.
+Rule-based get-paid tool for small contractors (2–12 people, roughly $750k–$2.5M). It works beside QuickBooks and reads from it (read-only): payments from a CSV export, or through the QuickBooks Online connection once the Intuit app's keys are set. It does not replace Jobber, Housecall Pro, or the books. There is no AI in the product yet.
 
 ## Run locally
 
@@ -37,8 +37,14 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | Variable | What it does |
 | --- | --- |
 | `BILLDABLE_DATA_DIR` | Where all data lives (see above). |
+| `BILLDABLE_DEMO` | `readonly` keeps the demo for prospects in production: anyone can sign in and look around, and nothing can be changed (no edits, reset, password or two-step changes). `off` removes it anywhere. The default is a writable demo outside production and none in production. |
+| `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` | Billing (billing.py). With them, owners get Settings › Team & account › Billing: Subscribe (Stripe Checkout, the free trial carried over) and Manage billing (Stripe's Customer Portal). Point a Stripe webhook at `<BILLDABLE_URL>/api/stripe/webhook`; see runbook 7. |
+| `BILLING_DAY`, `STRIPE_PARTNER_PRICE_ID` | Charges land on `BILLING_DAY` of the month (default 5, after the contractor's own 1st-of-the-month pay app is out): a trial ends on it, and a later subscription is anchored to it with the first part-month prorated. Design partners (`admin.py partner COMPANY_ID on`) pay `STRIPE_PARTNER_PRICE_ID`. |
+| `MONTHLY_SUMMARY_EMAILS` | `1`: the server emails each owner last month's summary on the 1st to the 3rd, once. The monthly restore drill runs by itself whenever backups exist, with an alert if it fails. |
+| `BILLING_ENFORCE`, `BILLING_GRACE_DAYS` | `BILLING_ENFORCE=1` makes a company read-only (never deleted) when its subscription is unpaid or cancelled, or when the trial ended more than `BILLING_GRACE_DAYS` (14) ago with no subscription. A declined card that Stripe is still retrying only shows a warning. Off by default. |
+| `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | The Intuit Developer app's keys; with them, owners can connect QuickBooks (read-only) on Money › Payments. Add `<BILLDABLE_URL>/api/qbo/callback` as a redirect URI in the Intuit app. `QBO_ENV=production` for real companies; the default is the sandbox. Tokens live in `qbo_connections.json`, which backups leave out: after a restore onto a new disk, connect again. |
 | `BILLDABLE_STORAGE` | `json` keeps the one-file-per-company layout. Unset (the default) uses SQLite. |
-| `BILLDABLE_ENV` | `production` turns the demo account off (not created, can't sign in, old demo sessions end) and refuses to start unless `BILLDABLE_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `BILLDABLE_URL` is an `https://` address. Unset everywhere else. |
+| `BILLDABLE_ENV` | `production` turns the demo account off unless `BILLDABLE_DEMO=readonly` (when off: not created, can't sign in, old demo sessions end) and refuses to start unless `BILLDABLE_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `BILLDABLE_URL` is an `https://` address. Unset everywhere else. |
 | `BILLDABLE_DATA_PERSISTENT` | `1` once a deploy has been seen to keep the data. Until then the landing page says "Demo: data may be erased". |
 | `COOKIE_SECURE` | `1` forces the Secure cookie flag. |
 | `HELPER_ADMIN_USER_IDS` | Comma-separated account ids of the people who may review helper questions and edit answers (the founders). Nobody can, if unset. Ids, not emails, because sign-up doesn't verify email. Each person's id is at the bottom of the Help page. |
@@ -117,7 +123,7 @@ Approved pay apps, pencil copies, follow-ups, waivers and retainage requests are
 
 ## Backups, health and logs
 
-- `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), keeping `BACKUP_KEEP`. They are on the same disk as the data, so when the `BACKUP_S3_*` settings are filled in, each new backup is also encrypted with age and uploaded (`offsite.py`); `python3 backup.py upload [FILE]` does one by hand. To restore an off-site copy: download the `.age` file, `age -d -i key.txt FILE.age > backup.tar.gz`, then `python3 backup.py restore backup.tar.gz`. `python3 backup.py now|list|restore FILE`; restore (server stopped) first unpacks into a staging folder and checks the archive is complete (it must hold `auth.json` and `companies/`, with nothing outside the data directory); only then does it move the current data aside to `pre-restore-<time>/` and swap the backup in. Company snapshots taken before a reset are included.
+- `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), keeping `BACKUP_KEEP`. They are on the same disk as the data, so when the `BACKUP_S3_*` settings are filled in, each new backup is also encrypted with age and uploaded (`offsite.py`); `python3 backup.py upload [FILE]` does one by hand. To restore an off-site copy: download the `.age` file, `age -d -i key.txt FILE.age > backup.tar.gz`, then `python3 backup.py restore backup.tar.gz`. `python3 backup.py now|list|restore FILE|drill [FILE]` (drill: restore into a temporary folder and check it reads, without touching the live data; runbook 2); restore (server stopped) first unpacks into a staging folder and checks the archive is complete (it must hold `auth.json` and `companies/`, with nothing outside the data directory); only then does it move the current data aside to `pre-restore-<time>/` and swap the backup in. Company snapshots taken before a reset are included.
 - `GET /healthz`: no sign-in; `ok`, whether the data directory is writable (503 if not), whether email is set up, the time of the last backup and of the last off-site upload, and the env. Point an uptime monitor (for example Better Stack's free tier) at it: it is the only thing that notices the server being down.
 - Logs: one JSON line per request on stderr (time, method, path, status, milliseconds, request id). Query strings and the secret parts of inbound and calendar addresses are removed. A crash logs its traceback with the request id, and the user sees the same id to quote. With `ALERT_WEBHOOK_URL` set, each crash also posts a one-line alert (`alerts.py`).
 
@@ -168,7 +174,9 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `offsite.py`: encrypted off-site copies of backups (age, S3-compatible upload)
 - `alerts.py`: crash and backup-failure alerts to a webhook
 - `totp.py`: two-step sign-in codes (RFC 6238)
+- `billing.py`: Stripe Checkout and Customer Portal, the signed webhook, ending Stripe's trial when the first pay app is paid, and whether a company is held read-only. Stripe's names are from their documentation as remembered, checked only against a stand-in (`tests/test_billing.py`)
 - `qbo_csv.py`: payments from a QuickBooks CSV export, proposed against open pay apps
+- `qbo.py`: the QuickBooks Online connection, read-only: OAuth connect and token refresh, payments proposed with the same matcher (each recorded once, by its QuickBooks id), and a reconciliation report against QuickBooks invoices. Intuit's endpoints and field names are from their documentation as remembered, checked only against a stand-in (`tests/test_qbo.py`) until the first sandbox connection
 - `metrics.py`: the Results numbers and the monthly summary email (`python3 admin.py monthly-summaries`)
 - `payer_page.py`: the payer's page for a pay app (`/p/...`) and the change-order signing page (`/s/...`)
 - `mail_events.py`: bounce and spam-complaint webhooks from the mail provider
@@ -213,6 +221,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `GET /api/jobs?status=open|closed|all&offset=&limit=&q=`: jobs, newest first (closed ones as summaries, by closing date); `limit` up to 200
 - `GET /api/jobs/{id}`: one job in full, with its payer
 - `GET /api/outbox?offset=&limit=&job=` and `GET /api/audit?…`: the Outbox and the audit trail, newest first
+- `GET /api/timeline?job=&offset=&limit=`: one job's history for its page: audit rows and emails (with delivery status, without bodies), newest first
 - `GET /api/export`: download the company's data file
 - `POST /api/reset`: demo company returns to the Hartline seed. Any other company needs `{confirm: "<exact company name>"}` and gets a snapshot first.
 - `POST /api/jobs`: create a job. Required: `name`, `address`, `customer`, `approver`, `ap_email`, `contract_cents`. Optional: `phone`, `role` (`Owner` or `GC`), `retainage_pct` (0–20), `packet_notes`, `contract_number`.
@@ -225,6 +234,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `GET /api/jobs/{id}/payapp/{invoice_id}.pdf`: the pay app as a PDF
 - `POST /api/auth/forgot` `{email}`; `POST /api/auth/reset` `{token, password}`; `POST /api/auth/verify` `{token}`; `POST /api/auth/resend-verify`; `POST /api/auth/password` `{current, new}`
 - `POST /api/auth/invite-info` `{token}`; `POST /api/auth/accept-invite` `{token, name, password}`
+- `POST /api/auth/name` `{name}`: your own name; owners: `POST /api/company` `{name, address, phone, license}` (on every pay app's From block)
 - `GET /api/team`; owners: `POST /api/team/invite` `{email, role}`, `/api/team/{user_id}/role` `{role}`, `/api/team/{user_id}/remove`, `/api/team/invites/{id}/revoke`, `/api/account/delete` `{password, confirm}`
 - `POST /api/onboarding/dismiss`; team only: `GET /api/admin/companies`
 - `GET /healthz`
@@ -247,6 +257,8 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/jobs/{id}/learn-rejection`: `{reason}`
 - `POST /api/jobs/{id}/close`
 - `POST /api/jobs/{id}/import-qbo`: demo company only; a hard-coded sample payment
+- Billing: `GET /api/billing`; owners: `POST /api/billing/checkout` and `/api/billing/portal` (each returns a Stripe address); `POST /api/stripe/webhook` (Stripe-Signature checked)
+- QuickBooks: `GET /api/qbo/status`; owners: `POST /api/qbo/connect` (returns Intuit's sign-in address) and `/api/qbo/disconnect`; `GET /api/qbo/callback` (Intuit sends the owner back here); `POST /api/qbo/payments` `{days}` (proposals, records nothing); `GET /api/qbo/reconcile`
 - `POST /api/payers/{id}/update`: playbook fields. Follow-up and approval days must be 1–365.
 - `POST /api/jobs/{id}/pencil`: send the open draft as a pencil copy; `POST /api/jobs/{id}/pencil-response`: `{agreed, note}`
 - `POST /api/jobs/{id}/void-draft`; `POST /api/jobs/{id}/withdraw-co/{co_id}`

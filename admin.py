@@ -5,6 +5,11 @@
     python3 admin.py delete-company COMPANY_ID     delete a company on request (asks to confirm)
     python3 admin.py end-sessions COMPANY_ID       sign every user of a company out
     python3 admin.py monthly-summaries [YYYY-MM]   email each company's owners last month's summary
+    python3 admin.py read-only COMPANY_ID REASON   stop changes (for example "payment is past due");
+                                                   the data stays, sign-in and export still work
+    python3 admin.py writable COMPANY_ID           undo read-only
+    python3 admin.py partner COMPANY_ID on|off     a design partner pays STRIPE_PARTNER_PRICE_ID
+                                                   (the business plan: up to 3, $99 a month)
 
 Every command acts on BILLDABLE_DATA_DIR, like the server. See docs/runbooks.md.
 """
@@ -15,6 +20,7 @@ import json
 import sys
 
 import auth
+import domain
 import server
 
 
@@ -52,20 +58,50 @@ def main(argv: list[str]) -> int:
         print(f"Deleted {match['name']} and {removed} users. Backups that hold it expire after BACKUP_KEEP days; off-site copies after the bucket's retention.")
     elif cmd == "monthly-summaries":
         # Run on the 1st of each month (a Render cron job, or by hand). Default: last month.
+        # The server also sends these by itself on the 1st with MONTHLY_SUMMARY_EMAILS=1.
         import datetime as dt
-        import metrics
         if args:
             year, month = (int(x) for x in args[0].split("-"))
         else:
             last = dt.date.today().replace(day=1) - dt.timedelta(days=1)
             year, month = last.year, last.month
-        for c in _companies():
-            if c["id"] == auth.DEMO_COMPANY_ID:
-                continue
-            subject, body = metrics.month_summary(server.load_company(c["id"]), year, month)
-            for u in auth.all_users():
-                if u["company_id"] == c["id"] and u.get("role") == "owner" and u.get("email_verified"):
-                    print(f"{c['id']}  {u['email']}: {server.send_system_email(u['email'], subject, body, c['id'])}")
+        for line in server.send_monthly_summaries(year, month):
+            print(line)
+    elif cmd == "partner" and len(args) == 2 and args[1] in {"on", "off"}:
+        if args[0] not in server.company_ids():
+            print("No company with that id. Run: python3 admin.py companies")
+            return 1
+        on = args[1] == "on"
+        with server.company_lock(args[0]):
+            state = server.load_company(args[0])
+            record = state.setdefault("company", {}).setdefault("billing", {})
+            if on:
+                record["partner"] = True
+            else:
+                record.pop("partner", None)
+            domain.audit(state, "", "billing", "Billdable made the company a design partner." if on else "Billdable ended the design-partner price.", "Billdable")
+            server.save_company(args[0], state)
+        partners = sum(1 for c in server.company_ids() if (server.load_company(c).get("company", {}).get("billing") or {}).get("partner"))
+        print(f"{args[0]} is {'a design partner' if on else 'on the regular price'}. Design partners now: {partners}.")
+        if partners > 3:
+            print("Note: the business plan caps design partners at 3.")
+        print("It applies to the next Subscribe; an existing subscription changes in Stripe.")
+    elif cmd in {"read-only", "writable"} and args and (cmd == "writable" or len(args) > 1):
+        if args[0] not in server.company_ids():
+            print("No company with that id. Run: python3 admin.py companies")
+            return 1
+        reason = " ".join(args[1:]).strip()[:200] if cmd == "read-only" else ""
+        with server.company_lock(args[0]):
+            state = server.load_company(args[0])
+            company = state.setdefault("company", {})
+            if reason:
+                company["read_only"] = reason
+            else:
+                company.pop("read_only", None)
+            domain.audit(state, "", "read_only" if reason else "writable",
+                         f"Billdable set the company read-only: {reason}." if reason else "Billdable made the company writable again.", "Billdable")
+            server.save_company(args[0], state)
+        print(f"{args[0]} is now {'read-only: ' + reason if reason else 'writable'}.")
     elif cmd == "end-sessions" and args:
         with auth.LOCK:
             data = auth._load()

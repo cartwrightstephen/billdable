@@ -52,7 +52,7 @@ class MetricsTests(unittest.TestCase):
                  {"company_id": "co-pine", "role": "member", "email_verified": True, "email": "mem@pine.example"},
                  {"company_id": "co-pine", "role": "owner", "email_verified": False, "email": "new@pine.example"}]
         sent = []
-        with mock.patch.object(admin, "_companies", return_value=[{"id": "co-pine", "name": "Pine", "users": 3, "jobs": 0}]), \
+        with mock.patch.object(admin.server, "company_ids", return_value=["co-pine"]), \
                 mock.patch.object(admin.auth, "all_users", return_value=users), \
                 mock.patch.object(admin.server, "load_company", return_value=seed_state()), \
                 mock.patch.object(admin.server, "send_system_email", side_effect=lambda to, s, b, c: sent.append(to) or "sent"), \

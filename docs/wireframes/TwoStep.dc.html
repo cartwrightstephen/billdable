@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Two-step sign-in</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1F4FD1}a:hover{color:#16389A}
+</style>
+</helmet>
+<div style="background: #F5F5F3; font-family: 'IBM Plex Sans', sans-serif; color: #1B1B1B; min-height: 100%; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 24px">
+  <h1 style="margin: 0; font-size: 32px; font-weight: 600">Two-step sign-in</h1>
+  <div style="display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start">
+
+    <section style="flex: 1 1 340px; max-width: 420px; background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">1 · Sign in, after the password</div>
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600">Sign in</h2>
+      <p style="margin: 0; font-size: 14px; color: #555555">Back to your jobs, packets, and playbook.</p>
+      <label for="code" style="font-size: 14px; font-weight: 500">Code from your authenticator app</label>
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" style="height: 48px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font: inherit; font-size: 20px; letter-spacing: 4px">
+      <p style="margin: 0; font-size: 14px; color: #555555">Lost your phone? Type one of your recovery codes instead.</p>
+      <button type="button" style="height: 48px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Sign in</button>
+      <button type="button" style="align-self: flex-start; height: 44px; padding: 0 14px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Back</button>
+    </section>
+
+    <section style="flex: 1 1 340px; max-width: 420px; background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">2 · Settings › Team &amp; account, setting it up</div>
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600">Two-step sign-in</h2>
+      <ol style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 12px; font-size: 15px">
+        <li>In an authenticator app (Google Authenticator, 1Password, Authy, Microsoft Authenticator), add an account and choose to enter a key.</li>
+        <li>Key: <code style="font-family: 'IBM Plex Mono', monospace; background: #EFEFEC; padding: 2px 6px; border-radius: 4px">[KEY SHOWN HERE]</code> <button type="button" style="height: 36px; padding: 0 10px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit; font-size: 14px">Copy</button></li>
+        <li style="display: flex; flex-direction: column; gap: 8px">Type the 6-digit code the app shows:
+          <span style="display: flex; gap: 8px"><label for="setup-code" style="position: absolute; left: -9999px">6-digit code</label><input id="setup-code" inputmode="numeric" placeholder="123456" style="flex: 1; height: 44px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"><button type="button" style="height: 44px; padding: 0 16px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Turn on</button></span></li>
+      </ol>
+    </section>
+
+    <section style="flex: 1 1 340px; max-width: 420px; background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">3 · Right after turning it on, shown once</div>
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600">Two-step sign-in is on</h2>
+      <p style="margin: 0; font-size: 15px">Save these recovery codes somewhere safe, such as your password manager. Each one signs you in once if you lose your phone. They are not shown again.</p>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; background: #EFEFEC; border-radius: 8px; padding: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px">
+        <span>xxxx-xxxx</span><span>xxxx-xxxx</span><span>xxxx-xxxx</span><span>xxxx-xxxx</span><span>xxxx-xxxx</span><span>xxxx-xxxx</span><span>xxxx-xxxx</span><span>xxxx-xxxx</span>
+      </div>
+      <div style="display: flex; gap: 8px">
+        <button type="button" style="height: 44px; padding: 0 14px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Copy</button>
+        <button type="button" style="height: 44px; padding: 0 16px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">I saved them</button>
+      </div>
+      <p style="margin: 0; font-size: 14px; color: #555555">Afterwards the card reads <strong style="color: #1B1B1B">On</strong>, with "Turn it off" asking for the password and a current code.</p>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1400,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

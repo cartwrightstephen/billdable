@@ -30,11 +30,13 @@ from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from html import escape as html_escape
 from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse
 
 import alerts
 import auth
 import backup
+import billing
 import calendar_feed
 import domain
 import helper
@@ -46,6 +48,7 @@ import metrics
 import migrations
 import offsite
 import payapp_pdf
+import qbo
 import qbo_csv
 import payer_page
 import sov
@@ -161,9 +164,42 @@ def production() -> bool:
     return (os.environ.get("BILLDABLE_ENV") or "").strip().lower() == "production"
 
 
+def demo_mode() -> str:
+    """BILLDABLE_DEMO: "on" (the default outside production), "readonly" or "off" (the default
+    in production). The demo's password is public, so production allows it only read-only:
+    visitors can look around, and nothing can be changed, reset or locked."""
+    value = (os.environ.get("BILLDABLE_DEMO") or "").strip().lower()
+    if value in {"off", "readonly"}:
+        return value
+    return "off" if production() else "on"
+
+
 def demo_enabled() -> bool:
-    # The demo account's password is public, so it never exists in production.
-    return not production()
+    return demo_mode() != "off"
+
+
+# What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
+# read-only demo allows less: no password, two-step or team changes, or the demo locks.
+DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv"}
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_team", "_p_helper_admin",
+                                             "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal"}
+
+
+def demo_locked(company_id: str) -> bool:
+    """The read-only demo also ignores writes from outside: its inbound addresses are visible to
+    every visitor, so mail, texts, "Mark as received" and signatures sent to it change nothing."""
+    return company_id == auth.DEMO_COMPANY_ID and demo_mode() == "readonly"
+
+
+def read_only_reason(company_id: str, state: dict | None = None) -> str:
+    """Why this company can't be changed right now, or "" when it can."""
+    if company_id == auth.DEMO_COMPANY_ID and demo_mode() == "readonly":
+        return "This is the read-only demo. Create your own company to try changes."
+    if state is None:
+        with company_lock(company_id):
+            state = load_company(company_id)
+    why = str(state.get("company", {}).get("read_only") or "").strip() or billing.standing(state)["hold"]
+    return f"This company is read-only: {why}. Nothing was changed; your data is kept and can be exported from Settings." if why else ""
 
 
 def data_notice() -> bool:
@@ -358,6 +394,82 @@ def save_company(company_id: str, state: dict) -> None:
         log_json("warn", msg="write to a deleted company refused", company=company_id)
         return
     company_store().save(company_id, state)
+
+
+def activation_days(state: dict) -> int | None:
+    """The business plan's activation measure: days from signup to the first paid pay app sent
+    through Billdable (None until then)."""
+    t = trial.status(state)
+    if t.get("reason") != "paid":
+        return None
+    return (datetime.fromisoformat(t["ended_at"]).date() - datetime.fromisoformat(t["started_at"]).date()).days
+
+
+def send_monthly_summaries(year: int, month: int) -> list:
+    """Email each company's owners (confirmed addresses) their summary of that month. Returns
+    one line per email for the log: "company  address: result"."""
+    lines = []
+    users = auth.all_users()
+    for company_id in company_ids():
+        if company_id == auth.DEMO_COMPANY_ID:
+            continue
+        with company_lock(company_id):
+            state = load_company(company_id)
+        subject, body = metrics.month_summary(state, year, month)
+        for u in users:
+            if u["company_id"] == company_id and u.get("role") == "owner" and u.get("email_verified"):
+                lines.append(f"{company_id}  {u['email']}: {send_system_email(u['email'], subject, body, company_id)}")
+    return lines
+
+
+MONTHLY_PATH_NAME = "monthly_jobs.json"
+
+
+def run_monthly_jobs(now: datetime | None = None) -> list:
+    """Once a month, recorded in <data dir>/monthly_jobs.json so a restart doesn't repeat them:
+    the restore drill on the newest backup (an alert when it fails), and, with
+    MONTHLY_SUMMARY_EMAILS=1 and email set up, last month's summary to each owner (on the 1st
+    to the 3rd). Returns what it did, for the log."""
+    now = now or datetime.now(timezone.utc)
+    month = now.strftime("%Y-%m")
+    path = storage.DATA_DIR / MONTHLY_PATH_NAME
+    try:
+        done = json.loads(path.read_text())
+    except (OSError, ValueError):
+        done = {}
+    did = []
+    newest = (backup.backups() or [None])[0]
+    if done.get("drill") != month and newest is not None:
+        report, problems = backup.drill(newest)
+        did.append(f"restore drill of {newest.name}: " + ("PASS" if not problems else f"FAIL ({len(problems)} problems)"))
+        if problems:
+            alerts.notify("drill", f"the monthly restore drill of {newest.name} failed: {problems[0]}")
+        done["drill"] = month
+    if (os.environ.get("MONTHLY_SUMMARY_EMAILS") == "1" and mailer.configured() and now.day <= 3
+            and done.get("summaries") != month):
+        last = now.date().replace(day=1) - timedelta(days=1)
+        lines = send_monthly_summaries(last.year, last.month)
+        did.append(f"monthly summaries for {last:%Y-%m}: {len(lines)} sent or tried")
+        done["summaries"] = month
+    if did:
+        storage.write_json(path, done)
+    return did
+
+
+def start_monthly_jobs() -> threading.Thread:
+    def loop() -> None:
+        while True:
+            try:
+                for line in run_monthly_jobs():
+                    log_json("info", msg=line)
+            except Exception as exc:  # a failure is logged and alerted; the loop keeps going
+                log_json("error", msg=f"monthly jobs failed: {exc.__class__.__name__}: {exc}")
+                alerts.notify("monthly-jobs", f"monthly jobs failed ({exc.__class__.__name__}); see the server log")
+            time.sleep(3600)
+
+    thread = threading.Thread(target=loop, name="monthly-jobs", daemon=True)
+    thread.start()
+    return thread
 
 
 def ensure_demo() -> None:
@@ -633,6 +745,13 @@ class Handler(BaseHTTPRequestHandler):
         user = self._require_user()
         if not user:
             return
+        if route.method == "POST":
+            allowed = DEMO_READ_ONLY_OK if user["company_id"] == auth.DEMO_COMPANY_ID and demo_mode() == "readonly" else COMPANY_READ_ONLY_OK
+            if route.handler not in allowed:
+                why = read_only_reason(user["company_id"])
+                if why:
+                    self._json(403, {"error": why, "read_only": True})
+                    return
         if route.access == "user":
             handler(m, user)
             return
@@ -655,8 +774,12 @@ class Handler(BaseHTTPRequestHandler):
             with company_lock(ctx.company_id):
                 state = load_company(ctx.company_id)
                 state = handler(state, m, ctx) or state
+                # The first paid pay app ends the free trial (trial.py): tell Stripe, once.
+                end_trial = billing.trial_end_due(state) if billing.configured() else None
                 save_company(ctx.company_id, state)
                 payload = domain.light_snapshot(state)
+                # Most changes queue no email: don't load the company again just to find that out.
+                queued = any(e.get("status") == "queued" for e in state.get("email_log", []))
         except UnknownAction:
             self._json(404, {"error": "Unknown action"})
             return
@@ -666,9 +789,11 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError, TypeError, OverflowError) as exc:
             self._json(400, {"error": f"Bad request: {exc}"})
             return
+        if end_trial:
+            threading.Thread(target=self._end_stripe_trial, args=(end_trial,), daemon=True).start()
         # Approved emails are delivered after the change is saved and the lock is released;
         # the reply is written after that too, so a slow client can't stall other companies.
-        self._json(200, self._deliver_queued(ctx.company_id, ctx.user) or payload)
+        self._json(200, (self._deliver_queued(ctx.company_id, ctx.user) if queued else None) or payload)
 
     def _get(self) -> None:
         self._dispatch("GET")
@@ -736,7 +861,9 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
-                         "mail_ready": bool(mailer.configured() and app_url())})
+                         "mail_ready": bool(mailer.configured() and app_url()),
+                         "read_only": read_only_reason(user["company_id"], state),
+                         "billing": billing.standing(state)})
 
     def _g_helper_review(self, m, user) -> None:
         if not is_helper_admin(user):
@@ -783,6 +910,138 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             self._json(200, domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0]))
+
+    # ----- Billing with Stripe (billing.py) -----
+
+    def _end_stripe_trial(self, subscription_id: str) -> None:
+        try:
+            billing.end_trial(subscription_id)
+        except billing.BillingError as exc:
+            log_json("warn", msg="ending the Stripe trial failed", reason=str(exc)[:200])
+            alerts.notify("billing:trial-end", f"Couldn't end a Stripe trial ({subscription_id}): {exc}")
+
+    def _g_billing(self, m, user) -> None:
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        self._json(200, {**billing.standing(state), "trial": trial.status(state)})
+
+    def _p_billing_checkout(self, m, ctx: "Ctx") -> None:
+        if ctx.company_id == auth.DEMO_COMPANY_ID or not app_url():
+            self._json(409, {"error": "The demo account can't subscribe." if ctx.company_id == auth.DEMO_COMPANY_ID
+                             else "Set BILLDABLE_URL first; Stripe sends people back to it."})
+            return
+        with company_lock(ctx.company_id):
+            state = load_company(ctx.company_id)
+        try:
+            self._json(200, {"url": billing.checkout_url(state, ctx.company_id, ctx.user.get("email", ""), app_url())})
+        except billing.BillingError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _p_billing_portal(self, m, ctx: "Ctx") -> None:
+        with company_lock(ctx.company_id):
+            state = load_company(ctx.company_id)
+        try:
+            self._json(200, {"url": billing.portal_url(state, app_url() or "")})
+        except billing.BillingError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _p_stripe_webhook(self, m) -> None:
+        payload = self._read_raw(MAX_BODY_BYTES)
+        try:
+            event = billing.verify(payload, self.headers.get("Stripe-Signature", ""))
+        except billing.BillingError as exc:
+            log_json("warn", msg="stripe webhook refused", reason=str(exc), rid=self._rid)
+            self._json(400, {"error": str(exc)})
+            return
+        company_id, customer = billing.company_hint(event)
+        known = company_ids()
+        if company_id not in known:
+            company_id = ""
+            for cid in known:
+                with company_lock(cid):
+                    if customer and (load_company(cid).get("company", {}).get("billing") or {}).get("customer_id") == customer:
+                        company_id = cid
+                        break
+        if not company_id:
+            # Answer 200 anyway: Stripe would retry an error for days, and nothing here can use it.
+            log_json("info", msg="stripe event for no known company", type=event.get("type"), rid=self._rid)
+            self._json(200, {"received": True})
+            return
+
+        def apply(st: dict) -> None:
+            line = billing.apply(st, event)
+            if line:
+                domain.audit(st, "", "billing", line, "Stripe")
+
+        self._change(company_id, apply)
+        self._json(200, {"received": True})
+
+    # ----- QuickBooks Online, read-only (qbo.py) -----
+
+    def _qbo_redirect_uri(self) -> str:
+        return f"{app_url() or ''}/api/qbo/callback"
+
+    def _g_qbo_status(self, m, user) -> None:
+        self._json(200, qbo.status(user["company_id"]))
+
+    def _g_qbo_callback(self, m) -> None:
+        q = parse_qs(urlparse(self.path).query)
+        arg = lambda k: (q.get(k) or [""])[0][:200]
+        try:
+            if arg("error"):
+                raise qbo.QboError("QuickBooks wasn't connected." + (" You cancelled it." if arg("error") == "access_denied" else ""))
+            company_id = qbo.finish(arg("state"), arg("code"), arg("realmId"), self._qbo_redirect_uri())
+        except qbo.QboError as exc:
+            page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+                    f'<title>QuickBooks - Billdable</title></head><body><main><h1>QuickBooks</h1><p>{html_escape(str(exc))}</p>'
+                    f'<p><a href="/money/payments">Back to Payments</a></p></main></body></html>')
+            self._send(400, page.encode("utf-8"), "text/html; charset=utf-8")
+            return
+        self._change(company_id, lambda st: domain.audit(st, "", "qbo_connected", "QuickBooks was connected (read-only).", "QuickBooks"))
+        self._send(303, b"", "text/plain", {"Location": "/money/payments"})
+
+    def _g_qbo_reconcile(self, m, user) -> None:
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        try:
+            invoices = qbo.query(user["company_id"], "Invoice")
+        except qbo.QboError as exc:
+            self._json(409, {"error": str(exc)})
+            return
+        self._json(200, {"rows": qbo.reconcile(state, invoices), "invoices": len(invoices)})
+
+    def _p_qbo_connect(self, m, ctx: "Ctx") -> None:
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The demo account can't connect QuickBooks. Use the sample import on a job instead."})
+            return
+        try:
+            self._json(200, {"url": qbo.authorize_url(ctx.company_id, ctx.actor, self._qbo_redirect_uri())})
+        except qbo.QboError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _p_qbo_disconnect(self, m, ctx: "Ctx") -> None:
+        qbo.disconnect(ctx.company_id)
+        self._change(ctx.company_id, lambda st: domain.audit(st, "", "qbo_disconnected", f"{ctx.actor} disconnected QuickBooks.", ctx.actor))
+        self._json(200, qbo.status(ctx.company_id))
+
+    def _p_qbo_payments(self, m, ctx: "Ctx") -> None:
+        days = _whole_number(ctx.body, "days", "Days", 1) if "days" in ctx.body else 90
+        with company_lock(ctx.company_id):
+            state = load_company(ctx.company_id)
+        try:
+            self._json(200, qbo.read_payments(ctx.company_id, state, days))
+        except qbo.QboError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _g_timeline(self, m, user) -> None:
+        offset, limit, q = self._paging()
+        job_id = (q.get("job") or [""])[0]
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        if not any(j["id"] == job_id for j in state["jobs"]):
+            self._json(404, {"error": "Job not found."})
+            return
+        self._json(200, domain.timeline_page(state, job_id, offset, limit))
 
     def _g_export(self, m, user) -> None:
         with company_lock(user["company_id"]):
@@ -1088,7 +1347,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     domain.match_payment(st, str(pick.get("job_id") or ""), pick.get("amount_cents"), ref,
                                          ctx.actor, invoice_id=str(pick.get("invoice_id") or "") or None,
-                                         received_on=str(pick.get("date") or "") or None)
+                                         received_on=str(pick.get("date") or "") or None,
+                                         qbo_payment_id=str(pick.get("qbo_id") or "") or None)
                     results.append({"reference": ref, "ok": True})
                 except domain.GateError as exc:
                     results.append({"reference": ref, "ok": False, "error": str(exc)})
@@ -1275,7 +1535,7 @@ class Handler(BaseHTTPRequestHandler):
             return None, None
         payer = next((p for p in state.get("payers", []) if p["id"] == job["payer_id"]), {})
         name = re.sub(r"[^A-Za-z0-9._-]", "-", invoice["number"]) + ".pdf"
-        return payapp_pdf.render(state.get("company", {}).get("name", ""), job, payer, invoice), name
+        return payapp_pdf.render(state.get("company", {}), job, payer, invoice), name
 
     def _company_overview(self) -> list:
         users = auth.all_users()
@@ -1297,6 +1557,8 @@ class Handler(BaseHTTPRequestHandler):
                 "jobs": len(state.get("jobs", [])),
                 "pay_apps_sent": sum(1 for j in state.get("jobs", []) for i in j.get("invoices", []) if i.get("sent_at")),
                 "trial": trial.status(state),
+                "billing": billing.standing(state)["status"] or ("none" if billing.configured() else ""),
+                "activation_days": activation_days(state),
                 "demo": company_id == auth.DEMO_COMPANY_ID,
             })
         return out
@@ -1527,6 +1789,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "Not found"})
             return
         data = self._read_raw(MAX_INBOUND_BYTES)
+        if demo_locked(company_id):
+            self._json(200, {"ok": True, "ignored": "the demo is read-only"})
+            return
         # Keep the header as sent: a multipart boundary is case-sensitive.
         parsed = _parse_inbound_email(data, self.headers.get("Content-Type") or "")
         stored, skipped = self._store_email_files(company_id, parsed, "inbound email")
@@ -1629,6 +1894,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
             return
         raw = self._read_raw(4_000)
+        if demo_locked(company_id):
+            self._send(303, b"", "text/plain", {"Location": f"/p/{company_id}.{token}"})
+            return
         name = dict(parse_qsl(raw.decode("utf-8", "replace"))).get("name", "")
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1649,6 +1917,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         company_id = user["company_id"]
         data = self._read_raw(MAX_INBOUND_BYTES)
+        if read_only_reason(company_id):
+            # The Inbox page shows why; nothing is stored.
+            self._send(303, b"", "text/plain", {"Location": "/inbox"})
+            return
         parsed = _parse_share(data, self.headers.get("Content-Type") or "")
         stored, skipped = [], []
         for f in parsed["files"]:
@@ -1695,6 +1967,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
             return
         form = dict(parse_qsl(self._read_raw(4_000).decode("utf-8", "replace")))
+        if demo_locked(company_id):
+            self._send(303, b"", "text/plain", {"Location": f"/s/{company_id}.{token}"})
+            return
         ip, agent = self._client_ip(), self.headers.get("User-Agent", "")
 
         def sign(st: dict) -> None:
@@ -1713,6 +1988,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "Not found"})
             return
         data = self._read_raw(MAX_BODY_BYTES)
+        if demo_locked(company_id):
+            self._json(200, {"ok": True, "ignored": "the demo is read-only"})
+            return
         params = dict(parse_qsl(data.decode("utf-8", "replace"), keep_blank_values=True))
         secret = os.environ.get("TWILIO_AUTH_TOKEN")
         if secret:
@@ -1793,6 +2071,17 @@ class Handler(BaseHTTPRequestHandler):
     def _m_payer_suggestion(self, state: dict, m, ctx: "Ctx") -> None:
         domain.answer_packet_suggestion(state, m.group(1), m.group(2), m.group(3) == "add", ctx.actor)
 
+    def _m_company_update(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.update_company(state, ctx.body, ctx.actor)
+
+    def _p_my_name(self, m, ctx: "Ctx") -> None:
+        try:
+            user = auth.update_name(ctx.user["id"], ctx.body.get("name"))
+        except auth.AuthError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._json(200, {"user": user})
+
     def _m_payer_update(self, state: dict, m, ctx: "Ctx") -> None:
         domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
 
@@ -1838,9 +2127,14 @@ ROUTES = [
     Route("GET", r"/api/jobs", "_g_jobs", "user"),
     Route("GET", r"/api/jobs/([^/]+)", "_g_job", "user"),
     Route("GET", r"/api/(outbox|audit)", "_g_log_page", "user"),
+    Route("GET", r"/api/timeline", "_g_timeline", "user"),
     Route("GET", r"/api/export", "_g_export", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
     Route("GET", r"/api/metrics", "_g_metrics", "user"),
+    Route("GET", r"/api/qbo/status", "_g_qbo_status", "user"),
+    Route("GET", r"/api/billing", "_g_billing", "user"),
+    Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user"),
+    Route("GET", r"/api/qbo/callback", "_g_qbo_callback"),
     Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
     Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.pdf", "_g_payapp_pdf", "user"),
@@ -1861,6 +2155,7 @@ ROUTES = [
     Route("POST", r"/p/" + TOKEN_LINK + r"/received", "_p_payer_received"),
     Route("POST", r"/s/" + TOKEN_LINK + r"/sign", "_p_co_sign"),
     Route("POST", r"/share", "_p_share"),
+    Route("POST", r"/api/stripe/webhook", "_p_stripe_webhook"),
     # signed in
     Route("POST", r"/api/import/file", "_p_import_file", "user"),
     Route("POST", r"/api/helper/ask", "_p_helper_ask", "body"),
@@ -1874,6 +2169,11 @@ ROUTES = [
     Route("POST", r"/api/import/text", "_p_import_text", "body"),
     Route("POST", r"/api/import/rotate", "_p_rotate", "body", owner=True),
     Route("POST", r"/api/metrics/summary-email", "_p_summary_email", "body"),
+    Route("POST", r"/api/qbo/connect", "_p_qbo_connect", "body", owner=True),
+    Route("POST", r"/api/billing/checkout", "_p_billing_checkout", "body", owner=True),
+    Route("POST", r"/api/billing/portal", "_p_billing_portal", "body", owner=True),
+    Route("POST", r"/api/qbo/disconnect", "_p_qbo_disconnect", "body", owner=True),
+    Route("POST", r"/api/qbo/payments", "_p_qbo_payments", "body"),
     Route("POST", r"/api/onboarding/dismiss", "_p_onboarding_dismiss", "body"),
     Route("POST", r"/api/team/.+|/api/account/delete", "_p_team", "body"),
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_p_inbox", "body"),
@@ -1885,6 +2185,8 @@ ROUTES = [
     Route("POST", r"/api/jobs/([^/]+)/([a-z-]+)(?:/([^/]+))?", "_m_job_action", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
+    Route("POST", r"/api/company", "_m_company_update", "mutate", owner=True),
+    Route("POST", r"/api/auth/name", "_p_my_name", "body"),
 ]
 
 
@@ -2047,6 +2349,7 @@ def main() -> None:
         {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK},
         log=lambda msg: log_json("info", msg=msg),
     )
+    start_monthly_jobs()
     server.serve_forever()
 
 

@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+import domain
+
 # Shown on the Calendar page and in every feed: Billdable computes no statutory dates (LC-2).
 NOT_LEGAL = "These are your contract and follow-up dates, not legal deadlines. Check lien and prompt-pay deadlines with your attorney."
 
@@ -68,6 +70,14 @@ def events(state: dict[str, Any]) -> list[dict[str, Any]]:
             add(p.get("matched_at"), f"Payment matched on {j['name']}", f"{j['id']}-{p['id']}")
         if j.get("closed_at"):
             add(j["closed_at"], f"{j['name']} closed", f"{j['id']}-closed")
+        # The payer's monthly cutoff (playbook), for jobs that may still bill: this cycle and the next two.
+        due = domain.payapp_due(payer)
+        if due and not j.get("closed") and (j.get("work_status") != "complete" or domain.job_money(j)["unbilled_completed_cents"] > 0):
+            when = due[0]
+            for _ in range(3):
+                add(when, f"Pay app due to {payer.get('name', 'the payer')} ({j['name']})", f"{j['id']}-due-{when:%Y%m}",
+                    "The payer's cutoff for this month's pay app, from the payer playbook.")
+                when = domain.payapp_due(payer, when + timedelta(days=1))[0]
     return out
 
 

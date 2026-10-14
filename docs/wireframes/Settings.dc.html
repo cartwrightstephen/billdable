@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings: team and account</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1F4FD1}a:hover{color:#16389A}
+</style>
+</helmet>
+<div style="background: #F5F5F3; font-family: 'IBM Plex Sans', sans-serif; color: #1B1B1B; min-height: 100%; display: flex; flex-wrap: wrap">
+  <aside style="flex: 1 1 200px; max-width: 232px; box-sizing: border-box; padding: 24px 16px; background: #EAEAE7; border-right: 1px solid #BDBDBD; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-size: 22px; font-weight: 600">Billdable</div>
+    <div style="font-size: 14px; color: #555555; margin-bottom: 20px"><strong style="color: #1B1B1B">Hartline Remodeling</strong><br>6 people · QuickBooks Online</div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 4px">
+      <a href="Today.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Today</a>
+      <a href="Jobs.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Jobs</a>
+      <a href="Inbox.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px; display: flex; justify-content: space-between">Inbox <span style="background: #1B1B1B; color: #FFFFFF; border-radius: 10px; padding: 0 8px; font-size: 13px">2</span></a>
+      <a href="Money.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Money</a>
+      <a href="Settings.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 12px">Settings</a>
+    </nav>
+    <div style="margin-top: 40px; padding-top: 12px; border-top: 1px solid #BDBDBD; font-size: 13px; color: #555555">Alex Hartline<br>alex@hartline.example<br><a href="Landing.dc.html">Log out</a></div>
+  </aside>
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 20px 32px 48px; display: flex; flex-direction: column; gap: 18px; max-width: 1200px">
+    <nav aria-label="Settings" style="display: flex; gap: 4px; border-bottom: 1px solid #BDBDBD; overflow-x: auto; white-space: nowrap">
+      <a href="Settings.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; padding: 10px 12px; border-bottom: 3px solid #1B1B1B">Team &amp; account</a>
+      <a href="#playbook" style="text-decoration: none; color: #555555; padding: 10px 12px">Payer playbook</a>
+      <a href="#audit" style="text-decoration: none; color: #555555; padding: 10px 12px">Audit</a>
+      <a href="#help" style="text-decoration: none; color: #555555; padding: 10px 12px">Help</a>
+      <span style="margin-left: auto; align-self: center; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">/settings</span>
+    </nav>
+    <h1 style="margin: 0; font-size: 36px; font-weight: 600">Team &amp; account</h1>
+
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column">
+      <h2 style="margin: 0 0 8px; font-size: 18px; font-weight: 600">You</h2>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><label for="my-name" style="color: #555555; min-width: 60px">Name</label><input id="my-name" value="Alex Hartline" style="flex: 1 1 220px; height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"><button type="button" style="height: 40px; padding: 0 14px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Save name</button></div>
+      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span style="color: #555555">Email</span><span>alex@hartline.example <span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px">Confirmed</span></span></div>
+      <div style="display: flex; justify-content: space-between; padding: 7px 0; font-size: 15px"><span style="color: #555555">Role</span><span>Owner</span></div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px">
+        <label for="pw-cur" style="position: absolute; left: -9999px">Current password</label>
+        <input id="pw-cur" type="password" placeholder="Current password" style="flex: 1 1 200px; height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+        <label for="pw-new" style="position: absolute; left: -9999px">New password</label>
+        <input id="pw-new" type="password" placeholder="New password (10+ characters)" style="flex: 1 1 200px; height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+        <button type="button" style="height: 40px; padding: 0 14px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Change password</button>
+      </div>
+    </section>
+
+    <section aria-labelledby="company" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 id="company" style="margin: 0; font-size: 18px; font-weight: 600">Company</h2>
+      <p style="margin: 0; font-size: 14px; color: #555555">On every pay app and its PDF, in the From block. Owners edit these; members see them.</p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px">
+        <div style="display: flex; flex-direction: column; gap: 4px"><label for="co-name" style="font-size: 13px; color: #555555">Company name</label><input id="co-name" value="Hartline Remodeling" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"></div>
+        <div style="display: flex; flex-direction: column; gap: 4px"><label for="co-phone" style="font-size: 13px; color: #555555">Phone</label><input id="co-phone" value="[YOUR PHONE]" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"></div>
+        <div style="display: flex; flex-direction: column; gap: 4px; grid-column: 1 / -1"><label for="co-address" style="font-size: 13px; color: #555555">Address</label><input id="co-address" placeholder="Street, city, state ZIP" value="[STREET, CITY, STATE ZIP]" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"></div>
+        <div style="display: flex; flex-direction: column; gap: 4px"><label for="co-license" style="font-size: 13px; color: #555555">Contractor licence number</label><input id="co-license" value="[LICENCE NO.]" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit"></div>
+        <div style="display: flex; flex-direction: column; gap: 4px"><label for="co-style" style="font-size: 13px; color: #555555">How you bill</label><select id="co-style" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 8px; font: inherit; background: #FFFFFF"><option>Pay apps to GCs or owners</option><option>Draws from homeowners</option></select><span style="font-size: 12px; color: #555555">Sets the free trial: 90 days, or 45 for draws. Either ends when the first one sent through Billdable is paid.</span></div>
+      </div>
+      <div><button type="button" style="height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Save company details</button></div>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 600">Team</h2>
+      <p style="margin: 0; font-size: 14px; color: #555555">Owners manage the team, inbound addresses, reset and deletion. Members do everything else. Every action is in the Audit with the person's name.</p>
+      <div style="overflow-x: auto">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px">
+          <thead><tr style="text-align: left; color: #555555; font-size: 13px"><th style="padding: 8px 10px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Name</th><th style="padding: 8px 10px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Email</th><th style="padding: 8px 10px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Role</th><th style="padding: 8px 10px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Joined</th></tr></thead>
+          <tbody><tr><td style="padding: 10px">Alex Hartline (you)</td><td style="padding: 10px">alex@hartline.example</td><td style="padding: 10px">Owner</td><td style="padding: 10px">Oct 12, 2026</td></tr></tbody>
+        </table>
+      </div>
+      <h3 style="margin: 6px 0 0; font-size: 16px; font-weight: 600">Invite someone</h3>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px">
+        <label for="inv" style="position: absolute; left: -9999px">Their email</label>
+        <input id="inv" type="email" placeholder="Their email, e.g. your bookkeeper" style="flex: 1 1 280px; height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+        <label for="role" style="position: absolute; left: -9999px">Role</label>
+        <select id="role" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 8px; font: inherit; background: #FFFFFF"><option>Member</option><option>Owner</option></select>
+        <button type="button" style="height: 40px; padding: 0 16px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Invite</button>
+      </div>
+      <p style="margin: 0; font-size: 14px; color: #555555">No seat limit: the bookkeeper is the second user.</p>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 600">Your data</h2>
+      <p style="margin: 0; font-size: 14px; color: #555555">Download everything in your company as one file, or start over.</p>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap"><a href="#export" style="text-decoration: none; border: 1px solid #8C8C8C; border-radius: 8px; padding: 9px 14px; color: #1B1B1B">Export data</a><button type="button" style="height: 40px; padding: 0 14px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Reset data</button></div>
+    </section>
+
+    <section aria-labelledby="billing" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 id="billing" style="margin: 0; font-size: 18px; font-weight: 600">Billing</h2>
+      <p style="margin: 0; font-size: 15px">No subscription yet. The free trial still applies: the first charge comes when it ends.</p>
+      <p style="margin: 0; font-size: 14px; color: #555555">Free trial: nothing to pay until the first pay app you send through Billdable is paid, or until Jan 11, 2027.</p>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap"><button type="button" style="height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Subscribe</button></div>
+      <p style="margin: 0; font-size: 14px; color: #555555">Charged on the 5th of each month, after your own pay apps are out. Payment by card through Stripe. Billdable never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only. After subscribing, the button reads <strong style="color: #1B1B1B">Manage billing</strong> (Stripe's page for the card, invoices and cancelling) and the status shows Trial or Active with the next renewal.</p>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 600">Two-step sign-in</h2>
+      <p style="margin: 0; font-size: 14px; color: #555555"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px; color: #1B1B1B">Off</span> Add a code from your phone to every sign-in, so a stolen password isn't enough.</p>
+      <div><a href="TwoStep.dc.html" style="display: inline-block; text-decoration: none; border: 1px solid #8C8C8C; border-radius: 8px; padding: 9px 14px; color: #1B1B1B">Set up two-step sign-in</a></div>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1.5px solid #1B1B1B; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 600">Delete the company</h2>
+      <p style="margin: 0; font-size: 14px; color: #555555">Deletes every job, file, payer and record, and every user on this team. Export first if you want a copy. Backups that hold it expire on their own.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px">
+        <label for="del-pw" style="position: absolute; left: -9999px">Your password</label>
+        <input id="del-pw" type="password" placeholder="Your password" style="flex: 1 1 200px; height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+        <label for="del-name" style="position: absolute; left: -9999px">Company name</label>
+        <input id="del-name" placeholder="Type the company name: Hartline Remodeling" style="flex: 2 1 280px; height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+        <button type="button" style="height: 40px; padding: 0 14px; border: 1.5px solid #1B1B1B; border-radius: 8px; background: #FFFFFF; font: inherit; font-weight: 600">Delete everything</button>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1920}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

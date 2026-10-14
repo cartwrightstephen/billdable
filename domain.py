@@ -12,7 +12,7 @@ import json
 import re
 import secrets
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import sov
@@ -513,10 +513,15 @@ def match_payment(
     actor: str = "billdable",
     invoice_id: str | None = None,
     received_on: str | None = None,
+    qbo_payment_id: str | None = None,
 ) -> dict[str, Any]:
     """Record money received against a pay app. `received_on` (YYYY-MM-DD) is the date the books
-    show, for imports; without it the payment is dated now."""
+    show, for imports; without it the payment is dated now. `qbo_payment_id` is QuickBooks' id
+    for the payment (qbo.py): one QuickBooks payment is recorded once in the whole company."""
     job = _open_job(state, job_id)
+    qbo_payment_id = str(qbo_payment_id or "").strip()[:40] or None
+    if qbo_payment_id and any(p.get("qbo_payment_id") == qbo_payment_id for j in state["jobs"] for p in j.get("payments", [])):
+        raise GateError("This QuickBooks payment is already recorded.")
     open_invoices = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
     if not open_invoices:
         raise GateError("No open invoice to match.")
@@ -553,6 +558,8 @@ def match_payment(
         "invoice_id": invoice["id"],
         "matched_at": f"{received_on}T12:00:00+00:00" if received_on and re.fullmatch(r"\d{4}-\d{2}-\d{2}", received_on) else utcnow(),
     }
+    if qbo_payment_id:
+        payment["qbo_payment_id"] = qbo_payment_id
     job["payments"].append(payment)
     collected_for_invoice = sum(p["amount_cents"] for p in job["payments"] if p["invoice_id"] == invoice["id"])
     if collected_for_invoice >= invoice["amount_cents"]:
@@ -820,8 +827,15 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     out["jobs"] = jobs
     # "First pay app to this payer" must not depend on which jobs were sent.
     sent = {j["payer_id"] for j in state["jobs"] if any(i.get("sent_at") for i in j.get("invoices", []))}
+    timings = payer_timing(state)
     for payer in out.get("payers", []):
         payer["sent_before"] = payer["id"] in sent
+        timing = timings.get(payer["id"])
+        if timing:
+            payer["paid_days_avg"], payer["paid_count"] = timing
+        due = payapp_due(payer, (now or datetime.now(timezone.utc)).date())
+        if due:
+            payer["payapp_due_next"], payer["payapp_due_prev"] = due[0].isoformat(), due[1].isoformat()
     emails = state.get("email_log", [])
     out["email_log"] = deepcopy(emails[-RECENT_EMAILS:])
     out["email_log_total"] = len(emails)
@@ -837,6 +851,30 @@ def page(rows: list[dict[str, Any]], offset: int, limit: int, job_id: str = "") 
     """Newest first, optionally one job's rows: for the Outbox and Audit pages."""
     picked = [r for r in reversed(rows) if not job_id or r.get("job_id") == job_id]
     return {"entries": deepcopy(picked[offset:offset + limit]), "total": len(picked), "offset": offset, "limit": limit}
+
+
+def timeline_page(state: dict[str, Any], job_id: str, offset: int, limit: int) -> dict[str, Any]:
+    """One job's history, newest first (UI/UX Option B): every audit row on the job, and every
+    email with its delivery status (bodies left out)."""
+    # One sequence for both: an action's place is its row number in the audit trail, an email's
+    # is between the audit rows written before and after it (audit_seq). Older emails, from
+    # before audit_seq, go after every audit row of the same second or earlier. Times are only
+    # to the second, so they can't order things done in the same second.
+    audit_rows = state.get("audit", [])
+    stamps = [a.get("at", "") for a in audit_rows]
+    keyed = [((n, 0), {"kind": "action", "at": a.get("at", ""), "action": a.get("action", ""), "text": a.get("detail", ""), "who": a.get("actor", "")})
+             for n, a in enumerate(audit_rows) if a.get("job_id") == job_id]
+    for n, e in enumerate(state.get("email_log", [])):
+        if e.get("job_id") != job_id:
+            continue
+        seq = e.get("audit_seq")
+        place = seq - 0.5 if isinstance(seq, int) else sum(1 for t in stamps if t <= e.get("at", "")) - 0.5
+        keyed.append(((place, n), {**{k: v for k, v in e.items() if k not in {"body", "subject", "approved_by", "kind", "audit_seq"}},
+                                   "kind": "email", "email_kind": e.get("kind", ""), "at": e.get("at", ""), "text": e.get("subject", ""),
+                                   "who": e.get("approved_by", "")}))
+    keyed.sort(key=lambda kr: kr[0], reverse=True)
+    rows = [r for _, r in keyed]
+    return {"entries": deepcopy(rows[offset:offset + limit]), "total": len(rows), "offset": offset, "limit": limit}
 
 
 def jobs_page(state: dict[str, Any], status: str, offset: int, limit: int, q: str = "") -> dict[str, Any]:
@@ -876,6 +914,8 @@ def _record_email(
     state.setdefault("email_log", []).append({
         "id": "eml-" + secrets.token_hex(5),
         "at": utcnow(),
+        # Where the email falls among the audit rows: the job's history orders by it (timeline_page).
+        "audit_seq": len(state.get("audit", [])),
         "job_id": job_id,
         "kind": kind,
         "to": to,
@@ -897,6 +937,14 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     clean: dict[str, Any] = {}
     errors = []
     for k, v in updates.items():
+        if k == "payapp_due_day":
+            # The payer's cutoff for this month's pay app (a contract date, not a legal one); blank clears it.
+            day = None if v in (None, "") else _int_or(v, 0)
+            if day is not None and not 1 <= day <= 31:
+                errors.append("Pay apps due by must be a day of the month from 1 to 31, or blank.")
+                continue
+            clean[k] = day
+            continue
         if v is None:
             continue
         if k in text_fields:
@@ -918,10 +966,96 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
         raise GateError("Playbook not saved.", errors)
     changed = []
     for k, v in clean.items():
-        payer[k] = v
+        if v is None:
+            payer.pop(k, None)
+        else:
+            payer[k] = v
         changed.append(k)
     audit(state, "", "playbook_update", f"{actor} updated {payer['name']}: {', '.join(changed) or 'no change'}.", actor)
     return payer
+
+
+def payapp_due(payer: dict[str, Any], today: date | None = None) -> tuple[date, date] | None:
+    """(the next cutoff, the one before it) for a payer with "pay apps due by day N", or None.
+    A day past the month's end means its last day (31 in April is April 30)."""
+    day = _int_or(payer.get("payapp_due_day"), 0)
+    if not 1 <= day <= 31:
+        return None
+    today = today or datetime.now(timezone.utc).date()
+
+    def cutoff(year: int, month: int) -> date:
+        last = (date(year + month // 12, month % 12 + 1, 1) - timedelta(days=1)).day
+        return date(year, month, min(day, last))
+
+    this = cutoff(today.year, today.month)
+    if today <= this:
+        before_m = today.month - 1 or 12
+        return this, cutoff(today.year - (today.month == 1), before_m)
+    nxt_m = today.month % 12 + 1
+    return cutoff(today.year + (today.month == 12), nxt_m), this
+
+
+COMPANY_FIELDS = {"name": 120, "address": 200, "phone": 40, "license": 60}
+BILLING_STYLES = {"pay_apps", "draws"}
+
+
+def payer_timing(state: dict[str, Any]) -> dict[str, tuple[float, int]]:
+    """{payer id: (average days from sent to paid, pay apps paid)}, from the company's own history:
+    what each payer actually does, for the playbook to compare with what it says (Results uses
+    the same rule)."""
+    out: dict[str, list[int]] = {}
+    for job in state.get("jobs", []):
+        for inv in job.get("invoices", []):
+            if inv.get("status") != "paid" or not inv.get("sent_at"):
+                continue
+            paid = [p.get("matched_at", "") for p in job.get("payments", []) if p.get("invoice_id") == inv["id"]]
+            try:
+                days = (datetime.fromisoformat(max(paid)).date() - datetime.fromisoformat(inv["sent_at"]).date()).days if paid else None
+            except ValueError:
+                days = None
+            if days is not None and days >= 0:
+                out.setdefault(job.get("payer_id", ""), []).append(days)
+    return {k: (round(sum(v) / len(v), 1), len(v)) for k, v in out.items()}
+
+
+def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+    """The company's own details: its name, and the address, phone and licence number that go on
+    every pay app. Blank clears a field; the name can't be blank."""
+    company = state.setdefault("company", {})
+    clean, errors = {}, []
+    if "billing_style" in updates:
+        # How the company bills: pay apps to GCs or owners, or draws from homeowners. It sets the
+        # free trial's length (trial.py: 90 days, or 45 for draws).
+        if updates["billing_style"] not in BILLING_STYLES:
+            errors.append("How you bill must be pay apps or draws.")
+        else:
+            clean["billing_style"] = updates["billing_style"]
+    for k, limit in COMPANY_FIELDS.items():
+        if k not in updates:
+            continue
+        v = updates[k]
+        if not isinstance(v, str):
+            errors.append(f"{k.capitalize()} must be text.")
+            continue
+        v = " ".join(v.split())
+        if len(v) > limit:
+            errors.append(f"{k.capitalize()} is too long (limit {limit} characters).")
+        elif k == "name" and not v:
+            errors.append("The company name can't be empty.")
+        else:
+            clean[k] = v
+    if errors:
+        raise GateError("Company details not saved.", errors)
+    changed = [k for k, v in clean.items() if (company.get(k) or ("pay_apps" if k == "billing_style" else "")) != v]
+    for k in changed:
+        if clean[k]:
+            company[k] = clean[k]
+        else:
+            company.pop(k, None)
+    if changed:
+        names = {"billing_style": f"billing style ({'draws' if clean.get('billing_style') == 'draws' else 'pay apps'})"}
+        audit(state, "", "company_update", f"{actor} updated the company's {', '.join(names.get(k, k) for k in changed)}.", actor)
+    return company
 
 
 # ---------- payer playbook learning (P3) ----------

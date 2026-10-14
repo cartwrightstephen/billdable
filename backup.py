@@ -18,6 +18,8 @@ Command line (run with the server stopped for restore):
     python3 backup.py list             list backups, newest first
     python3 backup.py restore FILE     restore one; the current data is moved aside first
     python3 backup.py upload [FILE]    encrypt and upload one off-site (default: the newest)
+    python3 backup.py drill [FILE]     restore one into a temporary folder and check it reads
+                                       (default: the newest); the live data is not touched
 """
 
 from __future__ import annotations
@@ -212,8 +214,67 @@ def start_scheduler(locks: dict[str, Any], log: Callable[[str], None] = print) -
     return thread
 
 
+def drill(path: str | Path) -> tuple[list[str], list[str]]:
+    """The restore drill (runbook 2): unpack a backup into a temporary folder, never the live
+    data, and check that it would work. Returns (report lines, problems); no problems = pass."""
+    import json
+    import tempfile
+
+    import domain
+    import migrations
+    import store
+
+    report: list[str] = []
+    problems: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        with tarfile.open(path, "r:gz") as tar:
+            for m in _safe_members(tar):
+                target = root / m.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source = tar.extractfile(m)
+                if source is None:
+                    problems.append(f"{m.name} couldn't be read from the backup.")
+                    continue
+                target.write_bytes(source.read())
+        try:
+            accounts = json.loads((root / "auth.json").read_text())
+        except (OSError, ValueError) as exc:
+            return report, [f"auth.json doesn't read: {exc}"]
+        users = accounts.get("users", [])
+        report.append(f"accounts: {len(users)} users, {len(accounts.get('sessions', {}))} sessions")
+        folder = root / "companies"
+        companies = store.SqliteStore(folder) if (folder / store.DB_NAME).exists() else store.JsonStore(folder)
+        ids = companies.ids() if folder.exists() else []
+        try:
+            deleted = set(json.loads((root / "deleted_companies.json").read_text()))
+        except (OSError, ValueError):
+            deleted = set()
+        for company_id in sorted({u["company_id"] for u in users} - set(ids) - deleted):
+            problems.append(f"users of {company_id} have no company data.")
+        uploads = settings()["uploads"]
+        for company_id in ids:
+            try:
+                state = companies.load(company_id)
+                migrations.migrate(state)
+            except Exception as exc:  # one broken company must not hide the others
+                problems.append(f"{company_id} doesn't load: {exc.__class__.__name__}: {exc}")
+                continue
+            chain = domain.check_audit(state)
+            if not chain["ok"]:
+                problems.append(f"{company_id}: the audit chain is broken at {chain['broken_at']}.")
+            missing = [f["name"] for f in state.get("files", [])
+                       if uploads and not (root / "uploads" / company_id / f"{f['id']}{f['ext']}").is_file()]
+            if missing:
+                problems.append(f"{company_id}: {len(missing)} uploaded files aren't in the backup, e.g. {missing[0]}.")
+            report.append(f"{company_id}: {state.get('company', {}).get('name', '')!r}, {len(state.get('jobs', []))} jobs, "
+                          f"{len(state.get('files', []))} files, audit {'ok' if chain['ok'] else 'BROKEN'} ({chain['rows']} rows)")
+        report.append(f"storage: {companies.kind}, {len(ids)} companies")
+    return report, problems
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] not in {"now", "list", "restore", "upload"}:
+    if len(argv) < 2 or argv[1] not in {"now", "list", "restore", "upload", "drill"}:
         print(__doc__)
         return 2
     if argv[1] == "now":
@@ -224,6 +285,19 @@ def main(argv: list[str]) -> int:
             print("No backup to upload. Make one with: python3 backup.py now")
             return 1
         print(f"Uploaded {target.name} as {offsite.upload(target)}")
+    elif argv[1] == "drill":
+        target = Path(argv[2]) if len(argv) > 2 else (backups() or [None])[0]
+        if target is None:
+            print("No backup to check. Make one with: python3 backup.py now")
+            return 1
+        report, problems = drill(target)
+        print(f"Restore drill of {target.name}")
+        for line in report:
+            print("  " + line)
+        for line in problems:
+            print("  PROBLEM: " + line)
+        print("PASS" if not problems else f"FAIL: {len(problems)} problems")
+        return 0 if not problems else 1
     elif argv[1] == "list":
         for b in backups():
             print(f"{b.name}  {b.stat().st_size:,} bytes")

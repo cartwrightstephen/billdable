@@ -6,7 +6,7 @@ import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine,
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
 import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js";
-import { labelTables, moreButton } from "./js/dom.js";
+import { labelTables, moreButton, askConfirm } from "./js/dom.js";
 
 let state = null;
 let me = null;
@@ -23,7 +23,12 @@ let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
 let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
 let metricsData = null;   // {period, data} from /api/metrics
 let metricsPeriod = "90";
-let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV
+let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV or the QuickBooks connection
+let qboStatus = null;      // /api/qbo/status: configured, connected, environment (escaped)
+let qboReconcile = null;   // /api/qbo/reconcile: {rows, invoices}
+const ordinal = (n) => n + ([11, 12, 13].includes(n % 100) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"));
+const BILLING_WORDS = { trialing: "Trial", active: "Active", past_due: "Card declined", unpaid: "Unpaid", canceled: "Cancelled", incomplete: "Incomplete", incomplete_expired: "Expired", paused: "Paused" };
+const RECON_WORDS = { missing: "Not in QuickBooks", amount: "Amount differs", paid_in_qbo: "Paid in QuickBooks", open_in_qbo: "Open in QuickBooks" };
 let currentView = "dashboard";
 let currentJobId = null;
 let currentDetailId = null; // for packet, co, payapp, waiver detail
@@ -43,7 +48,9 @@ let jobDetails = {};          // job id -> the full job from /api/jobs/<id>
 let jobDetailLoading = null;  // the id being fetched
 const missingJobs = new Set();
 let listPages = {};           // outbox | audit | history -> {job, entries, total, loading, stale}
-const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api/jobs?status=closed&" };
+const FILE_ACCEPT = document.getElementById("file-input")?.getAttribute("accept") || "";
+const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api/jobs?status=closed&", timeline: "/api/timeline?" };
+const LIST_VIEWS = { timeline: "job" };   // the view that shows a list, where it isn't the list's own name
 let auditJobFilter = "all";
 let coPreselectJob = null;
 let formOpen = {};
@@ -228,7 +235,7 @@ async function loadListPage(kind, job, offset, limit) {
     const rows = (data.entries || data.jobs || []).map(r => (kind === "history" ? withPayer(r) : r));
     Object.assign(p, { entries: offset ? p.entries.concat(rows) : rows, total: data.total, loading: false, stale: false });
   } catch (_) { setNetBanner(true); p.loading = false; return; }
-  if (currentView === kind) render();
+  if (currentView === (LIST_VIEWS[kind] || kind)) render();
 }
 
 async function boot(checkLink = true) {
@@ -253,6 +260,8 @@ async function boot(checkLink = true) {
     me = escDeep(data.user);
     helperAdmin = data.helper_admin === true;
     mailReady = data.mail_ready === true;
+    readOnly = typeof data.read_only === "string" ? esc(data.read_only) : "";
+    billingInfo = escDeep(data.billing || null);
     applyLocation();
     await load();
   } else {
@@ -344,7 +353,7 @@ function renderLanding() {
           <button class="btn" id="price-start">Create your company</button>
         </div>
       </section>
-      <footer class="land-foot">Billdable works beside QuickBooks; a direct QuickBooks connection is planned, not built. It does not replace your books or your field app.
+      <footer class="land-foot">Billdable works beside QuickBooks and never changes your books: it reads payments from a QuickBooks export today, and a direct QuickBooks connection is coming. It does not replace your books or your field app.
         <div class="land-legal"><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a></div></footer>
     </div>
   `;
@@ -416,6 +425,8 @@ async function onAuthSubmit(e) {
       const info = await readJson(who);
       helperAdmin = info.helper_admin === true;
       mailReady = info.mail_ready === true;
+      readOnly = typeof info.read_only === "string" ? esc(info.read_only) : "";
+      billingInfo = escDeep(info.billing || null);
     }
   } catch (_) { helperAdmin = false; }
   applyLocation();
@@ -475,7 +486,10 @@ async function post(path, body = {}) {
   } else {
     toast("Saved");
   }
-  await load();
+  // A change answers with the company's updated state (the same shape as /api/state): use it
+  // rather than asking again. Anything else (an error) reloads, so the page shows what is true.
+  if (res.ok && data && Array.isArray(data.jobs)) { setState(data); render(); }
+  else await load();
   const added = state ? (state.email_log_total || 0) - emailsBefore : 0;
   if (res.ok && added > 0) toast(emailOutcome(state.email_log.slice(-added)));
   return { ok: res.ok, status: res.status, data };
@@ -557,6 +571,75 @@ function coSignControls(j, co, extra = "") {
 
 // The job page shows ONE main button: the next step. Everything else that applies sits in a
 // secondary row, each with its explanation as a tooltip (it used to be a paragraph beside it).
+// Today's queue (UI/UX Option B): everything that needs a person, most urgent first, each with
+// the one button that does it. Nothing that emails a pay app or a waiver goes out from here: those
+// open the job, where "Before you send" shows what leaves and to whom. A follow-up names its
+// recipient on the row, and drafting or filing sends nothing.
+function todayQueue() {
+  const out = [];
+  const add = (rank, j, pill, text, button, opensJob = false) => out.push({ rank, j, pill, text, button, opensJob });
+  const tag = (word, color = "") => `<span class="pill ${color}">${word}</span>`;
+  const inbox = (state.inbox || []).filter(i => i.status === "new");
+  inbox.filter(i => i.says_done_job_id).forEach(i => {
+    const j = state.jobs.find(x => x.id === i.says_done_job_id && !x.closed);
+    if (j) add(0, j, tag("Job's done?", "copper"), `${SOURCE_LABELS[i.source] || i.source}${i.from ? " from " + i.from : ""}: ${(i.text || i.subject || "").split("\n")[0].slice(0, 120)}`,
+      `<button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark done and draft</button>`);
+  });
+  state.jobs.filter(j => !j.closed && !j.summary).forEach(j => {
+    const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
+    // The payer's monthly cutoff (playbook): within five days, and nothing billed since the last one.
+    const nextDue = toDate(j.payer.payapp_due_next), prevDue = toDate(j.payer.payapp_due_prev);
+    const billedThisCycle = prevDue && j.invoices.some(i => i.status !== "void" && (toDate(i.created_at || i.sent_at) || 0) > prevDue);
+    const mayBill = j.work_status !== "complete" || j.money.unbilled_completed_cents > 0;
+    const dueSoon = nextDue && mayBill && !billedThisCycle && (nextDue - new Date(new Date().toDateString())) <= 5 * 86400000;
+    const dueText = dueSoon ? ` Pay app due to ${j.payer.name} by ${fmtDate(j.payer.payapp_due_next)}.` : "";
+    const before = out.length;
+    // One next step per job, in the job page's order (jobActions): blockers first.
+    if (isBlocked(j)) add(3, j, statusPill(j), `${j.blockers[0]}${j.blockers.length > 1 ? ` And ${j.blockers.length - 1} more.` : ""}`,
+      `<button class="btn small" data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}>Clear ${j.blockers.length} blocker${j.blockers.length === 1 ? "" : "s"}</button>`);
+    else if (draft) add(1, j, tag("Ready to send", "green"), `${draft.number} for ${money(draft.amount_cents)} to ${j.payer.approver || j.payer.name}. Check what goes out, then approve.`,
+      `<button class="btn small" data-action="open-job" data-id="${j.id}" data-focus=".send-check">Review &amp; send</button>`, true);
+    else if (j.waiver_due && !j.waiver_sent) add(2, j, tag("Waiver due", "amber"), "Paid in full: the payer is waiting for the lien waiver.",
+      `<button class="btn small" data-action="open-job" data-id="${j.id}">Review waiver</button>`, true);
+    else if (j.work_status === "complete" && j.money.unbilled_completed_cents > 0)
+      add(5, j, tag("Not billed", "copper"), `${money(j.money.unbilled_completed_cents)} of finished work has no pay app yet. Drafting sends nothing.`,
+        `<button class="btn small" data-action="draft" data-id="${j.id}">Draft pay app</button>`);
+    else if (dueSoon) add(2.5, j, tag("Due soon", "amber"), `Record this month's progress and draft the pay app.`,
+      `<button class="btn small" data-action="open-job" data-id="${j.id}">Bill progress</button>`, true);
+    // A cutoff makes the job's row more urgent, and says so.
+    if (dueSoon && out.length > before) { const row = out[out.length - 1]; row.text += row.text.includes("Pay app due to") ? "" : dueText; row.rank = Math.min(row.rank, 1.5); }
+    // A pay app already sent and unpaid past the payer's follow-up window is its own row.
+    const sent = j.invoices.find(i => ["sent", "partial"].includes(i.status));
+    if (sent) {
+      const last = toDate(sent.last_follow_up_at || sent.sent_at);
+      const days = Number(unesc(String(j.payer.follow_up_days || ""))) || 7;
+      if (last && Date.now() >= last.getTime() + days * 86400000)
+        add(4, j, tag("Follow up", "copper"), `${sent.number} was sent ${fmtDate(sent.sent_at)}${sent.last_follow_up_at ? `, last follow-up ${fmtDate(sent.last_follow_up_at)}` : ""}. Emails ${j.payer.ap_email || "the payer"}.`,
+          `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`);
+    }
+  });
+  inbox.filter(i => !i.says_done_job_id && i.suggested_job_id).forEach(i => {
+    const j = state.jobs.find(x => x.id === i.suggested_job_id && !x.closed);
+    if (j) add(6, j, tag("Inbox"), `${(i.subject || i.text || "An item").split("\n")[0].slice(0, 100)}${i.match_reason ? ` <span class="sub">(${i.match_reason})</span>` : ""}`,
+      `<button class="btn small" data-action="inbox-file-suggested" data-item="${i.id}" data-job="${j.id}">File to this job</button>`);
+  });
+  return out.sort((a, b) => a.rank - b.rank);
+}
+
+// What happened on the job, newest first (UI/UX Option B): actions from the audit trail and
+// emails with what became of them, 50 at a time.
+function jobHistoryHtml(j) {
+  const page = listPage("timeline", j.id);
+  const rows = page ? page.entries : [];
+  return `<div class="card job-history"><h2>History</h2>
+    ${rows.length ? `<ol class="timeline">${rows.map(e => `<li>
+        <span class="pill${e.kind === "email" ? " copper" : ""}">${e.kind === "email" ? "Email" : words(e.action)}</span> ${e.text}
+        <div class="sub">${fmtDateTime(e.at)}${e.who ? " · " + e.who : ""}${e.kind === "email" ? ` · to ${e.to} · ${emailStatusHtml(e)}` : ""}</div>
+      </li>`).join("")}</ol>${moreButton("timeline", page)}`
+      : !page ? `<p class="sub">Loading…</p>` : `<p class="sub">Nothing has happened on this job yet.</p>`}
+  </div>`;
+}
+
 function jobActions(j) {
   if (j.closed) return { primary: null, more: [] };
   const m = j.money;
@@ -644,6 +727,7 @@ function render() {
   a11yPass(document.getElementById("app"));
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
   if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
+  if (currentView === "payments" && !qboStatus) loadQboStatus();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin") { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
@@ -651,7 +735,7 @@ function render() {
 
 async function resetData() {
   if (me && me.company_id === DEMO_COMPANY_ID) {
-    if (!confirm("Reset the demo account to its starting data?")) return;
+    if (!(await askConfirm("Reset the demo account to its starting data?", "Reset the demo", true))) return;
     await post("/api/reset");
     return;
   }
@@ -686,13 +770,13 @@ function bindActions() {
       }
       if (a === "team-role") { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); return; }
       if (a === "team-remove") {
-        if (!confirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`)) return;
+        if (!(await askConfirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`, "Remove", true))) return;
         await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed and signed out. The inbound email, text and calendar addresses changed too: update any forwarding rule or calendar subscription.");
         return;
       }
       if (a === "team-revoke") { await teamPost(`/api/team/invites/${el.dataset.invite}/revoke`, {}, "Invite revoked."); return; }
       if (a === "delete-account") {
-        if (!confirm("Delete the company, every job and file, and every user? This can't be undone here.")) return;
+        if (!(await askConfirm("Delete the company, every job and file, and every user? This can't be undone here.", "Delete everything", true))) return;
         const r = await postJson("/api/account/delete", { password: document.getElementById("del-password").value, confirm: document.getElementById("del-confirm").value });
         if (!r.ok) { toast(r.data.error || "Nothing was deleted."); return; }
         me = null; state = null; teamData = null; lastInvite = null;
@@ -731,7 +815,7 @@ function bindActions() {
       }
       if (a === "qbo-apply") {
         const picks = [...document.querySelectorAll("[data-qbo-row]:checked")].map(cb => paymentImport.rows[+cb.dataset.qboRow])
-          .map(row => ({ job_id: row.job_id, invoice_id: row.invoice_id, amount_cents: row.amount_cents, reference: unesc(row.ref), date: row.date }));
+          .map(row => ({ job_id: row.job_id, invoice_id: row.invoice_id, amount_cents: row.amount_cents, reference: unesc(row.ref), date: row.date, qbo_id: row.qbo_id ? unesc(row.qbo_id) : undefined }));
         if (!picks.length) { toast("Tick the payments to record."); return; }
         const r = await postJson("/api/import/payments-apply", { payments: picks });
         if (!r.ok) { toast(r.data.error || "Nothing was recorded."); return; }
@@ -741,6 +825,51 @@ function bindActions() {
         render(); return;
       }
       if (a === "qbo-cancel") { paymentImport = null; render(); return; }
+      if (a === "use-approval-days") { await post(`/api/payers/${id}/update`, { usual_approval_days: Number(el.dataset.days) }); return; }
+      if (a === "save-company") {
+        const v = (k) => document.getElementById(k)?.value || "";
+        await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license"), billing_style: v("co-style") || "pay_apps" });
+        return;
+      }
+      if (a === "save-my-name") {
+        const r = await postJson("/api/auth/name", { name: document.getElementById("my-name")?.value || "" });
+        if (!r.ok) { toast(r.data.error || "Not saved."); return; }
+        me = escDeep(r.data.user); toast("Saved"); render(); return;
+      }
+      if (a === "billing-checkout" || a === "billing-portal") {
+        const r = await postJson(a === "billing-checkout" ? "/api/billing/checkout" : "/api/billing/portal", {});
+        if (!r.ok) { toast(r.data.error || "Couldn't open billing."); return; }
+        if (typeof r.data.url === "string" && r.data.url.startsWith("https://")) location.assign(r.data.url);
+        return;
+      }
+      if (a === "qbo-connect") {
+        const r = await postJson("/api/qbo/connect", {});
+        if (!r.ok) { toast(r.data.error || "Couldn't start the QuickBooks connection."); return; }
+        if (typeof r.data.url === "string" && r.data.url.startsWith("https://")) location.assign(r.data.url);
+        return;
+      }
+      if (a === "qbo-sync") {
+        toast("Reading payments from QuickBooks…");
+        const r = await postJson("/api/qbo/payments", { days: 90 });
+        if (!r.ok) { toast(r.data.error || "Couldn't read QuickBooks."); qboStatus = null; render(); return; }
+        paymentImport = escDeep(r.data); render(); return;
+      }
+      if (a === "qbo-reconcile") {
+        try {
+          const res = await fetch("/api/qbo/reconcile");
+          const data = await readJson(res);
+          if (!res.ok) { toast(data.error || "Couldn't read QuickBooks."); qboStatus = null; render(); return; }
+          qboReconcile = escDeep(data);
+        } catch (_) { setNetBanner(true); return; }
+        render(); return;
+      }
+      if (a === "qbo-disconnect") {
+        if (!(await askConfirm("Disconnect QuickBooks? Payments already recorded stay. An owner can connect it again any time.", "Disconnect"))) return;
+        const r = await postJson("/api/qbo/disconnect", {});
+        if (r.ok) { qboStatus = escDeep(r.data); qboReconcile = null; }
+        toast(r.ok ? "QuickBooks is disconnected." : (r.data.error || "That didn't work."));
+        render(); return;
+      }
       if (a === "metrics-period") { metricsPeriod = el.dataset.period; metricsData = null; render(); return; }
       if (a === "metrics-email") {
         const r = await postJson("/api/metrics/summary-email", {});
@@ -805,7 +934,13 @@ function bindActions() {
       }
       else if (a === "pick-files") {
         const input = document.getElementById("file-input");
-        if (input) { input.dataset.job = el.dataset.job || ""; input.click(); }
+        if (input) {
+          input.dataset.job = el.dataset.job || "";
+          // "Take a photo" opens the rear camera directly; "choose files" offers every source.
+          if (el.dataset.capture) { input.setAttribute("capture", "environment"); input.setAttribute("accept", "image/*"); }
+          else { input.removeAttribute("capture"); input.setAttribute("accept", FILE_ACCEPT); }
+          input.click();
+        }
       }
       else if (a === "import-text") {
         const text = document.querySelector("#paste-text")?.value || "";
@@ -845,17 +980,17 @@ function bindActions() {
         catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
       }
       else if (a === "rotate-token") {
-        if (!confirm("Make a new address? The old one stops working right away.")) return;
+        if (!(await askConfirm("Make a new address? The old one stops working right away.", "Make a new address"))) return;
         await fetch("/api/import/rotate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: el.dataset.kind }) });
         importSettings = null;
         render();
       }
       else if (a === "withdraw-co") {
-        if (!confirm("Withdraw this change order? Use this when the customer will not sign it.")) return;
+        if (!(await askConfirm("Withdraw this change order? Use this when the customer will not sign it.", "Withdraw", true))) return;
         await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
       }
       else if (a === "void-draft") {
-        if (!confirm("Void the open draft pay app? Its work goes back to unbilled.")) return;
+        if (!(await askConfirm("Void the open draft pay app? Its work goes back to unbilled.", "Void the draft", true))) return;
         await post(`/api/jobs/${id}/void-draft`);
       }
       else if (a === "follow-up") await post(`/api/jobs/${id}/follow-up`);
@@ -941,7 +1076,11 @@ function bindActions() {
         if (!recordId) { toast("Pick a job record to attach."); return; }
         await post(`/api/jobs/${id}/attach-record/${el.dataset.item}`, { record_id: recordId });
       }
-      else if (a === "open-job") nav("job", id);
+      else if (a === "open-job") {
+        nav("job", id);
+        if (el.dataset.focus) requestAnimationFrame(() => document.querySelector(el.dataset.focus)?.scrollIntoView({ block: "start" }));
+      }
+      else if (a === "inbox-file-suggested") await post(`/api/inbox/${el.dataset.item}/file`, { job_id: el.dataset.job, kind: "" });
       else if (a === "create-job") {
         const name = document.querySelector("#nj-name")?.value.trim() || "";
         const address = document.querySelector("#nj-address")?.value.trim() || "";
@@ -1021,7 +1160,7 @@ function bindActions() {
         if (r && r.ok) { formOpen.editjob = false; jobFormErrors = {}; render(); }
       }
       else if (a === "delete-job") {
-        if (!confirm(`Delete ${unesc(el.dataset.name || "this job")}? It has no pay apps, so nothing billed is lost. Its record and notes go too.`)) return;
+        if (!(await askConfirm(`Delete ${unesc(el.dataset.name || "this job")}? It has no pay apps, so nothing billed is lost. Its record and notes go too.`, "Delete the job", true))) return;
         const r = await post(`/api/jobs/${id}/delete`);
         if (r && r.ok) nav("jobs");
       }
@@ -1038,7 +1177,8 @@ function bindActions() {
       else if (a === "save-playbook") {
         const form = el.closest("form");
         const updates = {};
-        new FormData(form).forEach((v, k) => { if (v !== "") updates[k] = isNaN(v) ? v : Number(v); });
+        // Blank skips a field, except the cutoff day, where blank means "no cutoff".
+        new FormData(form).forEach((v, k) => { if (v !== "") updates[k] = isNaN(v) ? v : Number(v); else if (k === "payapp_due_day") updates[k] = ""; });
         await post(`/api/payers/${id}/update`, updates);
       }
     });
@@ -1111,6 +1251,16 @@ async function loadMetrics() {
     metricsData = { period, data: escDeep(await readJson(res)) };
   } catch (_) { setNetBanner(true); return; }
   if (currentView === "results") render();
+}
+
+async function loadQboStatus() {
+  qboStatus = { loading: true };
+  try {
+    const res = await fetch("/api/qbo/status");
+    if (!res.ok) { qboStatus = null; return; }
+    qboStatus = escDeep(await readJson(res));
+  } catch (_) { qboStatus = null; setNetBanner(true); return; }
+  if (currentView === "payments") render();
 }
 
 async function loadImportSettings() {
@@ -1298,7 +1448,7 @@ async function sovSave(jobId, updateContract) {
   const t = sovDraftTotals();
   if (t.bad) { toast("Some lines need a description, a quantity above zero and a rate above zero."); return; }
   const j = state.jobs.find(x => x.id === jobId);
-  if (updateContract && !confirm(`Change the contract amount from ${money(j.contract_cents)} to ${money(t.total)} to match the schedule?`)) return;
+  if (updateContract && !(await askConfirm(`Change the contract amount from ${money(j.contract_cents)} to ${money(t.total)} to match the schedule?`, "Change the contract"))) return;
   const lines = sovFilledLines().map(l => ({ id: l.id || undefined, item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate }));
   const r = await post(`/api/jobs/${jobId}/sov`, { lines, op_pct: sovDraft.op_pct, update_contract: !!updateContract });
   if (r && r.ok) { sovDraft = null; render(); }
@@ -1342,6 +1492,8 @@ document.addEventListener("paste", (e) => {
 // ---------- accounts: reset, verify, invite links; Team & account ----------
 // Links in emails carry a one-time token after "#", which browsers never send to a server.
 let mailReady = false;
+let billingInfo = null;   // billing.standing from /api/auth/me: configured, status, warning (escaped)
+let readOnly = "";        // why this company can't be changed (the read-only demo, or a founder's hold), from /api/auth/me
 let teamData = null;      // { users, invites } from /api/team (escaped)
 let lastInvite = null;    // { link, emailed, email_status } after inviting
 let tokenScreen = null;   // { kind: "reset" | "invite", token, info }
@@ -1445,6 +1597,8 @@ async function teamPost(path, body, okMessage) {
 }
 
 function verifyBannerHtml() {
+  if (readOnly) return `<div class="verify-banner read-only-banner" role="status">${readOnly}</div>`;
+  if (billingInfo && billingInfo.warning) return `<div class="verify-banner" role="status">${billingInfo.warning}${me && me.role === "owner" ? ` <button class="linkish" data-action="nav" data-view="account">Billing</button>` : ""}</div>`;
   if (!mailReady || !me || me.email_verified || me.company_id === DEMO_COMPANY_ID) return "";
   return `<div class="verify-banner">Confirm your email (${me.email}) so Billdable can send pay apps for you; replies come back to it.
     <button class="linkish" data-action="resend-verify">Send the link again</button></div>`;
@@ -1463,7 +1617,7 @@ function accountView() {
     <h1>Team & account</h1>
     <div class="card">
       <h2>You</h2>
-      <div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>
+      ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-inline"><label for="my-name" class="inline-label">Name</label><input id="my-name" value="${me.name}" autocomplete="name" class="grow"><button class="btn small secondary" data-action="save-my-name">Save name</button></div>`}
       <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
       <div class="money-row"><span class="label">Role</span><span>${words(me.role)}</span></div>
       ${isDemo ? "" : `<div class="form-inline">
@@ -1471,6 +1625,21 @@ function accountView() {
         <input id="pw-new" type="password" placeholder="New password (10+ characters)" autocomplete="new-password">
         <button class="btn small" data-action="change-password">Change password</button>
       </div>`}
+    </div>
+    <div class="card" id="company-card">
+      <h2>Company</h2>
+      <p class="sub">On every pay app and its PDF, in the From block.${owner ? "" : " Owners can change these."}</p>
+      <div class="form-grid">
+        <div><label for="co-name">Company name</label><input id="co-name" value="${state.company.name || ""}"${owner ? "" : " disabled"}></div>
+        <div><label for="co-phone">Phone</label><input id="co-phone" value="${state.company.phone || ""}" inputmode="tel" autocomplete="tel"${owner ? "" : " disabled"}></div>
+        <div class="span-2"><label for="co-address">Address</label><input id="co-address" value="${state.company.address || ""}" placeholder="Street, city, state ZIP" autocomplete="street-address"${owner ? "" : " disabled"}></div>
+        <div><label for="co-license">Contractor licence number</label><input id="co-license" value="${state.company.license || ""}"${owner ? "" : " disabled"}></div>
+        <div><label for="co-style">How you bill</label><select id="co-style"${owner ? "" : " disabled"}>
+          <option value="pay_apps"${state.company.billing_style === "draws" ? "" : " selected"}>Pay apps to GCs or owners</option>
+          <option value="draws"${state.company.billing_style === "draws" ? " selected" : ""}>Draws from homeowners</option></select>
+          <span class="sub">Sets the free trial: 90 days, or 45 for draws. Either ends when the first one sent through Billdable is paid.</span></div>
+      </div>
+      ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
     <div class="card">
       <h2>Team</h2>
@@ -1494,6 +1663,16 @@ function accountView() {
         ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
           <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}
     </div>
+    ${!isDemo && owner && billingInfo && billingInfo.configured ? `<div class="card" id="billing">
+      <h2>Billing</h2>
+      ${billingInfo.status ? `<p class="sub"><span class="pill ${["active", "trialing"].includes(billingInfo.status) ? "green" : "red"}">${BILLING_WORDS[billingInfo.status] || words(billingInfo.status)}</span>${billingInfo.period_end ? ` Next renewal ${fmtDate(new Date(billingInfo.period_end * 1000).toISOString())}.` : ""}</p>`
+        : `<p class="sub">No subscription yet. The free trial still applies: the first charge comes when it ends.</p>`}
+      ${billingInfo.warning ? `<p class="blocker">${billingInfo.warning}</p>` : ""}
+      <div class="form-inline">${billingInfo.has_customer && billingInfo.status && !["canceled", "incomplete_expired"].includes(billingInfo.status)
+        ? `<button class="btn" data-action="billing-portal">Manage billing</button>` : `<button class="btn" data-action="billing-checkout">Subscribe</button>`}</div>
+      ${billingInfo.partner ? `<p class="sub"><span class="pill copper">Design partner</span> The design-partner price applies.</p>` : ""}
+      <p class="sub">Charged on the ${ordinal(Number(billingInfo.billing_day) || 5)} of each month, after your own pay apps are out. Payment by card through Stripe. Billdable never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
+    </div>` : ""}
     ${isDemo ? "" : `<div class="card" id="two-step">
       <h2>Two-step sign-in</h2>
       ${recoveryCodes ? `<div class="invite-result" role="status"><strong>Two-step sign-in is on.</strong> Save these recovery codes somewhere safe, such as your password manager. Each one signs you in once if you lose your phone. They are not shown again.
@@ -1540,10 +1719,11 @@ function trialBannerHtml() {
   const t = state.trial;
   if (!t || !t.tracked) return "";
   const day = (iso) => new Date(unesc(iso)).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const live = !!(billingInfo && billingInfo.configured);
   if (t.state === "active") {
-    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Billdable is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}. Billing isn't live yet.</div>`;
+    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Billdable is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.${live ? "" : " Billing isn't live yet."}</div>`;
   }
-  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}. Billing isn't live yet, so nothing changes for now.</div>`;
+  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : " Subscribe in Settings, Team &amp; account, Billing.") : " Billing isn't live yet, so nothing changes for now."}</div>`;
 }
 
 function onboardingHtml() {
@@ -1587,8 +1767,8 @@ function adminCompaniesHtml() {
   const trialText = (t) => !t.tracked ? "not tracked (signed up before trials)" : t.state === "active"
     ? `active until ${fmtDate(t.ends_by)}${t.extended ? " (extended)" : ""}` : `ended ${fmtDate(t.ended_at)}${t.reason === "paid" ? ` (${t.first_paid} paid)` : " (time)"}`;
   return `<div class="table-wrap"><table>
-    <tr><th>Company</th><th>Id</th><th>Signed up</th><th>Users</th><th>Jobs</th><th>Pay apps sent</th><th>Trial</th></tr>
-    ${adminCompanies.filter(c => !c.demo).map(c => `<tr><td>${c.name}</td><td><code>${c.company_id || ""}</code></td><td>${fmtDate(c.signed_up)}</td><td>${c.users}</td><td>${c.jobs}</td><td>${c.pay_apps_sent}</td><td>${trialText(c.trial)}</td></tr>`).join("")}
+    <tr><th>Company</th><th>Id</th><th>Signed up</th><th>Users</th><th>Jobs</th><th>Pay apps sent</th><th>Trial</th><th>Billing</th><th>Days to first paid</th></tr>
+    ${adminCompanies.filter(c => !c.demo).map(c => `<tr><td>${c.name}</td><td><code>${c.company_id || ""}</code></td><td>${fmtDate(c.signed_up)}</td><td>${c.users}</td><td>${c.jobs}</td><td>${c.pay_apps_sent}</td><td>${trialText(c.trial)}</td><td>${c.billing ? (BILLING_WORDS[c.billing] || words(c.billing)) : "not set up"}</td><td class="num">${c.activation_days ?? "—"}</td></tr>`).join("")}
   </table></div>`;
 }
 
@@ -1779,7 +1959,7 @@ const views = {
     return `<h1>Helper answers</h1>
       <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
       <div id="helper-admin-body">Loading…</div>
-      <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial. Billing isn't live, so nothing is enforced.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
+      <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial and, once Stripe is set up, its subscription. Nothing is enforced unless BILLING_ENFORCE=1.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
   },
   inbox() {
     const items = (state.inbox || []).filter(i => i.status === "new").slice().reverse();
@@ -1868,8 +2048,7 @@ const views = {
     const jobs = filteredJobs();
     const isDemo = me && me.company_id === DEMO_COMPANY_ID;
     const open = state.jobs.filter(j => !j.closed);
-    const actionJobs = open.filter(j => isBlocked(j) || (j.waiver_due && !j.waiver_sent) || j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status)));
-    const doneMessages = (state.inbox || []).filter(i => i.status === "new" && i.says_done_job_id);
+    const queue = todayQueue();
     const hero = t.unbilled_cents > 0 ? "unbilled" : t.outstanding_cents > 0 ? "outstanding" : "";
     const sortHead = (key, label) => `<th data-action="sort" data-sort="${key}" aria-sort="${dashSort === key ? (dashSortDir > 0 ? "ascending" : "descending") : "none"}">${label} ${dashSort === key ? (dashSortDir > 0 ? "↑" : "↓") : ""}</th>`;
     const stage = (key, label) => `<button class="stage ${dashFilter === key ? "active" : ""}" data-action="filter" data-filter="${key}" aria-pressed="${dashFilter === key}">${label}</button>`;
@@ -1885,13 +2064,12 @@ const views = {
         </div>` : ""}
       ${state.jobs.length ? `
       <section class="card action-queue" aria-labelledby="needs-action">
-        <h2 id="needs-action">Needs you${actionJobs.length + doneMessages.length ? ` <span class="count-badge">${actionJobs.length + doneMessages.length}</span>` : ""}</h2>
-        ${doneMessages.map(i => `<div class="action-item"><div class="action-text"><span class="pill copper">Job's done?</span> <strong>${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || ""}</strong><div class="next-action">${SOURCE_LABELS[i.source] || i.source}${i.from ? " from " + i.from : ""}: ${(i.text || i.subject || "").split("\n")[0].slice(0, 120)}</div></div><button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark done and draft</button></div>`).join("")}
-        ${actionJobs.length || doneMessages.length ? actionJobs.map(j => `
+        <h2 id="needs-action">Needs you${queue.length ? ` <span class="count-badge">${queue.length}</span>` : ""}</h2>
+        ${queue.length ? queue.map(q => `
           <div class="action-item">
-            <div class="action-text">${statusPill(j)} <strong>${j.name}</strong><div class="next-action">${nextStep(j)}</div></div>
-            <button class="btn small" data-action="open-job" data-id="${j.id}">Open</button>
-          </div>`).join("") : `<p class="sub">Nothing is waiting on you. Jobs show up here when a pay app is ready to send, a packet is blocked, or a waiver is due.</p>`}
+            <div class="action-text">${q.pill} <strong>${q.j.name}</strong><div class="next-action">${q.text}</div></div>
+            <div class="action-buttons">${q.button}${q.opensJob ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${q.j.id}">Open</button>`}</div>
+          </div>`).join("") : `<p class="sub">Nothing is waiting on you. Work shows up here when a pay app is ready to send, a packet is blocked, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.</p>`}
       </section>` : ""}
       <div class="metrics">
         <div class="metric ${hero === "unbilled" ? "highlight" : ""}"><div class="k">Unbilled completed</div><div class="v">${money(t.unbilled_cents)}</div></div>
@@ -2060,8 +2238,8 @@ const views = {
         </div>` : ""}
       ${!j.closed && j.work_status === "complete" && (j.close_blockers || []).length ? `<p class="sub">Close for record unlocks when: ${(j.close_blockers || []).join(" ")}</p>` : ""}
       <div class="detail-grid">
-        <div class="card">
-          <h2>Money file</h2>
+        <details class="card money-file"${window.innerWidth >= 800 ? " open" : ""}>
+          <summary><h2>Money file</h2><span class="sub">${money(m.contract_total_cents)} contract · ${money(m.billed_cents)} billed · ${money(m.collected_cents)} collected · ${money(m.outstanding_cents)} owed</span></summary>
           <div class="money-row"><span class="label">Contract</span><span>${money(m.contract_cents)}</span></div>
           <div class="money-row"><span class="label">Approved COs</span><span>${money(m.approved_co_cents)}</span></div>
           <div class="money-row"><span class="label">Pending COs</span><span>${money(m.pending_co_cents)}</span></div>
@@ -2073,7 +2251,7 @@ const views = {
           <div class="money-row"><span class="label">Retainage held</span><span>${money(m.retainage_held_cents)}${j.retainage_pct ? " · " + j.retainage_pct + "%" : ""}</span></div>
           <div class="money-row"><span class="label">Retainage released</span><span>${money(m.retainage_released_cents)}</span></div>
           <div class="money-row"><span class="label">Retainage open</span><span>${money(m.retainage_open_cents)}</span></div>
-        </div>
+        </details>
         <div class="card">
           <h2>Pay apps</h2>
           ${j.invoices.length ? j.invoices.map(i => {
@@ -2097,7 +2275,7 @@ const views = {
         <h2>Job record</h2>
         ${j.closed ? "" : `<div class="dropzone small" data-job="${j.id}">
           <strong>${(j.records || []).length ? "Add photos, PDFs, saved emails or spreadsheets" : "Nothing in the record yet. Add the contract, photos and tickets"}</strong>
-          <span class="sub">Drop files here, <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button> (opens the camera on a phone), or paste a screenshot. Emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
+          <span class="sub">Drop files here, <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button>, <button class="linkish" data-action="pick-files" data-job="${j.id}" data-capture="1">take a photo</button>, or paste a screenshot. Emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
         </div>`}
         ${(j.records || []).slice().reverse().map(r => `<div class="list-item"><span class="pill">${RECORD_KINDS[r.kind] || r.kind}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.added_at)}</div>` : ""}</div>`).join("")}
         <details class="add-record"${(j.records || []).length ? "" : " open"}><summary>Add a note to the record</summary>
@@ -2110,6 +2288,7 @@ const views = {
         </details>
       </div>
       ${sovCardHtml(j)}
+      ${jobHistoryHtml(j)}
     `;
   },
   results() {
@@ -2361,6 +2540,9 @@ const views = {
       if (j.waiver_sent_at) add(j.waiver_sent_at, `${j.code} waiver sent`, "waiver", j.id);
       if (j.waiver_due && !j.waiver_sent) add(todayKey, `${j.code} waiver ready`, "waiver", j.id);
       if (j.closed_at) add(j.closed_at, `${j.code} closed`, "paid", j.id);
+      const dueDay = Number(unesc(String(j.payer.payapp_due_day || "")));
+      if (dueDay && !j.closed && (j.work_status !== "complete" || j.money.unbilled_completed_cents > 0))
+        add(localDay(new Date(calYear, calMonth, Math.min(dueDay, daysInMonth))), `${j.code} pay app due to ${j.payer.name}`, "", j.id);
     });
     const cells = [];
     for (let i = 0; i < startDow; i++) cells.push({ other: true });
@@ -2557,8 +2739,21 @@ const views = {
       : `<textarea id="qbo-csv" rows="5" placeholder="Paste the CSV here" class="full-input"></textarea>
         <button class="btn small" data-action="qbo-read">Read payments</button>`}
     </details>`;
+    const q = qboStatus;
+    const owner = me && me.role === "owner";
+    const qboCard = !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
+      !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Billdable's Intuit app. Until then, use the CSV import below.</p>`
+      : !q.connected ? (owner
+        ? `<p class="sub">Read-only: Billdable reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
+        : `<p class="sub">An owner of this company can connect QuickBooks here.</p>`)
+      : `<p class="sub"><span class="pill green">Connected</span> ${q.environment === "sandbox" ? "Sandbox company. " : ""}Since ${fmtDate(q.connected_at)}${q.connected_by ? ", by " + q.connected_by : ""}. Read-only.</p>
+        <div class="form-inline"><button class="btn" data-action="qbo-sync">Read payments from QuickBooks</button><button class="btn secondary" data-action="qbo-reconcile">Check against QuickBooks</button>${owner ? `<button class="btn secondary" data-action="qbo-disconnect">Disconnect</button>` : ""}</div>
+        ${qboReconcile ? (qboReconcile.rows.length
+          ? `<h3>Where Billdable and QuickBooks differ</h3>${qboReconcile.rows.map(r => `<div class="list-item"><span class="pill">${RECON_WORDS[r.kind] || words(r.kind)}</span> <a href="${pathFor("job", r.job_id)}" data-action="open-job" data-id="${r.job_id}">${r.job}</a>: ${r.detail}</div>`).join("")}`
+          : `<p class="sub">Billdable and QuickBooks agree on every sent pay app (${qboReconcile.invoices} QuickBooks invoices checked).</p>`) : ""}`}</div>`;
     return `
       <h1>Payments</h1>
+      ${qboCard}
       ${importCard}
       ${pays.length ? `<div class="table-wrap">
         <table>
@@ -2637,10 +2832,17 @@ const views = {
             <div><strong>Add to the packet?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
             <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to packet</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
           </div>`).join("")}
+          ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${Math.round(Number(unesc(String(p.paid_days_avg))))} days after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
+            const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
+            return p.paid_count >= 2 && Math.abs(avg - set) >= 2
+              ? `The playbook says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} days</button>`
+              : "The playbook agrees.";
+          })()}</p>` : ""}
           <form data-id="${p.id}" class="form-grid">
             <div><label>Approver</label><input name="approver" value="${clean(p.approver)}"></div>
             <div><label>AP email</label><input name="ap_email" type="email" value="${clean(p.ap_email)}"></div>
             <div><label>Follow-up days</label><input name="follow_up_days" type="number" min="1" inputmode="numeric" value="${p.follow_up_days || 7}"></div>
+            <div><label>Pay apps due by (day of the month)</label><input name="payapp_due_day" type="number" min="1" max="31" inputmode="numeric" value="${p.payapp_due_day || ""}" placeholder="e.g. 25"></div>
             <div><label>Usual approval days</label><input name="usual_approval_days" type="number" min="1" inputmode="numeric" value="${p.usual_approval_days || 14}"></div>
             <div class="span-2"><label>Packet</label><textarea name="packet" rows="2">${clean(p.packet)}</textarea></div>
             <div class="span-2"><label>Rejects when</label><textarea name="rejects_when" rows="2">${clean(p.rejects_when)}</textarea></div>
@@ -2770,7 +2972,7 @@ async function helperRunAction(a) {
     try { await navigator.clipboard.writeText(a.text); toast("Copied"); }
     catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
   } else if (a.type === "post") {
-    if (a.confirm && !confirm(a.confirm)) return;
+    if (a.confirm && !(await askConfirm(unesc(a.confirm), "Go ahead"))) return;
     await post(a.path);
     helperLog.push({ who: "helper", text: "Done. The page is updated; the Outbox and Audit show what happened." });
     renderHelper();

@@ -120,6 +120,37 @@ class BackupWithSqliteTests(unittest.TestCase):
             self.assertEqual(store.SqliteStore(copy).load("co-1"), db.load("co-1"))
 
 
+class RestoreDrillTests(unittest.TestCase):
+    def make(self, root, tamper=False, orphan=False):
+        users = [{"id": "u1", "company_id": "co-1"}] + ([{"id": "u2", "company_id": "co-gone"}] if orphan else [])
+        (root / "auth.json").write_text(json.dumps({"users": users, "sessions": {}}))
+        state = seed_state()
+        if tamper:
+            state["audit"][0]["detail"] = "changed after the fact"
+        store.SqliteStore(root / "companies").save("co-1", state)
+        with mock.patch.object(storage, "DATA_DIR", root), mock.patch.dict("os.environ", {"BACKUP_UPLOADS": "0"}):
+            return backup.make_backup()
+
+    def test_a_good_backup_passes_without_touching_the_live_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = self.make(root)
+            before = sorted(p.name for p in root.rglob("*"))
+            with mock.patch.dict("os.environ", {"BACKUP_UPLOADS": "0"}):
+                report, problems = backup.drill(path)
+            self.assertEqual(problems, [])
+            self.assertTrue(any("co-1" in line and "audit ok" in line for line in report))
+            self.assertEqual(sorted(p.name for p in root.rglob("*")), before)
+
+    def test_problems_are_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.make(Path(tmp), tamper=True, orphan=True)
+            with mock.patch.dict("os.environ", {"BACKUP_UPLOADS": "0"}):
+                _, problems = backup.drill(path)
+            self.assertTrue(any("audit chain is broken" in p for p in problems))
+            self.assertTrue(any("co-gone" in p for p in problems))
+
+
 class BackendChoiceTests(unittest.TestCase):
     def test_sqlite_by_default_json_on_request(self):
         with tempfile.TemporaryDirectory() as tmp:

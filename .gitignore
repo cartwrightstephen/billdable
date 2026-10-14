@@ -12,6 +12,8 @@ data/
 *.json
 # The helper's prepared answers ship with the code.
 !helper/answers.json
+# The wireframes' layout (docs/wireframes) is source, not data.
+!docs/wireframes/canvas.json
 
 # Node (if any later)
 node_modules/
