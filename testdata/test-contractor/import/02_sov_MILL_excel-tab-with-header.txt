@@ -1,0 +1,8 @@
+Item	Description	Qty	Unit	Unit Price	Amount
+1	Floor prep and self-leveler	4,200	sf	1.85	7,770.00
+2	Porcelain floor tile 24x24	3,600	sf	9.75	35,100.00
+3	Restroom wall tile	1,450	sf	14.20	20,590.00
+4	Shower pans and waterproofing	6	ea	1,150.00	6,900.00
+5	Stone thresholds and transitions	1	LS	2,640.00	2,640.00
+	Overhead and profit 10%				7,300.00
+	Total				80,300.00
