@@ -44,7 +44,7 @@ class AlertTests(unittest.TestCase):
                 alerts.notify(f"crash:/api/{i}", "other", send=self.send)
         self.assertEqual(len(self.sent), alerts.HOURLY_LIMIT)
         self.assertEqual(self.sent[0][0], HOOK["ALERT_WEBHOOK_URL"])
-        self.assertTrue(self.sent[0][1].startswith("Billdable ("))
+        self.assertTrue(self.sent[0][1].startswith("Duracash ("))
 
 
 class CrashAlertHttpTests(unittest.TestCase):

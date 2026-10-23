@@ -1,6 +1,6 @@
 # Wireframes
 
-The live, clickable version is the Billdable wireframes canvas:
+The live, clickable version is the Duracash wireframes canvas:
 https://claude.ai/artifact/9EAKjG3KbsKpqpn5Afxr2J (version 21, Oct 13, 2026; anyone with the link
 can open it). Press Play on an artboard to follow its links.
 

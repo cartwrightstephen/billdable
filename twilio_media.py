@@ -1,4 +1,4 @@
-"""Download photos and files texted to the Billdable number (P3: "Twilio media download").
+"""Download photos and files texted to the Duracash number (P3: "Twilio media download").
 
 Twilio posts each picture as a MediaUrl on api.twilio.com, which redirects to Twilio's
 storage. Downloads happen only when TWILIO_AUTH_TOKEN is set (so the request was signed by

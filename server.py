@@ -1,10 +1,10 @@
-"""Local Billdable server with company isolation and cookie sessions.
+"""Local Duracash server with company isolation and cookie sessions.
 
     python3 server.py
     open http://127.0.0.1:8765
 
 Each company has its own JSON file under <data dir>/companies/. Auth lives in
-<data dir>/auth.json. The data dir is BILLDABLE_DATA_DIR, default data/ beside
+<data dir>/auth.json. The data dir is DURACASH_DATA_DIR, default data/ beside
 this file. Only index.html, app.js and styles.css are served from static/; the
 page addresses the app uses (/today, /jobs/..., /money/...) all get index.html.
 """
@@ -63,7 +63,7 @@ STATIC = ROOT / "static"
 COMPANIES = storage.DATA_DIR / "companies"
 PORT = int(os.environ.get("PORT", "8765"))
 HOST = os.environ.get("HOST", "0.0.0.0")
-COOKIE = "billdable_session"
+COOKIE = "duracash_session"
 _COMPANY_LOCKS: dict = {}
 _COMPANY_LOCKS_GUARD = threading.Lock()
 _DELETED_LOCK = threading.Lock()
@@ -125,9 +125,9 @@ def index_html() -> bytes:
     return page.encode("utf-8")
 
 
-NOT_FOUND_PAGE = b"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Page not found - Billdable</title>
+NOT_FOUND_PAGE = b"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Page not found - Duracash</title>
 <style>body{font:16px/1.6 system-ui,sans-serif;background:#f6f3ee;color:#1c1915;margin:0;display:grid;place-items:center;min-height:100vh}main{max-width:420px;padding:24px}h1{font:500 32px Georgia,serif;margin:0 0 8px}a{color:#8c3f1d}</style></head>
-<body><main><h1>Page not found</h1><p>There is nothing at this address.</p><p><a href="/">Go to Billdable</a></p></main></body></html>"""
+<body><main><h1>Page not found</h1><p>There is nothing at this address.</p><p><a href="/">Go to Duracash</a></p></main></body></html>"""
 
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -155,20 +155,20 @@ def is_helper_admin(user: dict) -> bool:
 def app_url() -> str | None:
     """The public address used in emailed links (password reset, verification, invites).
     Never taken from the request's Host header, which a stranger controls."""
-    url = (os.environ.get("BILLDABLE_URL") or "").strip().rstrip("/")
+    url = (os.environ.get("DURACASH_URL") or "").strip().rstrip("/")
     return url if re.match(r"^https?://[^\s/]+", url) else None
 
 
 def production() -> bool:
-    """BILLDABLE_ENV=production: no demo tenant, and startup refuses a half-set configuration."""
-    return (os.environ.get("BILLDABLE_ENV") or "").strip().lower() == "production"
+    """DURACASH_ENV=production: no demo tenant, and startup refuses a half-set configuration."""
+    return (os.environ.get("DURACASH_ENV") or "").strip().lower() == "production"
 
 
 def demo_mode() -> str:
-    """BILLDABLE_DEMO: "on" (the default outside production), "readonly" or "off" (the default
+    """DURACASH_DEMO: "on" (the default outside production), "readonly" or "off" (the default
     in production). The demo's password is public, so production allows it only read-only:
     visitors can look around, and nothing can be changed, reset or locked."""
-    value = (os.environ.get("BILLDABLE_DEMO") or "").strip().lower()
+    value = (os.environ.get("DURACASH_DEMO") or "").strip().lower()
     if value in {"off", "readonly"}:
         return value
     return "off" if production() else "on"
@@ -204,8 +204,8 @@ def read_only_reason(company_id: str, state: dict | None = None) -> str:
 
 def data_notice() -> bool:
     """Show "data may be erased" on the landing page until someone has checked that a
-    deploy kept the data (BILLDABLE_DATA_PERSISTENT=1)."""
-    return os.environ.get("BILLDABLE_DATA_PERSISTENT") != "1"
+    deploy kept the data (DURACASH_DATA_PERSISTENT=1)."""
+    return os.environ.get("DURACASH_DATA_PERSISTENT") != "1"
 
 
 def config_problems() -> list[str]:
@@ -213,15 +213,15 @@ def config_problems() -> list[str]:
     if not production():
         return []
     problems = []
-    if not os.environ.get("BILLDABLE_DATA_DIR"):
-        problems.append("BILLDABLE_DATA_DIR is not set. Point it at the persistent disk.")
+    if not os.environ.get("DURACASH_DATA_DIR"):
+        problems.append("DURACASH_DATA_DIR is not set. Point it at the persistent disk.")
     elif not storage.DATA_DIR.is_dir():
-        problems.append(f"BILLDABLE_DATA_DIR ({storage.DATA_DIR}) does not exist. Is the disk mounted?")
+        problems.append(f"DURACASH_DATA_DIR ({storage.DATA_DIR}) does not exist. Is the disk mounted?")
     if os.environ.get("COOKIE_SECURE") != "1":
         problems.append("COOKIE_SECURE must be 1.")
     url = app_url()
     if not url or not url.startswith("https://"):
-        problems.append("BILLDABLE_URL must be the site's https:// address, so emailed links work.")
+        problems.append("DURACASH_URL must be the site's https:// address, so emailed links work.")
     return problems
 
 
@@ -298,12 +298,12 @@ def _csp(policy: str, body: bytes) -> str:
 
 
 def company_store():
-    """SQLite by default, the JSON files with BILLDABLE_STORAGE=json (store.py, P2-5)."""
+    """SQLite by default, the JSON files with DURACASH_STORAGE=json (store.py, P2-5)."""
     return store.open_store(COMPANIES)
 
 
 def company_path(company_id: str) -> Path:
-    """The JSON layout's file for a company (BILLDABLE_STORAGE=json)."""
+    """The JSON layout's file for a company (DURACASH_STORAGE=json)."""
     return COMPANIES / f"{company_id}.json"
 
 
@@ -338,7 +338,7 @@ def deleted_companies() -> set:
 
 
 def send_system_email(to: str, subject: str, body: str, company_id: str = "", rid: str = "") -> str:
-    """An email from Billdable itself (reset, verification, invite, monthly summary). Returns "sent"
+    """An email from Duracash itself (reset, verification, invite, monthly summary). Returns "sent"
     or the reason it wasn't. It counts against the company's daily limit like any other email."""
     if not mailer.configured():
         return "email delivery is not set up on this server"
@@ -346,7 +346,7 @@ def send_system_email(to: str, subject: str, body: str, company_id: str = "", ri
     if company_id and mailer.sent_in_last_day(company_id) >= cfg["daily_limit"]:
         return f"the daily limit of {cfg['daily_limit']} emails is reached; try tomorrow"
     try:
-        msg, _ = mailer.build_message({"to": to, "subject": subject, "body": body}, "", "", [], cfg, sender_name="Billdable")
+        msg, _ = mailer.build_message({"to": to, "subject": subject, "body": body}, "", "", [], cfg, sender_name="Duracash")
         error = mailer.send([msg], cfg)[0]
     except Exception as exc:
         error = f"{exc.__class__.__name__}: {exc}"
@@ -398,7 +398,7 @@ def save_company(company_id: str, state: dict) -> None:
 
 def activation_days(state: dict) -> int | None:
     """The business plan's activation measure: days from signup to the first paid pay app sent
-    through Billdable (None until then)."""
+    through Duracash (None until then)."""
     t = trial.status(state)
     if t.get("reason") != "paid":
         return None
@@ -521,7 +521,7 @@ class Server(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Billdable"
+    server_version = "Duracash"
     sys_version = ""
     # A client that stops sending or reading is dropped after this many seconds.
     timeout = 30
@@ -840,7 +840,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _g_admin_companies(self, m, user) -> None:
         if not is_helper_admin(user):
-            self._json(403, {"error": "Only the Billdable team can see this."})
+            self._json(403, {"error": "Only the Duracash team can see this."})
             return
         self._json(200, {"companies": self._company_overview()})
 
@@ -867,7 +867,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _g_helper_review(self, m, user) -> None:
         if not is_helper_admin(user):
-            self._json(403, {"error": "Only the Billdable team can review helper questions."})
+            self._json(403, {"error": "Only the Duracash team can review helper questions."})
             return
         self._json(200, helper.review())
 
@@ -928,7 +928,7 @@ class Handler(BaseHTTPRequestHandler):
     def _p_billing_checkout(self, m, ctx: "Ctx") -> None:
         if ctx.company_id == auth.DEMO_COMPANY_ID or not app_url():
             self._json(409, {"error": "The demo account can't subscribe." if ctx.company_id == auth.DEMO_COMPANY_ID
-                             else "Set BILLDABLE_URL first; Stripe sends people back to it."})
+                             else "Set DURACASH_URL first; Stripe sends people back to it."})
             return
         with company_lock(ctx.company_id):
             state = load_company(ctx.company_id)
@@ -993,7 +993,7 @@ class Handler(BaseHTTPRequestHandler):
             company_id = qbo.finish(arg("state"), arg("code"), arg("realmId"), self._qbo_redirect_uri())
         except qbo.QboError as exc:
             page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
-                    f'<title>QuickBooks - Billdable</title></head><body><main><h1>QuickBooks</h1><p>{html_escape(str(exc))}</p>'
+                    f'<title>QuickBooks - Duracash</title></head><body><main><h1>QuickBooks</h1><p>{html_escape(str(exc))}</p>'
                     f'<p><a href="/money/payments">Back to Payments</a></p></main></body></html>')
             self._send(400, page.encode("utf-8"), "text/html; charset=utf-8")
             return
@@ -1048,7 +1048,7 @@ class Handler(BaseHTTPRequestHandler):
             state = load_company(user["company_id"])
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
         self._send(200, json.dumps(state, indent=2).encode(), "application/json",
-                   {"Content-Disposition": f'attachment; filename="billdable-export-{stamp}.json"'})
+                   {"Content-Disposition": f'attachment; filename="duracash-export-{stamp}.json"'})
 
     def _g_file(self, m, user) -> None:
         with company_lock(user["company_id"]):
@@ -1094,7 +1094,7 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(company_id):
             state = load_company(company_id)
         self._send(200, calendar_feed.render(state).encode("utf-8"), "text/calendar; charset=utf-8",
-                   {"Content-Disposition": 'inline; filename="billdable.ics"'})
+                   {"Content-Disposition": 'inline; filename="duracash.ics"'})
 
     def _g_legal(self, m) -> None:
         self._send(200, legal.page(m.group(1)).encode("utf-8"), "text/html; charset=utf-8")
@@ -1185,7 +1185,7 @@ class Handler(BaseHTTPRequestHandler):
         if not (mailer.configured() and url):
             contact = (os.environ.get("LEGAL_EMAIL") or "").strip()
             self._json(200, {"message": "Password reset by email isn't set up on this server yet. "
-                             + (f"Email {contact} to reset it." if contact else "Ask the Billdable team to reset it.")})
+                             + (f"Email {contact} to reset it." if contact else "Ask the Duracash team to reset it.")})
             return
         requested = _text(body, "email", limit=300)
 
@@ -1194,8 +1194,8 @@ class Handler(BaseHTTPRequestHandler):
             if found:
                 raw, account = found
                 self._system_email(
-                    account["email"], "Reset your Billdable password",
-                    f"Someone asked to reset the password for {account['email']} on Billdable.\n\n"
+                    account["email"], "Reset your Duracash password",
+                    f"Someone asked to reset the password for {account['email']} on Duracash.\n\n"
                     f"Choose a new password here (the link works once, for one hour):\n{url}/#reset={raw}\n\n"
                     "If it wasn't you, ignore this email; your password stays the same.",
                     company_id=account["company_id"],
@@ -1292,7 +1292,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _p_helper_admin(self, m, ctx: "Ctx") -> None:
         if not is_helper_admin(ctx.user):
-            self._json(403, {"error": "Only the Billdable team can edit helper answers."})
+            self._json(403, {"error": "Only the Duracash team can edit helper answers."})
             return
         try:
             if m.group(1) == "answers":
@@ -1438,14 +1438,14 @@ class Handler(BaseHTTPRequestHandler):
         if user["company_id"] == auth.DEMO_COMPANY_ID:
             return "the demo account isn't verified"
         if not (mailer.configured() and url):
-            return "email delivery or BILLDABLE_URL is not set up on this server"
+            return "email delivery or DURACASH_URL is not set up on this server"
         if not _within_limit(f"verify:{user['id']}", 3, 3600):
             return "three links were already sent in the last hour; use the newest, or try later"
         raw = auth.verify_email_token(user["id"])
         return self._system_email(
-            user["email"], "Confirm your email for Billdable",
+            user["email"], "Confirm your email for Duracash",
             f"Hi {user['name']},\n\nConfirm that this is your email address (the link works for 3 days):\n{url}/#verify={raw}\n\n"
-            "Billdable emails your pay apps from this address's account, with replies coming back to it, "
+            "Duracash emails your pay apps from this address's account, with replies coming back to it, "
             "so we check it first. If you didn't sign up, ignore this email.",
             company_id=user["company_id"],
         )
@@ -1468,16 +1468,16 @@ class Handler(BaseHTTPRequestHandler):
                 raw, invite = auth.create_invite(company_id, body.get("email"), body.get("role") or "member", user["name"], actor_id=user["id"])
                 url = app_url()
                 note = {"invite_path": f"/#invite={raw}", "invite_link": f"{url}/#invite={raw}" if url else None, "emailed": False,
-                        "email_status": "BILLDABLE_URL is not set on this server" if not url else "not sent"}
+                        "email_status": "DURACASH_URL is not set on this server" if not url else "not sent"}
                 if url:
                     with company_lock(company_id):
                         company_name = load_company(company_id).get("company", {}).get("name", "")
                     # Names typed by users go in the body only, flattened and shortened; the subject is fixed.
                     flat = lambda text, n: " ".join(str(text).split())[:n]
                     status = self._system_email(
-                        invite["email"], "You're invited to a team on Billdable",
+                        invite["email"], "You're invited to a team on Duracash",
                         f"{flat(user['name'], 80)} ({user['email']}) invited you to join the company "
-                        f"\"{flat(company_name, 80)}\" on Billdable as {invite['role']}.\n\n"
+                        f"\"{flat(company_name, 80)}\" on Duracash as {invite['role']}.\n\n"
                         f"Accept here (the link works for 7 days):\n{url}/#invite={raw}\n\n"
                         "If you don't know this person, ignore this email.",
                         company_id=company_id,
@@ -2341,7 +2341,7 @@ def main() -> None:
         ensure_demo()
     server = Server((HOST, PORT), Handler)
     browse = "http://127.0.0.1" if HOST in {"0.0.0.0", ""} else f"http://{HOST}"
-    print(f"Billdable running at {browse}:{PORT}{' (production)' if production() else ''}")
+    print(f"Duracash running at {browse}:{PORT}{' (production)' if production() else ''}")
     print(f"Data directory: {storage.DATA_DIR}")
     if demo_enabled():
         print(f"Demo login: {auth.DEMO_EMAIL} / {auth.DEMO_PASSWORD}")

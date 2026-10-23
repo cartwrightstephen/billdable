@@ -92,14 +92,14 @@ def parsed(message):
 
 
 class MailerUnitTests(unittest.TestCase):
-    cfg = {"host": "127.0.0.1", "port": 0, "user": "", "password": "", "security": "none", "from": "billing@billdable.test", "daily_limit": 50}
+    cfg = {"host": "127.0.0.1", "port": 0, "user": "", "password": "", "security": "none", "from": "billing@duracash.test", "daily_limit": 50}
 
     def test_headers_cannot_be_injected(self):
         entry = {"to": "ap@park.example", "subject": "Pay app\r\nBcc: victim@example.com", "body": "Hello"}
         msg, _ = mailer.build_message(entry, "Pine\nCo", "pat@pine.example", [], self.cfg)
         self.assertNotIn("Bcc", msg.keys())
         self.assertEqual(msg["Subject"], "Pay app Bcc: victim@example.com")
-        self.assertIn("Pine Co via Billdable", str(msg["From"]))
+        self.assertIn("Pine Co via Duracash", str(msg["From"]))
         self.assertEqual(msg["Reply-To"], "pat@pine.example")
         with self.assertRaises(ValueError):
             mailer.build_message({"to": "a@b.example, c@d.example", "subject": "x", "body": ""}, "Pine", "", [], self.cfg)
@@ -183,7 +183,7 @@ class MailHttpTests(unittest.TestCase):
     def mail_on(self, **extra):
         os.environ.update({
             "SMTP_HOST": "127.0.0.1", "SMTP_PORT": str(self.sink.server_address[1]),
-            "SMTP_SECURITY": "none", "MAIL_FROM": "billing@billdable.test", **extra,
+            "SMTP_SECURITY": "none", "MAIL_FROM": "billing@duracash.test", **extra,
         })
 
     def request(self, method, path, body=None, cookie=None, raw=None, headers=None):
@@ -238,8 +238,8 @@ class MailHttpTests(unittest.TestCase):
         self.assertEqual(self.sink.messages[0]["to"], ["ap@park.example"])
         self.assertEqual(msg["To"], "ap@park.example")
         self.assertEqual(msg["Reply-To"], "mail1@pine.example")
-        self.assertIn("Pine & Sons via Billdable", str(msg["From"]))
-        self.assertIn("billing@billdable.test", str(msg["From"]))
+        self.assertIn("Pine & Sons via Duracash", str(msg["From"]))
+        self.assertIn("billing@duracash.test", str(msg["From"]))
         self.assertIn("Pay application PA-", msg["Subject"])
         self.assertIn("Amount due this application", msg.get_body(("plain",)).get_content())
         self.assertIn("1 packet document is attached", msg.get_body(("plain",)).get_content())
@@ -396,7 +396,7 @@ class MailHttpTests(unittest.TestCase):
         self.assertEqual(parsed(self.sink.messages[-1])["Cc"], "dana@park.example")
         for odd in ("a(b@x.com", "x@y.z]", "a:b@x.com"):
             with self.assertRaises(ValueError):
-                mailer.build_message({"to": odd, "subject": "s", "body": "b"}, "Pine", "", [], {"from": "billing@billdable.test"})
+                mailer.build_message({"to": odd, "subject": "s", "body": "b"}, "Pine", "", [], {"from": "billing@duracash.test"})
 
     def test_sov_over_http(self):
         cookie, job = self.company("mail6@pine.example")

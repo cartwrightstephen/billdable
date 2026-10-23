@@ -2,7 +2,7 @@
 
 Until the QuickBooks Online connection is built, the bookkeeper exports received payments
 (Reports, e.g. "Transaction List by Date" filtered to payments, Export to CSV) and pastes
-them in. Billdable proposes a pay app for each row and records nothing until someone
+them in. Duracash proposes a pay app for each row and records nothing until someone
 applies the matches. Matching is keyed on the payment's reference (check number or QuickBooks
 number), which can be recorded once per job, so importing the same file twice is harmless.
 
@@ -109,7 +109,7 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
         result = {**row, "status": "no match", "reason": "No open pay app has this number, or this customer and amount.",
                   "job_id": None, "invoice_id": None, "number": None}
         if row["ref"] and row["ref"] in refs:
-            result.update(status="already recorded", reason=f"Payment {row['ref']} is already in Billdable.")
+            result.update(status="already recorded", reason=f"Payment {row['ref']} is already in Duracash.")
             out.append(result)
             continue
         named = set(PAYAPP_RE.findall(f"{row['memo']} {row['ref']}"))

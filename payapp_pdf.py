@@ -1,7 +1,7 @@
 """The pay app as a PDF: an application-for-payment summary and a continuation sheet.
 
 The layout follows the familiar G702/G703 pattern (summary lines 1-9, then a
-line-by-line sheet), but it is Billdable's own document, not an AIA form, and
+line-by-line sheet), but it is Duracash's own document, not an AIA form, and
 it says so on every page. Waiver documents are not generated: lien waiver
 forms are set by state law, so the contractor supplies their own.
 
@@ -149,7 +149,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
 
     def footer(page: _Page, n: int, total: int) -> None:
         page.line(MARGIN, 40, PAGE_W - MARGIN, 40)
-        page.text(MARGIN, 28, "Prepared with Billdable from the contractor's records. This is not an AIA document.", "F1", 7.5)
+        page.text(MARGIN, 28, "Prepared with Duracash from the contractor's records. This is not an AIA document.", "F1", 7.5)
         page.right(PAGE_W - MARGIN, 28, f"Page {n} of {total}", 7.5)
 
     # Page 1: the application summary.

@@ -520,7 +520,7 @@ def capture_reply(state: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]
         if not job:
             return None
         payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
-        file_item(state, item["id"], job["id"], "note", "billdable")
+        file_item(state, item["id"], job["id"], "note", "duracash")
         when = datetime.now(timezone.utc)
         summary = _reply_summary(item.get("text", ""))
         item["prev_external_status"] = job.get("external_status")
@@ -530,7 +530,7 @@ def capture_reply(state: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]
         if re.search(r"\b(need|needs|missing|required|require|attach|send us|please send)\b", summary, re.IGNORECASE):
             domain.suggest_packet_item(state, job.get("payer_id", ""), summary, "a reply", job["name"])
         domain.audit(state, job["id"], "reply_captured",
-                     f"A reply from {sender} to {', '.join(sorted(numbers))} was filed to the job record: {summary}", "billdable")
+                     f"A reply from {sender} to {', '.join(sorted(numbers))} was filed to the job record: {summary}", "duracash")
         return job
     return None
 

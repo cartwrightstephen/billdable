@@ -1,4 +1,4 @@
-"""Results: what Billdable did for a company, in numbers (P2-10)."""
+"""Results: what Duracash did for a company, in numbers (P2-10)."""
 
 import datetime as dt
 import io
@@ -41,7 +41,7 @@ class MetricsTests(unittest.TestCase):
 
     def test_month_summary(self):
         subject, body = metrics.month_summary(seed_state(), 2026, 9)
-        self.assertEqual(subject, "September 2026: what Billdable did for Hartline Remodeling")
+        self.assertEqual(subject, "September 2026: what Duracash did for Hartline Remodeling")
         self.assertIn("Pay apps sent: 2, for $148,300.00.", body)
         self.assertIn("Payments received: 1, for $28,600.00; on average 21.0 days", body)
         self.assertNotIn("-1 days", body, "jobs finished after the month don't appear")

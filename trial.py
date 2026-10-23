@@ -1,6 +1,6 @@
 """The free trial, timed to the payment cycle (business plan, Oct 12).
 
-A contractor pays nothing until the first pay app sent through Billdable is
+A contractor pays nothing until the first pay app sent through Duracash is
 paid in full, or for 90 days, whichever comes first. If a pay app has been
 sent but is still unpaid on day 90, the trial runs to day 120. A remodeler who
 bills homeowners in draws (company billing_style "draws") gets 45 days or the

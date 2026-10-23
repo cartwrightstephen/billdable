@@ -11,7 +11,7 @@
     python3 admin.py partner COMPANY_ID on|off     a design partner pays STRIPE_PARTNER_PRICE_ID
                                                    (the business plan: up to 3, $99 a month)
 
-Every command acts on BILLDABLE_DATA_DIR, like the server. See docs/runbooks.md.
+Every command acts on DURACASH_DATA_DIR, like the server. See docs/runbooks.md.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def main(argv: list[str]) -> int:
                 record["partner"] = True
             else:
                 record.pop("partner", None)
-            domain.audit(state, "", "billing", "Billdable made the company a design partner." if on else "Billdable ended the design-partner price.", "Billdable")
+            domain.audit(state, "", "billing", "Duracash made the company a design partner." if on else "Duracash ended the design-partner price.", "Duracash")
             server.save_company(args[0], state)
         partners = sum(1 for c in server.company_ids() if (server.load_company(c).get("company", {}).get("billing") or {}).get("partner"))
         print(f"{args[0]} is {'a design partner' if on else 'on the regular price'}. Design partners now: {partners}.")
@@ -99,7 +99,7 @@ def main(argv: list[str]) -> int:
             else:
                 company.pop("read_only", None)
             domain.audit(state, "", "read_only" if reason else "writable",
-                         f"Billdable set the company read-only: {reason}." if reason else "Billdable made the company writable again.", "Billdable")
+                         f"Duracash set the company read-only: {reason}." if reason else "Duracash made the company writable again.", "Duracash")
             server.save_company(args[0], state)
         print(f"{args[0]} is now {'read-only: ' + reason if reason else 'writable'}.")
     elif cmd == "end-sessions" and args:

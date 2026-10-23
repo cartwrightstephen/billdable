@@ -1,4 +1,4 @@
-"""File-backed auth for Billdable.
+"""File-backed auth for Duracash.
 
 A company has one or more users; each user belongs to one company and is an
 owner or a member. Sessions are opaque tokens stored in a cookie; only their
@@ -527,7 +527,7 @@ def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor
         data = _load()
         _require_owner(data, company_id, actor_id)
         if any(u["email"] == email for u in data["users"]):
-            raise AuthError("That email already has a Billdable account. Each person belongs to one company.")
+            raise AuthError("That email already has a Duracash account. Each person belongs to one company.")
         pending = [v for v in data["tokens"].values() if v["kind"] == "invite" and v.get("company_id") == company_id]
         if len(pending) >= 20:
             raise AuthError("Too many open invites. Revoke some first.")
@@ -561,7 +561,7 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
         if key not in data["tokens"]:
             raise AuthError("This invite has already been used.")
         if any(u["email"] == entry["email"] for u in data["users"]):
-            raise AuthError("That email already has a Billdable account.")
+            raise AuthError("That email already has a Duracash account.")
         data["tokens"].pop(key, None)
         user = {
             "id": "user-" + secrets.token_hex(4),

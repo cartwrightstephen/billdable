@@ -36,7 +36,7 @@ export function sovProgressHtml(j) {
       <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
     </tr>`).join("");
   return `<div class="card sov-progress">
-    <p class="sub">Enter how much of each line is done to date (not this period), and the dollars of materials delivered and stored on site but not yet installed. Billdable bills the difference since the last pay app, plus overhead and profit, less retainage. Lower the stored amount as materials are installed.</p>
+    <p class="sub">Enter how much of each line is done to date (not this period), and the dollars of materials delivered and stored on site but not yet installed. Duracash bills the difference since the last pay app, plus overhead and profit, less retainage. Lower the stored amount as materials are installed.</p>
     <div class="table-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th>Stored materials $</th><th></th></tr>
       ${rows}

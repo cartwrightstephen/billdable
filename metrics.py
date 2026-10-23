@@ -1,4 +1,4 @@
-"""What Billdable did for a company, in numbers (P2-10).
+"""What Duracash did for a company, in numbers (P2-10).
 
 The strategy doc's renewal argument and the pilot's four measures, from what the app
 already records. Each number says how it is counted; none is estimated.
@@ -94,7 +94,7 @@ def compute(state: dict[str, Any], today: date | None = None, since: date | None
 
 
 def month_summary(state: dict[str, Any], year: int, month: int) -> tuple[str, str]:
-    """Subject and body of the monthly "what Billdable did for you" email, for one calendar month."""
+    """Subject and body of the monthly "what Duracash did for you" email, for one calendar month."""
     first = date(year, month, 1)
     nxt = date(year + (month == 12), month % 12 + 1, 1)
     name = state.get("company", {}).get("name", "") or "your company"
@@ -117,7 +117,7 @@ def month_summary(state: dict[str, Any], year: int, month: int) -> tuple[str, st
     # As of the month's end: jobs finished after it belong to next month's email.
     waiting = [w for w in compute(state, today=nxt)["waiting_to_bill"] if w["days"] > 0]
     lines = [
-        f"{name}: {label} in Billdable",
+        f"{name}: {label} in Duracash",
         "",
         f"Pay apps sent: {len(sent)}, for {domain.money(sum(i['amount_cents'] for i in sent))}.",
         f"Payments received: {len(paid)}, for {domain.money(sum(p['amount_cents'] for p in paid))}"
@@ -126,5 +126,5 @@ def month_summary(state: dict[str, Any], year: int, month: int) -> tuple[str, st
     ]
     if waiting:
         lines += ["", "Done but not billed yet:"] + [f"- {w['job']}: {w['days']} days since the work was marked done" for w in waiting[:10]]
-    lines += ["", "Open Billdable to act on any of these. Owners of the company get this summary once a month."]
-    return f"{label}: what Billdable did for {name}", "\n".join(lines)
+    lines += ["", "Open Duracash to act on any of these. Owners of the company get this summary once a month."]
+    return f"{label}: what Duracash did for {name}", "\n".join(lines)

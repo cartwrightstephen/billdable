@@ -24,12 +24,12 @@ PASSWORD = "correct horse battery"
 
 class DemoModeTests(unittest.TestCase):
     def test_modes(self):
-        cases = [({}, "on"), ({"BILLDABLE_ENV": "production"}, "off"),
-                 ({"BILLDABLE_ENV": "production", "BILLDABLE_DEMO": "readonly"}, "readonly"),
-                 ({"BILLDABLE_ENV": "production", "BILLDABLE_DEMO": "on"}, "off"),
-                 ({"BILLDABLE_DEMO": "off"}, "off"), ({"BILLDABLE_DEMO": "readonly"}, "readonly")]
+        cases = [({}, "on"), ({"DURACASH_ENV": "production"}, "off"),
+                 ({"DURACASH_ENV": "production", "DURACASH_DEMO": "readonly"}, "readonly"),
+                 ({"DURACASH_ENV": "production", "DURACASH_DEMO": "on"}, "off"),
+                 ({"DURACASH_DEMO": "off"}, "off"), ({"DURACASH_DEMO": "readonly"}, "readonly")]
         for env, want in cases:
-            with mock.patch.dict("os.environ", {"BILLDABLE_ENV": "", "BILLDABLE_DEMO": "", **env}):
+            with mock.patch.dict("os.environ", {"DURACASH_ENV": "", "DURACASH_DEMO": "", **env}):
                 self.assertEqual(server.demo_mode(), want, env)
 
 
@@ -112,7 +112,7 @@ class ReadOnlyHttpTests(unittest.TestCase):
         self.assertEqual(me["read_only"], "")
 
     def test_the_production_demo_is_read_only(self):
-        env = {"BILLDABLE_ENV": "production", "BILLDABLE_DEMO": "readonly"}
+        env = {"DURACASH_ENV": "production", "DURACASH_DEMO": "readonly"}
         with mock.patch.dict("os.environ", env):
             res, data = self.request("POST", "/api/auth/login", {"email": auth.DEMO_EMAIL, "password": auth.DEMO_PASSWORD})
             self.assertEqual(res.status, 200, data)
@@ -136,7 +136,7 @@ class ReadOnlyHttpTests(unittest.TestCase):
                 res, data = self.request("POST", path, {"from": "x@example.com", "text": "spam"})
                 self.assertEqual((res.status, data.get("ignored")), (200, "the demo is read-only"), path)
             self.assertEqual(len(server.load_company(auth.DEMO_COMPANY_ID).get("inbox", [])), inbox_before)
-        with mock.patch.dict("os.environ", {"BILLDABLE_ENV": "production", "BILLDABLE_DEMO": ""}):
+        with mock.patch.dict("os.environ", {"DURACASH_ENV": "production", "DURACASH_DEMO": ""}):
             res, _ = self.request("GET", "/api/state", cookie=cookie)
             self.assertEqual(res.status, 401, "with the demo off, its sessions stop working")
 

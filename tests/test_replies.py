@@ -67,12 +67,12 @@ class ReplyCaptureTests(unittest.TestCase):
 
 
 class ReplyToHeaderTests(unittest.TestCase):
-    CFG = {"from": "billing@billdable.example"}
+    CFG = {"from": "billing@duracash.example"}
 
     def test_reply_to_lists_the_approver_and_the_inbound_address(self):
         msg, _ = mailer.build_message({"to": "ap@payer.example", "subject": "Pay application PA-X-1", "body": "Hi"},
-                                      "Pine", "pat@pine.example", [], self.CFG, inbound="jobs+abc123@in.billdable.example")
-        self.assertEqual(msg["Reply-To"], "pat@pine.example, jobs+abc123@in.billdable.example")
+                                      "Pine", "pat@pine.example", [], self.CFG, inbound="jobs+abc123@in.duracash.example")
+        self.assertEqual(msg["Reply-To"], "pat@pine.example, jobs+abc123@in.duracash.example")
 
     def test_without_an_inbound_address_only_the_approver(self):
         msg, _ = mailer.build_message({"to": "ap@payer.example", "subject": "s", "body": "b"}, "Pine", "pat@pine.example", [], self.CFG)

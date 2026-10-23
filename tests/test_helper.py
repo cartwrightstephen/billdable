@@ -22,7 +22,7 @@ CASES = {
     "does it work with quickbooks": "quickbooks", "how much does it cost": "pricing", "customer paid half": "partial",
     "write a reminder email to turner": "draft-followup", "how do i import my apple notes": "import-notes",
     "change order not signed yet can i bill it": "unsigned-co", "how do i delete a job": "edit-job", "is my data safe": "security",
-    "what is a pencil draft": "pencil", "can billdable call my customers": "voice-calls", "how to add a new job": "create-job",
+    "what is a pencil draft": "pencil", "can duracash call my customers": "voice-calls", "how to add a new job": "create-job",
     "can my bookkeeper log in": "team-users", "where do i see what i sent": "email-sent", "status of oak street": "job-status",
     "how do i delete my account": "delete-account", "is my data backed up": "backups",
     "how do i set up a schedule of values": "sov", "can i paste my estimate from excel": "sov", "bill by unit rates": "sov",

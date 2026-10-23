@@ -92,7 +92,7 @@ class UiServerTests(unittest.TestCase):
             res, body = self.get(path)
             self.assertEqual(res.status, 404, path)
             self.assertTrue(res.getheader("Content-Type").startswith("text/html"), path)
-            self.assertIn(b"Go to Billdable", body)
+            self.assertIn(b"Go to Duracash", body)
         res, body = self.get("/api/nope")
         self.assertEqual(res.status, 404)
         self.assertEqual(json.loads(body), {"error": "Not found"})
@@ -127,7 +127,7 @@ class UiServerTests(unittest.TestCase):
         self.assertIn(b'rel="manifest"', page)
 
     def share(self, cookie=None):
-        boundary = "----billdable"
+        boundary = "----duracash"
         parts = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nOak tickets\r\n"
                  f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"ticket.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n").encode()
         body = parts + b"\xff\xd8fakejpeg" + f"\r\n--{boundary}--\r\n".encode()

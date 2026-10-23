@@ -1,4 +1,4 @@
-"""The Billdable helper: prepared answers, matched by rules, with live data.
+"""The Duracash helper: prepared answers, matched by rules, with live data.
 
 Answers live in a database the team keeps growing:
   helper/answers.json                 shipped with the code (reviewed in Git)
@@ -366,7 +366,7 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
             reply["text"] = "I'm not sure I understood. Did you mean one of these?"
             reply["suggestions"] = [e["questions"][0] for e in close]
         else:
-            reply["text"] = ("I don't have an answer for that yet. I've saved the question so the Billdable team can add one. "
+            reply["text"] = ("I don't have an answer for that yet. I've saved the question so the Duracash team can add one. "
                              "Try asking what to do today, who owes you, or how to import an email.")
             reply["suggestions"] = ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"]
     log_id = "q-" + secrets.token_hex(6)

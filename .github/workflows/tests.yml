@@ -18,4 +18,4 @@ jobs:
       - name: Same tests on the JSON storage layout
         run: python3 -m unittest discover -s tests
         env:
-          BILLDABLE_STORAGE: json
+          DURACASH_STORAGE: json

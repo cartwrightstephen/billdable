@@ -99,7 +99,7 @@ def render(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], 
             + f'<p><a class="btn secondary" href="{_e(base)}/pdf">Open the pay app PDF</a></p>'
             + f'<h2>Lines</h2><div class="card">{lines or "<p>No lines.</p>"}</div>'
             + (f'<h2>Packet</h2><div class="card">{"".join(packet)}</div>' if packet else "")
-            + f'<p class="foot">This page is for the people {_e(company)} sent this pay app to. Prepared with Billdable. '
+            + f'<p class="foot">This page is for the people {_e(company)} sent this pay app to. Prepared with Duracash. '
             + "Questions about the amounts go to the contractor; reply to their email.</p></main></body></html>")
 
 
@@ -142,7 +142,7 @@ def render_co(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], ba
     if sig:
         return (head + summary + f'<div class="card received"><strong>Signed</strong> by {_e(sig["name"])} on {_e(_date(sig["at"]))}. '
                 f"A copy of what was signed is kept with {_e(company)}'s records.</div>"
-                + '<p class="foot">Prepared with Billdable.</p></main></body></html>')
+                + '<p class="foot">Prepared with Duracash.</p></main></body></html>')
     if co.get("status") != "pending":
         return head + summary + f"<p>This change order is {_e(co.get('status'))} and can no longer be signed here.</p></main></body></html>"
     return (head + summary

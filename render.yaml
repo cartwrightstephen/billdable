@@ -1,6 +1,7 @@
 services:
   # Production: deploys main.
   - type: web
+    # The services and disk keep their Billdable-era names: renaming them makes Render create new ones.
     name: billdable
     # Docker, so the image has the age program that encrypts off-site backups (offsite.py).
     runtime: docker
@@ -14,18 +15,18 @@ services:
       mountPath: /var/data
       sizeGB: 1
     envVars:
-      - key: BILLDABLE_DATA_DIR
+      - key: DURACASH_DATA_DIR
         value: /var/data
       # Production refuses to start without the settings below and turns the demo account off.
-      - key: BILLDABLE_ENV
+      - key: DURACASH_ENV
         value: production
       - key: COOKIE_SECURE
         value: "1"
       # The site's https:// address; set it in the Render dashboard.
-      - key: BILLDABLE_URL
+      - key: DURACASH_URL
         sync: false
       # Set to 1 only after a deploy has been seen to keep accounts and data.
-      - key: BILLDABLE_DATA_PERSISTENT
+      - key: DURACASH_DATA_PERSISTENT
         sync: false
 
   # Staging (P1-13): deploys dev, so a change is tried on a real server before main.

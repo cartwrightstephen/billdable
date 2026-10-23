@@ -2,8 +2,8 @@
 
 - Subscribe: a Stripe Checkout page for the one plan (STRIPE_PRICE_ID). While the free trial
   runs (trial.py), the subscription starts with Stripe's trial ending on the trial's last day.
-- The business plan ends the trial when the first pay app sent through Billdable is paid, which
-  is an event, not a date: when that happens, Billdable moves Stripe's trial end to the next
+- The business plan ends the trial when the first pay app sent through Duracash is paid, which
+  is an event, not a date: when that happens, Duracash moves Stripe's trial end to the next
   billing day.
 - Charges land on BILLING_DAY (the 5th by default), after the contractor's own 1st-of-the-month
   pay app is out, not on the signup date: a trial ends on a billing day, and a subscription
@@ -11,7 +11,7 @@
 - Design partners (up to 3, the business plan's $99 a month) pay STRIPE_PARTNER_PRICE_ID; a
   founder marks a company with "admin.py partner COMPANY_ID on".
 - Manage billing: Stripe's Customer Portal (card, invoices, cancel).
-- Stripe tells Billdable what happened through a signed webhook (STRIPE_WEBHOOK_SECRET); the
+- Stripe tells Duracash what happened through a signed webhook (STRIPE_WEBHOOK_SECRET); the
   subscription's status is kept on the company.
 - Enforcement is read-only, never deletion, and only with BILLING_ENFORCE=1: an unpaid or
   cancelled subscription, or a trial over BILLING_GRACE_DAYS (14) past its end with no

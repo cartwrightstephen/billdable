@@ -15,11 +15,11 @@ bucket, an alert channel, a lawyer, and the buyer interviews.
 | P0-1 | Persistent disk on Render | Built: `render.yaml` (Docker, starter plan, 1 GB disk at /var/data) | Stephen: attach the disk or switch the service to the blueprint; deploy twice and check `/healthz`. Unchecked from here: the live site didn't answer within 60 s today |
 | P0-2 | Off-site encrypted backup | Built: `offsite.py` (age, then S3 API to B2) | A B2 bucket with Object Lock, a write-only key, an age key pair |
 | P0-3 | CI on every push | Built and running: unit tests on SQLite and JSON, 13-step browser test | Stephen: protect `main`, require `unittest` and `smoke` |
-| P0-4 | Production flags | Built (`BILLDABLE_ENV=production`) | Set on Render with `BILLDABLE_URL` |
+| P0-4 | Production flags | Built (`DURACASH_ENV=production`) | Set on Render with `DURACASH_URL` |
 | P0-5 | Error alerts and uptime | Built: `alerts.py` (crash and backup alerts to a webhook), `/healthz` | A webhook (Slack or Better Stack) and an uptime monitor |
 | P0-6 | "Not legal deadlines" label | Built | — |
 | P0-7 | Session tokens hashed at rest | Built | — |
-| P0-8 | "Data may be erased" notice | Built | Set `BILLDABLE_DATA_PERSISTENT=1` once the disk is checked |
+| P0-8 | "Data may be erased" notice | Built | Set `DURACASH_DATA_PERSISTENT=1` once the disk is checked |
 
 ## P1: the pilot runs without a founder in the loop
 
@@ -40,7 +40,7 @@ checked against the chosen provider.
 | P2-2 | Stripe billing, portal, webhooks, read-only when past due | Built: `billing.py` (Checkout, Customer Portal, signed webhook, trial carried over, read-only never deletion with `BILLING_ENFORCE=1`) | Stripe account (after the entity); the first test-mode checkout checks Stripe's field names |
 | P2-3 | Change-order signature | Built (signing link, or a signed copy on the record) | Counsel to check the consent wording (`domain.CO_CONSENT`) |
 | P2-4 | Payer-facing page | Built | — |
-| P2-5 | SQLite storage | Built (`store.py`; JSON import on first start; `BILLDABLE_STORAGE=json` keeps files) | Back up before the first start of this code |
+| P2-5 | SQLite storage | Built (`store.py`; JSON import on first start; `DURACASH_STORAGE=json` keeps files) | Back up before the first start of this code |
 | P2-6 | Per-view endpoints | Built | — |
 | P2-7 | Route table | Built | — |
 | P2-8 | ES modules, no inline onclick, strict CSP | Built | — |
@@ -70,7 +70,7 @@ checked against the chosen provider.
 | 6 | Approval and send | Built (needs a mail provider to send for real) |
 | 7 | Status that names the blocker | Built |
 | 8 | Payment match from QuickBooks; partial stays partial | Built: by hand, CSV, or the QuickBooks connection (needs the Intuit keys) |
-| 9 | Waiver guard after payment | Built, with waiver types; Billdable never writes the waiver form |
+| 9 | Waiver guard after payment | Built, with waiver types; Duracash never writes the waiver form |
 | 10 | Follow-up by the payer's window | Built, and on Today in one tap |
 | 11 | Change order to billable; signature | Built: signing link or signed copy |
 | 12 | Payer playbook read by packet and follow-up | Built, and it learns |
@@ -103,7 +103,7 @@ the free period, competitor sizes.
 
 - TE-2 "no restore drill": `python3 backup.py drill`, monthly in runbook 2.
 - TE-5 "demo tenant in production": the demo is off in production, or read-only with
-  `BILLDABLE_DEMO=readonly`.
+  `DURACASH_DEMO=readonly`.
 - TE-6 tamper-evident audit, TE-7 idempotent matching, TE-10 CI, LC-2 calendar label, LC-4 send
   confirmation, LC-5 CO signature: built (see above).
 - No pen-test checklist yet; the security work so far is the review findings fixed with tests.

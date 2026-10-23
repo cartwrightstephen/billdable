@@ -2,10 +2,10 @@
 
 server.load_company() and save_company() go through here. Two layouts:
 
-- sqlite (the default): one database file, companies/billdable.db, in WAL mode. A company is
+- sqlite (the default): one database file, companies/duracash.db, in WAL mode. A company is
   a head row plus one row per job, audit row, email, inbox item, daily record and file, so a
   save writes only the rows that changed, and readers never wait for a writer.
-- json (BILLDABLE_STORAGE=json): the original one file per company, rewritten on every save.
+- json (DURACASH_STORAGE=json): the original one file per company, rewritten on every save.
 
 On its first start the SQLite store imports any company JSON files it finds and moves them to
 companies/imported-json-<time>/ (never deletes them). Export stays JSON (/api/export).
@@ -25,7 +25,8 @@ from typing import Any
 
 import storage
 
-DB_NAME = "billdable.db"
+DB_NAME = "duracash.db"
+OLD_DB_NAME = "billdable.db"  # its name before the product was renamed Duracash
 # Lists that grow with use; each entry is its own row. Everything else is in the head row.
 ROW_KINDS = ("jobs", "audit", "email_log", "inbox", "daily_records", "files")
 
@@ -50,7 +51,7 @@ MIGRATIONS = [
 
 
 def backend() -> str:
-    return "json" if (os.environ.get("BILLDABLE_STORAGE") or "").strip().lower() == "json" else "sqlite"
+    return "json" if (os.environ.get("DURACASH_STORAGE") or "").strip().lower() == "json" else "sqlite"
 
 
 def _dump(doc: Any) -> str:
@@ -101,6 +102,12 @@ class JsonStore:
         return []  # the company files are picked up with the rest of companies/
 
 
+def db_file(folder: Path) -> Path:
+    """The database in folder: duracash.db, or billdable.db when only that one exists (made before the rename)."""
+    new, old = Path(folder) / DB_NAME, Path(folder) / OLD_DB_NAME
+    return old if old.exists() and not new.exists() else new
+
+
 class SqliteStore:
     """Companies in one SQLite database; see the module docstring."""
 
@@ -108,7 +115,7 @@ class SqliteStore:
 
     def __init__(self, folder: Path) -> None:
         self.folder = Path(folder)
-        self.db_path = self.folder / DB_NAME
+        self.db_path = db_file(self.folder)
         self._local = threading.local()
         # company id -> (version, head digest, {kind: [row digests]}) as last read or written here
         self._seen: dict[str, tuple] = {}
@@ -280,14 +287,14 @@ class SqliteStore:
         if not self.db_path.exists():
             return []
         with tempfile.TemporaryDirectory() as tmp:
-            copy = Path(tmp) / DB_NAME
+            copy = Path(tmp) / self.db_path.name
             source, dest = sqlite3.connect(self.db_path, timeout=10), sqlite3.connect(copy)
             try:
                 source.backup(dest)
             finally:
                 source.close()
                 dest.close()
-            return [(f"{self.folder.name}/{DB_NAME}", copy.read_bytes())]
+            return [(f"{self.folder.name}/{self.db_path.name}", copy.read_bytes())]
 
 
 def _row_id(doc: str) -> str:

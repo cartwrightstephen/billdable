@@ -90,7 +90,7 @@ class UploadTests(unittest.TestCase):
         storage.write_json(root / "data" / "auth.json", {"users": [], "sessions": {}})
         self.env = {
             "BACKUP_S3_ENDPOINT": f"http://127.0.0.1:{self.s3.server_address[1]}",
-            "BACKUP_S3_BUCKET": "billdable-backups",
+            "BACKUP_S3_BUCKET": "duracash-backups",
             "BACKUP_S3_REGION": "us-west-004",
             "BACKUP_S3_KEY_ID": "KEYID",
             "BACKUP_S3_SECRET": "SECRET",
@@ -102,11 +102,11 @@ class UploadTests(unittest.TestCase):
         with mock.patch.dict(os.environ, self.env):
             made = backup.make_backup()
             key = offsite.upload(made)
-            self.assertEqual(key, f"billdable/{made.name}.age")
+            self.assertEqual(key, f"duracash/{made.name}.age")
             self.assertEqual(len(FakeS3.received), 1)
             path, body, ok = FakeS3.received[0]
             self.assertTrue(ok, "signature and payload hash check out")
-            self.assertEqual(path, f"/billdable-backups/{key}")
+            self.assertEqual(path, f"/duracash-backups/{key}")
             self.assertTrue(body.startswith(b"FAKE-AGE age1testrecipient\n"), "the uploaded bytes went through age")
             self.assertEqual(body.split(b"\n", 1)[1], made.read_bytes())
             self.assertFalse(made.with_name(made.name + ".age").exists(), "the encrypted copy is cleaned up")

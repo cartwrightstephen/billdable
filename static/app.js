@@ -1,4 +1,4 @@
-// Billdable's browser app, loaded as an ES module (no bundler). Shared helpers live in
+// Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
 import { RECORD_KINDS, SOURCE_LABELS, isBlocked, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm } from "./js/jobs.js";
@@ -36,7 +36,7 @@ let aiOpen = false;
 let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth();
 let calSelectedDay = null;
-let helpDismissed = localStorage.getItem("billdable-help-dismissed") === "1";
+let helpDismissed = localStorage.getItem("duracash-help-dismissed") === "1";
 let dashFilter = "all";
 let dashSort = "name";
 let dashSortDir = 1;
@@ -146,10 +146,10 @@ function tabLabel(view) {
   return "";
 }
 function pageTitle() {
-  if (!state) return "Billdable";
+  if (!state) return "Duracash";
   const j = currentJobId && state.jobs.find(x => x.id === currentJobId);
   const name = currentView === "job" && j ? unesc(j.name) : DETAIL_PARENT[currentView] && j ? `${tabLabel(DETAIL_PARENT[currentView])}: ${unesc(j.name)}` : (tabLabel(currentView) || sectionOf(currentView).label);
-  return `${name} · Billdable`;
+  return `${name} · Duracash`;
 }
 // Called once signed in: open the page in the address bar (or the one asked for while signed out).
 function applyLocation() {
@@ -281,7 +281,7 @@ function setAiVisible(on) {
 }
 
 function renderLanding() {
-  document.title = "Billdable";
+  document.title = "Duracash";
   if (!authError) authErrorField = "";
   setAiVisible(false);
   const app = document.getElementById("app");
@@ -290,7 +290,7 @@ function renderLanding() {
     <div class="landing">
       ${dataNotice ? `<p class="notice land-notice" role="status">Demo: data may be erased. Don't enter real job or customer data yet.</p>` : ""}
       <header class="land-bar">
-        <div class="brand">Billdable</div>
+        <div class="brand">Duracash</div>
         <div class="land-bar-actions">
           <button class="btn secondary small" id="bar-signin">Sign in</button>
           <button class="btn small" id="bar-start">Create account</button>
@@ -299,7 +299,7 @@ function renderLanding() {
       <section class="land-hero">
         <div class="land-copy">
           <p class="eyebrow">For small GCs and remodelers</p>
-          <h1>You finish the work.<br>Billdable gets it billed and collected.</h1>
+          <h1>You finish the work.<br>Duracash gets it billed and collected.</h1>
           <p class="lede">Works beside QuickBooks. Catches the missing packet, the unsigned change order, and the retainage nobody chased. You approve every send.</p>
           <div class="land-points">
             <div><strong>Same-week invoice</strong><span>From “job’s done” to a draft you can send.</span></div>
@@ -341,7 +341,7 @@ function renderLanding() {
         <h2>How it works</h2>
         <div class="land-steps">
           <div class="card"><span class="step">1</span><h3>Mark the job done</h3><p>Notes and evidence land in the binder. The money file already knows the contract.</p></div>
-          <div class="card"><span class="step">2</span><h3>Clear the packet</h3><p>Billdable names the blocker — missing waiver, unsigned CO, thin photos — before anything is sent.</p></div>
+          <div class="card"><span class="step">2</span><h3>Clear the packet</h3><p>Duracash names the blocker — missing waiver, unsigned CO, thin photos — before anything is sent.</p></div>
           <div class="card"><span class="step">3</span><h3>Approve and collect</h3><p>You approve the send. Payments match. Retainage and closeout stay on the calendar.</p></div>
         </div>
       </section>
@@ -353,7 +353,7 @@ function renderLanding() {
           <button class="btn" id="price-start">Create your company</button>
         </div>
       </section>
-      <footer class="land-foot">Billdable works beside QuickBooks and never changes your books: it reads payments from a QuickBooks export today, and a direct QuickBooks connection is coming. It does not replace your books or your field app.
+      <footer class="land-foot">Duracash works beside QuickBooks and never changes your books: it reads payments from a QuickBooks export today, and a direct QuickBooks connection is coming. It does not replace your books or your field app.
         <div class="land-legal"><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a></div></footer>
     </div>
   `;
@@ -467,7 +467,7 @@ async function post(path, body = {}) {
     });
   } catch (_) {
     setNetBanner(true);
-    toast("Not saved: can't reach Billdable.");
+    toast("Not saved: can't reach Duracash.");
     return;
   }
   setNetBanner(false);
@@ -652,7 +652,7 @@ function jobActions(j) {
   const all = [];
   const add = (key, label, attrs, why) => all.push({ key, label, attrs, why });
   if (blocked) add("clear", `Clear ${j.blockers.length} blocker${j.blockers.length === 1 ? "" : "s"}`, `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "Open the packet and attach what is missing.");
-  if (draft) add("send", "Approve & send", `data-action="send" data-id="${j.id}" ${blocked ? "disabled" : ""}`, blocked ? "Unlocks when the blockers are cleared." : "You approve; Billdable emails the pay app, its PDF and the packet.");
+  if (draft) add("send", "Approve & send", `data-action="send" data-id="${j.id}" ${blocked ? "disabled" : ""}`, blocked ? "Unlocks when the blockers are cleared." : "You approve; Duracash emails the pay app, its PDF and the packet.");
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Send waiver", `data-action="waiver" data-id="${j.id}"`, "Emails the payer the newest lien waiver on the job record. Drop your signed waiver there first.");
   if (waitingPay) add("match", "Match payment", `data-action="toggle-form" data-form="match"`, "Record money received. Paid in full opens the waiver step.");
   if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the unbilled completed work.");
@@ -690,11 +690,11 @@ function render() {
     <div class="shell ${drawerOpen ? "drawer-open" : ""}">
       <header class="topbar">
         <button class="menu-btn" id="menu-btn" aria-label="Menu" aria-controls="rail" aria-expanded="${drawerOpen}">☰</button>
-        <div class="brand">Billdable</div>
+        <div class="brand">Duracash</div>
         <span class="topbar-section">${section.label}</span>
       </header>
       <aside class="rail" id="rail">
-        <div class="brand">Billdable</div>
+        <div class="brand">Duracash</div>
         <div class="company"><strong>${company.name}</strong>${companyLine(company) ? `<br>${companyLine(company)}` : ""}</div>
         <nav class="nav" aria-label="Main">
           ${SECTIONS.map(s => `<button class="${s.key === section.key ? "active" : ""}" data-section="${s.key}" ${s.key === section.key ? 'aria-current="page"' : ""}>${s.label}${s.key === "inbox" && inboxCount ? ` <span class="count" aria-label="${inboxCount} new">${inboxCount}</span>` : ""}</button>`).join("")}
@@ -1124,7 +1124,7 @@ function bindActions() {
           });
         } catch (_) {
           setNetBanner(true);
-          toast("Not saved: can't reach Billdable.");
+          toast("Not saved: can't reach Duracash.");
           return;
         }
         const data = await readJson(res);
@@ -1165,7 +1165,7 @@ function bindActions() {
         if (r && r.ok) nav("jobs");
       }
       else if (a === "toggle-form") toggleForm(el.dataset.form);
-      else if (a === "dismiss-help") { helpDismissed = true; localStorage.setItem("billdable-help-dismissed", "1"); render(); }
+      else if (a === "dismiss-help") { helpDismissed = true; localStorage.setItem("duracash-help-dismissed", "1"); render(); }
       else if (a === "filter") { dashFilter = el.dataset.filter; render(); }
       else if (a === "sort") {
         if (dashSort === el.dataset.sort) dashSortDir *= -1;
@@ -1222,7 +1222,7 @@ async function uploadFiles(fileList, jobId = "", fileNow = false) {
       else failed.push(data.error || `${name}: upload failed`);
     } catch (_) {
       setNetBanner(true);
-      failed.push(`${name}: can't reach Billdable`);
+      failed.push(`${name}: can't reach Duracash`);
     }
   }
   const where = fileNow ? "added to the job record" : "in the Inbox";
@@ -1234,7 +1234,7 @@ async function postImport(path, body) {
   let res;
   try {
     res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  } catch (_) { setNetBanner(true); toast("Not saved: can't reach Billdable."); return false; }
+  } catch (_) { setNetBanner(true); toast("Not saved: can't reach Duracash."); return false; }
   const data = await readJson(res);
   if (!res.ok) { toast(data.error || "Import failed."); return false; }
   setState(data);
@@ -1280,7 +1280,7 @@ function fillImportSettings() {
     ? "This is the demo account: nothing is emailed from it."
     : s.mail_configured
       ? `Approved emails are sent from <strong>${s.mail_from}</strong> with your company name, and replies go to the person who approved them. Up to ${s.mail_daily_limit} a day.`
-      : "Email delivery is not set up on this server yet, so nothing here has left Billdable. Once it is, use Send again on any row.");
+      : "Email delivery is not set up on this server yet, so nothing here has left Duracash. Once it is, use Send again on any row.");
   set("email-webhook", s.email_webhook);
   set("sms-webhook", s.sms_webhook);
   set("cal-url", s.calendar_url);
@@ -1433,7 +1433,7 @@ async function sovReadPaste() {
   let res;
   try {
     res = await fetch("/api/sov/parse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
-  } catch (_) { setNetBanner(true); toast("Can't reach Billdable."); return; }
+  } catch (_) { setNetBanner(true); toast("Can't reach Duracash."); return; }
   const data = await readJson(res);
   if (!res.ok) { toast(data.error || "Couldn't read the rows."); return; }
   const kept = sovFilledLines();
@@ -1540,7 +1540,7 @@ function renderTokenScreen() {
         ${s.error ? `<div class="auth-error">${esc(s.error)}</div>` : ""}
       </form>`;
   }
-  app.innerHTML = `<div class="landing"><header class="land-bar"><div class="brand">Billdable</div></header>
+  app.innerHTML = `<div class="landing"><header class="land-bar"><div class="brand">Duracash</div></header>
     <section class="land-hero"><div class="auth-card land-form" id="token-card">${inner}</div></section></div>`;
   document.getElementById("token-done")?.addEventListener("click", () => { tokenScreen = null; authMode = "login"; renderLanding(); });
   document.getElementById("token-form")?.addEventListener("submit", async (e) => {
@@ -1600,7 +1600,7 @@ function verifyBannerHtml() {
   if (readOnly) return `<div class="verify-banner read-only-banner" role="status">${readOnly}</div>`;
   if (billingInfo && billingInfo.warning) return `<div class="verify-banner" role="status">${billingInfo.warning}${me && me.role === "owner" ? ` <button class="linkish" data-action="nav" data-view="account">Billing</button>` : ""}</div>`;
   if (!mailReady || !me || me.email_verified || me.company_id === DEMO_COMPANY_ID) return "";
-  return `<div class="verify-banner">Confirm your email (${me.email}) so Billdable can send pay apps for you; replies come back to it.
+  return `<div class="verify-banner">Confirm your email (${me.email}) so Duracash can send pay apps for you; replies come back to it.
     <button class="linkish" data-action="resend-verify">Send the link again</button></div>`;
 }
 
@@ -1637,7 +1637,7 @@ function accountView() {
         <div><label for="co-style">How you bill</label><select id="co-style"${owner ? "" : " disabled"}>
           <option value="pay_apps"${state.company.billing_style === "draws" ? "" : " selected"}>Pay apps to GCs or owners</option>
           <option value="draws"${state.company.billing_style === "draws" ? " selected" : ""}>Draws from homeowners</option></select>
-          <span class="sub">Sets the free trial: 90 days, or 45 for draws. Either ends when the first one sent through Billdable is paid.</span></div>
+          <span class="sub">Sets the free trial: 90 days, or 45 for draws. Either ends when the first one sent through Duracash is paid.</span></div>
       </div>
       ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
@@ -1671,7 +1671,7 @@ function accountView() {
       <div class="form-inline">${billingInfo.has_customer && billingInfo.status && !["canceled", "incomplete_expired"].includes(billingInfo.status)
         ? `<button class="btn" data-action="billing-portal">Manage billing</button>` : `<button class="btn" data-action="billing-checkout">Subscribe</button>`}</div>
       ${billingInfo.partner ? `<p class="sub"><span class="pill copper">Design partner</span> The design-partner price applies.</p>` : ""}
-      <p class="sub">Charged on the ${ordinal(Number(billingInfo.billing_day) || 5)} of each month, after your own pay apps are out. Payment by card through Stripe. Billdable never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
+      <p class="sub">Charged on the ${ordinal(Number(billingInfo.billing_day) || 5)} of each month, after your own pay apps are out. Payment by card through Stripe. Duracash never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
     </div>` : ""}
     ${isDemo ? "" : `<div class="card" id="two-step">
       <h2>Two-step sign-in</h2>
@@ -1721,7 +1721,7 @@ function trialBannerHtml() {
   const day = (iso) => new Date(unesc(iso)).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   const live = !!(billingInfo && billingInfo.configured);
   if (t.state === "active") {
-    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Billdable is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.${live ? "" : " Billing isn't live yet."}</div>`;
+    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Duracash is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.${live ? "" : " Billing isn't live yet."}</div>`;
   }
   return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : " Subscribe in Settings, Team &amp; account, Billing.") : " Billing isn't live yet, so nothing changes for now."}</div>`;
 }
@@ -1734,7 +1734,7 @@ function onboardingHtml() {
     ["Create your first job: contract amount, payer, approver, AP email, retainage.", jobs.length > 0, "onb-newjob", "New job"],
     ["Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", jobs.some(j => (j.records || []).length), "onb-job", "Open the job"],
     ["Optional: set up a schedule of values to bill line by line (paste it from your estimate).", jobs.some(j => j.sov_view && j.sov_view.present), "onb-job", "Open the job"],
-    ["Record progress, or mark the job done. Billdable drafts the pay app and lists the packet the payer requires.", invoices.length > 0, "onb-job", "Open the job"],
+    ["Record progress, or mark the job done. Duracash drafts the pay app and lists the packet the payer requires.", invoices.length > 0, "onb-job", "Open the job"],
     ["Clear the packet, then Approve & send.", invoices.some(i => i.sent_at), "onb-job", "Open the job"],
   ];
   if (steps[4][1]) return "";
@@ -1968,7 +1968,7 @@ const views = {
     const jobName = (id) => (state.jobs.find(j => j.id === id) || {}).name || "a job";
     return `
       <h1>Inbox</h1>
-      <p class="sub">Bring in photos, PDFs, saved emails, text threads and notes. Billdable suggests the job from the job code, address, name or sender; you file it with one click. Nothing is filed without you.</p>
+      <p class="sub">Bring in photos, PDFs, saved emails, text threads and notes. Duracash suggests the job from the job code, address, name or sender; you file it with one click. Nothing is filed without you.</p>
       <div class="dropzone" tabindex="0">
         <strong>Drop files anywhere on this page</strong>
         <span class="sub">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to ${MAX_UPLOAD_MB} MB each. Or <button class="linkish" data-action="pick-files">choose files</button>, or press Ctrl+V / ⌘V to paste a screenshot. On a phone, choose files opens the camera too.</span>
@@ -2002,7 +2002,7 @@ const views = {
         <div class="copy-row"><code id="email-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="email-webhook">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="email">Make a new address</button></div>
         <h3>Text messages</h3>
         <p id="sms-number" class="sub">Loading…</p>
-        <p class="sub">Steps: in Twilio, buy a number and set its incoming-message webhook to this private web address. Set TWILIO_AUTH_TOKEN on the server so Billdable checks each message really came from Twilio. Photos sent by text show as links for now; they are not downloaded.</p>
+        <p class="sub">Steps: in Twilio, buy a number and set its incoming-message webhook to this private web address. Set TWILIO_AUTH_TOKEN on the server so Duracash checks each message really came from Twilio. Photos sent by text show as links for now; they are not downloaded.</p>
         <div class="copy-row"><code id="sms-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="sms-webhook">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="sms">Make a new address</button></div>
         <p class="sub">Anyone who knows these addresses can drop items in your Inbox. They are reviewed before filing. Make a new address if one leaks.</p>
       </details>
@@ -2030,7 +2030,7 @@ const views = {
         <ol class="steps">
           <li>Jobs → New job: contract amount, payer, approver, AP email, retainage percent.</li>
           <li>Drop the contract, photos and tickets on the job record, or bring emails and texts in through the Inbox.</li>
-          <li>Progress pay app: enter completed-to-date. Billdable drafts the pay app, withholds retainage and lists the packet.</li>
+          <li>Progress pay app: enter completed-to-date. Duracash drafts the pay app, withholds retainage and lists the packet.</li>
           <li>Optional: send a pencil copy so the payer agrees the numbers first.</li>
           <li>Attach records to each packet item. Approve and send unlocks when the packet is complete.</li>
           <li>Match the payment when it arrives, then send the waiver for that pay app.</li>
@@ -2040,7 +2040,7 @@ const views = {
       <div class="card"><h2>Words you will see</h2>
         <dl class="glossary">${glossary.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join("")}</dl>
       </div>
-      <p class="sub">Your account id: <code>${me ? me.id : ""}</code> (the Billdable team uses it to set up access).</p>
+      <p class="sub">Your account id: <code>${me ? me.id : ""}</code> (the Duracash team uses it to set up access).</p>
     `;
   },
   dashboard() {
@@ -2294,7 +2294,7 @@ const views = {
   results() {
     const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
     const head = `<h1>Results</h1>
-      <p class="sub">What Billdable recorded for your company, counted from your own pay apps and payments. Nothing here is estimated.</p>
+      <p class="sub">What Duracash recorded for your company, counted from your own pay apps and payments. Nothing here is estimated.</p>
       <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}
         <button class="btn small secondary" data-action="metrics-email">Email me last month's summary</button></div>`;
     if (!metricsData || metricsData.period !== metricsPeriod) return head + `<p class="sub">Loading…</p>`;
@@ -2465,7 +2465,7 @@ const views = {
     return `
       ${backButton("waivers", "Waivers")}
       <h1>Waivers: ${j.name}</h1>
-      <p class="sub">Billdable never writes a waiver: state law sets the forms. Drop your signed waiver on the job record; sending attaches the newest one.</p>
+      <p class="sub">Duracash never writes a waiver: state law sets the forms. Drop your signed waiver on the job record; sending attaches the newest one.</p>
       <div class="card">
         <h2>Payer's requirement</h2>
         <p>${j.waiver_standard || j.payer.packet || "See the payer playbook."}</p>
@@ -2727,7 +2727,7 @@ const views = {
     state.jobs.forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     const imp = paymentImport;
     const importCard = `<details class="card"${imp ? " open" : ""}><summary><strong>Import payments from QuickBooks (CSV)</strong></summary>
-      <p class="sub">In QuickBooks, run a report of payments received (for example Transaction List by Date, filtered to payments) and export it to CSV. Paste it here. Billdable proposes a pay app for each payment; nothing is recorded until you tick and apply. A check number already in Billdable is skipped, so importing the same file twice is safe.</p>
+      <p class="sub">In QuickBooks, run a report of payments received (for example Transaction List by Date, filtered to payments) and export it to CSV. Paste it here. Duracash proposes a pay app for each payment; nothing is recorded until you tick and apply. A check number already in Duracash is skipped, so importing the same file twice is safe.</p>
       ${imp ? `${imp.warnings.length ? `<div class="sov-warn">${imp.warnings.map(w => `<div>${w}</div>`).join("")}</div>` : ""}
         <div class="table-wrap"><table>
           <tr><th>Record</th><th>Date</th><th>Customer</th><th>Number</th><th>Amount</th><th>Pay app</th><th>Why</th></tr>
@@ -2742,15 +2742,15 @@ const views = {
     const q = qboStatus;
     const owner = me && me.role === "owner";
     const qboCard = !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
-      !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Billdable's Intuit app. Until then, use the CSV import below.</p>`
+      !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Duracash's Intuit app. Until then, use the CSV import below.</p>`
       : !q.connected ? (owner
-        ? `<p class="sub">Read-only: Billdable reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
+        ? `<p class="sub">Read-only: Duracash reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
         : `<p class="sub">An owner of this company can connect QuickBooks here.</p>`)
       : `<p class="sub"><span class="pill green">Connected</span> ${q.environment === "sandbox" ? "Sandbox company. " : ""}Since ${fmtDate(q.connected_at)}${q.connected_by ? ", by " + q.connected_by : ""}. Read-only.</p>
         <div class="form-inline"><button class="btn" data-action="qbo-sync">Read payments from QuickBooks</button><button class="btn secondary" data-action="qbo-reconcile">Check against QuickBooks</button>${owner ? `<button class="btn secondary" data-action="qbo-disconnect">Disconnect</button>` : ""}</div>
         ${qboReconcile ? (qboReconcile.rows.length
-          ? `<h3>Where Billdable and QuickBooks differ</h3>${qboReconcile.rows.map(r => `<div class="list-item"><span class="pill">${RECON_WORDS[r.kind] || words(r.kind)}</span> <a href="${pathFor("job", r.job_id)}" data-action="open-job" data-id="${r.job_id}">${r.job}</a>: ${r.detail}</div>`).join("")}`
-          : `<p class="sub">Billdable and QuickBooks agree on every sent pay app (${qboReconcile.invoices} QuickBooks invoices checked).</p>`) : ""}`}</div>`;
+          ? `<h3>Where Duracash and QuickBooks differ</h3>${qboReconcile.rows.map(r => `<div class="list-item"><span class="pill">${RECON_WORDS[r.kind] || words(r.kind)}</span> <a href="${pathFor("job", r.job_id)}" data-action="open-job" data-id="${r.job_id}">${r.job}</a>: ${r.detail}</div>`).join("")}`
+          : `<p class="sub">Duracash and QuickBooks agree on every sent pay app (${qboReconcile.invoices} QuickBooks invoices checked).</p>`) : ""}`}</div>`;
     return `
       <h1>Payments</h1>
       ${qboCard}
@@ -2779,7 +2779,7 @@ const views = {
     const rows = due.concat(sent);
     return `
       <h1>Waivers</h1>
-      <p class="sub">One lien waiver per paid pay app. Billdable never writes the waiver; it sends the signed one on the job record.</p>
+      <p class="sub">One lien waiver per paid pay app. Duracash never writes the waiver; it sends the signed one on the job record.</p>
       ${rows.length ? `<div class="table-wrap">
         <table>
           <tr><th>Job</th><th>Type</th><th>Amount</th><th>Status</th><th>Action</th></tr>
@@ -2913,7 +2913,7 @@ function updateAiContext() {
 function helperStarters() {
   const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId);
   if (job) { const n = unesc(job.name); return [`What's blocking ${n}?`, `Draft a follow-up for ${n}`, `Status of ${n}`]; }
-  if (currentView === "inbox") return ["How does it know which job?", "How do I import 30 days of notes?", "How do I forward emails to Billdable?"];
+  if (currentView === "inbox") return ["How does it know which job?", "How do I import 30 days of notes?", "How do I forward emails to Duracash?"];
   if (currentView === "retainage") return ["How do I get retainage released?", "Which jobs are holding my retainage?"];
   return ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"];
 }
@@ -2922,7 +2922,7 @@ function renderHelper() {
   const box = document.getElementById("ai-replies");
   const chips = document.getElementById("ai-chips");
   if (!box || !chips) return;
-  const greeting = `<div class="msg helper"><p>Hi${me && me.name ? " " + me.name.split(" ")[0] : ""}. Ask me how to do something in Billdable, or about your own jobs: what to do today, who owes you, what's blocking a job.</p></div>`;
+  const greeting = `<div class="msg helper"><p>Hi${me && me.name ? " " + me.name.split(" ")[0] : ""}. Ask me how to do something in Duracash, or about your own jobs: what to do today, who owes you, what's blocking a job.</p></div>`;
   {
     box.innerHTML = greeting + helperLog.map((m, idx) => m.who === "you"
       ? `<div class="msg you">${esc(m.text)}</div>`
@@ -2955,7 +2955,7 @@ async function helperAsk(q) {
     if (res.status === 401) { helperBusy = false; me = null; state = null; renderLanding(); return; }
     if (!res.ok) reply = { text: reply.error || "Something went wrong. Try again." };
   } catch (_) {
-    reply = { text: "I can't reach Billdable right now. Check your connection and try again." };
+    reply = { text: "I can't reach Duracash right now. Check your connection and try again." };
   }
   helperBusy = false;
   helperLog.push({ who: "helper", text: reply.text, actions: reply.actions || [], suggestions: reply.suggestions || [], logId: reply.log_id });
@@ -3117,7 +3117,7 @@ document.getElementById("file-input").addEventListener("change", (e) => {
   uploadFiles(files, jobId, !!jobId);
 });
 
-// A reset, verify or invite link opened in a tab that already has Billdable loaded only changes
+// A reset, verify or invite link opened in a tab that already has Duracash loaded only changes
 // the part after "#", which doesn't reload the page; handle it here too.
 window.addEventListener("hashchange", async () => {
   const t = readTokenFromUrl();
@@ -3139,7 +3139,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 // Installable on a phone (manifest + a service worker that caches nothing), so photos and
-// PDFs can be shared straight to Billdable from the share menu.
+// PDFs can be shared straight to Duracash from the share menu.
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 window.nav = nav;

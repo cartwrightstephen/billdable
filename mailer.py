@@ -12,13 +12,13 @@ Settings (environment):
     SMTP_PASSWORD
     SMTP_SECURITY     starttls (default), ssl, or none (none is for local testing)
     MAIL_FROM         sender address on a domain the provider has verified,
-                      e.g. billing@billdable.com; required with SMTP_HOST
+                      e.g. billing@duracash.com; required with SMTP_HOST
     MAIL_DAILY_LIMIT  emails per company per 24 hours, default 50
 
-The From name is "<company> via Billdable" and Reply-To is the signed-in user,
+The From name is "<company> via Duracash" and Reply-To is the signed-in user,
 so the payer's answer goes to the contractor, not to us. When the company has an
 inbound address (INBOUND_EMAIL_ADDRESS_TEMPLATE), Reply-To lists it too, so the
-answer also lands in Billdable and is filed to the job it answers.
+answer also lands in Duracash and is filed to the job it answers.
 """
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ def build_message(
     if not EMAIL_RE.match(to):
         raise ValueError(f"the address {to!r} is not a valid email address")
     msg = EmailMessage()
-    sender_name = _clean_header(sender_name or f"{company_name or 'Billdable'} via Billdable", 120)
+    sender_name = _clean_header(sender_name or f"{company_name or 'Duracash'} via Duracash", 120)
     local, _, domain = cfg["from"].partition("@")
     msg["From"] = Address(display_name=sender_name, username=local, domain=domain)
     msg["To"] = to

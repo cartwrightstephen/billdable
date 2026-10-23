@@ -1,6 +1,6 @@
 """QuickBooks Online, read-only (P2-1, the API half; qbo_csv.py is the CSV fallback).
 
-An owner connects the company's QuickBooks once (OAuth 2). After that Billdable reads, and
+An owner connects the company's QuickBooks once (OAuth 2). After that Duracash reads, and
 never writes:
 
 - payments received, proposed against open pay apps with the same matcher as the CSV import;
@@ -10,7 +10,7 @@ never writes:
   and pay apps paid on one side but open on the other.
 
 Settings: QBO_CLIENT_ID and QBO_CLIENT_SECRET from the Intuit Developer app, QBO_ENV
-(sandbox, the default, or production) and BILLDABLE_URL, whose /api/qbo/callback must be
+(sandbox, the default, or production) and DURACASH_URL, whose /api/qbo/callback must be
 listed as a redirect URI in the Intuit app. QBO_TOKEN_URL, QBO_REVOKE_URL and QBO_API_BASE
 override Intuit's addresses (tests use a local stand-in).
 
@@ -119,7 +119,7 @@ def authorize_url(company_id: str, user_name: str, redirect_uri: str) -> str:
     if not configured():
         raise QboError("The QuickBooks connection isn't set up on this server (QBO_CLIENT_ID and QBO_CLIENT_SECRET).")
     if not redirect_uri.startswith(("https://", "http://localhost", "http://127.0.0.1")):
-        raise QboError("Set BILLDABLE_URL to the site's https address first; QuickBooks sends people back to it.")
+        raise QboError("Set DURACASH_URL to the site's https address first; QuickBooks sends people back to it.")
     state = secrets.token_urlsafe(24)
     now = time.time()
     with LOCK:
@@ -271,7 +271,7 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
     out = []
     for row, result in zip(rows, qbo_csv.propose(state, rows)):
         if row.get("qbo_id") and row["qbo_id"] in done:
-            result.update(status="already recorded", reason="This QuickBooks payment is already in Billdable.",
+            result.update(status="already recorded", reason="This QuickBooks payment is already in Duracash.",
                           job_id=None, invoice_id=None, number=None)
         out.append(result)
     return out
@@ -286,7 +286,7 @@ def read_payments(company_id: str, state: dict[str, Any], days: int = 90) -> dic
 
 
 def reconcile(state: dict[str, Any], invoices: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Where Billdable and QuickBooks disagree about sent pay apps. Changes nothing."""
+    """Where Duracash and QuickBooks disagree about sent pay apps. Changes nothing."""
     payers = {p["id"]: p for p in state.get("payers", [])}
     by_number = {str(inv.get("DocNumber") or ""): inv for inv in invoices if inv.get("DocNumber")}
     unused = list(invoices)

@@ -1,7 +1,7 @@
 {
   "v": 3,
   "createdOnFiles": {"v": 1, "at": "2026-10-13T04:40:00Z"},
-  "title": "Billdable wireframes",
+  "title": "Duracash wireframes",
   "launch": {"view": "canvas"},
   "pages": [],
   "boards": {
@@ -39,7 +39,7 @@
     "States.dc.html"
   ],
   "notes": {
-    "title": {"x": 0, "y": -320, "text": "Billdable 1.0 wireframes", "kind": "title1", "maxW": 2800},
+    "title": {"x": 0, "y": -320, "text": "Duracash 1.0 wireframes", "kind": "title1", "maxW": 2800},
     "row1": {"x": 0, "y": 1120, "text": "Desktop: the money path, one next step per screen", "kind": "title1", "maxW": 6720},
     "row2": {"x": 0, "y": 3690, "text": "Desktop: Money, Inbox, Calendar, Settings", "kind": "title1", "maxW": 5360},
     "row3": {"x": 0, "y": 5940, "text": "Phone, under 800 px", "kind": "title1", "maxW": 1800},

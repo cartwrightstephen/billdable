@@ -6,7 +6,7 @@ export function setNetBanner(on) {
     el = document.createElement("div");
     el.id = "net-banner";
     el.className = "net-banner";
-    el.textContent = "Can't reach Billdable. Your last change may not be saved. Check your connection and try again.";
+    el.textContent = "Can't reach Duracash. Your last change may not be saved. Check your connection and try again.";
     document.body.prepend(el);
   }
   if (el) el.style.display = on ? "block" : "none";
@@ -29,6 +29,6 @@ export async function postJson(path, body) {
     return { ok: res.ok, status: res.status, data: await readJson(res), res };
   } catch (_) {
     setNetBanner(true);
-    return { ok: false, status: 0, data: { error: "Can't reach Billdable." } };
+    return { ok: false, status: 0, data: { error: "Can't reach Duracash." } };
   }
 }

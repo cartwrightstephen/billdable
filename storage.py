@@ -1,6 +1,6 @@
-"""Where Billdable keeps its data, and how it writes it.
+"""Where Duracash keeps its data, and how it writes it.
 
-The data directory is set by BILLDABLE_DATA_DIR. It defaults to data/ beside
+The data directory is set by DURACASH_DATA_DIR. It defaults to data/ beside
 the app, which is outside static/ and never served. On Render, point it at a
 mounted disk; without a disk Render's filesystem does not survive a deploy.
 """
@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("BILLDABLE_DATA_DIR") or ROOT / "data").resolve()
+# The product was called Billdable: a server still set up with the old BILLDABLE_* names keeps working.
+for _name, _value in list(os.environ.items()):
+    if _name.startswith("BILLDABLE_"):
+        os.environ.setdefault("DURACASH_" + _name[len("BILLDABLE_"):], _value)
+
+DATA_DIR = Path(os.environ.get("DURACASH_DATA_DIR") or ROOT / "data").resolve()
 
 
 def write_json(path: Path, data: Any) -> None:

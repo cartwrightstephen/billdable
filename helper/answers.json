@@ -288,7 +288,7 @@
       "category": "Getting started",
       "questions": [
         "How do I get started?",
-        "How does Billdable work?",
+        "How does Duracash work?",
         "What does this tool do?",
         "I'm new, where do I begin?",
         "Walk me through it"
@@ -299,7 +299,7 @@
         "new",
         "how work"
       ],
-      "answer": "Billdable makes sure finished work gets billed with everything the payer needs, then follows the money until it's paid.\n- Create a job with the contract amount, payer, approver, AP email and retainage percent.\n- Put the paperwork on the job record: drop photos and PDFs, or bring in emails, texts and notes through the Inbox.\n- Record progress. Billdable drafts the pay app, withholds retainage and lists the packet the payer requires.\n- Attach records to the packet. Approve and send unlocks when nothing is missing.\n- Match the payment, send the waiver, finish the punch list, collect retainage, close the job.",
+      "answer": "Duracash makes sure finished work gets billed with everything the payer needs, then follows the money until it's paid.\n- Create a job with the contract amount, payer, approver, AP email and retainage percent.\n- Put the paperwork on the job record: drop photos and PDFs, or bring in emails, texts and notes through the Inbox.\n- Record progress. Duracash drafts the pay app, withholds retainage and lists the packet the payer requires.\n- Attach records to the packet. Approve and send unlocks when nothing is missing.\n- Match the payment, send the waiver, finish the punch list, collect retainage, close the job.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -408,7 +408,7 @@
         "mobile",
         "app"
       ],
-      "answer": "There's no separate app yet. Billdable runs in your phone's browser: sign in at the same address. On a phone, Choose files opens the camera, so you can photograph tickets straight into the Inbox or a job.",
+      "answer": "There's no separate app yet. Duracash runs in your phone's browser: sign in at the same address. On a phone, Choose files opens the camera, so you can photograph tickets straight into the Inbox or a job.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -491,7 +491,7 @@
         "completed to date",
         "monthly"
       ],
-      "answer": "Open the job and click Progress pay app. With a schedule of values, enter how much of each line is done to date; without one, enter the completed-to-date dollar amount (the total done so far, not just this month). Billdable drafts a pay app for the difference since the last one, withholds retainage, and builds the packet from the payer's playbook. The job stays in progress.",
+      "answer": "Open the job and click Progress pay app. With a schedule of values, enter how much of each line is done to date; without one, enter the completed-to-date dollar amount (the total done so far, not just this month). Duracash drafts a pay app for the difference since the last one, withholds retainage, and builds the packet from the payer's playbook. The job stays in progress.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -521,7 +521,7 @@
         "final",
         "complete"
       ],
-      "answer": "Open the job, click Mark done, add completion notes and confirm. Billdable drafts the final pay app for everything not billed yet. If a draft is already open, send or void it first; the message names it. Jobs with retainage get a closeout packet for the punch list.",
+      "answer": "Open the job, click Mark done, add completion notes and confirm. Duracash drafts the final pay app for everything not billed yet. If a draft is already open, send or void it first; the message names it. Jobs with retainage get a closeout packet for the punch list.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -587,7 +587,7 @@
         "wrong amount",
         "delete draft"
       ],
-      "answer": "Open the job and click Void draft. The draft is kept in history as void and its work goes back to unbilled, so you can draft again. A pay app that was already sent can't be voided in Billdable.",
+      "answer": "Open the job and click Void draft. The draft is kept in history as void and its work goes back to unbilled, so you can draft again. A pay app that was already sent can't be voided in Duracash.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -604,7 +604,7 @@
       "keywords": [
         "nothing draft"
       ],
-      "answer": "Nothing to draft means all completed work is already on a pay app. Record more progress (completed-to-date) or mark the job done first. If a draft is already open, Billdable says so and names it.",
+      "answer": "Nothing to draft means all completed work is already on a pay app. Record more progress (completed-to-date) or mark the job done first. If a draft is already open, Duracash says so and names it.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -661,7 +661,7 @@
       "keywords": [
         "packet"
       ],
-      "answer": "The packet is everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate. Billdable lists the items from the payer's playbook and won't let the pay app go out until each one is in.",
+      "answer": "The packet is everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate. Duracash lists the items from the payer's playbook and won't let the pay app go out until each one is in.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -854,7 +854,7 @@
         "conditional",
         "unconditional"
       ],
-      "answer": "A lien waiver gives up your lien rights for money you've been paid. Conditional: it only takes effect if the payment clears. Unconditional: payment received. Some states require exact statutory forms, so use the form your state or the payer requires; Billdable doesn't generate it.",
+      "answer": "A lien waiver gives up your lien rights for money you've been paid. Conditional: it only takes effect if the payment clears. Unconditional: payment received. Some states require exact statutory forms, so use the form your state or the payer requires; Duracash doesn't generate it.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -873,7 +873,7 @@
       "keywords": [
         "send waiver"
       ],
-      "answer": "When a pay app is paid in full, the job shows Send waiver. Drop your signed waiver on the job record first (kind: lien waiver): the email attaches the newest one not sent before; with none, it tells the payer the waiver follows. One waiver per paid pay app, and never before the payment is matched. Billdable doesn't write waiver forms; states set them.",
+      "answer": "When a pay app is paid in full, the job shows Send waiver. Drop your signed waiver on the job record first (kind: lien waiver): the email attaches the newest one not sent before; with none, it tells the payer the waiver follows. One waiver per paid pay app, and never before the payment is matched. Duracash doesn't write waiver forms; states set them.",
       "handler": "waivers_due",
       "needs_job": false,
       "actions": [],
@@ -890,7 +890,7 @@
       "keywords": [
         "retainage"
       ],
-      "answer": "Retainage is a percentage (often 5 to 10) the payer keeps from every pay app until the job is closed out. Billdable withholds it on each pay app, shows it as a line, and tracks it until it's released.",
+      "answer": "Retainage is a percentage (often 5 to 10) the payer keeps from every pay app until the job is closed out. Duracash withholds it on each pay app, shows it as a line, and tracks it until it's released.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -936,7 +936,7 @@
         "not due",
         "how often"
       ],
-      "answer": "Each payer has follow-up days in its playbook. A follow-up on a sent pay app is allowed once that many days have passed since it was sent (or since the last follow-up). If you try earlier, Billdable tells you the date it's due. Each follow-up is emailed to the payer's AP contact and listed in the Outbox.",
+      "answer": "Each payer has follow-up days in its playbook. A follow-up on a sent pay app is allowed once that many days have passed since it was sent (or since the last follow-up). If you try earlier, Duracash tells you the date it's due. Each follow-up is emailed to the payer's AP contact and listed in the Outbox.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -976,7 +976,7 @@
       "questions": [
         "Is email actually sent?",
         "Did the customer get my pay app?",
-        "Does Billdable send emails?",
+        "Does Duracash send emails?",
         "Outbox",
         "Where do I see what I sent?",
         "What did I send?",
@@ -993,7 +993,7 @@
         "send again",
         "delivered"
       ],
-      "answer": "The Outbox lists every approved email and what happened to it: sent (with the time), failed (with the reason, such as an address the payer's mail server refused), or not sent. A failed or unsent email has a Send again button. Pay apps go out with the packet documents attached, from \"your company via Billdable\", and the payer's reply goes to whoever approved the send. The demo account never sends real email.",
+      "answer": "The Outbox lists every approved email and what happened to it: sent (with the time), failed (with the reason, such as an address the payer's mail server refused), or not sent. A failed or unsent email has a Send again button. Pay apps go out with the packet documents attached, from \"your company via Duracash\", and the payer's reply goes to whoever approved the send. The demo account never sends real email.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1009,7 +1009,7 @@
       "id": "voice-calls",
       "category": "Collections",
       "questions": [
-        "Can Billdable call my customers?",
+        "Can Duracash call my customers?",
         "Automatic phone calls",
         "Voice agent"
       ],
@@ -1074,7 +1074,7 @@
         "bulk",
         "30 days"
       ],
-      "answer": "Copy the notes and paste them in the Inbox with \"Notes: one daily record per date\" selected. Start each day with a date (10/12, Oct 12, or 2026-10-12). Billdable splits them into one daily record per date and keeps the original date when you file them.",
+      "answer": "Copy the notes and paste them in the Inbox with \"Notes: one daily record per date\" selected. Start each day with a date (10/12, Oct 12, or 2026-10-12). Duracash splits them into one daily record per date and keeps the original date when you file them.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1109,7 +1109,7 @@
       "id": "import-email-setup",
       "category": "Importing",
       "questions": [
-        "How do I forward emails to Billdable?",
+        "How do I forward emails to Duracash?",
         "Connect my email",
         "Set up text messages",
         "Connect my texts"
@@ -1250,7 +1250,7 @@
         "notice",
         "file lien"
       ],
-      "answer": "Not yet. Lien and notice deadlines depend on the state, your role and the project type, and a wrong date can cost lien rights, so Billdable won't calculate them until they're reviewed by a lawyer for a specific state. The calendar shows billing dates only.",
+      "answer": "Not yet. Lien and notice deadlines depend on the state, your role and the project type, and a wrong date can cost lien rights, so Duracash won't calculate them until they're reviewed by a lawyer for a specific state. The calendar shows billing dates only.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1312,7 +1312,7 @@
         "login",
         "reset"
       ],
-      "answer": "On the sign-in screen, click Forgot your password? and enter your email: a reset link arrives that works once, for one hour, and signs you out everywhere else. Signed in, change it on Team & account. After 5 wrong passwords for one email, sign-in pauses for 15 minutes. Passwords need at least 10 characters. If the server can't send email yet, the screen says so; ask the Billdable team.",
+      "answer": "On the sign-in screen, click Forgot your password? and enter your email: a reset link arrives that works once, for one hour, and signs you out everywhere else. Signed in, change it on Team & account. After 5 wrong passwords for one email, sign-in pauses for 15 minutes. Passwords need at least 10 characters. If the server can't send email yet, the screen says so; ask the Duracash team.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1339,7 +1339,7 @@
         "privacy",
         "who see"
       ],
-      "answer": "Each company's data is kept separate; only your team's logins can see it, and owners decide who is on the team. Passwords are stored as one-way hashes; reset links work once and expire. Billdable is still early: keep your own copies of signed documents, and use Export data for a copy. Questions you ask here are saved so the team can add better answers.",
+      "answer": "Each company's data is kept separate; only your team's logins can see it, and owners decide who is on the team. Passwords are stored as one-way hashes; reset links work once and expire. Duracash is still early: keep your own copies of signed documents, and use Export data for a copy. Questions you ask here are saved so the team can add better answers.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1349,7 +1349,7 @@
       "id": "ai",
       "category": "Account and data",
       "questions": [
-        "Does Billdable use AI?",
+        "Does Duracash use AI?",
         "Is this chat AI?",
         "Are you a bot?"
       ],
@@ -1403,7 +1403,7 @@
         "procore",
         "contractor foreman"
       ],
-      "answer": "There are no direct connections to other software yet. Billdable sits beside the tools you use: export reports, photos or PDFs from them and drop the files into the Inbox.",
+      "answer": "There are no direct connections to other software yet. Duracash sits beside the tools you use: export reports, photos or PDFs from them and drop the files into the Inbox.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1426,7 +1426,7 @@
         "charge",
         "trial"
       ],
-      "answer": "Billing isn't live, so nothing is charged today. The trial is timed to the payment cycle: nothing to pay until the first pay app you send through Billdable is paid, or 90 days, whichever comes first (120 if a pay app is still unpaid at day 90). Your dashboard shows where your trial stands.",
+      "answer": "Billing isn't live, so nothing is charged today. The trial is timed to the payment cycle: nothing to pay until the first pay app you send through Duracash is paid, or 90 days, whichever comes first (120 if a pay app is still unpaid at day 90). Your dashboard shows where your trial stands.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1453,7 +1453,7 @@
         "human",
         "bug"
       ],
-      "answer": "Contact the Billdable founders directly by email for now. Tell them what you clicked and what you expected; a screenshot helps. Questions you ask here are saved, so they also see what's missing.",
+      "answer": "Contact the Duracash founders directly by email for now. Tell them what you clicked and what you expected; a screenshot helps. Questions you ask here are saved, so they also see what's missing.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1574,7 +1574,7 @@
       "category": "Account and data",
       "questions": [
         "How do I delete my account?",
-        "Close my Billdable account",
+        "Close my Duracash account",
         "Delete my company and data",
         "Cancel my account"
       ],
@@ -1612,7 +1612,7 @@
         "lose data",
         "restore"
       ],
-      "answer": "Yes. The server makes a backup every 24 hours (and on start-up when the last one is older) and keeps the newest 14. They sit on the same server as your data, so they guard against mistakes and bugs, not against losing the server itself. Keep your own copy with Export data, and keep signed documents outside Billdable too.",
+      "answer": "Yes. The server makes a backup every 24 hours (and on start-up when the last one is older) and keeps the newest 14. They sit on the same server as your data, so they guard against mistakes and bugs, not against losing the server itself. Keep your own copy with Export data, and keep signed documents outside Duracash too.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1634,7 +1634,7 @@
         "confirm email",
         "confirmation"
       ],
-      "answer": "Billdable sends pay apps with replies coming back to the person who approved them, so it checks that the address is really yours first. Click the link in the confirmation email (it works for 3 days). Didn't get it? Use Send the link again on Team & account, then check spam. Emails held while you were unconfirmed have Send again in the Outbox.",
+      "answer": "Duracash sends pay apps with replies coming back to the person who approved them, so it checks that the address is really yours first. Click the link in the confirmation email (it works for 3 days). Didn't get it? Use Send the link again on Team & account, then check spam. Emails held while you were unconfirmed have Send again in the Outbox.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1661,7 +1661,7 @@
         "policy",
         "sell my data"
       ],
-      "answer": "The Terms of Service and the Privacy Policy are linked at the bottom of the sign-in page (/terms and /privacy). In short: your data is yours, we use it only to run Billdable for you, we don't sell it or use it for advertising, the app loads no tracking scripts, and an owner can export or delete everything. Both pages say if they are still a draft awaiting a lawyer's review.",
+      "answer": "The Terms of Service and the Privacy Policy are linked at the bottom of the sign-in page (/terms and /privacy). In short: your data is yours, we use it only to run Duracash for you, we don't sell it or use it for advertising, the app loads no tracking scripts, and an owner can export or delete everything. Both pages say if they are still a draft awaiting a lawyer's review.",
       "handler": null,
       "needs_job": false,
       "actions": [],

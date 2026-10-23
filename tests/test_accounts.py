@@ -32,7 +32,7 @@ import trial
 from test_mail import Sink
 
 PASSWORD = "correct horse battery"
-ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "BILLDABLE_URL", "HELPER_ADMIN_USER_IDS", "BACKUP_KEEP")
+ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "DURACASH_URL", "HELPER_ADMIN_USER_IDS", "BACKUP_KEEP")
 
 
 class ServerCase(unittest.TestCase):
@@ -74,7 +74,7 @@ class ServerCase(unittest.TestCase):
 
     def mail_on(self):
         os.environ.update({"SMTP_HOST": "127.0.0.1", "SMTP_PORT": str(self.sink.server_address[1]), "SMTP_SECURITY": "none",
-                           "MAIL_FROM": "billing@billdable.test", "BILLDABLE_URL": "https://app.billdable.test"})
+                           "MAIL_FROM": "billing@duracash.test", "DURACASH_URL": "https://app.duracash.test"})
 
     def request(self, method, path, body=None, cookie=None, headers=None, raw=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
@@ -132,14 +132,14 @@ class AccountHttpTests(ServerCase):
         old_cookie, _ = self.signup("reset@pine.example")
         self.wait_for_mail(1)  # the verification email
         self.sink.messages.clear()
-        # The link is built from BILLDABLE_URL, never from the Host header a stranger controls.
+        # The link is built from DURACASH_URL, never from the Host header a stranger controls.
         res, data = self.request("POST", "/api/auth/forgot", {"email": "Reset@Pine.example"}, headers={"Host": "evil.example"})
         same, data2 = self.request("POST", "/api/auth/forgot", {"email": "nobody@pine.example"})
         self.assertEqual(data["message"], data2["message"])  # no hint which emails exist
         self.wait_for_mail(1)
         self.assertEqual(len(self.sink.messages), 1)
         base, token = self.link_token("reset")
-        self.assertEqual(base, "https://app.billdable.test")
+        self.assertEqual(base, "https://app.duracash.test")
         res, data = self.request("POST", "/api/auth/reset", {"token": token, "password": "short"})
         self.assertEqual(res.status, 400)
         res, data = self.request("POST", "/api/auth/reset", {"token": token, "password": "a new long password"})
@@ -209,7 +209,7 @@ class AccountHttpTests(ServerCase):
         res, out = self.request("POST", "/api/team/invite", {"email": "member@team.example", "role": "member"}, cookie=owner)
         self.assertEqual(res.status, 200, out)
         self.assertFalse(out["emailed"])  # no mail on this server: the owner gets the link to pass on
-        self.assertIsNone(out["invite_link"])  # no BILLDABLE_URL: only the path, never a Host-header link
+        self.assertIsNone(out["invite_link"])  # no DURACASH_URL: only the path, never a Host-header link
         token = out["invite_path"].split("#invite=")[1]
         res, info = self.request("POST", "/api/auth/invite-info", {"token": token})
         self.assertEqual((info["email"], info["company_name"], info["role"]), ("member@team.example", "Team Co", "member"))
@@ -269,10 +269,10 @@ class AccountHttpTests(ServerCase):
         _, out = self.request("POST", "/api/team/invite", {"email": "new@team.example", "role": "owner"}, cookie=owner)
         self.assertTrue(out["emailed"], out)
         msg = email.message_from_bytes(self.sink.messages[-1]["data"], policy=email.policy.default)
-        self.assertEqual(msg["Subject"], "You're invited to a team on Billdable")  # nothing typed by users in the subject
+        self.assertEqual(msg["Subject"], "You're invited to a team on Duracash")  # nothing typed by users in the subject
         self.assertNotIn("\n\nYour account is locked", msg.get_body(("plain",)).get_content())  # names are flattened
         base, token = self.link_token("invite")
-        self.assertEqual(base, "https://app.billdable.test")
+        self.assertEqual(base, "https://app.duracash.test")
         self.assertEqual(self.sink.messages[-1]["to"], ["new@team.example"])
 
     # ----- deleting the company -----
@@ -591,13 +591,13 @@ class ReviewFourTests(ServerCase):
         _, data = self.signup("terms@team.example")
         stored = next(u for u in json.loads(auth.AUTH_PATH.read_text())["users"] if u["email"] == "terms@team.example")
         self.assertEqual(stored["terms_version"], server.legal.TERMS_VERSION)
-        os.environ["LEGAL_ENTITY"] = "Billdable <script>LLC"
+        os.environ["LEGAL_ENTITY"] = "Duracash <script>LLC"
         try:
             res, page = self.request("GET", "/terms")
         finally:
             os.environ.pop("LEGAL_ENTITY", None)
         self.assertEqual(res.status, 200)
-        self.assertIn(b"Billdable &lt;script&gt;LLC", page)
+        self.assertIn(b"Duracash &lt;script&gt;LLC", page)
         self.assertIn(b"Draft", page)
         res, page = self.request("GET", "/privacy")
         self.assertEqual(res.status, 200)

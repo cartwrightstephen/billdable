@@ -1,7 +1,7 @@
-"""Billdable domain: job money file, packet gate, invoice draft, payment match.
+"""Duracash domain: job money file, packet gate, invoice draft, payment match.
 
 Source accounting data is treated as external. This module owns the operating
-record Billdable builds on top of it: what is billable, what is blocking send,
+record Duracash builds on top of it: what is billable, what is blocking send,
 who approved, and whether cash matched.
 """
 
@@ -198,7 +198,7 @@ def check_audit(state: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "rows": len(rows), "broken_at": None}
 
 
-def audit(state: dict[str, Any], job_id: str, action: str, detail: str, actor: str = "billdable") -> None:
+def audit(state: dict[str, Any], job_id: str, action: str, detail: str, actor: str = "duracash") -> None:
     rows = state.setdefault("audit", [])
     prev = rows[-1].get("hash", "") if rows else ""
     row = {
@@ -246,7 +246,7 @@ def record_progress(
         f"{actor} recorded completed-to-date {money(completed_value_cents)}.{' ' + notes if notes else ''}",
         actor,
     )
-    return draft_invoice(state, job_id, actor="billdable")
+    return draft_invoice(state, job_id, actor="duracash")
 
 
 def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: str = "", evidence: list[str] | None = None) -> dict[str, Any]:
@@ -270,10 +270,10 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         line["done_milli"] = line["qty_milli"]
     audit(state, job_id, "job_done", f"{actor} marked {job['name']} done. Notes: {notes or 'none'}.", actor)
     _ensure_closeout_packet(state, job)
-    return draft_invoice(state, job_id, actor="billdable")
+    return draft_invoice(state, job_id, actor="duracash")
 
 
-def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "billdable", strict: bool = False) -> dict[str, Any]:
+def draft_invoice(state: dict[str, Any], job_id: str, actor: str = "duracash", strict: bool = False) -> dict[str, Any]:
     """Draft a pay app for unbilled completed work, withholding retainage.
 
     strict=True is for the explicit "Draft pay app" button: a no-op raises
@@ -461,7 +461,7 @@ def approve_and_send(
 
 
 def record_follow_up(
-    state: dict[str, Any], job_id: str, actor: str = "billdable", link_base: str | None = None, company_id: str = ""
+    state: dict[str, Any], job_id: str, actor: str = "duracash", link_base: str | None = None, company_id: str = ""
 ) -> dict[str, Any]:
     """Draft a follow-up on the oldest unpaid pay app once the payer's window has passed."""
     job = _open_job(state, job_id)
@@ -510,7 +510,7 @@ def match_payment(
     job_id: str,
     amount_cents: int,
     reference: str,
-    actor: str = "billdable",
+    actor: str = "duracash",
     invoice_id: str | None = None,
     received_on: str | None = None,
     qbo_payment_id: str | None = None,
@@ -583,7 +583,7 @@ def match_payment(
     return job
 
 
-# The four lien waiver types. Billdable records which one went out; it never writes the
+# The four lien waiver types. Duracash records which one went out; it never writes the
 # waiver itself, because state law sets the forms (the contractor drops their signed form
 # on the job record and sending attaches it).
 WAIVER_KINDS = {
@@ -664,7 +664,7 @@ def _legacy_waiver_pending(job: dict[str, Any]) -> bool:
     return bool(job.get("waiver_due") and not job.get("waiver_sent") and not any("waiver_due" in inv for inv in job["invoices"]))
 
 
-def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "billdable") -> dict[str, Any]:
+def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash") -> dict[str, Any]:
     job = _open_job(state, job_id)
     open_retainage = job_money(job)["retainage_open_cents"]
     if open_retainage <= 0:
@@ -1188,7 +1188,7 @@ def request_co_signature(
     """Make the change order's signing link and, with a site address, email it to the payer. Returns the link."""
     job, co = _pending_co(state, job_id, co_id)
     if not link_base or not company_id:
-        raise GateError("Signing links need the site's address (BILLDABLE_URL) set on the server.")
+        raise GateError("Signing links need the site's address (DURACASH_URL) set on the server.")
     co["sign_token"] = co.get("sign_token") or secrets.token_urlsafe(24)
     co["signature_requested_at"] = utcnow()
     link = f"{link_base.rstrip('/')}/s/{company_id}.{co['sign_token']}"
@@ -1343,7 +1343,7 @@ def add_packet_attachment(state: dict[str, Any], job_id: str, item_id: str, name
     return job
 
 
-def import_sample_qbo_payment(state: dict[str, Any], job_id: str, actor: str = "billdable") -> dict[str, Any]:
+def import_sample_qbo_payment(state: dict[str, Any], job_id: str, actor: str = "duracash") -> dict[str, Any]:
     """Stub QuickBooks read: match a realistic payment if an open invoice exists."""
     job = _job(state, job_id)
     invoice = next((inv for inv in reversed(job["invoices"]) if inv["status"] in {"sent", "approved", "partial"}), None)
@@ -1928,7 +1928,7 @@ def record_sov_progress(
         + (f" {notes}" if notes else ""),
         actor,
     )
-    return draft_invoice(state, job_id, actor="billdable")
+    return draft_invoice(state, job_id, actor="duracash")
 
 
 def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:

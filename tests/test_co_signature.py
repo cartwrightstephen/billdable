@@ -22,7 +22,7 @@ import storage
 from seed import seed_state
 
 PASSWORD = "correct horse battery"
-SITE = "https://app.billdable.example"
+SITE = "https://app.duracash.example"
 
 
 def pending(state):
@@ -74,7 +74,7 @@ class SigningHttpTests(unittest.TestCase):
         auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR, importer.UPLOADS = root / "auth.json", root / "companies", root, root / "uploads"
         cls.httpd = server.Server(("127.0.0.1", 0), server.Handler)
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
-        cls.env = mock.patch.dict(os.environ, {"BILLDABLE_URL": SITE})
+        cls.env = mock.patch.dict(os.environ, {"DURACASH_URL": SITE})
         cls.env.start()
 
     @classmethod

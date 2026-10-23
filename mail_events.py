@@ -59,5 +59,5 @@ def apply(state: dict[str, Any], email: str, reason: str, now: str) -> dict[str,
     job = next((j for j in state.get("jobs", []) if j["id"] == entry.get("job_id")), None)
     if job and not job.get("closed"):
         job["external_status"] = f"Email to {email} bounced ({reason}). Fix the address in the Payer playbook and send again."
-    domain.audit(state, entry.get("job_id", ""), "email_bounced", f"The email \"{entry.get('subject', '')}\" to {email} bounced: {reason}.", "billdable")
+    domain.audit(state, entry.get("job_id", ""), "email_bounced", f"The email \"{entry.get('subject', '')}\" to {email} bounced: {reason}.", "duracash")
     return entry

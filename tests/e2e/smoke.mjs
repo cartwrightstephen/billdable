@@ -1,11 +1,11 @@
 // Browser smoke test (P1-10): drives the demo account the way a person would.
 // Runs in GitHub Actions (.github/workflows/e2e.yml) against a fresh server:
-//   BILLDABLE_URL_UNDER_TEST=http://127.0.0.1:8765 node tests/e2e/smoke.mjs
+//   DURACASH_URL_UNDER_TEST=http://127.0.0.1:8765 node tests/e2e/smoke.mjs
 // Needs Playwright: npm install --no-save playwright@1.47.2 && npx playwright install --with-deps chromium
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 
-const BASE = process.env.BILLDABLE_URL_UNDER_TEST || "http://127.0.0.1:8765";
+const BASE = process.env.DURACASH_URL_UNDER_TEST || "http://127.0.0.1:8765";
 const results = [];
 async function step(name, fn) {
   try { await fn(); results.push(["ok", name]); console.log(`ok    ${name}`); }
@@ -176,7 +176,7 @@ await step("phone: the menu drawer opens and moves between sections", async () =
 await step("unknown paths get the HTML 404 page", async () => {
   const res = await page.goto(BASE + "/no-such-page");
   assert.equal(res.status(), 404);
-  await page.getByText("Go to Billdable").waitFor();
+  await page.getByText("Go to Duracash").waitFor();
 });
 
 await step("no JavaScript errors on any page", async () => {

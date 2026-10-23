@@ -17,7 +17,7 @@ follow `render.yaml` and should be checked the first time through.
    code back; the data on the disk is not touched by a rollback.
 
 The first production deploy with the disk: deploy twice and repeat step 4 both times. Only then
-set `BILLDABLE_DATA_PERSISTENT=1`.
+set `DURACASH_DATA_PERSISTENT=1`.
 
 ## 2. Restore from a backup
 
@@ -34,10 +34,10 @@ python3 backup.py list
 
 From the off-site copy (disk lost, or the local backups are bad):
 
-1. Download the newest `billdable-….tar.gz.age` from the B2 bucket.
+1. Download the newest `duracash-….tar.gz.age` from the B2 bucket.
 2. On a laptop with the age private key: `age -d -i key.txt FILE.age > backup.tar.gz`
 3. Copy `backup.tar.gz` to the server (or restore on a laptop to inspect it first with
-   `BILLDABLE_DATA_DIR=/tmp/check python3 backup.py restore backup.tar.gz`), then follow the
+   `DURACASH_DATA_DIR=/tmp/check python3 backup.py restore backup.tar.gz`), then follow the
    local steps above.
 
 **Monthly drill.** A backup nobody has restored is a guess. Once a month, in the Shell tab
@@ -116,7 +116,7 @@ Something is down, data looks wrong, or a leak is suspected.
 
 Once the Intuit Developer app exists (setup doc, section 1):
 
-1. In the Intuit app's settings, add the redirect URI `<BILLDABLE_URL>/api/qbo/callback`, for
+1. In the Intuit app's settings, add the redirect URI `<DURACASH_URL>/api/qbo/callback`, for
    example `https://billdable.onrender.com/api/qbo/callback`, for both Development and Production.
 2. On Render, set `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET` (the Development keys first) and keep
    `QBO_ENV` unset: that is the sandbox.
@@ -138,7 +138,7 @@ Needs the company's Stripe account (after the entity exists).
 
 1. In Stripe (test mode first): create the product and its monthly price; copy the price id
    (`price_…`) and the secret key (`sk_test_…`).
-2. **Developers → Webhooks → Add endpoint**: `<BILLDABLE_URL>/api/stripe/webhook`, with the
+2. **Developers → Webhooks → Add endpoint**: `<DURACASH_URL>/api/stripe/webhook`, with the
    events `checkout.session.completed`, `customer.subscription.created`,
    `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` and
    `invoice.payment_failed`. Copy its signing secret (`whsec_…`).
@@ -150,7 +150,7 @@ Needs the company's Stripe account (after the entity exists).
    subscription unpaid and check the company shows the read-only banner once `BILLING_ENFORCE=1`.
 
 The free trial carries over: a company that subscribes during it starts with Stripe's trial
-ending on its last day, and when its first pay app is paid Billdable ends Stripe's trial, so
+ending on its last day, and when its first pay app is paid Duracash ends Stripe's trial, so
 the first charge follows the business plan. Charges land on the 5th (`BILLING_DAY`), after the
 contractor's own pay apps are out: a trial ends on the next 5th, and a subscription started after
 the trial is anchored to the 5th with the first part-month prorated. A company that bills

@@ -17,9 +17,9 @@ import server
 import storage
 
 GOOD = {
-    "BILLDABLE_ENV": "production",
+    "DURACASH_ENV": "production",
     "COOKIE_SECURE": "1",
-    "BILLDABLE_URL": "https://app.billdable.example",
+    "DURACASH_URL": "https://app.duracash.example",
 }
 
 
@@ -29,7 +29,7 @@ class ConfigTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def env(self, **values):
-        clean = {k: v for k, v in os.environ.items() if k not in {*GOOD, "BILLDABLE_DATA_DIR", "BILLDABLE_DATA_PERSISTENT"}}
+        clean = {k: v for k, v in os.environ.items() if k not in {*GOOD, "DURACASH_DATA_DIR", "DURACASH_DATA_PERSISTENT"}}
         return mock.patch.dict(os.environ, {**clean, **values}, clear=True)
 
     def test_development_has_no_requirements(self):
@@ -39,27 +39,27 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(server.config_problems(), [])
 
     def test_production_complete_config_starts(self):
-        with self.env(**GOOD, BILLDABLE_DATA_DIR=self.tmp.name), mock.patch.object(storage, "DATA_DIR", Path(self.tmp.name)):
+        with self.env(**GOOD, DURACASH_DATA_DIR=self.tmp.name), mock.patch.object(storage, "DATA_DIR", Path(self.tmp.name)):
             self.assertTrue(server.production())
             self.assertFalse(server.demo_enabled())
             self.assertEqual(server.config_problems(), [])
 
     def test_production_refuses_each_missing_setting(self):
-        with self.env(BILLDABLE_ENV="production"):
+        with self.env(DURACASH_ENV="production"):
             problems = " ".join(server.config_problems())
-        for name in ("BILLDABLE_DATA_DIR", "COOKIE_SECURE", "BILLDABLE_URL"):
+        for name in ("DURACASH_DATA_DIR", "COOKIE_SECURE", "DURACASH_URL"):
             self.assertIn(name, problems)
-        with self.env(**{**GOOD, "BILLDABLE_URL": "http://app.billdable.example"}, BILLDABLE_DATA_DIR=self.tmp.name), \
+        with self.env(**{**GOOD, "DURACASH_URL": "http://app.duracash.example"}, DURACASH_DATA_DIR=self.tmp.name), \
                 mock.patch.object(storage, "DATA_DIR", Path(self.tmp.name)):
             self.assertEqual(len(server.config_problems()), 1)
 
     def test_production_refuses_unmounted_disk(self):
         missing = Path(self.tmp.name) / "not-mounted"
-        with self.env(**GOOD, BILLDABLE_DATA_DIR=str(missing)), mock.patch.object(storage, "DATA_DIR", missing):
+        with self.env(**GOOD, DURACASH_DATA_DIR=str(missing)), mock.patch.object(storage, "DATA_DIR", missing):
             self.assertIn("does not exist", " ".join(server.config_problems()))
 
     def test_main_exits_when_misconfigured(self):
-        with self.env(BILLDABLE_ENV="production"), mock.patch.object(server, "ensure_demo") as demo, \
+        with self.env(DURACASH_ENV="production"), mock.patch.object(server, "ensure_demo") as demo, \
                 mock.patch.object(server, "log_json"), self.assertRaises(SystemExit):
             server.main()
         demo.assert_not_called()
@@ -67,12 +67,12 @@ class ConfigTests(unittest.TestCase):
     def test_data_notice_flag(self):
         with self.env():
             self.assertTrue(server.data_notice())
-        with self.env(BILLDABLE_DATA_PERSISTENT="1"):
+        with self.env(DURACASH_DATA_PERSISTENT="1"):
             self.assertFalse(server.data_notice())
 
 
 class ProductionHttpTests(unittest.TestCase):
-    """A demo account left on the disk can't be used once BILLDABLE_ENV=production."""
+    """A demo account left on the disk can't be used once DURACASH_ENV=production."""
 
     @classmethod
     def setUpClass(cls):
@@ -114,7 +114,7 @@ class ProductionHttpTests(unittest.TestCase):
         res, _ = self.demo_login()
         self.assertEqual(res.status, 200)
         cookie = res.getheader("Set-Cookie").split(";")[0]
-        with mock.patch.dict(os.environ, {"BILLDABLE_ENV": "production"}):
+        with mock.patch.dict(os.environ, {"DURACASH_ENV": "production"}):
             res, _ = self.request("GET", "/api/state", cookie=cookie)
             self.assertEqual(res.status, 401, "an existing demo session stops working")
             res, _ = self.request("GET", "/api/auth/me", cookie=cookie)
@@ -126,11 +126,11 @@ class ProductionHttpTests(unittest.TestCase):
             self.assertEqual(health["env"], "production")
 
     def test_signed_out_me_carries_data_notice(self):
-        with mock.patch.dict(os.environ, {"BILLDABLE_DATA_PERSISTENT": ""}):
+        with mock.patch.dict(os.environ, {"DURACASH_DATA_PERSISTENT": ""}):
             res, body = self.request("GET", "/api/auth/me")
             self.assertEqual(res.status, 401)
             self.assertIs(body["data_notice"], True)
-        with mock.patch.dict(os.environ, {"BILLDABLE_DATA_PERSISTENT": "1"}):
+        with mock.patch.dict(os.environ, {"DURACASH_DATA_PERSISTENT": "1"}):
             _, body = self.request("GET", "/api/auth/me")
             self.assertIs(body["data_notice"], False)
 

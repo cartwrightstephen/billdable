@@ -112,8 +112,8 @@ class BackupWithSqliteTests(unittest.TestCase):
             with mock.patch.object(storage, "DATA_DIR", root):
                 path = backup.make_backup()
             with tarfile.open(path) as tar:
-                self.assertIn("companies/billdable.db", tar.getnames())
-                data = tar.extractfile("companies/billdable.db").read()
+                self.assertIn("companies/duracash.db", tar.getnames())
+                data = tar.extractfile("companies/duracash.db").read()
             copy = root / "restored" / "companies"
             copy.mkdir(parents=True)
             (copy / store.DB_NAME).write_bytes(data)
@@ -154,9 +154,9 @@ class RestoreDrillTests(unittest.TestCase):
 class BackendChoiceTests(unittest.TestCase):
     def test_sqlite_by_default_json_on_request(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict("os.environ", {"BILLDABLE_STORAGE": ""}):
+            with mock.patch.dict("os.environ", {"DURACASH_STORAGE": ""}):
                 self.assertEqual(store.open_store(Path(tmp)).kind, "sqlite")
-            with mock.patch.dict("os.environ", {"BILLDABLE_STORAGE": "json"}):
+            with mock.patch.dict("os.environ", {"DURACASH_STORAGE": "json"}):
                 self.assertEqual(store.open_store(Path(tmp)).kind, "json")
 
 

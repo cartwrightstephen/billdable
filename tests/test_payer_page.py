@@ -20,7 +20,7 @@ import server
 import storage
 
 PASSWORD = "correct horse battery"
-SITE = "https://app.billdable.example"
+SITE = "https://app.duracash.example"
 
 
 class PayerPageTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class PayerPageTests(unittest.TestCase):
         auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR, importer.UPLOADS = root / "auth.json", root / "companies", root, root / "uploads"
         cls.httpd = server.Server(("127.0.0.1", 0), server.Handler)
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
-        cls.env = mock.patch.dict(os.environ, {"BILLDABLE_URL": SITE})
+        cls.env = mock.patch.dict(os.environ, {"DURACASH_URL": SITE})
         cls.env.start()
 
     @classmethod
@@ -114,7 +114,7 @@ class PayerPageTests(unittest.TestCase):
         self.assertEqual(json.loads(raw)["jobs"][-1]["invoices"][-1]["received_at"], first, "only the first receipt counts")
 
     def test_no_link_without_a_site_address(self):
-        with mock.patch.dict(os.environ, {"BILLDABLE_URL": ""}):
+        with mock.patch.dict(os.environ, {"DURACASH_URL": ""}):
             res, _ = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "nolink@example.com", "password": PASSWORD,
                                                                "name": "Pat", "company_name": "Pine"})
             cookie = res.getheader("Set-Cookie").split(";")[0]

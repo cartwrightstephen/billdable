@@ -115,7 +115,7 @@ class BillingHttpTests(unittest.TestCase):
         threading.Thread(target=cls.stripe.serve_forever, daemon=True).start()
         cls.env = mock.patch.dict("os.environ", {"STRIPE_SECRET_KEY": "sk_test_1", "STRIPE_PRICE_ID": "price_1", "STRIPE_WEBHOOK_SECRET": WHSEC,
                                                  "STRIPE_API_BASE": f"http://127.0.0.1:{cls.stripe.server_address[1]}",
-                                                 "BILLING_ENFORCE": "1", "BILLDABLE_URL": "https://billdable.example"})
+                                                 "BILLING_ENFORCE": "1", "DURACASH_URL": "https://duracash.example"})
         cls.env.start()
         cls.httpd = server.Server(("127.0.0.1", 0), server.Handler)
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()

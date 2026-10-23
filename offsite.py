@@ -12,7 +12,7 @@ recipient the upload is refused and logged.
 Requests are signed with AWS Signature Version 4, standard library only.
 
 Restore on a laptop: download the .age file, then
-    age -d -i key.txt billdable-....tar.gz.age > backup.tar.gz
+    age -d -i key.txt duracash-....tar.gz.age > backup.tar.gz
     python3 backup.py restore backup.tar.gz
 """
 
@@ -43,7 +43,7 @@ def settings() -> dict[str, str]:
         "region": (env("BACKUP_S3_REGION") or "").strip(),
         "key_id": (env("BACKUP_S3_KEY_ID") or "").strip(),
         "secret": env("BACKUP_S3_SECRET") or "",
-        "prefix": (env("BACKUP_S3_PREFIX") or "billdable/").lstrip("/"),
+        "prefix": (env("BACKUP_S3_PREFIX") or "duracash/").lstrip("/"),
         "recipient": (env("BACKUP_AGE_RECIPIENT") or "").strip(),
         "age": (env("BACKUP_AGE_BINARY") or "age").strip(),
     }

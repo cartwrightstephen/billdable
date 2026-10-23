@@ -94,7 +94,7 @@ class QboTests(unittest.TestCase):
         threading.Thread(target=cls.intuit.serve_forever, daemon=True).start()
         fake = f"http://127.0.0.1:{cls.intuit.server_address[1]}"
         cls.env = mock.patch.dict("os.environ", {"QBO_CLIENT_ID": CLIENT[0], "QBO_CLIENT_SECRET": CLIENT[1], "QBO_TOKEN_URL": fake + "/token",
-                                                 "QBO_REVOKE_URL": fake + "/revoke", "QBO_API_BASE": fake, "BILLDABLE_URL": "http://localhost:8765"})
+                                                 "QBO_REVOKE_URL": fake + "/revoke", "QBO_API_BASE": fake, "DURACASH_URL": "http://localhost:8765"})
         cls.env.start()
         cls.httpd = server.Server(("127.0.0.1", 0), server.Handler)
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()

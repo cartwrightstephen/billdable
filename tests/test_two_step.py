@@ -37,7 +37,7 @@ class TotpTests(unittest.TestCase):
         self.assertIsNotNone(totp.verify(secret, totp.code_at(secret, now // 30 - 1), now=now), "30 seconds of clock drift")
         self.assertIsNone(totp.verify(secret, totp.code_at(secret, now // 30 - 3), now=now))
         self.assertIsNone(totp.verify(secret, "12345", now=now))
-        self.assertTrue(totp.uri(secret, "pat@pine.example").startswith("otpauth://totp/Billdable:pat%40pine.example?secret="))
+        self.assertTrue(totp.uri(secret, "pat@pine.example").startswith("otpauth://totp/Duracash:pat%40pine.example?secret="))
 
 
 class TwoStepHttpTests(unittest.TestCase):

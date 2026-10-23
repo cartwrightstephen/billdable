@@ -12,7 +12,7 @@ from typing import Any
 
 import domain
 
-# Shown on the Calendar page and in every feed: Billdable computes no statutory dates (LC-2).
+# Shown on the Calendar page and in every feed: Duracash computes no statutory dates (LC-2).
 NOT_LEGAL = "These are your contract and follow-up dates, not legal deadlines. Check lien and prompt-pay deadlines with your attorney."
 
 
@@ -83,11 +83,11 @@ def events(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 def render(state: dict[str, Any]) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    name = state.get("company", {}).get("name", "Billdable")
+    name = state.get("company", {}).get("name", "Duracash")
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//Billdable//Billing calendar//EN",
+        "PRODID:-//Duracash//Billing calendar//EN",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         _fold(f"X-WR-CALNAME:{_esc(name + ' billing')}"),
@@ -96,7 +96,7 @@ def render(state: dict[str, Any]) -> str:
     for e in events(state):
         lines += [
             "BEGIN:VEVENT",
-            _fold(f"UID:{e['uid']}@billdable"),
+            _fold(f"UID:{e['uid']}@duracash"),
             f"DTSTAMP:{stamp}",
             f"DTSTART;VALUE=DATE:{e['date'].strftime('%Y%m%d')}",
             f"DTEND;VALUE=DATE:{(e['date'] + timedelta(days=1)).strftime('%Y%m%d')}",

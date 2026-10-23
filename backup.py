@@ -41,7 +41,8 @@ import offsite
 import storage
 import store
 
-PREFIX = "billdable-"
+PREFIX = "duracash-"
+OLD_PREFIX = "billdable-"  # backups made before the rename to Duracash
 SUFFIX = ".tar.gz"
 _RUN_LOCK = threading.Lock()
 
@@ -67,7 +68,8 @@ def folder() -> Path:
 def backups() -> list[Path]:
     if not folder().exists():
         return []
-    return sorted(folder().glob(f"{PREFIX}*{SUFFIX}"), reverse=True)
+    found = [*folder().glob(f"{PREFIX}*{SUFFIX}"), *folder().glob(f"{OLD_PREFIX}*{SUFFIX}")]
+    return sorted(found, key=lambda p: p.name.split("-", 1)[1], reverse=True)
 
 
 def newest_time() -> str | None:
@@ -99,7 +101,7 @@ def make_backup(locks: dict[str, Any] | None = None) -> Path:
             # Company files (the JSON layout, and the snapshots taken before a reset) and the database.
             for path in sorted(companies.rglob("*.json")):
                 members.append((str(path.relative_to(data_dir)), path.read_bytes()))
-            if (companies / store.DB_NAME).exists():
+            if store.db_file(companies).exists():
                 members.extend(store.SqliteStore(companies).backup_members())
         for rel, key in (("inbound_tokens.json", "tokens"), ("helper_answers.json", None), ("helper_log.json", None), ("mail_sends.json", None)):
             grab(rel, locks.get(key) if key else None)
@@ -143,7 +145,7 @@ def _safe_members(tar: tarfile.TarFile) -> list[tarfile.TarInfo]:
     for m in tar.getmembers():
         parts = Path(m.name).parts
         if not m.isfile() or not parts or m.name.startswith("/") or ".." in parts or parts[0] not in allowed_top:
-            raise ValueError(f"Refusing to restore {m.name!r}: not a Billdable backup member.")
+            raise ValueError(f"Refusing to restore {m.name!r}: not a Duracash backup member.")
         out.append(m)
     return out
 
@@ -163,7 +165,7 @@ def restore(path: str | Path) -> Path:
             members = _safe_members(tar)
             names = {m.name for m in members}
             if "auth.json" not in names or not any(n.startswith("companies/") for n in names):
-                raise ValueError("Not a complete Billdable backup: auth.json or the companies folder is missing.")
+                raise ValueError("Not a complete Duracash backup: auth.json or the companies folder is missing.")
             staging.mkdir(parents=True)
             for m in members:
                 target = staging / m.name
@@ -244,7 +246,7 @@ def drill(path: str | Path) -> tuple[list[str], list[str]]:
         users = accounts.get("users", [])
         report.append(f"accounts: {len(users)} users, {len(accounts.get('sessions', {}))} sessions")
         folder = root / "companies"
-        companies = store.SqliteStore(folder) if (folder / store.DB_NAME).exists() else store.JsonStore(folder)
+        companies = store.SqliteStore(folder) if store.db_file(folder).exists() else store.JsonStore(folder)
         ids = companies.ids() if folder.exists() else []
         try:
             deleted = set(json.loads((root / "deleted_companies.json").read_text()))
