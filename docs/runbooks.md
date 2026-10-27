@@ -8,9 +8,9 @@ follow `render.yaml` and should be checked the first time through.
 ## 1. Deploy
 
 1. Open a pull request into `dev`. GitHub Actions runs the tests; merge only when it is green.
-2. Merging into `dev` deploys **billdable-staging** (free, throwaway data, no email). Click
+2. Merging into `dev` deploys **duracash-staging** (free, throwaway data, no email). Click
    through the change there: sign up, create a job, draft a pay app, open the PDF.
-3. Open a pull request from `dev` into `main` and merge it. Render deploys **billdable**.
+3. Open a pull request from `dev` into `main` and merge it. Render deploys **duracash**.
 4. Check `https://<site>/healthz`: `ok` is true, `env` is `production`, `last_backup` is the
    same time as before the deploy (a new one appears within `BACKUP_HOURS`).
 5. Sign in. If the deploy went wrong, Render's **Rollback** on the previous deploy puts the old
@@ -117,7 +117,7 @@ Something is down, data looks wrong, or a leak is suspected.
 Once the Intuit Developer app exists (setup doc, section 1):
 
 1. In the Intuit app's settings, add the redirect URI `<DURACASH_URL>/api/qbo/callback`, for
-   example `https://billdable.onrender.com/api/qbo/callback`, for both Development and Production.
+   example `https://duracash.onrender.com/api/qbo/callback`, for both Development and Production.
 2. On Render, set `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET` (the Development keys first) and keep
    `QBO_ENV` unset: that is the sandbox.
 3. An owner opens **Money → Payments → Connect QuickBooks**, signs in to Intuit and picks the

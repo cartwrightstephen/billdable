@@ -1,8 +1,9 @@
 services:
   # Production: deploys main.
   - type: web
-    # The services and disk keep their Billdable-era names: renaming them makes Render create new ones.
-    name: billdable
+    # Renamed from billdable on 2026-10-27. On an account that still has the old services, rename
+    # them and the disk in the Render dashboard first, or Render creates new, empty ones.
+    name: duracash
     # Docker, so the image has the age program that encrypts off-site backups (offsite.py).
     runtime: docker
     dockerfilePath: ./Dockerfile
@@ -11,7 +12,7 @@ services:
     branch: main
     healthCheckPath: /healthz
     disk:
-      name: billdable-data
+      name: duracash-data
       mountPath: /var/data
       sizeGB: 1
     envVars:
@@ -33,7 +34,7 @@ services:
   # Free plan, no disk: its data is throwaway and the landing page says so. No mail
   # settings, so it never emails anyone; the Outbox shows what it would have sent.
   - type: web
-    name: billdable-staging
+    name: duracash-staging
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: free

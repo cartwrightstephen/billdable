@@ -54,7 +54,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `TWILIO_ACCOUNT_SID` | Sent with the auth token when Twilio asks for a login to fetch media (accounts with media authentication on). |
 | `TWILIO_NUMBER` | The texting number shown to users in the Inbox. Display only. |
 | `INBOUND_EMAIL_ADDRESS_TEMPLATE` | The forwarding address shown in the Inbox, with `{token}` where the company's secret goes, e.g. `jobs+{token}@in.example.com`. Display only; the email service does the routing. |
-| `DURACASH_URL` | The public address, e.g. `https://billdable.onrender.com`. Password-reset, verification and invite emails use it for their links; they are not sent without it (a link built from the request's Host header could point a reset token at someone else's site). |
+| `DURACASH_URL` | The public address, e.g. `https://duracash.onrender.com`. Password-reset, verification and invite emails use it for their links; they are not sent without it (a link built from the request's Host header could point a reset token at someone else's site). |
 | `LEGAL_ENTITY`, `LEGAL_ADDRESS`, `LEGAL_EMAIL`, `LEGAL_STATE`, `DATA_REGION` | Company details shown in the Terms of Service and Privacy Policy (`/terms`, `/privacy`). Until all are set and `LEGAL_REVIEWED=1`, both pages say they are a draft. |
 | `LEGAL_REVIEWED` | `1` once a lawyer has reviewed the text in `legal/` and the details above are filled in. |
 | `BACKUP_HOURS` | Hours between automatic backups, default 24; `0` turns them off. |
