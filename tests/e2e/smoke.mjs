@@ -139,6 +139,10 @@ await step("money path: the main button walks a job from blocked to closed", asy
       assert.match(new URL(page.url()).pathname, /^\/money\/pay-app\//);
       await page.click('.send-check [data-action="send"]');
       await page.locator('.send-check [data-action="send"]').waitFor({ state: "detached" });
+      // The demo never emails, so Today lists the pay app's email as one that didn't go out (R1-11).
+      await page.goto(BASE + "/today");
+      await page.locator(".action-item", { hasText: "Inman Park bath" }).filter({ hasText: "Didn't go out" })
+        .getByRole("button", { name: "Send again" }).waitFor();
       await page.goto(BASE + "/jobs/job-inman");
     } else if (label === "Choose waiver and send") {
       await main.click();

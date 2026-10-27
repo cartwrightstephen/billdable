@@ -886,6 +886,39 @@ def _closed_recently(job: dict[str, Any], since: str) -> bool:
     return (job.get("closed_at") or job.get("completed_at") or "") >= since
 
 
+def _email_failed(e: dict[str, Any]) -> bool:
+    status = e.get("status") or ""
+    return status.startswith("failed") or status.startswith("not sent")
+
+
+def email_failures(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Emails that didn't go out and still matter, newest first: the latest email about an item
+    (the same job, kind and pay app) failed, the job is open, the pay app is not void, and a pay
+    app or follow-up is still unpaid.
+    The demo's sample Outbox rows (seed.py) are not real sends and are left out."""
+    jobs = {j["id"]: j for j in state.get("jobs", [])}
+    latest: dict[tuple, dict[str, Any]] = {}
+    for e in state.get("email_log", []):
+        latest[(e.get("job_id"), e.get("kind"), e.get("payapp_invoice_id"))] = e
+    out = []
+    for e in latest.values():
+        job = jobs.get(e.get("job_id"))
+        # Demo files seeded before the flag: their sample rows' ids are "eml-<pay app id>".
+        sample = e.get("sample") or e.get("id") == f"eml-{e.get('payapp_invoice_id')}"
+        if not _email_failed(e) or sample or not job or job.get("closed"):
+            continue
+        inv = next((i for i in job.get("invoices", []) if i["id"] == e.get("payapp_invoice_id")), None)
+        if inv and (inv.get("status") == "void" or inv.get("replaced")):
+            continue
+        # Once the money is in, a pay app or follow-up that didn't go out no longer matters.
+        if e.get("kind") == "pay_app" and inv and inv.get("status") == "paid":
+            continue
+        if e.get("kind") == "follow_up" and not any(i.get("status") in {"sent", "partial"} for i in job.get("invoices", [])):
+            continue
+        out.append(e)
+    return sorted(out, key=lambda e: e.get("at", ""), reverse=True)
+
+
 def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """What /api/state sends: bounded by the open work, not by the company's whole history."""
     since = ((now or datetime.now(timezone.utc)) - timedelta(days=RECENT_CLOSED_DAYS)).isoformat()
@@ -919,6 +952,10 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     emails = state.get("email_log", [])
     out["email_log"] = deepcopy(emails[-RECENT_EMAILS:])
     out["email_log_total"] = len(emails)
+    # Today lists these with Send again, however old they are; the count is for the Today badge.
+    failures = email_failures(state)
+    out["email_failures"] = [{k: v for k, v in e.items() if k != "body"} for e in failures[:RECENT_EMAILS]]
+    out["pending_email_failures"] = len(failures)
     out["audit_total"] = len(state.get("audit", []))
     out["closed_jobs_total"] = closed_count
     out["audit_chain"] = check_audit(state)

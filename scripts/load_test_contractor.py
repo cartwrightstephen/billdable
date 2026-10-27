@@ -434,7 +434,9 @@ def imports(run: Run) -> None:
         run.record(f"CSV row {ref}: {status_word}{' ' + code if code else ''}", got == (status_word, code),
                    f"{row.get('status')} - {row.get('reason')}")
     warns = proposal.get("warnings", [])
-    run.record("CSV warnings for the refund and the non-number row", len(warns) == 2, " | ".join(warns))
+    run.record("CSV warnings for the refund, the non-number row and the invoice", len(warns) == 3
+               and any("an Invoice is not money received" in w for w in warns), " | ".join(warns))
+    run.record("CSV invoice row is not proposed", not any(r.get("ref") == "1043" for r in rows), "")
     picks = [{"job_id": r["job_id"], "invoice_id": r["invoice_id"], "amount_cents": r["amount_cents"],
               "reference": r["ref"], "date": r.get("date") or ""} for r in rows if r.get("status") == "match"]
     applied = run.post("Record the ticked (matched) payments", "/api/import/payments-apply", {"payments": picks}, quiet=True)

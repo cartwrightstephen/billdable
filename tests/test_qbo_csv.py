@@ -56,5 +56,52 @@ class ProposeAndApplyTests(unittest.TestCase):
         self.assertEqual(big[0]["status"], "too much")
 
 
+class UnfilteredReportTests(unittest.TestCase):
+    """R1-10: a Transaction List that was not filtered to payments, and check numbers two customers share."""
+
+    def test_invoice_row_is_skipped_and_payment_proposed(self):
+        state = seed_state()
+        trn = next(j for j in state["jobs"] if j["code"] == "TRN")
+        owed = next(i for i in trn["invoices"] if i["status"] in domain.OPEN_FOR_PAYMENT)["amount_cents"]
+        text = ("Date,Transaction Type,Num,Name,Memo/Description,Amount\n"
+                f"10/01/2026,Invoice,1043,Northline GC,,{owed / 100:.2f}\n"
+                f"10/09/2026,Payment,4417,Northline GC,,{owed / 100:.2f}\n"
+                "10/09/2026,Sales Receipt,4418,Someone Else,,10.00\n"
+                "10/09/2026,Deposit,4419,Someone Else,,10.00\n")
+        parsed = qbo_csv.parse(text)
+        self.assertEqual([r["ref"] for r in parsed["rows"]], ["4417", "4418", "4419"])
+        self.assertEqual(parsed["warnings"], ["Line 2: skipped, an Invoice is not money received."])
+        rows = qbo_csv.propose(state, parsed["rows"])
+        self.assertEqual((rows[0]["status"], rows[0]["number"]), ("match", "PA-TRN-01"))
+
+    def test_same_check_number_from_two_customers(self):
+        state = seed_state()
+        trn = next(j for j in state["jobs"] if j["code"] == "TRN")
+        brk = next(j for j in state["jobs"] if j["code"] == "BRK")
+        payer = {p["id"]: p["name"] for p in state["payers"]}
+        domain.match_payment(state, trn["id"], 100, "1001", "owner")
+        rows = qbo_csv.propose(state, [
+            {"line": 2, "date": None, "ref": "1001", "customer": payer[trn["payer_id"]], "amount_cents": 100, "memo": ""},
+            {"line": 3, "date": None, "ref": "1001", "customer": payer[brk["payer_id"]], "amount_cents": 100, "memo": ""},
+            {"line": 4, "date": None, "ref": "1001", "customer": "Someone Else", "amount_cents": 100, "memo": ""},
+        ])
+        self.assertEqual(rows[0]["status"], "already recorded")
+        self.assertEqual(rows[0]["reason"], f"Check 1001 from {payer[trn['payer_id']]} for $1.00 is already recorded on {trn['name']}.")
+        self.assertNotEqual(rows[1]["status"], "already recorded")
+        self.assertNotEqual(rows[2]["status"], "already recorded")
+
+    def test_two_payers_sharing_check_1001_are_both_proposed(self):
+        state = seed_state()
+        trn = next(j for j in state["jobs"] if j["code"] == "TRN")
+        brk = next(j for j in state["jobs"] if j["code"] == "BRK")
+        payer = {p["id"]: p["name"] for p in state["payers"]}
+        owed = {j["code"]: next(i for i in j["invoices"] if i["status"] in domain.OPEN_FOR_PAYMENT) for j in (trn, brk)}
+        rows = qbo_csv.propose(state, [
+            {"line": 2, "date": None, "ref": "1001", "customer": payer[trn["payer_id"]], "amount_cents": owed["TRN"]["amount_cents"], "memo": ""},
+            {"line": 3, "date": None, "ref": "1001", "customer": payer[brk["payer_id"]], "amount_cents": owed["BRK"]["amount_cents"], "memo": ""},
+        ])
+        self.assertEqual([(r["status"], r["number"]) for r in rows], [("match", owed["TRN"]["number"]), ("match", owed["BRK"]["number"])])
+
+
 if __name__ == "__main__":
     unittest.main()

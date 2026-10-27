@@ -141,6 +141,42 @@ class MailerUnitTests(unittest.TestCase):
         self.assertIn("could not connect", closed[0])
 
 
+class EmailFailureTests(unittest.TestCase):
+    """light_snapshot's pending_email_failures: the Outbox entries Today lists as "Didn't go out"."""
+
+    def state_with(self, *entries):
+        from seed import seed_state
+        import domain
+        state = seed_state()
+        job = next(j for j in state["jobs"] if not j.get("closed") and any(i["status"] in {"sent", "partial"} for i in j["invoices"]))
+        inv = next(i for i in job["invoices"] if i["status"] in {"sent", "partial"})
+        for n, (status, extra) in enumerate(entries):
+            state["email_log"].append({"id": f"eml-t{n}", "at": f"2026-10-2{n}T12:00:00+00:00", "job_id": job["id"], "kind": "pay_app",
+                                       "to": "ap@x.example", "subject": "Pay app", "body": "b", "payapp_invoice_id": inv["id"],
+                                       "status": status, **extra})
+        return domain, state, job, inv
+
+    def test_counts_a_failed_outbox_entry(self):
+        domain, state, _, _ = self.state_with(("failed: recipient refused", {}))
+        snap = domain.light_snapshot(state)
+        self.assertEqual(snap["pending_email_failures"], 1, "the demo's sample rows are not counted")
+        self.assertEqual(snap["email_failures"][0]["id"], "eml-t0")
+
+    def test_a_later_send_of_the_same_item_clears_it(self):
+        domain, state, _, _ = self.state_with((mailer.NOT_SET_UP, {}), ("sent", {}))
+        self.assertEqual(domain.light_snapshot(state)["pending_email_failures"], 0)
+
+    def test_void_pay_app_or_closed_job_is_not_counted(self):
+        domain, state, job, inv = self.state_with(("failed: timeout", {}))
+        inv["status"] = "void"
+        self.assertEqual(domain.light_snapshot(state)["pending_email_failures"], 0)
+        inv["status"] = "paid"
+        self.assertEqual(domain.email_failures(state), [], "the money is in")
+        inv["status"] = "sent"
+        job["closed"] = True
+        self.assertEqual(domain.email_failures(state), [])
+
+
 class MailHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -257,6 +293,10 @@ class MailHttpTests(unittest.TestCase):
         entry = state["email_log"][-1]
         self.assertEqual(entry["status"], mailer.NOT_SET_UP)
         self.assertEqual(self.sink.messages, [])
+        # Today lists it with Send again (R1-11), counted for the badge.
+        self.assertEqual(state["pending_email_failures"], 1)
+        self.assertEqual([e["id"] for e in state["email_failures"]], [entry["id"]])
+        self.assertNotIn("body", state["email_failures"][0])
         _, settings = self.request("GET", "/api/import/settings", cookie=cookie)
         self.assertFalse(settings["mail_configured"])
         self.mail_on()
@@ -264,6 +304,7 @@ class MailHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
         self.assertEqual(state["email_log"][-1]["retried"], 1)
+        self.assertEqual((state["pending_email_failures"], state["email_failures"]), (0, []))
         self.assertEqual(len(self.sink.messages), 1)
         res, _ = self.request("POST", f"/api/outbox/{entry['id']}/retry", {}, cookie=cookie)
         self.assertEqual(res.status, 409)  # already sent

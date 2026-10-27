@@ -27,6 +27,7 @@ def seed_state() -> dict:
             "cc": [],
             "payapp_invoice_id": inv["id"],
             "status": "not sent: demo account",
+            "sample": True,  # not a real send: Today doesn't list it as an email that didn't go out
         }
         for job in state["jobs"]
         for inv in job["invoices"]

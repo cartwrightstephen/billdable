@@ -21,7 +21,9 @@ When a result differs, note the step number and what you saw. Known app problems
 
 Email is not set up on a test server, so every send ends with a toast like
 "Saved. The email to ap@... was not sent: email delivery is not set up." That is expected: the
-pay app is still marked sent, and the Outbox lists the email.
+pay app is still marked sent, and the Outbox lists the email. Today lists each of those that still matters (job open, pay app unpaid) at the top
+as **Didn't go out** with **Send again**, the Today menu item shows how many, and the pay app's row
+on its job page reads "sent <date> · email failed".
 
 ## 1. Look around (what the loader built)
 
@@ -29,7 +31,7 @@ pay app is still marked sent, and the Outbox lists the email.
 - [ ] 1.2 Open **Mill Creek Clubhouse**. Status pill **Needs paperwork** (amber, not red), primary button **Add 2 missing documents**. The Schedule of values card shows 5 lines and a $80,300.00 contract. PA-MILL-01 is a Draft for $33,042.90.
 - [ ] 1.3 Open **Decatur Library Annex**. Money shows $6,400.00 retainage open; PA-DECA-01 is Paid.
 - [ ] 1.4 **Settings > Payer playbook** shows 6 payers. Open **Tallow Creek Builders**: Follow-up days 5, Pay apps due by 25, Usual approval days 18, Copy pm@tallowcreekbuilders.example.
-- [ ] 1.5 **Today** > Needs you: Mill Creek Clubhouse shows its first blocker and **Add 2 missing documents**. Within 5 days before the 25th (Wrenfield's cutoff), Kennesaw Ortho Clinic shows "Due soon" with **Bill progress** and the cutoff date. (MILL gets no cutoff row: it already has a pay app this cycle.)
+- [ ] 1.5 **Today** > Needs you: Mill Creek Clubhouse shows its first blocker and **Add 2 missing documents**. Within 5 days before the 25th (the cutoff), Kennesaw Ortho Clinic shows "Due soon" with **Bill progress** and the cutoff date, and Mill Creek's blocked row ends with "Pay app due to Tallow Creek Builders by <the 25th>." and moves up: its PA-MILL-01 is only a draft, so this cycle is not billed yet. Above them, each unpaid pay app and each waiver the loader sent shows **Didn't go out** ("<subject> to <email>: not sent: email delivery is not set up") with **Send again**.
 
 ## 2. Enter one job fully by hand (new customer)
 
@@ -107,14 +109,14 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 
 ### 3c. QuickBooks payments CSV (Money > Payments)
 
-- [ ] 3.17 Open **Import payments from QuickBooks (CSV)**, paste all of `01_qbo-payments_partial-nomatch-odd-formats.csv`, tap **Read payments**. Expected two warnings at the top: "Line 12: skipped, (150.00) is not money received." and "Line 13: skipped, the amount 'pending' isn't a number." and 6 rows:
+- [ ] 3.17 Open **Import payments from QuickBooks (CSV)**, paste all of `01_qbo-payments_partial-nomatch-odd-formats.csv` (an unfiltered Transaction List: it also has a refund and an invoice), tap **Read payments**. Expected three warnings at the top: "Line 12: skipped, a Refund is not money received.", "Line 13: skipped, the amount 'pending' isn't a number." and "Line 14: skipped, an Invoice is not money received." and 6 rows (the invoice 1043 for PA-VEST-01 is not one of them):
 
   | Number | Customer | Amount | Date shown | Pay app / pill | Ticked |
   | --- | --- | --- | --- | --- | --- |
   | ACH-30211 | Corbel Street Properties | $36,020.00 | Oct 14, 2026 | PA-ASHB-01 · Ashby Lofts Amenity Deck ("The memo or number names PA-ASHB-01.") | yes |
   | 4471 | Ironleaf General Contractors | $28,750.00 | Oct 15, 2026 (from `2026-10-15`) | PA-GLEN-01 · Glenwood Retail Shell | yes |
   | 9902 | Harmon & Vale Construction | $42,000.00 | Oct 16, 2026 (from `10/16/26`) | "Too much": $42,000.00 is more than the $37,800.00 owed on PA-VEST-01 | no |
-  | CHK 40871 | Wrenfield Construction Group | $57,600.00 | Oct 17, 2026 (from `17-Oct-2026`) | "Already recorded" | no |
+  | CHK 40871 | Wrenfield Construction Group | $57,600.00 | Oct 17, 2026 (from `17-Oct-2026`) | "Already recorded" ("Payment CHK 40871 from Wrenfield Construction Group for $57,600.00 is already recorded on Decatur Library Annex.") | no |
   | 1187 | Priya Whitfield | $8,412.50 | Oct 20, 2026 (from `"Oct 20, 2026"`) | PA-WHIT-01 ("Same customer and exactly the $8,412.50 still owed.") | yes |
   | 2210 | Lakeside Fellowship Church | $1,850.00 | Oct 21, 2026 | "No match" | no |
 
@@ -141,7 +143,7 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 - [ ] 4.1 Open **Kirkwood Dental Suite** > **Progress pay app**. **Total done so far ($)** `13,725`, **What was completed** `Operatories 1-3 floors set`, **Draft progress pay app**. Expected: PA-KIRK-01 Draft $13,725.00; pill **Needs paperwork**; next step "Attach the paperwork, then send: Signed contract, Conditional waiver, Completion photos, Pay-app backup"; primary button **Add 4 missing documents**; blockers "Signed contract is missing.", "Conditional waiver is missing.", "Completion photos is missing.", "Pay-app backup is missing." ("Contract LDP-0412" is only the number from the form, so it is not attached by itself.)
 - [ ] 4.2 **Add 4 missing documents**. Each missing item has **Attach**, **Mark present…** and **Not needed for this customer**. On **Signed contract** pick "Contract LDP-0412" and tap **Attach**. Expected: ✓ and "Attached: Contract LDP-0412".
 - [ ] 4.3 For the other three: **Mark present…**, type `Emailed to Dr. Lindell on 10/20`, **Save reason**. Expected: each shows "Marked present: Emailed to Dr. Lindell on 10/20". The job's status reads "Pay app ready for review", and Today tags it "Ready to send" with **Review & send**.
-- [ ] 4.4 Tap **Review & send** on Today's row: it opens the pay app (PA-KIRK-01) at **Before you send**. **Open the PDF**: "APPLICATION FOR PAYMENT", FROM block = Brightwater Tile & Stone LLC, 2480 Cobb Industrial Ct, Smyrna, GA 30080. **Before you send** shows To "Dr. Maya Lindell · billing@lindelldental.example" and the first-send notice. Tap **Approve & send to billing@lindelldental.example**. Expected: PA-KIRK-01 Sent; status "Submitted to Lindell Dental Partners, awaiting Dr. Maya Lindell".
+- [ ] 4.4 Tap **Review & send** on Today's row: it opens the pay app (PA-KIRK-01) at **Before you send**. **Open the PDF**: "APPLICATION FOR PAYMENT", FROM block = Brightwater Tile & Stone LLC, 2480 Cobb Industrial Ct, Smyrna, GA 30080. **Before you send** shows To "Dr. Maya Lindell · billing@lindelldental.example" and the first-send notice. Tap **Approve & send to billing@lindelldental.example**. Expected: PA-KIRK-01 Sent; status "Submitted to Lindell Dental Partners, awaiting Dr. Maya Lindell". The job page's Pay apps row reads "sent <today> · email failed", and Today's first row is **Didn't go out** for Kirkwood Dental Suite: "Pay application PA-KIRK-01 … to billing@lindelldental.example: not sent: email delivery is not set up". **Send again** keeps it there (mail is still not set up); with mail set up it would go out and the row would leave.
 - [ ] 4.5 Job page > **Match payment**: pay app PA-KIRK-01, **Amount received ($)** `13,725`, **Reference** `CHK 2207`, **Match**. Expected: Paid; status "Payment received, waiver not sent"; primary **Choose waiver and send**.
 - [ ] 4.6 **Choose waiver and send** opens **Waivers: Kirkwood Dental Suite** with the type preselected (Unconditional, progress). With no Lien waiver on the job record it first shows "No signed waiver on the job yet" with **Take a photo** and **Choose file** (a file picked there is filed to the job as a Lien waiver). **Approve & send**. Expected: the email in the Outbox is "Unconditional waiver on progress payment for PA-KIRK-01 — Kirkwood Dental Suite".
 - [ ] 4.6a Correct the amount (before 4.7, on a second progress draft): **Progress pay app**, **Total done so far ($)** `20,000`, **Draft progress pay app**: PA-KIRK-02 Draft $6,275.00; the form says "This replaces PA-KIRK-02 at the new total. Its number and paperwork stay." Open the form again, enter `18,000`: still **PA-KIRK-02**, now $4,275.00 (the first one is voided and kept out of the list), with the same paperwork. Enter `13,000`: refused under the box with "Enter more than the $13,725.00 already billed. …". **Void draft**: no draft left, and the progress goes back to $13,725.00.

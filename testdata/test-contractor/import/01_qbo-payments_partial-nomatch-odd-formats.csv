@@ -11,5 +11,6 @@ Date,Transaction Type,Num,Name,Memo/Description,Amount
 10/21/2026,Payment,2210,Lakeside Fellowship Church,Grout repair (cash job),"1,850.00"
 10/21/2026,Refund,2211,Lakeside Fellowship Church,Deposit refund,(150.00)
 10/21/2026,Payment,2212,Lakeside Fellowship Church,Check to follow,pending
+10/21/2026,Invoice,1043,Harmon & Vale Construction,PA-VEST-01,"37,800.00"
 ,,,,,
 TOTAL,,,,,"174,632.50"

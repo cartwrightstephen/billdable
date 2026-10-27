@@ -609,11 +609,22 @@ function coSignControls(j, co, extra = "") {
 // open the pay app's "Before you send" card, or the waiver page with its type, which show what
 // leaves and to whom. A follow-up names its
 // recipient on the row, and drafting or filing sends nothing.
+// The pay app's latest email didn't go out (light_snapshot's email_failures).
+function emailFailed(invoiceId) {
+  return (state.email_failures || []).some(e => e.payapp_invoice_id === invoiceId);
+}
+
 function todayQueue() {
   const out = [];
   const add = (rank, j, pill, text, button, opensJob = false) => out.push({ rank, j, pill, text, button, opensJob });
   const tag = (word, color = "") => `<span class="pill ${color}">${word}</span>`;
   const inbox = (state.inbox || []).filter(i => i.status === "new");
+  // An email that didn't go out (the server lists the latest per pay app or follow-up, open jobs only).
+  (state.email_failures || []).forEach(e => {
+    const j = state.jobs.find(x => x.id === e.job_id && !x.closed);
+    if (j) add(0.5, j, tag("Didn't go out", "red"), `${e.subject} to ${e.to}: ${e.status}`,
+      `<button class="btn small" data-action="email-retry" data-email="${e.id}">Send again</button>`);
+  });
   inbox.filter(i => i.says_done_job_id).forEach(i => {
     const j = state.jobs.find(x => x.id === i.says_done_job_id && !x.closed);
     if (j) add(0, j, tag("Job's done?", "copper"), `${SOURCE_LABELS[i.source] || i.source}${i.from ? " from " + i.from : ""}: ${(i.text || i.subject || "").split("\n")[0].slice(0, 120)}`,
@@ -623,7 +634,8 @@ function todayQueue() {
     const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
     // The payer's monthly cutoff (playbook): within five days, and nothing billed since the last one.
     const nextDue = toDate(j.payer.payapp_due_next), prevDue = toDate(j.payer.payapp_due_prev);
-    const billedThisCycle = prevDue && j.invoices.some(i => i.status !== "void" && (toDate(i.created_at || i.sent_at) || 0) > prevDue);
+    // Only a pay app that went out counts: a draft stuck on paperwork still leaves the cutoff ahead.
+    const billedThisCycle = prevDue && j.invoices.some(i => ["sent", "approved", "partial", "paid"].includes(i.status) && (toDate(i.sent_at || i.created_at) || 0) > prevDue);
     const mayBill = j.work_status !== "complete" || j.money.unbilled_completed_cents > 0;
     const dueSoon = nextDue && mayBill && !billedThisCycle && (nextDue - new Date(new Date().toDateString())) <= 5 * 86400000;
     const dueText = dueSoon ? ` Pay app due to ${j.payer.name} by ${fmtDate(j.payer.payapp_due_next)}.` : "";
@@ -723,6 +735,7 @@ function render() {
   const section = sectionOf(currentView);
   const tabView = DETAIL_PARENT[currentView] || currentView;
   const inboxCount = newInboxCount();
+  const failedEmails = state.pending_email_failures || 0;
   const tabs = section.views.filter(([v]) => v !== "helper-admin" || helperAdmin);
   const shell = `
     <a class="skip-link" href="#main">Skip to content</a>
@@ -736,7 +749,7 @@ function render() {
         <div class="brand">Duracash</div>
         <div class="company"><strong>${company.name}</strong>${companyLine(company) ? `<br>${companyLine(company)}` : ""}</div>
         <nav class="nav" aria-label="Main">
-          ${SECTIONS.map(s => `<button class="${s.key === section.key ? "active" : ""}" data-action="section" data-section="${s.key}" ${s.key === section.key ? 'aria-current="page"' : ""}>${s.label}${s.key === "inbox" && inboxCount ? ` <span class="count" aria-label="${inboxCount} new">${inboxCount}</span>` : ""}</button>`).join("")}
+          ${SECTIONS.map(s => `<button class="${s.key === section.key ? "active" : ""}" data-action="section" data-section="${s.key}" ${s.key === section.key ? 'aria-current="page"' : ""}>${s.label}${s.key === "inbox" && inboxCount ? ` <span class="count" aria-label="${inboxCount} new">${inboxCount}</span>` : ""}${s.key === "today" && failedEmails ? ` <span class="count" aria-label="${failedEmails} email${failedEmails === 1 ? "" : "s"} didn't go out">${failedEmails}</span>` : ""}</button>`).join("")}
         </nav>
         <div class="user-meta">
           ${me ? me.name : ""}<br>${me ? me.email : ""}
@@ -2381,7 +2394,7 @@ const views = {
             const pencil = i.pencil_status ? ` · pencil ${i.pencil_status === "sent" ? "with payer" : words(i.pencil_status)}${i.pencil_note ? ": " + i.pencil_note : ""}` : "";
             return `<div class="list-item row-link">
               <div><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}"><strong>${i.number}</strong></a> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
-              <div class="sub row-sub">${i.status === "void" ? "Voided" : missing ? `${missing} packet item${missing === 1 ? "" : "s"} missing` : "Packet complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by ? " · approved by " + i.approved_by : ""}${pencil}</div></div>
+              <div class="sub row-sub">${i.status === "void" ? "Voided" : missing ? `${missing} packet item${missing === 1 ? "" : "s"} missing` : "Packet complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by ? " · approved by " + i.approved_by : ""}${pencil}</div></div>
             </div>`;
           }).join("") : `<p class="sub">No pay apps yet. ${j.work_status === "complete" ? "Draft one from the unbilled work." : "Record progress or mark the job done to draft one."}</p>`}
           ${closeout.length ? `<div class="list-item row-link"><div><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout"><strong>Closeout packet</strong></a> <span class="sub">gates the retainage release · ${closeoutMissing ? closeoutMissing + " missing" : "complete"}</span></div></div>` : ""}
@@ -2782,7 +2795,7 @@ const views = {
             <td><a href="${pathFor("job", a.jobId)}" data-action="open-job" data-id="${a.jobId}">${a.job}</a></td>
             <td class="num">${money(a.amount_cents)}</td>
             <td>${invoicePill(a)}</td>
-            <td>${a.sent_at ? fmtDate(a.sent_at) : "—"}</td>
+            <td>${a.sent_at ? fmtDate(a.sent_at) : "—"}${emailFailed(a.id) ? " · email failed" : ""}</td>
             <td>${a.blockers.join("; ") || "—"}</td>
           </tr>`).join("")}
         </table>
@@ -2879,7 +2892,7 @@ const views = {
     state.jobs.forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     const imp = paymentImport;
     const importCard = `<details class="card"${imp ? " open" : ""}><summary><strong>Import payments from QuickBooks (CSV)</strong></summary>
-      <p class="sub">In QuickBooks, run a report of payments received (for example Transaction List by Date, filtered to payments) and export it to CSV. Paste it here. Duracash proposes a pay app for each payment; nothing is recorded until you tick and apply. A check number already in Duracash is skipped, so importing the same file twice is safe.</p>
+      <p class="sub">In QuickBooks, export a report to CSV and paste it here. Any QuickBooks report with payments in it works; invoices and refunds are skipped. Duracash proposes a pay app for each payment and records nothing until you tick and apply. A check already recorded from the same customer is skipped, so importing the same file twice is safe.</p>
       ${imp ? `${imp.warnings.length ? `<div class="sov-warn">${imp.warnings.map(w => `<div>${w}</div>`).join("")}</div>` : ""}
         <div class="table-wrap"><table>
           <tr><th>Record</th><th>Date</th><th>Customer</th><th>Number</th><th>Amount</th><th>Pay app</th><th>Why</th></tr>

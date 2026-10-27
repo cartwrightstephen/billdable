@@ -1,10 +1,12 @@
 """Payments from a QuickBooks CSV export (P2-1, the CSV half of the QuickBooks import).
 
 Until the QuickBooks Online connection is built, the bookkeeper exports received payments
-(Reports, e.g. "Transaction List by Date" filtered to payments, Export to CSV) and pastes
+(Reports, e.g. "Transaction List by Date", Export to CSV; rows whose Transaction Type is not
+money in, such as invoices and refunds, are skipped) and pastes
 them in. Duracash proposes a pay app for each row and records nothing until someone
 applies the matches. Matching is keyed on the payment's reference (check number or QuickBooks
-number), which can be recorded once per job, so importing the same file twice is harmless.
+number) together with the customer, since two customers can send the same check number; a
+reference can be recorded once per job, so importing the same file twice is harmless.
 
 The column names QuickBooks uses are from memory, not from a real export, so the reader
 accepts several spellings and finds the header row below any report-title lines.
@@ -26,7 +28,10 @@ COLUMNS = {
     "customer": {"customer", "name", "received from", "customer:job", "customer/job", "payer"},
     "amount": {"amount", "payment", "payment amount", "amount received", "total", "total amount"},
     "memo": {"memo", "memo/description", "description", "notes"},
+    "type": {"transaction type", "type", "txn type"},
 }
+# Transaction types that are money in. An unfiltered report also lists invoices, bills and refunds.
+MONEY_IN = {"payment", "sales receipt", "deposit", "receive payment"}
 PAYAPP_RE = re.compile(r"\bPA-[A-Z0-9]{1,12}-\d{1,4}\b")
 MAX_ROWS = 2_000
 
@@ -76,6 +81,10 @@ def parse(text: str) -> dict[str, Any]:
         get = lambda name: row[cols[name]].strip() if name in cols and cols[name] < len(row) else ""
         if not any(c.strip() for c in row):
             continue
+        kind = get("type")
+        if kind and _norm(kind) not in MONEY_IN and not any(_norm(c).startswith("total") for c in row):
+            warnings.append(f"Line {n}: skipped, {'an' if kind[:1].lower() in 'aeiou' else 'a'} {kind} is not money received.")
+            continue
         amount = _cents(get("amount"))
         if amount is None:
             if get("customer") or get("ref"):
@@ -92,6 +101,11 @@ def parse(text: str) -> dict[str, Any]:
     return {"rows": out[:MAX_ROWS], "warnings": warnings[:50]}
 
 
+def _same(cust: str, payer: str) -> bool:
+    """A report's customer names this payer: one normalized name contains the other."""
+    return bool(cust and payer) and (payer in cust or cust in payer)
+
+
 def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """A proposed pay app for each row, and why. Changes nothing."""
     payers = {p["id"]: p for p in state.get("payers", [])}
@@ -103,13 +117,21 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
             if inv.get("status") in domain.OPEN_FOR_PAYMENT:
                 paid = sum(p["amount_cents"] for p in job.get("payments", []) if p.get("invoice_id") == inv["id"])
                 open_apps.append((job, inv, inv["amount_cents"] - paid))
-    refs = {p.get("reference") for j in state.get("jobs", []) for p in j.get("payments", [])}
+    recorded = [(j, p, _norm(payers.get(j.get("payer_id"), {}).get("name", "")))
+                for j in state.get("jobs", []) for p in j.get("payments", []) if p.get("reference")]
     out = []
     for row in rows:
         result = {**row, "status": "no match", "reason": "No open pay app has this number, or this customer and amount.",
                   "job_id": None, "invoice_id": None, "number": None}
-        if row["ref"] and row["ref"] in refs:
-            result.update(status="already recorded", reason=f"Payment {row['ref']} is already in Duracash.")
+        # A check number is only unique per customer: two customers can both send check 1001.
+        # Without a customer column the number alone decides, to stay on the safe side.
+        cust = _norm(row["customer"])
+        seen = next((j for j, p, name in recorded if p["reference"] == row["ref"] and (not cust or _same(cust, name))), None) if row["ref"] else None
+        if seen:
+            what = "Check" if row["ref"].isdigit() else "Payment"
+            who = f" from {row['customer']}" if row["customer"] else ""
+            result.update(status="already recorded",
+                          reason=f"{what} {row['ref']}{who} for {domain.money(row['amount_cents'])} is already recorded on {seen['name']}.")
             out.append(result)
             continue
         named = set(PAYAPP_RE.findall(f"{row['memo']} {row['ref']}"))
@@ -118,10 +140,8 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
         if hit:
             reason = f"The memo or number names {hit[1]['number']}."
         else:
-            cust = _norm(row["customer"])
             same = [(j, i, r) for j, i, r in open_apps
-                    if cust and (_norm(payers.get(j.get("payer_id"), {}).get("name", "")) in cust or cust in _norm(payers.get(j.get("payer_id"), {}).get("name", "")))
-                    and r == row["amount_cents"]]
+                    if cust and _same(cust, _norm(payers.get(j.get("payer_id"), {}).get("name", ""))) and r == row["amount_cents"]]
             if len(same) == 1:
                 hit, reason = same[0], f"Same customer and exactly the {domain.money(row['amount_cents'])} still owed."
             elif len(same) > 1:
