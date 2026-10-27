@@ -899,7 +899,9 @@ def email_failures(state: dict[str, Any]) -> list[dict[str, Any]]:
     jobs = {j["id"]: j for j in state.get("jobs", [])}
     latest: dict[tuple, dict[str, Any]] = {}
     for e in state.get("email_log", []):
-        latest[(e.get("job_id"), e.get("kind"), e.get("payapp_invoice_id"))] = e
+        # A waiver or a signature request names its pay app or change order only in the subject.
+        which = e.get("payapp_invoice_id") or (e.get("subject") if e.get("kind") in {"waiver", "co_signature"} else None)
+        latest[(e.get("job_id"), e.get("kind"), which)] = e
     out = []
     for e in latest.values():
         job = jobs.get(e.get("job_id"))
@@ -914,6 +916,15 @@ def email_failures(state: dict[str, Any]) -> list[dict[str, Any]]:
         if e.get("kind") == "pay_app" and inv and inv.get("status") == "paid":
             continue
         if e.get("kind") == "follow_up" and not any(i.get("status") in {"sent", "partial"} for i in job.get("invoices", [])):
+            continue
+        # A draft for review is moot once the pay app itself went out; a signature request once
+        # the change order is signed or withdrawn.
+        if e.get("kind") == "pencil" and inv and inv.get("status") not in DRAFT_STATUSES:
+            continue
+        if e.get("kind") == "co_signature" and not any(
+            co.get("status") == "pending" and f"change order {co['number']} " in (e.get("subject") or "")
+            for co in job.get("change_orders", [])
+        ):
             continue
         out.append(e)
     return sorted(out, key=lambda e: e.get("at", ""), reverse=True)
@@ -1110,6 +1121,8 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
         else:
             payer[k] = v
         changed.append(k)
+    if clean.get("packet"):
+        payer.pop("no_paperwork", None)  # a list typed in again replaces "nothing needed"
     audit(state, "", "playbook_update", f"{actor} updated {payer['name']}: {', '.join(changed) or 'no change'}.", actor)
     return payer
 
@@ -1623,6 +1636,8 @@ def _new_packet(state: dict[str, Any], job: dict[str, Any], invoice_id: str) -> 
     labels = [l for l in parse_packet_text(payer.get("packet", "")) if not _is_closeout(l)]
     if labels:
         return _items_from_labels(invoice_id, labels)
+    if payer.get("no_paperwork"):
+        return []  # every item was marked not needed for this customer
     items = [
         _packet_item(invoice_id, "contract", "Signed contract", "Signed contract is missing."),
         _packet_item(invoice_id, "waiver", "Conditional lien waiver", "Conditional lien waiver is missing."),
@@ -1738,9 +1753,16 @@ def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: s
     item["skipped_at"] = utcnow()
     payer = _payer(state, job["payer_id"])
     labels = parse_packet_text(payer.get("packet", ""))
+    if not labels and _invoice:
+        # No list saved: this pay app used the default one, so save what it asked for, less this.
+        labels = [p["label"] for p in _invoice.get("packet") or [] if p is item or not p.get("skipped_reason")]
     kept = [l for l in labels if l.lower() != item["label"].lower()]
     if len(kept) != len(labels):
         payer["packet"] = _packet_text(kept)
+        if kept:
+            payer.pop("no_paperwork", None)
+        else:
+            payer["no_paperwork"] = True  # an empty list would bring the default one back
         audit(state, "", "playbook_update", f"{actor} took \"{item['label']}\" off {payer['name']}'s paperwork list.", actor)
     audit(state, job_id, "paperwork_not_needed", f"{actor} marked {item['label']} not needed: {item['skipped_reason']}.", actor)
     _refresh_draft_gate(job)

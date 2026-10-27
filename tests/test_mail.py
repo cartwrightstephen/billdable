@@ -176,6 +176,23 @@ class EmailFailureTests(unittest.TestCase):
         job["closed"] = True
         self.assertEqual(domain.email_failures(state), [])
 
+    def test_moot_draft_and_signature_requests_are_not_counted(self):
+        domain, state, job, inv = self.state_with()
+        state["email_log"].append({"id": "eml-pencil", "at": "2026-10-20T12:00:00+00:00", "job_id": job["id"], "kind": "pencil",
+                                   "to": "ap@x.example", "subject": "Pencil copy", "body": "b", "payapp_invoice_id": inv["id"],
+                                   "status": "failed: timeout"})
+        self.assertEqual(domain.email_failures(state), [], "the pay app itself has gone out since")
+        job.setdefault("change_orders", []).extend([
+            {"id": "co-a", "number": 91, "status": "pending", "amount_cents": 100, "title": "A"},
+            {"id": "co-b", "number": 92, "status": "approved", "amount_cents": 100, "title": "B"},
+        ])
+        for n in (91, 92):
+            state["email_log"].append({"id": f"eml-co{n}", "at": "2026-10-21T12:00:00+00:00", "job_id": job["id"], "kind": "co_signature",
+                                       "to": "ap@x.example", "subject": f"Please sign change order {n} — {job['name']}", "body": "b",
+                                       "payapp_invoice_id": None, "status": "failed: timeout"})
+        self.assertEqual([e["id"] for e in domain.email_failures(state)], ["eml-co91"],
+                         "each change order counts on its own, and a signed one no longer matters")
+
 
 class MailHttpTests(unittest.TestCase):
     @classmethod

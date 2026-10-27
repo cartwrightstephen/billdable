@@ -196,6 +196,30 @@ class FirstRunTests(unittest.TestCase):
         self.assertEqual(second["number"][-2:], "02")
         self.assertNotIn("Completion photos", [p["label"] for p in second["packet"]])
 
+    def test_every_item_not_needed_stays_that_way(self):  # R1-08, review: an emptied list must not bring the default back
+        cookie, _ = self.signup("first-run-no-paperwork@example.com")
+        res, data = self.request("POST", "/api/jobs", new_job_body(), cookie)
+        job_id = data["jobs"][-1]["id"]
+        res, data = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 2000000, "notes": ""}, cookie)
+        for item in self.job(data, job_id)["invoices"][-1]["packet"]:
+            if not item["present"]:
+                res, data = self.request("POST", f"/api/jobs/{job_id}/packet-skip/{item['id']}", {}, cookie)
+                self.assertEqual(res.status, 200, data)
+        job = self.job(data, job_id)
+        self.assertEqual(job["missing_paperwork"], [])
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        self.assertEqual(res.status, 200, data)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 3000000, "notes": ""}, cookie)
+        self.assertEqual(res.status, 200, data)
+        job = self.job(data, job_id)
+        self.assertEqual([p for p in job["invoices"][-1]["packet"] if p["required"] and not p["present"]], [],
+                         "the second pay app asks for nothing")
+        # Typing a list into Customer settings again brings paperwork back.
+        res, data = self.request("POST", f"/api/payers/{job['payer_id']}/update", {"packet": "Lien waiver."}, cookie)
+        self.assertEqual(res.status, 200, data)
+        payer = next(p for p in data["payers"] if p["id"] == job["payer_id"])
+        self.assertNotIn("no_paperwork", payer)
+
 
 class FirstRunWithMailTests(ServerCase):
     """On a server that sends mail: an unconfirmed email can't send, and says so (R1-07)."""

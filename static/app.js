@@ -1087,7 +1087,8 @@ const ACTIONS = {
   "daily-save": async () => {
     const notes = document.querySelector("#daily-notes")?.value || "";
     const job = document.querySelector("#daily-job")?.value;
-    if (job && notes) await post(`/api/jobs/${job}/daily-record`, { notes });
+    // A blank entry is refused by the server, under this button, rather than doing nothing.
+    if (job) await post(`/api/jobs/${job}/daily-record`, { notes });
   },
   "attach": async (el, id) => {
     const name = document.querySelector("#attach-name")?.value || "attachment.pdf";
@@ -1115,8 +1116,8 @@ const ACTIONS = {
     if (label) await post(`/api/jobs/${id}/add-evidence`, { label, kind: "note" });
   },
   "learn": async (el, id) => {
-    const reason = document.querySelector("#learn-reason")?.value;
-    if (reason) await post(`/api/jobs/${id}/learn-rejection`, { reason });
+    const reason = document.querySelector("#learn-reason")?.value || "";
+    await post(`/api/jobs/${id}/learn-rejection`, { reason });
   },
   "add-record": async (el, id) => {
     const v = formValues("record");
@@ -2590,7 +2591,10 @@ const views = {
       ${continuationHtml(inv, j)}
       <div class="card">
         <h2>Packet</h2>
-        ${pkt.length ? pkt.map(p => `<div class="list-item"><span aria-hidden="true">${p.present ? "✓" : "✗"}</span> ${p.label}<span class="visually-hidden">${p.present ? " present" : " missing"}</span></div>`).join("") : `<p class="sub">No packet on this pay app.</p>`}
+        ${pkt.length ? pkt.map(p => {
+          const skipped = !p.required && !p.present;
+          return `<div class="list-item"><span aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> ${p.label}${skipped ? ` <span class="sub">not needed</span>` : `<span class="visually-hidden">${p.present ? " in" : " missing"}</span>`}</div>`;
+        }).join("") : `<p class="sub">No packet on this pay app.</p>`}
         <button class="btn secondary small" data-action="open-packet" data-job="${j.id}" data-inv="${inv.id}">Open packet</button>
       </div>
       <div class="card">
