@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Check your email</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1F4FD1}a:hover{color:#16389A}
+</style>
+</helmet>
+<div style="background: #F5F5F3; font-family: 'IBM Plex Sans', sans-serif; color: #1B1B1B; min-height: 100%; display: flex; flex-wrap: wrap">
+  <aside style="flex: 1 1 200px; max-width: 232px; box-sizing: border-box; padding: 24px 16px; background: #EAEAE7; border-right: 1px solid #BDBDBD; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-size: 22px; font-weight: 600">Duracash</div>
+    <div style="font-size: 14px; color: #555555; margin-bottom: 20px"><strong style="color: #1B1B1B">Ridgeway Tile &amp; Bath</strong></div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 4px">
+      <a href="FirstRun.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 12px">Today</a>
+      <a href="NewJob.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Jobs</a>
+      <a href="Inbox.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Inbox</a>
+      <a href="Money.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Money</a>
+      <a href="Settings.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Settings</a>
+    </nav>
+    <div style="margin-top: 40px; padding-top: 12px; border-top: 1px solid #BDBDBD; font-size: 13px; color: #555555">Dana Ruiz<br>dana@ridgewaytile.example<br><a href="Landing.dc.html">Log out</a></div>
+  </aside>
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 20px 32px 48px; display: flex; flex-direction: column; gap: 18px; max-width: 1200px">
+    <nav aria-label="Today" style="display: flex; gap: 4px; border-bottom: 1px solid #BDBDBD; overflow-x: auto; white-space: nowrap">
+      <a href="FirstRun.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; padding: 10px 12px; border-bottom: 3px solid #1B1B1B">Overview</a>
+      <a href="Results.dc.html" style="text-decoration: none; color: #555555; padding: 10px 12px">Results</a>
+      <a href="Calendar.dc.html" style="text-decoration: none; color: #555555; padding: 10px 12px">Calendar</a>
+      <a href="#daily" style="text-decoration: none; color: #555555; padding: 10px 12px">Daily record</a>
+      <span style="margin-left: auto; align-self: center; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">/today</span>
+    </nav>
+    <section role="status" aria-labelledby="check" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; border: 2px solid #1B1B1B; gap: 8px">
+      <h2 id="check" style="margin: 0 0 8px; font-size: 20px; font-weight: 600; margin: 0">Check your email</h2>
+      <p style="margin: 0; font-size: 15px">We sent a confirmation link to dana@ridgewaytile.example. You can set up your first job meanwhile.</p>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap"><span style="text-decoration: none; border: 1px solid #8C8C8C; color: #1B1B1B; border-radius: 8px; padding: 8px 14px; white-space: nowrap; font-size: 14px">Send the link again</span><a href="FirstRun.dc.html" style="text-decoration: none; border: 1px solid #8C8C8C; color: #1B1B1B; border-radius: 8px; padding: 8px 14px; white-space: nowrap; font-size: 14px">Got it</a></div>
+    </section>
+    <h1 style="margin: 0; font-size: 36px; font-weight: 600">Today</h1>
+    <div style="background: #EAEAE7; border-radius: 8px; padding: 10px 14px; font-size: 14px">Free trial: nothing to pay until the first pay app you send through Duracash is paid, or until Jan 25, 2027.</div>
+    <section aria-labelledby="setup" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; position: relative">
+      <span aria-label="Hide the setup checklist" style="position: absolute; top: 12px; right: 16px; font-size: 20px; color: #555555">×</span>
+      <h2 id="setup" style="margin: 0 0 8px; font-size: 20px; font-weight: 600">Get your first pay app out</h2>
+      <p style="margin: 0; font-size: 14px; color: #555555; margin-bottom: 8px">0 of 5 steps done. Steps marked optional don't count. You can bring this back from Help.</p>
+      <ol style="margin: 0; padding-left: 20px; font-size: 15px">
+        <li style="font-weight: 600; padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Add your company address, phone and licence number (they print on every pay app).</span><a href="#co-address" style="text-decoration: none; background: #1F4FD1; color: #FFFFFF; border-radius: 8px; padding: 8px 14px; font-weight: 500; white-space: nowrap; font-size: 14px">Company details</a></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Create your first job: contract amount, customer and where pay apps go.</span><a href="NewJob.dc.html" style="text-decoration: none; border: 1px solid #8C8C8C; color: #1B1B1B; border-radius: 8px; padding: 8px 14px; white-space: nowrap; font-size: 14px">New job</a></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.</span></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Optional: Set up a schedule of values to bill line by line (paste it from your estimate).</span></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the customer needs.</span></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Add the missing paperwork, then Approve &amp; send.</span></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Optional: Already been paid on some jobs? Import the payments from QuickBooks.</span></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Optional: Connect QuickBooks.</span><a href="#payments" style="text-decoration: none; border: 1px solid #8C8C8C; color: #1B1B1B; border-radius: 8px; padding: 8px 14px; white-space: nowrap; font-size: 14px">QuickBooks</a></li>
+      </ol>
+    </section>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start">
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">WHEN NO LINK WENT OUT</span>
+        <span>The heading reads &quot;Your email isn't confirmed yet&quot; and the line gives the server's reason: &quot;No confirmation link went to dana@ridgewaytile.example: email delivery or DURACASH_URL is not set up on this server. You can set up your first job meanwhile.&quot; Send the link again shows only when this server sends mail.</span>
+      </div>
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">AFTER GOT IT</span>
+        <span>The panel goes; until the email is confirmed a one-line banner stays above Today with Send the link again (see Today: first run). The link in the email confirms the signed-in person at once.</span>
+      </div>
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">ON A PAY APP, BEFORE CONFIRMING</span>
+        <span>Before you send shows &quot;Confirm your email first so the pay app goes out from you.&quot; with Send the link again, and Approve &amp; send is off. The waiver page says the same for the waiver.</span>
+      </div>
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">SIGN-UP THAT LED HERE</span>
+        <span>Your name, Company name (&quot;you can add it later&quot;), Email, Password (10+ characters, checked when the box is left) and the terms box. An email that already has an account gets &quot;Sign in instead&quot;.</span>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1150}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

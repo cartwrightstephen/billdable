@@ -36,8 +36,24 @@ a{color:#1F4FD1}a:hover{color:#16389A}
     </nav>
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px">
       <h1 style="margin: 0; font-size: 36px; font-weight: 600">Jobs</h1>
-      <button type="button" style="height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">New job</button>
+      <button type="button" style="height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Cancel</button>
     </div>
+    <section aria-labelledby="newjob" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px">
+      <div><h2 id="newjob" style="margin: 0 0 8px; font-size: 20px; font-weight: 600">New job</h2><p style="margin: 0; font-size: 14px; color: #555555">Fields marked <span style="color: #B3261E">*</span> are required.</p></div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px">
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Job name <span style="color: #B3261E">*</span></span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">Ellison back porch</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Address <span style="color: #B3261E">*</span></span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">2215 Ponce de Leon Ave, Atlanta, GA 30307</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Customer <span style="color: #B3261E">*</span></span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">Ellison Residential</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Who pays you?</span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">The homeowner or property owner<span style="margin-left: auto; color: #555555">▾</span></div><span style="font-size: 13px; color: #555555">Sets the paperwork they usually need and when to follow up. You can change both later.</span></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Contract amount ($) <span style="color: #B3261E">*</span></span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">$12,800.00</div></div>
+        <p style="grid-column: 1 / -1; margin: 0; font-size: 14px; color: #555555">Pay apps go to Mara Ellison · ap@ellisonresidential.example. <a href="Playbook.dc.html">Change in Customer settings</a></p>
+      </div>
+      <div style="border-top: 1px solid #DADADA; padding-top: 12px; font-size: 15px; font-weight: 500"><span aria-hidden="true">▸ </span>More details (optional)</div>
+      <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap">
+        <a href="Job.dc.html" style="text-decoration: none; height: 50px; display: flex; align-items: center; padding: 0 22px; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font-size: 16px; font-weight: 600">Save job</a>
+        <span style="font-size: 14px; color: #555555">A saved customer: who signs off and the email come from Customer settings, so More details holds only Contract number, Retainage %, Phone and Notes. A new customer's form is drawn in <a href="NewJob.dc.html">New job: five boxes</a>.</span>
+      </div>
+    </section>
     <div style="overflow-x: auto; background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px">
       <table style="width: 100%; border-collapse: collapse; font-size: 14px">
         <thead><tr style="text-align: left; color: #555555; font-size: 13px">
@@ -64,7 +80,7 @@ a{color:#1F4FD1}a:hover{color:#16389A}
   </main>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1000}}'>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1450}}'>
 class Component extends DCLogic {
   renderVals() {
     return {};

@@ -60,42 +60,53 @@ The money loop is the middle: draft, clear the packet, send, follow up, record p
 
 ## 2. First day setup
 
-**Goal:** create the company, confirm the email, and fill in the company details that print on every pay app.
+**Goal:** create the company, confirm the email, and fill in the company details that print on every pay app. Redrawn from the code after Round 2 (Oct 27); the screens are the wireframes `CheckEmail`, `FirstRun`, `NewJob` and `FirstPacket` (`docs/wireframes/`).
 
 ```mermaid
 flowchart TD
-    A["Landing page: card 'Create your company' shows by default"] --> B["Fill Your name, Company name, Email, Password"]
+    A["Landing page: 'Create your company' card, or 'Sign in' on a device that has signed in before"] --> A2{"Just looking?"}
+    A2 -->|"Yes, and the server has the sample company"| DEMO["'Look around a sample company': the demo's Today, no account"]
+    A2 -->|"No"| B["Fill Your name, Company name (can wait), Email, Password"]
     B --> C["Tick 'I agree to the Terms of Service and the Privacy Policy.'"]
     C --> D["Tap 'Create account'"]
-    D --> E{"Password 10+ characters and box ticked?"}
-    E -->|"No"| B
-    E -->|"Yes"| F["Today: free trial banner, 'Get your first pay app out', and an email banner when the server can send mail"]
-    F --> G["Email: 'Confirm your email for Duracash', tap the link"]
+    D --> E{"Name, email, 10+ character password, box ticked?"}
+    E -->|"No"| E1["Red note under that box; nothing typed is lost"]
+    E1 --> B
+    E -->|"Email already has an account"| E2["'Sign in instead' under the email"]
+    E -->|"Yes"| F["Today: 'Check your email' panel, free trial banner, 'Get your first pay app out' checklist"]
+    F --> F1{"Did a link go out?"}
+    F1 -->|"Yes"| G["Email: 'Confirm your email for Duracash', tap the link"]
+    F1 -->|"No: mail not set up here"| F2["Panel reads 'Your email isn't confirmed yet' with the reason"]
     G --> H{"Link still good? valid 3 days"}
-    H -->|"Yes"| I["Toast: 'Your email is confirmed. Thanks.'"]
-    H -->|"No"| J["Banner: tap 'Send the link again'"]
+    H -->|"Yes"| I["Toast: 'Your email is confirmed. You can send pay apps now.'"]
+    H -->|"No"| J["'Send the link again' on the panel or the banner"]
     J --> G
-    I --> K["Settings: Team & account, card 'Company'"]
-    K --> L["Fill Company name, Phone, Address, Contractor licence number, How you bill"]
-    L --> M["Tap 'Save company details'"]
-    M --> N{"Office help?"}
-    N -->|"Yes"| O["Card 'Team': type their email, pick Member or Owner, tap 'Invite'"]
-    N -->|"No"| P["Done: next, add the first job"]
-    O --> Q{"Email confirmed and mail set up?"}
-    Q -->|"Yes"| R["Invite emailed, good for 7 days"]
-    Q -->|"Not emailed"| S["Copy the link and send it yourself"]
-    R --> P
-    S --> P
+    F --> K["Checklist step 1: 'Company details'"]
+    K --> L["Settings: Team & account, card 'Company', cursor in Address"]
+    L --> M["Fill Company name, Phone, Address, Contractor licence number, How you bill; tap 'Save company details'"]
+    M --> N["Step 1 ticked; next: 'New job' (section 3)"]
+    N --> O{"Office help?"}
+    O -->|"Yes"| P["Card 'Team': type their email, pick Member or Owner, tap 'Invite'"]
+    O -->|"No"| Q["Done: the checklist leads to the first job, its paperwork and the first send"]
+    P --> R{"Email confirmed and mail set up?"}
+    R -->|"Yes"| S["Invite emailed, good for 7 days"]
+    R -->|"Not emailed"| T["Copy the link and send it yourself"]
+    S --> Q
+    T --> Q
 ```
 
-Code: sign-up card static/app.js:283-330, `Create account` static/app.js:330, server checks server.py:1159-1176; confirm link static/app.js:1502-1505; `Send the link again` static/app.js:1604; `Save company details` static/app.js:1642; `Invite` static/app.js:1659, server.py:1453-1486. Optional two-step sign-in: `Set up two-step sign-in` static/app.js:1691, then `Turn on`.
+Code: landing and sign-up card static/app.js:306-360 (Sign in first when this browser has signed in, static/app.js:23-29); `Look around a sample company` static/app.js:332, 470-490, server.py:1215 (`_p_demo`); checks in place static/app.js:413-425 and the password rule when the box is left static/app.js:399-403; `Sign in instead` static/app.js:450-457, server.py:1194-1213 (`exists`); a blank company name takes the person's name server.py:1203; "Check your email" panel static/app.js:1793-1802 (`Got it`, `Send the link again`); the banner that stays until confirmed static/app.js:1804-1811; confirm link static/app.js:1681-1686, link valid 72 hours auth.py:51; checklist static/app.js:1942-1986, its step 1 `Company details` static/app.js:1957-1958 opens Team & account at `#co-address`; `Save company details` static/app.js:904-906, 1876; `Invite` static/app.js:839-848, server.py:1515-1517. Optional two-step sign-in: `Set up two-step sign-in` on Team & account, then `Turn on`.
 
-**Taps from start to done:** about 6. Create account (1, after typing 4 fields and the tick), the email link (1), Settings and the Team & account tab (2), Save company details (1), Invite (1, optional).
+**Taps from start to done:** about 5. Create account (1, after typing 3 boxes and the tick; the company name can wait), the email link (1), Company details on the checklist (1, lands in the Address box), Save company details (1), Invite (1, optional).
 
-**Where it could be simpler:**
-- After sign-up the app goes straight to Today. There is no "check your email" step, and the server's answer about the email is ignored (static/app.js:418-434, server.py:1173-1174). Apart from the Today banner (static/app.js:1599-1605, shown only when the server can send mail), nothing stops an unconfirmed owner: the first pay app is marked sent, but its email is "not sent: verify your email address first (Team & account page), then Send again" (mailer.py:47, server.py:1586).
-- The Today checklist does not include company details. The From block on the pay app PDF can go out with only the company name: no address, phone or licence (payapp_pdf.py:166-168).
-- `Invite` fails with "Confirm your own email address before inviting people." only after it is tapped (server.py:1464-1465).
+**What Round 2 changed here:**
+- After sign-up a "Check your email" panel says where the link went, or why none did (R1-07). Until the email is confirmed, a server that sends mail refuses to send pay apps, waivers and follow-ups, and the send buttons say why instead of parking the email in the Outbox.
+- The checklist's first step is the company address, phone and licence (R2-03), and its button goes straight to the Address box. Before you send also says "Your company address is blank on this PDF." while it is (R2-05).
+- Company name is optional at sign-up (R2-02); a returning browser opens on Sign in; a visitor can look around the sample company first (R2-06).
+
+**Where it could still be simpler:**
+- `Invite` is refused with "Confirm your own email address before inviting people." only after it is tapped (server.py:1516-1517); the Team card doesn't say so beforehand.
+- Hiding the checklist is per person, so a teammate who joins later sees it too until they hide it.
 
 ---
 

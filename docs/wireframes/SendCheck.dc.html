@@ -44,7 +44,7 @@ a{color:#1F4FD1}a:hover{color:#16389A}
     <div style="display: flex; flex-direction: column; gap: 8px">
       <h1 style="margin: 0; font-size: 36px; font-weight: 600">PA-OAK-02</h1>
       <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 15px; color: #555555"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px; color: #1B1B1B">Ready to send</span> <a href="Job.dc.html">Oak Street kitchen</a> · $44,000.00</div>
-      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap"><a href="#pdf" style="text-decoration: none; border: 1px solid #8C8C8C; border-radius: 8px; padding: 8px 14px; color: #1B1B1B; font-size: 14px">Open the PDF</a><span style="font-size: 14px; color: #555555">The same PDF goes with the email.</span></div>
+      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap"><a href="#pdf" style="text-decoration: none; border: 1px solid #8C8C8C; border-radius: 8px; padding: 8px 14px; color: #1B1B1B; font-size: 14px">Open the PDF</a><span style="font-size: 14px; color: #555555">The same PDF goes with the email when the pay app is sent.</span></div>
     </div>
 
     <section aria-labelledby="before" style="background: #FFFFFF; border: 2px solid #1B1B1B; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column">
@@ -54,10 +54,26 @@ a{color:#1F4FD1}a:hover{color:#16389A}
       <div style="display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span style="color: #555555">Amount</span><span style="font-weight: 600">$44,000.00</span></div>
       <div style="display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span style="color: #555555">Attached</span><span>Pay app PDF, packet checklist, 3 packet items</span></div>
       <div style="margin-top: 14px; border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px">
-        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">SHOWN ONLY ON A PAYER'S FIRST SEND</span>
-        <span>First pay app to this payer. Check the AP email above; a typo sends it to a stranger. Change it in the <a href="Settings.dc.html">Payer playbook</a>.</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">SHOWN ONLY ON A CUSTOMER'S FIRST SEND</span>
+        <span>First pay app to Ellison Residential. Check the email above; a typo sends it to a stranger. Change it in <a href="Playbook.dc.html">Customer settings</a>.</span>
       </div>
       <button type="button" style="margin-top: 16px; align-self: flex-start; height: 50px; padding: 0 22px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-size: 16px; font-weight: 600">Approve &amp; send to ap@ellisonresidential.example</button>
+    </section>
+
+    <section aria-labelledby="noemail" style="background: #FFFFFF; border: 1.5px dashed #8C8C8C; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column">
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">WHEN THE JOB WAS SAVED WITHOUT AN EMAIL (THE NEW JOB FORM KEEPS IT UNDER MORE DETAILS)</span>
+      <h2 id="noemail" style="margin: 8px 0 10px; font-size: 20px; font-weight: 600">Before you send</h2>
+      <div style="display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span style="color: #555555">To</span><span>Mara Ellison · <span style="color: #B3261E">no email yet</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-bottom: 1px solid #DADADA">
+        <span style="font-size: 14px; font-weight: 500">Email for pay apps</span>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center"><span style="flex: 0 1 360px; height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; display: flex; align-items: center; color: #8C8C8C">name@example.com</span><button type="button" style="height: 44px; padding: 0 16px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Save email</button></div>
+        <span style="font-size: 13px; color: #555555">Saved to the customer's settings, so every pay app to them uses it. A typo is refused under the box.</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span style="color: #555555">Copy</span><span>Nobody</span></div>
+      <div style="display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span style="color: #555555">Amount</span><span style="font-weight: 600">$44,000.00</span></div>
+      <p style="margin: 12px 0 0; font-size: 15px; color: #B3261E">Add the email pay apps go to, then send.</p>
+      <button type="button" disabled style="margin-top: 12px; align-self: flex-start; height: 50px; padding: 0 22px; border: 0; border-radius: 8px; background: #BDBDBD; color: #FFFFFF; font: inherit; font-size: 16px; font-weight: 600">Approve &amp; send to the customer</button>
+      <span style="margin-top: 8px; font-size: 14px; color: #555555">After Save email the To row shows the address, the box goes and Approve &amp; send turns on, named for that address.</span>
     </section>
 
     <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
@@ -81,7 +97,7 @@ a{color:#1F4FD1}a:hover{color:#16389A}
   </main>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1500}}'>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1900}}'>
 class Component extends DCLogic {
   renderVals() {
     return {};

@@ -1969,7 +1969,7 @@ function onboardingHtml() {
       attrs: draft ? `data-action="open-payapp" data-job="${draftJob.id}" data-inv="${draft.id}" data-focus=".send-check"` : goJob(billed, ".next-card"), needsJob: true },
     { text: "Already been paid on some jobs? Import the payments from QuickBooks.", optional: true, done: jobs.some(j => (j.payments || []).length),
       label: "Import payments", attrs: `data-action="onb-go" data-view="payments" data-focus="#qbo-csv"`, needsJob: true },
-    { text: "Connect QuickBooks (optional).", optional: true, done: !!(qboStatus && qboStatus.connected), hidden: !!(qboStatus && !qboStatus.loading && !qboStatus.configured),
+    { text: "Connect QuickBooks.", optional: true, done: !!(qboStatus && qboStatus.connected), hidden: !!(qboStatus && !qboStatus.loading && !qboStatus.configured),
       label: "QuickBooks", attrs: `data-action="onb-go" data-view="payments"` },
   ].filter(st => !st.hidden);
   const required = steps.filter(st => !st.optional);

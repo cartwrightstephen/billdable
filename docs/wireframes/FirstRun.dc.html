@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Today: first run</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1F4FD1}a:hover{color:#16389A}
+</style>
+</helmet>
+<div style="background: #F5F5F3; font-family: 'IBM Plex Sans', sans-serif; color: #1B1B1B; min-height: 100%; display: flex; flex-wrap: wrap">
+  <aside style="flex: 1 1 200px; max-width: 232px; box-sizing: border-box; padding: 24px 16px; background: #EAEAE7; border-right: 1px solid #BDBDBD; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-size: 22px; font-weight: 600">Duracash</div>
+    <div style="font-size: 14px; color: #555555; margin-bottom: 20px"><strong style="color: #1B1B1B">Ridgeway Tile &amp; Bath</strong></div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 4px">
+      <a href="FirstRun.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 12px">Today</a>
+      <a href="NewJob.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Jobs</a>
+      <a href="Inbox.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Inbox</a>
+      <a href="Money.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Money</a>
+      <a href="Settings.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Settings</a>
+    </nav>
+    <div style="margin-top: 40px; padding-top: 12px; border-top: 1px solid #BDBDBD; font-size: 13px; color: #555555">Dana Ruiz<br>dana@ridgewaytile.example<br><a href="Landing.dc.html">Log out</a></div>
+  </aside>
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 20px 32px 48px; display: flex; flex-direction: column; gap: 18px; max-width: 1200px">
+    <nav aria-label="Today" style="display: flex; gap: 4px; border-bottom: 1px solid #BDBDBD; overflow-x: auto; white-space: nowrap">
+      <a href="FirstRun.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; padding: 10px 12px; border-bottom: 3px solid #1B1B1B">Overview</a>
+      <a href="Results.dc.html" style="text-decoration: none; color: #555555; padding: 10px 12px">Results</a>
+      <a href="Calendar.dc.html" style="text-decoration: none; color: #555555; padding: 10px 12px">Calendar</a>
+      <a href="#daily" style="text-decoration: none; color: #555555; padding: 10px 12px">Daily record</a>
+      <span style="margin-left: auto; align-self: center; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">/today</span>
+    </nav>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 8px; padding: 10px 14px; font-size: 14px">Confirm your email (dana@ridgewaytile.example) so Duracash can send pay apps for you; replies come back to it. <a href="CheckEmail.dc.html">Send the link again</a></div>
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">SHOWN UNTIL THE EMAIL IS CONFIRMED, ON A SERVER THAT SENDS MAIL</span>
+    </div>
+    <h1 style="margin: 0; font-size: 36px; font-weight: 600">Today</h1>
+    <div style="background: #EAEAE7; border-radius: 8px; padding: 10px 14px; font-size: 14px">Free trial: nothing to pay until the first pay app you send through Duracash is paid, or until Jan 25, 2027.</div>
+    <section aria-labelledby="setup" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; border: 2px solid #1B1B1B; position: relative">
+      <span aria-label="Hide the setup checklist" style="position: absolute; top: 12px; right: 16px; font-size: 20px; color: #555555">×</span>
+      <h2 id="setup" style="margin: 0 0 8px; font-size: 20px; font-weight: 600">Get your first pay app out</h2>
+      <p style="margin: 0; font-size: 14px; color: #555555; margin-bottom: 8px">1 of 5 steps done. Steps marked optional don't count. You can bring this back from Help.</p>
+      <ol style="margin: 0; padding-left: 20px; font-size: 15px">
+        <li style="font-weight: 600; padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Add your company address, phone and licence number (they print on every pay app).</span><a href="#co-address" style="text-decoration: none; background: #1F4FD1; color: #FFFFFF; border-radius: 8px; padding: 8px 14px; font-weight: 500; white-space: nowrap; font-size: 14px">Company details</a></li>
+        <li style="color: #555555; padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span><span aria-hidden="true">✓ </span>Create your first job: contract amount, customer and where pay apps go.</span></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.</span></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Optional: Set up a schedule of values to bill line by line (paste it from your estimate).</span><a href="#job" style="text-decoration: none; border: 1px solid #8C8C8C; color: #1B1B1B; border-radius: 8px; padding: 8px 14px; white-space: nowrap; font-size: 14px">Open the job</a></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the customer needs.</span></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Add the missing paperwork, then Approve &amp; send.</span></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Optional: Already been paid on some jobs? Import the payments from QuickBooks.</span><a href="#payments" style="text-decoration: none; border: 1px solid #8C8C8C; color: #1B1B1B; border-radius: 8px; padding: 8px 14px; white-space: nowrap; font-size: 14px">Import payments</a></li>
+        <li style="padding: 8px 0; border-top: 1px solid #DADADA; display: flex; justify-content: space-between; gap: 16px; align-items: center"><span>Optional: Connect QuickBooks.</span><a href="#payments" style="text-decoration: none; border: 1px solid #8C8C8C; color: #1B1B1B; border-radius: 8px; padding: 8px 14px; white-space: nowrap; font-size: 14px">QuickBooks</a></li>
+      </ol>
+    </section>
+    <section aria-labelledby="needs" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column">
+      <h2 id="needs" style="margin: 0 0 8px; font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 8px">Needs you <span style="background: #1B1B1B; color: #FFFFFF; border-radius: 11px; padding: 0 8px; font-size: 13px">1</span></h2>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid #DADADA">
+        <div style="display: flex; flex-direction: column; gap: 4px"><div style="display: flex; gap: 8px; align-items: center"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px">Not billed yet</span><strong>Kessler hall bath</strong></div><span style="font-size: 14px; color: #555555">Kessler hall bath has no pay app yet. Bill the work done so far, or mark it done.</span></div>
+        <a href="#next-step" style="text-decoration: none; background: #1F4FD1; color: #FFFFFF; border-radius: 8px; padding: 8px 14px; font-weight: 500; white-space: nowrap; font-size: 14px">Bill progress</a>
+      </div>
+    </section>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px">
+      <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 14px; color: #555555">Unbilled completed</span><span style="font-size: 28px; font-weight: 600">$0.00</span></div>
+      <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 14px; color: #555555">Outstanding</span><span style="font-size: 28px; font-weight: 600">$0.00</span></div>
+      <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 14px; color: #555555">Retainage open</span><span style="font-size: 28px; font-weight: 600">$0.00</span></div>
+      <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 14px; color: #555555">Billed this month</span><span style="font-size: 28px; font-weight: 600">$0.00</span></div>
+    </div>
+    <p style="margin: 0; font-size: 14px; color: #555555">1 active job</p>
+    <div style="overflow-x: auto; background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px">
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px">
+        <thead><tr style="text-align: left; color: #555555; font-size: 13px">
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Job</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Customer</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Status</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Contract total</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Billed</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Unbilled</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Next</th>
+        </tr></thead>
+        <tbody><tr><td style="padding: 12px"><a href="#job">Kessler hall bath</a></td><td style="padding: 12px">Ruth Kessler</td><td style="padding: 12px"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px">In progress</span></td><td style="padding: 12px; text-align: right">$18,400.00</td><td style="padding: 12px; text-align: right">$0.00</td><td style="padding: 12px; text-align: right">$0.00</td><td style="padding: 12px; color: #555555">Record progress, or mark the job done.</td></tr></tbody>
+      </table>
+    </div>
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">BEFORE THE FIRST JOB</span>
+        <span>The checklist shows 0 of 5 with two buttons, Company details and New job (blue, once the address is in). There is no Needs you card and no table. With the checklist hidden, Today shows &quot;No jobs yet&quot; and a New job button.</span>
+      </div>
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">WHAT CHANGES WHEN</span>
+        <span>Bill progress opens the job at its Next step card. Once a pay app is drafted, the row becomes Needs paperwork (Add N missing documents) or Ready to send (Review &amp; send). The checklist goes away when the first pay app is sent, and can be hidden earlier with ×.</span>
+      </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1500}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

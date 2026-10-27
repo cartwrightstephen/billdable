@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>New job: five boxes</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1F4FD1}a:hover{color:#16389A}
+</style>
+</helmet>
+<div style="background: #F5F5F3; font-family: 'IBM Plex Sans', sans-serif; color: #1B1B1B; min-height: 100%; display: flex; flex-wrap: wrap">
+  <aside style="flex: 1 1 200px; max-width: 232px; box-sizing: border-box; padding: 24px 16px; background: #EAEAE7; border-right: 1px solid #BDBDBD; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-size: 22px; font-weight: 600">Duracash</div>
+    <div style="font-size: 14px; color: #555555; margin-bottom: 20px"><strong style="color: #1B1B1B">Ridgeway Tile &amp; Bath</strong></div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 4px">
+      <a href="FirstRun.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Today</a>
+      <a href="NewJob.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 12px">Jobs</a>
+      <a href="Inbox.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Inbox</a>
+      <a href="Money.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Money</a>
+      <a href="Settings.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Settings</a>
+    </nav>
+    <div style="margin-top: 40px; padding-top: 12px; border-top: 1px solid #BDBDBD; font-size: 13px; color: #555555">Dana Ruiz<br>dana@ridgewaytile.example<br><a href="Landing.dc.html">Log out</a></div>
+  </aside>
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 20px 32px 48px; display: flex; flex-direction: column; gap: 18px; max-width: 1200px">
+    <nav aria-label="Jobs" style="display: flex; gap: 4px; border-bottom: 1px solid #BDBDBD; overflow-x: auto; white-space: nowrap">
+      <a href="NewJob.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; padding: 10px 12px; border-bottom: 3px solid #1B1B1B">Open jobs</a>
+      <a href="History.dc.html" style="text-decoration: none; color: #555555; padding: 10px 12px">Job history</a>
+      <span style="margin-left: auto; align-self: center; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">/jobs</span>
+    </nav>
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px">
+      <h1 style="margin: 0; font-size: 36px; font-weight: 600">Jobs</h1>
+      <button type="button" style="height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Cancel</button>
+    </div>
+    <section aria-labelledby="newjob" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px">
+      <div><h2 id="newjob" style="margin: 0 0 8px; font-size: 20px; font-weight: 600">New job</h2><p style="margin: 0; font-size: 14px; color: #555555">Fields marked <span style="color: #B3261E">*</span> are required.</p></div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px">
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Job name <span style="color: #B3261E">*</span></span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">Kessler hall bath</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Address <span style="color: #B3261E">*</span></span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">418 Larkin St, Decatur, GA 30030</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Customer <span style="color: #B3261E">*</span></span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">Ruth Kessler</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Who pays you?</span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">The homeowner or property owner<span style="margin-left: auto; color: #555555">▾</span></div><span style="font-size: 13px; color: #555555">Sets the paperwork they usually need and when to follow up. You can change both later.</span></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 14px; font-weight: 500">Contract amount ($) <span style="color: #B3261E">*</span></span><div style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 12px; font-size: 15px; display: flex; align-items: center; background: #FFFFFF">$18,400.00</div></div>
+      </div>
+      <div style="border-top: 1px solid #DADADA; padding-top: 12px; font-size: 15px; font-weight: 500"><span aria-hidden="true">▸ </span>More details (optional)</div>
+      <a href="FirstRun.dc.html" style="align-self: flex-start; text-decoration: none; height: 50px; display: flex; align-items: center; padding: 0 22px; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font-size: 16px; font-weight: 600">Save job</a>
+    </section>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start">
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">MORE DETAILS, OPENED</span>
+        <span>Contract number · Retainage % · Phone · Who signs off on your bills (&quot;The customer, unless you say otherwise&quot;) · Email for pay apps (can add later) · Notes (kept on the job record): &quot;Gate code, who to call, contract notes&quot;.</span>
+        <span>It stays as you left it, and opens by itself when one of its boxes has an error.</span>
+      </div>
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">A BOX THAT IS WRONG</span>
+        <span>Turns red in place with the reason under it, for example &quot;Enter the job address.&quot; Nothing typed is lost.</span>
+        <span>Contract amount takes $18,400 or 18400 and shows $18,400.00 when you leave the box.</span>
+      </div>
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">A CUSTOMER ALREADY SAVED</span>
+        <span>The Customer box lists saved customers. Picking one sets Who pays you? to theirs (and, for a general contractor, their last job's retainage) and replaces Who signs off and the email with &quot;Pay apps go to &lt;who&gt; · &lt;email&gt;. Change in Customer settings&quot;.</span>
+      </div>
+      <div style="border: 1.5px dashed #8C8C8C; border-radius: 8px; padding: 12px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 4px; background: #FFFFFF">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555555">AFTER SAVE JOB</span>
+        <span>The job page opens. Today gets a Not billed yet row for the job and ticks &quot;Create your first job&quot; on the checklist. With no jobs and the form closed, Jobs says &quot;No jobs yet&quot; with a New job button.</span>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1100}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

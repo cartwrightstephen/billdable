@@ -6,8 +6,10 @@
     python3 scripts/video/build.py                             # narration, captions, the video
 
 Needs <out>/raw/*.mp4 (record.swift against a local server on the demo company), the macOS
-`say` voice and the compiled editor. <out> is DURACASH_VIDEO_OUT, by default the work folder's
-10-Promo-video; the editor is DURACASH_EDIT. Writes <out>/duracash-promo.mp4 (about 45 s).
+`say` voice and the compiled editor. <out> is DURACASH_VIDEO_OUT, by default <tmp>/duracash-video
+(set it to keep the clips somewhere lasting); the editor is DURACASH_EDIT, by default
+<tmp>/duracash-edit. <tmp> is the system's temporary folder. Writes <out>/duracash-promo.mp4
+(about 45 s).
 """
 
 from __future__ import annotations
@@ -17,11 +19,12 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-OUT = Path(os.environ.get("DURACASH_VIDEO_OUT",
-                          Path.home() / "Claude/Billdable/Billdable-work-2026-10-12/10-Promo-video"))
-EDIT = Path(os.environ.get("DURACASH_EDIT", "/private/tmp/claude-501/bd-video/duracash-edit"))
+TMP = Path(tempfile.gettempdir())
+OUT = Path(os.environ.get("DURACASH_VIDEO_OUT") or TMP / "duracash-video")
+EDIT = Path(os.environ.get("DURACASH_EDIT") or TMP / "duracash-edit")
 RATE = "176"
 PREFERRED = "Zoe (Premium)"                  # the YuuP promo's voice, used whenever it's installed
 SAY_AS: dict[str, str] = {}                  # spoken spellings, if a word comes out wrong
