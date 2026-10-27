@@ -2278,6 +2278,8 @@ JOB_ACTIONS = {
     "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor)),
+    "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
+    "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the customer sent the pay app back."), c.actor)),
     "import-qbo": (False, _import_qbo),
     "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),

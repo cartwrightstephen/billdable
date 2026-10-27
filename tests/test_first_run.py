@@ -1,8 +1,8 @@
 """A new contractor's first run over HTTP: sign up, add a job with the New job form's exact body,
 mark it done, deal with the paperwork, send the first pay app (R1-12).
 
-R1-04 (notes stay notes), R1-05 (email asked at send) and R1-07 (confirm your email first)
-are pinned here; R1-08 (paperwork Duracash already has) adds its assertions when it lands.
+R1-04 (notes stay notes), R1-05 (email asked at send), R1-07 (confirm your email first) and
+R1-08 (paperwork Duracash makes or already has) are pinned here.
 """
 
 import http.client
@@ -163,6 +163,38 @@ class FirstRunTests(unittest.TestCase):
         res, data = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
         self.assertEqual(res.status, 200, data)
         self.assertEqual(self.job(data, job["id"])["invoices"][-1]["status"], "sent")
+
+    def test_paperwork_on_the_job_and_items_not_needed(self):  # R1-08
+        cookie, _ = self.signup("first-run-paperwork@example.com")
+        res, data = self.request("POST", "/api/jobs", new_job_body(), cookie)
+        job_id = data["jobs"][-1]["id"]
+        self.request("POST", f"/api/jobs/{job_id}/add-record", {"label": "Signed contract PDF", "kind": "contract", "note": ""}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 2000000, "notes": ""}, cookie)
+        self.assertEqual(res.status, 200, data)
+        job = self.job(data, job_id)
+        packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
+        self.assertTrue(packet["Signed contract"]["present"], "the contract on the job record is attached")
+        self.assertNotIn("Signed contract", job["missing_paperwork"])
+        self.assertEqual(len(job["missing_paperwork"]), len(job["blockers"]), "only paperwork blocks it")
+
+        # "Not needed for this customer": it stops blocking and the next pay app does not ask.
+        photos = packet["Completion photos"]
+        res, data = self.request("POST", f"/api/jobs/{job_id}/packet-skip/{photos['id']}", {}, cookie)
+        self.assertEqual(res.status, 200, data)
+        job = self.job(data, job_id)
+        self.assertNotIn("Completion photos", job["missing_paperwork"])
+        payer = next(p for p in data["payers"] if p["id"] == job["payer_id"])
+        self.assertNotIn("photos", payer["packet"].lower())
+        for label in job["missing_paperwork"]:
+            item = next(p for p in job["invoices"][-1]["packet"] if p["label"] == label)
+            self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        self.assertEqual(res.status, 200, data)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 3000000, "notes": ""}, cookie)
+        self.assertEqual(res.status, 200, data)
+        second = self.job(data, job_id)["invoices"][-1]
+        self.assertEqual(second["number"][-2:], "02")
+        self.assertNotIn("Completion photos", [p["label"] for p in second["packet"]])
 
 
 class FirstRunWithMailTests(ServerCase):

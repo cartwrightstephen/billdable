@@ -336,7 +336,10 @@ def check_setup(run: Run) -> None:
     run.record("DECA: retainage $6,400.00 held and open", deca.get("money", {}).get("retainage_open_cents") == 640_000,
                money(deca.get("money", {}).get("retainage_open_cents", 0)))
     mill = run.job("MILL")
-    run.record("MILL: draft blocked by packet items", len(mill.get("blockers", [])) == 4, f"{len(mill.get('blockers', []))} blockers")
+    # The pay app and schedule of values are made by Duracash, so only the waiver and insurance wait (R1-08).
+    run.record("MILL: draft waits on the waiver and insurance certificate only",
+               mill.get("missing_paperwork") == ["Conditional lien waiver", "Insurance certificate"] and len(mill.get("blockers", [])) == 2,
+               f"{len(mill.get('blockers', []))} blockers: {'; '.join(mill.get('blockers', []))}")
     broo = run.job("BROO")
     run.record("BROO: SOV $46,068.00 and CO 1 pending", broo.get("contract_cents") == 4_606_800
                and any(c["status"] == "pending" for c in broo.get("change_orders", [])))

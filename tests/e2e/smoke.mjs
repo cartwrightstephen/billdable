@@ -118,7 +118,8 @@ await step("money path: the main button walks a job from blocked to closed", asy
     const main = page.locator(".next-card .btn");
     const label = (await main.innerText()).trim();
     seen.push(label);
-    if (/^Clear \d+ blocker/.test(label)) {
+    // Paperwork alone reads "Add N missing documents" (R1-08); an unsigned CO keeps "Clear N blockers".
+    if (/^(Clear \d+ blocker|Add \d+ missing document)/.test(label)) {
       await main.click();
       await page.getByRole("heading", { name: /packet/i }).waitFor();
       while (await page.locator('[data-form^="resolve-"]').count()) {

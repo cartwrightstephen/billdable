@@ -1,7 +1,7 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm } from "./js/jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
@@ -630,7 +630,7 @@ function todayQueue() {
     const before = out.length;
     // One next step per job, in the job page's order (jobActions): blockers first.
     if (isBlocked(j)) add(3, j, statusPill(j), `${j.blockers[0]}${j.blockers.length > 1 ? ` And ${j.blockers.length - 1} more.` : ""}`,
-      `<button class="btn small" data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}>Clear ${j.blockers.length} blocker${j.blockers.length === 1 ? "" : "s"}</button>`);
+      `<button class="btn small" data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}>${blockerButton(j)}</button>`);
     else if (draft) add(1, j, tag("Ready to send", "green"), `${draft.number} for ${money(draft.amount_cents)} to ${j.payer.approver || j.payer.name}. Check what goes out, then approve.`,
       `<button class="btn small" data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check">Review &amp; send</button>`, true);
     else if (j.waiver_due && !j.waiver_sent) add(2, j, tag("Waiver due", "amber"), "Paid in full: the payer is waiting for the lien waiver.",
@@ -685,7 +685,7 @@ function jobActions(j) {
   const isDemo = me && me.company_id === DEMO_COMPANY_ID;
   const all = [];
   const add = (key, label, attrs, why) => all.push({ key, label, attrs, why });
-  if (blocked) add("clear", `Clear ${j.blockers.length} blocker${j.blockers.length === 1 ? "" : "s"}`, `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "Open the packet and attach what is missing.");
+  if (blocked) add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "Open the packet and attach what is missing.");
   // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
   if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "See what goes out and to whom, then approve.");
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver on the job record.");
@@ -702,7 +702,7 @@ function jobActions(j) {
   if (m.retainage_open_cents > 0) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "Record retainage the payer released.");
   add("co", "Add change order", `data-action="goto-co" data-id="${j.id}"`, "Create a change order for this job.");
   if (draft) add("packet", "Open packet", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "Attach records to the pay app's packet.");
-  if (draft) add("void", "Void draft", `data-action="void-draft" data-id="${j.id}"`, "Throw away the open draft. Its work goes back to unbilled.");
+  if (draft) add("void", "Void draft", `data-action="void-draft" data-id="${j.id}"`, "Throw away the open draft. You can draft it again from the job page.");
   if (isDemo) add("qbo", "Import QBO sample", `data-action="import-qbo" data-id="${j.id}"`, "Demo only: a stand-in for a QuickBooks payment read.");
   const order = ["clear", "send", "waiver", "match", "draft", "progress", "close", "retainage"];
   const primary = order.map(k => all.find(a => a.key === k)).find(Boolean) || null;
@@ -1042,7 +1042,7 @@ const ACTIONS = {
     await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
   },
   "void-draft": async (el, id) => {
-    if (!(await askConfirm("Void the open draft pay app? Its work goes back to unbilled.", "Void the draft", true))) return;
+    if (!(await askConfirm("Void the open draft pay app? You can draft it again from the job page.", "Void the draft", true))) return;
     await post(`/api/jobs/${id}/void-draft`);
   },
   "follow-up": (el, id) => post(`/api/jobs/${id}/follow-up`),
@@ -1110,6 +1110,8 @@ const ACTIONS = {
     if (refuseForm("record", v.label ? {} : { label: "Enter what this is, like \"Rough-in inspection passed\"." })) return;
     await post(`/api/jobs/${id}/add-record`, { label: v.label, note: v.note, kind: v.kind || "note" }, { formKey: "record" });
   },
+  "packet-detach": (el, id) => post(`/api/jobs/${id}/detach/${el.dataset.item}`),
+  "packet-skip": (el, id) => post(`/api/jobs/${id}/packet-skip/${el.dataset.item}`, {}),
   "attach-record": async (el, id) => {
     const recordId = document.querySelector(`#attach-rec-${el.dataset.item}`)?.value;
     if (!recordId) { toast("Pick a job record to attach."); return; }
@@ -2334,7 +2336,7 @@ const views = {
         </details>
       </div>` : ""}
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j) : ""}
-      ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="card form-card" data-form-key="progress"><h2>Progress pay app</h2>${formErrorLine("progress")}<div class="form-row">
+      ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="card form-card" data-form-key="progress"><h2>Progress pay app</h2>${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">This replaces ${openDraft.number} at the new total. Its number and paperwork stay.</p>` : ""}${formErrorLine("progress")}<div class="form-row">
         ${moneyField({ form: "progress", name: "completed_cents", id: "progress-amt", label: "Total done so far ($)", help: "All the work done to date, not just this period." })}
         ${field({ form: "progress", name: "notes", id: "progress-notes", label: "What was completed", wide: true })}
         <button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div></div>` : ""}
@@ -2373,7 +2375,7 @@ const views = {
         </details>
         <div class="card">
           <h2>Pay apps</h2>
-          ${j.invoices.length ? j.invoices.map(i => {
+          ${j.invoices.length ? j.invoices.filter(i => !i.replaced).map(i => {  // a draft replaced by a progress correction stays in the history only
             const pkt = i.packet || j.packet || [];
             const missing = pkt.filter(p => p.required && !p.present).length;
             const pencil = i.pencil_status ? ` · pencil ${i.pencil_status === "sent" ? "with payer" : words(i.pencil_status)}${i.pencil_note ? ": " + i.pencil_note : ""}` : "";
@@ -2479,19 +2481,26 @@ const views = {
       <p class="sub">${j.name}${inv ? " · " + money(inv.amount_cents) + " · " + (INVOICE_WORDS[inv.status] || words(inv.status)) : ""}${isCloseout ? " · must be complete before asking for retainage" : ""} · ${missing ? `<span class="blocker">${missing} missing</span>` : "complete"}</p>
       <div class="card">
         <h2>Required items</h2>
-        ${packet.length ? packet.map(p => `
-          <div class="list-item packet-item ${p.present ? "present" : "absent"}">
-            <div><span class="mark" aria-hidden="true">${p.present ? "✓" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "present" : "missing"}</span>
-              ${!p.present ? `<span class="field-error">${p.blocker}</span>` : ""}
-              ${p.present && p.present_reason ? `<div class="sub">Marked present: ${p.present_reason}</div>` : ""}
-              ${(p.attachments || []).map(a => `<div class="sub">Attached: ${a.name}</div>`).join("")}
+        ${packet.length ? packet.map(p => {
+          const skipped = !p.required && p.skipped_reason;
+          return `
+          <div class="list-item packet-item ${p.present || skipped ? "present" : "absent"}">
+            <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
+              ${!p.present && !skipped ? `<span class="field-error">${p.blocker}</span>` : ""}
+              ${skipped ? `<div class="sub">Not needed for this customer${p.skipped_reason !== "Not needed for this customer" ? ": " + p.skipped_reason : ""}</div>` : ""}
+              ${p.present && p.present_reason ? `<div class="sub">${p.present_reason === "Produced by Duracash" ? "Produced by Duracash with the pay app" : "Marked as in hand: " + p.present_reason}</div>` : ""}
+              ${(p.attachments || []).map(a => a.auto
+                ? `<div class="sub">Attached from the job record: ${a.name} <button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Detach</button></div>`
+                : `<div class="sub">Attached: ${a.name}</div>`).join("")}
             </div>
-            ${!p.present ? `<div class="form-inline">
+            ${!p.present && !skipped ? `<div class="form-inline">
               ${jobRecords.length ? `<select id="attach-rec-${p.id}" aria-label="Job record to attach">${jobRecords.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small" data-action="attach-record" data-id="${j.id}" data-item="${p.id}">Attach</button>` : `<span class="sub">Add the document to the <button class="linkish" data-action="open-job" data-id="${j.id}">job record</button> first.</span>`}
               <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">Mark present…</button>
+              ${isCloseout ? "" : `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}" title="It stops blocking this pay app and comes off ${j.payer.name}'s paperwork list.">Not needed for this customer</button>`}
             </div>
             ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Why it is present, e.g. emailed to the payer on 10/12" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save reason</button></div>` : ""}` : ""}
-          </div>`).join("") : `<p class="sub">This pay app has no packet items.</p>`}
+          </div>`;
+        }).join("") : `<p class="sub">This pay app has no packet items.</p>`}
       </div>
     `;
   },

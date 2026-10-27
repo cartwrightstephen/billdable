@@ -167,5 +167,87 @@ class PartnerCommandTests(unittest.TestCase):
             self.assertEqual(server.load_company("co-1")["audit"][-1]["action"], "billing")
 
 
+class FirstPayAppPaperworkTests(unittest.TestCase):
+    """R1-08: the first pay app is not blocked by paperwork Duracash makes or already has."""
+
+    SOV_LINES = [{"item": "1", "description": "Pavers", "quantity": "100", "unit": "sf", "rate": "100"}]
+
+    def gc_job(self, state, packet=None):
+        job = domain.create_job(state, "Mill Creek patio", "Tallow Creek Builders", 1_000_000, address="1 Mill Rd",
+                                ap_email="ap@tallow.example", role="GC")
+        if packet is not None:
+            domain.update_payer(state, job["payer_id"], {"packet": packet})
+        return job
+
+    def test_gc_job_with_a_schedule_drafts_ready_to_send(self):
+        state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = self.gc_job(state, "AIA-style pay app, schedule of values, continuation sheet, pay-app backup")
+        domain.save_sov(state, job["id"], self.SOV_LINES, "0")
+        line_id = job["sov"]["lines"][0]["id"]
+        domain.record_sov_progress(state, job["id"], {line_id: "40"})
+        draft = job["invoices"][-1]
+        self.assertEqual(draft["status"], "awaiting_approval")
+        self.assertEqual(domain.blocker_lines(job), [])
+        self.assertEqual({p["present_reason"] for p in draft["packet"]}, {"Produced by Duracash"})
+
+    def test_gc_default_list_leaves_out_the_pay_app_and_schedule(self):
+        state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = self.gc_job(state)
+        self.assertEqual(state["payers"][0]["packet"], "Lien waiver, insurance certificate, daily tickets.")
+        domain.record_progress(state, job["id"], 400_000)
+        labels = [p["label"] for p in domain.missing_packet(job)]
+        self.assertEqual(labels, ["Lien waiver", "Insurance certificate", "Daily tickets"])
+        self.assertFalse([b for b in domain.blocker_lines(job) if "pay app" in b.lower() or "schedule" in b.lower()])
+
+    def test_owner_backup_is_needed_only_without_a_schedule(self):
+        state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        plain = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St")
+        domain.record_progress(state, plain["id"], 400_000)
+        self.assertIn("Pay-app backup", [p["label"] for p in domain.missing_packet(plain)])
+        scheduled = domain.create_job(state, "Deck", "Dana Homeowner", 1_000_000, address="3 Elm St")
+        domain.save_sov(state, scheduled["id"], self.SOV_LINES, "0")
+        domain.record_sov_progress(state, scheduled["id"], {scheduled["sov"]["lines"][0]["id"]: "40"})
+        self.assertNotIn("Pay-app backup", [p["label"] for p in domain.missing_packet(scheduled)])
+
+    def test_records_on_the_job_fill_the_paperwork(self):
+        state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", contract_number="C-7")
+        domain.add_job_record(state, job["id"], "Signed contract PDF", "contract")
+        domain.record_progress(state, job["id"], 400_000)
+        contract = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Signed contract")
+        self.assertTrue(contract["present"])
+        self.assertEqual([(a["name"], a["auto"]) for a in contract["attachments"]], [("Signed contract PDF", True)])
+        self.assertTrue(any("attached automatically from the job record" in a["detail"] for a in state["audit"]))
+        # A record added after drafting fills its item too.
+        domain.add_job_record(state, job["id"], "Kitchen photos", "photo")
+        photos = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Completion photos")
+        self.assertTrue(photos["present"])
+        # Detach takes it off, and the same record is not attached again.
+        domain.detach_packet_item(state, job["id"], photos["id"])
+        self.assertFalse(photos["present"])
+        domain.add_job_record(state, job["id"], "A note", "note")
+        self.assertFalse(photos["present"])
+
+    def test_contract_number_alone_is_not_the_signed_contract(self):
+        state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", contract_number="C-7")
+        domain.record_progress(state, job["id"], 400_000)
+        self.assertIn("Signed contract", [p["label"] for p in domain.missing_packet(job)])
+
+    def test_this_periods_waiver_is_not_reused(self):
+        state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", ap_email="d@example.com")
+        domain.add_job_record(state, job["id"], "Signed contract", "contract")
+        domain.add_job_record(state, job["id"], "Waiver for PA-01", "waiver")
+        domain.record_progress(state, job["id"], 400_000)
+        for item in domain.missing_packet(job):
+            domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
+        domain.approve_and_send(state, job["id"], "Owner")
+        domain.record_progress(state, job["id"], 600_000)
+        packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
+        self.assertTrue(packet["Signed contract"]["present"], "the contract carries over")
+        self.assertFalse(packet["Conditional waiver"]["present"], "last period's waiver does not")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -554,8 +554,14 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]
     job = domain._open_job(state, item["filed_job_id"])
     rids = set(item.get("record_ids", []))
     packets = [p for inv in job["invoices"] for p in (inv.get("packet") or [])] + (job.get("packet") or []) + (job.get("closeout_packet") or [])
-    if any(a.get("record_id") in rids for p in packets for a in p.get("attachments", [])):
+    if any(a.get("record_id") in rids and not a.get("auto") for p in packets for a in p.get("attachments", [])):
         raise domain.GateError("A packet already uses this record. Remove it from the packet first.")
+    for p in packets:  # attached automatically from the job record: it comes off with the record
+        if any(a.get("record_id") in rids for a in p.get("attachments", [])):
+            p["attachments"] = [a for a in p["attachments"] if a.get("record_id") not in rids]
+            if not p["attachments"] and not p.get("present_reason"):
+                p["present"] = False
+    domain._refresh_draft_gate(job)
     job["records"] = [r for r in job.get("records", []) if r["id"] not in rids]
     dr_ids = {d["id"] for d in state.get("daily_records", []) if d.get("import_inbox_id") == item_id}
     state["daily_records"] = [d for d in state.get("daily_records", []) if d["id"] not in dr_ids]

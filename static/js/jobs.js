@@ -13,7 +13,7 @@ export const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email"
 export function jobStatus(j) {
   const inv = j.invoices || [];
   if (j.closed) return ["Closed", "green"];
-  if (isBlocked(j)) return ["Blocked", "red"];
+  if (isBlocked(j)) return needsPaperwork(j) ? ["Needs paperwork", "amber"] : ["Blocked", "red"];
   if (inv.some(i => ["draft", "awaiting_approval"].includes(i.status))) return ["Ready to send", "copper"];
   if (j.waiver_due && !j.waiver_sent) return ["Waiver due", "amber"];
   if (inv.some(i => i.status === "partial")) return ["Partly paid", "amber"];
@@ -33,8 +33,20 @@ export function isBlocked(j) {
   return !!(j.blockers && j.blockers.length && (j.work_status === "complete" || j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status))));
 }
 
+// Blocked only by paperwork to attach: amber, not red. Red stays for an unsigned change order on the bill.
+export function needsPaperwork(j) {
+  return isBlocked(j) && (j.missing_paperwork || []).length === j.blockers.length;
+}
+
+// The button that opens the paperwork page.
+export function blockerButton(j) {
+  const n = j.blockers.length;
+  return needsPaperwork(j) ? `Add ${n} missing document${n === 1 ? "" : "s"}` : `Clear ${n} blocker${n === 1 ? "" : "s"}`;
+}
+
 export function nextStep(j) {
   if (j.closed) return "Closed for the record.";
+  if (needsPaperwork(j)) return "Attach the paperwork, then send: " + j.missing_paperwork.join(", ");
   if (isBlocked(j)) return "Clear blockers: " + j.blockers[0];
   const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   if (draft) return "Pay app is ready. Review it, then Approve & send.";

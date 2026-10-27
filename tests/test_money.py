@@ -154,6 +154,85 @@ class DraftTests(unittest.TestCase):
         self.assertTrue(item["present"])
 
 
+class ProgressCorrectionTests(unittest.TestCase):  # R1-09
+    def test_progress_with_open_draft_redrafts_same_number(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        first = job["invoices"][-1]
+        domain.resolve_packet_item(state, job["id"], first["packet"][0]["id"], reason="On site")
+        domain.record_progress(state, job["id"], 350_000)
+        live = [i for i in job["invoices"] if i["status"] != "void"]
+        self.assertEqual(len(live), 1)
+        self.assertEqual((live[0]["number"], live[0]["gross_cents"]), (first["number"], 350_000))
+        self.assertEqual(first["status"], "void")
+        self.assertTrue(live[0]["packet"][0]["present"], "the paperwork carries over")
+        self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 0)
+
+    def test_progress_refused_while_the_customer_reviews_the_draft(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        domain.send_pencil(state, job["id"])
+        with self.assertRaises(domain.GateError) as raised:
+            domain.record_progress(state, job["id"], 350_000)
+        self.assertIn("is with the customer as a draft", str(raised.exception))
+        self.assertEqual(job["invoices"][-1]["gross_cents"], 400_000)
+
+    def test_void_then_lower_progress_redrafts(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        domain.void_draft(state, job["id"])
+        self.assertEqual(job["completed_value_cents"], 0)
+        domain.record_progress(state, job["id"], 300_000)
+        self.assertEqual(job["invoices"][-1]["gross_cents"], 300_000)
+
+    def test_floor_is_what_is_already_billed(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        send_open(state, job)
+        with self.assertRaises(domain.GateError) as raised:
+            domain.record_progress(state, job["id"], 400_000)
+        self.assertIn("more than the $4,000.00 already billed", raised.exception.fields["completed_cents"])
+
+    def test_pay_app_numbers_do_not_skip_after_void(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        number = job["invoices"][-1]["number"]
+        self.assertTrue(number.endswith("-01"))
+        domain.void_draft(state, job["id"])
+        domain.record_progress(state, job["id"], 400_000)
+        self.assertEqual(job["invoices"][-1]["number"], number)
+        send_open(state, job)
+        domain.record_progress(state, job["id"], 600_000)
+        self.assertTrue(job["invoices"][-1]["number"].endswith("-02"))
+
+    def test_a_number_the_customer_saw_is_not_reused(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        domain.send_pencil(state, job["id"])
+        domain.void_draft(state, job["id"])
+        domain.record_progress(state, job["id"], 300_000)
+        self.assertTrue(job["invoices"][-1]["number"].endswith("-02"))
+
+    def test_void_draft_releases_change_orders(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.add_change_order(state, job["id"], "Extra outlets", 50_000)
+        co = job["change_orders"][0]
+        domain.include_change_order(state, job["id"], co["id"])
+        domain.record_progress(state, job["id"], 400_000)
+        domain.void_draft(state, job["id"])
+        self.assertFalse(co["included_in_billing"])
+        self.assertTrue(any(a["detail"] == f"CO {co['number']} taken off the voided draft." for a in state["audit"]))
+        domain.record_progress(state, job["id"], 400_000)
+        self.assertFalse([l for l in job["invoices"][-1]["lines"] if l.get("co_id")])
+
+
 class ChangeOrderTests(unittest.TestCase):
     def test_co_approved_after_done_is_billable(self):  # M4
         state = new_state()
@@ -323,7 +402,11 @@ class ReviewFindingTests(unittest.TestCase):
             domain.withdraw_change_order(state, job["id"], co_id)
         domain.void_draft(state, job["id"])
         domain.withdraw_change_order(state, job["id"], co_id)
-        self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 1_000_000)
+        # Voiding takes the progress back to what is billed (R1-09); enter it again.
+        self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 0)
+        domain.record_progress(state, job["id"], 1_000_000)
+        self.assertEqual(job["invoices"][-1]["gross_cents"], 1_000_000)
+        domain.void_draft(state, job["id"])
         domain.mark_done(state, job["id"])
         self.assertEqual(job["invoices"][-1]["amount_cents"], 10_000_000)
 
