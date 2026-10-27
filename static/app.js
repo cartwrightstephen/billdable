@@ -1,7 +1,7 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
-import { esc, unesc, escDeep, money, centsFrom, percentFrom, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId } from "./js/jobs.js";
+import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
@@ -57,6 +57,7 @@ let dashFilter = "all";
 let dashSort = "name";
 let dashSortDir = 1;
 let payappFilter = "all";
+let progressMode = "period";   // the progress form takes this draw $ (default), the total done so far $, or % complete (R3-01)
 let outboxJobFilter = "all";
 // /api/state carries open jobs in full and recently closed jobs as summaries (P2-6). A job opened
 // from history is fetched whole and kept here until the next change; long lists are paged.
@@ -671,6 +672,62 @@ function coSignControls(j, co, extra = "") {
 
 // The job page shows ONE main button: the next step. Everything else that applies sits in a
 // secondary row, each with its explanation as a tooltip (it used to be a paragraph beside it).
+// Who a customer email goes to, for a confirmation: "Sam Jones · ap@jones.example" (plain text).
+function sendsTo(j) {
+  const p = j.payer || {};
+  return unesc(`${p.approver || p.name || "the customer"}${p.ap_email ? " · " + p.ap_email : ""}`);
+}
+
+// What is owed on a pay app: "$13,725.00", or "$2,000.00 of $5,000.00" once part is paid (R3-02).
+function owedText(i) {
+  const left = i.remaining_cents ?? i.amount_cents;
+  return left < i.amount_cents ? `${money(left)} of ${money(i.amount_cents)}` : money(i.amount_cents);
+}
+
+// Today on this device, as a date box wants it (YYYY-MM-DD).
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// The box the progress form shows for its mode, by request key.
+const progressInput = () => progressMode === "percent" ? "percent" : progressMode === "total" ? "completed_cents" : "period_cents";
+
+// The progress form's "This pay app: ..." line, from what is typed (R3-01).
+function progressPreviewText(j, typed = draftValue("progress", progressInput(), "")) {
+  if (!String(typed).trim()) return "This pay app: enter an amount above.";
+  const f = progressFigures(j, progressMode, typed);
+  if (f.error) return `This pay app: ${f.error}`;
+  return f.retained ? `This pay app: ${money(f.gross)} less retainage ${money(f.retained)} = ${money(f.net)}.` : `This pay app: ${money(f.net)}.`;
+}
+
+// The progress card for a job billed in dollars: where the job stands, three ways to say how
+// far it got, what the pay app comes to, and "All of it" for the last one.
+function progressFormHtml(j, openDraft) {
+  const m = j.money;
+  const base = billedWork(j);
+  const pctBilled = m.contract_total_cents ? Math.round(base * 100 / m.contract_total_cents) : 0;
+  const mode = (key, label) => `<button class="${progressMode === key ? "btn" : "btn secondary"} small" data-action="progress-mode" data-mode="${key}" aria-pressed="${progressMode === key}">${label}</button>`;
+  const input = progressMode === "percent"
+    ? field({ form: "progress", name: "percent", id: "progress-pct", label: "% complete", inputmode: "decimal", placeholder: "50", help: "How much of the whole contract is done." })
+    : progressMode === "total"
+      ? moneyField({ form: "progress", name: "completed_cents", id: "progress-amt", label: "Total done so far ($)", help: "All the work done to date, not just this draw." })
+      : moneyField({ form: "progress", name: "period_cents", id: "progress-draw", label: "This draw ($)", help: "The work done since the last pay app, before retainage." });
+  return `<div class="card form-card" data-form-key="progress"><h2>Progress pay app</h2>
+    <p class="sub progress-context">Billed so far ${money(base)} of ${money(m.contract_total_cents)} contract (${pctBilled}%).</p>
+    ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">This replaces ${openDraft.number} (${money(openDraft.amount_cents)}). Its number and paperwork stay.</p>` : ""}
+    <div class="filter-bar progress-modes" role="group" aria-label="Enter">${mode("period", "This draw $")}${mode("total", "Total done so far $")}${mode("percent", "% complete")}</div>
+    ${formErrorLine("progress")}<div class="form-row">
+      ${input}
+      ${field({ form: "progress", name: "notes", id: "progress-notes", label: "What was completed", wide: true })}
+    </div>
+    <p class="progress-preview" id="progress-preview" aria-live="polite">${progressPreviewText(j)}</p>
+    <div class="form-inline">
+      <button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button>
+      <button class="linkish" data-action="progress-all">All of it: mark the job done</button>
+    </div></div>`;
+}
+
 // The pay app's latest email didn't go out (light_snapshot's email_failures).
 function emailFailed(invoiceId) {
   return (state.email_failures || []).some(e => e.payapp_invoice_id === invoiceId);
@@ -705,11 +762,11 @@ function jobActions(j) {
   // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
   if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "See what goes out and to whom, then approve.");
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver on the job record.");
-  if (waitingPay) add("match", "Match payment", `data-action="toggle-form" data-form="match"`, "Record money received. Paid in full opens the waiver step.");
+  if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "Record money received. Paid in full opens the waiver step.");
   if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the unbilled completed work.");
   if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "Bill completed-to-date without marking the job done.");
   if (j.work_status !== "complete") add("done", "Mark done", `data-action="toggle-form" data-form="done"`, "Record completion and draft the final pay app.");
-  if (canClose) add("close", "Close for record", `data-action="close" data-id="${j.id}"`, "Moves the settled job to Job history.");
+  if (canClose) add("close", "Finish job", `data-action="close" data-id="${j.id}"`, "Moves the settled job to Job history.");
   if (m.retainage_open_cents > 0) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "Emails the request once the closeout packet is complete.");
   if (draft && !pencilOut) add("pencil", "Send pencil copy", `data-action="pencil" data-id="${j.id}"`, "Send the draft so the payer agrees quantities first.");
   if (pencilOut) add("pencil-ok", "Payer agreed to pencil", `data-action="pencil-agreed" data-id="${j.id}"`, "Record that the payer agreed to the pencil copy.");
@@ -982,13 +1039,24 @@ const ACTIONS = {
     if (refuseForm("sendemail", EMAIL_PATTERN.test(v.ap_email) ? {} : { ap_email: "Enter the email pay apps go to, like ap@builder.com." })) return;
     await post(`/api/payers/${id}/update`, { ap_email: v.ap_email }, { formKey: "sendemail" });
   },
+  // This draw goes to the server as period_cents, which it adds to what is billed; the total and
+  // the percent go as the total done so far (R3-01).
   "progress": async (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
     const v = formValues("progress");
-    const amount = centsFrom(v.completed_cents);
-    if (refuseForm("progress", amount.error || amount.cents <= 0 ? { completed_cents: "Enter the total done so far in dollars, like 19,400." } : {})) return;
-    await post(`/api/jobs/${id}/progress`, { completed_cents: amount.cents, notes: v.notes }, { formKey: "progress", close: "progress" });
+    const input = progressInput();
+    const f = progressFigures(j, progressMode, v[input]);
+    if (refuseForm("progress", f.error ? { [input]: f.error } : {})) return;
+    await post(`/api/jobs/${id}/progress`, { [f.field]: f.field === "period_cents" ? f.period : f.completed, notes: v.notes }, { formKey: "progress", close: "progress" });
   },
-  "done": async (el, id) => { await post(`/api/jobs/${id}/done`, { notes: formValues("done").notes || "" }, { formKey: "done", close: "done" }); },
+  "progress-mode": (el) => { progressMode = el.dataset.mode; render(); document.querySelector('[data-form-key="progress"] [data-money], #progress-pct')?.focus(); },
+  // "All of it": the Mark done form instead, which drafts the final pay app for the rest.
+  "progress-all": () => { formOpen.progress = false; clearForm("progress"); formOpen.done = true; render(); document.getElementById("done-notes")?.focus(); },
+  "done": async (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
+    if (!(await askConfirm(`Mark ${unesc(j ? j.name : "the job")} done? This bills the rest of the contract on a final pay app.`, "Mark done"))) return;
+    await post(`/api/jobs/${id}/done`, { notes: formValues("done").notes || "" }, { formKey: "done", close: "done" });
+  },
   "resolve": async (el, id) => {
     const box = document.getElementById(`resolve-reason-${el.dataset.item}`);
     const reason = (box?.value || "").trim();
@@ -999,7 +1067,11 @@ const ACTIONS = {
     const kind = document.getElementById(`waiver-kind-${el.dataset.inv || "job"}`)?.value;
     await post(`/api/jobs/${id}/waiver`, { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(kind ? { kind } : {}) });
   },
-  "retainage": (el, id) => post(`/api/jobs/${id}/retainage`),
+  "retainage": async (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
+    if (j && !(await askConfirm(`Email a request for the ${money(j.money.retainage_open_cents)} retainage to ${sendsTo(j)}?`, "Send the request"))) return;
+    await post(`/api/jobs/${id}/retainage`);
+  },
   "retainage-paid": async (el, id) => {
     const v = formValues("retpay");
     const amount = centsFrom(v.amount_cents);
@@ -1007,7 +1079,12 @@ const ACTIONS = {
     await post(`/api/jobs/${id}/retainage-paid`, { amount_cents: amount.cents, reference: v.reference }, { formKey: "retpay", close: "retpay" });
   },
   "include-co": (el, id) => post(`/api/jobs/${id}/include-co/${el.dataset.co}`),
-  "pencil": (el, id) => post(`/api/jobs/${id}/pencil`),
+  "pencil": async (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
+    const draft = j && j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
+    if (j && !(await askConfirm(`Email ${unesc(draft ? draft.number : "the draft")} to ${sendsTo(j)} as a draft for their review?`, "Send the draft"))) return;
+    await post(`/api/jobs/${id}/pencil`);
+  },
   "pencil-agreed": (el, id) => post(`/api/jobs/${id}/pencil-response`, { agreed: true }),
   "pencil-changes": async (el, id) => {
     const note = (document.getElementById("pencil-note")?.value || "").trim();
@@ -1052,7 +1129,13 @@ const ACTIONS = {
     }
   },
   "inbox-dismiss": (el) => post(`/api/inbox/${el.dataset.item}/dismiss`),
+  // The message may only sound like the job is done: filing it is the other way out.
   "inbox-mark-done": async (el) => {
+    const it = (state.inbox || []).find(x => x.id === el.dataset.item);
+    const j = it && state.jobs.find(x => x.id === it.says_done_job_id);
+    const answer = await askConfirm(`Mark ${unesc(j ? j.name : "the job")} done? This bills the rest of the contract on a final pay app.`, "Mark done and draft", false, "Just file the message");
+    if (!answer) return;
+    if (answer === "alt") { if (it) await post(`/api/inbox/${it.id}/file`, { job_id: it.says_done_job_id, kind: it.kind }); return; }
     const r = await post(`/api/inbox/${el.dataset.item}/mark-done`);
     const item = r && r.ok && (state.inbox || []).find(x => x.id === el.dataset.item);
     if (item) nav("job", item.filed_job_id);
@@ -1077,12 +1160,21 @@ const ACTIONS = {
     if (!(await askConfirm("Void the open draft pay app? You can draft it again from the job page.", "Void the draft", true))) return;
     await post(`/api/jobs/${id}/void-draft`);
   },
-  "follow-up": (el, id) => post(`/api/jobs/${id}/follow-up`),
+  "follow-up": async (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
+    const follow = j && followUpDue(j);
+    if (j && !(await askConfirm(`Email a follow-up on ${unesc(follow ? follow.invoice.number : "the pay app")} to ${sendsTo(j)}?`, "Send follow-up"))) return;
+    await post(`/api/jobs/${id}/follow-up`);
+  },
   "match": async (el, id) => {
     const v = formValues("match");
     const amount = centsFrom(v.amount_cents);
-    if (refuseForm("match", amount.error || amount.cents <= 0 ? { amount_cents: "Enter the payment amount in dollars, like 9,500." } : {})) return;
-    await post(`/api/jobs/${id}/match-payment`, { amount_cents: amount.cents, reference: v.reference, invoice_id: v.invoice_id || "" }, { formKey: "match", close: "match" });
+    const errors = {};
+    if (amount.error || amount.cents <= 0) errors.amount_cents = "Enter the payment amount in dollars, like 9,500.";
+    if (!v.received_on) errors.received_on = "Enter the date received.";
+    if (refuseForm("match", errors)) return;
+    await post(`/api/jobs/${id}/match-payment`, { amount_cents: amount.cents, reference: v.reference, invoice_id: v.invoice_id || "", received_on: v.received_on },
+      { formKey: "match", close: "match" });
   },
   "add-co": async (el, id) => {
     const r = await addChangeOrder(id);
@@ -1116,7 +1208,11 @@ const ACTIONS = {
     await post(`/api/jobs/${id}/attach/${el.dataset.item}`, { name });
   },
   "import-qbo": (el, id) => post(`/api/jobs/${id}/import-qbo`),
-  "close": (el, id) => post(`/api/jobs/${id}/close`),
+  "close": async (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
+    if (!(await askConfirm(`Finish ${unesc(j ? j.name : "the job")}? It moves to Job history and no more payments can be recorded.`, "Finish job"))) return;
+    await post(`/api/jobs/${id}/close`);
+  },
   "cal-prev": () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } calSelectedDay = null; render(); },
   "cal-next": () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } calSelectedDay = null; render(); },
   "cal-today": () => { const n = new Date(); calYear = n.getFullYear(); calMonth = n.getMonth(); calSelectedDay = null; render(); },
@@ -1332,6 +1428,24 @@ function prefillRetainage() {
   (formDraft.newjob ||= {}).retainage_pct = box.value;
 }
 
+// The progress form's preview follows what is typed, without a redraw.
+function updateProgressPreview() {
+  const j = state.jobs.find(x => x.id === currentJobId);
+  const line = document.getElementById("progress-preview");
+  const box = document.querySelector(`[data-form-key="progress"] [data-field="${progressInput()}"]`);
+  if (j && line && box) line.textContent = unesc(progressPreviewText(j, box.value));
+}
+
+// Picking another pay app in Record a payment fills in what is still owed on it.
+function prefillPaymentAmount(invoiceId) {
+  const j = state.jobs.find(x => x.id === currentJobId);
+  const inv = j && j.invoices.find(i => unesc(i.id) === invoiceId);
+  const box = document.getElementById("match-amt");
+  if (!inv || !box) return;
+  box.value = dollarsText(inv.remaining_cents ?? inv.amount_cents);
+  (formDraft.match ||= {}).amount_cents = box.value;
+}
+
 function listenForActions() {
   if (listening) return;
   listening = true;
@@ -1348,11 +1462,15 @@ function listenForActions() {
     run(el, el.dataset.id, e);
   });
   app.addEventListener("input", (e) => {
+    if (e.target.closest && e.target.closest('[data-form-key="progress"]')) updateProgressPreview();
     if (e.target.id === "nj-customer") syncNewJobCustomer();
     if (e.target.id === "nj-retainage") (formDraft.newjob ||= {}).retainage_touched = true;
   });
   app.addEventListener("focusout", (e) => { if (e.target.id === "nj-customer") prefillApprover(); });
-  app.addEventListener("change", (e) => { if (e.target.id === "nj-role" || e.target.id === "nj-customer") prefillRetainage(); });
+  app.addEventListener("change", (e) => {
+    if (e.target.id === "nj-role" || e.target.id === "nj-customer") prefillRetainage();
+    if (e.target.id === "match-inv") prefillPaymentAmount(e.target.value);
+  });
   // A details' toggle doesn't bubble; catch it on the way down.
   app.addEventListener("toggle", (e) => { if (e.target.dataset && e.target.dataset.more) moreDetails[e.target.dataset.more] = e.target.open; }, true);
   // Filter dropdowns listen for "change" only. A click handler that re-renders
@@ -2055,7 +2173,7 @@ function filteredJobs() {
   } else if (dashFilter === "complete") {
     jobs = jobs.filter(j => j.work_status === "complete" && thisMonth(j.completed_at));
   } else if (dashFilter === "sent") {
-    jobs = jobs.filter(j => j.invoices.some(i => i.status === "sent"));
+    jobs = jobs.filter(j => j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status)));
   } else if (dashFilter === "blocked") jobs = jobs.filter(j => isBlocked(j) && !j.closed);
   else if (dashFilter === "draft") jobs = jobs.filter(j => j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status)));
   else if (dashFilter === "waiver") jobs = jobs.filter(j => j.waiver_due && !j.waiver_sent);
@@ -2318,7 +2436,7 @@ const views = {
       <p class="sub">${open.length} active job${open.length === 1 ? "" : "s"}${t.blocked_jobs ? ` · ${t.blocked_jobs} blocked` : ""}</p>
       ${state.jobs.length ? `
       <div class="stages" role="group" aria-label="Show jobs">
-        ${stage("all", "Open and recent")}${stage("draft", "Ready to send")}${stage("blocked", "Blocked")}${stage("sent", "Sent")}${stage("waiver", "Waiver due")}${stage("complete", "Completed this month")}
+        ${stage("all", "Open and recent")}${stage("draft", "Ready to send")}${stage("blocked", "Blocked")}${stage("sent", "Unpaid")}${stage("waiver", "Waiver due")}${stage("complete", "Completed this month")}
       </div>
       ${jobs.length ? `<div class="table-wrap">
         <table class="sortable">
@@ -2464,19 +2582,17 @@ const views = {
         </details>
       </div>` : ""}
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j) : ""}
-      ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="card form-card" data-form-key="progress"><h2>Progress pay app</h2>${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">This replaces ${openDraft.number} at the new total. Its number and paperwork stay.</p>` : ""}${formErrorLine("progress")}<div class="form-row">
-        ${moneyField({ form: "progress", name: "completed_cents", id: "progress-amt", label: "Total done so far ($)", help: "All the work done to date, not just this period." })}
-        ${field({ form: "progress", name: "notes", id: "progress-notes", label: "What was completed", wide: true })}
-        <button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div></div>` : ""}
+      ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? progressFormHtml(j, openDraft) : ""}
       ${formOpen.pencilchanges ? `<div class="card form-card"><h2>Payer wants changes</h2><div class="form-inline"><input id="pencil-note" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
       ${formOpen.done ? `<div class="card form-card" data-form-key="done"><h2>Mark done</h2>${formErrorLine("done")}<div class="form-row">
         ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true })}
         <button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div></div>` : ""}
-      ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Match payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
-        ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${money(i.amount_cents)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
-        ${moneyField({ form: "match", name: "amount_cents", id: "match-amt", label: "Amount received ($)" })}
-        ${field({ form: "match", name: "reference", id: "match-ref", label: "Reference", placeholder: "Check no. or QuickBooks id" })}
-        <button class="btn small" data-action="match" data-id="${j.id}">Match</button></div>` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
+      ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Record a payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
+        ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${owedText(i)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
+        ${moneyField({ form: "match", name: "amount_cents", id: "match-amt", label: "Amount received ($)", cents: (openForPay.find(i => i.id === draftValue("match", "invoice_id", "")) || openForPay[0]).remaining_cents })}
+        ${field({ form: "match", name: "received_on", id: "match-date", label: "Date received", type: "date", value: todayIso(), attrs: `max="${todayIso()}"` })}
+        ${field({ form: "match", name: "reference", id: "match-ref", label: "Check or reference no. (optional)", placeholder: "CHK 2207" })}
+        <button class="btn small" data-action="match" data-id="${j.id}">Record</button></div>` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
       ${formOpen.retpay ? `<div class="card form-card" data-form-key="retpay"><h2>Record retainage paid</h2>${formErrorLine("retpay")}<div class="form-row">
         ${moneyField({ form: "retpay", name: "amount_cents", id: "retpay-amt", label: "Retainage received ($)" })}
         ${field({ form: "retpay", name: "reference", id: "retpay-ref", label: "Reference", placeholder: "Check no. or QuickBooks id" })}
@@ -2485,7 +2601,7 @@ const views = {
         <div class="more-actions" role="group" aria-label="More actions">
           ${more.map(a => `<button class="btn secondary small" ${a.attrs} title="${esc(a.why || "")}">${a.label}</button>`).join("")}
         </div>` : ""}
-      ${!j.closed && j.work_status === "complete" && (j.close_blockers || []).length ? `<p class="sub">Close for record unlocks when: ${(j.close_blockers || []).join(" ")}</p>` : ""}
+      ${!j.closed && j.work_status === "complete" && (j.close_blockers || []).length ? `<p class="sub">Finish job unlocks when: ${(j.close_blockers || []).join(" ")}</p>` : ""}
       <div class="detail-grid">
         <details class="card money-file"${window.innerWidth >= 800 ? " open" : ""}>
           <summary><h2>Money file</h2><span class="sub">${money(m.contract_total_cents)} contract · ${money(m.billed_cents)} billed · ${money(m.collected_cents)} collected · ${money(m.outstanding_cents)} owed</span></summary>
@@ -2717,7 +2833,7 @@ const views = {
         <button class="btn secondary small" data-action="open-packet" data-job="${j.id}" data-inv="${inv.id}">Open packet</button>
       </div>
       <div class="card">
-        <h2>Payments matched</h2>
+        <h2>Payments received</h2>
         ${pays.length ? pays.map(p => `<div class="list-item">${money(p.amount_cents)} · ${p.reference} · ${fmtDate(p.matched_at)}</div>`).join("") : `<p class="sub">None yet.</p>`}
       </div>
       <div class="card">
@@ -2793,7 +2909,7 @@ const views = {
               <td>${j.done_notes || j.status_label}</td>
             </tr>`).join("")}
         </table>
-      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No closed jobs yet", "Finish the money path on a job and use Close for record.")}
+      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No closed jobs yet", "Finish the money path on a job and use Finish job.")}
     `;
   },
   calendar() {
@@ -2905,18 +3021,20 @@ const views = {
   payapps() {
     let apps = [];
     state.jobs.forEach(j => j.invoices.forEach(inv => apps.push({ ...inv, job: j.name, jobId: j.id, blockers: ["draft", "awaiting_approval"].includes(inv.status) ? j.blockers : [] })));
-    if (payappFilter !== "all") apps = apps.filter(a => a.status === payappFilter || (payappFilter === "draft" && ["draft", "awaiting_approval"].includes(a.status)));
+    // "Unpaid" (the sent filter) holds every pay app out for payment, part-paid ones too (R3-02).
+    const shown = { draft: ["draft", "awaiting_approval"], sent: ["sent", "approved", "partial"] };
+    if (payappFilter !== "all") apps = apps.filter(a => (shown[payappFilter] || [payappFilter]).includes(a.status));
     const f = (key, label) => `<button class="${payappFilter === key ? "btn" : "btn secondary"} small" data-action="payapp-filter" data-filter="${key}" aria-pressed="${payappFilter === key}">${label}</button>`;
     return `
       <h1>Pay apps</h1>
-      <div class="filter-bar" role="group" aria-label="Show">${f("all", "All")}${f("draft", "Ready to send")}${f("sent", "Sent")}${f("paid", "Paid")}</div>
+      <div class="filter-bar" role="group" aria-label="Show">${f("all", "All")}${f("draft", "Ready to send")}${f("sent", "Unpaid")}${f("paid", "Paid")}</div>
       ${apps.length ? `<div class="table-wrap">
         <table>
           <tr><th>Number</th><th>Job</th><th>Amount</th><th>Status</th><th>Sent</th><th>Blockers</th></tr>
           ${apps.slice().reverse().map(a => `<tr>
             <td><a href="${pathFor("payapp-detail", a.jobId, a.id)}" data-action="open-payapp" data-job="${a.jobId}" data-inv="${a.id}">${a.number}</a></td>
             <td><a href="${pathFor("job", a.jobId)}" data-action="open-job" data-id="${a.jobId}">${a.job}</a></td>
-            <td class="num">${money(a.amount_cents)}</td>
+            <td class="num">${a.status === "partial" ? owedText(a) : money(a.amount_cents)}</td>
             <td>${invoicePill(a)}</td>
             <td>${a.sent_at ? fmtDate(a.sent_at) : "—"}${emailFailed(a.id) ? " · email failed" : ""}</td>
             <td>${a.blockers.join("; ") || "—"}</td>
@@ -2993,14 +3111,17 @@ const views = {
           ${open.map(j => {
             const sent = j.invoices.find(i => ["sent", "partial"].includes(i.status) && i.sent_at);
             const days = sent ? Math.floor((today - toDate(sent.sent_at)) / 86400000) : "—";
-            const unpaid = j.invoices.filter(i => ["sent", "partial", "approved"].includes(i.status)).map(i => i.number + " " + money(i.amount_cents)).join(", ") || money(j.money.outstanding_cents);
+            const unpaid = j.invoices.filter(i => ["sent", "partial", "approved"].includes(i.status)).map(i => i.number + " " + owedText(i)).join(", ") || money(j.money.outstanding_cents);
+            // Inside the customer's days between follow-ups the button waits, and says until when (R3-03).
+            const follow = followUpDue(j);
+            const early = follow && today < follow.due;
             return `<tr>
               <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a><div class="sub row-sub">${statusPill(j)}</div></td>
               <td>${unpaid}</td>
               <td class="num">${days}</td>
               <td>${j.payer.approver}<div class="sub row-sub">${j.payer.ap_email}${j.payer.phone ? "<br>" + j.payer.phone : ""}</div></td>
               <td class="actions-cell">
-                <button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>
+                ${early ? `<button class="btn small" disabled>Next follow-up ${fmtDate(follow.due.toISOString())}</button>` : `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`}
                 <a class="btn small secondary" href="mailto:${j.payer.ap_email}">Email</a>
                 ${j.payer.phone ? `<a class="btn small secondary" href="tel:${(j.payer.phone || "").replace(/[^0-9+]/g, "")}">Call</a>` : ""}
               </td>
@@ -3045,7 +3166,7 @@ const views = {
       ${importCard}
       ${pays.length ? `<div class="table-wrap">
         <table>
-          <tr><th>Job</th><th>Pay app</th><th>Amount</th><th>Reference</th><th>Matched</th></tr>
+          <tr><th>Job</th><th>Pay app</th><th>Amount</th><th>Reference</th><th>Received</th></tr>
           ${pays.slice().reverse().map(p => {
             const job = state.jobs.find(j => j.id === p.jobId);
             const inv = job && job.invoices.find(i => i.id === p.invoice_id);

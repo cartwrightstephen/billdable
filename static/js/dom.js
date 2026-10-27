@@ -18,8 +18,9 @@ export function labelTables(root) {
 }
 
 // An in-page confirmation instead of the browser's confirm(): styled like the app, the focus
-// stays inside it, Escape cancels. The message is plain text. Resolves true for the main button.
-export function askConfirm(message, okLabel = "Yes", danger = false) {
+// stays inside it, Escape cancels. The message is plain text. Resolves true for the main button,
+// false for Cancel, and "alt" for altLabel's button when there is one (a second, gentler way out).
+export function askConfirm(message, okLabel = "Yes", danger = false, altLabel = "") {
   return new Promise((resolve) => {
     const back = document.activeElement;
     const dlg = document.createElement("dialog");
@@ -38,7 +39,16 @@ export function askConfirm(message, okLabel = "Yes", danger = false) {
     ok.type = "button";
     ok.className = danger ? "btn danger" : "btn";
     ok.textContent = okLabel;
-    row.append(cancel, ok);
+    row.append(cancel);
+    if (altLabel) {
+      const alt = document.createElement("button");
+      alt.type = "button";
+      alt.className = "btn secondary";
+      alt.textContent = altLabel;
+      alt.addEventListener("click", () => done("alt"));
+      row.append(alt);
+    }
+    row.append(ok);
     dlg.append(text, row);
     document.body.append(dlg);
     const done = (answer) => {

@@ -122,6 +122,8 @@ table.sortable th:hover { color: var(--copper); }
 .legend .lg-paid { background: #e5f2ea; } .legend .lg-waiver { background: #f8efd8; } .legend .lg-overdue { background: #f8e8e4; } .legend .lg-other { background: var(--copper-soft); }
 .day-detail { margin-top: 16px; }
 .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.filter-bar.progress-modes { margin: 4px 0 8px; }
+.progress-preview { font-weight: 600; margin: 8px 0; }
 .filter-bar select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--field); font: inherit; background: white; min-height: 34px; }
 .inline-label { font-size: 13px; color: var(--muted); }
 select { max-width: 100%; }

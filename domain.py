@@ -249,10 +249,13 @@ def record_progress(
     completed_value_cents: int,
     notes: str = "",
     actor: str = "owner",
+    period_cents: int | None = None,
 ) -> dict[str, Any]:
     """Set completed-to-date and draft a progress pay app. Does not mark the job done.
     A correction while the draft is still only here replaces it at the new amount, keeping its
-    number and its paperwork; a draft the customer is reviewing has to be answered or voided first."""
+    number and its paperwork; a draft the customer is reviewing has to be answered or voided first.
+    period_cents is "this draw" instead (R3-01): the work on this pay app, before retainage, on top
+    of what is already billed; completed_value_cents is then ignored and refusals name period_cents."""
     job = _open_job(state, job_id)
     if job.get("work_status") == "complete":
         raise GateError("Job is already marked done. Draft the remaining pay app instead.")
@@ -265,6 +268,14 @@ def record_progress(
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
     billed = _billed_gross(job, skip=open_draft)
+    if period_cents is not None:
+        if period_cents <= 0:
+            _refuse("", {"period_cents": "Enter this draw, more than $0."})
+        if billed + period_cents > contract_total:
+            _refuse("", {"period_cents": f"Enter no more than the {money(contract_total - billed)} left on the contract. You entered {money(period_cents)}."})
+        if open_draft and billed + period_cents == job.get("completed_value_cents", 0):
+            _refuse("", {"period_cents": f"{open_draft['number']} is already drafted at that amount. Enter the corrected draw."})
+        completed_value_cents = billed + period_cents
     if completed_value_cents <= 0:
         _refuse("", {"completed_cents": "Enter the total done so far, more than $0."})
     if completed_value_cents > contract_total:
@@ -837,6 +848,10 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out.setdefault("evidence", [])
     out.setdefault("done_notes", "")
     out["sov_view"] = _sov_view(job)
+    # What is still owed on each pay app (R3-02): a part-paid one shows "$remaining of $amount".
+    for inv in out["invoices"]:
+        paid = sum(p["amount_cents"] for p in job["payments"] if p.get("invoice_id") == inv["id"])
+        inv["remaining_cents"] = max(0, inv["amount_cents"] - paid) if inv["status"] in OPEN_FOR_PAYMENT else 0
     return out
 
 

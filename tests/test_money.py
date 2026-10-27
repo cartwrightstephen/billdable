@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import server
 from seed import seed_state
 
 
@@ -419,6 +420,84 @@ class ReviewFindingTests(unittest.TestCase):
         domain.match_payment(state, job["id"], 100_000, "")
         refs = [p["reference"] for p in job["payments"]]
         self.assertEqual(len(refs), len(set(refs)))
+
+
+def job_route(state, job, action, body):
+    """A job action the way the page calls it: the route's own handler, with its body."""
+    ctx = server.Ctx(user={}, body=body, company_id="co-test", actor="Owner")
+    return server.JOB_ACTIONS[action][1](None, state, job["id"], None, ctx)
+
+
+class DrawTests(unittest.TestCase):  # R3-01: "This draw $" goes to the server as period_cents
+    def test_period_cents_adds_to_what_is_billed(self):
+        state = new_state()
+        job = new_job(state, contract=10_000_000, retainage=10)
+        job_route(state, job, "progress", {"period_cents": 3_000_000})
+        send_open(state, job)
+        job_route(state, job, "progress", {"period_cents": 2_000_000, "notes": "Second draw"})
+        self.assertEqual(job["completed_value_cents"], 5_000_000)
+        second = job["invoices"][-1]
+        self.assertEqual((second["gross_cents"], second["retainage_cents"], second["amount_cents"]), (2_000_000, 200_000, 1_800_000))
+
+    def test_period_cents_replaces_an_open_draft(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        send_open(state, job)
+        job_route(state, job, "progress", {"period_cents": 100_000})
+        job_route(state, job, "progress", {"period_cents": 150_000})
+        live = [i for i in job["invoices"] if i["status"] != "void"]
+        self.assertEqual([i["gross_cents"] for i in live], [400_000, 150_000])
+        self.assertEqual(job["completed_value_cents"], 550_000)
+
+    def test_period_cents_refusals_name_the_draw(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        send_open(state, job)
+        for body, says in [({"period_cents": 0}, "more than $0"), ({"period_cents": 700_000}, "$6,000.00 left on the contract"),
+                           ({"period_cents": "lots"}, "as a number")]:
+            with self.assertRaises(domain.GateError) as raised:
+                job_route(state, job, "progress", body)
+            self.assertIn(says, raised.exception.fields["period_cents"])
+        self.assertEqual(job["completed_value_cents"], 400_000)
+
+    def test_total_done_so_far_still_works(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        job_route(state, job, "progress", {"completed_cents": 250_000})
+        self.assertEqual(job["invoices"][-1]["gross_cents"], 250_000)
+
+
+class RecordPaymentTests(unittest.TestCase):  # R3-02
+    def _sent(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        send_open(state, job)
+        return state, job
+
+    def test_received_on_from_the_job_route_is_stored(self):
+        state, job = self._sent()
+        job_route(state, job, "match-payment", {"amount_cents": 100_000, "reference": "CHK 1", "received_on": "2026-10-02"})
+        self.assertEqual(job["payments"][-1]["matched_at"], "2026-10-02T12:00:00+00:00")
+        job_route(state, job, "match-payment", {"amount_cents": 100_000, "reference": "CHK 2", "received_on": ""})
+        self.assertTrue(job["payments"][-1]["matched_at"].startswith(datetime.now(timezone.utc).date().isoformat()[:4]))
+
+    def test_bad_or_future_date_is_refused_under_the_field(self):
+        state, job = self._sent()
+        later = (datetime.now(timezone.utc) + timedelta(days=5)).date().isoformat()
+        for day in ["10/02/2026", later]:
+            with self.assertRaises(domain.GateError) as raised:
+                job_route(state, job, "match-payment", {"amount_cents": 100_000, "received_on": day})
+            self.assertIn("received_on", raised.exception.fields)
+        self.assertEqual(job["payments"], [])
+
+    def test_job_view_shows_what_is_still_owed(self):
+        state, job = self._sent()
+        domain.match_payment(state, job["id"], 150_000, "CHK 3")
+        inv = domain.job_view(state, job)["invoices"][-1]
+        self.assertEqual((inv["status"], inv["remaining_cents"]), ("partial", 250_000))
 
 
 if __name__ == "__main__":

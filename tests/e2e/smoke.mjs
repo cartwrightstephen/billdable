@@ -30,6 +30,15 @@ async function signedInPage(viewport) {
 
 const page = await signedInPage({ width: 1280, height: 900 });
 
+// The in-page confirmation (askConfirm) that sends, marks done and finishes now ask first (R3-03).
+const confirmDialog = (p) => p.locator("dialog.confirm-dialog");
+async function confirmIfAsked(p) {
+  if (await confirmDialog(p).count()) {
+    await confirmDialog(p).locator(".confirm-actions .btn:not(.secondary)").click();
+    await confirmDialog(p).waitFor({ state: "detached" });
+  }
+}
+
 await step("landing redirects a deep link to sign-in, then opens it", async () => {
   const ctx = await browser.newContext();
   const p = await ctx.newPage();
@@ -149,6 +158,14 @@ await step("a first job: Today, the Daily record and the company address", async
   await row.locator(".pill", { hasText: "Not billed yet" }).waitFor();
   await row.getByRole("button", { name: "Bill progress" }).click();
   await p.getByRole("heading", { name: "First porch" }).waitFor();
+  // The progress form says where the job stands and what the pay app comes to (R3-01).
+  await p.locator(".next-card .btn", { hasText: "Progress pay app" }).click();
+  await p.locator(".progress-context", { hasText: "Billed so far $0.00 of $12,000.00 contract (0%)" }).waitFor();
+  await p.fill("#progress-draw", "3,000");
+  assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $3,000.00.");
+  await p.locator('[data-action="progress-mode"][data-mode="percent"]').click();
+  await p.fill("#progress-pct", "50");
+  assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $6,000.00.");
   // The only open job is picked on the Daily record.
   await p.goto(BASE + "/today/daily");
   await p.locator("#daily-job").waitFor();
@@ -187,6 +204,7 @@ await step("money path: the main button walks a job from blocked to closed", asy
   // Follow the one main button, whatever it says, until the job is closed.
   const seen = [];
   let triedRefusal = false;
+  let triedCancel = false;
   await page.goto(BASE + "/jobs/job-inman");
   for (let n = 0; n < 12; n++) {
     await page.getByRole("heading", { name: "Inman Park bath" }).waitFor();
@@ -229,14 +247,26 @@ await step("money path: the main button walks a job from blocked to closed", asy
       await sendWaiver.first().click();
       for (let t = 0; t < 100 && (await sendWaiver.count()) >= before; t++) await new Promise((r) => setTimeout(r, 100));
       await page.goto(BASE + "/jobs/job-inman");
-    } else if (label === "Match payment") {
+    } else if (label === "Record a payment") {
       await main.click();
       const option = await page.locator("#match-inv option").first().innerText();
-      await page.fill("#match-amt", option.match(/\$([\d,]+\.\d\d)/)[1].replace(/,/g, ""));
+      // The amount starts at what is still owed on the pay app, and the date at today (R3-02).
+      assert.equal((await page.inputValue("#match-amt")).replace(/[$,]/g, ""), option.match(/\$([\d,]+\.\d\d)/)[1].replace(/,/g, ""));
+      assert.match(await page.inputValue("#match-date"), /^\d{4}-\d{2}-\d{2}$/);
       await page.fill("#match-ref", "CHK-2201");
       await page.click('[data-action="match"]');
       await page.locator("#match-inv").waitFor({ state: "detached" });
-    } else if (label === "Close for record" && !triedRefusal) {
+    } else if (label === "Finish job" && triedRefusal && !triedCancel) {
+      // Finishing asks first; Cancel changes nothing (R3-03).
+      triedCancel = true;
+      await main.click();
+      await confirmDialog(page).waitFor();
+      assert.match(await confirmDialog(page).innerText(), /Finish Inman Park bath\? It moves to Job history/);
+      await confirmDialog(page).getByRole("button", { name: "Cancel" }).click();
+      await confirmDialog(page).waitFor({ state: "detached" });
+      const inman = await page.evaluate(async () => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === "job-inman"));
+      assert.ok(inman && !inman.closed, "Cancel left the job open");
+    } else if (label === "Finish job" && !triedRefusal) {
       // A refusal shows under the button that was tapped: an unsigned change order added
       // behind the page's back makes Close fail, and the card says why.
       triedRefusal = true;
@@ -247,6 +277,7 @@ await step("money path: the main button walks a job from blocked to closed", asy
         return st.jobs.find((j) => j.id === "job-inman").change_orders.find((c) => c.status === "pending").id;
       });
       await main.click();
+      await confirmIfAsked(page);
       const card = page.locator(".next-card + .action-error");
       await card.waitFor();
       assert.match(await card.innerText(), /change order/i);
@@ -254,6 +285,7 @@ await step("money path: the main button walks a job from blocked to closed", asy
       await page.goto(BASE + "/jobs/job-inman");
     } else {
       await main.click();
+      await confirmIfAsked(page);
       // The page's CSP forbids evaluating strings, so poll from here rather than with waitForFunction.
       for (let t = 0; t < 100; t++) {
         if (await page.locator(".job-head .pill", { hasText: "Closed" }).count()) break;
@@ -263,7 +295,7 @@ await step("money path: the main button walks a job from blocked to closed", asy
       }
     }
   }
-  for (const want of ["Review & send", "Match payment", "Choose waiver and send", "Close for record"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
+  for (const want of ["Review & send", "Record a payment", "Choose waiver and send", "Finish job"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
   await page.locator(".job-head .pill", { hasText: "Closed" }).waitFor();
 });
 
@@ -272,7 +304,7 @@ await step("the audit chain checks out after all that", async () => {
   await page.getByText("The chain of records checks out.").waitFor();
 });
 
-await step("Today's queue: one main button per row, and a follow-up goes in one tap", async () => {
+await step("Today's queue: one main button per row, and a follow-up names who it goes to first", async () => {
   await page.goto(BASE + "/today");
   const rows = page.locator(".action-queue .action-item");
   await rows.first().waitFor();
@@ -290,8 +322,32 @@ await step("Today's queue: one main button per row, and a follow-up goes in one 
   const follow = () => page.locator(".action-item", { hasText: "Turner office TI" }).getByRole("button", { name: "Send follow-up" });
   if (await follow().count()) {
     await follow().click();
+    await confirmDialog(page).waitFor();
+    assert.match(await confirmDialog(page).innerText(), /^Email a follow-up on PA-/);
+    await confirmIfAsked(page);
     await follow().waitFor({ state: "detached" });  // followed up: not due again until the payer's window passes
   }
+});
+
+await step("a part-paid pay app is under Unpaid, with what is still owed", async () => {  // R3-02
+  const paid = await page.evaluate(async () => {
+    const st = await (await fetch("/api/state")).json();
+    for (const j of st.jobs) {
+      const inv = j.invoices.find((i) => i.status === "sent");
+      if (!inv) continue;
+      const res = await fetch(`/api/jobs/${j.id}/match-payment`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount_cents: 100, reference: "SMOKE-PART", invoice_id: inv.id, received_on: "" }) });
+      if (res.ok) return { number: inv.number, owed: inv.amount_cents - 100 };
+    }
+    return null;
+  });
+  assert.ok(paid, "a sent pay app to part-pay");
+  await page.goto(BASE + "/money");
+  await page.locator('[data-action="payapp-filter"][data-filter="sent"]', { hasText: "Unpaid" }).click();
+  const row = page.locator("tr", { hasText: paid.number });
+  await row.locator(".pill", { hasText: "Partly paid" }).waitFor();
+  const owed = (paid.owed / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  assert.match(await row.innerText(), new RegExp(`\\$${owed.replace(/[.]/g, "\\.")} of \\$`));
 });
 
 await step("the job page shows what happened, newest first", async () => {

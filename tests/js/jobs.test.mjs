@@ -1,7 +1,7 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId } from "../../static/js/jobs.js";
+import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue } from "../../static/js/jobs.js";
 
 const job = (over = {}) => ({
   id: "j1", closed: false, work_status: "in_progress", blockers: [], close_blockers: [], invoices: [],
@@ -49,7 +49,7 @@ test("each stage of the money path has one status and one next step", () => {
   assert.deepEqual(jobStatus(job({ ...done, invoices: [inv("paid")], money: { unbilled_completed_cents: 0, retainage_open_cents: 100, outstanding_cents: 0 } })), ["Retainage open", "amber"]);
   const paid = job({ ...done, invoices: [inv("paid")] });
   assert.deepEqual(jobStatus(paid), ["Paid", "green"]);
-  assert.equal(nextStep(paid), "Ready to close for the record.");
+  assert.equal(nextStep(paid), "Ready to finish the job.");
   assert.equal(nextStep(job({ ...done, invoices: [inv("paid")], close_blockers: ["Final waiver"] })), "Before closing: Final waiver");
   assert.deepEqual(jobStatus(job({ closed: true })), ["Closed", "green"]);
 });
@@ -72,4 +72,61 @@ test("forms start on the job last used, else the only open job (R2-07)", () => {
   assert.equal(defaultJobId([a, b], "b"), "b");
   assert.equal(defaultJobId([a], "gone"), "a", "a closed or deleted job is not kept");
   assert.equal(defaultJobId([]), "");
+});
+
+// R3-01: the progress form's three ways in, and the pay app it drafts.
+const billing = (over = {}) => job({
+  retainage_pct: 10, change_orders: [],
+  money: { contract_total_cents: 10_000_000, unbilled_completed_cents: 0, retainage_open_cents: 0, outstanding_cents: 0 },
+  invoices: [
+    { id: "a", status: "paid", amount_cents: 2_700_000, retainage_cents: 300_000, gross_cents: 3_000_000 },
+    { id: "b", status: "void", amount_cents: 900_000, retainage_cents: 100_000, gross_cents: 1_000_000 },
+    { id: "c", status: "draft", amount_cents: 900_000, retainage_cents: 100_000, gross_cents: 1_000_000 },
+  ],
+  ...over,
+});
+
+test("billed work counts gross on pay apps that count, not a void one or the open draft", () => {
+  assert.equal(billedWork(billing()), 3_000_000);
+  assert.equal(billedWork(job({ invoices: [{ status: "sent", amount_cents: 950, retainage_cents: 50 }] })), 1000);
+});
+
+test("this draw is added to what is billed, less retainage", () => {
+  const f = progressFigures(billing(), "period", "$20,000");
+  assert.equal(f.field, "period_cents");
+  assert.equal(f.completed, 5_000_000);
+  assert.equal(f.period, 2_000_000);
+  assert.equal(f.retained, 200_000);
+  assert.equal(f.net, 1_800_000);
+});
+
+test("total done so far and percent complete give the same pay app", () => {
+  const total = progressFigures(billing(), "total", "50,000");
+  const pct = progressFigures(billing(), "percent", "50");
+  assert.equal(total.field, "completed_cents");
+  assert.equal(total.period, 2_000_000);
+  assert.equal(pct.completed, 5_000_000);
+  assert.equal(pct.net, total.net);
+});
+
+test("the progress form refuses what the server would", () => {
+  assert.match(progressFigures(billing(), "period", "").error, /this draw/);
+  assert.match(progressFigures(billing(), "period", "80,000").error, /\$70,000\.00 left/);
+  assert.match(progressFigures(billing(), "total", "30,000").error, /already billed/);
+  assert.match(progressFigures(billing(), "percent", "120").error, /1 to 100/);
+});
+
+test("an unsigned change order on the bill rides on the same pay app", () => {
+  const f = progressFigures(billing({ change_orders: [{ status: "pending", included_in_billing: true, amount_cents: 100_000 }] }), "period", "1,000");
+  assert.equal(f.gross, 200_000);
+  assert.equal(f.retained, 20_000);
+});
+
+// R3-03: the next follow-up is the customer's days after the last one, or after the send.
+test("follow-up due date follows the customer's days", () => {
+  const sent = job({ payer: { follow_up_days: 5 }, invoices: [{ status: "sent", sent_at: "2026-10-01T12:00:00+00:00" }] });
+  assert.equal(followUpDue(sent).due.toISOString(), "2026-10-06T12:00:00.000Z");
+  const again = job({ payer: {}, invoices: [{ status: "partial", sent_at: "2026-10-01T12:00:00+00:00", last_follow_up_at: "2026-10-10T12:00:00+00:00" }] });
+  assert.equal(followUpDue(again).due.toISOString(), "2026-10-17T12:00:00.000Z");
+  assert.equal(followUpDue(job({ invoices: [{ status: "paid", sent_at: "2026-10-01" }] })), null);
 });

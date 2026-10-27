@@ -2274,6 +2274,31 @@ def _import_qbo(h, st, j, i, c):
     domain.import_sample_qbo_payment(st, j, c.actor)
 
 
+def _progress(h, st, j, i, c):
+    """Progress in dollars: the total done so far, or this draw (period_cents), which the
+    domain adds to what is already billed (R3-01)."""
+    body = c.body
+    if body.get("period_cents") not in (None, ""):
+        return domain.record_progress(st, j, 0, _text(body, "notes"), c.actor, period_cents=_number(body, "period_cents", "this draw"))
+    return domain.record_progress(st, j, _number(body, "completed_cents", "the total done so far", 0), _text(body, "notes"), c.actor)
+
+
+def _received_on(body: dict) -> str | None:
+    """The date a payment came in (YYYY-MM-DD, R3-02); blank is today. Not a date, or a day
+    still to come, is refused under the field."""
+    text = _text(body, "received_on").strip()
+    if not text:
+        return None
+    try:
+        day = datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        raise domain.GateError("Enter the date received, like 2026-10-27.", fields={"received_on": "Enter the date received, like 2026-10-27."})
+    # One day past today in UTC is allowed: where the person is, it may already be tomorrow.
+    if day > (datetime.now(timezone.utc) + timedelta(days=1)).date():
+        raise domain.GateError("Enter a date that has already happened.", fields={"received_on": "Enter a date that has already happened."})
+    return text
+
+
 def _edit_job(h, st, j, i, c):
     body = c.body
     updates = {k: _text(body, k) for k in ("name", "address", "contract_number") if k in body}
@@ -2287,14 +2312,15 @@ def _edit_job(h, st, j, i, c):
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
 JOB_ACTIONS = {
     "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"))),
-    "progress": (False, lambda h, st, j, i, c: domain.record_progress(st, j, _number(c.body, "completed_cents", "the total done so far", 0), _text(c.body, "notes"), c.actor)),
+    "progress": (False, _progress),
     "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), c.body.get("update_contract") is True, c.actor)),
     "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"))),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, _sends("the pay app", lambda h, st, j, i, c: domain.approve_and_send(st, j, c.actor, **_co_args(c)))),
     "follow-up": (False, _sends("the follow-up", lambda h, st, j, i, c: domain.record_follow_up(st, j, c.actor, **_co_args(c)))),
-    "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor, invoice_id=_text(c.body, "invoice_id") or None)),
+    "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor,
+                                                                         invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None))),
     "retainage": (False, _sends("the request", lambda h, st, j, i, c: domain.chase_retainage(st, j, c.actor))),
     "retainage-paid": (False, lambda h, st, j, i, c: domain.record_retainage_payment(st, j, _number(c.body, "amount_cents", "the retainage received"), _text(c.body, "reference"), c.actor)),

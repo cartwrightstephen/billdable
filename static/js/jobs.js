@@ -1,6 +1,6 @@
 // Where a job stands: blocked or not, the one next step, status pills, change-order signatures and waiver kinds.
 
-import { unesc, fmtDate, fmtDateTime } from "./format.js";
+import { unesc, fmtDate, fmtDateTime, toDate, centsFrom, percentFrom, money } from "./format.js";
 
 export const RECORD_KINDS = {
   note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
@@ -51,10 +51,10 @@ export function nextStep(j) {
   const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   if (draft) return "Pay app is ready. Review it, then Approve & send.";
   if (j.waiver_due && !j.waiver_sent) return "Payment received. Approve and send the waiver.";
-  if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the payer. Follow up or match a payment.";
+  if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the payer. Follow up or record a payment.";
   if (j.work_status !== "complete") return "Record progress, or mark the job done." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
   if (j.money.retainage_open_cents > 0) return "Chase retainage once the closeout packet is complete.";
-  if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before closing: " + j.close_blockers[0] : "Ready to close for the record.";
+  if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before closing: " + j.close_blockers[0] : "Ready to finish the job.";
   return "Draft a pay app for unbilled completed work.";
 }
 
@@ -90,4 +90,54 @@ export function waiverSendForm(j, inv, disabled = false) {
 export function defaultJobId(openJobs, lastId = "") {
   if (lastId && openJobs.some(j => j.id === lastId)) return lastId;
   return openJobs.length === 1 ? openJobs[0].id : "";
+}
+
+const DRAFTS = ["draft", "awaiting_approval"];
+
+// Work already billed, before retainage, on the pay apps that count, leaving out an open draft
+// (a progress entry replaces it). The server's _billed_gross, which a draw is added to.
+export function billedWork(j) {
+  return (j.invoices || []).filter(i => i.status !== "void" && !DRAFTS.includes(i.status))
+    .reduce((sum, i) => sum + Number(i.gross_cents ?? (i.amount_cents + (i.retainage_cents || 0))), 0);
+}
+
+// The progress form (R3-01): what was typed, in one of three ways, as the pay app it drafts.
+// mode: "period" (this draw $, the default), "total" (total done so far $) or "percent" (% complete).
+// Returns {field, completed, period, retained, net, error}; field is the request key the number goes in.
+export function progressFigures(j, mode, text) {
+  const base = billedWork(j);
+  const total = j.money.contract_total_cents;
+  const out = { field: mode === "period" ? "period_cents" : "completed_cents", completed: null, period: null, retained: 0, net: null, error: "" };
+  if (mode === "percent") {
+    const pct = percentFrom(text);
+    if (pct.error) return { ...out, error: pct.error };
+    if (pct.value <= 0 || pct.value > 100) return { ...out, error: "Enter a percent from 1 to 100." };
+    out.completed = Math.round(total * pct.value / 100);
+  } else {
+    const amount = centsFrom(text);
+    if (amount.error || amount.cents <= 0) return { ...out, error: mode === "period" ? "Enter this draw in dollars, like 4,850." : "Enter the total done so far in dollars, like 19,400." };
+    out.completed = mode === "period" ? base + amount.cents : amount.cents;
+  }
+  out.period = out.completed - base;
+  if (out.completed > total) return { ...out, error: mode === "period" ? `Enter no more than the ${money(total - base)} left on the contract.` : `Enter no more than the contract total, ${money(total)}.` };
+  if (out.period <= 0) return { ...out, error: `Enter more than the ${money(base)} already billed. This is the total done so far, not this draw.` };
+  // Unsigned change orders put on the bill ride on the same pay app (domain.draft_invoice).
+  const cos = (j.change_orders || []).filter(co => co.status === "pending" && co.included_in_billing).reduce((s, co) => s + co.amount_cents, 0);
+  const gross = out.period + cos;
+  const pct = Number(j.retainage_pct) || 0;
+  out.gross = gross;
+  out.retained = pct ? Math.floor((gross * pct + 50) / 100) : 0;
+  out.net = gross - out.retained;
+  return out;
+}
+
+// When the next follow-up on the oldest unpaid pay app may go (domain.record_follow_up): the
+// customer's days between follow-ups after the last one, or after it was sent. Null with nothing to chase.
+export function followUpDue(j) {
+  const sent = (j.invoices || []).find(i => ["sent", "partial"].includes(i.status));
+  if (!sent) return null;
+  const last = toDate(sent.last_follow_up_at || sent.sent_at);
+  if (!last) return null;
+  const days = Number(unesc(String((j.payer || {}).follow_up_days || ""))) || 7;
+  return { invoice: sent, due: new Date(last.getTime() + days * 86400000) };
 }
