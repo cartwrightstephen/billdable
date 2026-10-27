@@ -310,7 +310,8 @@ def _next_number(job: dict[str, Any]) -> str:
     return f"PA-{job['code']}-{n:02d}"
 
 
-def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: str = "", evidence: list[str] | None = None) -> dict[str, Any]:
+def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: str = "", evidence: list[str] | None = None,
+              note_record: bool = True) -> dict[str, Any]:
     job = _open_job(state, job_id)
     if job.get("work_status") == "complete":
         raise GateError("Job is already marked done.")
@@ -323,8 +324,8 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     job["completed_at"] = job.get("completed_at") or utcnow()
     job["done_notes"] = notes or job.get("done_notes", "")
     # The notes are kept on the job record (and in History, through the audit line below), not
-    # on the job's header line (R2-05).
-    if (notes or "").strip():
+    # on the job's header line (R2-05). A message filed from the Inbox is its own record already.
+    if note_record and (notes or "").strip():
         job.setdefault("records", []).append({
             "id": "rec-" + secrets.token_hex(3), "kind": "note", "label": "Notes when marked done",
             "note": notes.strip(), "added_at": utcnow(), "added_by": actor,

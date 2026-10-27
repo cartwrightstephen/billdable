@@ -275,7 +275,8 @@ async function boot(checkLink = true) {
     mailReady = data.mail_ready === true;
     readOnly = typeof data.read_only === "string" ? esc(data.read_only) : "";
     billingInfo = escDeep(data.billing || null);
-    rememberSignIn();
+    // A visit to the sample company doesn't count as having an account on this device.
+    if (data.user && data.user.company_id !== DEMO_COMPANY_ID) rememberSignIn();
     applyLocation();
     await load();
   } else {
@@ -955,6 +956,9 @@ const ACTIONS = {
     if (sel) requestAnimationFrame(() => {
       const target = document.querySelector(sel);
       if (!target) return;
+      // A box folded away (the payments import) opens first, or it can't be seen or focused.
+      const folded = target.closest("details");
+      if (folded) folded.open = true;
       target.scrollIntoView({ block: "center" });
       if (target.matches("input, select, textarea, [tabindex]")) target.focus({ preventScroll: true });
     });
@@ -1961,7 +1965,7 @@ function onboardingHtml() {
     { text: "Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
     { text: "Set up a schedule of values to bill line by line (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present),
-      label: "Open the job", attrs: goJob(j => j.sov_view && j.sov_view.present, ".next-card"), needsJob: true },
+      label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.editable) || j.sov_view.present, "#sov-card"), needsJob: true },
     { text: "Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the customer needs.", done: invoices.length > 0,
       label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
     { text: "Add the missing paperwork, then Approve & send.", done: invoices.some(i => i.sent_at),
@@ -1973,7 +1977,8 @@ function onboardingHtml() {
       label: "QuickBooks", attrs: `data-action="onb-go" data-view="payments"` },
   ].filter(st => !st.hidden);
   const required = steps.filter(st => !st.optional);
-  if (required.every(st => st.done)) return "";
+  // Its job is the first pay app: once one has gone out, it is done, whatever else is left.
+  if (required.every(st => st.done) || anyPayAppSent(state)) return "";
   const done = required.filter(st => st.done).length;
   const next = steps.find(st => !st.optional && !st.done);
   const button = (st) => st.done || !st.attrs || (st.needsJob && !jobs.length) ? ""

@@ -434,7 +434,8 @@ def file_and_mark_done(state: dict[str, Any], item_id: str, actor: str) -> dict[
         raise domain.GateError("This item doesn't say a job is done.")
     file_item(state, item_id, job_id, item["kind"] if item["kind"] != "daily" else "note", actor)
     note = (item.get("text") or "").strip().splitlines()[0][:300] if item.get("text") else ""
-    return domain.mark_done(state, job_id, actor, notes=f"From {item.get('from') or 'a message'}: {note}".strip())
+    return domain.mark_done(state, job_id, actor, notes=f"From {item.get('from') or 'a message'}: {note}".strip(),
+                            note_record=False)
 
 
 def _item(state: dict[str, Any], item_id: str) -> dict[str, Any]:
