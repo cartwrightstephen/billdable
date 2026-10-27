@@ -62,6 +62,23 @@ await step("the job page has one main action, and Back returns to Today", async 
   assert.equal(new URL(page.url()).pathname, "/today");
 });
 
+await step("New job: a wrong field is marked in place and nothing typed is lost", async () => {
+  await page.goto(BASE + "/jobs");
+  await page.getByRole("button", { name: "New job" }).first().click();
+  await page.fill("#nj-name", "Smoke test porch");
+  await page.fill("#nj-address", "1 Porch Lane");
+  await page.fill("#nj-amount", "48,500");
+  await page.fill("#nj-customer", "Smoke Homeowner");
+  await page.fill("#nj-approver", "Sam Smoke");
+  await page.fill("#nj-email", "not an email");
+  await page.click('[data-action="create-job"]');
+  await page.locator('#nj-email[aria-invalid="true"]').waitFor();
+  assert.match(await page.locator("#nj-email-err").innerText(), /ap@builder\.com/);
+  assert.equal(await page.inputValue("#nj-name"), "Smoke test porch");
+  assert.equal(await page.inputValue("#nj-amount"), "$48,500.00", "dollars are tidied when the box is left");
+  await page.getByRole("button", { name: "Cancel" }).first().click();  // nothing saved
+});
+
 await step("refresh keeps the page", async () => {
   await page.goto(BASE + "/money/collections");
   await page.reload();
@@ -71,6 +88,7 @@ await step("refresh keeps the page", async () => {
 await step("money path: the main button walks a job from blocked to closed", async () => {
   // Follow the one main button, whatever it says, until the job is closed.
   const seen = [];
+  let triedRefusal = false;
   await page.goto(BASE + "/jobs/job-inman");
   for (let n = 0; n < 12; n++) {
     await page.getByRole("heading", { name: "Inman Park bath" }).waitFor();
@@ -97,6 +115,22 @@ await step("money path: the main button walks a job from blocked to closed", asy
       await page.fill("#match-ref", "CHK-2201");
       await page.click('[data-action="match"]');
       await page.locator("#match-inv").waitFor({ state: "detached" });
+    } else if (label === "Close for record" && !triedRefusal) {
+      // A refusal shows under the button that was tapped: an unsigned change order added
+      // behind the page's back makes Close fail, and the card says why.
+      triedRefusal = true;
+      const coId = await page.evaluate(async () => {
+        const res = await fetch("/api/jobs/job-inman/add-co", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "Smoke test extra", amount_cents: 10000 }) });
+        const st = await res.json();
+        return st.jobs.find((j) => j.id === "job-inman").change_orders.find((c) => c.status === "pending").id;
+      });
+      await main.click();
+      const card = page.locator(".next-card + .action-error");
+      await card.waitFor();
+      assert.match(await card.innerText(), /change order/i);
+      await page.evaluate(async (co) => { await fetch(`/api/jobs/job-inman/withdraw-co/${co}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); }, coId);
+      await page.goto(BASE + "/jobs/job-inman");
     } else {
       await main.click();
       // The page's CSP forbids evaluating strings, so poll from here rather than with waitForFunction.

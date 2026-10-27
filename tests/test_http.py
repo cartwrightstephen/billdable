@@ -89,8 +89,32 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(res.status, 400)
         res, data = self.request("POST", "/api/auth/login", {"email": "x@example.com", "password": 12345})
         self.assertEqual(res.status, 400)
+        # A number that isn't one is refused under its field, so the form can show it there (R1-02).
         res, data = self.request("POST", "/api/jobs", {"name": "A", "contract_cents": 1e400}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        self.assertIn("contract_cents", data["fields"])
+
+    def test_bad_request_says_nothing_about_python(self):
+        cookie, _ = self.signup("not-understood@example.com")
+        job = {"name": "Ash deck", "customer": "Ash GC", "address": "1 Ash", "approver": "Kim", "ap_email": "ap@ash.example", "contract_cents": 500_000}
+        res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
+        jid = state["jobs"][0]["id"]
+        res, data = self.request("POST", f"/api/jobs/{jid}/sov", {"lines": "x"}, cookie=cookie)
         self.assertEqual(res.status, 400)
+        for leak in ("'", '"', "str", "list", "dict", "NoneType", "Error", "Traceback"):
+            self.assertNotIn(leak, data["error"])
+        self.assertIn("request_id", data)
+
+    def test_refusals_name_the_field(self):
+        cookie, _ = self.signup("fields@example.com")
+        res, data = self.request("POST", "/api/jobs", {"name": "Oak", "customer": "Oak GC", "address": "1 Oak", "approver": "Kim",
+                                                       "ap_email": "not an email", "contract_cents": 100_000}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        self.assertEqual(list(data["fields"]), ["ap_email"])
+        self.assertEqual(data["error"], data["fields"]["ap_email"], "one bad field: the message is that field's")
+        res, data = self.request("POST", "/api/jobs", {"name": "", "customer": "", "contract_cents": "lots"}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        self.assertEqual(data["fields"], {"contract_cents": "Enter the contract amount as a number."})
 
     def test_signup_password_min_length(self):
         res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "short@example.com", "password": "123456789", "name": "Pat", "company_name": "P"})

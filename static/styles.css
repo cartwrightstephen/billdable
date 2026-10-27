@@ -382,3 +382,22 @@ textarea { font: inherit; }
 .money-file > summary { cursor: pointer; }
 .money-file > summary h2 { display: inline; margin: 0 8px 0 0; }
 .money-file[open] > summary { margin-bottom: 8px; }
+
+/* Forms built with field() (js/forms.js): label, input, help and error line in one block. */
+.field { min-width: 0; }
+.field-error:empty { display: none; }
+.field-help { display: block; font-size: 12px; margin-top: 2px; }
+.form-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-start; margin: 8px 0; }
+.form-row > .field { flex: 1 1 170px; }
+.form-row > .field.span-2 { flex: 3 1 260px; }
+.form-row label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.form-row input, .form-row select, .form-row textarea { width: 100%; padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: white; min-height: 34px; }
+.form-row > .btn { margin-top: 21px; }
+.form-row [aria-invalid="true"], .auth-card [aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+/* A refusal shown under the button that was tapped, instead of a toast. */
+.action-error { margin: 8px 0 12px; }
+.action-error ul { margin: 6px 0 0; padding-left: 18px; }
+@media (max-width: 800px) {
+  .form-row > .field, .form-row > .field.span-2 { flex-basis: 100%; }
+  .form-row > .btn { margin-top: 0; }
+}

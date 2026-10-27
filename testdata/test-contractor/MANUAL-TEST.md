@@ -42,7 +42,7 @@ Kirkwood Dental Suite was just awarded. Its customer is new, so this job also cr
   | Job name * | `Kirkwood Dental Suite` |
   | Address * | `1910 Hosea L Williams Dr NE, Atlanta, GA 30317` |
   | Contract number | `LDP-0412` |
-  | Contract amount ($) * | `27450` (type no comma: the field is a number box) |
+  | Contract amount ($) * | `27,450` (commas and a `$` are fine; leaving the box shows `$27,450.00`) |
   | Retainage % | `0` |
   | Customer * | `Lindell Dental Partners` |
   | Role | `Owner` |
@@ -54,7 +54,8 @@ Kirkwood Dental Suite was just awarded. Its customer is new, so this job also cr
 - [ ] 2.2 **Save job**. Expected: toast "Job saved", the job page opens. Its code is **KIRK**. The Job record holds one record, "Contract LDP-0412" (Contract).
 - [ ] 2.3 **Settings > Payer playbook** now has 7 payers. **Lindell Dental Partners**: Approver Dr. Maya Lindell, AP email billing@lindelldental.example, Follow-up days 7, Usual approval days 14, Packet "Signed contract, conditional waiver, completion photos, and pay-app backup."
 - [ ] 2.4 Optional, to see a known trap: create a throwaway job for another new customer and type `Gate code 1234, call before 8am` in **Notes for the job record**. That text becomes the new payer's whole Packet (two items: "Gate code 1234", "Call before 8am"). Delete the job afterwards with **Edit job > Delete job** (the payer stays).
-- [ ] 2.5 Validation: open **New job** again, leave everything empty, **Save job**. Expected inline errors: "Enter the job name.", "Enter the job address.", "Enter who pays this job.", "Enter who approves the pay app.", "Enter a real AP email, like ap@builder.com.", "Enter the contract amount in dollars." Then **Cancel**.
+- [ ] 2.5 Validation: open **New job** again, leave everything empty, **Save job**. Expected inline errors under each field: "Enter the job name.", "Enter the job address.", "Enter the customer: who pays for this job.", "Enter who signs off on your bills.", "Enter the email pay apps go to, like ap@builder.com.", "Enter the contract amount, like 48,500."
+- [ ] 2.6 Nothing typed is lost: type a Job name and `48,500` in **Contract amount ($)**, fill the other required fields but type `kim at oak` as **AP email**, **Save job**. Expected: only AP email turns red with its message; the job name and `$48,500.00` are still there. Then **Cancel**.
 
 ## 3. Imports
 
@@ -135,13 +136,13 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 
 ## 4. Money loop 1: Kirkwood Dental Suite, start to closed (no SOV, no retainage)
 
-- [ ] 4.1 Open **Kirkwood Dental Suite** > **Progress pay app**. **Completed to date $** `13725`, **What was completed** `Operatories 1-3 floors set`, **Draft progress pay app**. Expected: PA-KIRK-01 Draft $13,725.00; primary button **Clear 4 blockers**; blockers "Signed contract is missing.", "Conditional waiver is missing.", "Completion photos is missing.", "Pay-app backup is missing."
+- [ ] 4.1 Open **Kirkwood Dental Suite** > **Progress pay app**. **Total done so far ($)** `13,725`, **What was completed** `Operatories 1-3 floors set`, **Draft progress pay app**. Expected: PA-KIRK-01 Draft $13,725.00; primary button **Clear 4 blockers**; blockers "Signed contract is missing.", "Conditional waiver is missing.", "Completion photos is missing.", "Pay-app backup is missing."
 - [ ] 4.2 **Clear 4 blockers**. On **Signed contract** pick "Contract LDP-0412" and tap **Attach**. Expected: ✓ and "Attached: Contract LDP-0412".
 - [ ] 4.3 For the other three: **Mark present…**, type `Emailed to Dr. Lindell on 10/20`, **Save reason**. Expected: each shows "Marked present: Emailed to Dr. Lindell on 10/20". The job's status reads "Pay app ready for review", and Today tags it "Ready to send" with **Review & send**.
 - [ ] 4.4 Open the pay app (Money > Pay apps > PA-KIRK-01). **Open the PDF**: "APPLICATION FOR PAYMENT", FROM block = Brightwater Tile & Stone LLC, 2480 Cobb Industrial Ct, Smyrna, GA 30080. **Before you send** shows To "Dr. Maya Lindell · billing@lindelldental.example" and the first-send notice. Tap **Approve & send to billing@lindelldental.example**. Expected: PA-KIRK-01 Sent; status "Submitted to Lindell Dental Partners, awaiting Dr. Maya Lindell".
-- [ ] 4.5 Job page > **Match payment**: pay app PA-KIRK-01, **Amount in dollars** `13725`, **Reference (check no., QBO id)** `CHK 2207`, **Match**. Expected: Paid; status "Payment received, waiver not sent"; primary **Send waiver**.
+- [ ] 4.5 Job page > **Match payment**: pay app PA-KIRK-01, **Amount received ($)** `13,725`, **Reference** `CHK 2207`, **Match**. Expected: Paid; status "Payment received, waiver not sent"; primary **Send waiver**.
 - [ ] 4.6 **Send waiver**. Expected: the email in the Outbox is "Unconditional waiver on progress payment for PA-KIRK-01 — Kirkwood Dental Suite".
-- [ ] 4.7 **Mark done**, **Completion notes** `All rooms complete`, **Confirm done**. Expected: PA-KIRK-02 Draft $13,725.00 with the same 4 blockers (each pay app gets its own packet).
+- [ ] 4.7 **Mark done**, **Anything to note? (optional)** `All rooms complete`, **Confirm done**. Expected: PA-KIRK-02 Draft $13,725.00 with the same 4 blockers (each pay app gets its own packet).
 - [ ] 4.8 Clear the 4 blockers with **Mark present…** (`Sent with PA-KIRK-01`), send it, **Match payment** `13725` / `CHK 2291`, **Send waiver** (this one is "Unconditional waiver on final payment").
 - [ ] 4.9 **Close for record**. Expected: "This job is closed. Its money record is read-only..."; it moves to **Job history** (2 closed jobs, 3 after 6.2).
 
@@ -156,10 +157,10 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 
 ## 6. Other stages
 
-- [ ] 6.1 Ask for retainage too early: on Decatur Library Annex, the job page's **Ask for retainage** is refused with "Closeout packet incomplete." and "Punch-list signoff is missing."
-- [ ] 6.2 Retainage release (DECA): **Money > Retainage** shows Decatur Library Annex $6,400.00, holding it up "Punch-list signoff". **Open closeout packet**, **Mark present…** `Punch walk signed 10/23 by Joan Pettis`, **Save reason**. Back on Retainage tap **Ask for retainage** (toast with the email outcome; status "Retainage follow-up sent to Joan Pettis"). On the job page **Record retainage paid**: **Retainage received $** `6400`, **Reference** `CHK 41990`, **Record**. Then **Close for record**.
+- [ ] 6.1 Ask for retainage too early: on Decatur Library Annex, the job page's **Ask for retainage** is refused in a red card right under the buttons (not a toast) with "Closeout packet incomplete." and "Punch-list signoff is missing."
+- [ ] 6.2 Retainage release (DECA): **Money > Retainage** shows Decatur Library Annex $6,400.00, holding it up "Punch-list signoff". **Open closeout packet**, **Mark present…** `Punch walk signed 10/23 by Joan Pettis`, **Save reason**. Back on Retainage tap **Ask for retainage** (toast with the email outcome; status "Retainage follow-up sent to Joan Pettis"). On the job page **Record retainage paid**: **Retainage received ($)** `6,400`, **Reference** `CHK 41990`, **Record**. Then **Close for record**.
 - [ ] 6.3 Job's done from a text (WHIT): on Today tap **Mark done and draft** on the Whitfield row. Expected: the job opens with PA-WHIT-02 Draft $8,412.50 and the homeowner packet's 4 blockers; PA-WHIT-01 stays Paid.
-- [ ] 6.4 Slow payer (VEST): job page **Follow up**. Expected: refused "Follow-up on PA-VEST-01 is not due until <sent date + 7 days> (Harmon & Vale Construction expects 7 days between contacts)."
+- [ ] 6.4 Slow payer (VEST): job page **Follow up**. Expected: refused, in a card under the buttons, "Follow-up on PA-VEST-01 is not due until <sent date + 7 days> (Harmon & Vale Construction expects 7 days between contacts)."
 - [ ] 6.5 Short pay (GLEN): PA-GLEN-01 stays **Partly paid** with $1,250.00 outstanding. There is no way to accept the short pay (known gap, see APP-ISSUES 5).
 - [ ] 6.6 Change order (BROO): on the CO, **Request signature** is refused on a test server: "Signing links need the site's address (DURACASH_URL) set on the server." File the 3.1 Inbox card to Brookhaven as **Change order**, then on CO 1 **Signed on paper…**, pick "Brookhaven Townhomes Bldg C - change order request, shower niches", **Save as signed**. Expected: CO 1 approved, contract total $52,918.00, the schedule gets a fifth line for the change order.
 - [ ] 6.7 Payer says backup is missing (VEST): file the 3.3 card to Vesta Senior Living Phase 2 as **Pay app / invoice backup**. Expected: the record "RE: Pay application PA-VEST-01 — Vesta Senior Living Phase 2" with the .eml file. Then in **Settings > Payer playbook > Harmon & Vale Construction** add `; missing certified payroll backup` to **Rejects when** and **Save playbook** (toast "Saved").

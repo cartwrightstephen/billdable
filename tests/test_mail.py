@@ -414,7 +414,7 @@ class MailHttpTests(unittest.TestCase):
         res, _ = self.request("POST", f"/api/jobs/{job['id']}/sov-progress", {"done": {line_id: {"x": 1}}}, cookie=cookie)
         self.assertEqual(res.status, 409)
         res, _ = self.request("POST", f"/api/jobs/{job['id']}/sov", {"lines": "nope"}, cookie=cookie)
-        self.assertEqual(res.status, 409)
+        self.assertEqual(res.status, 400)  # the app always sends a list (R1-02)
 
 
 if __name__ == "__main__":

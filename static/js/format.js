@@ -39,6 +39,40 @@ export const money = (cents) => {
   return `${sign}$${(abs / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+// ---------- numbers people type ----------
+// "$12,500.50", "12500.5" and " 12,500 " are all the same amount. plainNumber drops what people
+// type around a number ($ , % and spaces); sovNum (sov.js) and the parsers below build on it.
+export const plainNumber = (v) => String(v ?? "").replace(/[$,\s%]/g, "");
+
+// Dollars typed into a form, as whole cents, without floating-point drift:
+// {cents, error}. Blank and anything that isn't an amount come back with an error to show.
+export function centsFrom(text) {
+  const t = plainNumber(text);
+  if (!t) return { cents: null, error: "Enter an amount in dollars, like 12,500.50." };
+  if (/^-?\d*\.\d{3,}$/.test(t)) return { cents: null, error: "Use no more than two digits after the point." };
+  if (!/^-?(\d+\.?\d{0,2}|\.\d{1,2})$/.test(t)) return { cents: null, error: "Enter an amount in dollars, like 12,500.50." };
+  const negative = t.startsWith("-");
+  const [whole, frac = ""] = t.replace("-", "").split(".");
+  const cents = Number(whole || "0") * 100 + Number((frac + "00").slice(0, 2));
+  if (!Number.isSafeInteger(cents)) return { cents: null, error: "That amount is too large." };
+  return { cents: negative ? -cents : cents, error: "" };
+}
+
+// A percent typed into a form ("5", "5.5", "5 %"), with at most one decimal: {value, error}.
+export function percentFrom(text) {
+  const t = plainNumber(text);
+  if (!t) return { value: null, error: "Enter a percent, like 5 or 7.5." };
+  if (!/^(\d+\.?\d?|\.\d)$/.test(t)) return { value: null, error: "Enter a percent, like 5 or 7.5." };
+  return { value: Number(t), error: "" };
+}
+
+// Cents as a person types them back: "$48,500.00", always US style so centsFrom reads it again.
+export function dollarsText(cents) {
+  if (cents == null) return "";
+  const sign = cents < 0 ? "-" : "";
+  return `${sign}$${(Math.abs(cents) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 // ---------- dates and words people read ----------
 // Server values arrive escaped; dates are plain ISO strings, so unesc() is only a safety net.
 export function toDate(iso) {

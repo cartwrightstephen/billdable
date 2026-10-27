@@ -53,6 +53,32 @@ class MoneyFileTests(unittest.TestCase):
             domain.create_job(state, "", "", 0)
         self.assertGreaterEqual(len(raised.exception.blockers), 4)
 
+    def test_create_job_names_the_bad_field(self):
+        state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": []}
+        with self.assertRaises(domain.GateError) as raised:
+            domain.create_job(state, "Oak", "Oak GC", 100_000, address="1 Oak", approver="Kim", ap_email="kim at oak")
+        self.assertEqual(set(raised.exception.fields), {"ap_email"})
+        self.assertIn("ap@builder.com", raised.exception.fields["ap_email"])
+        self.assertEqual(str(raised.exception), raised.exception.fields["ap_email"])
+
+    def test_parse_int_is_strict_at_the_request(self):
+        self.assertEqual(domain.parse_int("12", "the days", "days"), 12)
+        self.assertEqual(domain.parse_int(4000000.0, "the amount", "amount_cents"), 4000000)
+        self.assertEqual(domain.parse_int("", "the days", "days", 7), 7)
+        for bad in ("x", "1.5", True, [3], float("inf")):
+            with self.assertRaises(domain.GateError) as raised:
+                domain.parse_int(bad, "the days", "days")
+            self.assertEqual(list(raised.exception.fields), ["days"])
+        with self.assertRaises(domain.GateError):
+            domain.parse_int(None, "the days", "days")
+        self.assertEqual(domain._int_or("x", 7), 7, "reading stored values stays lenient")
+
+    def test_playbook_errors_are_keyed_by_field(self):
+        state = seed_state()
+        with self.assertRaises(domain.GateError) as raised:
+            domain.update_payer(state, "payer-ellison", {"follow_up_days": "soon", "ap_email": "nope", "payapp_due_day": 40})
+        self.assertEqual(set(raised.exception.fields), {"follow_up_days", "ap_email", "payapp_due_day"})
+
     def test_oak_street_money_file_separates_unsigned_change_order(self):
         job = seed_state()["jobs"][0]
         money = domain.job_money(job)

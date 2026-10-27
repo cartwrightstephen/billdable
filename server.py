@@ -496,23 +496,30 @@ def _text(body: dict, key: str, default: str = "", limit: int = MAX_TEXT_CHARS) 
     return value
 
 
-def _whole_number(body: dict, key: str, label: str, default: int | None = None) -> int:
-    value = body.get(key, default)
-    if value is None or value == "":
-        if default is None:
-            raise BadRequest(f"{label} is required.")
-        return default
-    if isinstance(value, bool):
-        raise BadRequest(f"{label} must be a number.")
-    if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
-            raise BadRequest(f"{label} must be a number.")
-        return int(round(value))
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
-        return int(value.strip())
-    raise BadRequest(f"{label} must be a number.")
+def _list(body: dict, key: str) -> list | None:
+    """A list from the request body, or None when absent; anything else was not sent by the app."""
+    value = body.get(key)
+    if value is not None and not isinstance(value, list):
+        raise BadRequest(NOT_UNDERSTOOD)
+    return value
+
+
+def _number(body: dict, key: str, label: str, default: int | None = None) -> int:
+    """A whole number from the request body; a bad one is refused under its field (409)."""
+    return domain.parse_int(body.get(key, default), label, key, default)
+
+
+# What a 400 says: the request's own wording (a Python exception's text) stays in the log.
+NOT_UNDERSTOOD = "Something in the form was not understood. Check the fields and try again."
+
+
+def _gate(exc: "domain.GateError") -> dict:
+    """The 409 reply for a business refusal: the message, what stands in the way, and the
+    fields to fix, each under its request key."""
+    out = {"error": str(exc), "blockers": exc.blockers}
+    if exc.fields:
+        out["fields"] = exc.fields
+    return out
 
 
 class Server(ThreadingHTTPServer):
@@ -649,7 +656,7 @@ class Handler(BaseHTTPRequestHandler):
                 save_company(company_id, state)
                 return 200, domain.light_snapshot(state)
         except domain.GateError as exc:
-            return 409, {"error": str(exc), "blockers": exc.blockers}
+            return 409, _gate(exc)
 
     def _token(self) -> str | None:
         raw = self.headers.get("Cookie", "")
@@ -700,7 +707,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._get()
         except BadRequest as exc:
-            self._json(exc.code, {"error": str(exc)})
+            self._json(exc.code, {"error": str(exc), "request_id": self._rid})
+        except domain.GateError as exc:
+            self._json(409, _gate(exc))
         except Exception:
             self._crash()
 
@@ -709,7 +718,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._post()
         except BadRequest as exc:
-            self._json(exc.code, {"error": str(exc)})
+            self._json(exc.code, {"error": str(exc), "request_id": self._rid})
+        except domain.GateError as exc:
+            self._json(409, _gate(exc))
         except Exception:
             self._crash()
 
@@ -784,10 +795,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "Unknown action"})
             return
         except domain.GateError as exc:
-            self._json(409, {"error": str(exc), "blockers": exc.blockers})
+            self._json(409, _gate(exc))
             return
         except (KeyError, ValueError, TypeError, OverflowError) as exc:
-            self._json(400, {"error": f"Bad request: {exc}"})
+            log_json("warn", msg="request not understood", rid=self._rid, path=redact(urlparse(self.path).path),
+                     error=redact(f"{type(exc).__name__}: {exc}")[:300])
+            self._json(400, {"error": NOT_UNDERSTOOD, "request_id": self._rid})
             return
         if end_trial:
             threading.Thread(target=self._end_stripe_trial, args=(end_trial,), daemon=True).start()
@@ -1025,7 +1038,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, qbo.status(ctx.company_id))
 
     def _p_qbo_payments(self, m, ctx: "Ctx") -> None:
-        days = _whole_number(ctx.body, "days", "Days", 1) if "days" in ctx.body else 90
+        days = _number(ctx.body, "days", "the number of days", 1) if "days" in ctx.body else 90
         with company_lock(ctx.company_id):
             state = load_company(ctx.company_id)
         try:
@@ -1714,7 +1727,7 @@ class Handler(BaseHTTPRequestHandler):
                 parsed, skipped = None, []
                 stored = [importer.store_bytes(company_id, filename, data, actor)]
         except domain.GateError as exc:
-            self._json(409, {"error": str(exc), "blockers": exc.blockers})
+            self._json(409, _gate(exc))
             return
 
         def add(state: dict) -> None:
@@ -2054,10 +2067,10 @@ class Handler(BaseHTTPRequestHandler):
     def _m_create_job(self, state: dict, m, ctx: "Ctx") -> None:
         body = ctx.body
         domain.create_job(
-            state, _text(body, "name"), _text(body, "customer"), _whole_number(body, "contract_cents", "Contract amount", 0),
+            state, _text(body, "name"), _text(body, "customer"), _number(body, "contract_cents", "the contract amount", 0),
             address=_text(body, "address"), approver=_text(body, "approver"), ap_email=_text(body, "ap_email"),
             phone=_text(body, "phone"), role=_text(body, "role", "Owner"),
-            retainage_pct=_whole_number(body, "retainage_pct", "Retainage", 0), packet_notes=_text(body, "packet_notes"),
+            retainage_pct=_number(body, "retainage_pct", "the retainage percent", 0), packet_notes=_text(body, "packet_notes"),
             contract_number=_text(body, "contract_number"), actor=ctx.actor,
         )
 
@@ -2204,27 +2217,27 @@ def _edit_job(h, st, j, i, c):
     body = c.body
     updates = {k: _text(body, k) for k in ("name", "address", "contract_number") if k in body}
     if "contract_cents" in body:
-        updates["contract_cents"] = _whole_number(body, "contract_cents", "Contract amount", 0)
+        updates["contract_cents"] = _number(body, "contract_cents", "the contract amount", 0)
     if "retainage_pct" in body:
-        updates["retainage_pct"] = _whole_number(body, "retainage_pct", "Retainage", 0)
+        updates["retainage_pct"] = _number(body, "retainage_pct", "the retainage percent", 0)
     domain.edit_job(st, j, updates, c.actor)
 
 
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
 JOB_ACTIONS = {
     "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"))),
-    "progress": (False, lambda h, st, j, i, c: domain.record_progress(st, j, _whole_number(c.body, "completed_cents", "Completed-to-date", 0), _text(c.body, "notes"), c.actor)),
-    "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, c.body.get("lines"), c.body.get("op_pct"), c.body.get("update_contract") is True, c.actor)),
+    "progress": (False, lambda h, st, j, i, c: domain.record_progress(st, j, _number(c.body, "completed_cents", "the total done so far", 0), _text(c.body, "notes"), c.actor)),
+    "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), c.body.get("update_contract") is True, c.actor)),
     "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"))),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, lambda h, st, j, i, c: domain.approve_and_send(st, j, c.actor, **_co_args(c))),
     "follow-up": (False, lambda h, st, j, i, c: domain.record_follow_up(st, j, c.actor, **_co_args(c))),
-    "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _whole_number(c.body, "amount_cents", "Payment amount"), _text(c.body, "reference"), c.actor, invoice_id=_text(c.body, "invoice_id") or None)),
+    "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor, invoice_id=_text(c.body, "invoice_id") or None)),
     "waiver": (False, lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None)),
     "retainage": (False, lambda h, st, j, i, c: domain.chase_retainage(st, j, c.actor)),
-    "retainage-paid": (False, lambda h, st, j, i, c: domain.record_retainage_payment(st, j, _whole_number(c.body, "amount_cents", "Retainage amount"), _text(c.body, "reference"), c.actor)),
-    "add-co": (False, lambda h, st, j, i, c: domain.add_change_order(st, j, _text(c.body, "title"), _whole_number(c.body, "amount_cents", "Change order amount", 0), c.actor, description=_text(c.body, "description"))),
+    "retainage-paid": (False, lambda h, st, j, i, c: domain.record_retainage_payment(st, j, _number(c.body, "amount_cents", "the retainage received"), _text(c.body, "reference"), c.actor)),
+    "add-co": (False, lambda h, st, j, i, c: domain.add_change_order(st, j, _text(c.body, "title"), _number(c.body, "amount_cents", "the change order amount", 0), c.actor, description=_text(c.body, "description"))),
     # A change order is approved by a signature: online (request-co-signature) or a signed
     # copy on the job record. A bare status flip is not accepted (P2-3).
     "approve-co": (True, lambda h, st, j, i, c: domain.mark_co_signed(st, j, i, _text(c.body, "record_id"), c.actor)),

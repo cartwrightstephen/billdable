@@ -1,11 +1,11 @@
 // Schedule of values: quantities in thousandths, money in cents, and the continuation sheet (G703 columns).
 
-import { money } from "./format.js";
+import { money, plainNumber } from "./format.js";
 
 // ---------- schedule of values ----------
 // Same integer arithmetic as sov.py, so the totals shown here match what the server saves.
 export function sovNum(v) {
-  const t = String(v ?? "").replace(/[$,\s%]/g, "");
+  const t = plainNumber(v);
   if (!t || !/^-?\d*\.?\d+$/.test(t)) return NaN;
   return parseFloat(t);
 }

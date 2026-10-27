@@ -1,20 +1,20 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
-import { esc, unesc, escDeep, money, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
+import { esc, unesc, escDeep, money, centsFrom, percentFrom, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
 import { RECORD_KINDS, SOURCE_LABELS, isBlocked, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
 import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js";
 import { labelTables, moreButton, askConfirm } from "./js/dom.js";
+import { field, moneyField, formErrorLine, refuseForm, formValues, formErrors, clearForm, clearAllForms, watchForms } from "./js/forms.js";
 
 let state = null;
 let me = null;
 let authMode = "signup";
 let dataNotice = false;   // server says data may be erased (no persistent disk confirmed yet)
-let authError = "";
-let authErrorField = "";  // "password" | "terms" when the error belongs to one field
-let jobFormErrors = {};   // new-job or edit-job field id -> message
+let authError = "";      // the two-step code screen's error; the sign-in form uses formErrors.auth
+let actionEl = null;      // the button whose action is running: a refusal is shown under it
 let drawerOpen = false;   // the phone menu
 let pendingPath = null;   // a page address opened while signed out, opened after sign-in
 let lastToastAt = 0;
@@ -282,7 +282,6 @@ function setAiVisible(on) {
 
 function renderLanding() {
   document.title = "Duracash";
-  if (!authError) authErrorField = "";
   setAiVisible(false);
   const app = document.getElementById("app");
   const signup = authMode === "signup";
@@ -317,18 +316,15 @@ function renderLanding() {
             <button class="btn" type="submit">Sign in</button>
             ${authError ? `<div class="auth-error" role="alert">${esc(authError)}</div>` : ""}
             <div class="auth-toggle"><button type="button" id="code-back">Back</button></div>
-          </form>` : `<form id="auth-form">
-            ${signup ? `<label>Your name</label><input name="name" required autocomplete="name" />` : ""}
-            ${signup ? `<label>Company name</label><input name="company_name" required />` : ""}
-            <label>Email</label>
-            <input name="email" type="email" required autocomplete="username" />
-            <label>Password</label>
-            <input name="password" type="password" required autocomplete="${signup ? "new-password" : "current-password"}"${authErrorField === "password" ? ' aria-invalid="true" aria-describedby="auth-field-error"' : ""} />
-            ${authErrorField === "password" ? `<span class="field-error" id="auth-field-error">${esc(authError)}</span>` : ""}
-            ${signup ? `<label class="terms-check"><input type="checkbox" name="accept_terms" required${authErrorField === "terms" ? ' aria-invalid="true" aria-describedby="auth-field-error"' : ""}> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>` : ""}
-            ${authErrorField === "terms" ? `<span class="field-error" id="auth-field-error">${esc(authError)}</span>` : ""}
+          </form>` : `<form id="auth-form" data-form-key="auth" novalidate>
+            ${signup ? field({ form: "auth", name: "name", id: "auth-name", label: "Your name", autocomplete: "name" }) : ""}
+            ${signup ? field({ form: "auth", name: "company_name", id: "auth-company", label: "Company name", autocomplete: "organization" }) : ""}
+            ${field({ form: "auth", name: "email", id: "auth-email", label: "Email", type: "email", autocomplete: "username" })}
+            ${field({ form: "auth", name: "password", id: "auth-password", label: "Password", type: "password", autocomplete: signup ? "new-password" : "current-password" })}
+            ${signup ? `<label class="terms-check"><input type="checkbox" id="auth-terms" name="accept_terms" data-field="accept_terms" aria-describedby="auth-terms-err"> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>
+            <span class="field-error" id="auth-terms-err"></span>` : ""}
             <button class="btn" type="submit">${signup ? "Create account" : "Sign in"}</button>
-            ${authError && !authErrorField ? `<div class="auth-error" role="alert">${esc(authError)}</div>` : ""}
+            ${formErrorLine("auth")}
           </form>`}
           ${signup ? "" : `<div class="auth-toggle"><button type="button" id="auth-forgot">Forgot your password?</button></div>`}
           <div class="auth-toggle">
@@ -363,10 +359,11 @@ function renderLanding() {
   document.getElementById("auth-switch").addEventListener("click", () => {
     authMode = signup ? "login" : "signup";
     authError = "";
+    delete formErrors.auth;
     renderLanding();
   });
-  const toSignup = () => { authMode = "signup"; authError = ""; renderLanding(); };
-  const toSignin = () => { authMode = "login"; authError = ""; renderLanding(); };
+  const toSignup = () => { authMode = "signup"; authError = ""; delete formErrors.auth; renderLanding(); };
+  const toSignin = () => { authMode = "login"; authError = ""; delete formErrors.auth; renderLanding(); };
   document.getElementById("bar-start").addEventListener("click", toSignup);
   document.getElementById("price-start").addEventListener("click", toSignup);
   document.getElementById("bar-signin").addEventListener("click", toSignin);
@@ -376,22 +373,25 @@ function renderLanding() {
 async function onAuthSubmit(e) {
   e.preventDefault();
   const form = e.target;
-  authErrorField = "";
-  if (authMode === "signup" && form.password.value.length < 10) {
-    authError = "Password must be at least 10 characters.";
-    authErrorField = "password";
-    renderLanding();
-    document.querySelector('#auth-form input[name="password"]')?.focus();
-    return;
-  }
+  const v = loginCode && authMode === "login" ? {} : formValues("auth");
   const body = loginCode && authMode === "login"
     ? { ...loginCode, code: form.code.value }
-    : { email: form.email.value, password: form.password.value };
+    : { email: v.email, password: form.password.value };
   if (authMode === "signup") {
-    body.name = form.name.value;
-    body.company_name = form.company_name.value;
-    body.accept_terms = form.accept_terms.checked;
-    if (!body.accept_terms) { authError = "To create an account, accept the Terms of Service and the Privacy Policy."; authErrorField = "terms"; renderLanding(); return; }
+    // Checked here first, in place: nothing typed is lost.
+    const errors = {};
+    if (!v.name) errors.name = "Enter your name.";
+    if (!v.company_name) errors.company_name = "Enter your company's name.";
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email)) errors.email = "Enter your email, like you@yourcompany.com.";
+    if (form.password.value.length < 10) errors.password = "Use at least 10 characters for the password.";
+    if (!form.accept_terms.checked) errors.accept_terms = "To create an account, accept the Terms of Service and the Privacy Policy.";
+    if (refuseForm("auth", errors)) return;
+    body.name = v.name;
+    body.company_name = v.company_name;
+    body.accept_terms = true;
+  } else if (!loginCode && (!v.email || !body.password)) {
+    refuseForm("auth", { ...(v.email ? {} : { email: "Enter your email." }), ...(body.password ? {} : { password: "Enter your password." }) });
+    return;
   }
   let res;
   try {
@@ -409,12 +409,16 @@ async function onAuthSubmit(e) {
     if (data.needs_code && authMode === "login") {
       authError = loginCode ? (data.error || "That code didn't work.") : "";
       loginCode = { email: body.email, password: body.password };
-    } else {
+      renderLanding();
+    } else if (loginCode) {
       authError = data.error || "Could not sign in.";
+      renderLanding();
+    } else {
+      refuseForm("auth", data.fields || { _form: data.error || "Could not sign in." });
     }
-    renderLanding();
     return;
   }
+  clearForm("auth");
   loginCode = null;
   me = escDeep(data.user);
   authError = "";
@@ -455,7 +459,12 @@ async function logout() {
   renderLanding();
 }
 
-async function post(path, body = {}) {
+// opts.formKey: the form this came from: what was typed is forgotten once it saves, and the
+// server's field errors show under its inputs. opts.close: the formOpen key to close once saved.
+// A refusal (409) changes nothing, so the page is not redrawn: its reasons show in a card under
+// the button that was tapped (opts.anchor, else the one being handled), not in a toast.
+async function post(path, body = {}, opts = {}) {
+  const anchor = opts.anchor || actionEl;
   const emailsBefore = state ? state.email_log_total || 0 : 0;
   jobDetails = {};
   let res;
@@ -479,12 +488,17 @@ async function post(path, body = {}) {
     return;
   }
   if (res.status === 409) {
-    const lines = data.blockers || [data.error];
-    toast((data.error && lines[0] !== data.error ? data.error + " " : "Blocked: ") + lines.join("; "));
-  } else if (!res.ok) {
+    const fields = data.fields && typeof data.fields === "object" ? data.fields : null;
+    if (opts.formKey && fields && Object.keys(fields).length) refuseForm(opts.formKey, fields);
+    else showRefusal(anchor, data);
+    return { ok: false, status: 409, data };
+  }
+  if (!res.ok) {
     toast((data.error || "Request failed") + (data.request_id ? ` Reference: ${data.request_id}.` : ""));
   } else {
     toast("Saved");
+    if (opts.formKey) clearForm(opts.formKey);
+    if (opts.close) formOpen[opts.close] = false;
   }
   // A change answers with the company's updated state (the same shape as /api/state): use it
   // rather than asking again. Anything else (an error) reloads, so the page shows what is true.
@@ -495,6 +509,33 @@ async function post(path, body = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
+// Why an action was refused, in a card right under the button that was tapped (or the row or
+// bar it sits in), scrolled into view. Without a button on the page it falls back to a toast.
+function showRefusal(anchor, data) {
+  document.querySelectorAll(".action-error").forEach(c => c.remove());
+  const message = String(data.error || "That wasn't done.");
+  const lines = (Array.isArray(data.blockers) ? data.blockers : []).map(String).filter(b => b && b !== message);
+  if (anchor && !anchor.isConnected && anchor.dataset && anchor.dataset.action) {
+    const sel = `[data-action="${CSS.escape(anchor.dataset.action)}"]${anchor.dataset.id ? `[data-id="${CSS.escape(anchor.dataset.id)}"]` : ""}`;
+    anchor = document.querySelector(sel);
+  }
+  if (!anchor || !anchor.isConnected) { toast([message, ...lines].join(" ")); return; }
+  const card = document.createElement("div");
+  card.className = "form-error action-error";
+  card.setAttribute("role", "alert");
+  const head = document.createElement("strong");
+  head.textContent = message;
+  card.append(head);
+  if (lines.length) {
+    const ul = document.createElement("ul");
+    lines.forEach(l => { const li = document.createElement("li"); li.textContent = l; ul.append(li); });
+    card.append(ul);
+  }
+  const host = anchor.closest(".action-item, .next-card, .more-actions, .form-inline, .form-row, .list-item") || anchor;
+  host.insertAdjacentElement("afterend", card);
+  card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
 // opts.fromHistory: Back/Forward already changed the address; opts.replace: don't add a history entry.
 function nav(view, jobId = null, detailId = null, opts = {}) {
   if (view === "account") teamData = null;  // fresh team list each time the page opens
@@ -503,7 +544,7 @@ function nav(view, jobId = null, detailId = null, opts = {}) {
   currentJobId = jobId;
   currentDetailId = detailId;
   formOpen = {};
-  jobFormErrors = {};
+  clearAllForms();
   drawerOpen = false;
   if (!opts.fromHistory) {
     const url = pathFor(view, jobId, detailId);
@@ -520,7 +561,7 @@ function nav(view, jobId = null, detailId = null, opts = {}) {
 
 function toggleForm(key) {
   formOpen[key] = !formOpen[key];
-  if (key === "newjob" || key === "editjob") jobFormErrors = {};
+  if (!formOpen[key]) clearForm(key);  // Cancel drops what was typed
   render();
 }
 
@@ -748,6 +789,7 @@ function bindActions() {
   document.querySelectorAll("[data-action]").forEach((el) => {
     el.addEventListener("click", async (e) => {
       e.preventDefault();
+      actionEl = el;
       const a = el.dataset.action;
       const id = el.dataset.id;
       if (a === "email-retry") e.stopPropagation();
@@ -757,15 +799,28 @@ function bindActions() {
         return;
       }
       if (a === "change-password") {
-        const r = await postJson("/api/auth/password", { current: document.getElementById("pw-current").value, new: document.getElementById("pw-new").value });
-        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
-        if (r.ok) render();
+        const current = document.getElementById("pw-current").value, next = document.getElementById("pw-new").value;
+        const errors = {};
+        if (!current) errors.current = "Enter your current password.";
+        if (next.length < 10) errors.new = "Use at least 10 characters for the new password.";
+        if (refuseForm("password", errors)) return;
+        const r = await postJson("/api/auth/password", { current, new: next });
+        if (!r.ok) { refuseForm("password", r.data.fields || { _form: r.data.error || "That didn't work." }); return; }
+        clearForm("password");
+        toast(r.data.message);
+        render();
         return;
       }
       if (a === "team-invite") {
-        const email = document.getElementById("invite-email").value;
-        const data = await teamPost("/api/team/invite", { email, role: document.getElementById("invite-role").value });
-        if (data) { lastInvite = { link: data.invite_link || (location.origin + data.invite_path), emailed: data.emailed, email_status: data.email_status, email }; render(); }
+        const v = formValues("invite");
+        if (refuseForm("invite", /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email) ? {} : { email: "Enter their email, like pat@yourcompany.com." })) return;
+        const r = await postJson("/api/team/invite", { email: v.email, role: v.role || "member" });
+        if (!r.ok) { refuseForm("invite", r.data.fields || { _form: r.data.error || "That didn't work." }); return; }
+        const data = r.data;
+        if (data.users) teamData = escDeep({ users: data.users, invites: data.invites || [] });
+        clearForm("invite");
+        lastInvite = { link: data.invite_link || (location.origin + data.invite_path), emailed: data.emailed, email_status: data.email_status, email: v.email };
+        render();
         return;
       }
       if (a === "team-role") { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); return; }
@@ -893,16 +948,13 @@ function bindActions() {
       else if (a === "email-retry") await post(`/api/outbox/${el.dataset.email}/retry`);
       else if (a === "send") await post(`/api/jobs/${id}/send`);
       else if (a === "progress") {
-        const dollars = parseFloat(document.querySelector("#progress-amt")?.value || "0");
-        const notes = document.querySelector("#progress-notes")?.value || "";
-        if (!(dollars > 0)) { toast("Enter completed-to-date in dollars."); return; }
-        formOpen.progress = false;
-        await post(`/api/jobs/${id}/progress`, { completed_cents: Math.round(dollars * 100), notes });
+        const v = formValues("progress");
+        const amount = centsFrom(v.completed_cents);
+        if (refuseForm("progress", amount.error || amount.cents <= 0 ? { completed_cents: "Enter the total done so far in dollars, like 19,400." } : {})) return;
+        await post(`/api/jobs/${id}/progress`, { completed_cents: amount.cents, notes: v.notes }, { formKey: "progress", close: "progress" });
       }
       else if (a === "done") {
-        const notes = document.querySelector("#done-notes")?.value || "";
-        await post(`/api/jobs/${id}/done`, { notes });
-        formOpen.done = false;
+        await post(`/api/jobs/${id}/done`, { notes: formValues("done").notes || "" }, { formKey: "done", close: "done" });
       }
       else if (a === "resolve") {
         const box = document.getElementById(`resolve-reason-${el.dataset.item}`);
@@ -916,12 +968,10 @@ function bindActions() {
       }
       else if (a === "retainage") await post(`/api/jobs/${id}/retainage`);
       else if (a === "retainage-paid") {
-        const dollars = parseFloat(document.querySelector("#retpay-amt")?.value || "0");
-        const reference = document.querySelector("#retpay-ref")?.value || "";
-        const cents = Math.round(dollars * 100);
-        if (!(cents > 0)) { toast("Enter the retainage amount received."); return; }
-        formOpen.retpay = false;
-        await post(`/api/jobs/${id}/retainage-paid`, { amount_cents: cents, reference });
+        const v = formValues("retpay");
+        const amount = centsFrom(v.amount_cents);
+        if (refuseForm("retpay", amount.error || amount.cents <= 0 ? { amount_cents: "Enter the retainage received in dollars, like 2,425." } : {})) return;
+        await post(`/api/jobs/${id}/retainage-paid`, { amount_cents: amount.cents, reference: v.reference }, { formKey: "retpay", close: "retpay" });
       }
       else if (a === "include-co") await post(`/api/jobs/${id}/include-co/${el.dataset.co}`);
       else if (a === "pencil") await post(`/api/jobs/${id}/pencil`);
@@ -995,34 +1045,20 @@ function bindActions() {
       }
       else if (a === "follow-up") await post(`/api/jobs/${id}/follow-up`);
       else if (a === "match") {
-        const dollars = parseFloat(document.querySelector("#match-amt")?.value || "0");
-        const ref = document.querySelector("#match-ref")?.value || "";
-        const invoiceId = document.querySelector("#match-inv")?.value || "";
-        const cents = Math.round(dollars * 100);
-        if (!(cents > 0)) { toast("Enter the payment amount in dollars."); return; }
-        await post(`/api/jobs/${id}/match-payment`, { amount_cents: cents, reference: ref, invoice_id: invoiceId });
+        const v = formValues("match");
+        const amount = centsFrom(v.amount_cents);
+        if (refuseForm("match", amount.error || amount.cents <= 0 ? { amount_cents: "Enter the payment amount in dollars, like 9,500." } : {})) return;
+        await post(`/api/jobs/${id}/match-payment`, { amount_cents: amount.cents, reference: v.reference, invoice_id: v.invoice_id || "" }, { formKey: "match", close: "match" });
       }
       else if (a === "add-co") {
-        const title = (document.querySelector("#co-title")?.value || "").trim();
-        const dollars = parseFloat(document.querySelector("#co-amt")?.value || "0");
-        const cents = Math.round(dollars * 100);
-        if (!title) { toast("Give the change order a title."); return; }
-        if (!(cents > 0)) { toast("Enter the change order amount."); return; }
-        const description = (document.querySelector("#co-desc")?.value || "").trim();
-        await post(`/api/jobs/${id}/add-co`, { title, amount_cents: cents, description });
-        nav("co-detail", id);
+        const r = await addChangeOrder(id);
+        if (r && r.ok) nav("co-detail", id);
       }
       else if (a === "goto-co") { coPreselectJob = id; nav("cos"); }
       else if (a === "add-co-from-list") {
-        const jobId = document.querySelector("#new-co-job")?.value;
-        const title = (document.querySelector("#co-title")?.value || "").trim();
-        const dollars = parseFloat(document.querySelector("#co-amt")?.value || "0");
-        const cents = Math.round(dollars * 100);
-        if (!jobId) { toast("Pick a job."); return; }
-        if (!title) { toast("Give the change order a title."); return; }
-        if (!(cents > 0)) { toast("Enter the change order amount."); return; }
-        const description = (document.querySelector("#co-desc")?.value || "").trim();
-        const r = await post(`/api/jobs/${jobId}/add-co`, { title, amount_cents: cents, description });
+        const jobId = formValues("newco").job;
+        if (!jobId) { refuseForm("newco", { job: "Pick a job." }); return; }
+        const r = await addChangeOrder(jobId);
         if (r && r.ok) toast(`Change order created on ${unesc((state.jobs.find(j => j.id === jobId) || {}).name || "the job")}. It stays unbilled until signed.`);
       }
       else if (a === "goto-packet") nav("packet-detail", id);
@@ -1065,11 +1101,9 @@ function bindActions() {
         if (reason) await post(`/api/jobs/${id}/learn-rejection`, { reason });
       }
       else if (a === "add-record") {
-        const label = document.querySelector("#rec-label")?.value.trim();
-        const note = document.querySelector("#rec-note")?.value.trim() || "";
-        const kind = document.querySelector("#rec-kind")?.value || "note";
-        if (!label) { toast("A record needs a label."); return; }
-        await post(`/api/jobs/${id}/add-record`, { label, note, kind });
+        const v = formValues("record");
+        if (refuseForm("record", v.label ? {} : { label: "Enter what this is, like \"Rough-in inspection passed\"." })) return;
+        await post(`/api/jobs/${id}/add-record`, { label: v.label, note: v.note, kind: v.kind || "note" }, { formKey: "record" });
       }
       else if (a === "attach-record") {
         const recordId = document.querySelector(`#attach-rec-${el.dataset.item}`)?.value;
@@ -1082,82 +1116,47 @@ function bindActions() {
       }
       else if (a === "inbox-file-suggested") await post(`/api/inbox/${el.dataset.item}/file`, { job_id: el.dataset.job, kind: "" });
       else if (a === "create-job") {
-        const name = document.querySelector("#nj-name")?.value.trim() || "";
-        const address = document.querySelector("#nj-address")?.value.trim() || "";
-        const customer = document.querySelector("#nj-customer")?.value.trim() || "";
-        const approver = document.querySelector("#nj-approver")?.value.trim() || "";
-        const apEmail = document.querySelector("#nj-email")?.value.trim() || "";
-        const phone = document.querySelector("#nj-phone")?.value.trim() || "";
-        const role = document.querySelector("#nj-role")?.value || "Owner";
-        const contractNumber = document.querySelector("#nj-contract")?.value.trim() || "";
-        const packetNotes = document.querySelector("#nj-packet")?.value.trim() || "";
-        const dollars = parseFloat(document.querySelector("#nj-amount")?.value || "0");
-        const retainage = parseInt(document.querySelector("#nj-retainage")?.value || "0", 10);
+        const v = formValues("newjob");
         const errors = {};
-        if (!name) errors["nj-name"] = "Enter the job name.";
-        if (!address) errors["nj-address"] = "Enter the job address.";
-        if (!customer) errors["nj-customer"] = "Enter who pays this job.";
-        if (!approver) errors["nj-approver"] = "Enter who approves the pay app.";
-        if (!apEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(apEmail)) errors["nj-email"] = "Enter a real AP email, like ap@builder.com.";
-        if (!(dollars > 0)) errors["nj-amount"] = "Enter the contract amount in dollars.";
-        if (retainage < 0 || retainage > 20) errors["nj-retainage"] = "Use a number from 0 to 20.";
-        if (Object.keys(errors).length) {
-          jobFormErrors = errors;
-          render();
-          document.getElementById(Object.keys(errors)[0])?.focus();
-          return;
-        }
-        jobFormErrors = {};
-        let res;
-        try {
-          res = await fetch("/api/jobs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name, address, customer, approver,
-            ap_email: apEmail, phone, role,
-            contract_number: contractNumber,
-            packet_notes: packetNotes,
-            contract_cents: Math.round(dollars * 100),
-            retainage_pct: retainage,
-          }),
-          });
-        } catch (_) {
-          setNetBanner(true);
-          toast("Not saved: can't reach Duracash.");
-          return;
-        }
-        const data = await readJson(res);
-        if (!res.ok) {
-          jobFormErrors = { form: (data.blockers || [data.error || "Could not create the job."]).join(" ") };
-          render();
-          return;
-        }
-        formOpen.newjob = false;
-        setState(data);
+        if (!v.name) errors.name = "Enter the job name.";
+        if (!v.address) errors.address = "Enter the job address.";
+        if (!v.customer) errors.customer = "Enter the customer: who pays for this job.";
+        if (!v.approver) errors.approver = "Enter who signs off on your bills.";
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.ap_email)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
+        const amount = centsFrom(v.contract_cents);
+        if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
+        const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
+        if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
+        if (refuseForm("newjob", errors)) return;
+        const r = await post("/api/jobs", {
+          name: v.name, address: v.address, customer: v.customer, approver: v.approver,
+          ap_email: v.ap_email, phone: v.phone, role: v.role || "Owner",
+          contract_number: v.contract_number, packet_notes: v.packet_notes,
+          contract_cents: amount.cents, retainage_pct: ret.value,
+        }, { formKey: "newjob", close: "newjob" });
+        if (!r || !r.ok) return;
         toast("Job saved");
         const made = state.jobs[state.jobs.length - 1];
-        if (made) nav("job", made.id); else render();
+        if (made) nav("job", made.id);
       }
       else if (a === "save-job") {
-        const val = (fid) => (document.getElementById(fid)?.value || "").trim();
-        const body = { name: val("ej-name"), address: val("ej-address"), contract_number: val("ej-contract") };
+        const v = formValues("editjob");
+        const body = { name: v.name, address: v.address, contract_number: v.contract_number };
         const errors = {};
-        if (!body.name) errors["ej-name"] = "Enter the job name.";
-        if (!body.address) errors["ej-address"] = "Enter the job address.";
-        if (document.getElementById("ej-amount")) {
-          const dollars = parseFloat(val("ej-amount") || "0");
-          if (!(dollars > 0)) errors["ej-amount"] = "Enter the contract amount in dollars.";
-          body.contract_cents = Math.round(dollars * 100);
+        if (!body.name) errors.name = "Enter the job name.";
+        if (!body.address) errors.address = "Enter the job address.";
+        if ("contract_cents" in v) {
+          const amount = centsFrom(v.contract_cents);
+          if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
+          body.contract_cents = amount.cents;
         }
-        if (document.getElementById("ej-retainage")) {
-          const pct = parseInt(val("ej-retainage") || "0", 10);
-          if (!(pct >= 0 && pct <= 20)) errors["ej-retainage"] = "Use a number from 0 to 20.";
-          body.retainage_pct = pct;
+        if ("retainage_pct" in v) {
+          const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
+          if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
+          body.retainage_pct = ret.value;
         }
-        if (Object.keys(errors).length) { jobFormErrors = errors; render(); document.getElementById(Object.keys(errors)[0])?.focus(); return; }
-        const r = await post(`/api/jobs/${id}/edit`, body);
-        if (r && r.ok) { formOpen.editjob = false; jobFormErrors = {}; render(); }
+        if (refuseForm("editjob", errors)) return;
+        await post(`/api/jobs/${id}/edit`, body, { formKey: "editjob", close: "editjob" });
       }
       else if (a === "delete-job") {
         if (!(await askConfirm(`Delete ${unesc(el.dataset.name || "this job")}? It has no pay apps, so nothing billed is lost. Its record and notes go too.`, "Delete the job", true))) return;
@@ -1193,6 +1192,17 @@ function bindActions() {
       render();
     });
   });
+}
+
+// The New change order form (Change orders tab, or a job with none yet): check it here, then save.
+async function addChangeOrder(jobId) {
+  const v = formValues("newco");
+  const amount = centsFrom(v.amount_cents);
+  const errors = {};
+  if (!v.title) errors.title = "Enter a title for the change order.";
+  if (amount.error || amount.cents <= 0) errors.amount_cents = "Enter the change order amount in dollars, like 1,250.";
+  if (refuseForm("newco", errors)) return null;
+  return post(`/api/jobs/${jobId}/add-co`, { title: v.title, amount_cents: amount.cents, description: v.description }, { formKey: "newco" });
 }
 
 function newInboxCount() {
@@ -1620,11 +1630,11 @@ function accountView() {
       ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-inline"><label for="my-name" class="inline-label">Name</label><input id="my-name" value="${me.name}" autocomplete="name" class="grow"><button class="btn small secondary" data-action="save-my-name">Save name</button></div>`}
       <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
       <div class="money-row"><span class="label">Role</span><span>${words(me.role)}</span></div>
-      ${isDemo ? "" : `<div class="form-inline">
-        <input id="pw-current" type="password" placeholder="Current password" autocomplete="current-password">
-        <input id="pw-new" type="password" placeholder="New password (10+ characters)" autocomplete="new-password">
+      ${isDemo ? "" : `<div data-form-key="password">${formErrorLine("password")}<div class="form-row">
+        ${field({ form: "password", name: "current", id: "pw-current", label: "Current password", type: "password", autocomplete: "current-password" })}
+        ${field({ form: "password", name: "new", id: "pw-new", label: "New password (10+ characters)", type: "password", autocomplete: "new-password" })}
         <button class="btn small" data-action="change-password">Change password</button>
-      </div>`}
+      </div></div>`}
     </div>
     <div class="card" id="company-card">
       <h2>Company</h2>
@@ -1653,11 +1663,11 @@ function accountView() {
       </table></div>
       ${owner && !isDemo ? `
         <h3>Invite someone</h3>
-        <div class="form-inline">
-          <input id="invite-email" type="email" placeholder="Their email" class="grow">
-          <select id="invite-role"><option value="member">Member</option><option value="owner">Owner</option></select>
+        <div data-form-key="invite">${formErrorLine("invite")}<div class="form-row">
+          ${field({ form: "invite", name: "email", id: "invite-email", label: "Their email", type: "email", autocomplete: "off", wide: true })}
+          ${field({ form: "invite", name: "role", id: "invite-role", label: "They join as", options: [["member", "Member"], ["owner", "Owner"]] })}
           <button class="btn small" data-action="team-invite">Invite</button>
-        </div>
+        </div></div>
         ${lastInvite ? `<div class="invite-result">${lastInvite.emailed ? `Invite emailed to ${esc(lastInvite.email)}.` : `Not emailed (${esc(lastInvite.email_status)}). Send them this link yourself; it works once, for 7 days:`}
           <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}
         ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
@@ -2116,40 +2126,36 @@ const views = {
   jobs() {
     const open = state.jobs.filter(j => !j.closed);
     const closed = state.closed_jobs_total || 0;
-    const err = (fid) => jobFormErrors[fid] ? `<span class="field-error" id="${fid}-err">${esc(jobFormErrors[fid])}</span>` : "";
-    const inv = (fid) => jobFormErrors[fid] ? ` aria-invalid="true" aria-describedby="${fid}-err"` : "";
+    const f = (o) => field({ form: "newjob", ...o });
     return `
       <div class="top">
         <h1>Jobs</h1>
         <button class="btn" data-action="toggle-form" data-form="newjob">${formOpen.newjob ? "Cancel" : "New job"}</button>
       </div>
       ${formOpen.newjob ? `
-        <div class="card">
+        <div class="card" data-form-key="newjob">
           <h2>New job</h2>
           <p class="sub">Fields marked <span class="req">*</span> are required. The packet is made later, with the first pay app.</p>
-          ${jobFormErrors.form ? `<div class="form-error" role="alert">${esc(jobFormErrors.form)}</div>` : ""}
+          ${formErrorLine("newjob")}
           <div class="form-section">Job</div>
           <div class="form-grid">
-            <div><label>Job name <span class="req">*</span></label><input id="nj-name" required autocomplete="off"${inv("nj-name")} />${err("nj-name")}</div>
-            <div><label>Address <span class="req">*</span></label><input id="nj-address" required autocomplete="street-address"${inv("nj-address")} />${err("nj-address")}</div>
-            <div><label>Contract number</label><input id="nj-contract" /></div>
-            <div><label>Contract amount ($) <span class="req">*</span></label><input id="nj-amount" type="number" step="0.01" min="0.01" inputmode="decimal" required${inv("nj-amount")} />${err("nj-amount")}</div>
-            <div><label>Retainage %</label><input id="nj-retainage" type="number" min="0" max="20" value="0" inputmode="numeric"${inv("nj-retainage")} />${err("nj-retainage")}</div>
+            ${f({ name: "name", id: "nj-name", label: "Job name", required: true, autocomplete: "off" })}
+            ${f({ name: "address", id: "nj-address", label: "Address", required: true, autocomplete: "street-address" })}
+            ${f({ name: "contract_number", id: "nj-contract", label: "Contract number" })}
+            ${moneyField({ form: "newjob", name: "contract_cents", id: "nj-amount", label: "Contract amount ($)", required: true, placeholder: "48,500" })}
+            ${f({ name: "retainage_pct", id: "nj-retainage", label: "Retainage %", value: "0", inputmode: "decimal", autocomplete: "off" })}
           </div>
           <div class="form-section">Customer</div>
           <div class="form-grid">
-            <div><label>Customer <span class="req">*</span></label><input id="nj-customer" required${inv("nj-customer")} />${err("nj-customer")}</div>
-            <div><label>Role</label><select id="nj-role"><option>Owner</option><option>GC</option></select></div>
-            <div><label>Approver <span class="req">*</span></label><input id="nj-approver" required${inv("nj-approver")} />${err("nj-approver")}</div>
-            <div><label>AP email <span class="req">*</span></label><input id="nj-email" type="email" required autocomplete="off"${inv("nj-email")} />${err("nj-email")}</div>
-            <div><label>Phone</label><input id="nj-phone" type="tel" /></div>
+            ${f({ name: "customer", id: "nj-customer", label: "Customer", required: true })}
+            ${f({ name: "role", id: "nj-role", label: "Role", options: [["Owner", "Owner"], ["GC", "GC"]] })}
+            ${f({ name: "approver", id: "nj-approver", label: "Approver", required: true })}
+            ${f({ name: "ap_email", id: "nj-email", label: "AP email", type: "email", required: true, autocomplete: "off", placeholder: "ap@builder.com" })}
+            ${f({ name: "phone", id: "nj-phone", label: "Phone", type: "tel", autocomplete: "off" })}
           </div>
           <div class="form-section">Job record</div>
           <div class="form-grid">
-            <div class="span-2">
-              <label>Notes for the job record</label>
-              <textarea id="nj-packet" placeholder="Contract notes, what this customer usually wants, anything to keep with the job"></textarea>
-            </div>
+            ${f({ name: "packet_notes", id: "nj-packet", label: "Notes for the job record", multiline: true, wide: true, placeholder: "Contract notes, what this customer usually wants, anything to keep with the job" })}
           </div>
           <button class="btn" data-action="create-job">Save job</button>
         </div>` : ""}
@@ -2184,8 +2190,7 @@ const views = {
     const closeoutMissing = closeout.filter(p => p.required && !p.present).length;
     const { primary, more } = jobActions(j);
     const hasPayApps = j.invoices.some(i => i.status !== "void");
-    const err = (fid) => jobFormErrors[fid] ? `<span class="field-error" id="${fid}-err">${esc(jobFormErrors[fid])}</span>` : "";
-    const inv = (fid) => jobFormErrors[fid] ? ` aria-invalid="true" aria-describedby="${fid}-err"` : "";
+    const ej = (o) => field({ form: "editjob", ...o });
     return `
       ${backButton("jobs", "Jobs")}
       <div class="job-head">
@@ -2196,14 +2201,15 @@ const views = {
         ${j.closed ? "" : `<button class="btn secondary small" data-action="toggle-form" data-form="editjob" aria-expanded="${!!formOpen.editjob}">${formOpen.editjob ? "Cancel" : "Edit job"}</button>`}
       </div>
       ${formOpen.editjob ? `
-        <div class="card">
+        <div class="card" data-form-key="editjob">
           <h2>Edit job</h2>
+          ${formErrorLine("editjob")}
           <div class="form-grid">
-            <div><label>Job name</label><input id="ej-name" value="${j.name}"${inv("ej-name")}>${err("ej-name")}</div>
-            <div><label>Address</label><input id="ej-address" value="${j.address}"${inv("ej-address")}>${err("ej-address")}</div>
-            <div><label>Contract number</label><input id="ej-contract" value="${j.contract_number || ""}"></div>
-            ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : `<div><label>Contract amount ($)</label><input id="ej-amount" type="number" step="0.01" min="0.01" inputmode="decimal" value="${(j.contract_cents / 100).toFixed(2)}"${inv("ej-amount")}>${err("ej-amount")}</div>`}
-            ${hasPayApps ? "" : `<div><label>Retainage %</label><input id="ej-retainage" type="number" min="0" max="20" inputmode="numeric" value="${j.retainage_pct || 0}"${inv("ej-retainage")}>${err("ej-retainage")}</div>`}
+            ${ej({ name: "name", id: "ej-name", label: "Job name", value: unesc(j.name) })}
+            ${ej({ name: "address", id: "ej-address", label: "Address", value: unesc(j.address) })}
+            ${ej({ name: "contract_number", id: "ej-contract", label: "Contract number", value: unesc(j.contract_number || "") })}
+            ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : moneyField({ form: "editjob", name: "contract_cents", id: "ej-amount", label: "Contract amount ($)", cents: j.contract_cents })}
+            ${hasPayApps ? "" : ej({ name: "retainage_pct", id: "ej-retainage", label: "Retainage %", value: String(j.retainage_pct || 0), inputmode: "decimal", autocomplete: "off" })}
           </div>
           <p class="sub">${hasPayApps ? "The contract amount and retainage are fixed once a pay app exists; use a change order. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Payer contacts are in the <button class="linkish" data-action="nav" data-view="playbook">Payer playbook</button>.</p>
           <div class="form-inline">
@@ -2227,11 +2233,23 @@ const views = {
         </details>
       </div>` : ""}
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j) : ""}
-      ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="card form-card"><h2>Progress pay app</h2><div class="form-inline"><input id="progress-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Completed to date $"><input id="progress-notes" placeholder="What was completed" class="grow"><button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div></div>` : ""}
+      ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? `<div class="card form-card" data-form-key="progress"><h2>Progress pay app</h2>${formErrorLine("progress")}<div class="form-row">
+        ${moneyField({ form: "progress", name: "completed_cents", id: "progress-amt", label: "Total done so far ($)", help: "All the work done to date, not just this period." })}
+        ${field({ form: "progress", name: "notes", id: "progress-notes", label: "What was completed", wide: true })}
+        <button class="btn small" data-action="progress" data-id="${j.id}">Draft progress pay app</button></div></div>` : ""}
       ${formOpen.pencilchanges ? `<div class="card form-card"><h2>Payer wants changes</h2><div class="form-inline"><input id="pencil-note" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
-      ${formOpen.done ? `<div class="card form-card"><h2>Mark done</h2><div class="form-inline"><input id="done-notes" placeholder="Completion notes" class="grow"><button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div></div>` : ""}
-      ${formOpen.match ? `<div class="card form-card"><h2>Match payment</h2>${openForPay.length ? `<div class="form-inline"><select id="match-inv" aria-label="Pay app">${openForPay.map(i => `<option value="${i.id}">${i.number} · ${money(i.amount_cents)} · ${INVOICE_WORDS[i.status] || i.status}</option>`).join("")}</select><input id="match-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Amount in dollars"><input id="match-ref" placeholder="Reference (check no., QBO id)"><button class="btn small" data-action="match" data-id="${j.id}">Match</button></div>` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
-      ${formOpen.retpay ? `<div class="card form-card"><h2>Record retainage paid</h2><div class="form-inline"><input id="retpay-amt" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Retainage received $"><input id="retpay-ref" placeholder="Reference"><button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div></div>` : ""}
+      ${formOpen.done ? `<div class="card form-card" data-form-key="done"><h2>Mark done</h2>${formErrorLine("done")}<div class="form-row">
+        ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true })}
+        <button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div></div>` : ""}
+      ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Match payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
+        ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${money(i.amount_cents)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
+        ${moneyField({ form: "match", name: "amount_cents", id: "match-amt", label: "Amount received ($)" })}
+        ${field({ form: "match", name: "reference", id: "match-ref", label: "Reference", placeholder: "Check no. or QuickBooks id" })}
+        <button class="btn small" data-action="match" data-id="${j.id}">Match</button></div>` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
+      ${formOpen.retpay ? `<div class="card form-card" data-form-key="retpay"><h2>Record retainage paid</h2>${formErrorLine("retpay")}<div class="form-row">
+        ${moneyField({ form: "retpay", name: "amount_cents", id: "retpay-amt", label: "Retainage received ($)" })}
+        ${field({ form: "retpay", name: "reference", id: "retpay-ref", label: "Reference", placeholder: "Check no. or QuickBooks id" })}
+        <button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div></div>` : ""}
       ${j.closed ? `<p class="sub">This job is closed. Its money record is read-only; you can still add notes to the job record.</p>` : more.length ? `
         <div class="more-actions" role="group" aria-label="More actions">
           ${more.map(a => `<button class="btn secondary small" ${a.attrs} title="${esc(a.why || "")}">${a.label}</button>`).join("")}
@@ -2278,13 +2296,13 @@ const views = {
           <span class="sub">Drop files here, <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button>, <button class="linkish" data-action="pick-files" data-job="${j.id}" data-capture="1">take a photo</button>, or paste a screenshot. Emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
         </div>`}
         ${(j.records || []).slice().reverse().map(r => `<div class="list-item"><span class="pill">${RECORD_KINDS[r.kind] || r.kind}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.added_at)}</div>` : ""}</div>`).join("")}
-        <details class="add-record"${(j.records || []).length ? "" : " open"}><summary>Add a note to the record</summary>
-          <div class="form-inline">
-            <input id="rec-label" placeholder="Label, e.g. Rough-in inspection passed" />
-            <input id="rec-note" placeholder="Note" />
-            <select id="rec-kind" aria-label="Kind">${Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select>
+        <details class="add-record"${(j.records || []).length && !formErrors.record ? "" : " open"}><summary>Add a note to the record</summary>
+          <div data-form-key="record">${formErrorLine("record")}<div class="form-row">
+            ${field({ form: "record", name: "label", id: "rec-label", label: "What it is", placeholder: "Rough-in inspection passed" })}
+            ${field({ form: "record", name: "note", id: "rec-note", label: "Note (optional)" })}
+            ${field({ form: "record", name: "kind", id: "rec-kind", label: "Kind", options: Object.entries(RECORD_KINDS) })}
             <button class="btn small" data-action="add-record" data-id="${j.id}">Add to record</button>
-          </div>
+          </div></div>
         </details>
       </div>
       ${sovCardHtml(j)}
@@ -2384,12 +2402,12 @@ const views = {
       return `
         ${backButton("cos", "Change orders")}
         <h1>New change order</h1>
-        <div class="form-inline">
-          <input id="co-title" placeholder="Title">
-          <input id="co-amt" type="number" step="0.01" inputmode="decimal" placeholder="Amount in dollars">
-          <input id="co-desc" placeholder="What changed (optional)" class="grow">
+        <div data-form-key="newco">${formErrorLine("newco")}<div class="form-row">
+          ${field({ form: "newco", name: "title", id: "co-title", label: "Title", placeholder: "Add two outlets in the kitchen" })}
+          ${moneyField({ form: "newco", name: "amount_cents", id: "co-amt", label: "Amount ($)" })}
+          ${field({ form: "newco", name: "description", id: "co-desc", label: "What changed (optional)", wide: true })}
           <button class="btn" data-action="add-co" data-id="${j.id}">Create</button>
-        </div>`;
+        </div></div>`;
     }
     return `
       ${backButton("cos", "Change orders")}
@@ -2668,13 +2686,14 @@ const views = {
     return `
       <h1>Change orders</h1>
       <p class="sub">Extra or changed work. Not billable until the customer signs.</p>
-      ${openJobs.length ? `<div class="card">
+      ${openJobs.length ? `<div class="card" data-form-key="newco">
         <h2>New change order</h2>
+        ${formErrorLine("newco")}
         <div class="form-grid">
-          <div><label>Job</label><select id="new-co-job">${openJobs.map(j => `<option value="${j.id}" ${coPreselectJob === j.id ? "selected" : ""}>${j.name}</option>`).join("")}</select></div>
-          <div><label>Title</label><input id="co-title" placeholder="Add two outlets in the kitchen"></div>
-          <div><label>Amount ($)</label><input id="co-amt" type="number" step="0.01" min="0.01" inputmode="decimal"></div>
-          <div><label>What changed (optional)</label><input id="co-desc"></div>
+          ${field({ form: "newco", name: "job", id: "new-co-job", label: "Job", value: unesc(coPreselectJob || ""), options: openJobs.map(j => [unesc(j.id), unesc(j.name)]) })}
+          ${field({ form: "newco", name: "title", id: "co-title", label: "Title", placeholder: "Add two outlets in the kitchen" })}
+          ${moneyField({ form: "newco", name: "amount_cents", id: "co-amt", label: "Amount ($)" })}
+          ${field({ form: "newco", name: "description", id: "co-desc", label: "What changed (optional)" })}
         </div>
         <button class="btn" data-action="add-co-from-list">Create change order</button>
       </div>` : ""}
@@ -3143,4 +3162,5 @@ document.addEventListener("keydown", (e) => {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 window.nav = nav;
+watchForms(document);
 boot();

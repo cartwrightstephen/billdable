@@ -36,9 +36,38 @@ def money(cents: int) -> str:
 
 
 class GateError(Exception):
-    def __init__(self, message: str, blockers: list[str] | None = None):
+    """A business refusal (the server's 409). `blockers` lists what stands in the way, for the
+    card under the button that was tapped; `fields` maps a request field (its JSON key, such as
+    "ap_email") to what to fix there, so a form shows it under that input."""
+
+    def __init__(self, message: str, blockers: list[str] | None = None, fields: dict[str, str] | None = None):
         super().__init__(message)
-        self.blockers = blockers or [message]
+        self.fields = dict(fields or {})
+        self.blockers = blockers or list(self.fields.values()) or [message]
+
+
+def _refuse(message: str, fields: dict[str, str]) -> None:
+    """Raise when any field has a problem: one message for one field, else `message` over them all."""
+    if fields:
+        raise GateError(next(iter(fields.values())) if len(fields) == 1 else message, fields=fields)
+
+
+def parse_int(value: Any, label: str, field: str, default: int | None = None) -> int:
+    """A whole number from a request: a JSON number or a string of digits. Blank gives `default`
+    (or asks for the value when there is none); anything else is refused under the field.
+    `label` names the field the way the form does, such as "the contract amount". Stored
+    values are read with the lenient _int_or instead, which never refuses."""
+    if value is None or value == "":
+        if default is None:
+            raise GateError(f"Enter {label}.", fields={field: f"Enter {label}."})
+        return default
+    if isinstance(value, float) and value == value and value not in (float("inf"), float("-inf")):
+        return int(round(value))
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    raise GateError(f"Enter {label} as a number.", fields={field: f"Enter {label} as a number."})
 
 
 def job_money(job: dict[str, Any]) -> dict[str, int]:
@@ -230,12 +259,13 @@ def record_progress(
     contract_total = job["contract_cents"] + sum(
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
+    before = job.get("completed_value_cents", 0)
     if completed_value_cents <= 0:
-        raise GateError("Completed-to-date must be greater than zero.")
+        _refuse("", {"completed_cents": "Enter the total done so far, more than $0."})
     if completed_value_cents > contract_total:
-        raise GateError("Completed-to-date cannot exceed the contract total.")
-    if completed_value_cents <= job.get("completed_value_cents", 0):
-        raise GateError("Completed-to-date must be higher than the last recorded amount.")
+        _refuse("", {"completed_cents": f"Enter no more than the contract total, {money(contract_total)}."})
+    if completed_value_cents <= before:
+        _refuse("", {"completed_cents": f"Enter more than the {money(before)} already recorded. This is the total done so far, not this period."})
     job["completed_value_cents"] = int(completed_value_cents)
     if notes:
         job["progress_notes"] = notes
@@ -528,23 +558,24 @@ def match_payment(
     if invoice_id:
         invoice = next((inv for inv in open_invoices if inv["id"] == invoice_id), None)
         if not invoice:
-            raise GateError("That pay app is not open for payment.")
+            _refuse("", {"invoice_id": "Pick a pay app that is waiting for payment."})
     elif len(open_invoices) == 1:
         invoice = open_invoices[0]
     else:
         raise GateError(
             "More than one pay app is open. Choose which pay app this payment is for.",
             [f"{inv['number']} ({money(inv['amount_cents'])})" for inv in open_invoices],
+            {"invoice_id": "Pick the pay app this payment is for."},
         )
     if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
-        raise GateError("Payment amount must be greater than zero.")
+        _refuse("", {"amount_cents": "Enter the payment amount, more than $0."})
     already = sum(p["amount_cents"] for p in job["payments"] if p["invoice_id"] == invoice["id"])
     remaining = invoice["amount_cents"] - already
     if amount_cents > remaining:
-        raise GateError(f"Payment of {money(amount_cents)} is more than the {money(remaining)} still owed on {invoice['number']}.")
+        _refuse("", {"amount_cents": f"Enter no more than the {money(remaining)} still owed on {invoice['number']}. You entered {money(amount_cents)}."})
     reference = reference.strip() if isinstance(reference, str) else ""
     if reference and any(p.get("reference") == reference for p in job["payments"]):
-        raise GateError(f"Payment {reference} is already recorded on this job.")
+        _refuse("", {"reference": f"Use another reference: {reference} is already recorded on this job."})
     if not reference:
         used = {p.get("reference") for p in job["payments"]}
         n = len(job["payments"]) + 1
@@ -932,16 +963,22 @@ def _record_email(
 
 def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
     payer = _payer(state, payer_id)
-    text_fields = {"approver", "ap_email", "packet", "rejects_when", "copy"}
-    day_fields = {"follow_up_days", "usual_approval_days"}
+    text_fields = {"approver": "who signs off on your bills", "ap_email": "the email pay apps go to",
+                   "packet": "the paperwork needed", "rejects_when": "when they send pay apps back", "copy": "who else to email"}
+    day_fields = {"follow_up_days": "the days between follow-ups", "usual_approval_days": "the days they usually take"}
     clean: dict[str, Any] = {}
-    errors = []
+    errors: dict[str, str] = {}
     for k, v in updates.items():
         if k == "payapp_due_day":
             # The payer's cutoff for this month's pay app (a contract date, not a legal one); blank clears it.
-            day = None if v in (None, "") else _int_or(v, 0)
+            day = None
+            if v not in (None, ""):
+                try:
+                    day = parse_int(v, "the day pay apps are due", k)
+                except GateError:
+                    day = 0
             if day is not None and not 1 <= day <= 31:
-                errors.append("Pay apps due by must be a day of the month from 1 to 31, or blank.")
+                errors[k] = "Enter a day of the month from 1 to 31 for when pay apps are due, or leave it blank."
                 continue
             clean[k] = day
             continue
@@ -949,21 +986,24 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
             continue
         if k in text_fields:
             if not isinstance(v, (str, int, float)) or isinstance(v, bool):
-                errors.append(f"{k.replace('_', ' ').capitalize()} must be text.")
+                errors[k] = f"Enter {text_fields[k]} as text."
                 continue
             clean[k] = str(v).strip()
         elif k in day_fields:
-            days = _int_or(v, None)
+            try:
+                days = parse_int(v, day_fields[k], k)
+            except GateError:
+                days = None
             if days is None or not 1 <= days <= 365:
-                errors.append(f"{k.replace('_', ' ').capitalize()} must be a whole number from 1 to 365.")
+                errors[k] = f"Enter {day_fields[k]} as a whole number from 1 to 365."
                 continue
             clean[k] = days
     if "ap_email" in clean and not EMAIL_RE.match(clean["ap_email"]):
-        errors.append("AP email must be a real email address.")
+        errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com."
     if "approver" in clean and not clean["approver"]:
-        errors.append("Approver cannot be empty.")
+        errors["approver"] = "Enter who signs off on your bills."
     if errors:
-        raise GateError("Playbook not saved.", errors)
+        raise GateError("Customer settings not saved.", fields=errors)
     changed = []
     for k, v in clean.items():
         if v is None:
@@ -1022,30 +1062,32 @@ def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = 
     """The company's own details: its name, and the address, phone and licence number that go on
     every pay app. Blank clears a field; the name can't be blank."""
     company = state.setdefault("company", {})
-    clean, errors = {}, []
+    clean: dict[str, Any] = {}
+    errors: dict[str, str] = {}
     if "billing_style" in updates:
         # How the company bills: pay apps to GCs or owners, or draws from homeowners. It sets the
         # free trial's length (trial.py: 90 days, or 45 for draws).
         if updates["billing_style"] not in BILLING_STYLES:
-            errors.append("How you bill must be pay apps or draws.")
+            errors["billing_style"] = "Pick how you bill: pay apps or draws."
         else:
             clean["billing_style"] = updates["billing_style"]
+    labels = {"name": "the company name", "address": "the address", "phone": "the phone number", "license": "the licence number"}
     for k, limit in COMPANY_FIELDS.items():
         if k not in updates:
             continue
         v = updates[k]
         if not isinstance(v, str):
-            errors.append(f"{k.capitalize()} must be text.")
+            errors[k] = f"Enter {labels[k]} as text."
             continue
         v = " ".join(v.split())
         if len(v) > limit:
-            errors.append(f"{k.capitalize()} is too long (limit {limit} characters).")
+            errors[k] = f"Shorten {labels[k]} to {limit} characters or fewer."
         elif k == "name" and not v:
-            errors.append("The company name can't be empty.")
+            errors[k] = "Enter the company name."
         else:
             clean[k] = v
     if errors:
-        raise GateError("Company details not saved.", errors)
+        raise GateError("Company details not saved.", fields=errors)
     changed = [k for k, v in clean.items() if (company.get(k) or ("pay_apps" if k == "billing_style" else "")) != v]
     for k in changed:
         if clean[k]:
@@ -1099,15 +1141,14 @@ def add_change_order(
     job = _open_job(state, job_id)
     title = title.strip() if isinstance(title, str) else ""
     description = description.strip() if isinstance(description, str) else ""
-    errors = []
+    errors: dict[str, str] = {}
     if not title:
-        errors.append("Change order title is required.")
+        errors["title"] = "Enter a title for the change order."
     if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
-        errors.append("Change order amount must be greater than zero.")
+        errors["amount_cents"] = "Enter the change order amount, more than $0."
     elif amount_cents > MAX_AMOUNT_CENTS:
-        errors.append(f"Change order amount cannot exceed {money(MAX_AMOUNT_CENTS)}.")
-    if errors:
-        raise GateError("Cannot add the change order.", errors)
+        errors["amount_cents"] = f"Enter a change order amount up to {money(MAX_AMOUNT_CENTS)}."
+    _refuse("Change order not saved.", errors)
     number = max((co["number"] for co in job["change_orders"]), default=0) + 1
     co = {
         "id": f"co-{job['code'].lower()}-{number}",
@@ -1565,25 +1606,24 @@ def create_job(
     packet_notes = (packet_notes or "").strip()
     contract_number = (contract_number or "").strip()
 
-    missing = []
+    errors: dict[str, str] = {}
     if not name:
-        missing.append("Job name is required.")
+        errors["name"] = "Enter the job name."
     if not address:
-        missing.append("Job address is required.")
+        errors["address"] = "Enter the job address."
     if not customer_name:
-        missing.append("Customer name is required.")
+        errors["customer"] = "Enter the customer: who pays for this job."
     if not approver:
-        missing.append("Approver is required.")
+        errors["approver"] = "Enter who signs off on your bills."
     if not ap_email or not EMAIL_RE.match(ap_email):
-        missing.append("A real AP email is required.")
+        errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com."
     if not isinstance(contract_cents, int) or isinstance(contract_cents, bool) or contract_cents <= 0:
-        missing.append("Contract amount must be greater than zero.")
+        errors["contract_cents"] = "Enter the contract amount, more than $0."
     elif contract_cents > MAX_AMOUNT_CENTS:
-        missing.append(f"Contract amount cannot exceed {money(MAX_AMOUNT_CENTS)}.")
-    if retainage_pct < 0 or retainage_pct > 20:
-        missing.append("Retainage must be between 0 and 20 percent.")
-    if missing:
-        raise GateError("Cannot create the job.", missing)
+        errors["contract_cents"] = f"Enter a contract amount up to {money(MAX_AMOUNT_CENTS)}."
+    if not isinstance(retainage_pct, int) or isinstance(retainage_pct, bool) or not 0 <= retainage_pct <= 20:
+        errors["retainage_pct"] = "Enter a retainage from 0 to 20 percent."
+    _refuse("Job not saved.", errors)
 
     payer = next((p for p in state["payers"] if p["name"].lower() == customer_name.lower()), None)
     packet_rule = packet_notes or "Signed contract, conditional waiver, completion photos, and pay-app backup."
@@ -1702,14 +1742,14 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
     job = _open_job(state, job_id)
     has_pay_apps = any(i.get("status") != "void" for i in job.get("invoices", []))
     changes: list[str] = []
-    problems: list[str] = []
+    problems: dict[str, str] = {}
 
     for key, label in (("name", "Job name"), ("address", "Job address"), ("contract_number", "Contract number")):
         if key not in updates:
             continue
         value = str(updates[key] or "").strip()
         if key != "contract_number" and not value:
-            problems.append(f"{label} can't be empty.")
+            problems[key] = f"Enter the {label.lower()}."
         elif value != job.get(key, ""):
             changes.append(f"{label.lower()} from \"{job.get(key, '')}\" to \"{value}\"")
             job[key] = value
@@ -1717,11 +1757,13 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
     if "contract_cents" in updates and updates["contract_cents"] != job["contract_cents"]:
         cents = updates["contract_cents"]
         if has_pay_apps:
-            problems.append("The contract amount can't change after the first pay app. Use a change order.")
+            problems["contract_cents"] = "Use a change order: the contract amount is fixed once a pay app exists."
         elif sov.has_sov(job):
-            problems.append("This job bills from a schedule of values. Change the contract from the schedule.")
-        elif not isinstance(cents, int) or isinstance(cents, bool) or cents <= 0 or cents > MAX_AMOUNT_CENTS:
-            problems.append("Contract amount must be greater than zero.")
+            problems["contract_cents"] = "Change the contract from the schedule of values: this job bills from it."
+        elif not isinstance(cents, int) or isinstance(cents, bool) or cents <= 0:
+            problems["contract_cents"] = "Enter the contract amount, more than $0."
+        elif cents > MAX_AMOUNT_CENTS:
+            problems["contract_cents"] = f"Enter a contract amount up to {money(MAX_AMOUNT_CENTS)}."
         else:
             changes.append(f"contract from {money(job['contract_cents'])} to {money(cents)}")
             job["contract_cents"] = cents
@@ -1729,15 +1771,14 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
     if "retainage_pct" in updates and updates["retainage_pct"] != job.get("retainage_pct", 0):
         pct = updates["retainage_pct"]
         if has_pay_apps:
-            problems.append("Retainage can't change after the first pay app.")
+            problems["retainage_pct"] = "Keep the retainage as it is: it is fixed once a pay app exists."
         elif not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 20:
-            problems.append("Retainage must be between 0 and 20 percent.")
+            problems["retainage_pct"] = "Enter a retainage from 0 to 20 percent."
         else:
             changes.append(f"retainage from {job.get('retainage_pct', 0)}% to {pct}%")
             job["retainage_pct"] = pct
 
-    if problems:
-        raise GateError("The job was not changed.", problems)
+    _refuse("The job was not changed.", problems)
     if changes:
         audit(state, job_id, "edit_job", f"{actor} changed {job['name']}: " + "; ".join(changes) + ".", actor)
     return job
