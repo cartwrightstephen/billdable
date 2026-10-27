@@ -181,6 +181,7 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "role": user.get("role", "owner"),
         "email_verified": bool(user.get("email_verified")),
         "two_step": bool(user.get("totp_enabled")),
+        "onboarding_dismissed": bool(user.get("onboarding_dismissed")),
     }
 
 
@@ -430,6 +431,22 @@ def update_name(user_id: str, name: Any) -> dict[str, Any]:
         if not user:
             raise AuthError("Account not found.")
         user["name"] = name
+        _save(data)
+        return _public(user)
+
+
+def set_onboarding_dismissed(user_id: str, dismissed: bool) -> dict[str, Any]:
+    """Hide or show the setup checklist for this person only (R2-03): a teammate who joins
+    later still sees it."""
+    with LOCK:
+        data = _load()
+        user = next((u for u in data["users"] if u["id"] == user_id), None)
+        if not user:
+            raise AuthError("Account not found.")
+        if dismissed:
+            user["onboarding_dismissed"] = True
+        else:
+            user.pop("onboarding_dismissed", None)
         _save(data)
         return _public(user)
 

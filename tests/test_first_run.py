@@ -2,7 +2,8 @@
 mark it done, deal with the paperwork, send the first pay app (R1-12).
 
 R1-04 (notes stay notes), R1-05 (email asked at send), R1-07 (confirm your email first) and
-R1-08 (paperwork Duracash makes or already has) are pinned here.
+R1-08 (paperwork Duracash makes or already has) and R2-01 (a contract number is not a record)
+are pinned here.
 """
 
 import http.client
@@ -127,6 +128,14 @@ class FirstRunTests(unittest.TestCase):
         self.assertTrue({"name", "ap_email", "contract_cents"} <= set(data["fields"]), data)
         res, data = self.request("GET", "/api/state", cookie=cookie)
         self.assertEqual(data["jobs"], [], "nothing is saved from a refused form")
+
+    def test_contract_number_makes_no_record(self):  # R2-01
+        cookie, _ = self.signup("first-run-contract@example.com")
+        res, data = self.request("POST", "/api/jobs", new_job_body(contract_number="C-100"), cookie)
+        self.assertEqual(res.status, 200, data)
+        job = data["jobs"][-1]
+        self.assertEqual(job["contract_number"], "C-100", "the number is kept on the job and prints from there")
+        self.assertEqual(job["records"], [], "no placeholder contract record")
 
     def test_notes_stay_on_the_job_record(self):  # R1-04
         cookie, _ = self.signup("first-run-notes@example.com")

@@ -1949,17 +1949,9 @@ def create_job(
         n += 1
 
     job_id = "job-" + secrets.token_hex(3)
+    # The contract number lives on the job (it prints on every pay app); it is not a record.
+    # Jobs made before this kept a "Contract <number>" record flagged number_only.
     records = []
-    if contract_number:
-        records.append({
-            "id": "rec-" + secrets.token_hex(3),
-            "kind": "contract",
-            "label": f"Contract {contract_number}",
-            "note": "",
-            "added_at": utcnow(),
-            "added_by": actor,
-            "number_only": True,  # just the number from the form: never fills "Signed contract"
-        })
     if note:
         records.append({
             "id": "rec-" + secrets.token_hex(3),

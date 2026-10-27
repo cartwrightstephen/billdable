@@ -7,10 +7,18 @@ import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from 
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
 import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js";
 import { labelTables, moreButton, askConfirm } from "./js/dom.js";
-import { field, moneyField, formErrorLine, refuseForm, formValues, formErrors, formDraft, draftValue, clearForm, clearAllForms, watchForms } from "./js/forms.js";
+import { field, moneyField, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, formDraft, draftValue, clearForm, clearAllForms, watchForms } from "./js/forms.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, setMe, clearSession, setLocation, closeForms } from "./js/state.js";
 
-let authMode = "signup";
+// Someone who has signed in on this device before lands on Sign in, not on Create account (R2-02).
+const SIGNED_IN_KEY = "duracash-signed-in";
+function signedInBefore() {
+  try { return localStorage.getItem(SIGNED_IN_KEY) === "1"; } catch (_) { return false; }
+}
+function rememberSignIn() {
+  try { localStorage.setItem(SIGNED_IN_KEY, "1"); } catch (_) { /* private window: start on Create account */ }
+}
+let authMode = signedInBefore() ? "login" : "signup";
 let dataNotice = false;   // server says data may be erased (no persistent disk confirmed yet)
 let authError = "";      // the two-step code screen's error; the sign-in form uses formErrors.auth
 let actionEl = null;      // the button whose action is running: a refusal is shown under it
@@ -255,6 +263,7 @@ async function boot(checkLink = true) {
     mailReady = data.mail_ready === true;
     readOnly = typeof data.read_only === "string" ? esc(data.read_only) : "";
     billingInfo = escDeep(data.billing || null);
+    rememberSignIn();
     applyLocation();
     await load();
   } else {
@@ -301,7 +310,7 @@ function renderLanding() {
         </div>
         <div class="auth-card land-form" id="signup">
           <h2>${signup ? "Create your company" : "Sign in"}</h2>
-          <p class="sub">${signup ? "Your jobs stay in your company space. Passwords need at least 10 characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, packets, and playbook."}</p>
+          <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, packets, and playbook."}</p>
           ${!signup && loginCode ? `<form id="auth-form">
             <label for="login-code">Code from your authenticator app</label>
             <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" placeholder="123456" />
@@ -311,7 +320,7 @@ function renderLanding() {
             <div class="auth-toggle"><button type="button" id="code-back">Back</button></div>
           </form>` : `<form id="auth-form" data-form-key="auth" novalidate>
             ${signup ? field({ form: "auth", name: "name", id: "auth-name", label: "Your name", autocomplete: "name" }) : ""}
-            ${signup ? field({ form: "auth", name: "company_name", id: "auth-company", label: "Company name", autocomplete: "organization" }) : ""}
+            ${signup ? field({ form: "auth", name: "company_name", id: "auth-company", label: "Company name", autocomplete: "organization", placeholder: "Company name (you can add it later)" }) : ""}
             ${field({ form: "auth", name: "email", id: "auth-email", label: "Email", type: "email", autocomplete: "username" })}
             ${field({ form: "auth", name: "password", id: "auth-password", label: "Password", type: "password", autocomplete: signup ? "new-password" : "current-password" })}
             ${signup ? `<label class="terms-check"><input type="checkbox" id="auth-terms" name="accept_terms" data-field="accept_terms" aria-describedby="auth-terms-err"> I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>
@@ -336,13 +345,13 @@ function renderLanding() {
       </section>
       <section class="land-price">
         <div class="card">
-          <p class="eyebrow">Planned pricing</p>
+          <p class="eyebrow">Pricing</p>
           <h2>$299<span>/mo</span></h2>
-          <p class="sub">Planned price for companies between $750k and $2.5M. No percent of collections. Billing is not live yet.</p>
+          <p class="sub">Free until the first pay app you send through Duracash is paid. Then $299/mo. No percent of collections.</p>
           <button class="btn" id="price-start">Create your company</button>
         </div>
       </section>
-      <footer class="land-foot">Duracash works beside QuickBooks and never changes your books: it reads payments from a QuickBooks export today, and a direct QuickBooks connection is coming. It does not replace your books or your field app.
+      <footer class="land-foot">Reads payments from QuickBooks (connect it, or import a CSV). Never changes your books.
         <div class="land-legal"><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a></div></footer>
     </div>
   `;
@@ -357,9 +366,16 @@ function renderLanding() {
   });
   const toSignup = () => { authMode = "signup"; authError = ""; delete formErrors.auth; renderLanding(); };
   const toSignin = () => { authMode = "login"; authError = ""; delete formErrors.auth; renderLanding(); };
-  document.getElementById("bar-start").addEventListener("click", toSignup);
-  document.getElementById("price-start").addEventListener("click", toSignup);
-  document.getElementById("bar-signin").addEventListener("click", toSignin);
+  // On a phone the form sits above the pitch; the bar's buttons bring it into view.
+  const showCard = () => document.getElementById("signup")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  document.getElementById("bar-start").addEventListener("click", () => { toSignup(); showCard(); });
+  document.getElementById("price-start").addEventListener("click", () => { toSignup(); showCard(); });
+  document.getElementById("bar-signin").addEventListener("click", () => { toSignin(); showCard(); });
+  // The password rule is checked when the box is left, in place: no redraw, nothing lost.
+  document.getElementById("auth-password")?.addEventListener("blur", (e) => {
+    if (!signup || !e.target.value || e.target.value.length >= 10) return;
+    showFieldErrors("auth", { ...(formErrors.auth || {}), password: "Use at least 10 characters for the password." });
+  });
   document.getElementById("auth-forgot")?.addEventListener("click", () => renderForgot());
 }
 
@@ -374,7 +390,6 @@ async function onAuthSubmit(e) {
     // Checked here first, in place: nothing typed is lost.
     const errors = {};
     if (!v.name) errors.name = "Enter your name.";
-    if (!v.company_name) errors.company_name = "Enter your company's name.";
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email)) errors.email = "Enter your email, like you@yourcompany.com.";
     if (form.password.value.length < 10) errors.password = "Use at least 10 characters for the password.";
     if (!form.accept_terms.checked) errors.accept_terms = "To create an account, accept the Terms of Service and the Privacy Policy.";
@@ -406,11 +421,20 @@ async function onAuthSubmit(e) {
     } else if (loginCode) {
       authError = data.error || "Could not sign in.";
       renderLanding();
+    } else if (data.exists && authMode === "signup") {
+      // That email has an account already: offer to sign in with it, keeping the email typed.
+      refuseForm("auth", { email: data.error });
+      const err = document.getElementById("auth-email-err");
+      if (err && !document.getElementById("signin-instead")) {
+        err.insertAdjacentHTML("afterend", `<button type="button" class="linkish" id="signin-instead">Sign in instead</button>`);
+        document.getElementById("signin-instead").addEventListener("click", () => { authMode = "login"; delete formErrors.auth; renderLanding(); document.getElementById("auth-password")?.focus(); });
+      }
     } else {
       refuseForm("auth", data.fields || { _form: data.error || "Could not sign in." });
     }
     return;
   }
+  rememberSignIn();
   // After sign-up (R1-07): say where the confirmation link went, or why none did.
   checkEmail = authMode === "signup" && data.user
     ? { email: esc(String(data.user.email || "")), verification: esc(String(data.verification || "")) } : null;
@@ -447,7 +471,7 @@ async function logout() {
   document.getElementById("ai-chips").innerHTML = "";
   aiOpen = false;
   document.getElementById("ai-panel").classList.remove("open");
-  authMode = "signup";
+  authMode = "login";  // they have an account on this device now
   setAiVisible(false);
   drawerOpen = false;
   history.replaceState(null, "", "/");
@@ -945,7 +969,19 @@ const ACTIONS = {
   "onb-newjob": () => { nav("jobs"); formOpen.newjob = true; render(); document.getElementById("nj-name")?.focus(); },
   "list-more": (el) => { const k = el.dataset.kind, pg = listPages[k]; if (pg && !pg.loading) loadListPage(k, pg.job, pg.entries.length, 50); },
   "onb-job": () => { const j = state.jobs.find(x => !x.closed) || state.jobs[0]; if (j) nav("job", j.id); },
-  "onb-dismiss": async () => { await post("/api/onboarding/dismiss"); },
+  // A setup step: open its page and bring the part to use into view.
+  "onb-go": (el) => {
+    nav(el.dataset.view, el.dataset.id || null);
+    const sel = el.dataset.focus;
+    if (sel) requestAnimationFrame(() => {
+      const target = document.querySelector(sel);
+      if (!target) return;
+      target.scrollIntoView({ block: "center" });
+      if (target.matches("input, select, textarea, [tabindex]")) target.focus({ preventScroll: true });
+    });
+  },
+  "onb-dismiss": () => setChecklist(false),
+  "onb-show": async () => { if (await setChecklist(true)) nav("dashboard"); },
   "draft": (el, id) => post(`/api/jobs/${id}/draft`),
   "sov-start": (el, id) => { sovStartEdit(state.jobs.find(x => x.id === id)); render(); },
   "sov-add": () => { sovDraft.lines.push(blankSovLine()); render(); document.querySelectorAll(".sov-desc")[sovDraft.lines.length - 1]?.focus(); },
@@ -1160,6 +1196,7 @@ const ACTIONS = {
       contract_cents: amount.cents, retainage_pct: ret.value,
     }, { formKey: "newjob", close: "newjob" });
     if (!r || !r.ok) return;
+    delete moreDetails.newjob;
     toast("Job saved");
     const made = state.jobs[state.jobs.length - 1];
     if (made) nav("job", made.id);
@@ -1208,6 +1245,16 @@ const ACTIONS = {
   },
 };
 
+// Hide the setup checklist, or show it again (from Help). It is kept on the person's own
+// account, so a teammate's choice doesn't change it.
+async function setChecklist(show) {
+  const r = await postJson("/api/onboarding/dismiss", show ? { show: true } : {});
+  if (!r.ok || !r.data.user) { toast(r.data.error || "That didn't work."); return false; }
+  setMe(escDeep(r.data.user));
+  render();
+  return true;
+}
+
 // Stripe's checkout or billing portal opens on Stripe's own page.
 async function openBilling(path) {
   const r = await postJson(path, {});
@@ -1217,6 +1264,27 @@ async function openBilling(path) {
 
 let listening = false;
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+// The job's own fields, the same on New job and Edit job (R2-01). prefix is the form's id
+// prefix (nj, ej); j holds the saved values (escaped, as in state), if any.
+function jobFields(form, prefix, j = {}) {
+  const f = (o) => field({ form, ...o });
+  return {
+    name: f({ name: "name", id: `${prefix}-name`, label: "Job name", required: true, autocomplete: "off", value: unesc(j.name || "") }),
+    address: f({ name: "address", id: `${prefix}-address`, label: "Address", required: true, autocomplete: "street-address", value: unesc(j.address || "") }),
+    contract_number: f({ name: "contract_number", id: `${prefix}-contract`, label: "Contract number", value: unesc(j.contract_number || "") }),
+    contract_cents: moneyField({ form, name: "contract_cents", id: `${prefix}-amount`, label: "Contract amount ($)", required: true, placeholder: "48,500", cents: j.contract_cents }),
+    retainage_pct: f({ name: "retainage_pct", id: `${prefix}-retainage`, label: "Retainage %", value: String(j.retainage_pct || 0), inputmode: "decimal", autocomplete: "off" }),
+  };
+}
+
+// "More details (optional)" stays as the person left it across re-renders, and opens when
+// one of its fields has an error.
+const moreDetails = {};
+function moreOpen(key) {
+  const errs = formErrors[key] || {};
+  return !!moreDetails[key] || ["contract_number", "retainage_pct", "phone", "approver", "ap_email", "note"].some(k => errs[k]);
+}
 
 // New job (R1-05): a customer already saved keeps who signs off and where pay apps go (changed
 // in Customer settings, never by a new job), so the form shows them instead of asking again.
@@ -1243,14 +1311,39 @@ function syncNewJobCustomer() {
 }
 
 // Leaving the Customer box fills "Who signs off" with the customer when it is still empty: a
-// homeowner signs off on their own bills.
+// homeowner signs off on their own bills. A saved customer sets "Who pays you?" to theirs, and
+// a general contractor's retainage to what their last job held (R2-01), unless already typed.
 function prefillApprover() {
   const form = document.querySelector('[data-form-key="newjob"]');
   const customer = form?.querySelector('[data-field="customer"]')?.value.trim();
-  const box = form?.querySelector('[data-field="approver"]');
-  if (!customer || !box || box.value.trim() || knownPayer(customer)) return;
-  box.value = customer;
-  (formDraft.newjob ||= {}).approver = customer;
+  if (!customer) return;
+  const known = knownPayer(customer);
+  const set = (name, value) => {
+    const box = form.querySelector(`[data-field="${name}"]`);
+    if (!box) return;
+    box.value = value;
+    (formDraft.newjob ||= {})[name] = value;
+  };
+  if (!known) {
+    const box = form.querySelector('[data-field="approver"]');
+    if (box && !box.value.trim()) set("approver", customer);
+    return;
+  }
+  if (known.role === "Owner" || known.role === "GC") set("role", known.role);
+  prefillRetainage();
+}
+
+// A general contractor usually holds the same retainage job after job: start from their last one.
+function prefillRetainage() {
+  const form = document.querySelector('[data-form-key="newjob"]');
+  const known = knownPayer(form?.querySelector('[data-field="customer"]')?.value);
+  const role = form?.querySelector('[data-field="role"]')?.value;
+  if (!known || role !== "GC" || (formDraft.newjob || {}).retainage_touched) return;
+  const last = [...state.jobs].reverse().find(j => (j.payer_id || (j.payer && j.payer.id)) === known.id);
+  const box = form.querySelector('[data-field="retainage_pct"]');
+  if (!last || !box) return;
+  box.value = String(last.retainage_pct || 0);
+  (formDraft.newjob ||= {}).retainage_pct = box.value;
 }
 
 function listenForActions() {
@@ -1268,8 +1361,14 @@ function listenForActions() {
     actionEl = el;
     run(el, el.dataset.id, e);
   });
-  app.addEventListener("input", (e) => { if (e.target.id === "nj-customer") syncNewJobCustomer(); });
+  app.addEventListener("input", (e) => {
+    if (e.target.id === "nj-customer") syncNewJobCustomer();
+    if (e.target.id === "nj-retainage") (formDraft.newjob ||= {}).retainage_touched = true;
+  });
   app.addEventListener("focusout", (e) => { if (e.target.id === "nj-customer") prefillApprover(); });
+  app.addEventListener("change", (e) => { if (e.target.id === "nj-role" || e.target.id === "nj-customer") prefillRetainage(); });
+  // A details' toggle doesn't bubble; catch it on the way down.
+  app.addEventListener("toggle", (e) => { if (e.target.dataset && e.target.dataset.more) moreDetails[e.target.dataset.more] = e.target.open; }, true);
   // Filter dropdowns listen for "change" only. A click handler that re-renders
   // destroys the open dropdown, which is why mouse selection used to fail.
   app.addEventListener("change", (e) => {
@@ -1685,7 +1784,7 @@ async function loadTeam() {
     if (!res.ok) return;
     teamData = escDeep(await readJson(res));
   } catch (_) { setNetBanner(true); return; }
-  if (currentView === "account") render();
+  if (currentView === "account" && !patch("#team-card", teamCardHtml())) render();
 }
 
 async function teamPost(path, body, okMessage) {
@@ -1729,12 +1828,40 @@ function verifyBannerHtml() {
     <button class="linkish" data-action="resend-verify">Send the link again</button></div>`;
 }
 
-function accountView() {
-  if (!teamData) loadTeam();
+// The team list fills in when /api/team answers, in place: the rest of the page (a company
+// address being typed, R2-03's step 0) is not redrawn.
+function teamCardHtml() {
   const owner = me.role === "owner";
   const isDemo = me.company_id === DEMO_COMPANY_ID;
   const users = teamData ? teamData.users : [];
   const invites = teamData ? teamData.invites : [];
+  return `
+      <h2>Team</h2>
+      <p class="sub">Owners manage the team, inbound addresses, reset and deletion. Members do everything else. Every action is in the Audit with the person's name.</p>
+      <div class="table-wrap"><table>
+        <tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr>
+        ${users.map(u => `<tr><td>${u.name}${u.id === me.id ? " (you)" : ""}</td><td>${u.email}</td><td>${words(u.role)}</td><td>${fmtDate(u.created_at)}</td>
+          <td>${owner && !isDemo && u.id !== me.id ? `
+            <button class="btn small secondary" data-action="team-role" data-user="${u.id}" data-role="${u.role === "owner" ? "member" : "owner"}">Make ${u.role === "owner" ? "member" : "owner"}</button>
+            <button class="btn small secondary" data-action="team-remove" data-user="${u.id}" data-name="${u.name}">Remove</button>` : ""}</td></tr>`).join("")}
+      </table></div>
+      ${owner && !isDemo ? `
+        <h3>Invite someone</h3>
+        <div data-form-key="invite">${formErrorLine("invite")}<div class="form-row">
+          ${field({ form: "invite", name: "email", id: "invite-email", label: "Their email", type: "email", autocomplete: "off", wide: true })}
+          ${field({ form: "invite", name: "role", id: "invite-role", label: "They join as", options: [["member", "Member"], ["owner", "Owner"]] })}
+          <button class="btn small" data-action="team-invite">Invite</button>
+        </div></div>
+        ${lastInvite ? `<div class="invite-result">${lastInvite.emailed ? `Invite emailed to ${esc(lastInvite.email)}.` : `Not emailed (${esc(lastInvite.email_status)}). Send them this link yourself; it works once, for 7 days:`}
+          <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}
+        ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
+          <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}`;
+}
+
+function accountView() {
+  if (!teamData) loadTeam();
+  const owner = me.role === "owner";
+  const isDemo = me.company_id === DEMO_COMPANY_ID;
   const verified = me.email_verified
     ? `<span class="pill green">confirmed</span>`
     : `<span class="pill amber">not confirmed</span> ${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : `<span class="sub">Confirming needs email set up on the server.</span>`}`;
@@ -1766,28 +1893,7 @@ function accountView() {
       </div>
       ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
-    <div class="card">
-      <h2>Team</h2>
-      <p class="sub">Owners manage the team, inbound addresses, reset and deletion. Members do everything else. Every action is in the Audit with the person's name.</p>
-      <div class="table-wrap"><table>
-        <tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr>
-        ${users.map(u => `<tr><td>${u.name}${u.id === me.id ? " (you)" : ""}</td><td>${u.email}</td><td>${words(u.role)}</td><td>${fmtDate(u.created_at)}</td>
-          <td>${owner && !isDemo && u.id !== me.id ? `
-            <button class="btn small secondary" data-action="team-role" data-user="${u.id}" data-role="${u.role === "owner" ? "member" : "owner"}">Make ${u.role === "owner" ? "member" : "owner"}</button>
-            <button class="btn small secondary" data-action="team-remove" data-user="${u.id}" data-name="${u.name}">Remove</button>` : ""}</td></tr>`).join("")}
-      </table></div>
-      ${owner && !isDemo ? `
-        <h3>Invite someone</h3>
-        <div data-form-key="invite">${formErrorLine("invite")}<div class="form-row">
-          ${field({ form: "invite", name: "email", id: "invite-email", label: "Their email", type: "email", autocomplete: "off", wide: true })}
-          ${field({ form: "invite", name: "role", id: "invite-role", label: "They join as", options: [["member", "Member"], ["owner", "Owner"]] })}
-          <button class="btn small" data-action="team-invite">Invite</button>
-        </div></div>
-        ${lastInvite ? `<div class="invite-result">${lastInvite.emailed ? `Invite emailed to ${esc(lastInvite.email)}.` : `Not emailed (${esc(lastInvite.email_status)}). Send them this link yourself; it works once, for 7 days:`}
-          <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}
-        ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
-          <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}
-    </div>
+    <div class="card" id="team-card">${teamCardHtml()}</div>
     ${!isDemo && owner && billingInfo && billingInfo.configured ? `<div class="card" id="billing">
       <h2>Billing</h2>
       ${billingInfo.status ? `<p class="sub"><span class="pill ${["active", "trialing"].includes(billingInfo.status) ? "green" : "red"}">${BILLING_WORDS[billingInfo.status] || words(billingInfo.status)}</span>${billingInfo.period_end ? ` Next renewal ${fmtDate(new Date(billingInfo.period_end * 1000).toISOString())}.` : ""}</p>`
@@ -1851,28 +1957,50 @@ function trialBannerHtml() {
   return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : " Subscribe in Settings, Team &amp; account, Billing.") : " Billing isn't live yet, so nothing changes for now."}</div>`;
 }
 
+// The setup checklist on Today (R2-03). Each step's button goes to where that step is done:
+// the first job still lacking it, scrolled to the part to use (data-focus). Hidden per person.
 function onboardingHtml() {
-  if (!state || state.company.onboarding_dismissed || (me && me.company_id === DEMO_COMPANY_ID)) return "";
+  if (!state || (me && me.onboarding_dismissed) || (me && me.company_id === DEMO_COMPANY_ID)) return "";
   const jobs = state.jobs;
+  const open = jobs.filter(j => !j.closed);
   const invoices = jobs.flatMap(j => j.invoices);
+  // A note typed in doesn't count as paperwork: a file, or something brought in through the Inbox, does.
+  const hasPaperwork = (j) => (j.records || []).some(r => (r.file_ids || []).length || r.source);
+  const lacking = (has) => open.find(j => !has(j)) || open[0];
+  const goJob = (has, focus) => { const j = lacking(has); return j ? `data-action="onb-go" data-view="job" data-id="${j.id}" data-focus="${focus}"` : ""; };
+  const billed = (j) => j.invoices.some(i => i.status !== "void" && i.status !== "replaced");
+  const draftJob = open.find(j => j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status)));
+  const draft = draftJob && draftJob.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   const steps = [
-    ["Create your first job: contract amount, payer, approver, AP email, retainage.", jobs.length > 0, "onb-newjob", "New job"],
-    ["Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", jobs.some(j => (j.records || []).length), "onb-job", "Open the job"],
-    ["Optional: set up a schedule of values to bill line by line (paste it from your estimate).", jobs.some(j => j.sov_view && j.sov_view.present), "onb-job", "Open the job"],
-    ["Record progress, or mark the job done. Duracash drafts the pay app and lists the packet the payer requires.", invoices.length > 0, "onb-job", "Open the job"],
-    ["Clear the packet, then Approve & send.", invoices.some(i => i.sent_at), "onb-job", "Open the job"],
-  ];
-  if (steps[4][1]) return "";
-  const OPTIONAL = 2;  // the schedule of values is optional, so it doesn't count toward "done"
-  const required = steps.filter((s, i) => i !== OPTIONAL);
-  const done = required.filter(s => s[1]).length;
-  const next = steps.findIndex((s, i) => i !== OPTIONAL && !s[1]);
+    { text: "Add your company address, phone and licence number (they print on every pay app).", done: !!String(state.company.address || "").trim(),
+      label: "Company details", attrs: `data-action="onb-go" data-view="account" data-focus="#co-address"`, always: true },
+    { text: "Create your first job: contract amount, customer and where pay apps go.", done: jobs.length > 0,
+      label: "New job", attrs: `data-action="onb-newjob"`, always: true },
+    { text: "Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
+      label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
+    { text: "Set up a schedule of values to bill line by line (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present),
+      label: "Open the job", attrs: goJob(j => j.sov_view && j.sov_view.present, ".next-card"), needsJob: true },
+    { text: "Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the customer needs.", done: invoices.length > 0,
+      label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
+    { text: "Add the missing paperwork, then Approve & send.", done: invoices.some(i => i.sent_at),
+      label: draft ? "Review & send" : "Open the job",
+      attrs: draft ? `data-action="open-payapp" data-job="${draftJob.id}" data-inv="${draft.id}" data-focus=".send-check"` : goJob(billed, ".next-card"), needsJob: true },
+    { text: "Already been paid on some jobs? Import the payments from QuickBooks.", optional: true, done: jobs.some(j => (j.payments || []).length),
+      label: "Import payments", attrs: `data-action="onb-go" data-view="payments" data-focus="#qbo-csv"`, needsJob: true },
+    { text: "Connect QuickBooks (optional).", optional: true, done: !!(qboStatus && qboStatus.connected), hidden: !!(qboStatus && !qboStatus.loading && !qboStatus.configured),
+      label: "QuickBooks", attrs: `data-action="onb-go" data-view="payments"` },
+  ].filter(st => !st.hidden);
+  const required = steps.filter(st => !st.optional);
+  if (required.every(st => st.done)) return "";
+  const done = required.filter(st => st.done).length;
+  const next = steps.find(st => !st.optional && !st.done);
+  const button = (st) => st.done || !st.attrs || (st.needsJob && !jobs.length) ? ""
+    : ` <button class="btn small${st === next ? "" : " secondary"}" ${st.attrs}>${st.label}</button>`;
   return `<div class="card onboarding">
-    <button class="help-dismiss" data-action="onb-dismiss" title="Hide this">×</button>
+    <button class="help-dismiss" data-action="onb-dismiss" title="Hide this" aria-label="Hide the setup checklist">×</button>
     <h2>Get your first pay app out</h2>
-    <p class="sub">${done} of ${required.length} steps done (step 3 is optional). The Help page explains every term.</p>
-    <ol class="onb-steps">${steps.map((s, i) => `<li class="${s[1] ? "done" : i === next ? "next" : ""}">${s[1] ? "✓ " : ""}${s[0]}
-      ${i === next && (i === 0 || jobs.length) ? ` <button class="btn small" data-action="${s[2]}">${s[3]}</button>` : ""}</li>`).join("")}</ol>
+    <p class="sub">${done} of ${required.length} steps done. Steps marked optional don't count. You can bring this back from Help.</p>
+    <ol class="onb-steps">${steps.map(st => `<li class="${st.done ? "done" : st === next ? "next" : ""}">${st.done ? "✓ " : ""}${st.optional ? "Optional: " : ""}${st.text}${st === next || st.optional || st.always ? button(st) : ""}</li>`).join("")}</ol>
   </div>`;
 }
 
@@ -2149,10 +2277,11 @@ const views = {
     return `
       <h1>Help</h1>
       <p class="sub">Hover any label with an (i) to see what it means. Tap it on a phone.</p>
+      ${me && me.onboarding_dismissed && me.company_id !== DEMO_COMPANY_ID ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
       <div class="card">
         <h2>First job, start to finish</h2>
         <ol class="steps">
-          <li>Jobs → New job: contract amount, payer, approver, AP email, retainage percent.</li>
+          <li>Jobs → New job: job name, address, customer, who pays you and the contract amount. The rest can wait under More details.</li>
           <li>Drop the contract, photos and tickets on the job record, or bring emails and texts in through the Inbox.</li>
           <li>Progress pay app: enter completed-to-date. Duracash drafts the pay app, withholds retainage and lists the packet.</li>
           <li>Optional: send a pencil copy so the payer agrees the numbers first.</li>
@@ -2180,7 +2309,7 @@ const views = {
       <h1>Today</h1>
       ${trialBannerHtml()}
       ${onboardingHtml()}
-      ${!state.jobs.length && !state.closed_jobs_total && (state.company.onboarding_dismissed || isDemo) ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="onb-newjob">New job</button>`) : ""}
+      ${!state.jobs.length && !state.closed_jobs_total && (me.onboarding_dismissed || isDemo) ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="onb-newjob">New job</button>`) : ""}
       ${isDemo && !helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
@@ -2242,6 +2371,7 @@ const views = {
     const closed = state.closed_jobs_total || 0;
     const f = (o) => field({ form: "newjob", ...o });
     const known = knownPayer(draftValue("newjob", "customer"));
+    const jf = jobFields("newjob", "nj", { retainage_pct: 0 });
     return `
       <div class="top">
         <h1>Jobs</h1>
@@ -2250,30 +2380,29 @@ const views = {
       ${formOpen.newjob ? `
         <div class="card" data-form-key="newjob">
           <h2>New job</h2>
-          <p class="sub">Fields marked <span class="req">*</span> are required. The paperwork list comes from the customer's settings, with the first pay app.</p>
+          <p class="sub">Fields marked <span class="req">*</span> are required.</p>
           ${formErrorLine("newjob")}
-          <div class="form-section">Job</div>
           <div class="form-grid">
-            ${f({ name: "name", id: "nj-name", label: "Job name", required: true, autocomplete: "off" })}
-            ${f({ name: "address", id: "nj-address", label: "Address", required: true, autocomplete: "street-address" })}
-            ${f({ name: "contract_number", id: "nj-contract", label: "Contract number" })}
-            ${moneyField({ form: "newjob", name: "contract_cents", id: "nj-amount", label: "Contract amount ($)", required: true, placeholder: "48,500" })}
-            ${f({ name: "retainage_pct", id: "nj-retainage", label: "Retainage %", value: "0", inputmode: "decimal", autocomplete: "off" })}
-          </div>
-          <div class="form-section">Customer</div>
-          <div class="form-grid">
-            ${f({ name: "customer", id: "nj-customer", label: "Customer", required: true })}
-            ${f({ name: "role", id: "nj-role", label: "Role", options: [["Owner", "Owner"], ["GC", "GC"]] })}
+            ${jf.name}
+            ${jf.address}
+            ${f({ name: "customer", id: "nj-customer", label: "Customer", required: true, autocomplete: "off", attrs: 'list="nj-customers"' })}
+            <datalist id="nj-customers">${(state.payers || []).map(p => `<option value="${p.name}"></option>`).join("")}</datalist>
+            ${f({ name: "role", id: "nj-role", label: "Who pays you?", help: "Sets the paperwork they usually need and when to follow up. You can change both later.", options: [["Owner", "The homeowner or property owner"], ["GC", "A general contractor (you are the sub)"]] })}
+            ${jf.contract_cents}
             <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
               <button class="linkish" data-action="nav" data-view="playbook">Change in Customer settings</button></p>
-            <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", placeholder: "The customer, unless you say otherwise" })}</div>
-            <div data-payer-slot="ap_email"${known && known.ap_email ? " hidden" : ""}>${f({ name: "ap_email", id: "nj-email", label: "Email for pay apps (can add later)", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
-            ${f({ name: "phone", id: "nj-phone", label: "Phone", type: "tel", autocomplete: "off" })}
           </div>
-          <div class="form-section">Job record</div>
-          <div class="form-grid">
-            ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
-          </div>
+          <details class="more-details" data-more="newjob"${moreOpen("newjob") ? " open" : ""}>
+            <summary>More details (optional)</summary>
+            <div class="form-grid">
+              ${jf.contract_number}
+              ${jf.retainage_pct}
+              ${f({ name: "phone", id: "nj-phone", label: "Phone", type: "tel", autocomplete: "off" })}
+              <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", placeholder: "The customer, unless you say otherwise" })}</div>
+              <div data-payer-slot="ap_email"${known && known.ap_email ? " hidden" : ""}>${f({ name: "ap_email", id: "nj-email", label: "Email for pay apps (can add later)", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
+              ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
+            </div>
+          </details>
           <button class="btn" data-action="create-job">Save job</button>
         </div>` : ""}
       ${open.length ? `<div class="table-wrap">
@@ -2307,7 +2436,7 @@ const views = {
     const closeoutMissing = closeout.filter(p => p.required && !p.present).length;
     const { primary, more } = jobActions(j);
     const hasPayApps = j.invoices.some(i => i.status !== "void");
-    const ej = (o) => field({ form: "editjob", ...o });
+    const ejf = jobFields("editjob", "ej", j);
     return `
       ${backButton("jobs", "Jobs")}
       <div class="job-head">
@@ -2322,13 +2451,13 @@ const views = {
           <h2>Edit job</h2>
           ${formErrorLine("editjob")}
           <div class="form-grid">
-            ${ej({ name: "name", id: "ej-name", label: "Job name", value: unesc(j.name) })}
-            ${ej({ name: "address", id: "ej-address", label: "Address", value: unesc(j.address) })}
-            ${ej({ name: "contract_number", id: "ej-contract", label: "Contract number", value: unesc(j.contract_number || "") })}
-            ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : moneyField({ form: "editjob", name: "contract_cents", id: "ej-amount", label: "Contract amount ($)", cents: j.contract_cents })}
-            ${hasPayApps ? "" : ej({ name: "retainage_pct", id: "ej-retainage", label: "Retainage %", value: String(j.retainage_pct || 0), inputmode: "decimal", autocomplete: "off" })}
+            ${ejf.name}
+            ${ejf.address}
+            ${ejf.contract_number}
+            ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : ejf.contract_cents}
+            ${hasPayApps ? "" : ejf.retainage_pct}
           </div>
-          <p class="sub">${hasPayApps ? "The contract amount and retainage are fixed once a pay app exists; use a change order. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Payer contacts are in the <button class="linkish" data-action="nav" data-view="playbook">Payer playbook</button>.</p>
+          <p class="sub">${hasPayApps ? "The contract amount and retainage are fixed once a pay app exists; use a change order. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Who pays you and where pay apps go are in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>
           <div class="form-inline">
             <button class="btn" data-action="save-job" data-id="${j.id}">Save changes</button>
             ${j.invoices.length || j.payments.length ? "" : `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}">Delete job</button>`}

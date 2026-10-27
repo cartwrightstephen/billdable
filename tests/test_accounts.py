@@ -262,6 +262,23 @@ class AccountHttpTests(ServerCase):
         res, _ = self.request("POST", "/api/team/invite", {"email": "other@team.example"}, cookie=owner)
         self.assertEqual(res.status, 409)
 
+    def test_setup_checklist_is_dismissed_per_person(self):  # R2-03
+        owner, _ = self.signup("owner@checklist.example", "Checklist Co")
+        res, out = self.request("POST", "/api/team/invite", {"email": "member@checklist.example", "role": "member"}, cookie=owner)
+        token = out["invite_path"].split("#invite=")[1]
+        res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        res, out = self.request("POST", "/api/onboarding/dismiss", {}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        _, who = self.request("GET", "/api/auth/me", cookie=owner)
+        self.assertTrue(who["user"]["onboarding_dismissed"])
+        _, who = self.request("GET", "/api/auth/me", cookie=member)
+        self.assertFalse(who["user"]["onboarding_dismissed"], "the second person still sees the checklist")
+        # Help > "Show the setup checklist" brings it back.
+        res, out = self.request("POST", "/api/onboarding/dismiss", {"show": True}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        self.assertFalse(out["user"]["onboarding_dismissed"])
+
     def test_invite_is_emailed_when_mail_is_ready(self):
         self.mail_on()
         owner, data = self.signup("owner2@team.example", "Mail Team\n\nYour account is locked. Verify at https://evil.example")
@@ -365,9 +382,14 @@ class AccountHttpTests(ServerCase):
         self.assertEqual(state["trial"]["state"], "active")
         ends = datetime.fromisoformat(state["trial"]["ends_by"])
         self.assertAlmostEqual((ends - datetime.now(timezone.utc)).days, 89, delta=1)
-        self.assertFalse(state["company"].get("onboarding_dismissed", False))
-        _, state = self.request("POST", "/api/onboarding/dismiss", {}, cookie=cookie)
-        self.assertTrue(state["company"]["onboarding_dismissed"])
+        _, who = self.request("GET", "/api/auth/me", cookie=cookie)
+        self.assertFalse(who["user"]["onboarding_dismissed"])
+        res, out = self.request("POST", "/api/onboarding/dismiss", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, out)
+        self.assertTrue(out["user"]["onboarding_dismissed"])
+        _, who = self.request("GET", "/api/auth/me", cookie=cookie)
+        self.assertTrue(who["user"]["onboarding_dismissed"])
+        self.assertNotIn("onboarding_dismissed", self.request("GET", "/api/state", cookie=cookie)[1]["company"])
         res, _ = self.request("GET", "/api/admin/companies", cookie=cookie)
         self.assertEqual(res.status, 403)
         os.environ["HELPER_ADMIN_USER_IDS"] = data["user"]["id"]

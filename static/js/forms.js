@@ -68,7 +68,13 @@ export function showFieldErrors(key, errors = {}) {
     const msg = errors[input.dataset.field] || "";
     const span = document.getElementById(`${input.id}-err`);
     if (span) span.textContent = msg;
-    if (msg) { input.setAttribute("aria-invalid", "true"); first = first || input; }
+    if (msg) {
+      input.setAttribute("aria-invalid", "true");
+      first = first || input;
+      // A field folded away under "More details" opens so its error can be seen.
+      const folded = input.closest("details");
+      if (folded) folded.open = true;
+    }
     else input.removeAttribute("aria-invalid");
   }
   if (root) {

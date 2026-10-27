@@ -121,6 +121,18 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(res.status, 400)
         self.assertIn("10 characters", data["error"])
 
+    def test_signup_without_company_name_uses_the_persons_name(self):  # R2-02
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "noco@example.com", "password": PASSWORD, "name": "Pat Pine", "company_name": ""})
+        self.assertEqual(res.status, 200, data)
+        cookie = res.getheader("Set-Cookie").split(";")[0]
+        res, state = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual(res.status, 200)
+        self.assertEqual(state["company"]["name"], "Pat Pine")
+        # The same email again: the page is told to offer "Sign in instead".
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "noco@example.com", "password": PASSWORD, "name": "Pat Pine", "company_name": ""})
+        self.assertEqual(res.status, 400)
+        self.assertTrue(data.get("exists"), data)
+
     def test_login_rate_limited(self):
         self.signup("rate@example.com")
         for _ in range(auth.LOGIN_FREE_FAILURES):

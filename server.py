@@ -1186,7 +1186,8 @@ class Handler(BaseHTTPRequestHandler):
             company_id = "co-" + secrets.token_hex(4)
             user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
                                     terms_version=legal.TERMS_VERSION)
-            fresh = empty_state(_text(body, "company_name").strip() or "New company")
+            # The company name can wait (R2-02): until it is typed in Account, it is the person's name.
+            fresh = empty_state(_text(body, "company_name").strip() or str(user.get("name") or "").strip() or "New company")
             trial.start(fresh["company"])
             with company_lock(company_id):
                 save_company(company_id, fresh)
@@ -1194,7 +1195,8 @@ class Handler(BaseHTTPRequestHandler):
             verification = self._send_verification(user)
             self._json(200, {"user": user, "verification": verification}, self._set_cookie(token))
         except ValueError as exc:
-            self._json(400, {"error": str(exc)})
+            # An email that already has an account: the page offers "Sign in instead".
+            self._json(400, {"error": str(exc), **({"exists": True} if "already exists" in str(exc) else {})})
 
     def _p_logout(self, m) -> None:
         auth.destroy_session(self._token())
@@ -1412,7 +1414,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
 
     def _p_onboarding_dismiss(self, m, ctx: "Ctx") -> None:
-        self._json(*self._change(ctx.company_id, lambda st: st["company"].__setitem__("onboarding_dismissed", True)))
+        """Hide the setup checklist for the signed-in person, or show it again with {"show": true}.
+        Kept on their own account, not the company (an old company-wide flag is ignored)."""
+        try:
+            user = auth.set_onboarding_dismissed(ctx.user["id"], ctx.body.get("show") is not True)
+        except auth.AuthError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._json(200, {"user": user})
 
     def _p_team(self, m, ctx: "Ctx") -> None:
         path = urlparse(self.path).path
@@ -2069,7 +2078,7 @@ class Handler(BaseHTTPRequestHandler):
         if company_exists(company_id):
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             storage.write_json(COMPANIES / "snapshots" / f"{company_id}-before-reset-{stamp}.json", state)
-        kept = {k: v for k, v in state.get("company", {}).items() if k in ("trial", "onboarding_dismissed")}
+        kept = {k: v for k, v in state.get("company", {}).items() if k == "trial"}
         fresh = empty_state(name)
         fresh["company"].update(kept)  # a reset doesn't restart the trial
         return fresh

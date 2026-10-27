@@ -25,7 +25,8 @@ class MoneyFileTests(unittest.TestCase):
         )
         self.assertEqual(job["contract_cents"], 4500000)
         self.assertEqual(job["packet"], [])
-        self.assertTrue(any(r["kind"] == "contract" for r in job["records"]))
+        self.assertEqual(job["contract_number"], "C-100")
+        self.assertFalse(job["records"], "the contract number is not a job record")
         self.assertEqual(state["payers"][0]["ap_email"], "ap@jones.example")
         domain.mark_done(state, job["id"], notes="Done")
         invoice = job["invoices"][-1]

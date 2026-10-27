@@ -185,6 +185,8 @@ select { max-width: 100%; }
   .land-copy h1 { font-size: 34px; }
   .land-bar { padding: 14px 16px; }
   .land-hero, .land-how, .land-price { padding-left: 16px; padding-right: 16px; }
+  .land-form { order: -1; }  /* the form first on a phone; the pitch follows */
+  .land-form { scroll-margin-top: 12px; }
 }
 .net-banner { display: none; position: sticky; top: 0; z-index: 50; padding: 10px 16px; background: #fff5f0; color: #8a2b0f; border-bottom: 1px solid #e9b8a6; font-size: 14px; }
 a.reset-btn { display: block; text-decoration: none; text-align: left; }
@@ -411,3 +413,5 @@ textarea { font: inherit; }
 .send-check .send-email .btn { margin-top: 6px; }
 .notice.confirm-first { margin: 10px 0 0; }
 .known-payer { margin: 0; }
+.more-details { margin: 12px 0; }
+.more-details > summary { cursor: pointer; color: var(--copper); font-size: 14px; margin-bottom: 8px; }

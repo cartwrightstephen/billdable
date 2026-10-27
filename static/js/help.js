@@ -65,6 +65,7 @@ export const FIELD_HELP = {
   "contract number": "The number on the contract, if it has one.",
   "contract amount ($)": "The signed contract amount in dollars, before change orders.",
   "retainage %": "Percent the payer holds back from each pay app until closeout. Commonly 5 to 10 percent; check your contract.",
+  "who pays you?": "The homeowner or property owner, or a general contractor when you are their sub. It sets the paperwork they usually need with each pay app and when to follow up.",
   "role": "Owner: you bill the property owner or homeowner. GC: you are a sub billing a general contractor.",
   "approver": "The person who approves your pay app.",
   "ap email": "Where pay apps and follow-ups go: the payer's accounts payable address.",

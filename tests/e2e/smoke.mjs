@@ -40,6 +40,11 @@ await step("landing redirects a deep link to sign-in, then opens it", async () =
   await p.click("#auth-form button[type=submit]");
   await p.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
   assert.equal(new URL(p.url()).pathname, "/jobs/job-oak");
+  // This device has signed in now: after signing out, the landing opens on Sign in (R2-02).
+  await p.evaluate(() => fetch("/api/auth/logout", { method: "POST" }));
+  await p.goto(BASE + "/");
+  await p.locator("#signup h2", { hasText: "Sign in" }).waitFor();
+  assert.equal(await p.locator("#auth-name").count(), 0, "no sign-up fields");
   await ctx.close();
 });
 
@@ -69,6 +74,12 @@ await step("New job: a wrong field is marked in place and nothing typed is lost"
   await page.fill("#nj-address", "1 Porch Lane");
   await page.fill("#nj-amount", "48,500");
   await page.fill("#nj-customer", "Smoke Homeowner");
+  // Five boxes up front (R2-01); the rest wait under "More details (optional)".
+  assert.equal(await page.locator('[data-form-key="newjob"] > .form-grid [data-field]').count(), 5);
+  assert.deepEqual(await page.locator('[data-form-key="newjob"] > .form-grid [data-field]').evaluateAll(els => els.map(e => e.id)),
+    ["nj-name", "nj-address", "nj-customer", "nj-role", "nj-amount"]);
+  assert.equal(await page.locator("#nj-email").isVisible(), false, "More details starts folded");
+  await page.getByText("More details (optional)").click();
   await page.fill("#nj-approver", "Sam Smoke");
   await page.fill("#nj-email", "not an email");
   await page.click('[data-action="create-job"]');
@@ -98,6 +109,14 @@ await step("sign-up says where the confirmation link went", async () => {
   assert.match(await panel.innerText(), /set up your first job meanwhile/);
   await panel.getByRole("button", { name: "Got it" }).click();
   await panel.waitFor({ state: "detached" });
+  // The setup checklist's first step goes to the company address box (R2-03).
+  const checklist = p.locator(".onboarding");
+  await checklist.waitFor();
+  assert.match(await checklist.innerText(), /Add your company address/);
+  await checklist.getByRole("button", { name: "Company details" }).click();
+  await p.locator("#co-address").waitFor();
+  assert.equal(await p.evaluate(() => document.activeElement && document.activeElement.id), "co-address");
+  assert.equal(new URL(p.url()).pathname, "/settings");
   await ctx.close();
 });
 

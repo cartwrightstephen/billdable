@@ -16,7 +16,7 @@ When a result differs, note the step number and what you saw. Known app problems
       Expected: it ends with `55 of 55 checks passed.` and prints an email and password.
       They are also saved in `testdata/test-contractor/.login` (git-ignored).
       `--only-setup` stops before the imports, so you do the imports by hand in part 3.
-- [ ] 0.3 Open http://127.0.0.1:8791, choose **Sign in**, and use the email and password from `.login`.
+- [ ] 0.3 Open http://127.0.0.1:8791, choose **Sign in** (a browser that has signed in before opens there), and use the email and password from `.login`.
       Expected: Today opens for "Brightwater Tile & Stone LLC".
 
 Email is not set up on a test server, so every send ends with a toast like
@@ -37,28 +37,33 @@ on its job page reads "sent <date> · email failed".
 
 Kirkwood Dental Suite was just awarded. Its customer is new, so this job also creates the payer.
 
-- [ ] 2.1 **Jobs > Open jobs > New job**. Type exactly:
+- [ ] 2.1 **Jobs > Open jobs > New job**. Five boxes show: Job name, Address, Customer, Who pays you?, Contract amount. The rest are folded under **More details (optional)**. Type exactly:
 
   | Field | Value |
   | --- | --- |
   | Job name * | `Kirkwood Dental Suite` |
   | Address * | `1910 Hosea L Williams Dr NE, Atlanta, GA 30317` |
-  | Contract number | `LDP-0412` |
+  | Customer * | `Lindell Dental Partners` (the box suggests customers already saved; this one is new) |
+  | Who pays you? | `The homeowner or property owner` (hint under it: "Sets the paperwork they usually need and when to follow up. You can change both later.") |
   | Contract amount ($) * | `27,450` (commas and a `$` are fine; leaving the box shows `$27,450.00`) |
+
+  Open **More details (optional)** and type:
+
+  | Field | Value |
+  | --- | --- |
+  | Contract number | `LDP-0412` |
   | Retainage % | `0` |
-  | Customer * | `Lindell Dental Partners` |
-  | Role | `Owner` |
+  | Phone | `404-555-0127` |
   | Who signs off on your bills | `Dr. Maya Lindell` (leaving the Customer box fills it with the customer; replace it) |
   | Email for pay apps (can add later) | `billing@lindelldental.example` |
-  | Phone | `404-555-0127` |
   | Notes (kept on the job record) | leave empty (see 2.4) |
 
-- [ ] 2.2 **Save job**. Expected: toast "Job saved", the job page opens. Its code is **KIRK**. The Job record holds one record, "Contract LDP-0412" (Contract).
+- [ ] 2.2 **Save job**. Expected: toast "Job saved", the job page opens. Its code is **KIRK**. The Job record is empty: the contract number is kept on the job (it prints on every pay app, and shows in **Edit job**), not as a record.
 - [ ] 2.3 **Settings > Payer playbook** now has 7 payers. **Lindell Dental Partners**: Approver Dr. Maya Lindell, AP email billing@lindelldental.example, Follow-up days 7, Usual approval days 14, Packet "Signed contract, conditional waiver, completion photos, and pay-app backup."
 - [ ] 2.4 Notes with commas stay notes: create a throwaway job for another new customer (`Ruiz Residence`) and type `Gate code 1234, call before 8am` in **Notes (kept on the job record)**. Expected: the job record holds a Note "Job notes" with that text, and the new payer's Packet in **Settings > Payer playbook** is the default list ("Signed contract, conditional waiver, completion photos, and pay-app backup."), not the note. Keep the job for 2.7.
 - [ ] 2.5 Validation: open **New job** again, leave everything empty, **Save job**. Expected inline errors under each required field: "Enter the job name.", "Enter the job address.", "Enter the customer: who pays for this job.", "Enter the contract amount, like 48,500." Nothing under **Who signs off on your bills** or **Email for pay apps**: both are optional.
-- [ ] 2.6 Nothing typed is lost: type a Job name and `48,500` in **Contract amount ($)**, fill the other required fields but type `kim at oak` as **Email for pay apps**, **Save job**. Expected: only that box turns red ("Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."); the job name and `$48,500.00` are still there. Then **Cancel**.
-- [ ] 2.7 Repeat customer: **New job**, type `Lindell Dental Partners` as **Customer**. Expected: the two contact boxes give way to "Pay apps go to Dr. Maya Lindell · billing@lindelldental.example. Change in Customer settings". **Cancel**.
+- [ ] 2.6 Nothing typed is lost: type a Job name and `48,500` in **Contract amount ($)**, fill the other required fields, open **More details (optional)** and type `kim at oak` as **Email for pay apps**, fold **More details** again, **Save job**. Expected: More details opens by itself and only that box turns red ("Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."); the job name and `$48,500.00` are still there. Then **Cancel**.
+- [ ] 2.7 Repeat customer: **New job**, type `Lind` in **Customer** and pick `Lindell Dental Partners` from the suggestions. Expected: "Pay apps go to Dr. Maya Lindell · billing@lindelldental.example. Change in Customer settings" shows under the five boxes, and under **More details** the two contact boxes are gone. Then type `Ironleaf General Contractors` as **Customer** and leave the box: **Who pays you?** turns to "A general contractor (you are the sub)" and **Retainage %** under More details shows the retainage on Ironleaf's last job. **Cancel**.
 - [ ] 2.8 Homeowner job with no email: on the `Ruiz Residence` job from 2.4 (saved with both contact boxes empty; who signs off became "Ruiz Residence"), **Mark done**, **Confirm done**, then **Review & send** (beside the main **Add 4 missing documents** button) opens the pay app at **Before you send**: To shows "no email yet", an **Email for pay apps** box with **Save email**, and **Approve & send** is off ("Add the email pay apps go to, then send."). Type `ruiz@example.com`, **Save email**: Approve & send turns on (it still waits for the paperwork). Then **Edit job > Delete job** (the payer stays).
 
 ## 3. Imports
