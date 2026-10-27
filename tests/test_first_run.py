@@ -1,9 +1,8 @@
 """A new contractor's first run over HTTP: sign up, add a job with the New job form's exact body,
 mark it done, deal with the paperwork, send the first pay app (R1-12).
 
-This pins the path as it works today. R1-04 (notes stay notes), R1-05 (email asked at send),
-R1-07 (confirm your email first) and R1-08 (paperwork Duracash already has) each add their
-assertions here when they land.
+R1-04 (notes stay notes), R1-05 (email asked at send) and R1-07 (confirm your email first)
+are pinned here; R1-08 (paperwork Duracash already has) adds its assertions when it lands.
 """
 
 import http.client
@@ -18,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
 import server
+from test_accounts import ServerCase
 
 PASSWORD = "correct horse battery"
 
@@ -27,7 +27,7 @@ def new_job_body(**over):
     body = {
         "name": "Porch rebuild", "address": "12 Elm St", "customer": "Dana Homeowner", "approver": "Dana Homeowner",
         "ap_email": "dana@example.com", "phone": "", "role": "Owner",
-        "contract_number": "", "packet_notes": "",
+        "contract_number": "", "note": "",
         "contract_cents": 4850000, "retainage_pct": 0,
     }
     body.update(over)
@@ -127,6 +127,67 @@ class FirstRunTests(unittest.TestCase):
         self.assertTrue({"name", "ap_email", "contract_cents"} <= set(data["fields"]), data)
         res, data = self.request("GET", "/api/state", cookie=cookie)
         self.assertEqual(data["jobs"], [], "nothing is saved from a refused form")
+
+    def test_notes_stay_on_the_job_record(self):  # R1-04
+        cookie, _ = self.signup("first-run-notes@example.com")
+        res, data = self.request("POST", "/api/jobs", new_job_body(name="Plain deck", customer="Lee Family", approver="", ap_email=""), cookie)
+        self.assertEqual(res.status, 200, data)
+        res, data = self.request("POST", "/api/jobs", new_job_body(note="Gate code 1234, call before 8am"), cookie)
+        self.assertEqual(res.status, 200, data)
+        job = data["jobs"][-1]
+        self.assertIn({"kind": "note", "label": "Job notes", "note": "Gate code 1234, call before 8am"},
+                      [{k: r[k] for k in ("kind", "label", "note")} for r in job["records"]])
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/done", {"notes": ""}, cookie)
+        packets = {j["name"]: [p["label"] for p in j["invoices"][-1]["packet"]] for j in data["jobs"] if j["invoices"]}
+        res, data = self.request("POST", f"/api/jobs/{data['jobs'][0]['id']}/done", {"notes": ""}, cookie)
+        default = [p["label"] for p in data["jobs"][0]["invoices"][-1]["packet"]]
+        self.assertEqual(packets["Porch rebuild"], default, "the notes did not become the paperwork list")
+        self.assertNotIn("Gate code 1234", default)
+
+    def test_email_asked_for_at_send(self):  # R1-05
+        cookie, _ = self.signup("first-run-email@example.com")
+        res, data = self.request("POST", "/api/jobs", new_job_body(approver="", ap_email=""), cookie)
+        self.assertEqual(res.status, 200, data)
+        job = data["jobs"][-1]
+        payer = next(p for p in data["payers"] if p["id"] == job["payer_id"])
+        self.assertEqual((payer["approver"], payer["ap_email"]), ("Dana Homeowner", ""))
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/done", {"notes": ""}, cookie)
+        for item in self.job(data, job["id"])["invoices"][-1]["packet"]:
+            self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+        self.assertEqual(res.status, 409, data)
+        self.assertIn("Add the email pay apps go to", data["error"])
+        self.assertIn("ap_email", data["fields"])
+        res, data = self.request("POST", f"/api/payers/{payer['id']}/update", {"ap_email": "dana@example.com"}, cookie)
+        self.assertEqual(res.status, 200, data)
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+        self.assertEqual(res.status, 200, data)
+        self.assertEqual(self.job(data, job["id"])["invoices"][-1]["status"], "sent")
+
+
+class FirstRunWithMailTests(ServerCase):
+    """On a server that sends mail: an unconfirmed email can't send, and says so (R1-07)."""
+
+    def test_confirm_your_email_before_the_first_send(self):
+        self.mail_on()
+        cookie, signed = self.signup("first-run-mail@example.com")
+        self.assertEqual(signed["verification"], "sent")
+        self.wait_for_mail(1)
+        _, token = self.link_token("verify")
+        res, data = self.request("POST", "/api/jobs", new_job_body(), cookie)
+        job_id = data["jobs"][-1]["id"]
+        res, data = self.request("POST", f"/api/jobs/{job_id}/done", {"notes": ""}, cookie)
+        for item in next(j for j in data["jobs"] if j["id"] == job_id)["invoices"][-1]["packet"]:
+            self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        self.assertEqual(res.status, 409, data)
+        self.assertIn("Confirm your email first so the pay app goes out from you", data["error"])
+        _, state = self.request("GET", "/api/state", cookie=cookie)
+        self.assertIn(next(j for j in state["jobs"] if j["id"] == job_id)["invoices"][-1]["status"], ("draft", "awaiting_approval"))
+        res, data = self.request("POST", "/api/auth/verify", {"token": token})
+        self.assertEqual(res.status, 200, data)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        self.assertEqual(res.status, 200, data)
 
 
 if __name__ == "__main__":

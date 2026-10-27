@@ -69,7 +69,10 @@ export const FIELD_HELP = {
   "approver": "The person who approves your pay app.",
   "ap email": "Where pay apps and follow-ups go: the payer's accounts payable address.",
   "phone": "Payer phone for follow-up calls.",
-  "notes for the job record": "Anything to keep with the job: what the customer wants in a packet, contract notes.",
+  "who signs off on your bills": "The person who approves your pay app. Left blank, it is the customer.",
+  "email for pay apps (can add later)": "Homeowner: their email. GC: their accounts-payable address. You can add it before the first send.",
+  "email for pay apps": "Homeowner: their email. GC: their accounts-payable address.",
+  "notes (kept on the job record)": "Anything to keep with the job, like a gate code or who to call. The paperwork each pay app needs is set in Customer settings.",
   // playbook
   "follow-up days": "Days to wait after sending before a follow-up is allowed. Set it to the payer's normal payment window.",
   "usual approval days": "How long this payer usually takes to approve. Drives the expected-approval date on the calendar.",

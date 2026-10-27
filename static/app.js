@@ -7,7 +7,7 @@ import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from 
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
 import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js";
 import { labelTables, moreButton, askConfirm } from "./js/dom.js";
-import { field, moneyField, formErrorLine, refuseForm, formValues, formErrors, clearForm, clearAllForms, watchForms } from "./js/forms.js";
+import { field, moneyField, formErrorLine, refuseForm, formValues, formErrors, formDraft, draftValue, clearForm, clearAllForms, watchForms } from "./js/forms.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, setMe, clearSession, setLocation, closeForms } from "./js/state.js";
 
 let authMode = "signup";
@@ -411,6 +411,9 @@ async function onAuthSubmit(e) {
     }
     return;
   }
+  // After sign-up (R1-07): say where the confirmation link went, or why none did.
+  checkEmail = authMode === "signup" && data.user
+    ? { email: esc(String(data.user.email || "")), verification: esc(String(data.verification || "")) } : null;
   clearForm("auth");
   loginCode = null;
   setMe(escDeep(data.user));
@@ -434,7 +437,7 @@ async function onAuthSubmit(e) {
 async function logout() {
   await fetch("/api/auth/logout", { method: "POST" });
   clearSession();
-  twoStepSetup = null; recoveryCodes = null; loginCode = null;
+  twoStepSetup = null; recoveryCodes = null; loginCode = null; checkEmail = null;
   helperAdmin = false;
   teamData = null;
   lastInvite = null;
@@ -603,7 +606,8 @@ function coSignControls(j, co, extra = "") {
 // secondary row, each with its explanation as a tooltip (it used to be a paragraph beside it).
 // Today's queue (UI/UX Option B): everything that needs a person, most urgent first, each with
 // the one button that does it. Nothing that emails a pay app or a waiver goes out from here: those
-// open the job, where "Before you send" shows what leaves and to whom. A follow-up names its
+// open the pay app's "Before you send" card, or the waiver page with its type, which show what
+// leaves and to whom. A follow-up names its
 // recipient on the row, and drafting or filing sends nothing.
 function todayQueue() {
   const out = [];
@@ -628,9 +632,9 @@ function todayQueue() {
     if (isBlocked(j)) add(3, j, statusPill(j), `${j.blockers[0]}${j.blockers.length > 1 ? ` And ${j.blockers.length - 1} more.` : ""}`,
       `<button class="btn small" data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}>Clear ${j.blockers.length} blocker${j.blockers.length === 1 ? "" : "s"}</button>`);
     else if (draft) add(1, j, tag("Ready to send", "green"), `${draft.number} for ${money(draft.amount_cents)} to ${j.payer.approver || j.payer.name}. Check what goes out, then approve.`,
-      `<button class="btn small" data-action="open-job" data-id="${j.id}" data-focus=".send-check">Review &amp; send</button>`, true);
+      `<button class="btn small" data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check">Review &amp; send</button>`, true);
     else if (j.waiver_due && !j.waiver_sent) add(2, j, tag("Waiver due", "amber"), "Paid in full: the payer is waiting for the lien waiver.",
-      `<button class="btn small" data-action="open-job" data-id="${j.id}">Review waiver</button>`, true);
+      `<button class="btn small" data-action="open-waiver" data-id="${j.id}">Review waiver</button>`, true);
     else if (j.work_status === "complete" && j.money.unbilled_completed_cents > 0)
       add(5, j, tag("Not billed", "copper"), `${money(j.money.unbilled_completed_cents)} of finished work has no pay app yet. Drafting sends nothing.`,
         `<button class="btn small" data-action="draft" data-id="${j.id}">Draft pay app</button>`);
@@ -682,8 +686,9 @@ function jobActions(j) {
   const all = [];
   const add = (key, label, attrs, why) => all.push({ key, label, attrs, why });
   if (blocked) add("clear", `Clear ${j.blockers.length} blocker${j.blockers.length === 1 ? "" : "s"}`, `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "Open the packet and attach what is missing.");
-  if (draft) add("send", "Approve & send", `data-action="send" data-id="${j.id}" ${blocked ? "disabled" : ""}`, blocked ? "Unlocks when the blockers are cleared." : "You approve; Duracash emails the pay app, its PDF and the packet.");
-  if (j.waiver_due && !j.waiver_sent) add("waiver", "Send waiver", `data-action="waiver" data-id="${j.id}"`, "Emails the payer the newest lien waiver on the job record. Drop your signed waiver there first.");
+  // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
+  if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "See what goes out and to whom, then approve.");
+  if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver on the job record.");
   if (waitingPay) add("match", "Match payment", `data-action="toggle-form" data-form="match"`, "Record money received. Paid in full opens the waiver step.");
   if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the unbilled completed work.");
   if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "Bill completed-to-date without marking the job done.");
@@ -798,6 +803,7 @@ const ACTIONS = {
   "scrim": () => { drawerOpen = false; render(); },
   "logout": () => logout(),
   "reset-data": () => resetData(),
+  "dismiss-check-email": () => { checkEmail = null; render(); },
   "resend-verify": async () => {
     const r = await postJson("/api/auth/resend-verify", {});
     toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
@@ -938,6 +944,12 @@ const ACTIONS = {
   "sov-progress": (el, id) => sovProgress(id),
   "email-retry": (el) => post(`/api/outbox/${el.dataset.email}/retry`),
   "send": (el, id) => post(`/api/jobs/${id}/send`),
+  // "Before you send" with no email yet (R1-05): saved to the customer's settings, then send unlocks.
+  "save-send-email": async (el, id) => {
+    const v = formValues("sendemail");
+    if (refuseForm("sendemail", EMAIL_PATTERN.test(v.ap_email) ? {} : { ap_email: "Enter the email pay apps go to, like ap@builder.com." })) return;
+    await post(`/api/payers/${id}/update`, { ap_email: v.ap_email }, { formKey: "sendemail" });
+  },
   "progress": async (el, id) => {
     const v = formValues("progress");
     const amount = centsFrom(v.completed_cents);
@@ -975,6 +987,7 @@ const ACTIONS = {
     const input = document.getElementById("file-input");
     if (input) {
       input.dataset.job = el.dataset.job || "";
+      input.dataset.kind = el.dataset.kind || "";   // e.g. "waiver" from the waiver page
       // "Take a photo" opens the rear camera directly; "choose files" offers every source.
       if (el.dataset.capture) { input.setAttribute("capture", "environment"); input.setAttribute("accept", "image/*"); }
       else { input.removeAttribute("capture"); input.setAttribute("accept", FILE_ACCEPT); }
@@ -1053,7 +1066,10 @@ const ACTIONS = {
   "goto-packet": (el, id) => nav("packet-detail", id),
   "open-packet": (el) => nav("packet-detail", el.dataset.job, el.dataset.inv),
   "open-co": (el) => nav("co-detail", el.dataset.job, el.dataset.co),
-  "open-payapp": (el) => nav("payapp-detail", el.dataset.job, el.dataset.inv),
+  "open-payapp": (el) => {
+    nav("payapp-detail", el.dataset.job, el.dataset.inv);
+    if (el.dataset.focus) requestAnimationFrame(() => document.querySelector(el.dataset.focus)?.scrollIntoView({ block: "start" }));
+  },
   "open-waiver": (el, id) => nav("waiver-detail", id),
   "daily-save": async () => {
     const notes = document.querySelector("#daily-notes")?.value || "";
@@ -1110,17 +1126,21 @@ const ACTIONS = {
     if (!v.name) errors.name = "Enter the job name.";
     if (!v.address) errors.address = "Enter the job address.";
     if (!v.customer) errors.customer = "Enter the customer: who pays for this job.";
-    if (!v.approver) errors.approver = "Enter who signs off on your bills.";
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.ap_email)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
+    // A saved customer keeps its contact (shown instead of the two boxes); a new one may leave
+    // both blank: who signs off defaults to the customer, the email is asked for before sending.
+    const known = knownPayer(v.customer);
+    const approver = known ? "" : v.approver;
+    const apEmail = known && known.ap_email ? "" : v.ap_email;
+    if (apEmail && !EMAIL_PATTERN.test(apEmail)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now.";
     const amount = centsFrom(v.contract_cents);
     if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
     const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
     if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
     if (refuseForm("newjob", errors)) return;
     const r = await post("/api/jobs", {
-      name: v.name, address: v.address, customer: v.customer, approver: v.approver,
-      ap_email: v.ap_email, phone: v.phone, role: v.role || "Owner",
-      contract_number: v.contract_number, packet_notes: v.packet_notes,
+      name: v.name, address: v.address, customer: v.customer, approver,
+      ap_email: apEmail, phone: v.phone, role: v.role || "Owner",
+      contract_number: v.contract_number, note: v.note,
       contract_cents: amount.cents, retainage_pct: ret.value,
     }, { formKey: "newjob", close: "newjob" });
     if (!r || !r.ok) return;
@@ -1180,6 +1200,43 @@ async function openBilling(path) {
 }
 
 let listening = false;
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+// New job (R1-05): a customer already saved keeps who signs off and where pay apps go (changed
+// in Customer settings, never by a new job), so the form shows them instead of asking again.
+// Matched like the server does: the same name, ignoring case.
+function knownPayer(name) {
+  const key = String(name || "").trim().toLowerCase();
+  return key ? (state.payers || []).find(p => unesc(p.name).trim().toLowerCase() === key) || null : null;
+}
+
+function knownPayerText(p) {
+  return p ? `Pay apps go to ${p.approver || p.name} · ${p.ap_email || "no email yet"}` : "";
+}
+
+// As the Customer box is typed in: swap the two contact boxes for the saved contact, or back.
+function syncNewJobCustomer() {
+  const form = document.querySelector('[data-form-key="newjob"]');
+  if (!form) return;
+  const p = knownPayer(form.querySelector('[data-field="customer"]')?.value);
+  const note = form.querySelector("[data-known-payer]");
+  if (note) { note.hidden = !p; note.querySelector("[data-known-payer-text]").innerHTML = knownPayerText(p); }
+  const approver = form.querySelector('[data-payer-slot="approver"]'), email = form.querySelector('[data-payer-slot="ap_email"]');
+  if (approver) approver.hidden = !!p;
+  if (email) email.hidden = !!(p && p.ap_email);
+}
+
+// Leaving the Customer box fills "Who signs off" with the customer when it is still empty: a
+// homeowner signs off on their own bills.
+function prefillApprover() {
+  const form = document.querySelector('[data-form-key="newjob"]');
+  const customer = form?.querySelector('[data-field="customer"]')?.value.trim();
+  const box = form?.querySelector('[data-field="approver"]');
+  if (!customer || !box || box.value.trim() || knownPayer(customer)) return;
+  box.value = customer;
+  (formDraft.newjob ||= {}).approver = customer;
+}
+
 function listenForActions() {
   if (listening) return;
   listening = true;
@@ -1195,6 +1252,8 @@ function listenForActions() {
     actionEl = el;
     run(el, el.dataset.id, e);
   });
+  app.addEventListener("input", (e) => { if (e.target.id === "nj-customer") syncNewJobCustomer(); });
+  app.addEventListener("focusout", (e) => { if (e.target.id === "nj-customer") prefillApprover(); });
   // Filter dropdowns listen for "change" only. A click handler that re-renders
   // destroys the open dropdown, which is why mouse selection used to fail.
   app.addEventListener("change", (e) => {
@@ -1224,7 +1283,7 @@ function newInboxCount() {
 
 const MAX_UPLOAD_MB = 15;
 
-async function uploadFiles(fileList, jobId = "", fileNow = false) {
+async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "") {
   const files = [...(fileList || [])];
   if (!files.length) return;
   let ok = 0;
@@ -1232,7 +1291,7 @@ async function uploadFiles(fileList, jobId = "", fileNow = false) {
   for (const f of files) {
     if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { failed.push(`${f.name}: larger than ${MAX_UPLOAD_MB} MB`); continue; }
     const name = f.name && f.name !== "image.png" ? f.name : `Screenshot ${new Date().toISOString().slice(0, 16).replace("T", " ").replace(":", ".")}.png`;
-    const query = jobId ? `?job=${encodeURIComponent(jobId)}${fileNow ? "&file=1" : ""}` : "";
+    const query = jobId ? `?job=${encodeURIComponent(jobId)}${fileNow ? "&file=1" : ""}${fileNow && kind ? `&kind=${encodeURIComponent(kind)}` : ""}` : "";
     try {
       const res = await fetch(`/api/import/file${query}`, {
         method: "POST",
@@ -1515,6 +1574,7 @@ document.addEventListener("paste", (e) => {
 // ---------- accounts: reset, verify, invite links; Team & account ----------
 // Links in emails carry a one-time token after "#", which browsers never send to a server.
 let mailReady = false;
+let checkEmail = null;    // { email, verification } (escaped) right after sign-up: the "Check your email" panel
 let billingInfo = null;   // billing.standing from /api/auth/me: configured, status, warning (escaped)
 let readOnly = "";        // why this company can't be changed (the read-only demo, or a founder's hold), from /api/auth/me
 let teamData = null;      // { users, invites } from /api/team (escaped)
@@ -1524,7 +1584,9 @@ let tokenScreen = null;   // { kind: "reset" | "invite", token, info }
 async function handleTokenLink(t) {
   if (t.kind === "verify") {
     const r = await postJson("/api/auth/verify", { token: t.token });
-    return r.ok ? "Your email is confirmed. Thanks." : (r.data.error || "That link didn't work.");
+    // Sending unlocks at once in this tab too (boot reads /api/auth/me again as well).
+    if (r.ok && me) setMe({ ...me, email_verified: true });
+    return r.ok ? "Your email is confirmed. You can send pay apps now." : (r.data.error || "That link didn't work.");
   }
   if (t.kind === "invite") {
     const r = await postJson("/api/auth/invite-info", { token: t.token });
@@ -1619,9 +1681,33 @@ async function teamPost(path, body, okMessage) {
   return r.data;
 }
 
+// On a server that sends mail, nothing goes out until the signed-in email is confirmed: the
+// server refuses (R1-07), so the send buttons are off and say why, with the link to send again.
+function emailUnconfirmed() {
+  return !!(mailReady && me && !me.email_verified && me.company_id !== DEMO_COMPANY_ID);
+}
+
+function confirmFirstHtml(what) {
+  return `<p class="notice confirm-first">Confirm your email first so ${what} goes out from you.
+    <button class="btn small secondary" data-action="resend-verify">Send the link again</button></p>`;
+}
+
+// Shown after sign-up until the email is confirmed or the panel is put away. When no link went
+// out, the server's reason is shown instead (email not set up on this server, too many links).
+function checkEmailHtml() {
+  const sent = checkEmail.verification === "sent";
+  return `<div class="card check-email" role="status">
+    <h2>${sent ? "Check your email" : "Your email isn't confirmed yet"}</h2>
+    <p>${sent ? `We sent a confirmation link to ${checkEmail.email}.` : `No confirmation link went to ${checkEmail.email}: ${checkEmail.verification || "it could not be sent"}.`} You can set up your first job meanwhile.</p>
+    <div class="form-inline">${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : ""}
+      <button class="btn small secondary" data-action="dismiss-check-email">Got it</button></div>
+  </div>`;
+}
+
 function verifyBannerHtml() {
   if (readOnly) return `<div class="verify-banner read-only-banner" role="status">${readOnly}</div>`;
   if (billingInfo && billingInfo.warning) return `<div class="verify-banner" role="status">${billingInfo.warning}${me && me.role === "owner" ? ` <button class="linkish" data-action="nav" data-view="account">Billing</button>` : ""}</div>`;
+  if (checkEmail && me && !me.email_verified) return checkEmailHtml();
   if (!mailReady || !me || me.email_verified || me.company_id === DEMO_COMPANY_ID) return "";
   return `<div class="verify-banner">Confirm your email (${me.email}) so Duracash can send pay apps for you; replies come back to it.
     <button class="linkish" data-action="resend-verify">Send the link again</button></div>`;
@@ -2139,6 +2225,7 @@ const views = {
     const open = state.jobs.filter(j => !j.closed);
     const closed = state.closed_jobs_total || 0;
     const f = (o) => field({ form: "newjob", ...o });
+    const known = knownPayer(draftValue("newjob", "customer"));
     return `
       <div class="top">
         <h1>Jobs</h1>
@@ -2147,7 +2234,7 @@ const views = {
       ${formOpen.newjob ? `
         <div class="card" data-form-key="newjob">
           <h2>New job</h2>
-          <p class="sub">Fields marked <span class="req">*</span> are required. The packet is made later, with the first pay app.</p>
+          <p class="sub">Fields marked <span class="req">*</span> are required. The paperwork list comes from the customer's settings, with the first pay app.</p>
           ${formErrorLine("newjob")}
           <div class="form-section">Job</div>
           <div class="form-grid">
@@ -2161,13 +2248,15 @@ const views = {
           <div class="form-grid">
             ${f({ name: "customer", id: "nj-customer", label: "Customer", required: true })}
             ${f({ name: "role", id: "nj-role", label: "Role", options: [["Owner", "Owner"], ["GC", "GC"]] })}
-            ${f({ name: "approver", id: "nj-approver", label: "Approver", required: true })}
-            ${f({ name: "ap_email", id: "nj-email", label: "AP email", type: "email", required: true, autocomplete: "off", placeholder: "ap@builder.com" })}
+            <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
+              <button class="linkish" data-action="nav" data-view="playbook">Change in Customer settings</button></p>
+            <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", placeholder: "The customer, unless you say otherwise" })}</div>
+            <div data-payer-slot="ap_email"${known && known.ap_email ? " hidden" : ""}>${f({ name: "ap_email", id: "nj-email", label: "Email for pay apps (can add later)", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
             ${f({ name: "phone", id: "nj-phone", label: "Phone", type: "tel", autocomplete: "off" })}
           </div>
           <div class="form-section">Job record</div>
           <div class="form-grid">
-            ${f({ name: "packet_notes", id: "nj-packet", label: "Notes for the job record", multiline: true, wide: true, placeholder: "Contract notes, what this customer usually wants, anything to keep with the job" })}
+            ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
           </div>
           <button class="btn" data-action="create-job">Save job</button>
         </div>` : ""}
@@ -2449,6 +2538,8 @@ const views = {
     const draft = ["draft", "awaiting_approval"].includes(inv.status);
     const copies = (j.payer.copy && unesc(j.payer.copy) !== "None") ? j.payer.copy : "";
     const firstSend = draft && !j.payer.sent_before && !state.jobs.some(x => x.payer_id === j.payer_id && x.invoices.some(i => i.sent_at));
+    const noEmail = !j.payer.ap_email;
+    const locked = emailUnconfirmed();
     return `
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
@@ -2456,13 +2547,19 @@ const views = {
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a> <span class="sub">The same PDF goes with the email when the pay app is sent.</span></p>
       ${draft ? `<div class="card send-check">
         <h2>Before you send</h2>
-        <div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email || '<span class="blocker">no AP email</span>'}</span></div>
+        <div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email || '<span class="blocker">no email yet</span>'}</span></div>
+        ${noEmail ? `<div class="send-email" data-form-key="sendemail">${formErrorLine("sendemail")}
+          <div class="form-grid">${field({ form: "sendemail", name: "ap_email", id: "send-email", label: "Email for pay apps", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
+          <button class="btn small secondary" data-action="save-send-email" data-id="${j.payer_id}">Save email</button>
+        </div>` : ""}
         <div class="money-row"><span class="label">Copy</span><span>${copies || "Nobody"}</span></div>
         <div class="money-row"><span class="label">Amount</span><span>${money(inv.amount_cents)}</span></div>
         <div class="money-row"><span class="label">Attached</span><span>Pay app PDF${inv.sov_sheet && inv.sov_sheet.length ? " with continuation sheet" : ""}, packet checklist, ${pkt.filter(p => p.present).length} packet item${pkt.filter(p => p.present).length === 1 ? "" : "s"}</span></div>
-        ${firstSend ? `<p class="notice">First pay app to ${j.payer.name}. Check the AP email above; a typo sends it to a stranger. Change it in the <button class="linkish" data-action="nav" data-view="playbook">Payer playbook</button>.</p>` : ""}
+        ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>` : ""}
         ${missing ? `<p class="blocker">${missing} packet item${missing === 1 ? " is" : "s are"} missing, so sending is blocked.</p>` : ""}
-        <button class="btn" data-action="send" data-id="${j.id}" ${missing || (j.blockers || []).length ? "disabled" : ""}>Approve & send to ${j.payer.ap_email || "the payer"}</button>
+        ${noEmail ? `<p class="blocker">Add the email pay apps go to, then send.</p>` : ""}
+        ${locked ? confirmFirstHtml("the pay app") : ""}
+        <button class="btn" data-action="send" data-id="${j.id}" ${missing || (j.blockers || []).length || noEmail || locked ? "disabled" : ""}>Approve & send to ${j.payer.ap_email || "the customer"}</button>
       </div>` : ""}
       <div class="card">
         <h2>Lines</h2>
@@ -2492,6 +2589,10 @@ const views = {
     if (!j) return backButton("waivers", "Waivers") + emptyState("Waiver not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="waivers">Go to Waivers</button>`);
     const due = j.invoices.filter(i => i.waiver_due && !i.waiver_sent);
     const sent = j.invoices.filter(i => i.waiver_sent);
+    const locked = emailUnconfirmed();
+    const owed = due.length || (j.waiver_due && !j.waiver_sent);
+    // Sending attaches the newest lien waiver on the job record; say so when there is none (R1-06).
+    const hasWaiver = (j.records || []).some(r => r.kind === "waiver");
     return `
       ${backButton("waivers", "Waivers")}
       <h1>Waivers: ${j.name}</h1>
@@ -2500,11 +2601,22 @@ const views = {
         <h2>Payer's requirement</h2>
         <p>${j.waiver_standard || j.payer.packet || "See the payer playbook."}</p>
       </div>
-      <div class="card">
+      ${owed && !j.summary && !hasWaiver ? `<div class="card no-waiver">
+        <h2>No signed waiver on the job yet</h2>
+        <p class="sub">Sending without one tells ${j.payer.name} the signed waiver follows separately.</p>
+        <div class="form-inline">
+          <button class="btn small" data-action="pick-files" data-job="${j.id}" data-kind="waiver" data-capture="1">Take a photo</button>
+          <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-kind="waiver">Choose file</button>
+        </div>
+      </div>` : ""}
+      <div class="card send-check">
         <h2>By pay app</h2>
+        ${owed && j.payer.ap_email ? `<div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email}</span></div>` : ""}
+        ${owed && !j.payer.ap_email ? `<p class="blocker">Add the email pay apps go to in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>, then send.</p>` : ""}
+        ${owed && locked ? confirmFirstHtml("the waiver") : ""}
         ${due.concat(sent).length ? due.concat(sent).map(i => `<div class="list-item"><strong>${i.number}</strong> · ${money(i.amount_cents)} · ${i.waiver_sent ? `sent ${fmtDate(i.waiver_sent_at)}${i.waiver_kind ? " · " + waiverKindLabel(i.waiver_kind) : ""}` : `<span class="pill amber">Due</span>`}
-          ${!i.waiver_sent ? waiverSendForm(j, i) : ""}</div>`).join("")
-          : j.waiver_due && !j.waiver_sent ? waiverSendForm(j, null) : `<p class="sub">${j.waiver_sent ? "Sent " + fmtDate(j.waiver_sent_at) : "No waiver is due yet. One is due after each paid pay app."}</p>`}
+          ${!i.waiver_sent ? waiverSendForm(j, i, locked || !j.payer.ap_email) : ""}</div>`).join("")
+          : j.waiver_due && !j.waiver_sent ? waiverSendForm(j, null, locked || !j.payer.ap_email) : `<p class="sub">${j.waiver_sent ? "Sent " + fmtDate(j.waiver_sent_at) : "No waiver is due yet. One is due after each paid pay app."}</p>`}
       </div>
     `;
   },
@@ -3141,11 +3253,12 @@ document.addEventListener("scroll", hideHelpTip, true);
 // One file picker for every screen ("choose files" on the Inbox or a job page).
 document.getElementById("file-input").addEventListener("change", (e) => {
   const input = e.target;
-  const jobId = input.dataset.job || "";
+  const jobId = input.dataset.job || "", kind = input.dataset.kind || "";
   const files = [...input.files];
   input.value = "";
   input.dataset.job = "";   // the next pick starts with no job unless its button sets one
-  uploadFiles(files, jobId, !!jobId);
+  input.dataset.kind = "";
+  uploadFiles(files, jobId, !!jobId, kind);
 });
 
 // A reset, verify or invite link opened in a tab that already has Duracash loaded only changes

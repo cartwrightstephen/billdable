@@ -169,9 +169,13 @@ class HttpTests(unittest.TestCase):
     def test_full_loop_over_http(self):
         cookie, _ = self.signup("loop@example.com")
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC", "packet_notes": "Pay app, lien waiver. Punch list before retainage."}
+               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC", "note": "Site contact: Kim, gate code 1234."}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         jid = state["jobs"][0]["id"]
+        self.assertEqual([r["label"] for r in state["jobs"][0]["records"]], ["Job notes"])
+        # The paperwork list lives in the customer's settings, not in the job's notes (R1-04).
+        res, state = self.request("POST", f"/api/payers/{state['jobs'][0]['payer_id']}/update", {"packet": "Pay app, lien waiver. Punch list before retainage."}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
         res, state = self.request("POST", f"/api/jobs/{jid}/progress", {"completed_cents": 4_000_000}, cookie=cookie)
         inv = state["jobs"][0]["invoices"][0]
         self.assertEqual(inv["amount_cents"], 3_600_000)

@@ -249,7 +249,7 @@ def setup(run: Run) -> None:
     run.post("Company profile (POST /api/company)", "/api/company", COMPANY)
     for spec in JOBS:
         body = {k: v for k, v in spec.items() if k != "key"}
-        body["packet_notes"] = ""
+        body["note"] = ""
         payload = run.post(f"Create job {spec['key']} {spec['name']}", "/api/jobs", body)
         made = next((j for j in payload.get("jobs", []) if j["name"] == spec["name"]), None)
         if made:

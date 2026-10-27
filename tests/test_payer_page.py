@@ -67,7 +67,7 @@ class PayerPageTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         res, raw = self.request("POST", "/api/jobs", {"name": "Elm <b>addition</b>", "customer": "Park GC", "address": "9 Elm",
                                                       "approver": "Kim", "ap_email": "ap@park.example", "contract_cents": 1_000_000,
-                                                      "retainage_pct": 0, "packet_notes": "Invoice only"}, cookie)
+                                                      "retainage_pct": 0, "note": "Invoice only"}, cookie)
         job = json.loads(raw)["jobs"][-1]
         self.request("POST", f"/api/jobs/{job['id']}/progress", {"completed_cents": 400_000}, cookie)
         res, raw = self.request("GET", "/api/state", cookie=cookie)

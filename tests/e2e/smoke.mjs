@@ -79,6 +79,28 @@ await step("New job: a wrong field is marked in place and nothing typed is lost"
   await page.getByRole("button", { name: "Cancel" }).first().click();  // nothing saved
 });
 
+await step("sign-up says where the confirmation link went", async () => {
+  const ctx = await browser.newContext();
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => errors.push(e.message));
+  const email = `smoke-${Date.now()}@example.com`;
+  await p.goto(BASE + "/");
+  await p.fill("#auth-name", "Sam Smoke");
+  await p.fill("#auth-company", "Smoke Builders");
+  await p.fill("#auth-email", email);
+  await p.fill("#auth-password", "smoke test password");
+  await p.check("#auth-terms");
+  await p.click("#auth-form button[type=submit]");
+  const panel = p.locator(".check-email");
+  await panel.waitFor();
+  // CI has no mail server, so the panel gives the server's reason instead of "We sent a confirmation link".
+  assert.match(await panel.innerText(), new RegExp(`(We sent a confirmation link|No confirmation link went) to ${email.replace(/[.]/g, "\\.")}`));
+  assert.match(await panel.innerText(), /set up your first job meanwhile/);
+  await panel.getByRole("button", { name: "Got it" }).click();
+  await panel.waitFor({ state: "detached" });
+  await ctx.close();
+});
+
 await step("refresh keeps the page", async () => {
   await page.goto(BASE + "/money/collections");
   await page.reload();
@@ -107,6 +129,24 @@ await step("money path: the main button walks a job from blocked to closed", asy
         await page.click(`[data-action="resolve"][data-item="${item}"]`);
         await page.locator(`#resolve-reason-${item}`).waitFor({ state: "detached" });
       }
+      await page.goto(BASE + "/jobs/job-inman");
+    } else if (label === "Review & send") {
+      // Every send passes "Before you send" (R1-06): Today's button opens the pay app there.
+      await page.goto(BASE + "/today");
+      await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & send" }).click();
+      await page.locator(".send-check").waitFor({ state: "visible" });
+      assert.match(new URL(page.url()).pathname, /^\/money\/pay-app\//);
+      await page.click('.send-check [data-action="send"]');
+      await page.locator('.send-check [data-action="send"]').waitFor({ state: "detached" });
+      await page.goto(BASE + "/jobs/job-inman");
+    } else if (label === "Choose waiver and send") {
+      await main.click();
+      await page.getByRole("heading", { name: /^Waivers:/ }).waitFor();
+      const sendWaiver = page.locator('[data-action="waiver"]');
+      await sendWaiver.first().waitFor();
+      const before = await sendWaiver.count();
+      await sendWaiver.first().click();
+      for (let t = 0; t < 100 && (await sendWaiver.count()) >= before; t++) await new Promise((r) => setTimeout(r, 100));
       await page.goto(BASE + "/jobs/job-inman");
     } else if (label === "Match payment") {
       await main.click();
@@ -142,7 +182,7 @@ await step("money path: the main button walks a job from blocked to closed", asy
       }
     }
   }
-  for (const want of ["Approve & send", "Match payment", "Send waiver", "Close for record"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
+  for (const want of ["Review & send", "Match payment", "Choose waiver and send", "Close for record"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
   await page.locator(".job-head .pill", { hasText: "Closed" }).waitFor();
 });
 

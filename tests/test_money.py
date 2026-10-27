@@ -98,10 +98,49 @@ class DraftTests(unittest.TestCase):
 
     def test_packet_built_from_playbook(self):  # M12
         state = new_state()
-        job = new_job(state, packet_notes="W-9, notarized waiver")
+        job = new_job(state)
+        domain.update_payer(state, job["payer_id"], {"packet": "W-9, notarized waiver"})
         domain.record_progress(state, job["id"], 1_000_000)
         labels = [i["label"] for i in job["invoices"][-1]["packet"]]
         self.assertEqual(labels, ["W-9", "Notarized waiver"])
+
+    def test_job_notes_stay_notes(self):  # R1-04: notes never become the paperwork list
+        state = new_state()
+        plain = new_job(state, customer="Lee Family")
+        job = new_job(state, name="Oak deck", customer="Ray Family", note="Gate code 1234, call before 8am")
+        self.assertEqual(state["payers"][-1]["packet"], state["payers"][-2]["packet"])
+        [rec] = job["records"]
+        self.assertEqual((rec["kind"], rec["label"], rec["note"]), ("note", "Job notes", "Gate code 1234, call before 8am"))
+        self.assertEqual(plain["records"], [])
+
+    def test_approver_and_email_optional_until_send(self):  # R1-05
+        state = new_state()
+        job = new_job(state, approver="", ap_email="", customer="Dana Homeowner")
+        payer = state["payers"][-1]
+        self.assertEqual((payer["approver"], payer["ap_email"]), ("Dana Homeowner", ""))
+        domain.mark_done(state, job["id"])
+        clear_packet(state, job)
+        with self.assertRaises(domain.GateError) as raised:
+            domain.approve_and_send(state, job["id"])
+        self.assertIn("Add the email pay apps go to", str(raised.exception))
+        self.assertIn("ap_email", raised.exception.fields)
+        self.assertIn(job["invoices"][-1]["status"], domain.DRAFT_STATUSES, "nothing changed")
+        self.assertFalse(state.get("email_log"))
+        domain.update_payer(state, payer["id"], {"ap_email": "dana@example.com"})
+        domain.approve_and_send(state, job["id"])
+        self.assertEqual(state["email_log"][-1]["to"], "dana@example.com")
+
+    def test_repeat_customer_keeps_saved_contact(self):  # R1-05
+        state = new_state()
+        new_job(state, customer="Park GC", approver="Kim", ap_email="ap@park.example")
+        new_job(state, name="Second", customer="park gc", approver="Someone", ap_email="other@park.example")
+        [payer] = state["payers"]
+        self.assertEqual((payer["approver"], payer["ap_email"]), ("Kim", "ap@park.example"))
+        self.assertTrue(any(a["action"] == "payer_kept" for a in state["audit"]))
+        # A blank email on the saved customer is filled in by the next job that has one.
+        new_job(state, name="Third", customer="Ada Owner", ap_email="")
+        new_job(state, name="Fourth", customer="Ada Owner", ap_email="ada@example.com")
+        self.assertEqual(state["payers"][-1]["ap_email"], "ada@example.com")
 
     def test_mark_present_requires_evidence(self):
         state = new_state()

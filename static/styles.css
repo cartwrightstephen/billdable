@@ -401,3 +401,13 @@ textarea { font: inherit; }
   .form-row > .field, .form-row > .field.span-2 { flex-basis: 100%; }
   .form-row > .btn { margin-top: 0; }
 }
+
+/* First run (R1-05 to R1-07): hidden parts stay hidden whatever their display rule; the
+   sign-up "Check your email" panel; the email box and the confirm-first note in "Before you send". */
+[hidden] { display: none !important; }
+.check-email { border-color: var(--copper); }
+.check-email p { margin: 4px 0 10px; }
+.send-check .send-email { margin: 10px 0 4px; }
+.send-check .send-email .btn { margin-top: 6px; }
+.notice.confirm-first { margin: 10px 0 0; }
+.known-payer { margin: 0; }

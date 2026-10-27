@@ -173,19 +173,23 @@ class AccountHttpTests(ServerCase):
         _, me = self.request("GET", "/api/auth/me", cookie=cookie)
         self.assertFalse(me["user"]["email_verified"])
         self.assertTrue(me["mail_ready"])
-        # Unverified: an approved email is held, not sent.
+        # Unverified: sending is refused with the reason, not held in the Outbox without a word (R1-07).
         job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
                "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         job_id = state["jobs"][0]["id"]
         self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 500_000}, cookie=cookie)
-        _, state = self.request("POST", f"/api/jobs/{job_id}/pencil", {}, cookie=cookie)
-        self.assertEqual(state["email_log"][-1]["status"], mailer.UNVERIFIED)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/pencil", {}, cookie=cookie)
+        self.assertEqual(res.status, 409, data)
+        self.assertIn("Confirm your email first", data["error"])
+        _, state = self.request("GET", "/api/state", cookie=cookie)
+        self.assertFalse(state.get("email_log"), "nothing was queued")
         before = len(self.sink.messages)
         res, data = self.request("POST", "/api/auth/verify", {"token": token})
         self.assertEqual(res.status, 200, data)
         self.assertTrue(data["user"]["email_verified"])
-        res, state = self.request("POST", f"/api/outbox/{state['email_log'][-1]['id']}/retry", {}, cookie=cookie)
+        res, state = self.request("POST", f"/api/jobs/{job_id}/pencil", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
         self.assertEqual(len(self.sink.messages), before + 1)
         res, _ = self.request("POST", "/api/auth/resend-verify", {}, cookie=cookie)
@@ -217,6 +221,7 @@ class AccountHttpTests(ServerCase):
         self.assertEqual(res.status, 200, joined)
         member = res.getheader("Set-Cookie").split(";")[0]
         self.assertEqual(joined["user"]["company_id"], data["user"]["company_id"])
+        self.assertTrue(joined["user"]["email_verified"])  # the invite link reached this address (R1-07)
         _, state = self.request("GET", "/api/state", cookie=member)
         self.assertEqual(state["company"]["name"], "Team Co")
         _, page = self.request("GET", "/api/audit", cookie=member)

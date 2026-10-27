@@ -226,7 +226,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `GET /api/timeline?job=&offset=&limit=`: one job's history for its page: audit rows and emails (with delivery status, without bodies), newest first
 - `GET /api/export`: download the company's data file
 - `POST /api/reset`: demo company returns to the Hartline seed. Any other company needs `{confirm: "<exact company name>"}` and gets a snapshot first.
-- `POST /api/jobs`: create a job. Required: `name`, `address`, `customer`, `approver`, `ap_email`, `contract_cents`. Optional: `phone`, `role` (`Owner` or `GC`), `retainage_pct` (0–20), `packet_notes`, `contract_number`.
+- `POST /api/jobs`: create a job. Required: `name`, `address`, `customer`, `contract_cents`. Optional: `approver` (defaults to the customer), `ap_email` (asked for before the first send), `phone`, `role` (`Owner` or `GC`), `retainage_pct` (0–20), `note` (kept on the job record as "Job notes"; the old `packet_notes` key is read the same way), `contract_number`. The paperwork list for each pay app comes from the customer's settings, not from the job.
 - `POST /api/jobs/{id}/done`: `{notes}`
 - `POST /api/jobs/{id}/progress`: `{completed_cents, notes}` (jobs without a schedule of values)
 - `POST /api/sov/parse`: `{text}` → `{lines, warnings, op_pct}`; reads pasted rows, saves nothing

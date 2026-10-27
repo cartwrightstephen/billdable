@@ -46,16 +46,18 @@ Kirkwood Dental Suite was just awarded. Its customer is new, so this job also cr
   | Retainage % | `0` |
   | Customer * | `Lindell Dental Partners` |
   | Role | `Owner` |
-  | Approver * | `Dr. Maya Lindell` |
-  | AP email * | `billing@lindelldental.example` |
+  | Who signs off on your bills | `Dr. Maya Lindell` (leaving the Customer box fills it with the customer; replace it) |
+  | Email for pay apps (can add later) | `billing@lindelldental.example` |
   | Phone | `404-555-0127` |
-  | Notes for the job record | leave empty (see 2.4) |
+  | Notes (kept on the job record) | leave empty (see 2.4) |
 
 - [ ] 2.2 **Save job**. Expected: toast "Job saved", the job page opens. Its code is **KIRK**. The Job record holds one record, "Contract LDP-0412" (Contract).
 - [ ] 2.3 **Settings > Payer playbook** now has 7 payers. **Lindell Dental Partners**: Approver Dr. Maya Lindell, AP email billing@lindelldental.example, Follow-up days 7, Usual approval days 14, Packet "Signed contract, conditional waiver, completion photos, and pay-app backup."
-- [ ] 2.4 Optional, to see a known trap: create a throwaway job for another new customer and type `Gate code 1234, call before 8am` in **Notes for the job record**. That text becomes the new payer's whole Packet (two items: "Gate code 1234", "Call before 8am"). Delete the job afterwards with **Edit job > Delete job** (the payer stays).
-- [ ] 2.5 Validation: open **New job** again, leave everything empty, **Save job**. Expected inline errors under each field: "Enter the job name.", "Enter the job address.", "Enter the customer: who pays for this job.", "Enter who signs off on your bills.", "Enter the email pay apps go to, like ap@builder.com.", "Enter the contract amount, like 48,500."
-- [ ] 2.6 Nothing typed is lost: type a Job name and `48,500` in **Contract amount ($)**, fill the other required fields but type `kim at oak` as **AP email**, **Save job**. Expected: only AP email turns red with its message; the job name and `$48,500.00` are still there. Then **Cancel**.
+- [ ] 2.4 Notes with commas stay notes: create a throwaway job for another new customer (`Ruiz Residence`) and type `Gate code 1234, call before 8am` in **Notes (kept on the job record)**. Expected: the job record holds a Note "Job notes" with that text, and the new payer's Packet in **Settings > Payer playbook** is the default list ("Signed contract, conditional waiver, completion photos, and pay-app backup."), not the note. Keep the job for 2.7.
+- [ ] 2.5 Validation: open **New job** again, leave everything empty, **Save job**. Expected inline errors under each required field: "Enter the job name.", "Enter the job address.", "Enter the customer: who pays for this job.", "Enter the contract amount, like 48,500." Nothing under **Who signs off on your bills** or **Email for pay apps**: both are optional.
+- [ ] 2.6 Nothing typed is lost: type a Job name and `48,500` in **Contract amount ($)**, fill the other required fields but type `kim at oak` as **Email for pay apps**, **Save job**. Expected: only that box turns red ("Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."); the job name and `$48,500.00` are still there. Then **Cancel**.
+- [ ] 2.7 Repeat customer: **New job**, type `Lindell Dental Partners` as **Customer**. Expected: the two contact boxes give way to "Pay apps go to Dr. Maya Lindell · billing@lindelldental.example. Change in Customer settings". **Cancel**.
+- [ ] 2.8 Homeowner job with no email: on the `Ruiz Residence` job from 2.4 (saved with both contact boxes empty; who signs off became "Ruiz Residence"), **Mark done**, **Confirm done**, then **Review & send** (beside the main **Clear 4 blockers** button) opens the pay app at **Before you send**: To shows "no email yet", an **Email for pay apps** box with **Save email**, and **Approve & send** is off ("Add the email pay apps go to, then send."). Type `ruiz@example.com`, **Save email**: Approve & send turns on (it still waits for the paperwork). Then **Edit job > Delete job** (the payer stays).
 
 ## 3. Imports
 
@@ -139,11 +141,11 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 - [ ] 4.1 Open **Kirkwood Dental Suite** > **Progress pay app**. **Total done so far ($)** `13,725`, **What was completed** `Operatories 1-3 floors set`, **Draft progress pay app**. Expected: PA-KIRK-01 Draft $13,725.00; primary button **Clear 4 blockers**; blockers "Signed contract is missing.", "Conditional waiver is missing.", "Completion photos is missing.", "Pay-app backup is missing."
 - [ ] 4.2 **Clear 4 blockers**. On **Signed contract** pick "Contract LDP-0412" and tap **Attach**. Expected: ✓ and "Attached: Contract LDP-0412".
 - [ ] 4.3 For the other three: **Mark present…**, type `Emailed to Dr. Lindell on 10/20`, **Save reason**. Expected: each shows "Marked present: Emailed to Dr. Lindell on 10/20". The job's status reads "Pay app ready for review", and Today tags it "Ready to send" with **Review & send**.
-- [ ] 4.4 Open the pay app (Money > Pay apps > PA-KIRK-01). **Open the PDF**: "APPLICATION FOR PAYMENT", FROM block = Brightwater Tile & Stone LLC, 2480 Cobb Industrial Ct, Smyrna, GA 30080. **Before you send** shows To "Dr. Maya Lindell · billing@lindelldental.example" and the first-send notice. Tap **Approve & send to billing@lindelldental.example**. Expected: PA-KIRK-01 Sent; status "Submitted to Lindell Dental Partners, awaiting Dr. Maya Lindell".
-- [ ] 4.5 Job page > **Match payment**: pay app PA-KIRK-01, **Amount received ($)** `13,725`, **Reference** `CHK 2207`, **Match**. Expected: Paid; status "Payment received, waiver not sent"; primary **Send waiver**.
-- [ ] 4.6 **Send waiver**. Expected: the email in the Outbox is "Unconditional waiver on progress payment for PA-KIRK-01 — Kirkwood Dental Suite".
+- [ ] 4.4 Tap **Review & send** on Today's row: it opens the pay app (PA-KIRK-01) at **Before you send**. **Open the PDF**: "APPLICATION FOR PAYMENT", FROM block = Brightwater Tile & Stone LLC, 2480 Cobb Industrial Ct, Smyrna, GA 30080. **Before you send** shows To "Dr. Maya Lindell · billing@lindelldental.example" and the first-send notice. Tap **Approve & send to billing@lindelldental.example**. Expected: PA-KIRK-01 Sent; status "Submitted to Lindell Dental Partners, awaiting Dr. Maya Lindell".
+- [ ] 4.5 Job page > **Match payment**: pay app PA-KIRK-01, **Amount received ($)** `13,725`, **Reference** `CHK 2207`, **Match**. Expected: Paid; status "Payment received, waiver not sent"; primary **Choose waiver and send**.
+- [ ] 4.6 **Choose waiver and send** opens **Waivers: Kirkwood Dental Suite** with the type preselected (Unconditional, progress). With no Lien waiver on the job record it first shows "No signed waiver on the job yet" with **Take a photo** and **Choose file** (a file picked there is filed to the job as a Lien waiver). **Approve & send**. Expected: the email in the Outbox is "Unconditional waiver on progress payment for PA-KIRK-01 — Kirkwood Dental Suite".
 - [ ] 4.7 **Mark done**, **Anything to note? (optional)** `All rooms complete`, **Confirm done**. Expected: PA-KIRK-02 Draft $13,725.00 with the same 4 blockers (each pay app gets its own packet).
-- [ ] 4.8 Clear the 4 blockers with **Mark present…** (`Sent with PA-KIRK-01`), send it, **Match payment** `13725` / `CHK 2291`, **Send waiver** (this one is "Unconditional waiver on final payment").
+- [ ] 4.8 Clear the 4 blockers with **Mark present…** (`Sent with PA-KIRK-01`), send it (**Review & send**, then **Approve & send**), **Match payment** `13725` / `CHK 2291`, **Choose waiver and send** (this one is "Unconditional waiver on final payment").
 - [ ] 4.9 **Close for record**. Expected: "This job is closed. Its money record is read-only..."; it moves to **Job history** (2 closed jobs, 3 after 6.2).
 
 ## 5. Money loop 2: Mill Creek Clubhouse (SOV, stored materials, 5% retainage)
@@ -152,7 +154,7 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 - [ ] 5.2 On the job page, **Add a note to the record**: Label `COI Brightwater 2026-27`, Kind **Other**, **Add to record**. Back on the packet, attach it to **Insurance certificate**. Mark the other three present with `Emailed to Renee Calloway 10/22`.
 - [ ] 5.3 Open PA-MILL-01: the continuation sheet lists all 5 lines; Restroom wall tile shows $4,000.00 stored. Amount $33,042.90 (lines $31,620.00 + O&P $3,162.00 - retainage $1,739.10). Copy shows pm@tallowcreekbuilders.example. **Approve & send to ap@tallowcreekbuilders.example**.
 - [ ] 5.4 **Match payment** `20000` / `CHK 51002`. Expected: **Partly paid**, outstanding $13,042.90, no waiver step yet.
-- [ ] 5.5 **Match payment** `13042.90` / `CHK 51003`. Expected: **Paid**; **Send waiver**; after it, retainage open $1,739.10 (Money > Retainage lists MILL $1,739.10, holding it up "Closeout / punch-list signoff", next "Mark the job done first").
+- [ ] 5.5 **Match payment** `13042.90` / `CHK 51003`. Expected: **Paid**; **Choose waiver and send**; after it, retainage open $1,739.10 (Money > Retainage lists MILL $1,739.10, holding it up "Closeout / punch-list signoff", next "Mark the job done first").
 - [ ] 5.6 The **Match payment** button is gone (no pay app is open for payment), and **Follow up** is gone too.
 
 ## 6. Other stages

@@ -48,4 +48,7 @@ test("waiver kinds read as words, and the send form picks the likely one", () =>
   assert.match(waiverSendForm(job(), null), /<option value="unconditional_progress" selected>/);
   const final = job({ work_status: "complete", invoices: [inv("paid")] });
   assert.match(waiverSendForm(final, { id: "inv-9" }), /<option value="unconditional_final" selected>[\s\S]*data-inv="inv-9"/);
+  // Sending is off until the email is confirmed or the customer has an email (R1-05, R1-07).
+  assert.doesNotMatch(waiverSendForm(job(), null), /disabled/);
+  assert.match(waiverSendForm(job(), null, true), /data-action="waiver"[^>]* disabled>/);
 });

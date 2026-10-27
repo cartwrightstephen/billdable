@@ -62,12 +62,13 @@ export const WAIVER_KINDS = {
 
 export function waiverKindLabel(code) { return WAIVER_KINDS[unesc(code)] || code; }
 
-export function waiverSendForm(j, inv) {
+// disabled: sending is off (email not confirmed, or no email for the customer); the page says why.
+export function waiverSendForm(j, inv, disabled = false) {
   const key = inv ? inv.id : "job";
   const final = j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0;
   const pick = final ? "unconditional_final" : "unconditional_progress";
   return `<div class="form-inline">
     <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}>${v}</option>`).join("")}</select>
-    <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}>Approve & send</button>
+    <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}${disabled ? " disabled" : ""}>Approve & send</button>
   </div>`;
 }

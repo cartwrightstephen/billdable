@@ -574,6 +574,9 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
             "kdf_iterations": KDF_ITERATIONS,
             "created_at": _iso(_utcnow()),
             "invited_by": entry.get("invited_by", ""),
+            # They received the invite link at this address, as with a reset link.
+            "email_verified": True,
+            "verified_at": _iso(_utcnow()),
         }
         if terms_version:
             user["terms_version"] = terms_version

@@ -1717,6 +1717,8 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(urlparse(self.path).query)
         job_id = (query.get("job") or [""])[0] or None
         file_now = bool(job_id) and (query.get("file") or [""])[0] == "1"
+        # What the person said it is (the waiver page's "Take a photo" files a lien waiver); else guessed.
+        kind = (query.get("kind") or [""])[0]
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
@@ -1753,7 +1755,7 @@ class Handler(BaseHTTPRequestHandler):
                 item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=ids, job_id=job_id)
             if file_now:
                 # Dropped on a job page: the person already chose the job.
-                importer.file_item(state, item["id"], job_id, item["kind"], actor)
+                importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
 
         status, payload = self._change(company_id, add)
         if status != 200:
@@ -2078,7 +2080,9 @@ class Handler(BaseHTTPRequestHandler):
             state, _text(body, "name"), _text(body, "customer"), _number(body, "contract_cents", "the contract amount", 0),
             address=_text(body, "address"), approver=_text(body, "approver"), ap_email=_text(body, "ap_email"),
             phone=_text(body, "phone"), role=_text(body, "role", "Owner"),
-            retainage_pct=_number(body, "retainage_pct", "the retainage percent", 0), packet_notes=_text(body, "packet_notes"),
+            retainage_pct=_number(body, "retainage_pct", "the retainage percent", 0),
+            # "packet_notes" is what pages from before R1-04 send; it is a note on the job record now.
+            note=_text(body, "note") or _text(body, "packet_notes"),
             contract_number=_text(body, "contract_number"), actor=ctx.actor,
         )
 
@@ -2215,6 +2219,22 @@ def _co_args(ctx: Ctx) -> dict:
     return {"link_base": app_url(), "company_id": ctx.company_id}
 
 
+def _confirmed(c: Ctx, what: str = "the pay app") -> None:
+    """Emails go out from the signed-in person's address, so on a server that sends mail it must
+    be confirmed first. The Outbox used to hold them without a word (mailer.UNVERIFIED); now the
+    tap that would send is refused with the reason, before anything changes (R1-07)."""
+    if c.company_id != auth.DEMO_COMPANY_ID and mailer.configured() and not c.user.get("email_verified"):
+        raise domain.GateError(f"Confirm your email first so {what} goes out from you. Open the link we emailed you, or send it again.")
+
+
+def _sends(what: str, run):
+    """A JOB_ACTIONS handler that emails the payer: refused until the sender's email is confirmed."""
+    def handler(h, st, j, i, c):
+        _confirmed(c, what)
+        return run(h, st, j, i, c)
+    return handler
+
+
 def _import_qbo(h, st, j, i, c):
     if c.company_id != auth.DEMO_COMPANY_ID:
         raise domain.GateError("QuickBooks import is not built yet. The sample import only runs on the demo account.")
@@ -2239,21 +2259,21 @@ JOB_ACTIONS = {
     "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"))),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
-    "send": (False, lambda h, st, j, i, c: domain.approve_and_send(st, j, c.actor, **_co_args(c))),
-    "follow-up": (False, lambda h, st, j, i, c: domain.record_follow_up(st, j, c.actor, **_co_args(c))),
+    "send": (False, _sends("the pay app", lambda h, st, j, i, c: domain.approve_and_send(st, j, c.actor, **_co_args(c)))),
+    "follow-up": (False, _sends("the follow-up", lambda h, st, j, i, c: domain.record_follow_up(st, j, c.actor, **_co_args(c)))),
     "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor, invoice_id=_text(c.body, "invoice_id") or None)),
-    "waiver": (False, lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None)),
-    "retainage": (False, lambda h, st, j, i, c: domain.chase_retainage(st, j, c.actor)),
+    "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None))),
+    "retainage": (False, _sends("the request", lambda h, st, j, i, c: domain.chase_retainage(st, j, c.actor))),
     "retainage-paid": (False, lambda h, st, j, i, c: domain.record_retainage_payment(st, j, _number(c.body, "amount_cents", "the retainage received"), _text(c.body, "reference"), c.actor)),
     "add-co": (False, lambda h, st, j, i, c: domain.add_change_order(st, j, _text(c.body, "title"), _number(c.body, "amount_cents", "the change order amount", 0), c.actor, description=_text(c.body, "description"))),
     # A change order is approved by a signature: online (request-co-signature) or a signed
     # copy on the job record. A bare status flip is not accepted (P2-3).
     "approve-co": (True, lambda h, st, j, i, c: domain.mark_co_signed(st, j, i, _text(c.body, "record_id"), c.actor)),
-    "request-co-signature": (True, lambda h, st, j, i, c: domain.request_co_signature(st, j, i, c.actor, **_co_args(c))),
+    "request-co-signature": (True, _sends("the request", lambda h, st, j, i, c: domain.request_co_signature(st, j, i, c.actor, **_co_args(c)))),
     "include-co": (True, lambda h, st, j, i, c: domain.include_change_order(st, j, i, c.actor)),
     "withdraw-co": (True, lambda h, st, j, i, c: domain.withdraw_change_order(st, j, i, c.actor)),
     "void-draft": (False, lambda h, st, j, i, c: domain.void_draft(st, j, c.actor)),
-    "pencil": (False, lambda h, st, j, i, c: domain.send_pencil(st, j, c.actor)),
+    "pencil": (False, _sends("the draft", lambda h, st, j, i, c: domain.send_pencil(st, j, c.actor))),
     "pencil-response": (False, lambda h, st, j, i, c: domain.record_pencil_response(st, j, c.body.get("agreed") is True, _text(c.body, "note"), c.actor)),
     "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),

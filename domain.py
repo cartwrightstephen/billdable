@@ -393,6 +393,7 @@ def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dic
     if not draft:
         raise GateError("Draft a pay app first. The pencil copy is the draft sent for review.")
     payer = _payer(state, job["payer_id"])
+    to = _send_to(payer)
     subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
     body = (
         f"{payer.get('approver') or payer['name']},\n\n"
@@ -400,7 +401,7 @@ def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dic
         "Please confirm the quantities and change orders, or send corrections, before we submit the formal pay app.\n\n"
         f"{pay_app_text(state, job, draft)}\n\nApproved by {actor}."
     )
-    _record_email(state, job_id, "pencil", payer["ap_email"], subject, body, actor, payapp_invoice_id=draft["id"])
+    _record_email(state, job_id, "pencil", to, subject, body, actor, payapp_invoice_id=draft["id"])
     draft["pencil_sent_at"] = utcnow()
     draft["pencil_status"] = "sent"
     job["external_status"] = f"Pencil copy with {payer.get('approver') or payer['name']} for review"
@@ -461,10 +462,11 @@ def approve_and_send(
     invoice = next((inv for inv in reversed(job["invoices"]) if inv["status"] in {"draft", "awaiting_approval"}), None)
     if not invoice:
         raise GateError("No draft pay app to send.")
+    payer = _payer(state, job["payer_id"])
+    to = _send_to(payer)
     invoice["status"] = "sent"
     invoice["sent_at"] = utcnow()
     invoice["approved_by"] = actor
-    payer = _payer(state, job["payer_id"])
     job["external_status"] = f"Submitted to {payer['name']}, awaiting {payer['approver']}"
     subject = f"Pay application {invoice['number']} — {job['name']}"
     files = _packet_file_ids(state, job, invoice)
@@ -478,13 +480,13 @@ def approve_and_send(
     if link:
         body += f"\n\nSee this pay app, its packet and documents, and tell us it reached you:\n{link}"
     body += f"\n\nApproved by {actor}."
-    _record_email(state, job_id, "pay_app", payer["ap_email"], subject, body, actor, attachments=files, cc=_copy_list(payer),
+    _record_email(state, job_id, "pay_app", to, subject, body, actor, attachments=files, cc=_copy_list(payer),
                   payapp_invoice_id=invoice["id"])
     audit(
         state,
         job_id,
         "approve_send",
-        f"{actor} approved and sent {invoice['number']} for {money(invoice['amount_cents'])} to {payer['ap_email']}.",
+        f"{actor} approved and sent {invoice['number']} for {money(invoice['amount_cents'])} to {to}.",
         actor,
     )
     return job
@@ -499,6 +501,7 @@ def record_follow_up(
     if not invoice:
         raise GateError("No sent pay app to follow up.")
     payer = _payer(state, job["payer_id"])
+    to = _send_to(payer)
     days = _int_or(payer.get("follow_up_days"), 7)
     last = invoice.get("last_follow_up_at") or invoice.get("sent_at")
     if last:
@@ -524,7 +527,7 @@ def record_follow_up(
     if link:
         body += f"\n\nThe pay app, its packet and documents: {link}"
     body += f"\n\nApproved by {actor}."
-    _record_email(state, job_id, "follow_up", payer["ap_email"], subject, body, actor)
+    _record_email(state, job_id, "follow_up", to, subject, body, actor)
     audit(
         state,
         job_id,
@@ -644,6 +647,8 @@ def send_waiver(
     if invoice_id:
         pending = [inv for inv in pending if inv["id"] == invoice_id]
     payer = _payer(state, job["payer_id"])
+    if pending or (not invoice_id and _legacy_waiver_pending(job)):
+        to = _send_to(payer)
     now = utcnow()
     if not invoice_id and _legacy_waiver_pending(job):
         # The older job-level waiver goes first; it predates per-pay-app tracking.
@@ -672,7 +677,7 @@ def send_waiver(
         + ("Our lien waiver for it is attached." if files else "Our signed lien waiver for it will follow separately.")
         + f"\n\nApproved by {actor}."
     )
-    _record_email(state, job_id, "waiver", payer["ap_email"], subject, body, actor, attachments=files)
+    _record_email(state, job_id, "waiver", to, subject, body, actor, attachments=files)
     _sync_waiver(job)
     audit(state, job_id, "send_waiver", f"{actor} approved sending the {WAIVER_KINDS[kind].lower()}{which}.", actor)
     return job
@@ -709,6 +714,7 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash")
     if missing:
         raise GateError("Closeout packet incomplete.", [item["blocker"] for item in missing])
     payer = _payer(state, job["payer_id"])
+    to = _send_to(payer)
     days = _int_or(payer.get("follow_up_days"), 7)
     last = job.get("last_retainage_chase_at")
     if last:
@@ -732,7 +738,7 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash")
         + (f" The closeout documents on file are attached ({len(files)})." if files else "")
         + f"\n\nApproved by {actor}."
     )
-    _record_email(state, job_id, "retainage", payer["ap_email"], subject, body, actor, attachments=files)
+    _record_email(state, job_id, "retainage", to, subject, body, actor, attachments=files)
     audit(
         state,
         job_id,
@@ -927,6 +933,16 @@ def _refresh_draft_gate(job: dict[str, Any]) -> None:
     if not invoice:
         return
     invoice["status"] = "draft" if blocker_lines(job) else "awaiting_approval"
+
+
+def _send_to(payer: dict[str, Any]) -> str:
+    """Where an email to this payer goes. A job can be saved without it (the email is asked for
+    before the first send), so anything that emails the payer refuses until it is set."""
+    to = str(payer.get("ap_email") or "").strip()
+    if not to:
+        message = f"Add the email pay apps go to for {payer['name']}."
+        raise GateError(message, fields={"ap_email": message})
+    return to
 
 
 def _record_email(
@@ -1591,11 +1607,13 @@ def create_job(
     phone: str = "",
     role: str = "Owner",
     retainage_pct: int = 0,
-    packet_notes: str = "",
+    note: str = "",
     contract_number: str = "",
     actor: str = "owner",
 ) -> dict[str, Any]:
-    """Add a job and its record. The packet is created later, with a pay app."""
+    """Add a job and its record. The packet is created later, with a pay app, from the payer's
+    paperwork list (Customer settings); `note` is kept on the job record and never becomes it.
+    Who signs off and the email are optional: the email is asked for before the first send."""
     name = (name or "").strip()
     customer_name = (customer_name or "").strip()
     address = (address or "").strip()
@@ -1603,7 +1621,7 @@ def create_job(
     ap_email = (ap_email or "").strip()
     phone = (phone or "").strip()
     role = role if role in {"Owner", "GC"} else "Owner"
-    packet_notes = (packet_notes or "").strip()
+    note = (note or "").strip()
     contract_number = (contract_number or "").strip()
 
     errors: dict[str, str] = {}
@@ -1613,10 +1631,8 @@ def create_job(
         errors["address"] = "Enter the job address."
     if not customer_name:
         errors["customer"] = "Enter the customer: who pays for this job."
-    if not approver:
-        errors["approver"] = "Enter who signs off on your bills."
-    if not ap_email or not EMAIL_RE.match(ap_email):
-        errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com."
+    if ap_email and not EMAIL_RE.match(ap_email):
+        errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
     if not isinstance(contract_cents, int) or isinstance(contract_cents, bool) or contract_cents <= 0:
         errors["contract_cents"] = "Enter the contract amount, more than $0."
     elif contract_cents > MAX_AMOUNT_CENTS:
@@ -1624,11 +1640,12 @@ def create_job(
     if not isinstance(retainage_pct, int) or isinstance(retainage_pct, bool) or not 0 <= retainage_pct <= 20:
         errors["retainage_pct"] = "Enter a retainage from 0 to 20 percent."
     _refuse("Job not saved.", errors)
+    approver = approver or customer_name  # a homeowner signs off on their own bills
 
     payer = next((p for p in state["payers"] if p["name"].lower() == customer_name.lower()), None)
-    packet_rule = packet_notes or "Signed contract, conditional waiver, completion photos, and pay-app backup."
+    packet_rule = "Signed contract, conditional waiver, completion photos, and pay-app backup."
     if role == "GC":
-        packet_rule = packet_notes or "AIA-style pay app, schedule of values, lien waiver, insurance certificate, daily tickets."
+        packet_rule = "AIA-style pay app, schedule of values, lien waiver, insurance certificate, daily tickets."
     if not payer:
         payer = {
             "id": "payer-" + secrets.token_hex(3),
@@ -1646,21 +1663,25 @@ def create_job(
         state["payers"].append(payer)
     else:
         # Keep the payer's existing contact. A new job must not silently redirect
-        # where every other job's pay apps go; changes belong in the playbook.
+        # where every other job's pay apps go; changes belong in Customer settings.
+        # A blank one is filled in, since nothing goes anywhere yet.
+        if ap_email and not str(payer.get("ap_email") or "").strip():
+            payer["ap_email"] = ap_email
+            audit(state, "", "playbook_update", f"{actor} added the email for pay apps to {payer['name']}: {ap_email}.", actor)
         differs = [
             label
             for label, new, old in (
-                ("approver", approver, payer.get("approver", "")),
-                ("AP email", ap_email, payer.get("ap_email", "")),
+                ("who signs off", approver if approver != customer_name else "", payer.get("approver", "")),
+                ("email for pay apps", ap_email, payer.get("ap_email", "")),
             )
-            if new and new.lower() != str(old).lower()
+            if new and old and new.lower() != str(old).lower()
         ]
         if differs:
             audit(
                 state,
                 "",
                 "payer_kept",
-                f"{actor} entered a different {' and '.join(differs)} for {payer['name']}; kept the playbook values. Change them in the Payer Playbook.",
+                f"{actor} entered a different {' and '.join(differs)} for {payer['name']}; kept the saved ones. Change them in Customer settings.",
                 actor,
             )
 
@@ -1683,12 +1704,12 @@ def create_job(
             "added_at": utcnow(),
             "added_by": actor,
         })
-    if packet_notes:
+    if note:
         records.append({
             "id": "rec-" + secrets.token_hex(3),
             "kind": "note",
-            "label": "Packet requirements",
-            "note": packet_notes,
+            "label": "Job notes",
+            "note": note,
             "added_at": utcnow(),
             "added_by": actor,
         })
