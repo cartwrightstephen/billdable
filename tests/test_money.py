@@ -503,5 +503,173 @@ class RecordPaymentTests(unittest.TestCase):  # R3-02
         self.assertEqual((inv["status"], inv["remaining_cents"]), ("partial", 250_000))
 
 
+class ShortPayTests(unittest.TestCase):  # R4-01
+    def _partial(self, retainage=0):
+        state = new_state()
+        job = new_job(state, contract=3_000_000, retainage=retainage, name="Ironleaf deck")
+        domain.mark_done(state, job["id"])
+        inv = send_open(state, job)
+        domain.match_payment(state, job["id"], 2_875_000, "CHK 3101", invoice_id=inv["id"])
+        return state, job, inv
+
+    def test_partial_then_short_pay_settles_and_opens_waiver(self):
+        state, job, inv = self._partial()
+        job_route_item(state, job, "accept-short-pay", inv["id"], {"reason": "Backcharge for dumpster"})
+        self.assertEqual(inv["status"], "paid")
+        self.assertEqual(inv["amount_cents"], 3_000_000)   # the pay app stays as it was sent
+        self.assertEqual((inv["short_pay_cents"], inv["short_pay_reason"]), (125_000, "Backcharge for dumpster"))
+        self.assertTrue(inv["waiver_due"])
+        self.assertFalse(inv["waiver_sent"])
+        m = domain.job_money(job)
+        self.assertEqual((m["outstanding_cents"], m["short_paid_cents"], m["unbilled_completed_cents"]), (0, 125_000, 0))
+        self.assertEqual(state["audit"][-1]["action"], "short_pay")
+        self.assertEqual([b["kind"] for b in domain.close_blocker_items(job)], ["waiver"])
+        domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
+        domain.close_job(state, job["id"])
+        self.assertTrue(job["closed"])
+
+    def test_short_pay_needs_a_payment_and_a_reason(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        inv = send_open(state, job)
+        with self.assertRaises(domain.GateError) as raised:
+            domain.settle_short_pay(state, job["id"], inv["id"], "Backcharge")
+        self.assertIn("Record what came in", str(raised.exception))
+        domain.match_payment(state, job["id"], 300_000, "CHK 1")
+        with self.assertRaises(domain.GateError) as raised:
+            job_route_item(state, job, "accept-short-pay", inv["id"], {"reason": "  "})
+        self.assertIn("reason", raised.exception.fields)
+        self.assertEqual(inv["status"], "partial")
+
+    def test_next_pay_app_does_not_bill_the_short_pay_again(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000, retainage=10)
+        domain.record_progress(state, job["id"], 400_000)
+        inv = send_open(state, job)
+        domain.match_payment(state, job["id"], 300_000, "CHK 1")
+        domain.settle_short_pay(state, job["id"], inv["id"], "Disputed line 2")
+        domain.record_progress(state, job["id"], 600_000)
+        self.assertEqual(job["invoices"][-1]["gross_cents"], 200_000)
+
+    def test_rest_paid_after_all_comes_off_the_short_pay(self):
+        state, job, inv = self._partial()
+        domain.settle_short_pay(state, job["id"], inv["id"], "Backcharge")
+        domain.match_payment(state, job["id"], 100_000, "CHK 3200")
+        self.assertEqual((inv["status"], inv["short_pay_cents"]), ("paid", 25_000))
+        self.assertEqual(domain.job_money(job)["collected_cents"], 2_975_000)
+
+
+class ReopenAndUndoTests(unittest.TestCase):  # R4-02
+    def test_reopen_job_allows_late_payment(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.mark_done(state, job["id"])
+        inv = send_open(state, job)
+        domain.match_payment(state, job["id"], 900_000, "CHK 1")
+        domain.settle_short_pay(state, job["id"], inv["id"], "Customer held $1,000 for touch-ups")
+        domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
+        domain.close_job(state, job["id"])
+        with self.assertRaises(domain.GateError):
+            domain.match_payment(state, job["id"], 100_000, "CHK 2")
+        with self.assertRaises(domain.GateError) as raised:
+            job_route(state, job, "reopen", {"reason": ""})
+        self.assertIn("reason", raised.exception.fields)
+        job_route(state, job, "reopen", {"reason": "Touch-up money came in"})
+        self.assertFalse(job["closed"])
+        self.assertNotIn("closed_at", job)
+        self.assertEqual(state["audit"][-1]["action"], "reopen_job")
+        domain.match_payment(state, job["id"], 100_000, "CHK 2")
+        self.assertEqual((inv["short_pay_cents"], domain.job_money(job)["collected_cents"]), (0, 1_000_000))
+        domain.close_job(state, job["id"])
+        self.assertTrue(job["closed"])
+        with self.assertRaises(domain.GateError):
+            domain.reopen_job(state, "job-none", "x")
+
+    def test_undo_done_restores_progress(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000, retainage=10)
+        domain.record_progress(state, job["id"], 400_000)
+        send_open(state, job)
+        domain.mark_done(state, job["id"])
+        final = job["invoices"][-1]
+        self.assertTrue(domain.can_undo_done(job))
+        job_route(state, job, "undo-done", {})
+        self.assertEqual((final["status"], job["work_status"], job["completed_value_cents"]), ("void", "in_progress", 400_000))
+        self.assertNotIn("completed_at", job)
+        self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 0)
+        # Progress goes on from what is billed; the final pay app's number is used again.
+        domain.record_progress(state, job["id"], 700_000)
+        self.assertEqual((job["invoices"][-1]["gross_cents"], job["invoices"][-1]["number"]), (300_000, final["number"]))
+
+    def test_undo_done_refused_once_the_final_pay_app_went_out(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.mark_done(state, job["id"])
+        send_open(state, job)
+        self.assertFalse(domain.can_undo_done(job))
+        with self.assertRaises(domain.GateError) as raised:
+            domain.undo_mark_done(state, job["id"])
+        self.assertIn("Pull it back first", str(raised.exception))
+        self.assertEqual(job["work_status"], "complete")
+
+
+class PullBackTests(unittest.TestCase):  # R4-03
+    def test_void_sent_then_redraft_lower(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000, retainage=10)
+        domain.record_progress(state, job["id"], 600_000)
+        inv = send_open(state, job)
+        number = inv["number"]
+        job_route_item(state, job, "void-sent", inv["id"], {"reason": "Billed line 3 twice"})
+        self.assertEqual((inv["status"], inv["voided_reason"]), ("void", "Billed line 3 twice"))
+        self.assertEqual(job["completed_value_cents"], 0)
+        m = domain.job_money(job)
+        self.assertEqual((m["billed_cents"], m["retainage_held_cents"], m["outstanding_cents"]), (0, 0, 0))
+        mail = state["email_log"][-1]
+        self.assertEqual((mail["kind"], mail["to"]), ("pay_app_withdrawn", "ap@jones.example"))
+        self.assertEqual(mail["subject"], f"Pay application {number} withdrawn — Pine kitchen")
+        self.assertIn("Billed line 3 twice", mail["body"])
+        domain.record_progress(state, job["id"], 450_000)
+        again = job["invoices"][-1]
+        self.assertEqual(again["gross_cents"], 450_000)
+        self.assertNotEqual(again["number"], number)   # the customer saw that number
+        import payer_page
+        self.assertIn("withdrew this pay app", payer_page.render(state, job, inv, "/p/x"))
+
+    def test_void_sent_refused_after_a_payment(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        inv = send_open(state, job)
+        domain.match_payment(state, job["id"], 100_000, "CHK 1")
+        with self.assertRaises(domain.GateError) as raised:
+            domain.void_sent_pay_app(state, job["id"], inv["id"], "Wrong amount")
+        self.assertIn("A payment is recorded", str(raised.exception))
+        self.assertEqual(inv["status"], "partial")
+
+    def test_void_sent_needs_a_reason_and_the_newest_pay_app(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        first = send_open(state, job)
+        domain.record_progress(state, job["id"], 600_000)
+        with self.assertRaises(domain.GateError) as raised:
+            domain.void_sent_pay_app(state, job["id"], first["id"], "Wrong")
+        self.assertIn("Delete the draft", str(raised.exception))
+        send_open(state, job)
+        with self.assertRaises(domain.GateError) as raised:
+            domain.void_sent_pay_app(state, job["id"], first["id"], "Wrong")
+        self.assertIn("Pull that one back first", str(raised.exception))
+        with self.assertRaises(domain.GateError) as raised:
+            domain.void_sent_pay_app(state, job["id"], job["invoices"][-1]["id"], "")
+        self.assertIn("reason", raised.exception.fields)
+
+
+def job_route_item(state, job, action, item, body):
+    ctx = server.Ctx(user={"email_verified": True}, body=body, company_id="co-test", actor="Owner")
+    return server.JOB_ACTIONS[action][1](None, state, job["id"], item, ctx)
+
+
 if __name__ == "__main__":
     unittest.main()

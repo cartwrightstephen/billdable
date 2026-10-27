@@ -76,6 +76,8 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
     contract_total = job["contract_cents"] + approved
     billed = sum(inv["amount_cents"] for inv in job["invoices"] if inv["status"] in BILLED_STATUSES)
     collected = sum(p["amount_cents"] for p in job["payments"])
+    # What the customer kept off a pay app that was settled short (R4-01): no longer owed.
+    short_paid = sum(int(inv.get("short_pay_cents") or 0) for inv in job["invoices"] if inv["status"] in BILLED_STATUSES)
     draft = sum(inv["amount_cents"] for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES)
     # Pay app amounts are net of retainage. Retainage withheld on a pay app is
     # stored on the invoice; older records keep it in retainage_held_cents.
@@ -91,7 +93,7 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
             0,
             job.get("completed_value_cents", contract_total) - billed - draft - retainage_held - retainage_on_drafts,
         )
-    outstanding = max(0, billed - collected)
+    outstanding = max(0, billed - collected - short_paid)
     return {
         "contract_cents": job["contract_cents"],
         "approved_co_cents": approved,
@@ -100,6 +102,7 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
         "billed_cents": billed,
         "draft_cents": draft,
         "collected_cents": collected,
+        "short_paid_cents": short_paid,
         "outstanding_cents": outstanding,
         "unbilled_completed_cents": unbilled_completed,
         "retainage_held_cents": retainage_held,
@@ -331,8 +334,8 @@ def _billed_gross(job: dict[str, Any], skip: dict[str, Any] | None = None) -> in
 
 def _next_number(job: dict[str, Any]) -> str:
     """PA-<code>-NN, one past the pay apps that count. A voided draft's number is used again,
-    unless the customer saw it as a draft for review."""
-    taken = {inv["number"] for inv in job["invoices"] if inv["status"] != "void" or inv.get("pencil_sent_at")}
+    unless the customer saw it: as a draft for review, or sent and then pulled back (R4-03)."""
+    taken = {inv["number"] for inv in job["invoices"] if inv["status"] != "void" or inv.get("pencil_sent_at") or inv.get("sent_at")}
     n = len([inv for inv in job["invoices"] if inv["status"] != "void"]) + 1
     while f"PA-{job['code']}-{n:02d}" in taken:
         n += 1
@@ -351,6 +354,7 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         )
     job["work_status"] = "complete"
     job["completed_at"] = job.get("completed_at") or utcnow()
+    job["done_at_invoice"] = len(job["invoices"])   # pay apps from here on are the final one(s)
     job["done_notes"] = notes or job.get("done_notes", "")
     # The notes are kept on the job record (and in History, through the audit line below), not
     # on the job's header line (R2-05). A message filed from the Inbox is its own record already.
@@ -636,18 +640,23 @@ def match_payment(
     if qbo_payment_id and any(p.get("qbo_payment_id") == qbo_payment_id for j in state["jobs"] for p in j.get("payments", [])):
         raise GateError("This QuickBooks payment is already recorded.")
     open_invoices = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
-    if not open_invoices:
+    # A pay app settled short still takes the rest if the customer pays it after all (R4-01):
+    # named by id, or on its own when nothing else is open.
+    short = [inv for inv in job["invoices"] if inv["status"] == "paid" and inv.get("short_pay_cents")]
+    if not open_invoices and not short:
         raise GateError("No open invoice to match.")
     if invoice_id:
-        invoice = next((inv for inv in open_invoices if inv["id"] == invoice_id), None)
+        invoice = next((inv for inv in open_invoices + short if inv["id"] == invoice_id), None)
         if not invoice:
             _refuse("", {"invoice_id": "Pick a pay app that is waiting for payment."})
     elif len(open_invoices) == 1:
         invoice = open_invoices[0]
+    elif not open_invoices and len(short) == 1:
+        invoice = short[0]
     else:
         raise GateError(
             "More than one pay app is open. Choose which pay app this payment is for.",
-            [f"{inv['number']} ({money(inv['amount_cents'])})" for inv in open_invoices],
+            [f"{inv['number']} ({money(inv['amount_cents'])})" for inv in open_invoices + short],
             {"invoice_id": "Pick the pay app this payment is for."},
         )
     if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
@@ -676,7 +685,12 @@ def match_payment(
         payment["qbo_payment_id"] = qbo_payment_id
     job["payments"].append(payment)
     collected_for_invoice = sum(p["amount_cents"] for p in job["payments"] if p["invoice_id"] == invoice["id"])
-    if collected_for_invoice >= invoice["amount_cents"]:
+    late = ""
+    if invoice["status"] == "paid":
+        # The rest of a short pay came in after all: less of it stays written off.
+        invoice["short_pay_cents"] = max(0, invoice["amount_cents"] - collected_for_invoice)
+        late = f" Short pay now {money(invoice['short_pay_cents'])}."
+    elif collected_for_invoice >= invoice["amount_cents"]:
         if _legacy_waiver_pending(job):
             job["legacy_waiver_pending"] = True
         invoice["status"] = "paid"
@@ -691,7 +705,48 @@ def match_payment(
         state,
         job_id,
         "match_payment",
-        f"Matched {money(amount_cents)} ({reference}) to {invoice['number']}.",
+        f"Matched {money(amount_cents)} ({reference}) to {invoice['number']}.{late}",
+        actor,
+    )
+    return job
+
+
+def settle_short_pay(state: dict[str, Any], job_id: str, invoice_id: str, reason: str, actor: str = "owner") -> dict[str, Any]:
+    """The customer paid part of a pay app and won't pay the rest (a backcharge, a disputed line):
+    accept what came in, so the pay app reads paid and its lien waiver comes due (R4-01).
+    The pay app keeps its amount and lines as they were sent (its PDF and the customer's page
+    show what went out, and the next pay app's "previous certificates" count it in full); what
+    was kept off it is stored beside it as short_pay_cents, which no longer counts as owed."""
+    job = _open_job(state, job_id)
+    invoice = next((inv for inv in job["invoices"] if inv["id"] == invoice_id), None)
+    if not invoice or invoice["status"] not in OPEN_FOR_PAYMENT:
+        raise GateError("Pick a pay app that is waiting for payment.")
+    collected = sum(p["amount_cents"] for p in job["payments"] if p["invoice_id"] == invoice["id"])
+    if collected <= 0:
+        raise GateError(f"Record what came in on {invoice['number']} first. Short pay is accepted after a payment.")
+    reason = _reason(reason)
+    if not reason:
+        _refuse("", {"reason": "Enter why it was paid short, like a backcharge for cleanup."})
+    remaining = invoice["amount_cents"] - collected
+    if remaining <= 0:
+        raise GateError(f"{invoice['number']} is paid in full.")
+    invoice["short_pay_cents"] = remaining
+    invoice["short_pay_reason"] = reason
+    invoice["short_pay_at"] = utcnow()
+    invoice["short_pay_by"] = actor
+    if _legacy_waiver_pending(job):
+        job["legacy_waiver_pending"] = True
+    invoice["status"] = "paid"
+    invoice["waiver_due"] = True
+    invoice["waiver_sent"] = False
+    _sync_waiver(job)
+    job["external_status"] = "Short pay accepted, waiver not sent"
+    audit(
+        state,
+        job_id,
+        "short_pay",
+        f"{actor} accepted {money(collected)} on {invoice['number']} ({money(invoice['amount_cents'])} billed); "
+        f"{money(remaining)} short: {reason}.",
         actor,
     )
     return job
@@ -865,6 +920,7 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out["status_label"] = status_label(job)
     out["payer"] = deepcopy(_payer(state, job["payer_id"]))
     out["can_delete"] = can_delete_job(job)
+    out["can_undo_done"] = can_undo_done(job)
     out["close_blocker_items"] = close_blocker_items(job)
     out["close_blockers"] = [b["text"] for b in out["close_blocker_items"]]
     out.setdefault("closeout_packet", [])
@@ -1589,6 +1645,100 @@ def void_draft(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict
     return job
 
 
+def _reason(text: Any) -> str:
+    return " ".join(str(text or "").split())[:200]
+
+
+def void_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, reason: str, actor: str = "owner") -> dict[str, Any]:
+    """Pull back a pay app that went out with a mistake, before anything was paid on it (R4-03).
+    It is kept as void with the reason, its number is not used again, and the customer gets an
+    email saying it is withdrawn (their page for it already says so). The work on it is unbilled
+    again: on a dollar job still running, the total done so far goes back to what is billed, so
+    progress can be entered again at a lower amount; on a schedule the quantities stay."""
+    job = _open_job(state, job_id)
+    invoice = next((inv for inv in job["invoices"] if inv["id"] == invoice_id), None)
+    if not invoice or invoice["status"] not in {"sent", "approved", "partial", "paid"}:
+        raise GateError("Pick a pay app that has gone out. A draft is deleted instead.")
+    if invoice["status"] in {"partial", "paid"} or any(p["invoice_id"] == invoice["id"] for p in job["payments"]):
+        raise GateError(f"A payment is recorded on {invoice['number']}, so it can't be pulled back. Correct the next pay app instead.")
+    later = [inv for inv in job["invoices"][job["invoices"].index(invoice) + 1:] if inv["status"] != "void"]
+    if later:
+        nxt = later[0]
+        if nxt["status"] in DRAFT_STATUSES:
+            raise GateError(f"Delete the draft {nxt['number']} first, then pull back {invoice['number']}.")
+        raise GateError(f"{nxt['number']} went out after it. Pull that one back first.")
+    reason = _reason(reason)
+    if not reason:
+        _refuse("", {"reason": "Enter why you are pulling it back, like a wrong quantity on line 3."})
+    payer = _payer(state, job["payer_id"])
+    to = _send_to(payer)
+    invoice["status"] = "void"
+    invoice["voided_at"] = utcnow()
+    invoice["voided_reason"] = reason
+    invoice["voided_by"] = actor
+    job["external_status"] = ""
+    if job.get("work_status") != "complete" and not sov.has_sov(job):
+        job["completed_value_cents"] = _billed_gross(job)
+    carried = {line.get("co_id") for line in invoice.get("lines", []) if line.get("co_id")}
+    for co in job["change_orders"]:
+        if co["id"] in carried and co.get("included_in_billing"):
+            co["included_in_billing"] = False
+    subject = f"Pay application {invoice['number']} withdrawn — {job['name']}"
+    body = (
+        f"{payer.get('approver') or payer['name']},\n\n"
+        f"We have withdrawn pay application {invoice['number']} for {job['name']} ({money(invoice['amount_cents'])}), "
+        f"sent {(invoice.get('sent_at') or '')[:10]}. Nothing is due on it; please set it aside.\n\n"
+        f"Why: {reason}\n\nIf a corrected pay app is due, it follows separately."
+        f"\n\nApproved by {actor}."
+    )
+    _record_email(state, job_id, "pay_app_withdrawn", to, subject, body, actor, cc=_copy_list(payer))
+    audit(state, job_id, "void_sent", f"{actor} pulled back {invoice['number']} ({money(invoice['amount_cents'])}): {reason}.", actor)
+    return job
+
+
+def can_undo_done(job: dict[str, Any]) -> bool:
+    """Done can be undone while nothing billed since has gone out: the final pay app is still a
+    draft (or there is none), so taking it back changes nothing the customer has (R4-02)."""
+    if job.get("closed") or job.get("work_status") != "complete":
+        return False
+    if "done_at_invoice" in job:
+        after = job["invoices"][job["done_at_invoice"]:]
+    else:  # marked done before R4-02: by date
+        after = [inv for inv in job["invoices"] if (inv.get("created_at") or "") > (job.get("completed_at") or "")]
+    return not any(inv["status"] not in DRAFT_STATUSES and inv["status"] != "void" for inv in after)
+
+
+def undo_mark_done(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
+    """Mark done tapped by mistake: delete the final draft and put the job back in progress, with
+    the total done so far at what is billed (on a schedule, each line back to its billed quantity)."""
+    job = _open_job(state, job_id)
+    if job.get("work_status") != "complete":
+        raise GateError(f"{job['name']} is not marked done.")
+    if not can_undo_done(job):
+        raise GateError("The final pay app has gone out. Pull it back first, then undo done.")
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if draft:
+        draft["status"] = "void"
+        draft["voided_at"] = utcnow()
+        carried = {line.get("co_id") for line in draft.get("lines", []) if line.get("co_id")}
+        for co in job["change_orders"]:
+            if co["id"] in carried and co.get("included_in_billing"):
+                co["included_in_billing"] = False
+    job["work_status"] = "in_progress"
+    job.pop("completed_at", None)
+    job.pop("done_at_invoice", None)
+    if sov.has_sov(job):
+        billed_qty = sov.billed(job)["qty_by_line"]
+        for line in sov.lines(job):
+            if line["scheduled_cents"] >= 0:  # a credit's line stays taken off
+                line["done_milli"] = billed_qty.get(line["id"], 0)
+    job["completed_value_cents"] = _billed_gross(job)
+    audit(state, job_id, "undo_done", f"{actor} undid done on {job['name']}"
+          + (f"; deleted draft {draft['number']} ({money(draft['amount_cents'])})" if draft else "")
+          + f". Total done so far back to {money(job['completed_value_cents'])}.", actor)
+    return job
+
+
 def include_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: str = "owner") -> dict[str, Any]:
     """Put a pending CO's dollars on the next pay app. Send stays blocked until it is signed."""
     job = _open_job(state, job_id)
@@ -1634,6 +1784,21 @@ def close_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[
     job["closed"] = True
     job["closed_at"] = utcnow()
     audit(state, job_id, "close_job", f"{actor} closed {job['name']} for the record.", actor)
+    return job
+
+
+def reopen_job(state: dict[str, Any], job_id: str, reason: str, actor: str = "owner") -> dict[str, Any]:
+    """Bring a finished job back, for a late payment or a fix (R4-02). The reason goes in History."""
+    job = _job(state, job_id)
+    if not job.get("closed"):
+        raise GateError(f"{job['name']} is not finished.")
+    reason = _reason(reason)
+    if not reason:
+        _refuse("", {"reason": "Enter why you are reopening it, like a late payment came in."})
+    job["closed"] = False
+    job.pop("closed_at", None)
+    job["reopened_at"] = utcnow()
+    audit(state, job_id, "reopen_job", f"{actor} reopened {job['name']}: {reason}.", actor)
     return job
 
 

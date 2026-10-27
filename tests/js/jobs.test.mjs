@@ -1,7 +1,7 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions } from "../../static/js/jobs.js";
+import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, shortPayable, shortPayLabel, canPullBack } from "../../static/js/jobs.js";
 
 const job = (over = {}) => ({
   id: "j1", closed: false, work_status: "in_progress", blockers: [], close_blockers: [], invoices: [],
@@ -198,4 +198,31 @@ test("each thing standing between the job and Finish job has its buttons (R3-08)
   assert.deepEqual(labels({ kind: "draft", invoice_id: "i1", number: "PA-1" }), ["Review & send", "Delete draft"]);
   assert.deepEqual(labels({ kind: "unbilled" }), ["Draft pay app"]);
   assert.deepEqual(labels({ kind: "something new" }), []);
+});
+
+test("a part-paid pay app offers to accept the short pay, in the close list too", () => {  // R4-01
+  const partial = { id: "i2", number: "PA-02", status: "partial", amount_cents: 3000000, remaining_cents: 125000 };
+  const j = job({ work_status: "complete", invoices: [{ id: "i1", status: "paid", remaining_cents: 0 }, partial] });
+  assert.deepEqual(shortPayable(j), [partial]);
+  assert.equal(shortPayLabel(partial), "Accept $1,250.00 short pay…");
+  const actions = closeBlockerActions(j, { kind: "outstanding", text: "$1,250.00 is still owed on pay apps sent." });
+  assert.deepEqual(actions.map(a => a.label), ["Record a payment", "Accept $1,250.00 short pay…"]);
+  assert.match(actions[1].attrs, /data-action="short-pay-open" data-job="j1" data-inv="i2"/);
+  assert.deepEqual(shortPayable(job({ invoices: [{ id: "i3", status: "sent", remaining_cents: 5000 }] })), []);
+});
+
+test("undo done is offered only while the server says it can be", () => {  // R4-02
+  const keys = (j) => { const { primary, more } = jobActions(j); return [primary, ...more].filter(Boolean).map(a => a.key); };
+  assert.ok(keys(job({ work_status: "complete", can_undo_done: true, invoices: [inv("draft")] })).includes("undo"));
+  assert.ok(!keys(job({ work_status: "complete", can_undo_done: false })).includes("undo"));
+});
+
+test("only the newest sent pay app with nothing paid can be pulled back", () => {  // R4-03
+  const first = { id: "a", status: "sent" }, second = { id: "b", status: "sent" }, gone = { id: "c", status: "void" };
+  const j = job({ invoices: [first, second, gone], payments: [] });
+  assert.equal(canPullBack(j, second), true);
+  assert.equal(canPullBack(j, first), false);
+  assert.equal(canPullBack(job({ invoices: [first], payments: [{ invoice_id: "a" }] }), first), false);
+  assert.equal(canPullBack(job({ invoices: [first], closed: true }), first), false);
+  assert.equal(canPullBack(job({ invoices: [{ id: "d", status: "partial" }] }), { id: "d", status: "partial" }), false);
 });

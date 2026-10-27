@@ -482,7 +482,7 @@ flowchart TD
     C --> D["Fix each: send draft, sign or withdraw change order, bill, collect, retainage, waiver"]
     D --> B
     B -->|"No"| E["Tap 'Close for record'"]
-    E --> F["Job page: 'This job is closed. Its money record is read-only'"]
+    E --> F["Job page: 'This job is finished. Its money record is read-only'"]
     F --> G["Jobs page: listed under 'Job history'"]
 ```
 

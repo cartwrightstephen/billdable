@@ -81,7 +81,11 @@ Wrenfield cutoff on the 25th. The job closest to missing a cutoff is the one not
 **Fix idea:** count only sent pay apps (status sent, approved, partial or paid) as billed this
 cycle, or keep the cutoff text on a blocked or ready draft.
 
-## 5. Short pays can't be settled (product gap, already known)
+## 5. Short pays can't be settled (product gap, already known) — fixed in R4-01
+
+Fixed: **Accept $1,250.00 short pay…** on the pay app, the Record a payment card, Collections and
+the "Before you can finish this job" list settles it with a reason (MANUAL-TEST 6.5). The report
+as it was:
 
 Ironleaf's PA-GLEN-01 ($30,000.00) gets $28,750.00 from the CSV import. It stays **Partly paid**
 with $1,250.00 outstanding, no waiver comes due, and Close for record is blocked by

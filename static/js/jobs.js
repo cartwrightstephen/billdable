@@ -182,7 +182,7 @@ export function waitingText(j, now = new Date()) {
 // no follow-up is due), then the rest in the order they matter. Each has a group for the "More"
 // list: bill, paid (get paid) or close (close out). demo adds the QuickBooks sample import.
 const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "pencil", "pencil-ok", "pencil-no", "packet",
-  "draft", "progress", "done", "retainage", "retpay", "co", "close", "void", "qbo"];
+  "draft", "progress", "done", "retainage", "retpay", "co", "close", "undo", "void", "qbo"];
 
 export function jobActions(j, { now = new Date(), demo = false } = {}) {
   if (j.closed) return { primary: null, more: [] };
@@ -210,6 +210,8 @@ export function jobActions(j, { now = new Date(), demo = false } = {}) {
   if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "Bill the work done so far without marking the job done.", "bill");
   if (j.work_status !== "complete") add("done", "Mark done", `data-action="toggle-form" data-form="done"`, "Record that the work is finished and draft the final pay app.", "close");
   if (canClose) add("close", "Finish job", `data-action="close" data-id="${j.id}"`, "Moves the settled job to Job history.", "close");
+  // Mark done by mistake (R4-02): while the final pay app has not gone out.
+  if (j.can_undo_done) add("undo", "Undo done", `data-action="undo-done" data-id="${j.id}"`, "Back to in progress. The final draft is deleted.", "close");
   // Asking for retainage only once the work is done and the closeout paperwork is in; until then
   // the Money card says why it isn't here.
   if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "Email the customer for the retainage held back.", "paid");
@@ -246,7 +248,8 @@ export function closeBlockerActions(j, b) {
       { label: `Get CO ${b.number} signed`, attrs: `data-action="open-co" data-job="${id}" data-co="${b.co_id}"` },
       { label: "Withdraw", attrs: `data-action="withdraw-co" data-id="${id}" data-co="${b.co_id}"` }];
     case "unbilled": return [{ label: "Draft pay app", attrs: `data-action="draft" data-id="${id}"` }];
-    case "outstanding": return [{ label: "Record a payment", attrs: `data-action="toggle-form" data-form="match"` }];
+    case "outstanding": return [{ label: "Record a payment", attrs: `data-action="toggle-form" data-form="match"` },
+      ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i) }))];
     case "retainage": return [
       { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"` },
       closeoutMissing(j)
@@ -255,4 +258,25 @@ export function closeBlockerActions(j, b) {
     case "waiver": return [{ label: "Send waiver", attrs: `data-action="open-waiver" data-id="${id}"` }];
     default: return [];
   }
+}
+
+// Part-paid pay apps the customer may not pay in full (R4-01): accepting the short pay settles them.
+export function shortPayable(j) {
+  return (j.invoices || []).filter(i => i.status === "partial" && i.remaining_cents > 0);
+}
+
+export function shortPayLabel(inv) {
+  return `Accept ${money(inv.remaining_cents)} short pay…`;
+}
+
+export function shortPayAttrs(j, inv) {
+  return `data-action="short-pay-open" data-job="${j.id}" data-inv="${inv.id}"`;
+}
+
+// A sent pay app can be pulled back (R4-03) while nothing is paid on it and nothing came after it.
+export function canPullBack(j, inv) {
+  if (j.closed || !["sent", "approved"].includes(inv.status)) return false;
+  if ((j.payments || []).some(p => p.invoice_id === inv.id)) return false;
+  const live = (j.invoices || []).filter(i => i.status !== "void");
+  return live[live.length - 1] === inv;
 }

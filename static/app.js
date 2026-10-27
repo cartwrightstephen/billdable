@@ -1,7 +1,7 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue } from "./js/jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, shortPayable, shortPayLabel, shortPayAttrs, canPullBack } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
@@ -724,6 +724,38 @@ function owedText(i) {
   return left < i.amount_cents ? `${money(left)} of ${money(i.amount_cents)}` : money(i.amount_cents);
 }
 
+// Accept short pay (R4-01): why it was short, then Accept. On the job page and the pay app's page.
+function shortPayCardHtml(j, i) {
+  const key = `shortpay-${i.id}`;
+  if (!formOpen[key]) return "";
+  return `<div class="card form-card short-pay" data-form-key="${key}"><h2>Accept short pay on ${i.number}</h2>
+    <p class="sub">${i.number} was ${money(i.amount_cents)} and ${money(i.amount_cents - i.remaining_cents)} came in. Accepting marks it paid: the ${money(i.remaining_cents)} left is no longer owed, and its lien waiver comes due.</p>
+    ${formErrorLine(key)}<div class="form-row">
+      ${field({ form: key, name: "reason", id: `shortpay-reason-${i.id}`, label: "Why it was paid short", required: true, placeholder: "Backcharge for cleanup", wide: true })}
+      <button class="btn small" data-action="accept-short-pay" data-id="${j.id}" data-inv="${i.id}">Accept short pay</button>
+      <button class="btn small secondary" data-action="toggle-form" data-form="${key}">Cancel</button>
+    </div></div>`;
+}
+
+// The short-pay buttons for a job's part-paid pay apps, naming the pay app when there are several.
+function shortPayButtons(j) {
+  const list = shortPayable(j);
+  return list.map(i => `<button class="btn small secondary" ${shortPayAttrs(j, i)}>${list.length > 1 ? i.number + ": " : ""}${shortPayLabel(i)}</button>`).join(" ");
+}
+
+// Pull back a sent pay app (R4-03): a button, then the reason and the button that does it.
+function pullBackHtml(j, i) {
+  const key = `voidsent-${i.id}`;
+  if (!formOpen[key]) return `<button class="btn small secondary danger-text" data-action="toggle-form" data-form="${key}" aria-expanded="false">Pull back this pay app…</button>`;
+  return `<div class="pull-back" data-form-key="${key}"><h3>Pull back ${i.number}</h3>
+    <p class="sub">For a pay app that went out with a mistake. ${j.payer.name || "The customer"} is emailed that it is withdrawn; you can then bill again.</p>
+    ${formErrorLine(key)}<div class="form-row">
+      ${field({ form: key, name: "reason", id: `voidsent-reason-${i.id}`, label: "Why pull it back", required: true, placeholder: "Wrong quantity on line 3", wide: true })}
+      <button class="btn small danger" data-action="void-sent" data-id="${j.id}" data-inv="${i.id}">Pull back ${i.number}</button>
+      <button class="btn small secondary" data-action="toggle-form" data-form="${key}">Cancel</button>
+    </div></div>`;
+}
+
 // Today on this device, as a date box wants it (YYYY-MM-DD).
 function todayIso() {
   const d = new Date();
@@ -1172,6 +1204,45 @@ const ACTIONS = {
   "withdraw-co": async (el, id) => {
     if (!(await askConfirm("Withdraw this change order? Use this when the customer will not sign it.", "Withdraw", true))) return;
     await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
+  },
+  // Short pay (R4-01): the card opens where the button was, or on the pay app's page.
+  "short-pay-open": (el) => {
+    const { job, inv } = el.dataset;
+    const here = (currentView === "job" && currentJobId === job) || (currentView === "payapp-detail" && currentJobId === job && currentDetailId === inv);
+    if (!here) nav("payapp-detail", job, inv);
+    formOpen[`shortpay-${inv}`] = true;
+    render();
+    document.getElementById(`shortpay-reason-${inv}`)?.focus();
+  },
+  "accept-short-pay": async (el, id) => {
+    const inv = el.dataset.inv, key = `shortpay-${inv}`;
+    const j = state.jobs.find(x => x.id === id);
+    const i = j && j.invoices.find(x => x.id === inv);
+    const v = formValues(key);
+    if (refuseForm(key, v.reason ? {} : { reason: "Enter why it was paid short, like a backcharge for cleanup." })) return;
+    if (i && !(await askConfirm(`Accept ${money(i.amount_cents - i.remaining_cents)} on ${unesc(i.number)} as settled? The ${money(i.remaining_cents)} left is no longer owed, and its lien waiver comes due.`, "Accept short pay"))) return;
+    await post(`/api/jobs/${id}/accept-short-pay/${inv}`, { reason: v.reason }, { formKey: key, close: key });
+  },
+  // Pull back a sent pay app (R4-03): a reason, then a confirm, then the customer is told.
+  "void-sent": async (el, id) => {
+    const inv = el.dataset.inv, key = `voidsent-${inv}`;
+    const j = state.jobs.find(x => x.id === id);
+    const i = j && j.invoices.find(x => x.id === inv);
+    const v = formValues(key);
+    if (refuseForm(key, v.reason ? {} : { reason: "Enter why you are pulling it back, like a wrong quantity on line 3." })) return;
+    if (j && !(await askConfirm(`Pull back ${unesc(i ? i.number : "this pay app")}? An email to ${sendsTo(j)} says it is withdrawn and nothing is due on it.`, "Pull back", true))) return;
+    await post(`/api/jobs/${id}/void-sent/${inv}`, { reason: v.reason }, { formKey: key, close: key });
+  },
+  "reopen": async (el, id) => {
+    const v = formValues("reopen");
+    if (refuseForm("reopen", v.reason ? {} : { reason: "Enter why you are reopening it, like a late payment came in." })) return;
+    await post(`/api/jobs/${id}/reopen`, { reason: v.reason }, { formKey: "reopen", close: "reopen" });
+  },
+  "undo-done": async (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
+    const draft = j && j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
+    if (!(await askConfirm(`Undo done on ${unesc(j ? j.name : "the job")}? ${draft ? `The final draft ${unesc(draft.number)} is deleted and the` : "The"} job goes back to in progress at what is billed.`, "Undo done", true))) return;
+    await post(`/api/jobs/${id}/undo-done`);
   },
   "void-draft": async (el, id) => {
     if (!(await askConfirm("Delete the open draft pay app? You can draft it again from the job page.", "Delete draft", true))) return;
@@ -2683,13 +2754,20 @@ const views = {
         ${moneyField({ form: "match", name: "amount_cents", id: "match-amt", label: "Amount received ($)", cents: (openForPay.find(i => i.id === draftValue("match", "invoice_id", "")) || openForPay[0]).remaining_cents })}
         ${field({ form: "match", name: "received_on", id: "match-date", label: "Date received", type: "date", value: todayIso(), attrs: `max="${todayIso()}"` })}
         ${field({ form: "match", name: "reference", id: "match-ref", label: "Check or reference no. (optional)", placeholder: "CHK 2207" })}
-        <button class="btn small" data-action="match" data-id="${j.id}">Record</button></div>` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
+        <button class="btn small" data-action="match" data-id="${j.id}">Record</button></div>
+        ${shortPayable(j).length ? `<p class="sub short-pay-row">Paid short, and the rest won't come? ${shortPayButtons(j)}</p>` : ""}` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
+      ${shortPayable(j).map(i => shortPayCardHtml(j, i)).join("")}
       ${formOpen.retpay ? `<div class="card form-card" data-form-key="retpay"><h2>Record retainage paid</h2>${formErrorLine("retpay")}<div class="form-row">
         ${moneyField({ form: "retpay", name: "amount_cents", id: "retpay-amt", label: "Retainage received ($)" })}
         ${field({ form: "retpay", name: "reference", id: "retpay-ref", label: "Reference", placeholder: "Check no. or QuickBooks id" })}
         <button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div></div>` : ""}
       ${formOpen.newco && !j.closed ? newCoCardHtml(j) : ""}
-      ${j.closed ? `<p class="sub">This job is closed. Its money record is read-only; you can still add notes to the job record.</p>` : rest.length ? `
+      ${j.closed ? `<div class="card reopen-card" data-form-key="reopen"><p class="sub">This job is finished. Its money record is read-only; you can still add notes to the job record.</p>
+        ${me && me.role === "owner" ? formOpen.reopen ? `${formErrorLine("reopen")}<div class="form-row">
+          ${field({ form: "reopen", name: "reason", id: "reopen-reason", label: "Why reopen it?", required: true, placeholder: "A late payment came in", wide: true })}
+          <button class="btn small" data-action="reopen" data-id="${j.id}">Reopen job</button>
+          <button class="btn small secondary" data-action="toggle-form" data-form="reopen">Cancel</button></div>`
+          : `<button class="btn small secondary" data-action="toggle-form" data-form="reopen" aria-expanded="false">Reopen job…</button>` : ""}</div>` : rest.length ? `
         <details class="more-actions-rest" data-more="jobactions"${moreOpen("jobactions") ? " open" : ""}><summary>More (${rest.length})</summary>
           ${ACTION_GROUPS.map(([g, title]) => {
             const list = rest.filter(a => a.group === g);
@@ -2710,6 +2788,7 @@ const views = {
           <div class="money-row strong"><span class="label">Contract total</span><span>${money(m.contract_total_cents)}</span></div>
           <div class="money-row"><span class="label">Billed</span><span>${money(m.billed_cents)}</span></div>
           <div class="money-row"><span class="label">Collected</span><span>${money(m.collected_cents)}</span></div>
+          ${m.short_paid_cents ? `<div class="money-row"><span class="label">Short pay accepted</span><span>${money(m.short_paid_cents)}</span></div>` : ""}
           <div class="money-row strong"><span class="label">Outstanding</span><span>${money(m.outstanding_cents)}</span></div>
           <div class="money-row"><span class="label">Unbilled completed</span><span>${money(m.unbilled_completed_cents)}</span></div>
           <div class="money-row"><span class="label">Retainage held</span><span>${money(m.retainage_held_cents)}${j.retainage_pct ? " · " + j.retainage_pct + "%" : ""}</span></div>
@@ -2725,7 +2804,7 @@ const views = {
             const pencil = i.pencil_status ? ` · pencil ${i.pencil_status === "sent" ? "with payer" : words(i.pencil_status)}${i.pencil_note ? ": " + i.pencil_note : ""}` : "";
             return `<div class="list-item row-link">
               <div><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}"><strong>${i.number}</strong></a> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
-              <div class="sub row-sub">${i.status === "void" ? "Voided" : missing ? `${missing} packet item${missing === 1 ? "" : "s"} missing` : "Packet complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by ? " · approved by " + i.approved_by : ""}${pencil}</div></div>
+              <div class="sub row-sub">${i.status === "void" ? (i.voided_reason ? "Pulled back: " + i.voided_reason : "Voided") : missing ? `${missing} packet item${missing === 1 ? "" : "s"} missing` : "Packet complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by ? " · approved by " + i.approved_by : ""}${i.short_pay_cents ? " · short pay " + money(i.short_pay_cents) : ""}${pencil}</div></div>
             </div>`;
           }).join("") : `<p class="sub">No pay apps yet. ${j.work_status === "complete" ? "Draft one from the unbilled work." : "Record progress or mark the job done to draft one."}</p>`}
           ${closeout.length ? `<div class="list-item row-link"><div><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout"><strong>Closeout packet</strong></a> <span class="sub">gates the retainage release · ${closeoutMissing ? closeoutMissing + " missing" : "complete"}</span></div></div>` : ""}
@@ -2907,6 +2986,7 @@ const views = {
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
       <p class="sub">${invoicePill(inv)} <a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(inv.amount_cents)}</p>
+      ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The customer was told nothing is due on it.</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a> <span class="sub">The same PDF goes with the email when the pay app is sent.</span></p>
       ${draft ? `<div class="card send-check">
         <h2>Before you send</h2>
@@ -2942,6 +3022,9 @@ const views = {
       <div class="card">
         <h2>Payments received</h2>
         ${pays.length ? pays.map(p => `<div class="list-item">${money(p.amount_cents)} · ${p.reference} · ${fmtDate(p.matched_at)}</div>`).join("") : `<p class="sub">None yet.</p>`}
+        ${inv.short_pay_cents ? `<p class="sub">Short pay accepted ${fmtDate(inv.short_pay_at)}: ${money(inv.short_pay_cents)} not paid. ${inv.short_pay_reason || ""}</p>` : ""}
+        ${inv.status === "partial" && inv.remaining_cents > 0 && !formOpen[`shortpay-${inv.id}`] ? `<p class="sub short-pay-row">Paid short, and the rest won't come? <button class="btn small secondary" ${shortPayAttrs(j, inv)}>${shortPayLabel(inv)}</button></p>` : ""}
+        ${inv.status === "partial" ? shortPayCardHtml(j, inv) : ""}
       </div>
       <div class="card">
         <h2>Approval</h2>
@@ -2949,6 +3032,7 @@ const views = {
         <div class="money-row"><span class="label">Sent</span><span>${fmtDateTime(inv.sent_at)}</span></div>
         <div class="money-row"><span class="label">Received by the payer</span><span>${inv.received_at ? `${inv.received_by || "the payer"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
         ${inv.payer_token ? `<p class="sub">The payer's page for this pay app (it went in the email): <a href="/p/${me.company_id}.${inv.payer_token}" target="_blank" rel="noopener">open it</a>. They can see the pay app and its packet and mark it received.</p>` : ""}
+        ${canPullBack(j, inv) ? pullBackHtml(j, inv) : ""}
       </div>
     `;
   },
@@ -3227,6 +3311,7 @@ const views = {
               <td>${j.payer.approver}<div class="sub row-sub">${j.payer.ap_email}${j.payer.phone ? "<br>" + j.payer.phone : ""}</div></td>
               <td class="actions-cell">
                 ${early ? `<button class="btn small" disabled>Next follow-up ${fmtDate(follow.due.toISOString())}</button>` : `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`}
+                ${shortPayButtons(j)}
                 <a class="btn small secondary" href="mailto:${j.payer.ap_email}">Email</a>
                 ${j.payer.phone ? `<a class="btn small secondary" href="tel:${(j.payer.phone || "").replace(/[^0-9+]/g, "")}">Call</a>` : ""}
               </td>

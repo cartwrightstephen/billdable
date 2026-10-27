@@ -813,6 +813,9 @@ class Handler(BaseHTTPRequestHandler):
         except UnknownAction:
             self._json(404, {"error": "Unknown action"})
             return
+        except OwnerOnly:
+            self._json(403, {"error": "Only an owner can do that."})
+            return
         except domain.GateError as exc:
             self._json(409, _gate(exc))
             return
@@ -2130,6 +2133,8 @@ class Handler(BaseHTTPRequestHandler):
         entry = JOB_ACTIONS.get(action)
         if not entry or entry[0] != (item is not None):
             raise UnknownAction()
+        if action in OWNER_ACTIONS and ctx.user["role"] != "owner":
+            raise OwnerOnly()
         entry[1](self, state, job_id, item, ctx)
 
     def _m_payer_suggestion(self, state: dict, m, ctx: "Ctx") -> None:
@@ -2159,6 +2164,10 @@ class Handler(BaseHTTPRequestHandler):
 
 class UnknownAction(Exception):
     """A job action the route table doesn't know: answered with 404."""
+
+
+class OwnerOnly(Exception):
+    """A job action only an owner may take: answered with 403."""
 
 
 @dataclass
@@ -2325,6 +2334,9 @@ def _edit_job(h, st, j, i, c):
     domain.edit_job(st, j, updates, c.actor)
 
 
+# Job actions only an owner may take (R4-02; R4-09 widens this to every final or emailed step).
+OWNER_ACTIONS = {"reopen"}
+
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
 JOB_ACTIONS = {
     "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"))),
@@ -2359,6 +2371,10 @@ JOB_ACTIONS = {
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the customer sent the pay app back."), c.actor)),
     "import-qbo": (False, _import_qbo),
     "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),
+    "reopen": (False, lambda h, st, j, i, c: domain.reopen_job(st, j, _text(c.body, "reason"), c.actor)),
+    "undo-done": (False, lambda h, st, j, i, c: domain.undo_mark_done(st, j, c.actor)),
+    "accept-short-pay": (True, lambda h, st, j, i, c: domain.settle_short_pay(st, j, i, _text(c.body, "reason"), c.actor)),
+    "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
     "edit": (False, _edit_job),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter what happened on the job."), c.actor)),

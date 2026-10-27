@@ -262,6 +262,22 @@ class AccountHttpTests(ServerCase):
         res, _ = self.request("POST", "/api/team/invite", {"email": "other@team.example"}, cookie=owner)
         self.assertEqual(res.status, 409)
 
+    def test_only_an_owner_reopens_a_job(self):  # R4-02
+        owner, _ = self.signup("owner@reopen.example", "Reopen Co")
+        _, out = self.request("POST", "/api/team/invite", {"email": "member@reopen.example", "role": "member"}, cookie=owner)
+        token = out["invite_path"].split("#invite=")[1]
+        res, _ = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
+               "contract_cents": 1_000_000, "role": "Owner"}
+        _, state = self.request("POST", "/api/jobs", job, cookie=owner)
+        job_id = state["jobs"][0]["id"]
+        res, out = self.request("POST", f"/api/jobs/{job_id}/reopen", {"reason": "Late check"}, cookie=member)
+        self.assertEqual((res.status, out["error"]), (403, "Only an owner can do that."))
+        res, out = self.request("POST", f"/api/jobs/{job_id}/reopen", {"reason": "Late check"}, cookie=owner)
+        self.assertEqual(res.status, 409, out)
+        self.assertIn("is not finished", out["error"])
+
     def test_setup_checklist_is_dismissed_per_person(self):  # R2-03
         owner, _ = self.signup("owner@checklist.example", "Checklist Co")
         res, out = self.request("POST", "/api/team/invite", {"email": "member@checklist.example", "role": "member"}, cookie=owner)

@@ -254,6 +254,18 @@ await step("an unsettled job lists what stands before Finish job, each with its 
   assert.equal(await page.locator(".next-card .btn", { hasText: "Finish job" }).count(), 0, "no Finish job while unsettled");
 });
 
+await step("a sent pay app with nothing paid can be pulled back, with a reason first", async () => {
+  // PA-TRN-01 went out and nothing is recorded on it (R4-03). Nothing is sent here: Cancel.
+  await page.goto(BASE + "/money/pay-app/job-turner/inv-trn-1");
+  await page.getByRole("heading", { name: "PA-TRN-01" }).waitFor();
+  await page.getByRole("button", { name: "Pull back this pay app…" }).click();
+  await page.locator("#voidsent-reason-inv-trn-1").waitFor();
+  await page.click('[data-action="void-sent"][data-inv="inv-trn-1"]');
+  await page.locator('[data-form-key="voidsent-inv-trn-1"] .field-error', { hasText: "Enter why you are pulling it back" }).waitFor();
+  await page.locator('[data-form-key="voidsent-inv-trn-1"]').getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Pull back this pay app…" }).waitFor();
+});
+
 await step("money path: the main button walks a job from blocked to closed", async () => {
   // Follow the one main button, whatever it says, until the job is closed.
   const seen = [];

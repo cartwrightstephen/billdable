@@ -452,3 +452,10 @@ textarea { font: inherit; }
 .close-blocker-list { list-style: none; margin: 0; padding: 0; }
 .close-blocker-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
 .close-blocker-list li:first-child { border-top: 0; }
+
+/* R4-01..03: short pay, pull back and reopen sit inside their cards. */
+.short-pay-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.pull-back { border-top: 1px solid var(--line, #e3ddd2); margin-top: 12px; padding-top: 12px; }
+.pull-back h3 { margin: 0 0 4px; }
+.notice.pulled-back { margin: 0 0 12px; }
+.reopen-card .form-row, .reopen-card > .btn { margin-top: 8px; }
