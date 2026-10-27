@@ -1,14 +1,24 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm } from "./js/jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
 import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js";
 import { labelTables, moreButton, askConfirm } from "./js/dom.js";
 import { field, moneyField, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, formDraft, draftValue, clearForm, clearAllForms, watchForms } from "./js/forms.js";
+import { todayQueue, queueHtml, anyPayAppSent } from "./js/today.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, setMe, clearSession, setLocation, closeForms } from "./js/state.js";
+
+// The Daily record starts on the job last used on this device (R2-07).
+const DAILY_JOB_KEY = "duracash-daily-job";
+function lastDailyJob() {
+  try { return localStorage.getItem(DAILY_JOB_KEY) || ""; } catch (_) { return ""; }
+}
+function rememberDailyJob(id) {
+  try { localStorage.setItem(DAILY_JOB_KEY, unesc(id)); } catch (_) { /* private window: the only open job still comes first */ }
+}
 
 // Someone who has signed in on this device before lands on Sign in, not on Create account (R2-02).
 const SIGNED_IN_KEY = "duracash-signed-in";
@@ -19,6 +29,7 @@ function rememberSignIn() {
   try { localStorage.setItem(SIGNED_IN_KEY, "1"); } catch (_) { /* private window: start on Create account */ }
 }
 let authMode = signedInBefore() ? "login" : "signup";
+let demoAvailable = false;  // /api/auth/demo-available: the landing offers the sample company
 let dataNotice = false;   // server says data may be erased (no persistent disk confirmed yet)
 let authError = "";      // the two-step code screen's error; the sign-in form uses formErrors.auth
 let actionEl = null;      // the button whose action is running: a refusal is shown under it
@@ -40,7 +51,8 @@ let aiOpen = false;
 let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth();
 let calSelectedDay = null;
-let helpDismissed = localStorage.getItem("duracash-help-dismissed") === "1";
+let helpDismissed = (() => { try { return localStorage.getItem("duracash-help-dismissed") === "1"; } catch (_) { return false; } })();
+let queueExpanded = false;   // Today's "and N more" was tapped; back to three rows on the next page
 let dashFilter = "all";
 let dashSort = "name";
 let dashSortDir = 1;
@@ -270,6 +282,7 @@ async function boot(checkLink = true) {
     dataNotice = (await readJson(res)).data_notice === true;
     if (location.pathname !== "/" && routeFromPath(location.pathname)) { pendingPath = location.pathname; authMode = "login"; }
     renderLanding();
+    checkDemo();
   }
   setAiVisible(!!me);
   if (linkMessage) toast(linkMessage);
@@ -280,6 +293,14 @@ function setAiVisible(on) {
   const panel = document.getElementById("ai-panel");
   if (badge) badge.style.display = on ? "flex" : "none";
   if (panel && !on) panel.classList.remove("open");
+}
+
+async function checkDemo() {
+  try {
+    const res = await fetch("/api/auth/demo-available");
+    const on = res.ok && (await readJson(res)).available === true;
+    if (on !== demoAvailable) { demoAvailable = on; if (!me && document.querySelector(".landing")) renderLanding(); }
+  } catch (_) { /* offline: the landing works without it */ }
 }
 
 function renderLanding() {
@@ -307,6 +328,10 @@ function renderLanding() {
             <div><strong>Packet gate</strong><span>Nothing leaves with a missing waiver or photo.</span></div>
             <div><strong>Money file</strong><span>Contract, COs, billed, collected, retainage — one place.</span></div>
           </div>
+          ${demoAvailable ? `<div class="land-demo">
+            <button class="btn secondary" id="land-demo">Look around a sample company</button>
+            <span class="sub">No account needed. Jobs, pay apps and payments are already in.</span>
+          </div>` : ""}
         </div>
         <div class="auth-card land-form" id="signup">
           <h2>${signup ? "Create your company" : "Sign in"}</h2>
@@ -377,6 +402,7 @@ function renderLanding() {
     showFieldErrors("auth", { ...(formErrors.auth || {}), password: "Use at least 10 characters for the password." });
   });
   document.getElementById("auth-forgot")?.addEventListener("click", () => renderForgot());
+  document.getElementById("land-demo")?.addEventListener("click", lookAround);
 }
 
 async function onAuthSubmit(e) {
@@ -438,9 +464,22 @@ async function onAuthSubmit(e) {
   // After sign-up (R1-07): say where the confirmation link went, or why none did.
   checkEmail = authMode === "signup" && data.user
     ? { email: esc(String(data.user.email || "")), verification: esc(String(data.verification || "")) } : null;
+  await startSession(data.user);
+}
+
+// Look around before signing up (R2-06): the sample company, signed in without a password.
+// It doesn't count as having an account on this device.
+async function lookAround() {
+  const r = await postJson("/api/auth/demo", {});
+  if (!r.ok) { demoAvailable = false; renderLanding(); return; }
+  checkEmail = null;
+  await startSession(r.data.user);
+}
+
+async function startSession(user) {
   clearForm("auth");
   loginCode = null;
-  setMe(escDeep(data.user));
+  setMe(escDeep(user));
   authError = "";
   helperLog.length = 0;
   try {
@@ -459,6 +498,7 @@ async function onAuthSubmit(e) {
 }
 
 async function logout() {
+  const wasDemo = me && me.company_id === DEMO_COMPANY_ID;
   await fetch("/api/auth/logout", { method: "POST" });
   clearSession();
   twoStepSetup = null; recoveryCodes = null; loginCode = null; checkEmail = null;
@@ -471,7 +511,8 @@ async function logout() {
   document.getElementById("ai-chips").innerHTML = "";
   aiOpen = false;
   document.getElementById("ai-panel").classList.remove("open");
-  authMode = "login";  // they have an account on this device now
+  // They have an account on this device now; leaving the sample company goes back to where they were.
+  authMode = wasDemo && !signedInBefore() ? "signup" : "login";
   setAiVisible(false);
   drawerOpen = false;
   history.replaceState(null, "", "/");
@@ -562,6 +603,7 @@ function nav(view, jobId = null, detailId = null, opts = {}) {
   closeForms();
   clearAllForms();
   drawerOpen = false;
+  queueExpanded = false;
   if (!opts.fromHistory) {
     const url = pathFor(view, jobId, detailId);
     if (url !== location.pathname) history[opts.replace ? "replaceState" : "pushState"](null, "", url);
@@ -628,72 +670,9 @@ function coSignControls(j, co, extra = "") {
 
 // The job page shows ONE main button: the next step. Everything else that applies sits in a
 // secondary row, each with its explanation as a tooltip (it used to be a paragraph beside it).
-// Today's queue (UI/UX Option B): everything that needs a person, most urgent first, each with
-// the one button that does it. Nothing that emails a pay app or a waiver goes out from here: those
-// open the pay app's "Before you send" card, or the waiver page with its type, which show what
-// leaves and to whom. A follow-up names its
-// recipient on the row, and drafting or filing sends nothing.
 // The pay app's latest email didn't go out (light_snapshot's email_failures).
 function emailFailed(invoiceId) {
   return (state.email_failures || []).some(e => e.payapp_invoice_id === invoiceId);
-}
-
-function todayQueue() {
-  const out = [];
-  const add = (rank, j, pill, text, button, opensJob = false) => out.push({ rank, j, pill, text, button, opensJob });
-  const tag = (word, color = "") => `<span class="pill ${color}">${word}</span>`;
-  const inbox = (state.inbox || []).filter(i => i.status === "new");
-  // An email that didn't go out (the server lists the latest per pay app or follow-up, open jobs only).
-  (state.email_failures || []).forEach(e => {
-    const j = state.jobs.find(x => x.id === e.job_id && !x.closed);
-    if (j) add(0.5, j, tag("Didn't go out", "red"), `${e.subject} to ${e.to}: ${e.status}`,
-      `<button class="btn small" data-action="email-retry" data-email="${e.id}">Send again</button>`);
-  });
-  inbox.filter(i => i.says_done_job_id).forEach(i => {
-    const j = state.jobs.find(x => x.id === i.says_done_job_id && !x.closed);
-    if (j) add(0, j, tag("Job's done?", "copper"), `${SOURCE_LABELS[i.source] || i.source}${i.from ? " from " + i.from : ""}: ${(i.text || i.subject || "").split("\n")[0].slice(0, 120)}`,
-      `<button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark done and draft</button>`);
-  });
-  state.jobs.filter(j => !j.closed && !j.summary).forEach(j => {
-    const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
-    // The payer's monthly cutoff (playbook): within five days, and nothing billed since the last one.
-    const nextDue = toDate(j.payer.payapp_due_next), prevDue = toDate(j.payer.payapp_due_prev);
-    // Only a pay app that went out counts: a draft stuck on paperwork still leaves the cutoff ahead.
-    const billedThisCycle = prevDue && j.invoices.some(i => ["sent", "approved", "partial", "paid"].includes(i.status) && (toDate(i.sent_at || i.created_at) || 0) > prevDue);
-    const mayBill = j.work_status !== "complete" || j.money.unbilled_completed_cents > 0;
-    const dueSoon = nextDue && mayBill && !billedThisCycle && (nextDue - new Date(new Date().toDateString())) <= 5 * 86400000;
-    const dueText = dueSoon ? ` Pay app due to ${j.payer.name} by ${fmtDate(j.payer.payapp_due_next)}.` : "";
-    const before = out.length;
-    // One next step per job, in the job page's order (jobActions): blockers first.
-    if (isBlocked(j)) add(3, j, statusPill(j), `${j.blockers[0]}${j.blockers.length > 1 ? ` And ${j.blockers.length - 1} more.` : ""}`,
-      `<button class="btn small" data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}>${blockerButton(j)}</button>`);
-    else if (draft) add(1, j, tag("Ready to send", "green"), `${draft.number} for ${money(draft.amount_cents)} to ${j.payer.approver || j.payer.name}. Check what goes out, then approve.`,
-      `<button class="btn small" data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check">Review &amp; send</button>`, true);
-    else if (j.waiver_due && !j.waiver_sent) add(2, j, tag("Waiver due", "amber"), "Paid in full: the payer is waiting for the lien waiver.",
-      `<button class="btn small" data-action="open-waiver" data-id="${j.id}">Review waiver</button>`, true);
-    else if (j.work_status === "complete" && j.money.unbilled_completed_cents > 0)
-      add(5, j, tag("Not billed", "copper"), `${money(j.money.unbilled_completed_cents)} of finished work has no pay app yet. Drafting sends nothing.`,
-        `<button class="btn small" data-action="draft" data-id="${j.id}">Draft pay app</button>`);
-    else if (dueSoon) add(2.5, j, tag("Due soon", "amber"), `Record this month's progress and draft the pay app.`,
-      `<button class="btn small" data-action="open-job" data-id="${j.id}">Bill progress</button>`, true);
-    // A cutoff makes the job's row more urgent, and says so.
-    if (dueSoon && out.length > before) { const row = out[out.length - 1]; row.text += row.text.includes("Pay app due to") ? "" : dueText; row.rank = Math.min(row.rank, 1.5); }
-    // A pay app already sent and unpaid past the payer's follow-up window is its own row.
-    const sent = j.invoices.find(i => ["sent", "partial"].includes(i.status));
-    if (sent) {
-      const last = toDate(sent.last_follow_up_at || sent.sent_at);
-      const days = Number(unesc(String(j.payer.follow_up_days || ""))) || 7;
-      if (last && Date.now() >= last.getTime() + days * 86400000)
-        add(4, j, tag("Follow up", "copper"), `${sent.number} was sent ${fmtDate(sent.sent_at)}${sent.last_follow_up_at ? `, last follow-up ${fmtDate(sent.last_follow_up_at)}` : ""}. Emails ${j.payer.ap_email || "the payer"}.`,
-          `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`);
-    }
-  });
-  inbox.filter(i => !i.says_done_job_id && i.suggested_job_id).forEach(i => {
-    const j = state.jobs.find(x => x.id === i.suggested_job_id && !x.closed);
-    if (j) add(6, j, tag("Inbox"), `${(i.subject || i.text || "An item").split("\n")[0].slice(0, 100)}${i.match_reason ? ` <span class="sub">(${i.match_reason})</span>` : ""}`,
-      `<button class="btn small" data-action="inbox-file-suggested" data-item="${i.id}" data-job="${j.id}">File to this job</button>`);
-  });
-  return out.sort((a, b) => a.rank - b.rank);
 }
 
 // What happened on the job, newest first (UI/UX Option B): actions from the audit trail and
@@ -1123,8 +1102,10 @@ const ACTIONS = {
   "daily-save": async () => {
     const notes = document.querySelector("#daily-notes")?.value || "";
     const job = document.querySelector("#daily-job")?.value;
-    // A blank entry is refused by the server, under this button, rather than doing nothing.
-    if (job) await post(`/api/jobs/${job}/daily-record`, { notes });
+    if (!job) { toast("Pick a job."); document.querySelector("#daily-job")?.focus(); return; }
+    if (!notes.trim()) { toast("Write what happened today."); document.querySelector("#daily-notes")?.focus(); return; }
+    const r = await post(`/api/jobs/${job}/daily-record`, { notes });
+    if (r && r.ok) rememberDailyJob(job);
   },
   "attach": async (el, id) => {
     const name = document.querySelector("#attach-name")?.value || "attachment.pdf";
@@ -1226,7 +1207,8 @@ const ACTIONS = {
     if (r && r.ok) nav("jobs");
   },
   "toggle-form": (el) => toggleForm(el.dataset.form),
-  "dismiss-help": () => { helpDismissed = true; localStorage.setItem("duracash-help-dismissed", "1"); render(); },
+  "queue-more": () => { queueExpanded = true; render(); },
+  "dismiss-help": () => { helpDismissed = true; try { localStorage.setItem("duracash-help-dismissed", "1"); } catch (_) { /* hidden for this visit */ } render(); },
   "filter": (el) => { dashFilter = el.dataset.filter; render(); },
   "sort": (el) => {
     if (dashSort === el.dataset.sort) dashSortDir *= -1;
@@ -2037,7 +2019,9 @@ function inboxItemCard(i) {
   const title = i.subject || (files[0] && files[0].name) || (i.text || "").split("\n")[0].slice(0, 80) || "Untitled";
   const preview = (i.text || "").slice(0, 600);
   const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? "selected" : ""}>${v}</option>`).join("");
-  const jobs = `<option value="">Pick a job…</option>` + openJobs.map(j => `<option value="${j.id}" ${i.suggested_job_id === j.id ? "selected" : ""}>${j.name} (${j.code})</option>`).join("");
+  // Nothing suggested and only one open job: that one (R2-07).
+  const pick = i.suggested_job_id || defaultJobId(openJobs);
+  const jobs = `<option value="">Pick a job…</option>` + openJobs.map(j => `<option value="${j.id}" ${pick === j.id ? "selected" : ""}>${j.name} (${j.code})</option>`).join("");
   return `<div class="inbox-item">
     <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${title}</strong>
       <span class="sub">${i.from ? "from " + i.from + " · " : ""}${fmtDate(i.sent_at || i.received_at)}${i.note_date ? " · dated " + fmtDate(i.note_date) : ""}</span></div>
@@ -2301,7 +2285,7 @@ const views = {
     const jobs = filteredJobs();
     const isDemo = me && me.company_id === DEMO_COMPANY_ID;
     const open = state.jobs.filter(j => !j.closed);
-    const queue = todayQueue();
+    const queue = todayQueue(state);
     const hero = t.unbilled_cents > 0 ? "unbilled" : t.outstanding_cents > 0 ? "outstanding" : "";
     const sortHead = (key, label) => `<th data-action="sort" data-sort="${key}" aria-sort="${dashSort === key ? (dashSortDir > 0 ? "ascending" : "descending") : "none"}">${label} ${dashSort === key ? (dashSortDir > 0 ? "↑" : "↓") : ""}</th>`;
     const stage = (key, label) => `<button class="stage ${dashFilter === key ? "active" : ""}" data-action="filter" data-filter="${key}" aria-pressed="${dashFilter === key}">${label}</button>`;
@@ -2318,11 +2302,7 @@ const views = {
       ${state.jobs.length ? `
       <section class="card action-queue" aria-labelledby="needs-action">
         <h2 id="needs-action">Needs you${queue.length ? ` <span class="count-badge">${queue.length}</span>` : ""}</h2>
-        ${queue.length ? queue.map(q => `
-          <div class="action-item">
-            <div class="action-text">${q.pill} <strong>${q.j.name}</strong><div class="next-action">${q.text}</div></div>
-            <div class="action-buttons">${q.button}${q.opensJob ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${q.j.id}">Open</button>`}</div>
-          </div>`).join("") : `<p class="sub">Nothing is waiting on you. Work shows up here when a pay app is ready to send, a packet is blocked, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.</p>`}
+        ${queueHtml(queue, { expanded: queueExpanded, anySent: anyPayAppSent(state) })}
       </section>` : ""}
       <div class="metrics">
         <div class="metric ${hero === "unbilled" ? "highlight" : ""}"><div class="k">Unbilled completed</div><div class="v">${money(t.unbilled_cents)}</div></div>
@@ -2442,7 +2422,7 @@ const views = {
       <div class="job-head">
         <div>
           <h1>${j.name}</h1>
-          <p class="sub">${statusPill(j)} ${j.code} · ${j.address} · ${j.payer.name}${j.done_notes ? " · " + j.done_notes : ""}</p>
+          <p class="sub">${statusPill(j)} ${j.code} · ${j.address} · ${j.payer.name}</p>
         </div>
         ${j.closed ? "" : `<button class="btn secondary small" data-action="toggle-form" data-form="editjob" aria-expanded="${!!formOpen.editjob}">${formOpen.editjob ? "Cancel" : "Edit job"}</button>`}
       </div>
@@ -2588,6 +2568,7 @@ const views = {
   },
   daily() {
     const openJobs = state.jobs.filter(j => !j.closed);
+    const pick = defaultJobId(openJobs, esc(lastDailyJob()));
     const records = state.daily_records || [];
     return `
       <h1>Daily record</h1>
@@ -2595,7 +2576,7 @@ const views = {
       <div class="card">
         <h2>New record</h2>
         ${openJobs.length ? `<div class="form-grid">
-          <div><label>Job</label><select id="daily-job"><option value="">Pick a job…</option>${openJobs.map(j => `<option value="${j.id}">${j.name}</option>`).join("")}</select></div>
+          <div><label>Job</label><select id="daily-job"><option value="">Pick a job…</option>${openJobs.map(j => `<option value="${j.id}"${j.id === pick ? " selected" : ""}>${j.name}</option>`).join("")}</select></div>
           <div class="span-2"><label>What happened today</label><textarea id="daily-notes" rows="3" placeholder="Framing done on the east wall, 4 crew, inspector booked for Thursday"></textarea></div>
         </div>
         <button class="btn" data-action="daily-save">Save to job record</button>` : `<p class="sub">Create a job first; daily records are saved on a job.</p>`}
@@ -2691,6 +2672,8 @@ const views = {
     const copies = (j.payer.copy && unesc(j.payer.copy) !== "None") ? j.payer.copy : "";
     const firstSend = draft && !j.payer.sent_before && !state.jobs.some(x => x.payer_id === j.payer_id && x.invoices.some(i => i.sent_at));
     const noEmail = !j.payer.ap_email;
+    // The PDF's header prints the company's address (R2-05): say so before the first one goes out.
+    const noAddress = !String((state.company || {}).address || "").trim();
     const locked = emailUnconfirmed();
     return `
       ${backButton("job", j.name, j.id)}
@@ -2707,6 +2690,8 @@ const views = {
         <div class="money-row"><span class="label">Copy</span><span>${copies || "Nobody"}</span></div>
         <div class="money-row"><span class="label">Amount</span><span>${money(inv.amount_cents)}</span></div>
         <div class="money-row"><span class="label">Attached</span><span>Pay app PDF${inv.sov_sheet && inv.sov_sheet.length ? " with continuation sheet" : ""}, packet checklist, ${pkt.filter(p => p.present).length} packet item${pkt.filter(p => p.present).length === 1 ? "" : "s"}</span></div>
+        ${noAddress ? `<div class="notice no-address">Your company address is blank on this PDF.
+          <button class="btn small secondary" data-action="onb-go" data-view="account" data-focus="#co-address">Company details</button></div>` : ""}
         ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>` : ""}
         ${missing ? `<p class="blocker">${missing} packet item${missing === 1 ? " is" : "s are"} missing, so sending is blocked.</p>` : ""}
         ${noEmail ? `<p class="blocker">Add the email pay apps go to, then send.</p>` : ""}

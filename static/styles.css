@@ -153,6 +153,8 @@ select { max-width: 100%; }
 .land-points div { display: grid; gap: 2px; }
 .land-points strong { font-size: 15px; }
 .land-points span { font-size: 14px; color: var(--muted); }
+.land-demo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 20px; }
+.land-demo .sub { margin: 0; }
 .land-form { margin: 0; }
 .land-form h2 { margin: 0 0 4px; font-family: Georgia, serif; font-weight: 500; }
 .land-how, .land-price { max-width: 1080px; margin: 0 auto; padding: 8px 32px 32px; }
@@ -415,3 +417,4 @@ textarea { font: inherit; }
 .known-payer { margin: 0; }
 .more-details { margin: 12px 0; }
 .more-details > summary { cursor: pointer; color: var(--copper); font-size: 14px; margin-bottom: 8px; }
+.notice.no-address { margin: 10px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

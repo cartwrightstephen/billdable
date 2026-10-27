@@ -322,6 +322,13 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     job["work_status"] = "complete"
     job["completed_at"] = job.get("completed_at") or utcnow()
     job["done_notes"] = notes or job.get("done_notes", "")
+    # The notes are kept on the job record (and in History, through the audit line below), not
+    # on the job's header line (R2-05).
+    if (notes or "").strip():
+        job.setdefault("records", []).append({
+            "id": "rec-" + secrets.token_hex(3), "kind": "note", "label": "Notes when marked done",
+            "note": notes.strip(), "added_at": utcnow(), "added_by": actor,
+        })
     if evidence:
         job.setdefault("evidence", []).extend(evidence)
     job["completed_value_cents"] = job["contract_cents"] + sum(

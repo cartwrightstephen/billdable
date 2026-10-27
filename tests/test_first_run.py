@@ -153,6 +153,24 @@ class FirstRunTests(unittest.TestCase):
         self.assertEqual(packets["Porch rebuild"], default, "the notes did not become the paperwork list")
         self.assertNotIn("Gate code 1234", default)
 
+    def test_done_notes_go_on_the_job_record(self):  # R2-05
+        cookie, _ = self.signup("first-run-done-notes@example.com")
+        res, data = self.request("POST", "/api/jobs", new_job_body(), cookie)
+        job_id = data["jobs"][-1]["id"]
+        res, data = self.request("POST", f"/api/jobs/{job_id}/done", {"notes": "Punch list walked with Dana"}, cookie)
+        self.assertEqual(res.status, 200, data)
+        job = self.job(data, job_id)
+        self.assertIn({"kind": "note", "label": "Notes when marked done", "note": "Punch list walked with Dana"},
+                      [{k: r[k] for k in ("kind", "label", "note")} for r in job["records"]])
+        res, timeline = self.request("GET", f"/api/timeline?job={job_id}", cookie=cookie)
+        self.assertEqual(res.status, 200, timeline)
+        self.assertTrue(any("Punch list walked with Dana" in e["text"] for e in timeline["entries"]), "the notes are in History")
+        # Blank notes make no record.
+        res, data = self.request("POST", "/api/jobs", new_job_body(name="Second porch"), cookie)
+        other = data["jobs"][-1]["id"]
+        res, data = self.request("POST", f"/api/jobs/{other}/done", {"notes": "  "}, cookie)
+        self.assertEqual(self.job(data, other)["records"], [])
+
     def test_email_asked_for_at_send(self):  # R1-05
         cookie, _ = self.signup("first-run-email@example.com")
         res, data = self.request("POST", "/api/jobs", new_job_body(approver="", ap_email=""), cookie)

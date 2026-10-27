@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -120,6 +121,26 @@ class HttpTests(unittest.TestCase):
         res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "short@example.com", "password": "123456789", "name": "Pat", "company_name": "P"})
         self.assertEqual(res.status, 400)
         self.assertIn("10 characters", data["error"])
+
+    def test_look_around_the_sample_company(self):  # R2-06
+        with mock.patch.dict("os.environ", {"DURACASH_ENV": "", "DURACASH_DEMO": "readonly"}):
+            res, data = self.request("GET", "/api/auth/demo-available")
+            self.assertEqual((res.status, data), (200, {"available": True}))
+            res, data = self.request("POST", "/api/auth/demo", {})
+            self.assertEqual(res.status, 200, data)
+            self.assertEqual(data["user"]["company_id"], auth.DEMO_COMPANY_ID)
+            cookie = res.getheader("Set-Cookie").split(";")[0]
+            self.assertTrue(cookie.split("=", 1)[1], "a session cookie is set")
+            res, me = self.request("GET", "/api/auth/me", cookie=cookie)
+            self.assertEqual(res.status, 200, me)
+            self.assertEqual(me["user"]["email"], auth.DEMO_EMAIL)
+            self.assertTrue(me["read_only"], "the read-only demo stays read-only")
+        with mock.patch.dict("os.environ", {"DURACASH_ENV": "", "DURACASH_DEMO": "off"}):
+            res, data = self.request("GET", "/api/auth/demo-available")
+            self.assertEqual(data, {"available": False})
+            res, data = self.request("POST", "/api/auth/demo", {})
+            self.assertEqual(res.status, 404, data)
+            self.assertNotIn("Set-Cookie", dict(res.getheaders()))
 
     def test_signup_without_company_name_uses_the_persons_name(self):  # R2-02
         res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "noco@example.com", "password": PASSWORD, "name": "Pat Pine", "company_name": ""})

@@ -84,3 +84,10 @@ export function waiverSendForm(j, inv, disabled = false) {
     <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}${disabled ? " disabled" : ""}>Approve & send</button>
   </div>`;
 }
+
+// The job a form starts on (R2-07): the one last used when it is still open, else the only open
+// job, else none ("Pick a job…").
+export function defaultJobId(openJobs, lastId = "") {
+  if (lastId && openJobs.some(j => j.id === lastId)) return lastId;
+  return openJobs.length === 1 ? openJobs[0].id : "";
+}

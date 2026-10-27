@@ -120,6 +120,63 @@ await step("sign-up says where the confirmation link went", async () => {
   await ctx.close();
 });
 
+await step("the landing opens a sample company without an account", async () => {  // R2-06
+  const ctx = await browser.newContext();
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => errors.push(e.message));
+  await p.goto(BASE + "/");
+  await p.locator("#land-demo", { hasText: "Look around a sample company" }).click();
+  await p.getByRole("heading", { name: "Today" }).waitFor();
+  assert.equal((await p.evaluate(async () => (await (await fetch("/api/auth/me")).json()).user.company_id)), "co-hartline");
+  await ctx.close();
+});
+
+await step("a first job: Today, the Daily record and the company address", async () => {  // R2-04, R2-05, R2-07
+  const ctx = await browser.newContext();
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => errors.push(e.message));
+  await p.goto(BASE + "/");
+  const jobId = await p.evaluate(async (email) => {
+    const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Ann First", company_name: "First Builders" });
+    const st = await (await post("/api/jobs", { name: "First porch", address: "2 Elm St", customer: "Lee Homeowner", role: "Owner",
+      ap_email: "lee@example.com", contract_cents: 1200000 })).json();
+    return st.jobs[0].id;
+  }, `first-${Date.now()}@example.com`);
+  // One new job: Today says it isn't billed yet, and its button opens the job.
+  await p.goto(BASE + "/today");
+  const row = p.locator(".action-item", { hasText: "First porch" });
+  await row.locator(".pill", { hasText: "Not billed yet" }).waitFor();
+  await row.getByRole("button", { name: "Bill progress" }).click();
+  await p.getByRole("heading", { name: "First porch" }).waitFor();
+  // The only open job is picked on the Daily record.
+  await p.goto(BASE + "/today/daily");
+  await p.locator("#daily-job").waitFor();
+  assert.equal(await p.inputValue("#daily-job"), jobId);
+  // No company address yet: Before you send says so; once it is filled in, the notice is gone.
+  const invId = await p.evaluate(async (id) => {
+    const st = await (await fetch(`/api/jobs/${id}/done`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes: "" }) })).json();
+    return st.jobs.find((j) => j.id === id).invoices[0].id;
+  }, jobId);
+  await p.goto(`${BASE}/money/pay-app/${jobId}/${invId}`);
+  const warn = p.locator(".send-check .no-address");
+  await warn.waitFor();
+  assert.match(await warn.innerText(), /Your company address is blank on this PDF/);
+  await warn.getByRole("button", { name: "Company details" }).click();
+  await p.locator("#co-address").waitFor();
+  await p.fill("#co-address", "2 Elm St, Decatur, GA 30030");
+  await p.click('[data-action="save-company"]');
+  for (let t = 0; t < 50; t++) {
+    const addr = await p.evaluate(async () => (await (await fetch("/api/state")).json()).company.address);
+    if (addr) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  await p.goto(`${BASE}/money/pay-app/${jobId}/${invId}`);
+  await p.locator(".send-check").waitFor();
+  assert.equal(await p.locator(".send-check .no-address").count(), 0);
+  await ctx.close();
+});
+
 await step("refresh keeps the page", async () => {
   await page.goto(BASE + "/money/collections");
   await page.reload();
@@ -222,6 +279,13 @@ await step("Today's queue: one main button per row, and a follow-up goes in one 
   const n = await rows.count();
   for (let i = 0; i < n; i++) {
     assert.equal(await rows.nth(i).locator(".action-buttons .btn:not(.secondary)").count(), 1, `row ${i + 1} has one main button`);
+  }
+  // Three rows show until "and N more" is tapped (R2-04).
+  if (await page.locator(".queue-more").count()) {
+    assert.equal(n, 3);
+    await page.locator(".queue-more").click();
+    await page.locator(".queue-more").waitFor({ state: "detached" });
+    assert.ok(await rows.count() > 3);
   }
   const follow = () => page.locator(".action-item", { hasText: "Turner office TI" }).getByRole("button", { name: "Send follow-up" });
   if (await follow().count()) {

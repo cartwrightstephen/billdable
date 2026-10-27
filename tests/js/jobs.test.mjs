@@ -1,7 +1,7 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm } from "../../static/js/jobs.js";
+import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId } from "../../static/js/jobs.js";
 
 const job = (over = {}) => ({
   id: "j1", closed: false, work_status: "in_progress", blockers: [], close_blockers: [], invoices: [],
@@ -63,4 +63,13 @@ test("waiver kinds read as words, and the send form picks the likely one", () =>
   // Sending is off until the email is confirmed or the customer has an email (R1-05, R1-07).
   assert.doesNotMatch(waiverSendForm(job(), null), /disabled/);
   assert.match(waiverSendForm(job(), null, true), /data-action="waiver"[^>]* disabled>/);
+});
+
+test("forms start on the job last used, else the only open job (R2-07)", () => {
+  const a = { id: "a" }, b = { id: "b" };
+  assert.equal(defaultJobId([a]), "a");
+  assert.equal(defaultJobId([a, b]), "");
+  assert.equal(defaultJobId([a, b], "b"), "b");
+  assert.equal(defaultJobId([a], "gone"), "a", "a closed or deleted job is not kept");
+  assert.equal(defaultJobId([]), "");
 });

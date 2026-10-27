@@ -185,6 +185,17 @@ COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_my
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal"}
 
 
+def demo_user() -> dict | None:
+    """The demo owner, when the demo is on or read-only and its company exists. Someone who turned
+    on two-step sign-in for it (possible when the demo is "on") keeps the password route only."""
+    if not demo_enabled() or not company_exists(auth.DEMO_COMPANY_ID):
+        return None
+    user = auth.user_by_email(auth.DEMO_EMAIL)
+    if not user or user.get("company_id") != auth.DEMO_COMPANY_ID or user.get("two_step"):
+        return None
+    return user
+
+
 def demo_locked(company_id: str) -> bool:
     """The read-only demo also ignores writes from outside: its inbound addresses are visible to
     every visitor, so mail, texts, "Mark as received" and signatures sent to it change nothing."""
@@ -886,6 +897,9 @@ class Handler(BaseHTTPRequestHandler):
                          "read_only": read_only_reason(user["company_id"], state),
                          "billing": billing.standing(state)})
 
+    def _g_demo_available(self, m) -> None:
+        self._json(200, {"available": demo_user() is not None})
+
     def _g_helper_review(self, m, user) -> None:
         if not is_helper_admin(user):
             self._json(403, {"error": "Only the Duracash team can review helper questions."})
@@ -1197,6 +1211,14 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             # An email that already has an account: the page offers "Sign in instead".
             self._json(400, {"error": str(exc), **({"exists": True} if "already exists" in str(exc) else {})})
+
+    def _p_demo(self, m) -> None:
+        """Look around before signing up (R2-06): a session as the demo owner, no password typed."""
+        user = demo_user()
+        if not user:
+            self._json(404, {"error": "There is no sample company on this server."})
+            return
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
 
     def _p_logout(self, m) -> None:
         auth.destroy_session(self._token())
@@ -2157,6 +2179,7 @@ ROUTES = [
     Route("GET", r"/s/" + TOKEN_LINK, "_g_co_sign"),
     # signed-in reads
     Route("GET", r"/api/auth/me", "_g_me"),
+    Route("GET", r"/api/auth/demo-available", "_g_demo_available"),
     Route("GET", r"/api/state", "_g_state", "user"),
     Route("GET", r"/api/jobs", "_g_jobs", "user"),
     Route("GET", r"/api/jobs/([^/]+)", "_g_job", "user"),
@@ -2177,6 +2200,7 @@ ROUTES = [
     # signing in, and links people outside the company use
     Route("POST", r"/api/auth/login", "_p_login"),
     Route("POST", r"/api/auth/signup", "_p_signup"),
+    Route("POST", r"/api/auth/demo", "_p_demo"),
     Route("POST", r"/api/auth/logout", "_p_logout"),
     Route("POST", r"/api/auth/forgot", "_p_forgot"),
     Route("POST", r"/api/auth/reset", "_p_reset_password"),
