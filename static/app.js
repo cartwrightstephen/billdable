@@ -1,7 +1,7 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue } from "./js/jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
@@ -120,11 +120,41 @@ function addInfoIcon(labelEl, text, hostEl) {
   (hostEl || labelEl).classList.add("has-info");
 }
 
+// The (i) beside each label, found by the label's data-help key (a field()), else its text.
+// A touch screen shows no icons (styles.css); each card instead ends with one "What do these
+// mean?" list of the help in it (R3-10).
 function decorateHelp(root) {
+  const lists = new Map();  // card -> [[term, help], ...]
   root.querySelectorAll(".money-row .label, .metric .k, th, label").forEach(el => {
     if (el.closest(".auth-card")) return;
     const host = el.closest(".money-row, .metric, th, .form-grid > div") || el;
-    addInfoIcon(el, helpFor(el.textContent), host);
+    const text = (el.dataset.help && FIELD_HELP[el.dataset.help]) || helpFor(el.textContent);
+    addInfoIcon(el, text, host);
+    const card = text && el.closest(".card, .table-wrap, .metrics");
+    if (!card) return;
+    const term = el.textContent.replace(/[↑↓*]/g, "").trim();
+    const list = lists.get(card) || [];
+    if (term && !list.some(([t]) => t === term)) list.push([term, text]);
+    lists.set(card, list);
+  });
+  lists.forEach((list, card) => {
+    const placed = card.classList.contains("card") ? card.querySelector(":scope > .help-list") : card.nextElementSibling?.classList.contains("help-list");
+    if (placed) return;  // drawn already
+    const box = document.createElement("details");
+    box.className = "help-list";
+    const summary = document.createElement("summary");
+    summary.textContent = "What do these mean?";
+    const dl = document.createElement("dl");
+    for (const [term, text] of list) {
+      const dt = document.createElement("dt"), dd = document.createElement("dd");
+      dt.textContent = term;
+      dd.textContent = text;
+      dl.append(dt, dd);
+    }
+    box.append(summary, dl);
+    // A card holds its list; a table or a row of tiles has it just after.
+    if (card.classList.contains("card")) card.append(box);
+    else card.after(box);
   });
   root.querySelectorAll(".nav button[data-section]").forEach(b => addInfoIcon(b, NAV_HELP[b.dataset.section], b));
 }
@@ -153,7 +183,7 @@ const SECTIONS = [
   { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["history", "Job history"]] },
   { key: "inbox", label: "Inbox", views: [["inbox", "Inbox"]] },
   { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["packets", "Packets"], ["cos", "Change orders"], ["collections", "Collections"], ["payments", "Payments"], ["waivers", "Waivers"], ["retainage", "Retainage"], ["outbox", "Outbox"]] },
-  { key: "settings", label: "Settings", views: [["account", "Team & account"], ["playbook", "Payer playbook"], ["audit", "Audit"], ["help", "Help"], ["helper-admin", "Helper answers"]] },
+  { key: "settings", label: "Settings", views: [["account", "Team & account"], ["playbook", "Customer settings"], ["audit", "Audit"], ["help", "Help"], ["helper-admin", "Helper answers"]] },
 ];
 
 function sectionOf(view) {
@@ -1144,7 +1174,7 @@ const ACTIONS = {
     await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
   },
   "void-draft": async (el, id) => {
-    if (!(await askConfirm("Void the open draft pay app? You can draft it again from the job page.", "Void the draft", true))) return;
+    if (!(await askConfirm("Delete the open draft pay app? You can draft it again from the job page.", "Delete draft", true))) return;
     await post(`/api/jobs/${id}/void-draft`);
   },
   "follow-up": async (el, id) => {
@@ -1301,7 +1331,8 @@ const ACTIONS = {
     await post(`/api/jobs/${id}/edit`, body, { formKey: "editjob", close: "editjob" });
   },
   "delete-job": async (el, id) => {
-    if (!(await askConfirm(`Delete ${unesc(el.dataset.name || "this job")}? It has no pay apps, so nothing billed is lost. Its record and notes go too.`, "Delete the job", true))) return;
+    const billed = el.dataset.drafts ? "Nothing was billed: its pay apps are deleted drafts." : "It has no pay apps, so nothing billed is lost.";
+    if (!(await askConfirm(`Delete ${unesc(el.dataset.name || "this job")}? ${billed} Its record and notes go too.`, "Delete the job", true))) return;
     const r = await post(`/api/jobs/${id}/delete`);
     if (r && r.ok) nav("jobs");
   },
@@ -1318,11 +1349,33 @@ const ACTIONS = {
   "sug-add": (el, id) => post(`/api/payers/${id}/suggestion/${el.dataset.sug}/add`),
   "sug-dismiss": (el, id) => post(`/api/payers/${id}/suggestion/${el.dataset.sug}/dismiss`),
   "save-playbook": async (el, id) => {
-    const form = el.closest("form");
-    const updates = {};
-    // Blank skips a field, except the cutoff day, where blank means "no cutoff".
-    new FormData(form).forEach((v, k) => { if (v !== "") updates[k] = isNaN(v) ? v : Number(v); else if (k === "payapp_due_day") updates[k] = ""; });
-    await post(`/api/payers/${id}/update`, updates);
+    const key = `payer-${id}`;
+    const updates = formValues(key);
+    // Blank clears a field (the day fields go back to the usual number, an empty paperwork list
+    // means nothing is needed), except who signs off and the email, which a send needs (R3-07).
+    for (const k of ["approver", "ap_email"]) if (!updates[k]) delete updates[k];
+    const errors = {};
+    if (!updates.name) errors.name = "Enter the customer's name.";
+    for (const [k, label] of [["follow_up_days", "the days between follow-ups"], ["usual_approval_days", "the days they usually take to pay"]]) {
+      if (updates[k] && !/^\d+$/.test(updates[k])) errors[k] = `Enter ${label} as a whole number from 1 to 365.`;
+    }
+    if (refuseForm(key, errors)) return;
+    await post(`/api/payers/${id}/update`, updates, { formKey: key });
+  },
+  "add-payer": async () => {
+    const v = formValues("addpayer");
+    if (refuseForm("addpayer", v.name ? {} : { name: "Enter the customer's name." })) return;
+    await post("/api/payers", v, { formKey: "addpayer", close: "addpayer" });
+  },
+  "merge-payer": async (el, id) => {
+    const select = el.closest(".merge-payer").querySelector("[data-merge-into]");
+    const into = state.payers.find(p => p.id === select.value);
+    if (!into) return;
+    const n = state.jobs.filter(j => j.payer_id === id).length;
+    const name = unesc(el.dataset.name || "this customer");
+    const jobs = n === 0 ? "It has no jobs." : `${n === 1 ? "Its job moves" : `Its ${n} jobs move`} to ${unesc(into.name)}.`;
+    if (!(await askConfirm(`Merge ${name} into ${unesc(into.name)}? ${jobs} ${unesc(into.name)} keeps its own settings, and ${name} is removed.`, "Merge", true))) return;
+    await post(`/api/payers/${id}/merge`, { into: into.id });
   },
 };
 
@@ -1348,14 +1401,18 @@ const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 // The job's own fields, the same on New job and Edit job (R2-01). prefix is the form's id
 // prefix (nj, ej); j holds the saved values (escaped, as in state), if any.
+// Who pays you: the two kinds of customer, as the forms show them.
+const ROLE_OPTIONS = [["Owner", "The homeowner or property owner"], ["GC", "A general contractor (you are the sub)"]];
+function roleLabel(role) { return unesc(role || "") === "GC" ? "General contractor" : "Homeowner or owner"; }
+
 function jobFields(form, prefix, j = {}) {
   const f = (o) => field({ form, ...o });
   return {
-    name: f({ name: "name", id: `${prefix}-name`, label: "Job name", required: true, autocomplete: "off", value: unesc(j.name || "") }),
-    address: f({ name: "address", id: `${prefix}-address`, label: "Address", required: true, autocomplete: "street-address", value: unesc(j.address || "") }),
-    contract_number: f({ name: "contract_number", id: `${prefix}-contract`, label: "Contract number", value: unesc(j.contract_number || "") }),
-    contract_cents: moneyField({ form, name: "contract_cents", id: `${prefix}-amount`, label: "Contract amount ($)", required: true, placeholder: "48,500", cents: j.contract_cents }),
-    retainage_pct: f({ name: "retainage_pct", id: `${prefix}-retainage`, label: "Retainage %", value: String(j.retainage_pct || 0), inputmode: "decimal", autocomplete: "off" }),
+    name: f({ name: "name", id: `${prefix}-name`, label: "Job name", helpKey: "job_name", required: true, autocomplete: "off", value: unesc(j.name || "") }),
+    address: f({ name: "address", id: `${prefix}-address`, label: "Address", helpKey: "job_address", required: true, autocomplete: "street-address", value: unesc(j.address || "") }),
+    contract_number: f({ name: "contract_number", id: `${prefix}-contract`, label: "Contract number", helpKey: "contract_number", value: unesc(j.contract_number || "") }),
+    contract_cents: moneyField({ form, name: "contract_cents", id: `${prefix}-amount`, label: "Contract amount ($)", helpKey: "contract_amount", required: true, placeholder: "48,500", cents: j.contract_cents }),
+    retainage_pct: f({ name: "retainage_pct", id: `${prefix}-retainage`, label: "Retainage %", helpKey: "retainage_pct", value: String(j.retainage_pct || 0), inputmode: "decimal", autocomplete: "off" }),
   };
 }
 
@@ -2407,7 +2464,7 @@ const views = {
       ["Closeout packet", "The documents needed to finish the job and release retainage: punch-list signoff, final waivers, warranties."],
       ["Lien waiver", "A document giving up lien rights for money already paid. Conditional: only if the payment clears. Unconditional: payment received. Forms are set by state law in some states."],
       ["Pay-when-paid / pay-if-paid", "Contract terms that tie a sub's payment to the GC being paid. Pay-if-paid shifts the risk to the sub; some states limit it."],
-      ["Payer playbook", "What each customer requires, who approves, how long they take, and why they reject pay apps."],
+      ["Customer settings", "Who each customer is, where pay apps go, the paperwork they need, how long they take to pay, and why they send pay apps back."],
     ];
     return `
       <h1>Help</h1>
@@ -2518,7 +2575,7 @@ const views = {
             ${jf.address}
             ${f({ name: "customer", id: "nj-customer", label: "Customer", required: true, autocomplete: "off", attrs: 'list="nj-customers"' })}
             <datalist id="nj-customers">${(state.payers || []).map(p => `<option value="${p.name}"></option>`).join("")}</datalist>
-            ${f({ name: "role", id: "nj-role", label: "Who pays you?", help: "Sets the paperwork they usually need and when to follow up. You can change both later.", options: [["Owner", "The homeowner or property owner"], ["GC", "A general contractor (you are the sub)"]] })}
+            ${f({ name: "role", id: "nj-role", label: "Who pays you?", helpKey: "role", help: "Sets the paperwork they usually need and when to follow up. You can change both later.", options: ROLE_OPTIONS })}
             ${jf.contract_cents}
             <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
               <button class="linkish" data-action="nav" data-view="playbook">Change in Customer settings</button></p>
@@ -2528,10 +2585,10 @@ const views = {
             <div class="form-grid">
               ${jf.contract_number}
               ${jf.retainage_pct}
-              ${f({ name: "phone", id: "nj-phone", label: "Phone", type: "tel", autocomplete: "off" })}
-              <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", placeholder: "The customer, unless you say otherwise" })}</div>
-              <div data-payer-slot="ap_email"${known && known.ap_email ? " hidden" : ""}>${f({ name: "ap_email", id: "nj-email", label: "Email for pay apps (can add later)", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
-              ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
+              ${f({ name: "phone", id: "nj-phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off" })}
+              <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The customer, unless you say otherwise" })}</div>
+              <div data-payer-slot="ap_email"${known && known.ap_email ? " hidden" : ""}>${f({ name: "ap_email", id: "nj-email", label: "Email for pay apps (can add later)", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
+              ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
             </div>
           </details>
           <button class="btn" data-action="create-job">Save job</button>
@@ -2594,7 +2651,7 @@ const views = {
           <p class="sub">${hasPayApps ? "The contract amount and retainage are fixed once a pay app exists; use a change order. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Who pays you and where pay apps go are in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>
           <div class="form-inline">
             <button class="btn" data-action="save-job" data-id="${j.id}">Save changes</button>
-            ${j.invoices.length || j.payments.length ? "" : `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}">Delete job</button>`}
+            ${j.can_delete ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
           </div>
         </div>` : ""}
       <section class="next-card" aria-label="Next step">
@@ -2639,7 +2696,11 @@ const views = {
             return list.length ? `<div class="more-group"><h3>${title}</h3><div class="more-actions" role="group" aria-label="${title}">${list.map(actionButton).join("")}</div></div>` : "";
           }).join("")}
         </details>` : ""}
-      ${!j.closed && j.work_status === "complete" && (j.close_blockers || []).length ? `<p class="sub">Finish job unlocks when: ${(j.close_blockers || []).join(" ")}</p>` : ""}
+      ${!j.closed && j.work_status === "complete" && (j.close_blocker_items || []).length ? `
+        <section class="card close-blockers" aria-labelledby="close-blockers-h">
+          <h2 id="close-blockers-h">Before you can finish this job</h2>
+          <ul class="close-blocker-list">${j.close_blocker_items.map(b => `<li data-blocker="${b.kind}"><span>${b.text}</span><span class="form-inline">${closeBlockerActions(j, b).map((a, n) => `<button class="btn small${n ? " secondary" : ""}" ${a.attrs}>${a.label}</button>`).join("")}</span></li>`).join("")}</ul>
+        </section>` : ""}
       <div class="detail-grid">
         <details class="card money-file"${window.innerWidth >= 800 ? " open" : ""}>
           <summary><h2>Money file</h2><span class="sub">${money(m.contract_total_cents)} contract · ${money(m.billed_cents)} billed · ${money(m.collected_cents)} collected · ${money(m.outstanding_cents)} owed</span></summary>
@@ -2849,7 +2910,7 @@ const views = {
         <h2>Before you send</h2>
         <div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email || '<span class="blocker">no email yet</span>'}</span></div>
         ${noEmail ? `<div class="send-email" data-form-key="sendemail">${formErrorLine("sendemail")}
-          <div class="form-grid">${field({ form: "sendemail", name: "ap_email", id: "send-email", label: "Email for pay apps", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
+          <div class="form-grid">${field({ form: "sendemail", name: "ap_email", id: "send-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
           <button class="btn small secondary" data-action="save-send-email" data-id="${j.payer_id}">Save email</button>
         </div>` : ""}
         <div class="money-row"><span class="label">Copy</span><span>${copies || "Nobody"}</span></div>
@@ -3273,34 +3334,74 @@ const views = {
   },
   playbook() {
     const clean = (v) => (v && unesc(v) !== "None" ? v : "");
+    const jobsOf = (p) => state.jobs.filter(j => j.payer_id === p.id).length;
+    const addForm = formOpen.addpayer ? `
+      <div class="card" data-form-key="addpayer">
+        <h2>Add customer</h2>
+        ${formErrorLine("addpayer")}
+        <div class="form-grid">
+          ${field({ form: "addpayer", name: "name", id: "ap-name", label: "Customer name", helpKey: "customer_name", required: true, autocomplete: "off" })}
+          ${field({ form: "addpayer", name: "role", id: "ap-role", label: "Who pays you?", helpKey: "role", options: ROLE_OPTIONS })}
+          ${field({ form: "addpayer", name: "approver", id: "ap-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The customer, unless you say otherwise" })}
+          ${field({ form: "addpayer", name: "ap_email", id: "ap-email", label: "Email for pay apps (can add later)", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com" })}
+          ${field({ form: "addpayer", name: "phone", id: "ap-phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off" })}
+        </div>
+        <div class="form-inline"><button class="btn" data-action="add-payer">Add customer</button></div>
+      </div>` : "";
     return `
-      <h1>Payer playbook</h1>
-      <p class="sub">What each payer requires, who approves, how long they take, and why they reject. These values set follow-up timing and the calendar.</p>
-      ${state.payers.length ? state.payers.map(p => `
-        <details class="card playbook-card"${(p.packet_suggestions || []).some(x => x.status === "open") ? " open" : ""}>
-          <summary><strong>${p.name}</strong> <span class="sub">${p.role} · ${p.approver || "no approver"} · ${p.ap_email || "no AP email"}</span>${(p.packet_suggestions || []).some(x => x.status === "open") ? ` <span class="pill copper">${p.packet_suggestions.filter(x => x.status === "open").length} suggested</span>` : ""}</summary>
+      <div class="job-head">
+        <div>
+          <h1>Customer settings</h1>
+          <p class="sub">Who each customer is, where pay apps go, the paperwork they need, and how long they take to pay. These set follow-up timing and the calendar.</p>
+        </div>
+        <button class="btn secondary small" data-action="toggle-form" data-form="addpayer" aria-expanded="${!!formOpen.addpayer}">${formOpen.addpayer ? "Cancel" : "Add customer"}</button>
+      </div>
+      ${addForm}
+      ${state.payers.length ? state.payers.map(p => {
+        const key = `payer-${p.id}`, f = (o) => field({ form: key, id: `${key}-${o.name}`, ...o });
+        const others = state.payers.filter(o => o.id !== p.id);
+        const n = jobsOf(p);
+        return `
+        <details class="card playbook-card"${(p.packet_suggestions || []).some(x => x.status === "open") || formErrors[key] ? " open" : ""}>
+          <summary><strong>${p.name}</strong> <span class="sub">${roleLabel(p.role)} · ${p.approver || "no one signs off yet"} · ${p.ap_email || "no email yet"} · ${n === 1 ? "1 job" : `${n} jobs`}</span>${(p.packet_suggestions || []).some(x => x.status === "open") ? ` <span class="pill copper">${p.packet_suggestions.filter(x => x.status === "open").length} suggested</span>` : ""}</summary>
           ${(p.packet_suggestions || []).filter(x => x.status === "open").map(x => `<div class="list-item suggestion">
-            <div><strong>Add to the packet?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
-            <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to packet</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
+            <div><strong>Add to the paperwork?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
+            <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to paperwork</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
           </div>`).join("")}
           ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${Math.round(Number(unesc(String(p.paid_days_avg))))} days after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
             const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
             return p.paid_count >= 2 && Math.abs(avg - set) >= 2
-              ? `The playbook says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} days</button>`
-              : "The playbook agrees.";
+              ? `Your setting says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} days</button>`
+              : "That matches your setting.";
           })()}</p>` : ""}
-          <form data-id="${p.id}" class="form-grid">
-            <div><label>Approver</label><input name="approver" value="${clean(p.approver)}"></div>
-            <div><label>AP email</label><input name="ap_email" type="email" value="${clean(p.ap_email)}"></div>
-            <div><label>Follow-up days</label><input name="follow_up_days" type="number" min="1" inputmode="numeric" value="${p.follow_up_days || 7}"></div>
-            <div><label>Pay apps due by (day of the month)</label><input name="payapp_due_day" type="number" min="1" max="31" inputmode="numeric" value="${p.payapp_due_day || ""}" placeholder="e.g. 25"></div>
-            <div><label>Usual approval days</label><input name="usual_approval_days" type="number" min="1" inputmode="numeric" value="${p.usual_approval_days || 14}"></div>
-            <div class="span-2"><label>Packet</label><textarea name="packet" rows="2">${clean(p.packet)}</textarea></div>
-            <div class="span-2"><label>Rejects when</label><textarea name="rejects_when" rows="2">${clean(p.rejects_when)}</textarea></div>
-            <div class="span-2"><label>Copy</label><input name="copy" value="${clean(p.copy)}" placeholder="other@payer.com, pm@payer.com"></div>
-            <div class="span-2"><button type="button" class="btn small" data-action="save-playbook" data-id="${p.id}">Save playbook</button></div>
-          </form>
-        </details>`).join("") : emptyState("No payers yet", "A payer is created with the first job for that customer.")}
+          <div data-form-key="${key}">
+            ${formErrorLine(key)}
+            <div class="form-grid">
+              ${f({ name: "name", label: "Customer name", helpKey: "customer_name", required: true, autocomplete: "off", value: unesc(p.name) })}
+              ${f({ name: "role", label: "Who pays you?", helpKey: "role", options: ROLE_OPTIONS, value: unesc(p.role || "Owner") })}
+              ${f({ name: "approver", label: "Who signs off on your bills", helpKey: "approver", value: unesc(clean(p.approver)) })}
+              ${f({ name: "ap_email", label: "Email for pay apps", helpKey: "ap_email", type: "email", autocomplete: "off", value: unesc(clean(p.ap_email)) })}
+              ${f({ name: "phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off", value: unesc(clean(p.phone)) })}
+              ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || ""), placeholder: "7" })}
+              ${f({ name: "payapp_due_day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", value: String(p.payapp_due_day || ""), placeholder: "e.g. 25" })}
+              ${f({ name: "usual_approval_days", label: "Days they usually take to pay", helpKey: "usual_approval_days", inputmode: "numeric", autocomplete: "off", value: String(p.usual_approval_days || ""), placeholder: "14" })}
+              ${f({ name: "packet", label: "Paperwork needed with each pay app", helpKey: "packet", multiline: true, wide: true, value: unesc(clean(p.packet)), placeholder: p.no_paperwork ? "Nothing needed" : "Lien waiver, insurance certificate" })}
+              ${f({ name: "rejects_when", label: "They send pay apps back when", helpKey: "rejects_when", multiline: true, wide: true, value: unesc(clean(p.rejects_when)) })}
+              ${f({ name: "copy", label: "Also email (CC)", helpKey: "copy", wide: true, autocomplete: "off", value: unesc(clean(p.copy)), placeholder: "other@example.com, pm@example.com" })}
+            </div>
+            <div class="form-inline"><button type="button" class="btn small" data-action="save-playbook" data-id="${p.id}">Save customer</button></div>
+          </div>
+          ${others.length ? `<details class="merge-payer">
+            <summary>Same customer as another one?</summary>
+            <div class="form-inline">
+              <label for="merge-${p.id}" class="inline-label">Merge into</label>
+              <select id="merge-${p.id}" data-merge-into>${others.map(o => `<option value="${o.id}">${o.name}</option>`).join("")}</select>
+              <button type="button" class="btn small secondary" data-action="merge-payer" data-id="${p.id}" data-name="${p.name}">Merge</button>
+            </div>
+            <p class="sub">Every job of ${p.name} moves to the customer you pick, which keeps its own settings. ${p.name} is then removed.</p>
+          </details>` : ""}
+        </details>`;
+      }).join("") : emptyState("No customers yet", "Add one here, or one is added with the first job for that customer.", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add customer</button>`)}
     `;
   },
   outbox() {

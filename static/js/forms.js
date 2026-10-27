@@ -25,8 +25,9 @@ export function clearForm(key) {
 // One labelled field. label, help, placeholder, value and option texts are raw text and
 // escaped here, so a value from the escaped state goes in through unesc().
 // options: [[value, text], ...] makes a select; multiline makes a textarea.
+// helpKey names the field's FIELD_HELP entry (the (i) text), put on the label as data-help.
 export function field({ form, name, id, label, type = "text", required = false, help = "", value = "", placeholder = "",
-  autocomplete = "", inputmode = "", options = null, multiline = false, wide = false, attrs = "" }) {
+  autocomplete = "", inputmode = "", options = null, multiline = false, wide = false, attrs = "", helpKey = "" }) {
   const err = (formErrors[form] || {})[name] || "";
   const current = type === "password" ? "" : String(draftValue(form, name, value ?? ""));
   const describedBy = [help ? `${id}-help` : "", `${id}-err`].filter(Boolean).join(" ");
@@ -35,7 +36,7 @@ export function field({ form, name, id, label, type = "text", required = false, 
   if (options) control = `<select ${common}>${options.map(([v, text]) => `<option value="${esc(v)}"${String(v) === current ? " selected" : ""}>${esc(text)}</option>`).join("")}</select>`;
   else if (multiline) control = `<textarea ${common}>${esc(current)}</textarea>`;
   else control = `<input ${common} type="${type}" value="${esc(current)}">`;
-  return `<div class="field${wide ? " span-2" : ""}"><label for="${id}">${esc(label)}${required ? ' <span class="req">*</span>' : ""}</label>${control}${help ? `<span class="sub field-help" id="${id}-help">${esc(help)}</span>` : ""}<span class="field-error" id="${id}-err">${esc(err)}</span></div>`;
+  return `<div class="field${wide ? " span-2" : ""}"><label for="${id}"${helpKey ? ` data-help="${esc(helpKey)}"` : ""}>${esc(label)}${required ? ' <span class="req">*</span>' : ""}</label>${control}${help ? `<span class="sub field-help" id="${id}-help">${esc(help)}</span>` : ""}<span class="field-error" id="${id}-err">${esc(err)}</span></div>`;
 }
 
 // Dollars: a text box (so "$48,500" and "48,500.00" both work), shown as "$48,500.00" once

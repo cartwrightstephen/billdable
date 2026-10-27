@@ -219,5 +219,63 @@ class FollowUpNowTests(unittest.TestCase):  # R3-04
         self.assertTrue(inv["last_follow_up_at"])
 
 
+
+class CloseBlockerTests(unittest.TestCase):  # R3-08
+    def blank(self):
+        return {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+
+    def test_close_blocker_items_shape(self):
+        state = self.blank()
+        job = domain.create_job(state, "Pine deck", "Lee Family", 1_000_000, address="1 Pine St", ap_email="lee@example.com", retainage_pct=10)
+        self.assertEqual([b["kind"] for b in domain.close_blocker_items(job)], ["not_done"])
+        domain.add_change_order(state, job["id"], "Extra stairs", 50_000)
+        domain.mark_done(state, job["id"], "owner")
+        items = domain.close_blocker_items(job)
+        self.assertEqual([b["kind"] for b in items], ["draft", "co"])
+        draft, co = items
+        self.assertEqual(set(draft), {"kind", "text", "invoice_id", "number"})
+        self.assertEqual(draft["invoice_id"], job["invoices"][-1]["id"])
+        self.assertEqual(draft["text"], f"{draft['number']} is still a draft.")
+        self.assertEqual((set(co), co["number"], co["text"]), ({"kind", "text", "co_id", "number"}, 1, "CO 1 is not signed yet."))
+        self.assertEqual(domain.close_blockers(job), [b["text"] for b in items])
+        view = domain.job_view(state, job)
+        self.assertEqual(view["close_blocker_items"], items)
+        with self.assertRaises(domain.GateError) as raised:
+            domain.close_job(state, job["id"])
+        self.assertEqual(raised.exception.blockers, [b["text"] for b in items])
+
+    def test_owed_and_held_back(self):
+        state = seed_state()
+        for job in state["jobs"]:
+            kinds = {b["kind"] for b in domain.close_blocker_items(job)}
+            m = domain.job_money(job)
+            self.assertEqual("retainage" in kinds, m["retainage_open_cents"] > 0)
+            self.assertEqual("outstanding" in kinds, m["outstanding_cents"] > 0)
+
+
+class DeleteJobTests(unittest.TestCase):  # R3-09
+    def test_delete_after_void_succeeds_and_after_a_payment_is_refused(self):
+        state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = domain.create_job(state, "Pine deck", "Lee Family", 1_000_000, address="1 Pine St", ap_email="lee@example.com")
+        domain.record_progress(state, job["id"], 400_000, "", "owner")
+        self.assertFalse(domain.can_delete_job(job))
+        with self.assertRaises(domain.GateError):
+            domain.delete_job(state, job["id"])
+        domain.void_draft(state, job["id"])
+        self.assertTrue(domain.can_delete_job(job))
+        domain.delete_job(state, job["id"])
+        self.assertEqual(state["jobs"], [])
+        self.assertIn("1 deleted draft", state["audit"][-1]["detail"])
+
+        paid = domain.create_job(state, "Oak porch", "Lee Family", 1_000_000, address="2 Oak St", ap_email="lee@example.com")
+        domain.update_payer(state, paid["payer_id"], {"packet": ""})  # nothing needed with each pay app
+        domain.record_progress(state, paid["id"], 400_000, "", "owner")
+        domain.approve_and_send(state, paid["id"], "owner")
+        domain.match_payment(state, paid["id"], 100_000, "1001", "owner")
+        with self.assertRaises(domain.GateError) as raised:
+            domain.delete_job(state, paid["id"])
+        self.assertIn("Finish it instead", str(raised.exception))
+        self.assertEqual(len(state["jobs"]), 1)
+
 if __name__ == "__main__":
     unittest.main()

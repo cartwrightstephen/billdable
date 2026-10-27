@@ -2149,6 +2149,12 @@ class Handler(BaseHTTPRequestHandler):
     def _m_payer_update(self, state: dict, m, ctx: "Ctx") -> None:
         domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
 
+    def _m_payer_add(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.add_payer(state, ctx.body, ctx.actor)
+
+    def _m_payer_merge(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.merge_payer(state, m.group(1), _text(ctx.body, "into"), ctx.actor)
+
 
 
 class UnknownAction(Exception):
@@ -2250,7 +2256,9 @@ ROUTES = [
     Route("POST", r"/api/jobs", "_m_create_job", "mutate"),
     Route("POST", r"/api/jobs/([^/]+)/([a-z-]+)(?:/([^/]+))?", "_m_job_action", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate"),
+    Route("POST", r"/api/payers", "_m_payer_add", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
     Route("POST", r"/api/company", "_m_company_update", "mutate", owner=True),
     Route("POST", r"/api/auth/name", "_p_my_name", "body"),
 ]

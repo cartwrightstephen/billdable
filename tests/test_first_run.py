@@ -191,6 +191,21 @@ class FirstRunTests(unittest.TestCase):
         self.assertEqual(res.status, 200, data)
         self.assertEqual(self.job(data, job["id"])["invoices"][-1]["status"], "sent")
 
+    def test_add_rename_and_merge_customers(self):  # R3-07
+        cookie, _ = self.signup("first-run-customers@example.com")
+        res, data = self.request("POST", "/api/payers", {"name": "Ironleaf GC", "role": "GC"}, cookie)
+        self.assertEqual(res.status, 200, data)
+        target = next(p for p in data["payers"] if p["name"] == "Ironleaf GC")
+        res, data = self.request("POST", "/api/jobs", new_job_body(customer="Ironleef"), cookie)
+        job = data["jobs"][-1]
+        res, data = self.request("POST", f"/api/payers/{job['payer_id']}/update", {"name": "ironleaf gc"}, cookie)
+        self.assertEqual(res.status, 409, data)
+        self.assertEqual(data["fields"]["name"], "Another customer is already called ironleaf gc.")
+        res, data = self.request("POST", f"/api/payers/{job['payer_id']}/merge", {"into": target["id"]}, cookie)
+        self.assertEqual(res.status, 200, data)
+        self.assertEqual(self.job(data, job["id"])["payer_id"], target["id"])
+        self.assertEqual([p["name"] for p in data["payers"]], ["Ironleaf GC"])
+
     def test_paperwork_on_the_job_and_items_not_needed(self):  # R1-08
         cookie, _ = self.signup("first-run-paperwork@example.com")
         res, data = self.request("POST", "/api/jobs", new_job_body(), cookie)

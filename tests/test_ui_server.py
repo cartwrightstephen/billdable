@@ -185,7 +185,13 @@ class UiServerTests(unittest.TestCase):
         self.post(f"/api/jobs/{job2['id']}/progress", {"completed_cents": 400_000}, cookie2)
         res, body = self.post(f"/api/jobs/{job2['id']}/delete", {}, cookie2)
         self.assertEqual(res.status, 409)
-        self.assertIn("Close it for the record", body["error"])
+        self.assertIn("Finish it instead", body["error"])
+        # A deleted draft is nothing billed (R3-09): the job can go.
+        res, state = self.post(f"/api/jobs/{job2['id']}/void-draft", {}, cookie2)
+        self.assertTrue(next(j for j in state["jobs"] if j["id"] == job2["id"])["can_delete"])
+        res, state = self.post(f"/api/jobs/{job2['id']}/delete", {}, cookie2)
+        self.assertEqual(res.status, 200, state)
+        self.assertFalse(any(j["id"] == job2["id"] for j in state["jobs"]))
 
     def test_change_order_description_is_kept(self):
         cookie, job = self.company("co@example.com")

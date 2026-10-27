@@ -3,7 +3,7 @@
 A wrong AP address used to look exactly like a delivered pay app. The provider calls
 POST /api/mail-events/<MAIL_EVENTS_TOKEN> when an email bounces or is marked as spam;
 the Outbox row for that address turns "bounced: <reason>", and the job's status line
-says so, so the contractor fixes the address in the Payer playbook and sends again.
+says so, so the contractor fixes the address in Customer settings and sends again.
 
 Accepted bodies (the formats are from the providers' documentation as remembered, not
 checked against a live account; check them when the provider is chosen):
@@ -58,6 +58,6 @@ def apply(state: dict[str, Any], email: str, reason: str, now: str) -> dict[str,
     entry["bounced_at"] = now
     job = next((j for j in state.get("jobs", []) if j["id"] == entry.get("job_id")), None)
     if job and not job.get("closed"):
-        job["external_status"] = f"Email to {email} bounced ({reason}). Fix the address in the Payer playbook and send again."
+        job["external_status"] = f"Email to {email} bounced ({reason}). Fix the address in Customer settings and send again."
     domain.audit(state, entry.get("job_id", ""), "email_bounced", f"The email \"{entry.get('subject', '')}\" to {email} bounced: {reason}.", "duracash")
     return entry

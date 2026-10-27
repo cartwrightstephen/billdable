@@ -243,6 +243,17 @@ await step("refresh keeps the page", async () => {
   await page.getByRole("heading", { name: "Collections" }).waitFor();
 });
 
+await step("an unsettled job lists what stands before Finish job, each with its buttons", async () => {
+  // Turner office TI is done, with money still owed on a pay app and retainage held back (R3-08).
+  await page.goto(BASE + "/jobs/job-turner");
+  await page.getByRole("heading", { name: "Turner office TI" }).waitFor();
+  await page.getByRole("heading", { name: "Before you can finish this job" }).waitFor();
+  assert.equal(await page.locator(".close-blocker-list li").count(), 2);
+  await page.locator('.close-blocker-list li[data-blocker="outstanding"]').getByRole("button", { name: "Record a payment" }).waitFor();
+  await page.locator('.close-blocker-list li[data-blocker="retainage"]').getByRole("button", { name: "Record retainage paid" }).waitFor();
+  assert.equal(await page.locator(".next-card .btn", { hasText: "Finish job" }).count(), 0, "no Finish job while unsettled");
+});
+
 await step("money path: the main button walks a job from blocked to closed", async () => {
   // Follow the one main button, whatever it says, until the job is closed.
   const seen = [];

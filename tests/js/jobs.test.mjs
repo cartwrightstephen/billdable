@@ -1,7 +1,7 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText } from "../../static/js/jobs.js";
+import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions } from "../../static/js/jobs.js";
 
 const job = (over = {}) => ({
   id: "j1", closed: false, work_status: "in_progress", blockers: [], close_blockers: [], invoices: [],
@@ -50,7 +50,7 @@ test("each stage of the money path has one status and one next step", () => {
   const paid = job({ ...done, invoices: [inv("paid")] });
   assert.deepEqual(jobStatus(paid), ["Paid", "green"]);
   assert.equal(nextStep(paid), "Ready to finish the job.");
-  assert.equal(nextStep(job({ ...done, invoices: [inv("paid")], close_blockers: ["Final waiver"] })), "Before closing: Final waiver");
+  assert.equal(nextStep(job({ ...done, invoices: [inv("paid")], close_blockers: ["Final waiver"] })), "Before you finish: Final waiver");
   assert.deepEqual(jobStatus(job({ closed: true })), ["Closed", "green"]);
 });
 
@@ -182,4 +182,18 @@ test("only an unsigned change order in the way: Get CO N signed opens it", () =>
   const { primary } = jobActions(j);
   assert.equal(primary.label, "Get CO 2 signed");
   assert.match(primary.attrs, /data-action="open-co" data-job="j1" data-co="co-x-2"/);
+});
+
+test("each thing standing between the job and Finish job has its buttons (R3-08)", () => {
+  const done = jobOf({ work_status: "complete", closeout_packet: [{ required: true, present: false }] });
+  const labels = (b, j = done) => closeBlockerActions(j, b).map(a => a.label);
+  assert.deepEqual(labels({ kind: "outstanding", text: "$500.00 is still owed on pay apps sent." }), ["Record a payment"]);
+  assert.deepEqual(labels({ kind: "co", text: "CO 2 is not signed yet.", co_id: "co-2", number: 2 }), ["Get CO 2 signed", "Withdraw"]);
+  assert.match(closeBlockerActions(done, { kind: "co", co_id: "co-2", number: 2 })[1].attrs, /data-action="withdraw-co".*data-co="co-2"/);
+  assert.deepEqual(labels({ kind: "retainage" }), ["Record retainage paid", "Open closeout paperwork"]);
+  assert.deepEqual(labels({ kind: "retainage" }, jobOf({ work_status: "complete" })), ["Record retainage paid", "Ask for retainage"]);
+  assert.deepEqual(labels({ kind: "waiver" }), ["Send waiver"]);
+  assert.deepEqual(labels({ kind: "draft", invoice_id: "i1", number: "PA-1" }), ["Review & send", "Delete draft"]);
+  assert.deepEqual(labels({ kind: "unbilled" }), ["Draft pay app"]);
+  assert.deepEqual(labels({ kind: "something new" }), []);
 });

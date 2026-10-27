@@ -67,7 +67,7 @@ export function nextStep(j) {
   if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the payer. Follow up or record a payment.";
   if (j.work_status !== "complete") return "Record progress, or mark the job done." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
   if (j.money.retainage_open_cents > 0) return "Chase retainage once the closeout packet is complete.";
-  if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before closing: " + j.close_blockers[0] : "Ready to finish the job.";
+  if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before you finish: " + j.close_blockers[0] : "Ready to finish the job.";
   return "Draft a pay app for unbilled completed work.";
 }
 
@@ -230,3 +230,27 @@ export function jobActions(j, { now = new Date(), demo = false } = {}) {
 }
 
 export const ACTION_GROUPS = [["bill", "Bill"], ["paid", "Get paid"], ["close", "Close out"]];
+
+// The buttons beside one thing that stands between the job and Finish job (R3-08), from the
+// server's close_blocker_items ({kind, text, invoice_id, co_id, number}): [{label, attrs}].
+export function closeBlockerActions(j, b) {
+  const id = j.id;
+  switch (b.kind) {
+    case "not_done": return [{ label: "Mark done", attrs: `data-action="toggle-form" data-form="done"` }];
+    case "draft": return [
+      { label: "Review & send", attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}" data-focus=".send-check"` },
+      { label: "Delete draft", attrs: `data-action="void-draft" data-id="${id}"` }];
+    case "co": return [
+      { label: `Get CO ${b.number} signed`, attrs: `data-action="open-co" data-job="${id}" data-co="${b.co_id}"` },
+      { label: "Withdraw", attrs: `data-action="withdraw-co" data-id="${id}" data-co="${b.co_id}"` }];
+    case "unbilled": return [{ label: "Draft pay app", attrs: `data-action="draft" data-id="${id}"` }];
+    case "outstanding": return [{ label: "Record a payment", attrs: `data-action="toggle-form" data-form="match"` }];
+    case "retainage": return [
+      { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"` },
+      closeoutMissing(j)
+        ? { label: "Open closeout paperwork", attrs: `data-action="open-packet" data-job="${id}" data-inv="closeout"` }
+        : { label: "Ask for retainage", attrs: `data-action="retainage" data-id="${id}"` }];
+    case "waiver": return [{ label: "Send waiver", attrs: `data-action="open-waiver" data-id="${id}"` }];
+    default: return [];
+  }
+}

@@ -3,9 +3,11 @@
 import { money, words } from "./format.js";
 
 // Plain-language help for every field, column, tile and section. The (i) icon
-// next to a label is hidden until the area is hovered or focused; hovering,
-// focusing or tapping the icon shows the text. Keys are the visible label,
-// lower case, without arrows or asterisks.
+// next to a label is hidden until the area is hovered or focused; hovering or
+// focusing it shows the text. On a touch screen there are no icons: each card
+// gets one "What do these mean?" list instead. A form field's key is the
+// helpKey its field() call names (its label carries data-help); anything else
+// is keyed by its visible label, lower case, without arrows or asterisks.
 export const FIELD_HELP = {
   // money file and tiles
   "contract": "The original contract amount, before any change orders.",
@@ -22,14 +24,11 @@ export const FIELD_HELP = {
   "retainage open": "Retainage still held. It is released after the punch list and closeout packet are done.",
   "retainage": "Retainage still held on this job.",
   "billed this month": "Total of pay apps sent this calendar month.",
-  "blocked jobs": "Open jobs with a missing packet item or unsigned change order that stops a pay app from going out.",
-  "active jobs": "Jobs not yet closed for the record.",
   // tables
   "job": "The job. Click it to open the money file, packet and actions.",
   "customer": "Who pays this job: the owner, homeowner or general contractor.",
   "status": "What is holding the job up right now, in words. Never just \"pending\".",
   "next": "The next thing to do to get paid on this job.",
-  "approved cos ": "Signed change orders.",
   "code": "Short job code. Put it in an email subject or text and the Inbox files it to this job.",
   "number": "Pay app number: PA, the job code, then the sequence.",
   "amount": "Amount of this pay app after retainage, or of this payment.",
@@ -38,10 +37,7 @@ export const FIELD_HELP = {
   "pay app": "The pay application this packet belongs to.",
   "co": "Change order number on this job.",
   "summary": "What the change order covers.",
-  "status / waiting on": "Signed or not, and who it is waiting on.",
-  "in billing": "Whether this unsigned change order is on the next pay app. Send stays blocked until it is signed.",
   "unpaid": "Pay apps sent and not fully paid.",
-  "days": "Days since the pay app was sent.",
   "contact": "Who approves payment, and their AP email and phone.",
   "follow up": "Send a follow-up once the payer's follow-up window has passed.",
   "reference": "Check number or QuickBooks payment id. Each can be used once per job.",
@@ -49,36 +45,31 @@ export const FIELD_HELP = {
   "kind": "What type of document or message this is.",
   "open": "Retainage still held on this job.",
   "holding it up": "Closeout items that must be done before you can ask for retainage.",
-  "unlock": "What to do next to release the retainage.",
-  "contact / follow up": "Who to ask for the retainage, and buttons to ask.",
   "closed": "Date the job was closed for the record.",
   "notes": "Completion notes, or the current status.",
   "when": "When it happened.",
-  "to": "Who it was addressed to: the payer's AP email from the playbook.",
+  "to": "Who it was addressed to: the customer's email for pay apps, from Customer settings.",
   "subject": "Subject line of the logged message.",
-  "actor": "The signed-in person who took the action.",
   "action": "What was done.",
-  "detail": "What changed, in words.",
-  // new job form
-  "job name": "What you call the job, for example \"Oak Street kitchen\".",
-  "address": "The job site address. The Inbox uses it to match emails and texts to this job.",
-  "contract number": "The number on the contract, if it has one.",
-  "contract amount ($)": "The signed contract amount in dollars, before change orders.",
-  "retainage %": "Percent the payer holds back from each pay app until closeout. Commonly 5 to 10 percent; check your contract.",
-  "who pays you?": "The homeowner or property owner, or a general contractor when you are their sub. It sets the paperwork they usually need with each pay app and when to follow up.",
-  "role": "Owner: you bill the property owner or homeowner. GC: you are a sub billing a general contractor.",
-  "approver": "The person who approves your pay app.",
-  "ap email": "Where pay apps and follow-ups go: the payer's accounts payable address.",
-  "phone": "Payer phone for follow-up calls.",
-  "who signs off on your bills": "The person who approves your pay app. Left blank, it is the customer.",
-  "email for pay apps (can add later)": "Homeowner: their email. GC: their accounts-payable address. You can add it before the first send.",
-  "email for pay apps": "Homeowner: their email. GC: their accounts-payable address.",
-  "notes (kept on the job record)": "Anything to keep with the job, like a gate code or who to call. The paperwork each pay app needs is set in Customer settings.",
-  // playbook
-  "follow-up days": "Days to wait after sending before a follow-up is allowed. Set it to the payer's normal payment window.",
-  "usual approval days": "How long this payer usually takes to approve. Drives the expected-approval date on the calendar.",
-  "packet": "What this payer requires with every pay app, separated by commas. New pay apps list these items.",
-  "rejects when": "Why this payer has sent pay apps back before. Grows as you teach it.",
+  // form fields: field() names its entry with helpKey, so the same words on another form
+  // (the company's own address and phone) don't pick up this help (R3-10)
+  "job_name": "What you call the job, for example \"Oak Street kitchen\".",
+  "job_address": "The job site address. The Inbox uses it to match emails and texts to this job.",
+  "contract_number": "The number on the contract, if it has one.",
+  "contract_amount": "The signed contract amount in dollars, before change orders.",
+  "retainage_pct": "Percent the customer holds back from each pay app until closeout. Commonly 5 to 10 percent; check your contract.",
+  "role": "The homeowner or property owner, or a general contractor when you are their sub. It sets the paperwork they usually need with each pay app and when to follow up.",
+  "approver": "The person who approves your pay app. Left blank, it is the customer.",
+  "ap_email": "Homeowner: their email. GC: their accounts-payable address. You can add it before the first send.",
+  "customer_phone": "The customer's phone, for follow-up calls.",
+  "job_notes": "Anything to keep with the job, like a gate code or who to call. The paperwork each pay app needs is set in Customer settings.",
+  "customer_name": "The name you know them by. A new job for the same name, in any case, goes to this customer.",
+  "follow_up_days": "Days to wait after sending before a follow-up is due. Set it to the customer's normal payment window. Blank goes back to 7.",
+  "payapp_due_day": "The day of the month their pay apps are due by, if the contract sets one. Leave it blank if not.",
+  "usual_approval_days": "How long this customer usually takes to pay after a pay app is sent. Sets the expected date on the calendar. Blank goes back to 14.",
+  "packet": "What this customer needs with every pay app, separated by commas. New pay apps list these items. Leave it blank if they need nothing.",
+  "rejects_when": "Why this customer has sent pay apps back before. It is shown before the next send.",
+  "copy": "Email addresses to copy on pay apps for this customer, separated by commas. Names without an address are ignored.",
   // schedule of values
   "item": "The line number on the schedule of values, as the payer's form numbers it.",
   "description": "What the line covers, in the words the payer will recognize.",
@@ -98,13 +89,12 @@ export const FIELD_HELP = {
   "this period": "Billed on this pay app: work done since the last one.",
   "total to date": "Previous plus this period.",
   "%": "Share of the line's scheduled value billed to date.",
-  "copy": "Email addresses to copy on pay apps for this payer, separated by commas. Names without an address are ignored.",
 };
 
 export const NAV_HELP = {
   today: "What needs you today, the money across open jobs, the calendar and the daily record.",
   money: "Pay apps, packets, change orders, collections, payments, waivers, retainage and the Outbox.",
-  settings: "Your team and account, the payer playbook, the audit trail and help.",
+  settings: "Your team and account, customer settings, the audit trail and help.",
   inbox: "Bring in photos, PDFs, emails, texts and notes, then file them to a job in one click.",
   dashboard: "What needs attention and the money across open jobs.",
   daily: "A dated note of what happened on site today, saved on the job record.",
@@ -119,7 +109,7 @@ export const NAV_HELP = {
   waivers: "Lien waivers: you give up lien rights for amounts you have been paid. One per paid pay app.",
   retainage: "Money the payer holds back until closeout, and what is holding it up.",
   history: "Jobs closed for the record.",
-  playbook: "What each payer requires, who approves, how long they take, and why they reject.",
+  playbook: "Each customer: where pay apps go, the paperwork they need, how long they take to pay, and why they send pay apps back.",
   outbox: "Every email approved to send, and whether it was delivered.",
   audit: "Every action, who took it and when.",
   help: "What the terms mean and how to start.",

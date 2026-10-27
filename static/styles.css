@@ -200,6 +200,18 @@ a.reset-btn { display: block; text-decoration: none; text-align: left; }
 .has-info:hover .info, .has-info:focus-within .info, .info:focus { opacity: 1; }
 .info:hover, .info:focus { color: var(--copper); border-color: var(--copper); outline: none; }
 @media (hover: none) { .info { opacity: 1; } }
+/* A touch screen has no hover to find the (i): label icons go, and each card ends with one
+   "What do these mean?" list instead (R3-10). The menu's icons stay. */
+.help-list { display: none; margin-top: 12px; font-size: 14px; }
+.help-list summary { cursor: pointer; color: var(--copper); }
+.help-list dl { margin: 8px 0 0; }
+.help-list dt { font-weight: 600; margin-top: 8px; }
+.help-list dd { margin: 2px 0 0; color: var(--muted); }
+@media (hover: none) {
+  .has-info .info { display: none; }
+  .nav button .info { display: inline-flex; }
+  .help-list { display: block; }
+}
 .help-tip { display: none; position: fixed; z-index: 100; max-width: 280px; padding: 8px 10px; border-radius: 8px; background: var(--ink); color: var(--card); font-size: 13px; line-height: 1.4; box-shadow: 0 6px 18px rgba(0,0,0,.18); pointer-events: none; }
 /* Import */
 .dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; margin: 12px 0; background: var(--card); display: flex; flex-direction: column; gap: 6px; }
@@ -314,7 +326,10 @@ td.num, .num { font-variant-numeric: tabular-nums; }
 .packet-item.absent .mark { color: var(--red); }
 .playbook-card summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .playbook-card summary .sub { margin: 0; }
-.playbook-card form { margin-top: 12px; }
+.playbook-card [data-form-key] { margin-top: 12px; }
+.merge-payer { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.merge-payer summary { cursor: pointer; color: var(--muted); }
+.merge-payer .form-inline { margin-top: 8px; }
 textarea { font: inherit; }
 .email-details summary { cursor: pointer; font-size: 12px; color: var(--copper); }
 .actions-cell { white-space: nowrap; }
@@ -432,3 +447,8 @@ textarea { font: inherit; }
 .more-details { margin: 12px 0; }
 .more-details > summary { cursor: pointer; color: var(--copper); font-size: 14px; margin-bottom: 8px; }
 .notice.no-address { margin: 10px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* What stands between a job and Finish job, each with the buttons that settle it (R3-08). */
+.close-blocker-list { list-style: none; margin: 0; padding: 0; }
+.close-blocker-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.close-blocker-list li:first-child { border-top: 0; }

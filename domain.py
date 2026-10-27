@@ -109,26 +109,35 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
 
 
 def close_blockers(job: dict[str, Any]) -> list[str]:
-    """Everything that must be settled before a job can be closed for the record."""
+    """Everything that must be settled before a job can be finished, in words."""
+    return [b["text"] for b in close_blocker_items(job)]
+
+
+def close_blocker_items(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """What stands between the job and Finish job, one entry per thing to do (R3-08):
+    {kind, text}, plus invoice_id/number for an open draft and co_id/number for an unsigned
+    change order. The job page puts the buttons that settle each one beside it."""
     if job.get("closed"):
-        return ["Job is already closed."]
+        return [{"kind": "closed", "text": "Job is already finished."}]
     m = job_money(job)
-    out = []
+    out: list[dict[str, Any]] = []
     if job.get("work_status") != "complete":
-        out.append("Work is not marked done.")
+        out.append({"kind": "not_done", "text": "Work is not marked done."})
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft:
-        out.append(f"{open_draft['number']} is still an open draft.")
-    if any(co["status"] == "pending" for co in job["change_orders"]):
-        out.append("A change order is still pending.")
-    if m["unbilled_completed_cents"] > 0:
-        out.append(f"{money(m['unbilled_completed_cents'])} of completed work is not billed.")
+        out.append({"kind": "draft", "text": f"{open_draft['number']} is still a draft.",
+                    "invoice_id": open_draft["id"], "number": open_draft["number"]})
+    for co in job["change_orders"]:
+        if co["status"] == "pending":
+            out.append({"kind": "co", "text": f"CO {co['number']} is not signed yet.", "co_id": co["id"], "number": co["number"]})
+    if m["unbilled_completed_cents"] > 0 and not open_draft:
+        out.append({"kind": "unbilled", "text": f"{money(m['unbilled_completed_cents'])} of finished work is not billed."})
     if m["outstanding_cents"] > 0:
-        out.append(f"{money(m['outstanding_cents'])} is still outstanding.")
+        out.append({"kind": "outstanding", "text": f"{money(m['outstanding_cents'])} is still owed on pay apps sent."})
     if m["retainage_open_cents"] > 0:
-        out.append(f"{money(m['retainage_open_cents'])} of retainage is still open.")
+        out.append({"kind": "retainage", "text": f"{money(m['retainage_open_cents'])} held back (retainage) is still owed."})
     if job.get("waiver_due") and not job.get("waiver_sent"):
-        out.append("A waiver is still due.")
+        out.append({"kind": "waiver", "text": "A lien waiver is still due."})
     return out
 
 
@@ -855,7 +864,9 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out["missing_paperwork"] = [item["label"] for item in missing_packet(job)]
     out["status_label"] = status_label(job)
     out["payer"] = deepcopy(_payer(state, job["payer_id"]))
-    out["close_blockers"] = close_blockers(job)
+    out["can_delete"] = can_delete_job(job)
+    out["close_blocker_items"] = close_blocker_items(job)
+    out["close_blockers"] = [b["text"] for b in out["close_blocker_items"]]
     out.setdefault("closeout_packet", [])
     out.setdefault("evidence", [])
     out.setdefault("done_notes", "")
@@ -898,7 +909,7 @@ def snapshot(state: dict[str, Any]) -> dict[str, Any]:
 RECENT_CLOSED_DAYS = 90
 RECENT_EMAILS = 20
 # Fields a closed job's summary leaves out; /api/jobs/<id> has them.
-SUMMARY_DROPS = ("blockers", "close_blockers", "closeout_packet", "evidence", "records", "daily_records", "follow_ups",
+SUMMARY_DROPS = ("blockers", "close_blockers", "close_blocker_items", "closeout_packet", "evidence", "records", "daily_records", "follow_ups",
                  "retainage_chases", "sov", "sov_view", "contract_doc")
 
 
@@ -907,7 +918,7 @@ def job_summary(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out = {k: deepcopy(v) for k, v in job.items() if k not in SUMMARY_DROPS}
     out["money"] = job_money(job)
     out["status_label"] = status_label(job)
-    out["blockers"], out["close_blockers"] = [], []
+    out["blockers"], out["close_blockers"], out["close_blocker_items"] = [], [], []
     out.setdefault("done_notes", "")
     for inv in out.get("invoices", []):
         inv.pop("lines", None)
@@ -1109,8 +1120,9 @@ def _record_email(
 def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
     payer = _payer(state, payer_id)
     text_fields = {"approver": "who signs off on your bills", "ap_email": "the email pay apps go to",
-                   "packet": "the paperwork needed", "rejects_when": "when they send pay apps back", "copy": "who else to email"}
-    day_fields = {"follow_up_days": "the days between follow-ups", "usual_approval_days": "the days they usually take"}
+                   "packet": "the paperwork needed", "rejects_when": "when they send pay apps back", "copy": "who else to email",
+                   "name": "the customer's name", "phone": "the phone number"}
+    day_fields = {"follow_up_days": "the days between follow-ups", "usual_approval_days": "the days they usually take to pay"}
     clean: dict[str, Any] = {}
     errors: dict[str, str] = {}
     for k, v in updates.items():
@@ -1134,7 +1146,15 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
                 errors[k] = f"Enter {text_fields[k]} as text."
                 continue
             clean[k] = str(v).strip()
+        elif k == "role":
+            if v not in ("Owner", "GC"):
+                errors[k] = "Pick who pays you: the property owner or a general contractor."
+                continue
+            clean[k] = v
         elif k in day_fields:
+            if v == "":
+                clean[k] = None  # blank goes back to the usual number
+                continue
             try:
                 days = parse_int(v, day_fields[k], k)
             except GateError:
@@ -1147,9 +1167,17 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com."
     if "approver" in clean and not clean["approver"]:
         errors["approver"] = "Enter who signs off on your bills."
+    if "name" in clean:
+        if not clean["name"]:
+            errors["name"] = "Enter the customer's name."
+        elif _payer_named(state, clean["name"], other_than=payer["id"]):
+            errors["name"] = f"Another customer is already called {clean['name']}."
+        elif clean["name"] == payer["name"]:
+            clean.pop("name")
     if errors:
         raise GateError("Customer settings not saved.", fields=errors)
     changed = []
+    was = payer["name"]
     for k, v in clean.items():
         if v is None:
             payer.pop(k, None)
@@ -1158,8 +1186,88 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
         changed.append(k)
     if clean.get("packet"):
         payer.pop("no_paperwork", None)  # a list typed in again replaces "nothing needed"
-    audit(state, "", "playbook_update", f"{actor} updated {payer['name']}: {', '.join(changed) or 'no change'}.", actor)
+    elif clean.get("packet") == "":
+        payer["no_paperwork"] = True  # an emptied list means nothing is needed; empty alone would bring the default back
+    if "role" in clean:
+        # The usual paperwork for a job follows who pays it.
+        for job in state["jobs"]:
+            if job.get("payer_id") == payer["id"]:
+                job["payer_role"] = clean["role"]
+    renamed = f" (was {was})" if "name" in clean else ""
+    audit(state, "", "playbook_update", f"{actor} updated {payer['name']}{renamed}: {', '.join(changed) or 'no change'}.", actor)
     return payer
+
+
+def _payer_named(state: dict[str, Any], name: str, other_than: str = "") -> dict[str, Any] | None:
+    """The customer with this name, ignoring case (one name, one customer)."""
+    key = (name or "").strip().lower()
+    return next((p for p in state["payers"] if p["name"].strip().lower() == key and p["id"] != other_than), None)
+
+
+def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_email: str, phone: str) -> dict[str, Any]:
+    """A customer with the usual settings for its role, added to the company."""
+    packet_rule = "Signed contract, conditional waiver, completion photos, and pay-app backup."
+    if role == "GC":
+        # The pay app and its schedule of values are made here, so they are not on the list.
+        packet_rule = "Lien waiver, insurance certificate, daily tickets."
+    payer = {
+        "id": "payer-" + secrets.token_hex(3),
+        "name": name,
+        "role": role,
+        "approver": approver,
+        "ap_email": ap_email,
+        "phone": phone,
+        "packet": packet_rule,
+        "follow_up_days": 5 if role == "GC" else 7,
+        "usual_approval_days": 21 if role == "GC" else 14,
+        "rejects_when": "Missing required packet items.",
+        "copy": "",
+    }
+    state["payers"].append(payer)
+    return payer
+
+
+def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+    """A customer added from Customer settings, before any job (R3-07). Only the name is needed;
+    who signs off defaults to the customer, and the email can wait until the first send."""
+    def text(key: str) -> str:
+        v = body.get(key)
+        return str(v).strip() if isinstance(v, (str, int, float)) and not isinstance(v, bool) else ""
+    name, approver, ap_email, phone = text("name"), text("approver"), text("ap_email"), text("phone")
+    role = text("role") if text("role") in {"Owner", "GC"} else "Owner"
+    errors: dict[str, str] = {}
+    if not name:
+        errors["name"] = "Enter the customer's name."
+    elif _payer_named(state, name):
+        errors["name"] = f"Another customer is already called {name}."
+    if ap_email and not EMAIL_RE.match(ap_email):
+        errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
+    _refuse("Customer not added.", errors)
+    payer = _new_payer(state, name, role, approver or name, ap_email, phone)
+    audit(state, "", "payer_add", f"{actor} added the customer {name}.", actor)
+    return payer
+
+
+def merge_payer(state: dict[str, Any], payer_id: str, into_id: str, actor: str = "owner") -> dict[str, Any]:
+    """Two customers that are one (a typo, or "Ironleaf" and "Ironleaf GC"): every job of the
+    first moves to the second, which keeps its own settings; the first is removed (R3-07)."""
+    payer = _payer(state, payer_id)
+    into = _payer(state, into_id) if into_id else None
+    if not into or into["id"] == payer["id"]:
+        raise GateError("Pick the customer to merge into.", fields={"into": "Pick the customer to merge into."})
+    moved = [j for j in state["jobs"] if j.get("payer_id") == payer["id"]]
+    for job in moved:
+        job["payer_id"] = into["id"]
+        job["payer_role"] = into.get("role", job.get("payer_role"))
+    # What this customer was asked for is still worth asking about on the one that stays.
+    kept = {s["text"].lower() for s in into.get("packet_suggestions", [])}
+    for sug in payer.get("packet_suggestions", []):
+        if sug.get("status") == "open" and sug["text"].lower() not in kept:
+            into.setdefault("packet_suggestions", []).append(sug)
+    state["payers"].remove(payer)
+    names = ", ".join(j["name"] for j in moved) or "no jobs"
+    audit(state, "", "payer_merge", f"{actor} merged {payer['name']} into {into['name']} ({names}); kept {into['name']}'s settings.", actor)
+    return into
 
 
 def payapp_due(payer: dict[str, Any], today: date | None = None) -> tuple[date, date] | None:
@@ -1521,7 +1629,7 @@ def close_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[
     job = _job(state, job_id)
     blockers = close_blockers(job)
     if blockers:
-        raise GateError("Cannot close this job yet.", blockers)
+        raise GateError("This job can't be finished yet.", blockers)
     job["closed"] = True
     job["closed_at"] = utcnow()
     audit(state, job_id, "close_job", f"{actor} closed {job['name']} for the record.", actor)
@@ -1961,26 +2069,9 @@ def create_job(
     _refuse("Job not saved.", errors)
     approver = approver or customer_name  # a homeowner signs off on their own bills
 
-    payer = next((p for p in state["payers"] if p["name"].lower() == customer_name.lower()), None)
-    packet_rule = "Signed contract, conditional waiver, completion photos, and pay-app backup."
-    if role == "GC":
-        # The pay app and its schedule of values are made here, so they are not on the list.
-        packet_rule = "Lien waiver, insurance certificate, daily tickets."
+    payer = _payer_named(state, customer_name)
     if not payer:
-        payer = {
-            "id": "payer-" + secrets.token_hex(3),
-            "name": customer_name,
-            "role": role,
-            "approver": approver,
-            "ap_email": ap_email,
-            "phone": phone,
-            "packet": packet_rule,
-            "follow_up_days": 5 if role == "GC" else 7,
-            "usual_approval_days": 21 if role == "GC" else 14,
-            "rejects_when": "Missing required packet items.",
-            "copy": "",
-        }
-        state["payers"].append(payer)
+        payer = _new_payer(state, customer_name, role, approver, ap_email, phone)
     else:
         # Keep the payer's existing contact. A new job must not silently redirect
         # where every other job's pay apps go; changes belong in Customer settings.
@@ -2119,14 +2210,22 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
 
 
 def delete_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> None:
-    """Delete a job created by mistake. Only a job with no pay apps and no payments can go;
-    anything billed stays on the record and is closed instead."""
+    """Delete a job created by mistake. A job can go while nothing was billed on it: no
+    payments, and no pay apps other than drafts deleted before they went out (R3-09);
+    anything billed stays on the record and the job is finished instead."""
     job = _job(state, job_id)
-    if job.get("invoices") or job.get("payments"):
-        raise GateError(f"{job['name']} has pay apps or payments, so it can't be deleted. Close it for the record instead.")
+    if not can_delete_job(job):
+        raise GateError(f"{job['name']} has pay apps or payments, so it can't be deleted. Finish it instead.")
+    drafts = len(job.get("invoices") or [])
     state["jobs"] = [j for j in state["jobs"] if j["id"] != job_id]
     state["daily_records"] = [r for r in state.get("daily_records", []) if r.get("job_id") != job_id]
-    audit(state, job_id, "delete_job", f"{actor} deleted {job['name']} ({job['code']}), which had no pay apps.", actor)
+    had = f"{drafts} deleted draft{'s' if drafts != 1 else ''}" if drafts else "no pay apps"
+    audit(state, job_id, "delete_job", f"{actor} deleted {job['name']} ({job['code']}), which had {had}.", actor)
+
+
+def can_delete_job(job: dict[str, Any]) -> bool:
+    """No payments, and every pay app a draft deleted before it was sent."""
+    return not job.get("payments") and all(i.get("status") == "void" and not i.get("sent_at") for i in job.get("invoices") or [])
 
 
 # ---------- schedule of values ----------
