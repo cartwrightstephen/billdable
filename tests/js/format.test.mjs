@@ -1,7 +1,7 @@
 // Client helpers that need no browser: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { centsFrom, percentFrom, dollarsText, plainNumber } from "../../static/js/format.js";
+import { centsFrom, percentFrom, dollarsText, plainNumber, esc, unesc, escDeep, money, words } from "../../static/js/format.js";
 import { sovNum } from "../../static/js/sov.js";
 
 test("centsFrom reads dollars the way people type them", () => {
@@ -41,4 +41,24 @@ test("the schedule of values strips the same characters", () => {
   assert.equal(plainNumber("$1,200 %"), "1200");
   assert.equal(sovNum("$1,200.5"), 1200.5);
   assert.ok(Number.isNaN(sovNum("abc")));
+});
+
+test("unesc gives back what esc wrote, without a page", () => {
+  for (const raw of [`Oak "St" <b>&co</b>`, "O'Brien & Sons", "&lt; stays literal", "plain"]) assert.equal(unesc(esc(raw)), raw);
+  assert.equal(unesc("&amp;lt;"), "&lt;", "one pass: decoded once, like the browser");
+  assert.equal(unesc("&#233;t&#xE9;"), "été");
+  assert.equal(unesc("&bogus; & alone"), "&bogus; & alone");
+});
+
+test("escDeep escapes every string inside, and only strings", () => {
+  const out = escDeep({ name: "<i>", n: 5, list: ["a&b", null], nested: { ok: true, s: '"' } });
+  assert.deepEqual(out, { name: "&lt;i&gt;", n: 5, list: ["a&amp;b", null], nested: { ok: true, s: "&quot;" } });
+});
+
+test("money and words", () => {
+  assert.equal(money(4850000), "$48,500.00");
+  assert.equal(money(-1250), "-$12.50");
+  assert.equal(money(null), "$0.00");
+  assert.equal(words("in_progress"), "In progress");
+  assert.equal(words("awaiting_<b>"), "Awaiting &lt;b&gt;", "words() output goes into HTML, so it is escaped");
 });

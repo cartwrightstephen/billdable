@@ -15,7 +15,17 @@ export function esc(value) {
 
 // The reverse of esc(), for values from escDeep'd state that are about to be escaped again
 // (or placed with textContent). Never put its result into innerHTML without esc().
+// Without a page (node --test) it decodes what esc() writes plus numeric references, in one pass
+// so "&amp;lt;" comes back as "&lt;", the way the browser decodes it.
+const NAMED = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
 export function unesc(value) {
+  if (typeof document === "undefined") {
+    return String(value).replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (m, dec, hex, name) => {
+      const code = dec ? parseInt(dec, 10) : hex ? parseInt(hex, 16) : null;
+      if (code !== null) return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+      return NAMED[name.toLowerCase()] ?? m;
+    });
+  }
   const t = document.createElement("textarea");
   t.innerHTML = String(value);
   return t.value;

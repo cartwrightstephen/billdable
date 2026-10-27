@@ -496,6 +496,14 @@ def _text(body: dict, key: str, default: str = "", limit: int = MAX_TEXT_CHARS) 
     return value
 
 
+def _filled(body: dict, key: str, message: str) -> str:
+    """A text field the action can't do without: blank is refused under that field."""
+    value = _text(body, key).strip()
+    if not value:
+        raise domain.GateError(message, fields={key: message})
+    return value
+
+
 def _list(body: dict, key: str) -> list | None:
     """A list from the request body, or None when absent; anything else was not sent by the app."""
     value = body.get(key)
@@ -2247,15 +2255,15 @@ JOB_ACTIONS = {
     "void-draft": (False, lambda h, st, j, i, c: domain.void_draft(st, j, c.actor)),
     "pencil": (False, lambda h, st, j, i, c: domain.send_pencil(st, j, c.actor)),
     "pencil-response": (False, lambda h, st, j, i, c: domain.record_pencil_response(st, j, c.body.get("agreed") is True, _text(c.body, "note"), c.actor)),
-    "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), c.actor)),
+    "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor)),
-    "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _text(c.body, "reason"), c.actor)),
+    "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the customer sent the pay app back."), c.actor)),
     "import-qbo": (False, _import_qbo),
     "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),
     "edit": (False, _edit_job),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
-    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _text(c.body, "notes"), c.actor)),
+    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter what happened on the job."), c.actor)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name", "attachment"), c.actor)),
 }
 

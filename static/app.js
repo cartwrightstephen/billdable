@@ -8,9 +8,8 @@ import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
 import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js";
 import { labelTables, moreButton, askConfirm } from "./js/dom.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues, formErrors, clearForm, clearAllForms, watchForms } from "./js/forms.js";
+import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, setMe, clearSession, setLocation, closeForms } from "./js/state.js";
 
-let state = null;
-let me = null;
 let authMode = "signup";
 let dataNotice = false;   // server says data may be erased (no persistent disk confirmed yet)
 let authError = "";      // the two-step code screen's error; the sign-in form uses formErrors.auth
@@ -29,9 +28,6 @@ let qboReconcile = null;   // /api/qbo/reconcile: {rows, invoices}
 const ordinal = (n) => n + ([11, 12, 13].includes(n % 100) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"));
 const BILLING_WORDS = { trialing: "Trial", active: "Active", past_due: "Card declined", unpaid: "Unpaid", canceled: "Cancelled", incomplete: "Incomplete", incomplete_expired: "Expired", paused: "Paused" };
 const RECON_WORDS = { missing: "Not in QuickBooks", amount: "Amount differs", paid_in_qbo: "Paid in QuickBooks", open_in_qbo: "Open in QuickBooks" };
-let currentView = "dashboard";
-let currentJobId = null;
-let currentDetailId = null; // for packet, co, payapp, waiver detail
 let aiOpen = false;
 let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth();
@@ -53,7 +49,6 @@ const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api
 const LIST_VIEWS = { timeline: "job" };   // the view that shows a list, where it isn't the list's own name
 let auditJobFilter = "all";
 let coPreselectJob = null;
-let formOpen = {};
 let toastTimer = null;
 const DEMO_COMPANY_ID = "co-hartline";
 let calJobFilter = "all";
@@ -155,9 +150,7 @@ function pageTitle() {
 function applyLocation() {
   const r = routeFromPath(pendingPath || location.pathname) || { view: "dashboard" };
   pendingPath = null;
-  currentView = r.view;
-  currentJobId = r.jobId || null;
-  currentDetailId = r.detailId || null;
+  setLocation(r.view, r.jobId, r.detailId);
   history.replaceState(null, "", pathFor(currentView, currentJobId, currentDetailId));
 }
 
@@ -170,8 +163,7 @@ async function load() {
     return;
   }
   if (res.status === 401) {
-    me = null;
-    state = null;
+    clearSession();
     renderLanding();
     return;
   }
@@ -190,7 +182,7 @@ function withPayer(j) {
 }
 
 function setState(data) {
-  state = escDeep(data);
+  setData(escDeep(data));
   state.jobs.forEach(withPayer);
   Object.values(jobDetails).forEach(placeJob);
   Object.values(listPages).forEach(p => { p.stale = true; });
@@ -239,6 +231,7 @@ async function loadListPage(kind, job, offset, limit) {
 }
 
 async function boot(checkLink = true) {
+  listenForActions();
   let linkMessage = null;
   if (checkLink) {
     const t = readTokenFromUrl();
@@ -257,7 +250,7 @@ async function boot(checkLink = true) {
   }
   if (res.ok) {
     const data = await readJson(res);
-    me = escDeep(data.user);
+    setMe(escDeep(data.user));
     helperAdmin = data.helper_admin === true;
     mailReady = data.mail_ready === true;
     readOnly = typeof data.read_only === "string" ? esc(data.read_only) : "";
@@ -420,7 +413,7 @@ async function onAuthSubmit(e) {
   }
   clearForm("auth");
   loginCode = null;
-  me = escDeep(data.user);
+  setMe(escDeep(data.user));
   authError = "";
   helperLog.length = 0;
   try {
@@ -440,8 +433,7 @@ async function onAuthSubmit(e) {
 
 async function logout() {
   await fetch("/api/auth/logout", { method: "POST" });
-  me = null;
-  state = null;
+  clearSession();
   twoStepSetup = null; recoveryCodes = null; loginCode = null;
   helperAdmin = false;
   teamData = null;
@@ -482,8 +474,7 @@ async function post(path, body = {}, opts = {}) {
   setNetBanner(false);
   const data = await readJson(res);
   if (res.status === 401) {
-    me = null;
-    state = null;
+    clearSession();
     renderLanding();
     return;
   }
@@ -540,10 +531,8 @@ function showRefusal(anchor, data) {
 function nav(view, jobId = null, detailId = null, opts = {}) {
   if (view === "account") teamData = null;  // fresh team list each time the page opens
   const moved = view !== currentView || jobId !== currentJobId || detailId !== currentDetailId;
-  currentView = view;
-  currentJobId = jobId;
-  currentDetailId = detailId;
-  formOpen = {};
+  setLocation(view, jobId, detailId);
+  closeForms();
   clearAllForms();
   drawerOpen = false;
   if (!opts.fromHistory) {
@@ -715,6 +704,10 @@ function jobActions(j) {
   return { primary, more: all.filter(a => a !== primary) };
 }
 
+// The shell (top bar, menu, tabs) as last drawn. render() redraws only #view while the shell
+// would come out the same, so a save or a filter doesn't rebuild the menu or move the focus.
+let shellHtml = "";
+
 function render() {
   if (!state) return;
   hideHelpTip();
@@ -726,11 +719,11 @@ function render() {
   const tabView = DETAIL_PARENT[currentView] || currentView;
   const inboxCount = newInboxCount();
   const tabs = section.views.filter(([v]) => v !== "helper-admin" || helperAdmin);
-  app.innerHTML = `
+  const shell = `
     <a class="skip-link" href="#main">Skip to content</a>
     <div class="shell ${drawerOpen ? "drawer-open" : ""}">
       <header class="topbar">
-        <button class="menu-btn" id="menu-btn" aria-label="Menu" aria-controls="rail" aria-expanded="${drawerOpen}">☰</button>
+        <button class="menu-btn" id="menu-btn" data-action="menu" aria-label="Menu" aria-controls="rail" aria-expanded="${drawerOpen}">☰</button>
         <div class="brand">Duracash</div>
         <span class="topbar-section">${section.label}</span>
       </header>
@@ -738,40 +731,48 @@ function render() {
         <div class="brand">Duracash</div>
         <div class="company"><strong>${company.name}</strong>${companyLine(company) ? `<br>${companyLine(company)}` : ""}</div>
         <nav class="nav" aria-label="Main">
-          ${SECTIONS.map(s => `<button class="${s.key === section.key ? "active" : ""}" data-section="${s.key}" ${s.key === section.key ? 'aria-current="page"' : ""}>${s.label}${s.key === "inbox" && inboxCount ? ` <span class="count" aria-label="${inboxCount} new">${inboxCount}</span>` : ""}</button>`).join("")}
+          ${SECTIONS.map(s => `<button class="${s.key === section.key ? "active" : ""}" data-action="section" data-section="${s.key}" ${s.key === section.key ? 'aria-current="page"' : ""}>${s.label}${s.key === "inbox" && inboxCount ? ` <span class="count" aria-label="${inboxCount} new">${inboxCount}</span>` : ""}</button>`).join("")}
         </nav>
         <div class="user-meta">
           ${me ? me.name : ""}<br>${me ? me.email : ""}
-          <button class="reset-btn" id="logout">Log out</button>
+          <button class="reset-btn" id="logout" data-action="logout">Log out</button>
         </div>
       </aside>
-      <div class="scrim" id="scrim" aria-hidden="true"></div>
+      <div class="scrim" id="scrim" data-action="scrim" aria-hidden="true"></div>
       <main class="main" id="main" tabindex="-1">
-        ${tabs.length > 1 ? `<nav class="tabs" aria-label="${section.label}">${tabs.map(([v, label]) => `<button class="tab ${v === tabView ? "active" : ""}" data-tab="${v}" ${v === tabView ? 'aria-current="page"' : ""} title="${esc(NAV_HELP[v] || "")}">${label}</button>`).join("")}</nav>` : ""}
+        ${tabs.length > 1 ? `<nav class="tabs" aria-label="${section.label}">${tabs.map(([v, label]) => `<button class="tab ${v === tabView ? "active" : ""}" data-action="tab" data-tab="${v}" ${v === tabView ? 'aria-current="page"' : ""} title="${esc(NAV_HELP[v] || "")}">${label}</button>`).join("")}</nav>` : ""}
         <div id="view"></div>
       </main>
     </div>
   `;
-  document.querySelectorAll(".nav button[data-section]").forEach(b =>
-    b.addEventListener("click", () => nav(SECTIONS.find(s => s.key === b.dataset.section).views[0][0]))
-  );
-  document.querySelectorAll(".tabs button[data-tab]").forEach(b => b.addEventListener("click", () => nav(b.dataset.tab)));
-  document.getElementById("menu-btn").addEventListener("click", () => { drawerOpen = !drawerOpen; render(); if (drawerOpen) document.querySelector(".nav button")?.focus(); });
-  document.getElementById("scrim").addEventListener("click", () => { drawerOpen = false; render(); });
-  document.getElementById("logout").addEventListener("click", logout);
-  document.getElementById("view").innerHTML = verifyBannerHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Today</button>`));
-  document.getElementById("reset")?.addEventListener("click", resetData);
+  const whole = shell !== shellHtml || !document.getElementById("view");
+  if (whole) { app.innerHTML = shell; shellHtml = shell; }
+  const view = document.getElementById("view");
+  view.innerHTML = verifyBannerHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Today</button>`));
   document.title = pageTitle();
-  bindActions();
-  labelTables(document.getElementById("app"));
-  decorateHelp(document.getElementById("app"));
-  a11yPass(document.getElementById("app"));
+  finishHtml(whole ? app : view);
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
   if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
   if (currentView === "payments" && !qboStatus) loadQboStatus();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin") { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
+}
+
+// Redraw one part of the page (a card, a list) in place, without redrawing the view around it.
+function patch(selector, html) {
+  const el = document.querySelector(selector);
+  if (!el) return null;
+  el.innerHTML = html;
+  finishHtml(el);
+  return el;
+}
+
+// What every freshly drawn piece of the page gets: phone-friendly tables, (i) help, field names.
+function finishHtml(root) {
+  labelTables(root);
+  decorateHelp(root);
+  a11yPass(root);
 }
 
 async function resetData() {
@@ -785,412 +786,424 @@ async function resetData() {
   document.getElementById("reset-confirm")?.focus();
 }
 
-function bindActions() {
-  document.querySelectorAll("[data-action]").forEach((el) => {
-    el.addEventListener("click", async (e) => {
-      e.preventDefault();
-      actionEl = el;
-      const a = el.dataset.action;
-      const id = el.dataset.id;
-      if (a === "email-retry") e.stopPropagation();
-      if (a === "resend-verify") {
-        const r = await postJson("/api/auth/resend-verify", {});
-        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
-        return;
-      }
-      if (a === "change-password") {
-        const current = document.getElementById("pw-current").value, next = document.getElementById("pw-new").value;
-        const errors = {};
-        if (!current) errors.current = "Enter your current password.";
-        if (next.length < 10) errors.new = "Use at least 10 characters for the new password.";
-        if (refuseForm("password", errors)) return;
-        const r = await postJson("/api/auth/password", { current, new: next });
-        if (!r.ok) { refuseForm("password", r.data.fields || { _form: r.data.error || "That didn't work." }); return; }
-        clearForm("password");
-        toast(r.data.message);
-        render();
-        return;
-      }
-      if (a === "team-invite") {
-        const v = formValues("invite");
-        if (refuseForm("invite", /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email) ? {} : { email: "Enter their email, like pat@yourcompany.com." })) return;
-        const r = await postJson("/api/team/invite", { email: v.email, role: v.role || "member" });
-        if (!r.ok) { refuseForm("invite", r.data.fields || { _form: r.data.error || "That didn't work." }); return; }
-        const data = r.data;
-        if (data.users) teamData = escDeep({ users: data.users, invites: data.invites || [] });
-        clearForm("invite");
-        lastInvite = { link: data.invite_link || (location.origin + data.invite_path), emailed: data.emailed, email_status: data.email_status, email: v.email };
-        render();
-        return;
-      }
-      if (a === "team-role") { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); return; }
-      if (a === "team-remove") {
-        if (!(await askConfirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`, "Remove", true))) return;
-        await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed and signed out. The inbound email, text and calendar addresses changed too: update any forwarding rule or calendar subscription.");
-        return;
-      }
-      if (a === "team-revoke") { await teamPost(`/api/team/invites/${el.dataset.invite}/revoke`, {}, "Invite revoked."); return; }
-      if (a === "delete-account") {
-        if (!(await askConfirm("Delete the company, every job and file, and every user? This can't be undone here.", "Delete everything", true))) return;
-        const r = await postJson("/api/account/delete", { password: document.getElementById("del-password").value, confirm: document.getElementById("del-confirm").value });
-        if (!r.ok) { toast(r.data.error || "Nothing was deleted."); return; }
-        me = null; state = null; teamData = null; lastInvite = null;
-        renderLanding();
-        toast(r.data.message);
-        return;
-      }
-      if (a === "reset-confirm") {
-        const r = await post("/api/reset", { confirm: document.getElementById("reset-confirm")?.value || "" });
-        if (r && r.ok) { formOpen.reset = false; render(); }
-        return;
-      }
-      if (a === "2fa-begin") {
-        const r = await postJson("/api/auth/2fa/begin", {});
-        if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
-        twoStepSetup = escDeep(r.data); render(); document.getElementById("2fa-code")?.focus(); return;
-      }
-      if (a === "2fa-enable") {
-        const r = await postJson("/api/auth/2fa/enable", { code: document.getElementById("2fa-code")?.value || "" });
-        if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
-        twoStepSetup = null; recoveryCodes = escDeep(r.data.recovery_codes); me.two_step = true; render(); return;
-      }
-      if (a === "2fa-done") { recoveryCodes = null; render(); return; }
-      if (a === "2fa-disable") {
-        const r = await postJson("/api/auth/2fa/disable", { password: document.getElementById("2fa-off-pw")?.value || "", code: document.getElementById("2fa-off-code")?.value || "" });
-        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
-        if (r.ok) { me.two_step = false; render(); }
-        return;
-      }
-      if (a === "qbo-read") {
-        const text = document.getElementById("qbo-csv")?.value || "";
-        if (!text.trim()) { toast("Paste the CSV first."); return; }
-        const r = await postJson("/api/import/payments-csv", { csv: text });
-        if (!r.ok) { toast(r.data.error || "Couldn't read it."); return; }
-        paymentImport = escDeep(r.data); render(); return;
-      }
-      if (a === "qbo-apply") {
-        const picks = [...document.querySelectorAll("[data-qbo-row]:checked")].map(cb => paymentImport.rows[+cb.dataset.qboRow])
-          .map(row => ({ job_id: row.job_id, invoice_id: row.invoice_id, amount_cents: row.amount_cents, reference: unesc(row.ref), date: row.date, qbo_id: row.qbo_id ? unesc(row.qbo_id) : undefined }));
-        if (!picks.length) { toast("Tick the payments to record."); return; }
-        const r = await postJson("/api/import/payments-apply", { payments: picks });
-        if (!r.ok) { toast(r.data.error || "Nothing was recorded."); return; }
-        const done = r.data.import_results.filter(x => x.ok).length, failed = r.data.import_results.filter(x => !x.ok);
-        setState(r.data); paymentImport = null;
-        toast(`${done} payment${done === 1 ? "" : "s"} recorded.${failed.length ? " Not recorded: " + failed.map(f => `${f.reference}: ${f.error}`).join("; ") : ""}`);
-        render(); return;
-      }
-      if (a === "qbo-cancel") { paymentImport = null; render(); return; }
-      if (a === "use-approval-days") { await post(`/api/payers/${id}/update`, { usual_approval_days: Number(el.dataset.days) }); return; }
-      if (a === "save-company") {
-        const v = (k) => document.getElementById(k)?.value || "";
-        await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license"), billing_style: v("co-style") || "pay_apps" });
-        return;
-      }
-      if (a === "save-my-name") {
-        const r = await postJson("/api/auth/name", { name: document.getElementById("my-name")?.value || "" });
-        if (!r.ok) { toast(r.data.error || "Not saved."); return; }
-        me = escDeep(r.data.user); toast("Saved"); render(); return;
-      }
-      if (a === "billing-checkout" || a === "billing-portal") {
-        const r = await postJson(a === "billing-checkout" ? "/api/billing/checkout" : "/api/billing/portal", {});
-        if (!r.ok) { toast(r.data.error || "Couldn't open billing."); return; }
-        if (typeof r.data.url === "string" && r.data.url.startsWith("https://")) location.assign(r.data.url);
-        return;
-      }
-      if (a === "qbo-connect") {
-        const r = await postJson("/api/qbo/connect", {});
-        if (!r.ok) { toast(r.data.error || "Couldn't start the QuickBooks connection."); return; }
-        if (typeof r.data.url === "string" && r.data.url.startsWith("https://")) location.assign(r.data.url);
-        return;
-      }
-      if (a === "qbo-sync") {
-        toast("Reading payments from QuickBooks…");
-        const r = await postJson("/api/qbo/payments", { days: 90 });
-        if (!r.ok) { toast(r.data.error || "Couldn't read QuickBooks."); qboStatus = null; render(); return; }
-        paymentImport = escDeep(r.data); render(); return;
-      }
-      if (a === "qbo-reconcile") {
-        try {
-          const res = await fetch("/api/qbo/reconcile");
-          const data = await readJson(res);
-          if (!res.ok) { toast(data.error || "Couldn't read QuickBooks."); qboStatus = null; render(); return; }
-          qboReconcile = escDeep(data);
-        } catch (_) { setNetBanner(true); return; }
-        render(); return;
-      }
-      if (a === "qbo-disconnect") {
-        if (!(await askConfirm("Disconnect QuickBooks? Payments already recorded stay. An owner can connect it again any time.", "Disconnect"))) return;
-        const r = await postJson("/api/qbo/disconnect", {});
-        if (r.ok) { qboStatus = escDeep(r.data); qboReconcile = null; }
-        toast(r.ok ? "QuickBooks is disconnected." : (r.data.error || "That didn't work."));
-        render(); return;
-      }
-      if (a === "metrics-period") { metricsPeriod = el.dataset.period; metricsData = null; render(); return; }
-      if (a === "metrics-email") {
-        const r = await postJson("/api/metrics/summary-email", {});
-        toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
-        return;
-      }
-      if (a === "nav") { nav(el.dataset.view, el.dataset.id || null, el.dataset.detail || null); return; }
-      if (a === "onb-newjob") { nav("jobs"); formOpen.newjob = true; render(); document.getElementById("nj-name")?.focus(); return; }
-      if (a === "list-more") { const k = el.dataset.kind, pg = listPages[k]; if (pg && !pg.loading) loadListPage(k, pg.job, pg.entries.length, 50); return; }
-      if (a === "onb-job") { const j = state.jobs.find(x => !x.closed) || state.jobs[0]; if (j) nav("job", j.id); return; }
-      if (a === "onb-dismiss") { await post("/api/onboarding/dismiss"); return; }
-      if (a === "draft") await post(`/api/jobs/${id}/draft`);
-      else if (a === "sov-start") { sovStartEdit(state.jobs.find(x => x.id === id)); render(); }
-      else if (a === "sov-add") { sovDraft.lines.push(blankSovLine()); render(); document.querySelectorAll(".sov-desc")[sovDraft.lines.length - 1]?.focus(); }
-      else if (a === "sov-remove") { sovDraft.lines.splice(+el.dataset.row, 1); if (!sovDraft.lines.length) sovDraft.lines.push(blankSovLine()); render(); }
-      else if (a === "sov-read") await sovReadPaste();
-      else if (a === "sov-cancel") { sovDraft = null; render(); }
-      else if (a === "sov-save") await sovSave(id, false);
-      else if (a === "sov-save-contract") await sovSave(id, true);
-      else if (a === "sov-progress") await sovProgress(id);
-      else if (a === "email-retry") await post(`/api/outbox/${el.dataset.email}/retry`);
-      else if (a === "send") await post(`/api/jobs/${id}/send`);
-      else if (a === "progress") {
-        const v = formValues("progress");
-        const amount = centsFrom(v.completed_cents);
-        if (refuseForm("progress", amount.error || amount.cents <= 0 ? { completed_cents: "Enter the total done so far in dollars, like 19,400." } : {})) return;
-        await post(`/api/jobs/${id}/progress`, { completed_cents: amount.cents, notes: v.notes }, { formKey: "progress", close: "progress" });
-      }
-      else if (a === "done") {
-        await post(`/api/jobs/${id}/done`, { notes: formValues("done").notes || "" }, { formKey: "done", close: "done" });
-      }
-      else if (a === "resolve") {
-        const box = document.getElementById(`resolve-reason-${el.dataset.item}`);
-        const reason = (box?.value || "").trim();
-        if (!reason) { toast("Say why it's present, or attach a job record instead."); box?.focus(); return; }
-        await post(`/api/jobs/${id}/resolve/${el.dataset.item}`, { reason });
-      }
-      else if (a === "waiver") {
-        const kind = document.getElementById(`waiver-kind-${el.dataset.inv || "job"}`)?.value;
-        await post(`/api/jobs/${id}/waiver`, { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(kind ? { kind } : {}) });
-      }
-      else if (a === "retainage") await post(`/api/jobs/${id}/retainage`);
-      else if (a === "retainage-paid") {
-        const v = formValues("retpay");
-        const amount = centsFrom(v.amount_cents);
-        if (refuseForm("retpay", amount.error || amount.cents <= 0 ? { amount_cents: "Enter the retainage received in dollars, like 2,425." } : {})) return;
-        await post(`/api/jobs/${id}/retainage-paid`, { amount_cents: amount.cents, reference: v.reference }, { formKey: "retpay", close: "retpay" });
-      }
-      else if (a === "include-co") await post(`/api/jobs/${id}/include-co/${el.dataset.co}`);
-      else if (a === "pencil") await post(`/api/jobs/${id}/pencil`);
-      else if (a === "pencil-agreed") await post(`/api/jobs/${id}/pencil-response`, { agreed: true });
-      else if (a === "pencil-changes") {
-        const note = (document.getElementById("pencil-note")?.value || "").trim();
-        if (!note) { toast("Say what the payer wants changed."); document.getElementById("pencil-note")?.focus(); return; }
-        formOpen.pencilchanges = false;
-        await post(`/api/jobs/${id}/pencil-response`, { agreed: false, note });
-      }
-      else if (a === "pick-files") {
-        const input = document.getElementById("file-input");
-        if (input) {
-          input.dataset.job = el.dataset.job || "";
-          // "Take a photo" opens the rear camera directly; "choose files" offers every source.
-          if (el.dataset.capture) { input.setAttribute("capture", "environment"); input.setAttribute("accept", "image/*"); }
-          else { input.removeAttribute("capture"); input.setAttribute("accept", FILE_ACCEPT); }
-          input.click();
-        }
-      }
-      else if (a === "import-text") {
-        const text = document.querySelector("#paste-text")?.value || "";
-        const source = document.querySelector("#paste-source")?.value || "paste";
-        const jobId = el.dataset.job || "";
-        if (!text.trim()) { toast("Paste some text first."); return; }
-        const ok = await postImport("/api/import/text" + (jobId ? "?file=1" : ""), { text, source, job_id: jobId });
-        if (ok) { const box = document.querySelector("#paste-text"); if (box) box.value = ""; }
-      }
-      else if (a === "inbox-file") {
-        const itemId = el.dataset.item;
-        const jobId = document.querySelector(`#inb-job-${itemId}`)?.value || "";
-        const kind = document.querySelector(`#inb-kind-${itemId}`)?.value || "";
-        if (!jobId) { toast("Pick a job for this item."); return; }
-        await post(`/api/inbox/${itemId}/file`, { job_id: jobId, kind });
-      }
-      else if (a === "inbox-file-all") {
-        const items = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id);
-        for (const i of items) {
-          const select = document.querySelector(`#inb-job-${i.id}`);
-          const jobId = select ? select.value : i.suggested_job_id;   // a row set back to "Pick a job" is skipped
-          if (!jobId) continue;
-          const kind = document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind;
-          await post(`/api/inbox/${i.id}/file`, { job_id: jobId, kind });
-        }
-      }
-      else if (a === "inbox-dismiss") await post(`/api/inbox/${el.dataset.item}/dismiss`);
-      else if (a === "inbox-mark-done") {
-        const r = await post(`/api/inbox/${el.dataset.item}/mark-done`);
-        const item = r && r.ok && (state.inbox || []).find(x => x.id === el.dataset.item);
-        if (item) nav("job", item.filed_job_id);
-      }
-      else if (a === "inbox-undo") await post(`/api/inbox/${el.dataset.item}/undo`);
-      else if (a === "copy") {
-        const text = document.getElementById(el.dataset.target)?.textContent || "";
-        try { await navigator.clipboard.writeText(text); toast("Copied"); }
-        catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
-      }
-      else if (a === "rotate-token") {
-        if (!(await askConfirm("Make a new address? The old one stops working right away.", "Make a new address"))) return;
-        await fetch("/api/import/rotate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: el.dataset.kind }) });
-        importSettings = null;
-        render();
-      }
-      else if (a === "withdraw-co") {
-        if (!(await askConfirm("Withdraw this change order? Use this when the customer will not sign it.", "Withdraw", true))) return;
-        await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
-      }
-      else if (a === "void-draft") {
-        if (!(await askConfirm("Void the open draft pay app? Its work goes back to unbilled.", "Void the draft", true))) return;
-        await post(`/api/jobs/${id}/void-draft`);
-      }
-      else if (a === "follow-up") await post(`/api/jobs/${id}/follow-up`);
-      else if (a === "match") {
-        const v = formValues("match");
-        const amount = centsFrom(v.amount_cents);
-        if (refuseForm("match", amount.error || amount.cents <= 0 ? { amount_cents: "Enter the payment amount in dollars, like 9,500." } : {})) return;
-        await post(`/api/jobs/${id}/match-payment`, { amount_cents: amount.cents, reference: v.reference, invoice_id: v.invoice_id || "" }, { formKey: "match", close: "match" });
-      }
-      else if (a === "add-co") {
-        const r = await addChangeOrder(id);
-        if (r && r.ok) nav("co-detail", id);
-      }
-      else if (a === "goto-co") { coPreselectJob = id; nav("cos"); }
-      else if (a === "add-co-from-list") {
-        const jobId = formValues("newco").job;
-        if (!jobId) { refuseForm("newco", { job: "Pick a job." }); return; }
-        const r = await addChangeOrder(jobId);
-        if (r && r.ok) toast(`Change order created on ${unesc((state.jobs.find(j => j.id === jobId) || {}).name || "the job")}. It stays unbilled until signed.`);
-      }
-      else if (a === "goto-packet") nav("packet-detail", id);
-      else if (a === "open-packet") nav("packet-detail", el.dataset.job, el.dataset.inv);
-      else if (a === "open-co") nav("co-detail", el.dataset.job, el.dataset.co);
-      else if (a === "open-payapp") nav("payapp-detail", el.dataset.job, el.dataset.inv);
-      else if (a === "open-waiver") nav("waiver-detail", id);
-      else if (a === "daily-save") {
-        const notes = document.querySelector("#daily-notes")?.value || "";
-        const job = document.querySelector("#daily-job")?.value;
-        if (job && notes) await post(`/api/jobs/${job}/daily-record`, { notes });
-      }
-      else if (a === "attach") {
-        const name = document.querySelector("#attach-name")?.value || "attachment.pdf";
-        await post(`/api/jobs/${id}/attach/${el.dataset.item}`, { name });
-      }
-      else if (a === "import-qbo") await post(`/api/jobs/${id}/import-qbo`);
-      else if (a === "close") await post(`/api/jobs/${id}/close`);
-      else if (a === "cal-prev") { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } calSelectedDay = null; render(); }
-      else if (a === "cal-next") { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } calSelectedDay = null; render(); }
-      else if (a === "cal-today") { const n = new Date(); calYear = n.getFullYear(); calMonth = n.getMonth(); calSelectedDay = null; render(); }
-      else if (a === "cal-day") {
-        calSelectedDay = el.dataset.day || null;
-        if (calSelectedDay) { const d = toDate(calSelectedDay); calYear = d.getFullYear(); calMonth = d.getMonth(); }
-        render();
-        document.getElementById("day-detail")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-      else if (a === "approve-co") {
-        const recordId = document.getElementById(`cosign-rec-${el.dataset.co}`)?.value || "";
-        const r = await post(`/api/jobs/${id}/approve-co/${el.dataset.co}`, { record_id: recordId });
-        if (r && r.ok) { formOpen[`cosign-${el.dataset.co}`] = false; render(); }
-      }
-      else if (a === "request-co-signature") await post(`/api/jobs/${id}/request-co-signature/${el.dataset.co}`);
-      else if (a === "add-evidence") {
-        const label = document.querySelector("#ev-label")?.value;
-        if (label) await post(`/api/jobs/${id}/add-evidence`, { label, kind: "note" });
-      }
-      else if (a === "learn") {
-        const reason = document.querySelector("#learn-reason")?.value;
-        if (reason) await post(`/api/jobs/${id}/learn-rejection`, { reason });
-      }
-      else if (a === "add-record") {
-        const v = formValues("record");
-        if (refuseForm("record", v.label ? {} : { label: "Enter what this is, like \"Rough-in inspection passed\"." })) return;
-        await post(`/api/jobs/${id}/add-record`, { label: v.label, note: v.note, kind: v.kind || "note" }, { formKey: "record" });
-      }
-      else if (a === "attach-record") {
-        const recordId = document.querySelector(`#attach-rec-${el.dataset.item}`)?.value;
-        if (!recordId) { toast("Pick a job record to attach."); return; }
-        await post(`/api/jobs/${id}/attach-record/${el.dataset.item}`, { record_id: recordId });
-      }
-      else if (a === "open-job") {
-        nav("job", id);
-        if (el.dataset.focus) requestAnimationFrame(() => document.querySelector(el.dataset.focus)?.scrollIntoView({ block: "start" }));
-      }
-      else if (a === "inbox-file-suggested") await post(`/api/inbox/${el.dataset.item}/file`, { job_id: el.dataset.job, kind: "" });
-      else if (a === "create-job") {
-        const v = formValues("newjob");
-        const errors = {};
-        if (!v.name) errors.name = "Enter the job name.";
-        if (!v.address) errors.address = "Enter the job address.";
-        if (!v.customer) errors.customer = "Enter the customer: who pays for this job.";
-        if (!v.approver) errors.approver = "Enter who signs off on your bills.";
-        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.ap_email)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
-        const amount = centsFrom(v.contract_cents);
-        if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
-        const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
-        if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
-        if (refuseForm("newjob", errors)) return;
-        const r = await post("/api/jobs", {
-          name: v.name, address: v.address, customer: v.customer, approver: v.approver,
-          ap_email: v.ap_email, phone: v.phone, role: v.role || "Owner",
-          contract_number: v.contract_number, packet_notes: v.packet_notes,
-          contract_cents: amount.cents, retainage_pct: ret.value,
-        }, { formKey: "newjob", close: "newjob" });
-        if (!r || !r.ok) return;
-        toast("Job saved");
-        const made = state.jobs[state.jobs.length - 1];
-        if (made) nav("job", made.id);
-      }
-      else if (a === "save-job") {
-        const v = formValues("editjob");
-        const body = { name: v.name, address: v.address, contract_number: v.contract_number };
-        const errors = {};
-        if (!body.name) errors.name = "Enter the job name.";
-        if (!body.address) errors.address = "Enter the job address.";
-        if ("contract_cents" in v) {
-          const amount = centsFrom(v.contract_cents);
-          if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
-          body.contract_cents = amount.cents;
-        }
-        if ("retainage_pct" in v) {
-          const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
-          if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
-          body.retainage_pct = ret.value;
-        }
-        if (refuseForm("editjob", errors)) return;
-        await post(`/api/jobs/${id}/edit`, body, { formKey: "editjob", close: "editjob" });
-      }
-      else if (a === "delete-job") {
-        if (!(await askConfirm(`Delete ${unesc(el.dataset.name || "this job")}? It has no pay apps, so nothing billed is lost. Its record and notes go too.`, "Delete the job", true))) return;
-        const r = await post(`/api/jobs/${id}/delete`);
-        if (r && r.ok) nav("jobs");
-      }
-      else if (a === "toggle-form") toggleForm(el.dataset.form);
-      else if (a === "dismiss-help") { helpDismissed = true; localStorage.setItem("duracash-help-dismissed", "1"); render(); }
-      else if (a === "filter") { dashFilter = el.dataset.filter; render(); }
-      else if (a === "sort") {
-        if (dashSort === el.dataset.sort) dashSortDir *= -1;
-        else { dashSort = el.dataset.sort; dashSortDir = 1; }
-        render();
-      }
-      else if (a === "payapp-filter") { payappFilter = el.dataset.filter; render(); }
-      else if (a === "sug-add" || a === "sug-dismiss") await post(`/api/payers/${id}/suggestion/${el.dataset.sug}/${a === "sug-add" ? "add" : "dismiss"}`);
-      else if (a === "save-playbook") {
-        const form = el.closest("form");
-        const updates = {};
-        // Blank skips a field, except the cutoff day, where blank means "no cutoff".
-        new FormData(form).forEach((v, k) => { if (v !== "") updates[k] = isNaN(v) ? v : Number(v); else if (k === "payapp_due_day") updates[k] = ""; });
-        await post(`/api/payers/${id}/update`, updates);
-      }
-    });
+// What each data-action does: ACTIONS[name](el, el.dataset.id, event). One click listener on
+// #app (listenForActions, set once in boot) finds the nearest [data-action] and runs its entry,
+// so a redraw never wires buttons again. Views moved out of this file bring their own entries.
+const DEV = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+const ACTIONS = {
+  // the shell: menu, sections, tabs
+  "section": (el) => nav(SECTIONS.find(s => s.key === el.dataset.section).views[0][0]),
+  "tab": (el) => nav(el.dataset.tab),
+  "menu": () => { drawerOpen = !drawerOpen; render(); if (drawerOpen) document.querySelector(".nav button")?.focus(); },
+  "scrim": () => { drawerOpen = false; render(); },
+  "logout": () => logout(),
+  "reset-data": () => resetData(),
+  "resend-verify": async () => {
+    const r = await postJson("/api/auth/resend-verify", {});
+    toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
+  },
+  "change-password": async () => {
+    const current = document.getElementById("pw-current").value, next = document.getElementById("pw-new").value;
+    const errors = {};
+    if (!current) errors.current = "Enter your current password.";
+    if (next.length < 10) errors.new = "Use at least 10 characters for the new password.";
+    if (refuseForm("password", errors)) return;
+    const r = await postJson("/api/auth/password", { current, new: next });
+    if (!r.ok) { refuseForm("password", r.data.fields || { _form: r.data.error || "That didn't work." }); return; }
+    clearForm("password");
+    toast(r.data.message);
+    render();
+  },
+  "team-invite": async () => {
+    const v = formValues("invite");
+    if (refuseForm("invite", /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email) ? {} : { email: "Enter their email, like pat@yourcompany.com." })) return;
+    const r = await postJson("/api/team/invite", { email: v.email, role: v.role || "member" });
+    if (!r.ok) { refuseForm("invite", r.data.fields || { _form: r.data.error || "That didn't work." }); return; }
+    const data = r.data;
+    if (data.users) teamData = escDeep({ users: data.users, invites: data.invites || [] });
+    clearForm("invite");
+    lastInvite = { link: data.invite_link || (location.origin + data.invite_path), emailed: data.emailed, email_status: data.email_status, email: v.email };
+    render();
+  },
+  "team-role": async (el) => { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); },
+  "team-remove": async (el) => {
+    if (!(await askConfirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`, "Remove", true))) return;
+    await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed and signed out. The inbound email, text and calendar addresses changed too: update any forwarding rule or calendar subscription.");
+  },
+  "team-revoke": async (el) => { await teamPost(`/api/team/invites/${el.dataset.invite}/revoke`, {}, "Invite revoked."); },
+  "delete-account": async () => {
+    if (!(await askConfirm("Delete the company, every job and file, and every user? This can't be undone here.", "Delete everything", true))) return;
+    const r = await postJson("/api/account/delete", { password: document.getElementById("del-password").value, confirm: document.getElementById("del-confirm").value });
+    if (!r.ok) { toast(r.data.error || "Nothing was deleted."); return; }
+    clearSession(); teamData = null; lastInvite = null;
+    renderLanding();
+    toast(r.data.message);
+  },
+  "reset-confirm": async () => {
+    const r = await post("/api/reset", { confirm: document.getElementById("reset-confirm")?.value || "" });
+    if (r && r.ok) { formOpen.reset = false; render(); }
+  },
+  "2fa-begin": async () => {
+    const r = await postJson("/api/auth/2fa/begin", {});
+    if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
+    twoStepSetup = escDeep(r.data); render(); document.getElementById("2fa-code")?.focus();
+  },
+  "2fa-enable": async () => {
+    const r = await postJson("/api/auth/2fa/enable", { code: document.getElementById("2fa-code")?.value || "" });
+    if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
+    twoStepSetup = null; recoveryCodes = escDeep(r.data.recovery_codes); me.two_step = true; render();
+  },
+  "2fa-done": () => { recoveryCodes = null; render(); },
+  "2fa-disable": async () => {
+    const r = await postJson("/api/auth/2fa/disable", { password: document.getElementById("2fa-off-pw")?.value || "", code: document.getElementById("2fa-off-code")?.value || "" });
+    toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
+    if (r.ok) { me.two_step = false; render(); }
+  },
+  "qbo-read": async () => {
+    const text = document.getElementById("qbo-csv")?.value || "";
+    if (!text.trim()) { toast("Paste the CSV first."); return; }
+    const r = await postJson("/api/import/payments-csv", { csv: text });
+    if (!r.ok) { toast(r.data.error || "Couldn't read it."); return; }
+    paymentImport = escDeep(r.data); render();
+  },
+  "qbo-apply": async () => {
+    const picks = [...document.querySelectorAll("[data-qbo-row]:checked")].map(cb => paymentImport.rows[+cb.dataset.qboRow])
+      .map(row => ({ job_id: row.job_id, invoice_id: row.invoice_id, amount_cents: row.amount_cents, reference: unesc(row.ref), date: row.date, qbo_id: row.qbo_id ? unesc(row.qbo_id) : undefined }));
+    if (!picks.length) { toast("Tick the payments to record."); return; }
+    const r = await postJson("/api/import/payments-apply", { payments: picks });
+    if (!r.ok) { toast(r.data.error || "Nothing was recorded."); return; }
+    const done = r.data.import_results.filter(x => x.ok).length, failed = r.data.import_results.filter(x => !x.ok);
+    setState(r.data); paymentImport = null;
+    toast(`${done} payment${done === 1 ? "" : "s"} recorded.${failed.length ? " Not recorded: " + failed.map(f => `${f.reference}: ${f.error}`).join("; ") : ""}`);
+    render();
+  },
+  "qbo-cancel": () => { paymentImport = null; render(); },
+  "use-approval-days": async (el, id) => { await post(`/api/payers/${id}/update`, { usual_approval_days: Number(el.dataset.days) }); },
+  "save-company": async () => {
+    const v = (k) => document.getElementById(k)?.value || "";
+    await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license"), billing_style: v("co-style") || "pay_apps" });
+  },
+  "save-my-name": async () => {
+    const r = await postJson("/api/auth/name", { name: document.getElementById("my-name")?.value || "" });
+    if (!r.ok) { toast(r.data.error || "Not saved."); return; }
+    setMe(escDeep(r.data.user)); toast("Saved"); render();
+  },
+  "billing-checkout": () => openBilling("/api/billing/checkout"),
+  "billing-portal": () => openBilling("/api/billing/portal"),
+  "qbo-connect": async () => {
+    const r = await postJson("/api/qbo/connect", {});
+    if (!r.ok) { toast(r.data.error || "Couldn't start the QuickBooks connection."); return; }
+    if (typeof r.data.url === "string" && r.data.url.startsWith("https://")) location.assign(r.data.url);
+  },
+  "qbo-sync": async () => {
+    toast("Reading payments from QuickBooks…");
+    const r = await postJson("/api/qbo/payments", { days: 90 });
+    if (!r.ok) { toast(r.data.error || "Couldn't read QuickBooks."); qboStatus = null; render(); return; }
+    paymentImport = escDeep(r.data); render();
+  },
+  "qbo-reconcile": async () => {
+    try {
+      const res = await fetch("/api/qbo/reconcile");
+      const data = await readJson(res);
+      if (!res.ok) { toast(data.error || "Couldn't read QuickBooks."); qboStatus = null; render(); return; }
+      qboReconcile = escDeep(data);
+    } catch (_) { setNetBanner(true); return; }
+    render();
+  },
+  "qbo-disconnect": async () => {
+    if (!(await askConfirm("Disconnect QuickBooks? Payments already recorded stay. An owner can connect it again any time.", "Disconnect"))) return;
+    const r = await postJson("/api/qbo/disconnect", {});
+    if (r.ok) { qboStatus = escDeep(r.data); qboReconcile = null; }
+    toast(r.ok ? "QuickBooks is disconnected." : (r.data.error || "That didn't work."));
+    render();
+  },
+  "metrics-period": (el) => { metricsPeriod = el.dataset.period; metricsData = null; render(); },
+  "metrics-email": async () => {
+    const r = await postJson("/api/metrics/summary-email", {});
+    toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
+  },
+  "nav": (el) => { nav(el.dataset.view, el.dataset.id || null, el.dataset.detail || null); },
+  "onb-newjob": () => { nav("jobs"); formOpen.newjob = true; render(); document.getElementById("nj-name")?.focus(); },
+  "list-more": (el) => { const k = el.dataset.kind, pg = listPages[k]; if (pg && !pg.loading) loadListPage(k, pg.job, pg.entries.length, 50); },
+  "onb-job": () => { const j = state.jobs.find(x => !x.closed) || state.jobs[0]; if (j) nav("job", j.id); },
+  "onb-dismiss": async () => { await post("/api/onboarding/dismiss"); },
+  "draft": (el, id) => post(`/api/jobs/${id}/draft`),
+  "sov-start": (el, id) => { sovStartEdit(state.jobs.find(x => x.id === id)); render(); },
+  "sov-add": () => { sovDraft.lines.push(blankSovLine()); render(); document.querySelectorAll(".sov-desc")[sovDraft.lines.length - 1]?.focus(); },
+  "sov-remove": (el) => { sovDraft.lines.splice(+el.dataset.row, 1); if (!sovDraft.lines.length) sovDraft.lines.push(blankSovLine()); render(); },
+  "sov-read": () => sovReadPaste(),
+  "sov-cancel": () => { sovDraft = null; render(); },
+  "sov-save": (el, id) => sovSave(id, false),
+  "sov-save-contract": (el, id) => sovSave(id, true),
+  "sov-progress": (el, id) => sovProgress(id),
+  "email-retry": (el) => post(`/api/outbox/${el.dataset.email}/retry`),
+  "send": (el, id) => post(`/api/jobs/${id}/send`),
+  "progress": async (el, id) => {
+    const v = formValues("progress");
+    const amount = centsFrom(v.completed_cents);
+    if (refuseForm("progress", amount.error || amount.cents <= 0 ? { completed_cents: "Enter the total done so far in dollars, like 19,400." } : {})) return;
+    await post(`/api/jobs/${id}/progress`, { completed_cents: amount.cents, notes: v.notes }, { formKey: "progress", close: "progress" });
+  },
+  "done": async (el, id) => { await post(`/api/jobs/${id}/done`, { notes: formValues("done").notes || "" }, { formKey: "done", close: "done" }); },
+  "resolve": async (el, id) => {
+    const box = document.getElementById(`resolve-reason-${el.dataset.item}`);
+    const reason = (box?.value || "").trim();
+    if (!reason) { toast("Say why it's present, or attach a job record instead."); box?.focus(); return; }
+    await post(`/api/jobs/${id}/resolve/${el.dataset.item}`, { reason });
+  },
+  "waiver": async (el, id) => {
+    const kind = document.getElementById(`waiver-kind-${el.dataset.inv || "job"}`)?.value;
+    await post(`/api/jobs/${id}/waiver`, { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(kind ? { kind } : {}) });
+  },
+  "retainage": (el, id) => post(`/api/jobs/${id}/retainage`),
+  "retainage-paid": async (el, id) => {
+    const v = formValues("retpay");
+    const amount = centsFrom(v.amount_cents);
+    if (refuseForm("retpay", amount.error || amount.cents <= 0 ? { amount_cents: "Enter the retainage received in dollars, like 2,425." } : {})) return;
+    await post(`/api/jobs/${id}/retainage-paid`, { amount_cents: amount.cents, reference: v.reference }, { formKey: "retpay", close: "retpay" });
+  },
+  "include-co": (el, id) => post(`/api/jobs/${id}/include-co/${el.dataset.co}`),
+  "pencil": (el, id) => post(`/api/jobs/${id}/pencil`),
+  "pencil-agreed": (el, id) => post(`/api/jobs/${id}/pencil-response`, { agreed: true }),
+  "pencil-changes": async (el, id) => {
+    const note = (document.getElementById("pencil-note")?.value || "").trim();
+    if (!note) { toast("Say what the payer wants changed."); document.getElementById("pencil-note")?.focus(); return; }
+    formOpen.pencilchanges = false;
+    await post(`/api/jobs/${id}/pencil-response`, { agreed: false, note });
+  },
+  "pick-files": (el) => {
+    const input = document.getElementById("file-input");
+    if (input) {
+      input.dataset.job = el.dataset.job || "";
+      // "Take a photo" opens the rear camera directly; "choose files" offers every source.
+      if (el.dataset.capture) { input.setAttribute("capture", "environment"); input.setAttribute("accept", "image/*"); }
+      else { input.removeAttribute("capture"); input.setAttribute("accept", FILE_ACCEPT); }
+      input.click();
+    }
+  },
+  "import-text": async (el) => {
+    const text = document.querySelector("#paste-text")?.value || "";
+    const source = document.querySelector("#paste-source")?.value || "paste";
+    const jobId = el.dataset.job || "";
+    if (!text.trim()) { toast("Paste some text first."); return; }
+    const ok = await postImport("/api/import/text" + (jobId ? "?file=1" : ""), { text, source, job_id: jobId });
+    if (ok) { const box = document.querySelector("#paste-text"); if (box) box.value = ""; }
+  },
+  "inbox-file": async (el) => {
+    const itemId = el.dataset.item;
+    const jobId = document.querySelector(`#inb-job-${itemId}`)?.value || "";
+    const kind = document.querySelector(`#inb-kind-${itemId}`)?.value || "";
+    if (!jobId) { toast("Pick a job for this item."); return; }
+    await post(`/api/inbox/${itemId}/file`, { job_id: jobId, kind });
+  },
+  "inbox-file-all": async () => {
+    const items = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id);
+    for (const i of items) {
+      const select = document.querySelector(`#inb-job-${i.id}`);
+      const jobId = select ? select.value : i.suggested_job_id;   // a row set back to "Pick a job" is skipped
+      if (!jobId) continue;
+      const kind = document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind;
+      await post(`/api/inbox/${i.id}/file`, { job_id: jobId, kind });
+    }
+  },
+  "inbox-dismiss": (el) => post(`/api/inbox/${el.dataset.item}/dismiss`),
+  "inbox-mark-done": async (el) => {
+    const r = await post(`/api/inbox/${el.dataset.item}/mark-done`);
+    const item = r && r.ok && (state.inbox || []).find(x => x.id === el.dataset.item);
+    if (item) nav("job", item.filed_job_id);
+  },
+  "inbox-undo": (el) => post(`/api/inbox/${el.dataset.item}/undo`),
+  "copy": async (el) => {
+    const text = document.getElementById(el.dataset.target)?.textContent || "";
+    try { await navigator.clipboard.writeText(text); toast("Copied"); }
+    catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
+  },
+  "rotate-token": async (el) => {
+    if (!(await askConfirm("Make a new address? The old one stops working right away.", "Make a new address"))) return;
+    await fetch("/api/import/rotate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: el.dataset.kind }) });
+    importSettings = null;
+    render();
+  },
+  "withdraw-co": async (el, id) => {
+    if (!(await askConfirm("Withdraw this change order? Use this when the customer will not sign it.", "Withdraw", true))) return;
+    await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
+  },
+  "void-draft": async (el, id) => {
+    if (!(await askConfirm("Void the open draft pay app? Its work goes back to unbilled.", "Void the draft", true))) return;
+    await post(`/api/jobs/${id}/void-draft`);
+  },
+  "follow-up": (el, id) => post(`/api/jobs/${id}/follow-up`),
+  "match": async (el, id) => {
+    const v = formValues("match");
+    const amount = centsFrom(v.amount_cents);
+    if (refuseForm("match", amount.error || amount.cents <= 0 ? { amount_cents: "Enter the payment amount in dollars, like 9,500." } : {})) return;
+    await post(`/api/jobs/${id}/match-payment`, { amount_cents: amount.cents, reference: v.reference, invoice_id: v.invoice_id || "" }, { formKey: "match", close: "match" });
+  },
+  "add-co": async (el, id) => {
+    const r = await addChangeOrder(id);
+    if (r && r.ok) nav("co-detail", id);
+  },
+  "goto-co": (el, id) => { coPreselectJob = id; nav("cos"); },
+  "add-co-from-list": async () => {
+    const jobId = formValues("newco").job;
+    if (!jobId) { refuseForm("newco", { job: "Pick a job." }); return; }
+    const r = await addChangeOrder(jobId);
+    if (r && r.ok) toast(`Change order created on ${unesc((state.jobs.find(j => j.id === jobId) || {}).name || "the job")}. It stays unbilled until signed.`);
+  },
+  "goto-packet": (el, id) => nav("packet-detail", id),
+  "open-packet": (el) => nav("packet-detail", el.dataset.job, el.dataset.inv),
+  "open-co": (el) => nav("co-detail", el.dataset.job, el.dataset.co),
+  "open-payapp": (el) => nav("payapp-detail", el.dataset.job, el.dataset.inv),
+  "open-waiver": (el, id) => nav("waiver-detail", id),
+  "daily-save": async () => {
+    const notes = document.querySelector("#daily-notes")?.value || "";
+    const job = document.querySelector("#daily-job")?.value;
+    if (job && notes) await post(`/api/jobs/${job}/daily-record`, { notes });
+  },
+  "attach": async (el, id) => {
+    const name = document.querySelector("#attach-name")?.value || "attachment.pdf";
+    await post(`/api/jobs/${id}/attach/${el.dataset.item}`, { name });
+  },
+  "import-qbo": (el, id) => post(`/api/jobs/${id}/import-qbo`),
+  "close": (el, id) => post(`/api/jobs/${id}/close`),
+  "cal-prev": () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } calSelectedDay = null; render(); },
+  "cal-next": () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } calSelectedDay = null; render(); },
+  "cal-today": () => { const n = new Date(); calYear = n.getFullYear(); calMonth = n.getMonth(); calSelectedDay = null; render(); },
+  "cal-day": (el) => {
+    calSelectedDay = el.dataset.day || null;
+    if (calSelectedDay) { const d = toDate(calSelectedDay); calYear = d.getFullYear(); calMonth = d.getMonth(); }
+    render();
+    document.getElementById("day-detail")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  },
+  "approve-co": async (el, id) => {
+    const recordId = document.getElementById(`cosign-rec-${el.dataset.co}`)?.value || "";
+    const r = await post(`/api/jobs/${id}/approve-co/${el.dataset.co}`, { record_id: recordId });
+    if (r && r.ok) { formOpen[`cosign-${el.dataset.co}`] = false; render(); }
+  },
+  "request-co-signature": (el, id) => post(`/api/jobs/${id}/request-co-signature/${el.dataset.co}`),
+  "add-evidence": async (el, id) => {
+    const label = document.querySelector("#ev-label")?.value;
+    if (label) await post(`/api/jobs/${id}/add-evidence`, { label, kind: "note" });
+  },
+  "learn": async (el, id) => {
+    const reason = document.querySelector("#learn-reason")?.value;
+    if (reason) await post(`/api/jobs/${id}/learn-rejection`, { reason });
+  },
+  "add-record": async (el, id) => {
+    const v = formValues("record");
+    if (refuseForm("record", v.label ? {} : { label: "Enter what this is, like \"Rough-in inspection passed\"." })) return;
+    await post(`/api/jobs/${id}/add-record`, { label: v.label, note: v.note, kind: v.kind || "note" }, { formKey: "record" });
+  },
+  "attach-record": async (el, id) => {
+    const recordId = document.querySelector(`#attach-rec-${el.dataset.item}`)?.value;
+    if (!recordId) { toast("Pick a job record to attach."); return; }
+    await post(`/api/jobs/${id}/attach-record/${el.dataset.item}`, { record_id: recordId });
+  },
+  "open-job": (el, id) => {
+    nav("job", id);
+    if (el.dataset.focus) requestAnimationFrame(() => document.querySelector(el.dataset.focus)?.scrollIntoView({ block: "start" }));
+  },
+  "inbox-file-suggested": (el) => post(`/api/inbox/${el.dataset.item}/file`, { job_id: el.dataset.job, kind: "" }),
+  "create-job": async () => {
+    const v = formValues("newjob");
+    const errors = {};
+    if (!v.name) errors.name = "Enter the job name.";
+    if (!v.address) errors.address = "Enter the job address.";
+    if (!v.customer) errors.customer = "Enter the customer: who pays for this job.";
+    if (!v.approver) errors.approver = "Enter who signs off on your bills.";
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.ap_email)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
+    const amount = centsFrom(v.contract_cents);
+    if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
+    const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
+    if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
+    if (refuseForm("newjob", errors)) return;
+    const r = await post("/api/jobs", {
+      name: v.name, address: v.address, customer: v.customer, approver: v.approver,
+      ap_email: v.ap_email, phone: v.phone, role: v.role || "Owner",
+      contract_number: v.contract_number, packet_notes: v.packet_notes,
+      contract_cents: amount.cents, retainage_pct: ret.value,
+    }, { formKey: "newjob", close: "newjob" });
+    if (!r || !r.ok) return;
+    toast("Job saved");
+    const made = state.jobs[state.jobs.length - 1];
+    if (made) nav("job", made.id);
+  },
+  "save-job": async (el, id) => {
+    const v = formValues("editjob");
+    const body = { name: v.name, address: v.address, contract_number: v.contract_number };
+    const errors = {};
+    if (!body.name) errors.name = "Enter the job name.";
+    if (!body.address) errors.address = "Enter the job address.";
+    if ("contract_cents" in v) {
+      const amount = centsFrom(v.contract_cents);
+      if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
+      body.contract_cents = amount.cents;
+    }
+    if ("retainage_pct" in v) {
+      const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
+      if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
+      body.retainage_pct = ret.value;
+    }
+    if (refuseForm("editjob", errors)) return;
+    await post(`/api/jobs/${id}/edit`, body, { formKey: "editjob", close: "editjob" });
+  },
+  "delete-job": async (el, id) => {
+    if (!(await askConfirm(`Delete ${unesc(el.dataset.name || "this job")}? It has no pay apps, so nothing billed is lost. Its record and notes go too.`, "Delete the job", true))) return;
+    const r = await post(`/api/jobs/${id}/delete`);
+    if (r && r.ok) nav("jobs");
+  },
+  "toggle-form": (el) => toggleForm(el.dataset.form),
+  "dismiss-help": () => { helpDismissed = true; localStorage.setItem("duracash-help-dismissed", "1"); render(); },
+  "filter": (el) => { dashFilter = el.dataset.filter; render(); },
+  "sort": (el) => {
+    if (dashSort === el.dataset.sort) dashSortDir *= -1;
+    else { dashSort = el.dataset.sort; dashSortDir = 1; }
+    render();
+  },
+  "payapp-filter": (el) => { payappFilter = el.dataset.filter; render(); },
+  "sug-add": (el, id) => post(`/api/payers/${id}/suggestion/${el.dataset.sug}/add`),
+  "sug-dismiss": (el, id) => post(`/api/payers/${id}/suggestion/${el.dataset.sug}/dismiss`),
+  "save-playbook": async (el, id) => {
+    const form = el.closest("form");
+    const updates = {};
+    // Blank skips a field, except the cutoff day, where blank means "no cutoff".
+    new FormData(form).forEach((v, k) => { if (v !== "") updates[k] = isNaN(v) ? v : Number(v); else if (k === "payapp_due_day") updates[k] = ""; });
+    await post(`/api/payers/${id}/update`, updates);
+  },
+};
+
+// Stripe's checkout or billing portal opens on Stripe's own page.
+async function openBilling(path) {
+  const r = await postJson(path, {});
+  if (!r.ok) { toast(r.data.error || "Couldn't open billing."); return; }
+  if (typeof r.data.url === "string" && r.data.url.startsWith("https://")) location.assign(r.data.url);
+}
+
+let listening = false;
+function listenForActions() {
+  if (listening) return;
+  listening = true;
+  const app = document.getElementById("app");
+  app.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-action]");
+    if (!el || !app.contains(el)) return;
+    // Ctrl-, Cmd- or Shift-click on a link opens its page in a new tab, as links do.
+    if (el.tagName === "A" && (e.metaKey || e.ctrlKey || e.shiftKey)) return;
+    e.preventDefault();
+    const run = ACTIONS[el.dataset.action];
+    if (!run) { if (DEV) console.warn(`No action named "${el.dataset.action}".`); return; }
+    actionEl = el;
+    run(el, el.dataset.id, e);
   });
   // Filter dropdowns listen for "change" only. A click handler that re-renders
   // destroys the open dropdown, which is why mouse selection used to fail.
-  document.querySelectorAll("select[data-filter-for]").forEach(s => {
-    s.addEventListener("change", () => {
-      if (s.dataset.filterFor === "outbox") outboxJobFilter = s.value;
-      else if (s.dataset.filterFor === "audit") auditJobFilter = s.value;
-      else if (s.dataset.filterFor === "calendar") calJobFilter = s.value;
-      render();
-    });
+  app.addEventListener("change", (e) => {
+    const s = e.target.closest("select[data-filter-for]");
+    if (!s) return;
+    if (s.dataset.filterFor === "outbox") outboxJobFilter = s.value;
+    else if (s.dataset.filterFor === "audit") auditJobFilter = s.value;
+    else if (s.dataset.filterFor === "calendar") calJobFilter = s.value;
+    render();
   });
 }
 
@@ -1227,7 +1240,7 @@ async function uploadFiles(fileList, jobId = "", fileNow = false) {
         body: f,
       });
       const data = await readJson(res);
-      if (res.status === 401) { me = null; state = null; renderLanding(); return; }
+      if (res.status === 401) { clearSession(); renderLanding(); return; }
       if (res.ok) { ok++; setState(data); setNetBanner(false); }
       else failed.push(data.error || `${name}: upload failed`);
     } catch (_) {
@@ -1705,7 +1718,7 @@ function accountView() {
       <p class="sub">Download everything in your company as one file, or start over.</p>
       <div class="form-inline">
         <a class="btn small secondary" href="/api/export" download>Export data</a>
-        ${owner ? `<button class="btn small secondary" id="reset" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>` : ""}
+        ${owner ? `<button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>` : ""}
       </div>
       ${formOpen.reset && !isDemo ? `<div class="form-inline">
         <label for="reset-confirm" class="inline-label">Reset deletes every job, payer and record; a snapshot is kept on the server. Type the company name to confirm:</label>
@@ -1768,8 +1781,7 @@ async function loadAdminCompanies() {
     if (!res.ok) return;
     adminCompanies = escDeep((await readJson(res)).companies);
   } catch (_) { return; }
-  const el = document.getElementById("admin-companies");
-  if (el) el.innerHTML = adminCompaniesHtml();
+  patch("#admin-companies", adminCompaniesHtml());
 }
 
 function adminCompaniesHtml() {
@@ -2971,7 +2983,7 @@ async function helperAsk(q) {
       body: JSON.stringify({ q, view: currentView, job_id: currentView === "job" ? currentJobId : "" }),
     });
     reply = await readJson(res);
-    if (res.status === 401) { helperBusy = false; me = null; state = null; renderLanding(); return; }
+    if (res.status === 401) { helperBusy = false; clearSession(); renderLanding(); return; }
     if (!res.ok) reply = { text: reply.error || "Something went wrong. Try again." };
   } catch (_) {
     reply = { text: "I can't reach Duracash right now. Check your connection and try again." };
