@@ -196,6 +196,20 @@ class PaperworkTests(unittest.TestCase):  # R3-05
         with self.assertRaises(domain.GateError):
             domain.detach_packet_item(state, "job-oak", item["id"])
 
+    def test_remove_refused_once_the_pay_app_went_out(self):
+        # What went with a sent pay app stays as it was sent (review of R3-05).
+        state = seed_state()
+        domain.draft_invoice(state, "job-oak")
+        job = domain._job(state, "job-oak")
+        item = next(p for p in domain.active_packet(job) if p["id"] == "pkt-oak-waiver")
+        domain.resolve_packet_item(state, "job-oak", item["id"], reason="Emailed 10/12")
+        sent = next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)
+        sent["status"], sent["sent_at"] = "sent", domain.utcnow()
+        with self.assertRaises(domain.GateError) as raised:
+            domain.detach_packet_item(state, "job-oak", item["id"])
+        self.assertIn(f"{sent['number']} has gone to the customer", str(raised.exception))
+        self.assertTrue(item["present"])
+
     def test_blocker_items_link_unsigned_change_orders(self):
         state = seed_state()
         domain.draft_invoice(state, "job-oak")

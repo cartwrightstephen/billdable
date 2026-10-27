@@ -151,7 +151,9 @@ test("waiting on the customer: no main button until the follow-up is due", () =>
   assert.equal(before.primary, null);
   assert.deepEqual(before.more.slice(0, 2).map(a => a.label), ["Record a payment", "Follow up now"]);
   assert.match(before.more[1].attrs, /data-early="1"/);
-  assert.match(waitingText(j), /^Waiting on Sam Jones\. Sent .+; follow-up due .+\.$/);
+  assert.match(waitingText(j, new Date("2026-10-03T12:00:00Z")), /^Waiting on Sam Jones\. Sent .+; follow-up due .+\.$/);
+  // Once the date has passed the card says so, beside the main Send follow-up.
+  assert.match(waitingText(j, new Date("2026-10-07T12:00:00Z")), /; a follow-up has been due since .+\.$/);
   const after = jobActions(j, { now: new Date("2026-10-07T12:00:00Z") });
   assert.equal(after.primary.label, "Send follow-up");
   assert.doesNotMatch(after.primary.attrs, /data-early/);

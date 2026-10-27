@@ -58,7 +58,7 @@ export function blockerButton(j) {
 }
 
 export function nextStep(j) {
-  if (j.closed) return "Closed for the record.";
+  if (j.closed) return "Finished.";
   if (needsPaperwork(j)) return "Attach the paperwork, then send: " + j.missing_paperwork.join(", ");
   if (isBlocked(j)) return "Clear blockers: " + j.blockers[0];
   const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
@@ -169,11 +169,13 @@ export function retainageNote(j) {
 }
 
 // "Waiting on Sam. Sent Oct 3; follow-up due Oct 10." while a sent pay app is unpaid. Empty otherwise.
-export function waitingText(j) {
+// Once the date has passed: "...; a follow-up has been due since Oct 10."
+export function waitingText(j, now = new Date()) {
   const f = followUpDue(j);
   if (!f) return "";
   const p = j.payer || {};
-  return `Waiting on ${p.approver || p.name || "the customer"}. Sent ${fmtDate(f.invoice.sent_at)}; follow-up due ${fmtDate(f.due)}.`;
+  const when = f.due <= now ? `a follow-up has been due since ${fmtDate(f.due)}` : `follow-up due ${fmtDate(f.due)}`;
+  return `Waiting on ${p.approver || p.name || "the customer"}. Sent ${fmtDate(f.invoice.sent_at)}; ${when}.`;
 }
 
 // The job page's buttons (R3-04): one main button (or none while the customer has the pay app and

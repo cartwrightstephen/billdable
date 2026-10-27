@@ -2475,11 +2475,11 @@ const views = {
         <ol class="steps">
           <li>Jobs → New job: job name, address, customer, who pays you and the contract amount. The rest can wait under More details.</li>
           <li>Drop the contract, photos and tickets on the job record, or bring emails and texts in through the Inbox.</li>
-          <li>Progress pay app: enter completed-to-date. Duracash drafts the pay app, withholds retainage and lists the packet.</li>
-          <li>Optional: send a pencil copy so the payer agrees the numbers first.</li>
-          <li>Attach records to each packet item. Approve and send unlocks when the packet is complete.</li>
-          <li>Match the payment when it arrives, then send the waiver for that pay app.</li>
-          <li>Mark done, finish the punch list (closeout packet), ask for retainage, record it when paid, close the job.</li>
+          <li>Progress pay app: enter this draw, the total done so far or a percent. Duracash shows what the pay app comes to, drafts it, holds back retainage and lists the paperwork.</li>
+          <li>Optional: Send draft for their review, so the customer agrees the numbers first.</li>
+          <li>Add each missing document: take a photo, choose a file or pick one from the job record. Review & send unlocks when the paperwork is in.</li>
+          <li>Record a payment when it arrives, with the date received, then send the waiver for that pay app.</li>
+          <li>Mark done, finish the punch list (closeout paperwork), ask for retainage, record it when paid, then Finish job.</li>
         </ol>
       </div>
       <div class="card"><h2>Words you will see</h2>
@@ -2505,7 +2505,7 @@ const views = {
       ${isDemo && !helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
-          <strong>Try the demo:</strong> open a job, clear its blockers, Approve & send, match the payment, send the waiver, then close it for the record.
+          <strong>Try the demo:</strong> open a job, clear its blockers, Review & send, record the payment, send the waiver, then finish the job.
         </div>` : ""}
       ${state.jobs.length ? `
       <section class="card action-queue" aria-labelledby="needs-action">
@@ -2822,6 +2822,8 @@ const views = {
     const missing = packet.filter(p => p.required && !p.present).length;
     // Unsigned change orders on the bill block the same send; say so here with a way to them (R3-05).
     const cosBlocking = !isCloseout && isBlocked(j) ? coBlockers(j) : [];
+    // What went with a pay app stays as it was sent: Remove is for a draft's paperwork, the job's and closeout's.
+    const canRemove = !j.closed && !(inv && !["draft", "awaiting_approval"].includes(inv.status));
     return `
       ${backButton("job", j.name, j.id)}
       <h1>${isCloseout ? "Closeout packet" : (inv ? inv.number + " packet" : "Packet")}</h1>
@@ -2839,7 +2841,7 @@ const views = {
               ${p.present && p.present_reason && p.present_reason !== "Produced by Duracash" ? `<div class="sub">Marked as in hand: ${p.present_reason}</div>` : ""}
               ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}
               ${(p.attachments || []).map(a => `<div class="sub">${a.auto ? "Attached from the job record" : "Attached"}: ${a.name}</div>`).join("")}
-              ${p.present && p.present_reason !== "Produced by Duracash" && !j.closed ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
+              ${p.present && p.present_reason !== "Produced by Duracash" && canRemove ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
             </div>
             ${!p.present && !skipped ? `<div class="form-inline packet-add">
               <button class="btn small" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}" data-capture="1">Take a photo</button>
@@ -3282,7 +3284,7 @@ const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("No payments matched", "Match a payment from a job once the payer has paid.")}
+      </div>` : emptyState("No payments yet", "Record a payment from the job once the customer has paid.")}
     `;
   },
   waivers() {

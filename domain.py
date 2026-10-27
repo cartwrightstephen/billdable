@@ -1168,10 +1168,11 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     if "approver" in clean and not clean["approver"]:
         errors["approver"] = "Enter who signs off on your bills."
     if "name" in clean:
+        same = _payer_named(state, clean["name"], other_than=payer["id"]) if clean["name"] else None
         if not clean["name"]:
             errors["name"] = "Enter the customer's name."
-        elif _payer_named(state, clean["name"], other_than=payer["id"]):
-            errors["name"] = f"Another customer is already called {clean['name']}."
+        elif same:
+            errors["name"] = f"Another customer is already called {same['name']}."
         elif clean["name"] == payer["name"]:
             clean.pop("name")
     if errors:
@@ -1239,7 +1240,7 @@ def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner")
     if not name:
         errors["name"] = "Enter the customer's name."
     elif _payer_named(state, name):
-        errors["name"] = f"Another customer is already called {name}."
+        errors["name"] = f"Another customer is already called {_payer_named(state, name)['name']}."
     if ap_email and not EMAIL_RE.match(ap_email):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
     _refuse("Customer not added.", errors)
@@ -1890,6 +1891,9 @@ def detach_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: 
         raise GateError("Packet item not found.")
     if item.get("present_reason") == MADE_HERE_REASON:
         raise GateError(f"Duracash makes {item['label']} with the pay app; there is nothing to remove.")
+    if _invoice and _invoice.get("status") not in DRAFT_STATUSES:
+        # What went with a pay app stays as it was sent; the customer may already have it.
+        raise GateError(f"{_invoice['number']} has gone to the customer, so its paperwork stays as it was sent.")
     taken = item.get("attachments", [])
     if not taken and not item.get("present"):
         raise GateError(f"Nothing is attached to {item['label']}.")
