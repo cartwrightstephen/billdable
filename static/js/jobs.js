@@ -38,10 +38,23 @@ export function needsPaperwork(j) {
   return isBlocked(j) && (j.missing_paperwork || []).length === j.blockers.length;
 }
 
-// The button that opens the paperwork page.
+// The unsigned change orders on the bill that block send: {kind: "co", text, co_id, number} (R3-05).
+export function coBlockers(j) {
+  return (j.blocker_items || []).filter(b => b.kind === "co");
+}
+
+// Blocked only by unsigned change orders: the way out is a signature, not paperwork.
+export function onlyCoBlockers(j) {
+  const cos = coBlockers(j);
+  return isBlocked(j) && cos.length > 0 && cos.length === j.blockers.length;
+}
+
+// The button that opens the paperwork page, or the change order when that is all that blocks.
 export function blockerButton(j) {
   const n = j.blockers.length;
-  return needsPaperwork(j) ? `Add ${n} missing document${n === 1 ? "" : "s"}` : `Clear ${n} blocker${n === 1 ? "" : "s"}`;
+  if (needsPaperwork(j)) return `Add ${n} missing document${n === 1 ? "" : "s"}`;
+  if (onlyCoBlockers(j)) return n === 1 ? `Get CO ${coBlockers(j)[0].number} signed` : `Get ${n} change orders signed`;
+  return `Clear ${n} blocker${n === 1 ? "" : "s"}`;
 }
 
 export function nextStep(j) {
@@ -141,3 +154,79 @@ export function followUpDue(j) {
   const days = Number(unesc(String((j.payer || {}).follow_up_days || ""))) || 7;
   return { invoice: sent, due: new Date(last.getTime() + days * 86400000) };
 }
+
+// Required closeout items not in yet (the closeout packet gates asking for retainage).
+export function closeoutMissing(j) {
+  return (j.closeout_packet || []).filter(p => p.required && !p.present).length;
+}
+
+// Why the job page has no "Ask for retainage" while retainage is held (R3-04). Empty when it has one.
+export function retainageNote(j) {
+  if (!(j.money.retainage_open_cents > 0) || j.closed) return "";
+  if (j.work_status !== "complete") return "Released at closeout.";
+  const n = closeoutMissing(j);
+  return n ? `Closeout paperwork: ${n} item${n === 1 ? "" : "s"} missing.` : "";
+}
+
+// "Waiting on Sam. Sent Oct 3; follow-up due Oct 10." while a sent pay app is unpaid. Empty otherwise.
+export function waitingText(j) {
+  const f = followUpDue(j);
+  if (!f) return "";
+  const p = j.payer || {};
+  return `Waiting on ${p.approver || p.name || "the customer"}. Sent ${fmtDate(f.invoice.sent_at)}; follow-up due ${fmtDate(f.due)}.`;
+}
+
+// The job page's buttons (R3-04): one main button (or none while the customer has the pay app and
+// no follow-up is due), then the rest in the order they matter. Each has a group for the "More"
+// list: bill, paid (get paid) or close (close out). demo adds the QuickBooks sample import.
+const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "pencil", "pencil-ok", "pencil-no", "packet",
+  "draft", "progress", "done", "retainage", "retpay", "co", "close", "void", "qbo"];
+
+export function jobActions(j, { now = new Date(), demo = false } = {}) {
+  if (j.closed) return { primary: null, more: [] };
+  const m = j.money;
+  const draft = (j.invoices || []).find(i => DRAFTS.includes(i.status));
+  const pencilOut = draft && draft.pencil_status === "sent";
+  const waitingPay = (j.invoices || []).some(i => ["sent", "approved", "partial"].includes(i.status));
+  const follow = waitingPay ? followUpDue(j) : null;
+  const followDue = !!follow && follow.due <= now;
+  const canClose = !(j.close_blockers || []).length;
+  const all = [];
+  const add = (key, label, attrs, why, group) => all.push({ key, label, attrs, why, group });
+  if (isBlocked(j)) {
+    const cos = coBlockers(j);
+    if (onlyCoBlockers(j)) add("clear", blockerButton(j), `data-action="open-co" data-job="${j.id}" data-co="${cos[0].co_id}"`, "Send waits until the customer signs it.", "bill");
+    else add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "Open the paperwork and add what is missing.", "bill");
+  }
+  // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
+  if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "See what goes out and to whom, then send.", "bill");
+  if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver on the job record.", "paid");
+  if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "Money came in. Paid in full opens the waiver step.", "paid");
+  if (follow) add("follow", followDue ? "Send follow-up" : "Follow up now", `data-action="follow-up" data-id="${j.id}"${followDue ? "" : ` data-early="1"`}`,
+    followDue ? "Email the customer a reminder." : `Before the follow-up date, ${fmtDate(follow.due)}.`, "paid");
+  if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the work done and not billed.", "bill");
+  if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "Bill the work done so far without marking the job done.", "bill");
+  if (j.work_status !== "complete") add("done", "Mark done", `data-action="toggle-form" data-form="done"`, "Record that the work is finished and draft the final pay app.", "close");
+  if (canClose) add("close", "Finish job", `data-action="close" data-id="${j.id}"`, "Moves the settled job to Job history.", "close");
+  // Asking for retainage only once the work is done and the closeout paperwork is in; until then
+  // the Money card says why it isn't here.
+  if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "Email the customer for the retainage held back.", "paid");
+  if (draft && !pencilOut) add("pencil", "Send draft for their review", `data-action="pencil" data-id="${j.id}"`, "The customer checks the numbers before the real one goes.", "bill");
+  if (pencilOut) add("pencil-ok", "Customer agreed to the draft", `data-action="pencil-agreed" data-id="${j.id}"`, "Record that the customer agreed to the draft.", "bill");
+  if (pencilOut) add("pencil-no", "Customer wants changes", `data-action="toggle-form" data-form="pencilchanges"`, "Record what the customer wants changed.", "bill");
+  if (m.retainage_open_cents > 0) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "Record retainage the customer released.", "paid");
+  add("co", "New change order", `data-action="new-co"`, "Extra or changed work, or a credit.", "bill");
+  if (draft) add("packet", "Open paperwork", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "Add the documents that go with the pay app.", "bill");
+  if (draft) add("void", "Delete draft", `data-action="void-draft" data-id="${j.id}"`, "Throw away the open draft. You can draft it again.", "bill");
+  if (demo) add("qbo", "Import QBO sample", `data-action="import-qbo" data-id="${j.id}"`, "Sample company only: a stand-in for a QuickBooks payment read.", "paid");
+  const order = ["clear", "send", "waiver"];
+  // While the customer has the pay app, nothing is the main step until a follow-up is due, unless
+  // finished work is still to bill.
+  if (waitingPay) order.push(...(followDue ? ["follow"] : []), "draft");
+  else order.push("draft", "progress", "close", "retainage");
+  const primary = order.map(k => all.find(a => a.key === k)).find(Boolean) || null;
+  const more = all.filter(a => a !== primary).sort((a, b) => SECONDARY_ORDER.indexOf(a.key) - SECONDARY_ORDER.indexOf(b.key));
+  return { primary, more };
+}
+
+export const ACTION_GROUPS = [["bill", "Bill"], ["paid", "Get paid"], ["close", "Close out"]];

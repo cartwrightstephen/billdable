@@ -168,5 +168,56 @@ class MoneyFileTests(unittest.TestCase):
         self.assertEqual(job["change_orders"][0]["status"], "approved")
 
 
+
+class PaperworkTests(unittest.TestCase):  # R3-05
+    def test_i_have_this_needs_no_reason_and_remove_restores_the_blocker(self):
+        state = seed_state()
+        domain.draft_invoice(state, "job-oak")
+        job = domain._job(state, "job-oak")
+        item = next(p for p in domain.active_packet(job) if p["id"] == "pkt-oak-waiver")
+        domain.resolve_packet_item(state, "job-oak", item["id"])
+        self.assertTrue(item["present"])
+        self.assertNotIn(item["blocker"], domain.blocker_lines(job))
+        self.assertTrue(state["audit"][-1]["detail"].endswith(f"marked {item['label']} as in hand."))
+        domain.detach_packet_item(state, "job-oak", item["id"])
+        self.assertFalse(item["present"])
+        self.assertIn(item["blocker"], domain.blocker_lines(job))
+        # Where it is, when given, is kept and in the activity log.
+        domain.resolve_packet_item(state, "job-oak", item["id"], reason="Emailed 10/12")
+        self.assertEqual(item["present_reason"], "Emailed 10/12")
+        self.assertIn("Emailed 10/12", state["audit"][-1]["detail"])
+        domain.detach_packet_item(state, "job-oak", item["id"])
+        self.assertNotIn("present_reason", item)
+        # A record attached by hand comes off too, and nothing on an empty item is refused.
+        domain.add_job_record(state, "job-oak", "Waiver scan", "other")
+        domain.attach_record_to_packet(state, "job-oak", item["id"], job["records"][-1]["id"])
+        domain.detach_packet_item(state, "job-oak", item["id"])
+        self.assertEqual((item["present"], item["attachments"]), (False, []))
+        with self.assertRaises(domain.GateError):
+            domain.detach_packet_item(state, "job-oak", item["id"])
+
+    def test_blocker_items_link_unsigned_change_orders(self):
+        state = seed_state()
+        domain.draft_invoice(state, "job-oak")
+        view = domain.job_view(state, domain._job(state, "job-oak"))
+        cos = [b for b in view["blocker_items"] if b["kind"] == "co"]
+        self.assertTrue(cos)
+        self.assertTrue(all(b["co_id"] and b["number"] for b in cos))
+        self.assertEqual(view["blockers"], [b["text"] for b in view["blocker_items"]])
+
+
+class FollowUpNowTests(unittest.TestCase):  # R3-04
+    def test_follow_up_now_goes_before_the_window(self):
+        state = seed_state()
+        job = next(j for j in state["jobs"] if any(i["status"] == "sent" for i in j["invoices"]))
+        inv = next(i for i in job["invoices"] if i["status"] == "sent")
+        inv["sent_at"] = domain.utcnow()
+        inv.pop("last_follow_up_at", None)
+        with self.assertRaisesRegex(domain.GateError, "not due"):
+            domain.record_follow_up(state, job["id"], "owner")
+        domain.record_follow_up(state, job["id"], "owner", early=True)
+        self.assertTrue(inv["last_follow_up_at"])
+
+
 if __name__ == "__main__":
     unittest.main()

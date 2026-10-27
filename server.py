@@ -1750,6 +1750,10 @@ class Handler(BaseHTTPRequestHandler):
         file_now = bool(job_id) and (query.get("file") or [""])[0] == "1"
         # What the person said it is (the waiver page's "Take a photo" files a lien waiver); else guessed.
         kind = (query.get("kind") or [""])[0]
+        # A photo taken for a missing paperwork item is attached to it, and one taken of a signed
+        # change order marks it signed, in the same step as the upload (R3-05, R3-06).
+        attach_to = (query.get("attach") or [""])[0] if file_now else ""
+        signed_co = (query.get("co") or [""])[0] if file_now else ""
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
@@ -1786,7 +1790,11 @@ class Handler(BaseHTTPRequestHandler):
                 item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=ids, job_id=job_id)
             if file_now:
                 # Dropped on a job page: the person already chose the job.
-                importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
+                filed = importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
+                if attach_to:
+                    domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor)
+                if signed_co:
+                    domain.mark_co_signed(state, job_id, signed_co, filed["record_ids"][0], actor)
 
         status, payload = self._change(company_id, add)
         if status != 200:
@@ -2318,13 +2326,14 @@ JOB_ACTIONS = {
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, _sends("the pay app", lambda h, st, j, i, c: domain.approve_and_send(st, j, c.actor, **_co_args(c)))),
-    "follow-up": (False, _sends("the follow-up", lambda h, st, j, i, c: domain.record_follow_up(st, j, c.actor, **_co_args(c)))),
+    "follow-up": (False, _sends("the follow-up", lambda h, st, j, i, c: domain.record_follow_up(st, j, c.actor, early=c.body.get("early") is True, **_co_args(c)))),
     "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor,
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None))),
     "retainage": (False, _sends("the request", lambda h, st, j, i, c: domain.chase_retainage(st, j, c.actor))),
     "retainage-paid": (False, lambda h, st, j, i, c: domain.record_retainage_payment(st, j, _number(c.body, "amount_cents", "the retainage received"), _text(c.body, "reference"), c.actor)),
-    "add-co": (False, lambda h, st, j, i, c: domain.add_change_order(st, j, _text(c.body, "title"), _number(c.body, "amount_cents", "the change order amount", 0), c.actor, description=_text(c.body, "description"))),
+    "add-co": (False, lambda h, st, j, i, c: domain.add_change_order(st, j, _text(c.body, "title"), _number(c.body, "amount_cents", "the change order amount", 0), c.actor, description=_text(c.body, "description"),
+                                                                    schedule_days=_number(c.body, "schedule_days", "the schedule change in days", 0))),
     # A change order is approved by a signature: online (request-co-signature) or a signed
     # copy on the job record. A bare status flip is not accepted (P2-3).
     "approve-co": (True, lambda h, st, j, i, c: domain.mark_co_signed(st, j, i, _text(c.body, "record_id"), c.actor)),

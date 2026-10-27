@@ -216,7 +216,8 @@ class HttpTests(unittest.TestCase):
         res, data = self.request("POST", f"/api/jobs/{jid}/send", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
         for item in inv["packet"]:
-            res, data = self.request("POST", f"/api/jobs/{jid}/resolve/{item['id']}", {}, cookie=cookie)
+            # Where it is is optional now (R3-05); a bad item id is still refused.
+            res, data = self.request("POST", f"/api/jobs/{jid}/resolve/pkt-nope", {}, cookie=cookie)
             self.assertEqual(res.status, 409)
             res, state = self.request("POST", f"/api/jobs/{jid}/resolve/{item['id']}", {"reason": "Sent by email"}, cookie=cookie)
             self.assertEqual(res.status, 200)

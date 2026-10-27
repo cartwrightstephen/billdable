@@ -18,6 +18,7 @@ import auth
 import domain
 import importer
 import server
+import sov
 import storage
 from seed import seed_state
 
@@ -63,6 +64,60 @@ class DomainTests(unittest.TestCase):
         domain.mark_co_signed(state, job["id"], co["id"], rec, "owner")
         self.assertEqual(co["status"], "approved")
         self.assertEqual(co["signed_evidence"]["record_id"], rec)
+
+
+class CreditTests(unittest.TestCase):
+    """A change order with a negative amount is a credit (R3-06)."""
+
+    def sign(self, state, job, co):
+        domain.add_job_record(state, job["id"], f"Signed CO {co['number']}", "change_order", "", "owner")
+        domain.mark_co_signed(state, job["id"], co["id"], job["records"][-1]["id"], "owner")
+
+    def test_credit_on_a_dollar_job_lowers_the_contract_and_line_2(self):
+        from test_money import new_job, new_state, send_open
+        import payapp_pdf
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000)
+        domain.add_change_order(state, job["id"], "Owner supplies the tile", -250_000, description="Tile by owner")
+        co = job["change_orders"][-1]
+        with self.assertRaisesRegex(domain.GateError, "credit"):
+            domain.include_change_order(state, job["id"], co["id"])
+        self.sign(state, job, co)
+        self.assertEqual(domain.job_money(job)["contract_total_cents"], 750_000)
+        inv = send_open(state, job)
+        figures = payapp_pdf.summary(job, inv)
+        self.assertEqual((figures["net_co"], figures["contract_to_date"]), (-250_000, 750_000))
+        self.assertEqual(figures["balance"], 750_000 - 400_000)
+        # Done: the work done is the lowered contract, so the last pay app bills what is left of it.
+        domain.mark_done(state, job["id"])
+        self.assertEqual(job["invoices"][-1]["amount_cents"], 350_000)
+
+    def test_credit_on_a_schedule_of_values_comes_off_the_next_pay_app(self):
+        from test_sov import sov_job, line
+        from test_money import new_state, send_open
+        import payapp_pdf
+        state = new_state()
+        job = sov_job(state, retainage=0)
+        domain.record_sov_progress(state, job["id"], {line(job, "1")["id"]: "100"}, "first floor")
+        first = send_open(state, job)
+        domain.add_change_order(state, job["id"], "Panel by owner", -250_000)
+        co = job["change_orders"][-1]
+        self.sign(state, job, co)
+        self.assertEqual(domain.job_money(job)["contract_total_cents"], 3_450_000 - 250_000)
+        credit_line = next(l for l in sov.lines(job) if l.get("co_id") == co["id"])
+        self.assertEqual(credit_line["scheduled_cents"], -250_000)
+        # Nothing new done: the credit waits, and nothing can be drafted from it alone.
+        self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 0)
+        domain.record_sov_progress(state, job["id"], {line(job, "1")["id"]: "300"})  # drafts the next pay app
+        inv = job["invoices"][-1]
+        self.assertIn(-250_000, [l["amount_cents"] for l in inv["lines"]])
+        figures = payapp_pdf.summary(job, inv)
+        self.assertEqual(figures["net_co"], -250_000)
+        self.assertEqual(figures["contract_to_date"], 3_200_000)
+        # 200 more ea at $45 plus 15% O&P, less the $2,500 credit.
+        self.assertEqual(inv["gross_cents"], 200 * 4500 * 115 // 100 - 250_000)
+        self.assertNotEqual(first["id"], inv["id"])
 
 
 class SigningHttpTests(unittest.TestCase):

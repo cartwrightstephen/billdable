@@ -143,13 +143,11 @@ class DraftTests(unittest.TestCase):
         new_job(state, name="Fourth", customer="Ada Owner", ap_email="ada@example.com")
         self.assertEqual(state["payers"][-1]["ap_email"], "ada@example.com")
 
-    def test_mark_present_requires_evidence(self):
+    def test_attach_a_record(self):
         state = new_state()
         job = new_job(state)
         domain.record_progress(state, job["id"], 1_000_000)
         item = job["invoices"][-1]["packet"][0]
-        with self.assertRaises(domain.GateError):
-            domain.resolve_packet_item(state, job["id"], item["id"])
         domain.add_job_record(state, job["id"], "Signed contract PDF", "contract")
         domain.attach_record_to_packet(state, job["id"], item["id"], job["records"][-1]["id"])
         self.assertTrue(item["present"])
@@ -249,9 +247,14 @@ class ChangeOrderTests(unittest.TestCase):
     def test_co_validation(self):  # M5
         state = new_state()
         job = new_job(state)
-        for title, amount in [("", 1000), ("Tile", 0), ("Tile", -5)]:
+        # A negative amount is a credit (R3-06), refused only when larger than the contract.
+        for title, amount in [("", 1000), ("Tile", 0), ("Tile", -job["contract_cents"] - 1)]:
             with self.assertRaises(domain.GateError):
                 domain.add_change_order(state, job["id"], title, amount)
+        with self.assertRaises(domain.GateError):
+            domain.add_change_order(state, job["id"], "Tile", 1000, schedule_days=400)
+        domain.add_change_order(state, job["id"], "Tile", -5, schedule_days=-2)
+        self.assertEqual((job["change_orders"][-1]["amount_cents"], job["change_orders"][-1]["schedule_days"]), (-5, -2))
 
     def test_unsigned_included_co_blocks_send(self):
         state = new_state()

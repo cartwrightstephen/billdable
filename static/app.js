@@ -1,7 +1,7 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue } from "./js/jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
@@ -70,6 +70,9 @@ const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api
 const LIST_VIEWS = { timeline: "job" };   // the view that shows a list, where it isn't the list's own name
 let auditJobFilter = "all";
 let coPreselectJob = null;
+// The change order just made from the job page's New change order card, shown there with
+// "Request signature" in place of the form (R3-06): {job, co}.
+let newCoMade = null;
 let toastTimer = null;
 const DEMO_COMPANY_ID = "co-hartline";
 let calJobFilter = "all";
@@ -648,6 +651,12 @@ function a11yPass(root) {
   });
 }
 
+// The job-record kind for a file taken for a paperwork item: the item's own kind when it is one
+// (waiver, ticket, contract, photo...), else Other.
+function recordKindFor(item) {
+  return RECORD_KINDS[unesc(item.kind || "")] && !["note", "daily"].includes(item.kind) ? item.kind : "other";
+}
+
 function emptyState(title, body, action = "") {
   return `<div class="empty-state"><strong>${title}</strong><p>${body}</p>${action}</div>`;
 }
@@ -658,6 +667,8 @@ function coSignControls(j, co, extra = "") {
   if (co.status !== "pending" || j.closed) return "";
   const key = `cosign-${co.id}`;
   const records = j.records || [];
+  // The signed copy is most likely the newest change-order record (R3-06).
+  const newestCo = records.filter(r => r.kind === "change_order").pop();
   return `<div class="form-inline">
       <button class="btn small" data-action="request-co-signature" data-id="${j.id}" data-co="${co.id}">${co.sign_token ? "Send the signing link again" : "Request signature"}</button>
       <button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="${!!formOpen[key]}">Signed on paper…</button>
@@ -665,13 +676,12 @@ function coSignControls(j, co, extra = "") {
       ${extra}
     </div>
     ${co.sign_token ? `<p class="sub">Signing page: <a href="/s/${me.company_id}.${co.sign_token}" target="_blank" rel="noopener">open it</a>${co.signature_requested_at ? ` · requested ${fmtDate(co.signature_requested_at)}` : ""}</p>` : ""}
-    ${formOpen[key] ? (records.length
-      ? `<div class="form-inline"><label for="cosign-rec-${co.id}" class="inline-label">Signed copy</label><select id="cosign-rec-${co.id}">${records.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Save as signed</button></div>`
-      : `<p class="sub">Add the signed copy to the <button class="linkish" data-action="open-job" data-id="${j.id}">job record</button> first (a photo or PDF), then pick it here.</p>`) : ""}`;
+    ${formOpen[key] ? `<div class="form-inline">
+        <button class="btn small" data-action="pick-files" data-job="${j.id}" data-co="${co.id}" data-kind="change_order" data-capture="1">Take a photo of the signed copy</button>
+        ${records.length ? `<label for="cosign-rec-${co.id}" class="inline-label">or pick it from the job record</label><select id="cosign-rec-${co.id}"><option value="">Choose a record…</option>${records.map(r => `<option value="${r.id}"${newestCo && r.id === newestCo.id ? " selected" : ""}>${r.label}</option>`).join("")}</select><button class="btn small secondary" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Save as signed</button>` : ""}
+      </div>` : ""}`;
 }
 
-// The job page shows ONE main button: the next step. Everything else that applies sits in a
-// secondary row, each with its explanation as a tooltip (it used to be a paragraph beside it).
 // Who a customer email goes to, for a confirmation: "Sam Jones · ap@jones.example" (plain text).
 function sendsTo(j) {
   const p = j.payer || {};
@@ -747,39 +757,14 @@ function jobHistoryHtml(j) {
   </div>`;
 }
 
+// The job page's buttons come from jobs.js (R3-04); the sample company also gets the QuickBooks sample.
 function jobActions(j) {
-  if (j.closed) return { primary: null, more: [] };
-  const m = j.money;
-  const blocked = isBlocked(j);
-  const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
-  const pencilOut = draft && draft.pencil_status === "sent";
-  const waitingPay = j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status));
-  const canClose = !(j.close_blockers || []).length;
-  const isDemo = me && me.company_id === DEMO_COMPANY_ID;
-  const all = [];
-  const add = (key, label, attrs, why) => all.push({ key, label, attrs, why });
-  if (blocked) add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "Open the packet and attach what is missing.");
-  // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
-  if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "See what goes out and to whom, then approve.");
-  if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver on the job record.");
-  if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "Record money received. Paid in full opens the waiver step.");
-  if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the unbilled completed work.");
-  if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "Bill completed-to-date without marking the job done.");
-  if (j.work_status !== "complete") add("done", "Mark done", `data-action="toggle-form" data-form="done"`, "Record completion and draft the final pay app.");
-  if (canClose) add("close", "Finish job", `data-action="close" data-id="${j.id}"`, "Moves the settled job to Job history.");
-  if (m.retainage_open_cents > 0) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "Emails the request once the closeout packet is complete.");
-  if (draft && !pencilOut) add("pencil", "Send pencil copy", `data-action="pencil" data-id="${j.id}"`, "Send the draft so the payer agrees quantities first.");
-  if (pencilOut) add("pencil-ok", "Payer agreed to pencil", `data-action="pencil-agreed" data-id="${j.id}"`, "Record that the payer agreed to the pencil copy.");
-  if (pencilOut) add("pencil-no", "Payer wants changes", `data-action="toggle-form" data-form="pencilchanges"`, "Record what the payer wants changed.");
-  if (waitingPay) add("follow", "Follow up", `data-action="follow-up" data-id="${j.id}"`, "Email a follow-up, no sooner than the payer's playbook allows.");
-  if (m.retainage_open_cents > 0) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "Record retainage the payer released.");
-  add("co", "Add change order", `data-action="goto-co" data-id="${j.id}"`, "Create a change order for this job.");
-  if (draft) add("packet", "Open packet", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "Attach records to the pay app's packet.");
-  if (draft) add("void", "Void draft", `data-action="void-draft" data-id="${j.id}"`, "Throw away the open draft. You can draft it again from the job page.");
-  if (isDemo) add("qbo", "Import QBO sample", `data-action="import-qbo" data-id="${j.id}"`, "Demo only: a stand-in for a QuickBooks payment read.");
-  const order = ["clear", "send", "waiver", "match", "draft", "progress", "close", "retainage"];
-  const primary = order.map(k => all.find(a => a.key === k)).find(Boolean) || null;
-  return { primary, more: all.filter(a => a !== primary) };
+  return jobActionsFor(j, { demo: !!(me && me.company_id === DEMO_COMPANY_ID) });
+}
+
+// One job-page button: the label, and why on a second line (no tooltip, so a phone shows it too).
+function actionButton(a) {
+  return `<button class="btn secondary two-line" ${a.attrs}><span>${a.label}</span><span class="sub">${a.why || ""}</span></button>`;
 }
 
 // The shell (top bar, menu, tabs) as last drawn. render() redraws only #view while the shell
@@ -819,7 +804,7 @@ function render() {
       </aside>
       <div class="scrim" id="scrim" data-action="scrim" aria-hidden="true"></div>
       <main class="main" id="main" tabindex="-1">
-        ${tabs.length > 1 ? `<nav class="tabs" aria-label="${section.label}">${tabs.map(([v, label]) => `<button class="tab ${v === tabView ? "active" : ""}" data-action="tab" data-tab="${v}" ${v === tabView ? 'aria-current="page"' : ""} title="${esc(NAV_HELP[v] || "")}">${label}</button>`).join("")}</nav>` : ""}
+        ${tabs.length > 1 ? `<nav class="tabs" aria-label="${section.label}">${tabs.map(([v, label]) => `<button class="tab ${v === tabView ? "active" : ""}" data-action="tab" data-tab="${v}" ${v === tabView ? 'aria-current="page"' : ""}>${label}</button>`).join("")}</nav>` : ""}
         <div id="view"></div>
       </main>
     </div>
@@ -1059,9 +1044,9 @@ const ACTIONS = {
   },
   "resolve": async (el, id) => {
     const box = document.getElementById(`resolve-reason-${el.dataset.item}`);
-    const reason = (box?.value || "").trim();
-    if (!reason) { toast("Say why it's present, or attach a job record instead."); box?.focus(); return; }
-    await post(`/api/jobs/${id}/resolve/${el.dataset.item}`, { reason });
+    const reason = (box?.value || "").trim();   // optional (R3-05)
+    const r = await post(`/api/jobs/${id}/resolve/${el.dataset.item}`, { reason });
+    if (r && r.ok) { formOpen[`resolve-${el.dataset.item}`] = false; render(); }
   },
   "waiver": async (el, id) => {
     const kind = document.getElementById(`waiver-kind-${el.dataset.inv || "job"}`)?.value;
@@ -1097,6 +1082,8 @@ const ACTIONS = {
     if (input) {
       input.dataset.job = el.dataset.job || "";
       input.dataset.kind = el.dataset.kind || "";   // e.g. "waiver" from the waiver page
+      input.dataset.attach = el.dataset.attach || "";   // a paperwork item to attach it to
+      input.dataset.co = el.dataset.co || "";   // a change order it is the signed copy of
       // "Take a photo" opens the rear camera directly; "choose files" offers every source.
       if (el.dataset.capture) { input.setAttribute("capture", "environment"); input.setAttribute("accept", "image/*"); }
       else { input.removeAttribute("capture"); input.setAttribute("accept", FILE_ACCEPT); }
@@ -1163,8 +1150,10 @@ const ACTIONS = {
   "follow-up": async (el, id) => {
     const j = state.jobs.find(x => x.id === id);
     const follow = j && followUpDue(j);
-    if (j && !(await askConfirm(`Email a follow-up on ${unesc(follow ? follow.invoice.number : "the pay app")} to ${sendsTo(j)}?`, "Send follow-up"))) return;
-    await post(`/api/jobs/${id}/follow-up`);
+    // "Follow up now" on the job page goes before the customer's days between follow-ups are up (R3-04).
+    const early = !!el.dataset.early && follow && follow.due > new Date();
+    if (j && !(await askConfirm(`Email a follow-up on ${unesc(follow ? follow.invoice.number : "the pay app")} to ${sendsTo(j)}?${early ? ` It's before the follow-up date, ${fmtDate(follow.due)}.` : ""}`, "Send follow-up"))) return;
+    await post(`/api/jobs/${id}/follow-up`, early ? { early: true } : {});
   },
   "match": async (el, id) => {
     const v = formValues("match");
@@ -1181,6 +1170,15 @@ const ACTIONS = {
     if (r && r.ok) nav("co-detail", id);
   },
   "goto-co": (el, id) => { coPreselectJob = id; nav("cos"); },
+  "new-co": () => { newCoMade = null; toggleForm("newco"); requestAnimationFrame(() => document.getElementById("co-title")?.focus()); },
+  "new-co-done": () => { newCoMade = null; formOpen.newco = false; clearForm("newco"); render(); },
+  "add-co-here": async (el, id) => {
+    const r = await addChangeOrder(id);
+    if (!(r && r.ok)) return;
+    const j = state.jobs.find(x => x.id === id);
+    const co = j && j.change_orders.reduce((a, c) => (!a || c.number > a.number ? c : a), null);
+    if (co) { newCoMade = { job: id, co: co.id }; render(); }
+  },
   "add-co-from-list": async () => {
     const jobId = formValues("newco").job;
     if (!jobId) { refuseForm("newco", { job: "Pick a job." }); return; }
@@ -1224,6 +1222,7 @@ const ACTIONS = {
   },
   "approve-co": async (el, id) => {
     const recordId = document.getElementById(`cosign-rec-${el.dataset.co}`)?.value || "";
+    if (!recordId) { toast("Choose the record that holds the signed copy, or take a photo of it."); return; }
     const r = await post(`/api/jobs/${id}/approve-co/${el.dataset.co}`, { record_id: recordId });
     if (r && r.ok) { formOpen[`cosign-${el.dataset.co}`] = false; render(); }
   },
@@ -1245,7 +1244,7 @@ const ACTIONS = {
   "packet-skip": (el, id) => post(`/api/jobs/${id}/packet-skip/${el.dataset.item}`, {}),
   "attach-record": async (el, id) => {
     const recordId = document.querySelector(`#attach-rec-${el.dataset.item}`)?.value;
-    if (!recordId) { toast("Pick a job record to attach."); return; }
+    if (!recordId) { toast("Choose a record first."); document.querySelector(`#attach-rec-${el.dataset.item}`)?.focus(); return; }
     await post(`/api/jobs/${id}/attach-record/${el.dataset.item}`, { record_id: recordId });
   },
   "open-job": (el, id) => {
@@ -1485,15 +1484,41 @@ function listenForActions() {
   });
 }
 
-// The New change order form (Change orders tab, or a job with none yet): check it here, then save.
+// The job page's New change order card (R3-06). Once saved, it shows the change order with the
+// ways to get it signed in place of the form.
+function newCoCardHtml(j) {
+  const made = newCoMade && newCoMade.job === j.id && j.change_orders.find(c => c.id === newCoMade.co);
+  if (made) return `<div class="card form-card new-co-card"><h2>CO ${made.number}: ${made.title}</h2>
+    <p class="sub">${made.amount_cents < 0 ? `A credit of ${money(-made.amount_cents)}` : money(made.amount_cents)}${made.schedule_days ? ` · ${made.schedule_days > 0 ? "+" : ""}${made.schedule_days} days on the schedule` : ""}. ${made.status === "pending" ? "Saved. Now get it signed." : "Signed."}</p>
+    ${made.status === "pending" ? coSignControls(j, made) : coSignature(made)}
+    <div class="form-inline"><button class="btn small secondary" data-action="new-co-done">Done</button></div></div>`;
+  return `<div class="card form-card" data-form-key="newco"><h2>New change order</h2>${formErrorLine("newco")}<div class="form-row">
+      ${coFormFields()}
+      <button class="btn small" data-action="add-co-here" data-id="${j.id}">Create change order</button>
+      <button class="btn small secondary" data-action="new-co-done">Cancel</button>
+    </div></div>`;
+}
+
+// The New change order boxes (job page, Change orders tab, a job with none yet). A negative amount
+// is a credit (R3-06).
+function coFormFields() {
+  return `${field({ form: "newco", name: "title", id: "co-title", label: "Title", placeholder: "Add two outlets in the kitchen" })}
+    ${moneyField({ form: "newco", name: "amount_cents", id: "co-amt", label: "Amount ($), negative for a credit", inputmode: "text" })}
+    ${field({ form: "newco", name: "description", id: "co-desc", label: "What changed (optional)", wide: true })}
+    ${field({ form: "newco", name: "schedule_days", id: "co-days", label: "Schedule change, days (optional)", inputmode: "numeric", placeholder: "3" })}`;
+}
+
+// The New change order form: check it here, then save.
 async function addChangeOrder(jobId) {
   const v = formValues("newco");
   const amount = centsFrom(v.amount_cents);
+  const days = String(v.schedule_days || "").trim();
   const errors = {};
   if (!v.title) errors.title = "Enter a title for the change order.";
-  if (amount.error || amount.cents <= 0) errors.amount_cents = "Enter the change order amount in dollars, like 1,250.";
+  if (amount.error || amount.cents === 0) errors.amount_cents = "Enter the change order amount in dollars, like 1,250, or -1,250 for a credit.";
+  if (days && !/^[-+]?\d{1,3}$/.test(days)) errors.schedule_days = "Enter the schedule change in whole days, like 3, or leave it blank.";
   if (refuseForm("newco", errors)) return null;
-  return post(`/api/jobs/${jobId}/add-co`, { title: v.title, amount_cents: amount.cents, description: v.description }, { formKey: "newco" });
+  return post(`/api/jobs/${jobId}/add-co`, { title: v.title, amount_cents: amount.cents, description: v.description, schedule_days: days ? Number(days) : 0 }, { formKey: "newco" });
 }
 
 function newInboxCount() {
@@ -1502,7 +1527,9 @@ function newInboxCount() {
 
 const MAX_UPLOAD_MB = 15;
 
-async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "") {
+// extra.attach: a paperwork item the upload is attached to; extra.co: a change order the upload
+// is the signed copy of (R3-05, R3-06). Both need fileNow.
+async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", extra = {}) {
   const files = [...(fileList || [])];
   if (!files.length) return;
   let ok = 0;
@@ -1510,7 +1537,8 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "") {
   for (const f of files) {
     if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { failed.push(`${f.name}: larger than ${MAX_UPLOAD_MB} MB`); continue; }
     const name = f.name && f.name !== "image.png" ? f.name : `Screenshot ${new Date().toISOString().slice(0, 16).replace("T", " ").replace(":", ".")}.png`;
-    const query = jobId ? `?job=${encodeURIComponent(jobId)}${fileNow ? "&file=1" : ""}${fileNow && kind ? `&kind=${encodeURIComponent(kind)}` : ""}` : "";
+    const also = fileNow ? `${extra.attach ? `&attach=${encodeURIComponent(extra.attach)}` : ""}${extra.co ? `&co=${encodeURIComponent(extra.co)}` : ""}` : "";
+    const query = jobId ? `?job=${encodeURIComponent(jobId)}${fileNow ? "&file=1" : ""}${fileNow && kind ? `&kind=${encodeURIComponent(kind)}` : ""}${also}` : "";
     try {
       const res = await fetch(`/api/import/file${query}`, {
         method: "POST",
@@ -1526,7 +1554,7 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "") {
       failed.push(`${name}: can't reach Duracash`);
     }
   }
-  const where = fileNow ? "added to the job record" : "in the Inbox";
+  const where = !fileNow ? "in the Inbox" : extra.attach ? "added to the job record and attached" : extra.co ? "added to the job record; the change order is signed" : "added to the job record";
   toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "));
   render();
 }
@@ -2536,8 +2564,11 @@ const views = {
     const openDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
     const openForPay = j.invoices.filter(i => ["sent", "approved", "partial"].includes(i.status));
     const closeout = j.closeout_packet || [];
-    const closeoutMissing = closeout.filter(p => p.required && !p.present).length;
+    const closeoutMissing = closeoutMissingCount(j);
     const { primary, more } = jobActions(j);
+    const rest = more.slice(2);
+    const waiting = waitingText(j);
+    const retNote = retainageNote(j);
     const hasPayApps = j.invoices.some(i => i.status !== "void");
     const ejf = jobFields("editjob", "ej", j);
     return `
@@ -2567,8 +2598,11 @@ const views = {
           </div>
         </div>` : ""}
       <section class="next-card" aria-label="Next step">
-        <div class="next-text"><span class="eyebrow">Next step</span><strong>${nextStep(j)}</strong>${primary && primary.why ? `<span class="sub">${primary.why}</span>` : ""}</div>
-        ${primary ? `<button class="btn" ${primary.attrs}>${primary.label}</button>` : ""}
+        <div class="next-text"><span class="eyebrow">Next step</span><strong>${waiting && (!primary || primary.key === "follow") ? waiting : nextStep(j)}</strong>${primary && primary.why ? `<span class="sub">${primary.why}</span>` : ""}</div>
+        ${primary || more.length ? `<div class="next-actions">
+          ${primary ? `<button class="btn primary-action" ${primary.attrs}>${primary.label}</button>` : ""}
+          ${more.slice(0, 2).map(actionButton).join("")}
+        </div>` : ""}
       </section>
       ${blocked ? `<div class="card blockers-card" role="note">
         <strong class="blocker">Blocking send:</strong>
@@ -2597,10 +2631,14 @@ const views = {
         ${moneyField({ form: "retpay", name: "amount_cents", id: "retpay-amt", label: "Retainage received ($)" })}
         ${field({ form: "retpay", name: "reference", id: "retpay-ref", label: "Reference", placeholder: "Check no. or QuickBooks id" })}
         <button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div></div>` : ""}
-      ${j.closed ? `<p class="sub">This job is closed. Its money record is read-only; you can still add notes to the job record.</p>` : more.length ? `
-        <div class="more-actions" role="group" aria-label="More actions">
-          ${more.map(a => `<button class="btn secondary small" ${a.attrs} title="${esc(a.why || "")}">${a.label}</button>`).join("")}
-        </div>` : ""}
+      ${formOpen.newco && !j.closed ? newCoCardHtml(j) : ""}
+      ${j.closed ? `<p class="sub">This job is closed. Its money record is read-only; you can still add notes to the job record.</p>` : rest.length ? `
+        <details class="more-actions-rest" data-more="jobactions"${moreOpen("jobactions") ? " open" : ""}><summary>More (${rest.length})</summary>
+          ${ACTION_GROUPS.map(([g, title]) => {
+            const list = rest.filter(a => a.group === g);
+            return list.length ? `<div class="more-group"><h3>${title}</h3><div class="more-actions" role="group" aria-label="${title}">${list.map(actionButton).join("")}</div></div>` : "";
+          }).join("")}
+        </details>` : ""}
       ${!j.closed && j.work_status === "complete" && (j.close_blockers || []).length ? `<p class="sub">Finish job unlocks when: ${(j.close_blockers || []).join(" ")}</p>` : ""}
       <div class="detail-grid">
         <details class="card money-file"${window.innerWidth >= 800 ? " open" : ""}>
@@ -2616,6 +2654,7 @@ const views = {
           <div class="money-row"><span class="label">Retainage held</span><span>${money(m.retainage_held_cents)}${j.retainage_pct ? " · " + j.retainage_pct + "%" : ""}</span></div>
           <div class="money-row"><span class="label">Retainage released</span><span>${money(m.retainage_released_cents)}</span></div>
           <div class="money-row"><span class="label">Retainage open</span><span>${money(m.retainage_open_cents)}</span></div>
+          ${retNote ? `<p class="sub retainage-note">${closeoutMissing && j.work_status === "complete" ? `<a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout">${retNote}</a>` : retNote}</p>` : ""}
         </details>
         <div class="card">
           <h2>Pay apps</h2>
@@ -2632,7 +2671,7 @@ const views = {
           <h2 class="h2-gap">Change orders</h2>
           ${j.change_orders.length ? j.change_orders.map(co => `
             <div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${words(co.status)}</span>${co.included_in_billing ? ` <span class="sub">on a pay app</span>` : ""}
-              ${coSignControls(j, co, !co.included_in_billing && !openDraft ? `<button class="btn small secondary" data-action="include-co" data-id="${j.id}" data-co="${co.id}" title="Bill it on the next pay app; send stays blocked until it is signed">Put on next pay app</button>` : "")}
+              ${coSignControls(j, co, !co.included_in_billing && !openDraft && co.amount_cents > 0 ? `<button class="btn small secondary" data-action="include-co" data-id="${j.id}" data-co="${co.id}">Bill now (send waits for signature)</button>` : "")}
             </div>`).join("") : `<p class="sub">No change orders. Add one if the scope changed.</p>`}
         </div>
       </div>
@@ -2720,6 +2759,8 @@ const views = {
     const jobRecords = j.records || [];
     if (!inv && !packet.length) return backButton("job", j.name, j.id) + emptyState("No packet yet", "Draft a pay app. The packet is created with it, from this payer's playbook. Until then, add notes and files to the job record.", `<button class="btn" data-action="open-job" data-id="${j.id}">Back to ${j.name}</button>`);
     const missing = packet.filter(p => p.required && !p.present).length;
+    // Unsigned change orders on the bill block the same send; say so here with a way to them (R3-05).
+    const cosBlocking = !isCloseout && isBlocked(j) ? coBlockers(j) : [];
     return `
       ${backButton("job", j.name, j.id)}
       <h1>${isCloseout ? "Closeout packet" : (inv ? inv.number + " packet" : "Packet")}</h1>
@@ -2733,20 +2774,29 @@ const views = {
             <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
               ${!p.present && !skipped ? `<span class="field-error">${p.blocker}</span>` : ""}
               ${skipped ? `<div class="sub">Not needed for this customer${p.skipped_reason !== "Not needed for this customer" ? ": " + p.skipped_reason : ""}</div>` : ""}
-              ${p.present && p.present_reason ? `<div class="sub">${p.present_reason === "Produced by Duracash" ? "Produced by Duracash with the pay app" : "Marked as in hand: " + p.present_reason}</div>` : ""}
-              ${(p.attachments || []).map(a => a.auto
-                ? `<div class="sub">Attached from the job record: ${a.name} <button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Detach</button></div>`
-                : `<div class="sub">Attached: ${a.name}</div>`).join("")}
+              ${p.present && p.present_reason === "Produced by Duracash" ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
+              ${p.present && p.present_reason && p.present_reason !== "Produced by Duracash" ? `<div class="sub">Marked as in hand: ${p.present_reason}</div>` : ""}
+              ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}
+              ${(p.attachments || []).map(a => `<div class="sub">${a.auto ? "Attached from the job record" : "Attached"}: ${a.name}</div>`).join("")}
+              ${p.present && p.present_reason !== "Produced by Duracash" && !j.closed ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
             </div>
-            ${!p.present && !skipped ? `<div class="form-inline">
-              ${jobRecords.length ? `<select id="attach-rec-${p.id}" aria-label="Job record to attach">${jobRecords.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small" data-action="attach-record" data-id="${j.id}" data-item="${p.id}">Attach</button>` : `<span class="sub">Add the document to the <button class="linkish" data-action="open-job" data-id="${j.id}">job record</button> first.</span>`}
-              <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">Mark present…</button>
-              ${isCloseout ? "" : `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}" title="It stops blocking this pay app and comes off ${j.payer.name}'s paperwork list.">Not needed for this customer</button>`}
+            ${!p.present && !skipped ? `<div class="form-inline packet-add">
+              <button class="btn small" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}" data-capture="1">Take a photo</button>
+              <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}">Choose file</button>
             </div>
-            ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Why it is present, e.g. emailed to the payer on 10/12" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save reason</button></div>` : ""}` : ""}
+            <div class="form-inline">
+              ${jobRecords.length ? `<select id="attach-rec-${p.id}" aria-label="Job record to attach"><option value="">Choose a record…</option>${jobRecords.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small secondary" data-action="attach-record" data-id="${j.id}" data-item="${p.id}">Attach</button>` : ""}
+              <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">I have this…</button>
+              ${isCloseout ? "" : `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">Not needed for this customer</button>`}
+            </div>
+            ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Where is it? (optional)" aria-label="Where is it? (optional)" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save</button></div>` : ""}` : ""}
           </div>`;
         }).join("") : `<p class="sub">This pay app has no packet items.</p>`}
       </div>
+      ${!isCloseout && cosBlocking.length ? `<div class="card also-blocking" role="note">
+        <h2>Also blocking send</h2>
+        ${cosBlocking.map(b => `<div class="list-item">${b.text} <a href="${pathFor("co-detail", j.id, b.co_id)}" data-action="open-co" data-job="${j.id}" data-co="${b.co_id}">Open CO ${b.number}</a></div>`).join("")}
+      </div>` : ""}
     `;
   },
   coDetail() {
@@ -2758,9 +2808,7 @@ const views = {
         ${backButton("cos", "Change orders")}
         <h1>New change order</h1>
         <div data-form-key="newco">${formErrorLine("newco")}<div class="form-row">
-          ${field({ form: "newco", name: "title", id: "co-title", label: "Title", placeholder: "Add two outlets in the kitchen" })}
-          ${moneyField({ form: "newco", name: "amount_cents", id: "co-amt", label: "Amount ($)" })}
-          ${field({ form: "newco", name: "description", id: "co-desc", label: "What changed (optional)", wide: true })}
+          ${coFormFields()}
           <button class="btn" data-action="add-co" data-id="${j.id}">Create</button>
         </div></div>`;
     }
@@ -2775,10 +2823,6 @@ const views = {
         <div class="money-row"><span class="label">On a pay app</span><span>${co.included_in_billing ? "Yes" : "No"}</span></div>
         ${coSignature(co)}
         ${coSignControls(j, co)}
-      </div>
-      <div class="card">
-        <h2>Signed copy</h2>
-        ${(co.attachments || []).map(a => `<div class="list-item">${a.name}</div>`).join("") || `<p class="sub">Drop the signed change order on the <button class="linkish" data-action="open-job" data-id="${j.id}">job record</button> (or forward it to the Inbox), then attach it to the pay app's packet.</p>`}
       </div>
     `;
   },
@@ -3078,9 +3122,7 @@ const views = {
         ${formErrorLine("newco")}
         <div class="form-grid">
           ${field({ form: "newco", name: "job", id: "new-co-job", label: "Job", value: unesc(coPreselectJob || ""), options: openJobs.map(j => [unesc(j.id), unesc(j.name)]) })}
-          ${field({ form: "newco", name: "title", id: "co-title", label: "Title", placeholder: "Add two outlets in the kitchen" })}
-          ${moneyField({ form: "newco", name: "amount_cents", id: "co-amt", label: "Amount ($)" })}
-          ${field({ form: "newco", name: "description", id: "co-desc", label: "What changed (optional)" })}
+          ${coFormFields()}
         </div>
         <button class="btn" data-action="add-co-from-list">Create change order</button>
       </div>` : ""}
@@ -3520,11 +3562,19 @@ document.addEventListener("scroll", hideHelpTip, true);
 document.getElementById("file-input").addEventListener("change", (e) => {
   const input = e.target;
   const jobId = input.dataset.job || "", kind = input.dataset.kind || "";
+  const extra = { attach: input.dataset.attach || "", co: input.dataset.co || "" };
   const files = [...input.files];
   input.value = "";
   input.dataset.job = "";   // the next pick starts with no job unless its button sets one
   input.dataset.kind = "";
-  uploadFiles(files, jobId, !!jobId, kind);
+  input.dataset.attach = "";
+  input.dataset.co = "";
+  // One file goes on a paperwork item or a change order; the rest of a multi-pick only on the job record.
+  if ((extra.attach || extra.co) && files.length > 1) {
+    uploadFiles(files.slice(0, 1), jobId, !!jobId, kind, extra).then(() => uploadFiles(files.slice(1), jobId, !!jobId, kind));
+    return;
+  }
+  uploadFiles(files, jobId, !!jobId, kind, extra);
 });
 
 // A reset, verify or invite link opened in a tab that already has Duracash loaded only changes

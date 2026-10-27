@@ -127,6 +127,53 @@ class ImportHttpTests(unittest.TestCase):
         self.assertEqual(state["inbox"][-1]["status"], "filed")
         self.assertEqual(state["jobs"][0]["records"][-1]["kind"], "photo")
 
+    def test_photo_for_a_missing_item_attaches_in_one_step(self):  # R3-05
+        cookie, job = self.company("paperwork-photo@example.com")
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/progress", {"completed_cents": 4_000_000}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        packet = state["jobs"][0]["invoices"][-1]["packet"]
+        item = next(p for p in packet if not p["present"])
+        res, state = self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=waiver&attach={item['id']}", raw=b"\x89PNG fake",
+                                  cookie=cookie, headers={"Content-Type": "image/png", "X-Filename": "IMG_0002.png"})
+        self.assertEqual(res.status, 200, state)
+        rec = state["jobs"][0]["records"][-1]
+        item = next(p for p in state["jobs"][0]["invoices"][-1]["packet"] if p["id"] == item["id"])
+        self.assertTrue(item["present"])
+        self.assertEqual([a["record_id"] for a in item["attachments"]], [rec["id"]])
+        # The Inbox's Undo was refused while the paperwork used the record; Remove frees it.
+        inbox_id = state["inbox"][-1]["id"]
+        res, data = self.request("POST", f"/api/inbox/{inbox_id}/undo", {}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        self.assertIn("Remove", data["error"])
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/detach/{item['id']}", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        self.assertIn(item["blocker"], state["jobs"][0]["blockers"])
+        res, state = self.request("POST", f"/api/inbox/{inbox_id}/undo", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        # A wrong item refuses the upload and keeps nothing.
+        records = len(state["jobs"][0]["records"])
+        res, data = self.request("POST", f"/api/import/file?job={job['id']}&file=1&attach=pkt-nope", raw=b"\x89PNG fake",
+                                 cookie=cookie, headers={"Content-Type": "image/png", "X-Filename": "IMG_0003.png"})
+        self.assertEqual(res.status, 409)
+        res, state = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual(len(state["jobs"][0]["records"]), records)
+
+    def test_photo_of_a_signed_change_order_signs_it(self):  # R3-06
+        cookie, job = self.company("co-photo@example.com")
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Owner buys fixtures", "amount_cents": -150_000, "schedule_days": "2"}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        co = state["jobs"][0]["change_orders"][-1]
+        self.assertEqual((co["amount_cents"], co["schedule_days"]), (-150_000, 2))
+        res, state = self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=change_order&co={co['id']}", raw=b"\x89PNG fake",
+                                  cookie=cookie, headers={"Content-Type": "image/png", "X-Filename": "IMG_0004.png"})
+        self.assertEqual(res.status, 200, state)
+        j = state["jobs"][0]
+        co = j["change_orders"][-1]
+        self.assertEqual(co["status"], "approved")
+        self.assertEqual(co["signed_evidence"]["record_id"], j["records"][-1]["id"])
+        self.assertEqual(j["records"][-1]["kind"], "change_order")
+        self.assertEqual(j["money"]["contract_total_cents"], 10_000_000 - 150_000)
+
     def test_notes_split_into_daily_records(self):
         cookie, job = self.company("notes@example.com")
         notes = "10/1 Footings poured\ncrew of 4\n10/2 Framing started\nOct 3, 2026: rough-in inspection passed"

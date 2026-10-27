@@ -42,7 +42,8 @@ export function field({ form, name, id, label, type = "text", required = false, 
 // typed. cents is the saved amount, if any.
 export function moneyField(opts) {
   const { cents, ...rest } = opts;
-  return field({ placeholder: "0.00", ...rest, type: "text", inputmode: "decimal", autocomplete: "off",
+  // inputmode "text" where a minus sign is allowed (a phone's decimal pad has none).
+  return field({ placeholder: "0.00", ...rest, type: "text", inputmode: opts.inputmode || "decimal", autocomplete: "off",
     value: cents != null ? dollarsText(cents) : (opts.value || ""), attrs: `data-money="1"${opts.attrs ? " " + opts.attrs : ""}` });
 }
 

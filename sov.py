@@ -235,6 +235,7 @@ def this_period(job: dict[str, Any]) -> dict[str, Any]:
     for line in lines(job):
         to_date = line_to_date(line)
         amount = to_date - already["by_line"].get(line["id"], 0)
+        credit = line["scheduled_cents"] < 0 and amount < 0
         previous_qty = already["qty_by_line"].get(line["id"], 0)
         completed = line_completed(line)
         prev_work = min(already["work_by_line"].get(line["id"], 0), completed)
@@ -248,7 +249,8 @@ def this_period(job: dict[str, Any]) -> dict[str, Any]:
             "qty_milli_this": max(0, line["done_milli"] - previous_qty),
             "qty_milli_to_date": line["done_milli"],
             "qty_milli": line["qty_milli"],
-            "amount_cents": max(0, amount),
+            # A credit change order's line (R3-06) bills negative, coming off this pay app.
+            "amount_cents": amount if credit else max(0, amount),
             "to_date_cents": to_date,
             "work_to_date_cents": completed,
             "prev_work_cents": prev_work,
@@ -257,7 +259,7 @@ def this_period(job: dict[str, Any]) -> dict[str, Any]:
         }
         # The continuation sheet lists every line, like a G703; only lines with new work are billed.
         sheet.append(entry)
-        if amount > 0:
+        if amount > 0 or credit:
             out.append(entry)
     op_this = max(0, totals(job)["op_to_date_cents"] - already["op_cents"])
     return {"lines": out, "sheet": sheet, "op_cents": op_this, "total_cents": sum(l["amount_cents"] for l in out) + op_this}

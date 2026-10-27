@@ -85,7 +85,7 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
     retainage_released = job.get("retainage_released_cents", 0)
     if sov.has_sov(job):
         # Billed line by line from the schedule of values.
-        unbilled_completed = sov.unbilled(job)
+        unbilled_completed = max(0, sov.unbilled(job))  # a credit waits for work to come off
     else:
         unbilled_completed = max(
             0,
@@ -151,13 +151,22 @@ def unsigned_cos_in_billing(job: dict[str, Any]) -> list[dict[str, Any]]:
     return [co for co in job["change_orders"] if co["status"] == "pending" and co.get("included_in_billing")]
 
 
-def blocker_lines(job: dict[str, Any]) -> list[str]:
-    lines = [item["blocker"] for item in missing_packet(job)]
+def blocker_items(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """What blocks send, each as {kind, text, co_id, number}: kind "paperwork" (a missing packet
+    item) or "co" (an unsigned change order on the bill, which the app links to)."""
+    items = [{"kind": "paperwork", "text": item["blocker"], "co_id": "", "number": 0} for item in missing_packet(job)]
     for co in unsigned_cos_in_billing(job):
-        lines.append(
-            f"Change Order {co['number']} is included in the billing amount but has not been signed."
-        )
-    return lines
+        items.append({
+            "kind": "co",
+            "text": f"Change Order {co['number']} is included in the billing amount but has not been signed.",
+            "co_id": co["id"],
+            "number": co["number"],
+        })
+    return items
+
+
+def blocker_lines(job: dict[str, Any]) -> list[str]:
+    return [b["text"] for b in blocker_items(job)]
 
 
 def status_label(job: dict[str, Any]) -> str:
@@ -491,14 +500,14 @@ def resolve_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor:
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
         raise GateError("Packet item not found.")
-    reason = (reason or "").strip() if isinstance(reason, str) else ""
-    if not item.get("attachments") and not reason:
-        raise GateError(f"Attach a job record to {item['label']}, or say why it is present, before marking it present.")
+    # "I have this" (R3-05): where it is is optional; when given it is kept and audited.
+    reason = (reason or "").strip()[:500] if isinstance(reason, str) else ""
     item["present"] = True
     item["resolved_at"] = utcnow()
+    item["marked_in_hand"] = True
     if reason:
         item["present_reason"] = reason
-    audit(state, job_id, "packet_resolved", f"{item['label']} marked present{': ' + reason if reason else ''}.", actor)
+    audit(state, job_id, "packet_resolved", f"{actor} marked {item['label']} as in hand{': ' + reason if reason else ''}.", actor)
     _refresh_draft_gate(job, state)
     return job
 
@@ -553,9 +562,11 @@ def approve_and_send(
 
 
 def record_follow_up(
-    state: dict[str, Any], job_id: str, actor: str = "duracash", link_base: str | None = None, company_id: str = ""
+    state: dict[str, Any], job_id: str, actor: str = "duracash", link_base: str | None = None, company_id: str = "",
+    early: bool = False,
 ) -> dict[str, Any]:
-    """Draft a follow-up on the oldest unpaid pay app once the payer's window has passed."""
+    """Draft a follow-up on the oldest unpaid pay app once the payer's window has passed.
+    `early`: the person chose "Follow up now" on the job page before then (R3-04)."""
     job = _open_job(state, job_id)
     invoice = next((inv for inv in job["invoices"] if inv["status"] in {"sent", "partial"}), None)
     if not invoice:
@@ -564,7 +575,7 @@ def record_follow_up(
     to = _send_to(payer)
     days = _int_or(payer.get("follow_up_days"), 7)
     last = invoice.get("last_follow_up_at") or invoice.get("sent_at")
-    if last:
+    if last and not early:
         due = datetime.fromisoformat(last) + timedelta(days=days)
         if due.tzinfo is None:
             due = due.replace(tzinfo=timezone.utc)
@@ -838,7 +849,8 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     """One job as the app shows it: the stored job plus money, blockers and labels."""
     out = deepcopy(job)
     out["money"] = job_money(job)
-    out["blockers"] = blocker_lines(job)
+    out["blocker_items"] = blocker_items(job)
+    out["blockers"] = [b["text"] for b in out["blocker_items"]]
     # The blockers that are paperwork to attach (the rest are unsigned change orders).
     out["missing_paperwork"] = [item["label"] for item in missing_packet(job)]
     out["status_label"] = status_label(job)
@@ -1270,19 +1282,29 @@ def answer_packet_suggestion(state: dict[str, Any], payer_id: str, suggestion_id
     return payer
 
 
+MAX_SCHEDULE_DAYS = 365
+
+
 def add_change_order(
-    state: dict[str, Any], job_id: str, title: str, amount_cents: int, actor: str = "owner", description: str = ""
+    state: dict[str, Any], job_id: str, title: str, amount_cents: int, actor: str = "owner", description: str = "",
+    schedule_days: int = 0,
 ) -> dict[str, Any]:
+    """A change order, pending until signed. A negative amount is a credit (R3-06): signed, it
+    lowers the contract. `schedule_days` is how many days it adds to (or takes off) the schedule."""
     job = _open_job(state, job_id)
     title = title.strip() if isinstance(title, str) else ""
     description = description.strip() if isinstance(description, str) else ""
     errors: dict[str, str] = {}
     if not title:
         errors["title"] = "Enter a title for the change order."
-    if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
-        errors["amount_cents"] = "Enter the change order amount, more than $0."
-    elif amount_cents > MAX_AMOUNT_CENTS:
+    if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents == 0:
+        errors["amount_cents"] = "Enter the change order amount, like 1,250, or -1,250 for a credit."
+    elif abs(amount_cents) > MAX_AMOUNT_CENTS:
         errors["amount_cents"] = f"Enter a change order amount up to {money(MAX_AMOUNT_CENTS)}."
+    elif amount_cents < 0 and job["contract_cents"] + sum(c["amount_cents"] for c in job["change_orders"] if c["status"] == "approved") + amount_cents < 0:
+        errors["amount_cents"] = "Enter a credit no larger than the contract total."
+    if not isinstance(schedule_days, int) or isinstance(schedule_days, bool) or abs(schedule_days) > MAX_SCHEDULE_DAYS:
+        errors["schedule_days"] = f"Enter the schedule change in whole days, up to {MAX_SCHEDULE_DAYS}, or leave it blank."
     _refuse("Change order not saved.", errors)
     number = max((co["number"] for co in job["change_orders"]), default=0) + 1
     co = {
@@ -1294,8 +1316,12 @@ def add_change_order(
         "status": "pending",
         "included_in_billing": False,
     }
+    if schedule_days:
+        co["schedule_days"] = schedule_days
     job["change_orders"].append(co)
-    audit(state, job_id, "add_co", f"{actor} added CO {number} — {title} for {money(amount_cents)}.", actor)
+    what = f"a credit of {money(-amount_cents)}" if amount_cents < 0 else money(amount_cents)
+    days = f", {schedule_days:+d} day{'' if abs(schedule_days) == 1 else 's'} on the schedule" if schedule_days else ""
+    audit(state, job_id, "add_co", f"{actor} added CO {number} — {title} for {what}{days}.", actor)
     return job
 
 
@@ -1316,7 +1342,8 @@ def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
         # approved CO, so the new CO becomes billable. Recompute rather than add,
         # because older records can carry a stale completed value.
         contract_total = job["contract_cents"] + sum(c["amount_cents"] for c in job["change_orders"] if c["status"] == "approved")
-        job["completed_value_cents"] = max(job.get("completed_value_cents", 0), contract_total)
+        # A credit lowers the whole contract, so the work done comes down with it.
+        job["completed_value_cents"] = contract_total if co["amount_cents"] < 0 else max(job.get("completed_value_cents", 0), contract_total)
     audit(state, job_id, "approve_co", f"{actor} approved CO {co['number']} — {co['title']}.", actor)
     _refresh_draft_gate(job, state)
     return job
@@ -1461,6 +1488,8 @@ def include_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
         raise GateError("Change order not found.")
     if co["status"] != "pending":
         raise GateError(f"CO {co['number']} is already approved; it is billed as contract work.")
+    if co["amount_cents"] < 0:
+        raise GateError(f"CO {co['number']} is a credit. It comes off the contract once it is signed.")
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft:
         raise GateError(f"Send or finish {open_draft['number']} first. The CO goes on the next pay app.")
@@ -1744,20 +1773,25 @@ def _attach_from_record(state: dict[str, Any], job: dict[str, Any], packet: list
 
 
 def detach_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: str = "owner") -> dict[str, Any]:
-    """Take off what Duracash attached from the job record. The same record is not attached again."""
+    """Remove (R3-05): take everything off an item, whether attached by hand, attached from the
+    job record or marked as in hand, so it is missing again. The records stay on the job record,
+    and one attached automatically is not attached again."""
     job = _open_job(state, job_id)
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
         raise GateError("Packet item not found.")
-    auto = [a for a in item.get("attachments", []) if a.get("auto")]
-    if not auto:
-        raise GateError(f"Nothing was attached to {item['label']} automatically.")
-    item["attachments"] = [a for a in item.get("attachments", []) if not a.get("auto")]
-    item.setdefault("detached_record_ids", []).extend(a["record_id"] for a in auto if a.get("record_id"))
-    if not item["attachments"] and not item.get("present_reason"):
-        item["present"] = False
-        item.pop("resolved_at", None)
-    names = ", ".join(a["name"] for a in auto)
+    if item.get("present_reason") == MADE_HERE_REASON:
+        raise GateError(f"Duracash makes {item['label']} with the pay app; there is nothing to remove.")
+    taken = item.get("attachments", [])
+    if not taken and not item.get("present"):
+        raise GateError(f"Nothing is attached to {item['label']}.")
+    item["attachments"] = []
+    item.setdefault("detached_record_ids", []).extend(a["record_id"] for a in taken if a.get("auto") and a.get("record_id"))
+    item["present"] = False
+    item.pop("resolved_at", None)
+    item.pop("present_reason", None)
+    item.pop("marked_in_hand", None)
+    names = ", ".join(a["name"] for a in taken) or "the in-hand mark"
     audit(state, job_id, "paperwork_detached", f"{actor} took {names} off {item['label']}.", actor)
     _refresh_draft_gate(job)
     return job
@@ -1859,6 +1893,14 @@ def attach_record_to_packet(
         raise GateError("Packet item not found.")
     if not record:
         raise GateError("Job record not found.")
+    already = next((a for a in item.get("attachments", []) if a.get("record_id") == record_id), None)
+    if already:
+        # Attached from the job record as it was added (a photo taken for this item): it is the
+        # person's choice now, so keep one attachment and make it theirs.
+        already.pop("auto", None)
+        already["added_by"] = actor
+        _refresh_draft_gate(job, state)
+        return job
     item.setdefault("attachments", []).append({
         "name": record["label"],
         "record_id": record_id,
@@ -2104,8 +2146,9 @@ def _add_co_line(job: dict[str, Any], co: dict[str, Any]) -> None:
         "qty_milli": 1000,
         "rate_cents": co["amount_cents"],
         "scheduled_cents": co["amount_cents"],
-        # Billed while unsigned, or the job is done: the work is complete.
-        "done_milli": 1000 if billed_already or job.get("work_status") == "complete" else 0,
+        # Billed while unsigned, or the job is done: the work is complete. A credit (R3-06) is
+        # "done" when signed, so it comes off the next pay app.
+        "done_milli": 1000 if billed_already or job.get("work_status") == "complete" or co["amount_cents"] < 0 else 0,
         "co_id": co["id"],
     })
 
