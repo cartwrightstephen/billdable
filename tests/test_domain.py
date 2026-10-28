@@ -167,6 +167,21 @@ class MoneyFileTests(unittest.TestCase):
         domain.approve_change_order(state, "job-ponce", co_id)
         self.assertEqual(job["change_orders"][0]["status"], "approved")
 
+    def test_edit_record_kind(self):  # R5-07
+        state = seed_state()
+        domain.add_job_record(state, "job-ponce", "ABC Supply invoice 4471", "pay_app", "", "owner")
+        job = domain._job(state, "job-ponce")
+        rec = job["records"][-1]
+        domain.edit_record(state, "job-ponce", rec["id"], "ABC Supply tile delivery", "ticket", "owner")
+        self.assertEqual((rec["label"], rec["kind"]), ("ABC Supply tile delivery", "ticket"))
+        self.assertEqual(state["audit"][-1]["action"], "edit_record")
+        with self.assertRaises(domain.GateError):
+            domain.edit_record(state, "job-ponce", rec["id"], "x", "invoice", "owner")
+        with self.assertRaises(domain.GateError):
+            domain.edit_record(state, "job-ponce", rec["id"], "  ", "ticket", "owner")
+        with self.assertRaises(domain.GateError):
+            domain.edit_record(state, "job-ponce", "rec-nope", "x", "ticket", "owner")
+
 
 
 class PaperworkTests(unittest.TestCase):  # R3-05

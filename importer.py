@@ -75,13 +75,18 @@ KINDS = {
 _KIND_RULES = [
     ("change_order", r"\bchange order\b|\bc\.?o\.?\s*#?\s*\d+|\bextra work\b|\bfield (?:order|directive)\b"),
     ("waiver", r"\bwaiver\b|\blien release\b"),
-    ("pay_app", r"\bpay app\b|\bpay application\b|\bapplication for payment\b|\bg70[23]\b|\binvoice\b|\brequisition\b|\bpencil\b"),
+    ("pay_app", r"\bpay app\b|\bpay application\b|\bapplication for payment\b|\bg70[23]\b|\brequisition\b|\bpencil\b"),
+    # An invoice is a supplier's bill (a ticket for the backup) unless it names one of our pay apps (R5-07).
+    ("invoice", r"\binvoice\b"),
     ("ticket", r"\bdelivery ticket\b|\bticket\b|\bpacking slip\b|\btime sheet\b|\btimesheet\b"),
     ("contract", r"\bcontract\b|\bagreement\b|\bsubcontract\b|\bpurchase order\b"),
     ("daily", r"\bdaily (?:log|report|record)\b|\bcrew\b|\bon site today\b"),
 ]
 
-_MONEY_RE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{2}))?")
+# $1,250.00, $40; without the $ only with a thousands comma or cents (1,250 or 412.50), so
+# "4 crew" and "10/12" are not money (R5-05).
+_MONEY_RE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{2}))?"
+                       r"|(?<![\d.,/$-])(?:(\d{1,3}(?:,\d{3})+)(?:\.(\d{2}))?|(\d+)\.(\d{2}))(?![\d,]|\.\d)")
 _MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
 _DATE_PATTERNS = [
@@ -182,11 +187,11 @@ def parse_email(data: bytes) -> dict[str, Any]:
         if payload:
             attachments.append({"filename": part.get_filename() or "attachment", "data": payload})
     sent = ""
-    if msg["date"]:
-        try:
+    try:  # Python 3.9 raises on reading a Date header it can't parse ("Mon, Oct 12, 2026 at 9:00 AM")
+        if msg["date"]:
             sent = email.utils.parsedate_to_datetime(str(msg["date"])).astimezone(timezone.utc).replace(microsecond=0).isoformat()
-        except (TypeError, ValueError):
-            sent = ""
+    except (TypeError, ValueError, IndexError):
+        sent = ""
     return {
         "from": str(msg["from"] or ""),
         "to": str(msg["to"] or ""),
@@ -197,10 +202,39 @@ def parse_email(data: bytes) -> dict[str, Any]:
     }
 
 
+# What Gmail, Outlook and Apple Mail put above a forwarded or quoted email (R5-06).
+FORWARD_BANNER_RE = re.compile(r"^\s*(?:-{2,}\s*(?:forwarded message|original message)\s*-{2,}|begin forwarded message:?|_{8,})\s*$", re.I)
+PASTED_HEADER_RE = re.compile(r"^\s*(from|subject|to|date|sent|cc):\s*\S", re.I)
+
+
+def pasted_headers(text: str, strict: bool = False) -> tuple[str, str] | None:
+    """Find the From:/Subject: block of a pasted email in its first 10 lines, past any forward
+    banner and a line or two the person wrote above it. Returns (what is above it, the email
+    from its headers on) for parse_email, or None. `strict` (pasted as "Something else") needs
+    two header lines, one of them From: or Subject:, so a note that starts "To: Mike" stays a note."""
+    lines = (text or "").splitlines()
+    start = next((n for n, line in enumerate(lines[:10]) if PASTED_HEADER_RE.match(line)), None)
+    if start is None:
+        return None
+    end = start
+    while end < len(lines) and PASTED_HEADER_RE.match(lines[end]):
+        end += 1
+    names = {PASTED_HEADER_RE.match(line).group(1).lower() for line in lines[start:end]}
+    if strict and (end - start < 2 or not names & {"from", "subject"}):
+        return None
+    above = "\n".join(line for line in lines[:start] if not FORWARD_BANNER_RE.match(line)).strip()
+    # Outlook writes the address as [mailto:ap@x.com]; an email header wants <ap@x.com>.
+    header = [re.sub(r"\s*\[mailto:([^\]\s]+)\]", r" <\1>", line.strip()) for line in lines[start:end]]
+    body = "\n".join(lines[end:]).strip("\n")
+    return above, "\n".join(header) + "\n\n" + body
+
+
 def amounts(text: str) -> list[int]:
-    """Dollar amounts written with a $ sign, in cents, largest first, at most 5."""
+    """Dollar amounts, in cents, largest first, at most 5."""
     out = []
-    for whole, cents in _MONEY_RE.findall(text or ""):
+    for m in _MONEY_RE.finditer(text or ""):
+        g = m.groups()
+        whole, cents = (g[0], g[1]) if g[0] else (g[2], g[3]) if g[2] else (g[4], g[5])
         value = int(whole.replace(",", "")) * 100 + int(cents or 0)
         if value and value not in out:
             out.append(value)
@@ -312,6 +346,8 @@ def guess_kind(name: str, text: str, exts: str | list[str] | tuple = ()) -> str:
     hay = f"{spaced(name)}\n{text[:4000]}".lower()
     for kind, pattern in _KIND_RULES:
         if re.search(pattern, hay):
+            if kind == "invoice":
+                return "pay_app" if PAYAPP_NUMBER_RE.search(f"{name}\n{text[:4000]}") else "ticket"
             return kind
     exts = [exts] if isinstance(exts, str) else list(exts)
     files = [e for e in exts if e and e != ".eml"]
@@ -380,7 +416,9 @@ def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "
     top_score = ranked[0][1][0]
     tied = [jid for jid, (s, _) in ranked if s == top_score]
     if len(tied) > 1:
-        return {"job_id": None, "reason": "More than one job fits. Pick one.", "candidates": [jid for jid, _ in ranked[:5]]}
+        # The tied jobs come first; the Inbox card offers them as one-tap choices (R5-05).
+        return {"job_id": None, "reason": "More than one job fits. Pick one.", "candidates": [jid for jid, _ in ranked[:5]],
+                "tied": min(len(tied), 5)}
     return {"job_id": ranked[0][0], "reason": ranked[0][1][1], "candidates": [jid for jid, _ in ranked[:5]]}
 
 
@@ -414,6 +452,7 @@ def add_item(
     sent_at: str = "",
     note_date: str | None = None,
     extra: dict[str, Any] | None = None,
+    job_reason: str = "Added from the job page.",
 ) -> dict[str, Any]:
     text = (text or "")[:MAX_TEXT_CHARS]
     if len([i for i in state.get("inbox", []) if i.get("status") == "new"]) >= MAX_NEW_INBOX:
@@ -422,7 +461,7 @@ def add_item(
     names = " ".join(f["name"] for f in files)
     if job_id and not any(j["id"] == job_id and not j.get("closed") for j in state.get("jobs", [])):
         job_id = None
-    match = {"job_id": job_id, "reason": "Added from the job page.", "candidates": [job_id]} if job_id else match_job(
+    match = {"job_id": job_id, "reason": job_reason, "candidates": [job_id]} if job_id else match_job(
         state, f"{subject}\n{text}", sender, names=names
     )
     item = {
@@ -441,6 +480,7 @@ def add_item(
         "suggested_job_id": match["job_id"],
         "match_reason": match["reason"],
         "candidates": match["candidates"],
+        "tied": match.get("tied", 0),
         "status": "new",
     }
     if extra:

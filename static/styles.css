@@ -132,6 +132,15 @@ select { max-width: 100%; }
 .stage.clickable { cursor: pointer; }
 .stage.clickable:hover, .stage.active { border-color: var(--copper); background: var(--copper-soft); }
 .toast { position: fixed; top: 16px; left: 50%; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); background: var(--ink); color: white; padding: 10px 16px; border-radius: 8px; z-index: 2000; font-size: 14px; }
+.toast-action { background: none; border: 0; padding: 0 0 0 8px; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.inbox-choices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+.inbox-choices .sub { flex-basis: 100%; }
+.inbox-one-tap { align-items: center; gap: 12px; }
+.paste-hint:empty { display: none; }
+.upload-job { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 600; }
+.upload-job select { max-width: 100%; }
+.record-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.record-edit input { flex: 1 1 200px; min-width: 0; }
 .summary-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
 .summary-row .metric { min-width: 140px; }
 .auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }

@@ -10,6 +10,7 @@ import { labelTables, moreButton, askConfirm } from "./js/dom.js";
 import { field, moneyField, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, formDraft, draftValue, clearForm, clearAllForms, watchForms } from "./js/forms.js";
 import { todayQueue, queueHtml, anyPayAppSent } from "./js/today.js";
 import { canRecord, needsPick, pickPayApp, splitTooMuch, picksFrom, afterRecord } from "./js/payimport.js";
+import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "./js/inbox.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, setMe, clearSession, setLocation, closeForms } from "./js/state.js";
 
 // The Daily record starts on the job last used on this device (R2-07).
@@ -19,6 +20,19 @@ function lastDailyJob() {
 }
 function rememberDailyJob(id) {
   try { localStorage.setItem(DAILY_JOB_KEY, unesc(id)); } catch (_) { /* private window: the only open job still comes first */ }
+}
+
+// Files added in the Inbox go with the job last picked under "Which job?" on this device (R5-07).
+// "" is "Not sure, file later". Kept in memory too, for a private window.
+const UPLOAD_JOB_KEY = "duracash-upload-job";
+let uploadJob = null;
+function lastUploadJob() {
+  if (uploadJob !== null) return uploadJob;
+  try { return localStorage.getItem(UPLOAD_JOB_KEY) || ""; } catch (_) { return ""; }
+}
+function rememberUploadJob(id) {
+  uploadJob = unesc(id);
+  try { localStorage.setItem(UPLOAD_JOB_KEY, uploadJob); } catch (_) { /* private window: remembered until reload */ }
 }
 
 // Someone who has signed in on this device before lands on Sign in, not on Create account (R2-02).
@@ -165,7 +179,9 @@ function decorateHelp(root) {
   root.querySelectorAll(".nav button[data-section]").forEach(b => addInfoIcon(b, NAV_HELP[b.dataset.section], b));
 }
 
-function toast(msg) {
+// action: { label, run } adds a button to the toast, like Undo after Dismiss (R5-05); the toast
+// then stays up long enough to reach it.
+function toast(msg, action = null) {
   let el = document.getElementById("toast");
   if (!el) {
     el = document.createElement("div");
@@ -176,10 +192,18 @@ function toast(msg) {
     document.body.appendChild(el);
   }
   el.textContent = msg;
+  if (action) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "toast-action";
+    btn.textContent = action.label;
+    btn.addEventListener("click", () => { hideToast(); action.run(); });
+    el.append(" ", btn);
+  }
   el.style.display = "block";
   lastToastAt = Date.now();
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(hideToast, Math.min(9000, Math.max(2200, String(msg).length * 50)));
+  toastTimer = setTimeout(hideToast, action ? 8000 : Math.min(9000, Math.max(2200, String(msg).length * 50)));
 }
 function hideToast() { const el = document.getElementById("toast"); if (el) el.style.display = "none"; }
 
@@ -602,7 +626,7 @@ async function post(path, body = {}, opts = {}) {
   if (!res.ok) {
     toast((data.error || "Request failed") + (data.request_id ? ` Reference: ${data.request_id}.` : ""));
   } else {
-    toast("Saved");
+    if (!opts.quiet) toast("Saved");
     if (opts.formKey) clearForm(opts.formKey);
     if (opts.close) formOpen[opts.close] = false;
   }
@@ -1266,6 +1290,8 @@ const ACTIONS = {
       input.dataset.kind = el.dataset.kind || "";   // e.g. "waiver" from the waiver page
       input.dataset.attach = el.dataset.attach || "";   // a paperwork item to attach it to
       input.dataset.co = el.dataset.co || "";   // a change order it is the signed copy of
+      // The Inbox's choose files: the job picked under "Which job?", suggested and not filed.
+      input.dataset.suggest = el.dataset.askJob ? inboxUploadJob() : "";
       // "Take a photo" opens the rear camera directly; "choose files" offers every source.
       if (el.dataset.capture) { input.setAttribute("capture", "environment"); input.setAttribute("accept", "image/*"); }
       else { input.removeAttribute("capture"); input.setAttribute("accept", FILE_ACCEPT); }
@@ -1287,17 +1313,30 @@ const ACTIONS = {
     if (!jobId) { toast("Pick a job for this item."); return; }
     await post(`/api/inbox/${itemId}/file`, { job_id: jobId, kind });
   },
+  // One toast for the lot (R5-05), not a "Saved" per item.
   "inbox-file-all": async () => {
     const items = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id);
+    let filed = 0;
     for (const i of items) {
       const select = document.querySelector(`#inb-job-${i.id}`);
       const jobId = select ? select.value : i.suggested_job_id;   // a row set back to "Pick a job" is skipped
       if (!jobId) continue;
       const kind = document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind;
-      await post(`/api/inbox/${i.id}/file`, { job_id: jobId, kind });
+      const r = await post(`/api/inbox/${i.id}/file`, { job_id: jobId, kind }, { quiet: true });
+      if (r && r.ok) filed++;
     }
+    if (filed) toast(`Added ${filed} item${filed === 1 ? "" : "s"} to ${filed === 1 ? "its job" : "their jobs"}.`);
   },
-  "inbox-dismiss": (el) => post(`/api/inbox/${el.dataset.item}/dismiss`),
+  "inbox-other": (el) => {
+    inboxOpen.add(el.dataset.item);
+    render();
+    document.querySelector(`#inb-${el.dataset.focus === "kind" ? "kind" : "job"}-${el.dataset.item}`)?.focus();
+  },
+  "inbox-dismiss": async (el) => {
+    const id = el.dataset.item;
+    const r = await post(`/api/inbox/${id}/dismiss`, {}, { quiet: true });
+    if (r && r.ok) toast("Dismissed.", { label: "Undo", run: () => post(`/api/inbox/${id}/undo`) });
+  },
   // The message may only sound like the job is done: filing it is the other way out.
   "inbox-mark-done": async (el) => {
     const it = (state.inbox || []).find(x => x.id === el.dataset.item);
@@ -1461,6 +1500,19 @@ const ACTIONS = {
     if (refuseForm("record", v.label ? {} : { label: "Enter what this is, like \"Rough-in inspection passed\"." })) return;
     await post(`/api/jobs/${id}/add-record`, { label: v.label, note: v.note, kind: v.kind || "note" }, { formKey: "record" });
   },
+  "record-edit": (el) => {
+    editingRecord = el.dataset.item || "";
+    render();
+    if (editingRecord) document.getElementById(`rec-edit-label-${editingRecord}`)?.focus();
+  },
+  "record-save": async (el, id) => {
+    const rid = el.dataset.item;
+    const label = document.getElementById(`rec-edit-label-${rid}`)?.value || "";
+    const kind = document.getElementById(`rec-edit-kind-${rid}`)?.value || "";
+    if (!label.trim()) { toast("Enter what this is."); document.getElementById(`rec-edit-label-${rid}`)?.focus(); return; }
+    const r = await post(`/api/jobs/${id}/edit-record/${rid}`, { label, kind });
+    if (r && r.ok) { editingRecord = ""; render(); }
+  },
   "packet-detach": (el, id) => post(`/api/jobs/${id}/detach/${el.dataset.item}`),
   "packet-skip": (el, id) => post(`/api/jobs/${id}/packet-skip/${el.dataset.item}`, {}),
   "attach-record": async (el, id) => {
@@ -1472,7 +1524,8 @@ const ACTIONS = {
     nav("job", id);
     if (el.dataset.focus) requestAnimationFrame(() => document.querySelector(el.dataset.focus)?.scrollIntoView({ block: "start" }));
   },
-  "inbox-file-suggested": (el) => post(`/api/inbox/${el.dataset.item}/file`, { job_id: el.dataset.job, kind: "" }),
+  // The card's kind select counts when it is open; Today's row has none and keeps the guessed kind.
+  "inbox-file-suggested": (el) => post(`/api/inbox/${el.dataset.item}/file`, { job_id: el.dataset.job, kind: document.querySelector(`#inb-kind-${el.dataset.item}`)?.value || "" }),
   "create-job": async () => {
     const v = formValues("newjob");
     const errors = {};
@@ -1711,10 +1764,13 @@ function listenForActions() {
   app.addEventListener("input", (e) => {
     if (e.target.closest && e.target.closest('[data-form-key="progress"]')) updateProgressPreview();
     if (e.target.id === "nj-customer") syncNewJobCustomer();
+    if (e.target.id === "paste-text") guessPasteSource();
     if (e.target.id === "nj-retainage") (formDraft.newjob ||= {}).retainage_touched = true;
   });
   app.addEventListener("focusout", (e) => { if (e.target.id === "nj-customer") prefillApprover(); });
   app.addEventListener("change", (e) => {
+    if (e.target.id === "upload-job") rememberUploadJob(e.target.value);
+    if (e.target.id === "paste-source") { e.target.dataset.touched = "1"; const hint = document.getElementById("paste-hint"); if (hint) hint.textContent = ""; }
     if (e.target.id === "nj-role" || e.target.id === "nj-customer") prefillRetainage();
     if (e.target.id === "match-inv") prefillPaymentAmount(e.target.value);
     if (e.target.dataset && e.target.dataset.companySwitch) companySwitch(e.target);
@@ -2494,6 +2550,22 @@ function adminCompaniesHtml() {
   </table></div>`;
 }
 
+// A record on the job page, with Edit for its label and kind (R5-07). One open at a time.
+let editingRecord = "";
+function recordRow(j, r) {
+  if (editingRecord === r.id && !j.closed) {
+    return `<div class="list-item record-edit">
+      <label class="inline-label" for="rec-edit-label-${r.id}">What it is</label>
+      <input id="rec-edit-label-${r.id}" value="${r.label}" maxlength="120">
+      <label class="inline-label" for="rec-edit-kind-${r.id}">Kind</label>
+      <select id="rec-edit-kind-${r.id}">${Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}"${r.kind === k ? " selected" : ""}>${v}</option>`).join("")}</select>
+      <button class="btn small" data-action="record-save" data-id="${j.id}" data-item="${r.id}">Save</button>
+      <button class="btn small secondary" data-action="record-edit" data-item="">Cancel</button>
+    </div>`;
+  }
+  return `<div class="list-item"><span class="pill">${RECORD_KINDS[r.kind] || r.kind}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${j.closed ? "" : ` <button class="linkish" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.added_at)}</div>` : ""}</div>`;
+}
+
 function recordFiles(r) {
   return (r.file_ids || []).map(fid => {
     const f = (state.files || []).find(x => x.id === fid);
@@ -2501,31 +2573,86 @@ function recordFiles(r) {
   }).filter(Boolean).join(" · ");
 }
 
+// The Inbox's "Which job?" for files added there: the last one picked, or the only open job.
+function uploadJobOptions() {
+  const openJobs = state.jobs.filter(j => !j.closed);
+  const pick = defaultJobId(openJobs, lastUploadJob());
+  return `<option value="">Not sure, file later</option>` + openJobs.map(j => `<option value="${j.id}"${pick === j.id ? " selected" : ""}>${j.name} (${j.code})</option>`).join("");
+}
+
+// The job for files added on the Inbox page: suggested on the card, never filed by itself.
+function inboxUploadJob() {
+  return currentView === "inbox" ? document.getElementById("upload-job")?.value || "" : "";
+}
+
+// The paste box, on the Inbox and (with jobId) on a job page, where it files straight to the job.
+// "Something else" until the text looks like notes or an email (R5-06).
+function pasteBoxHtml(jobId = "") {
+  return `<div class="form-inline">
+          <select id="paste-source" aria-label="What are you pasting?">
+            <option value="email">An email</option>
+            <option value="sms">Text messages</option>
+            <option value="notes">Notes: one daily record per date</option>
+            <option value="paste" selected>Something else</option>
+          </select>
+        </div>
+        <textarea id="paste-text" rows="6" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in"></textarea>
+        <p id="paste-hint" class="sub paste-hint" role="status"></p>
+        <div class="form-inline"><button class="btn" data-action="import-text"${jobId ? ` data-job="${jobId}"` : ""}>${jobId ? "Add to job" : "Add to Inbox"}</button>
+        <span class="sub">Notes split at every line that starts with a date (10/12, Oct 12, 2026-10-12). Exported Apple Notes or a typed-up notebook work.</span></div>`;
+}
+
+// Typing or pasting in the box: pick what it looks like, unless the person already chose.
+function guessPasteSource() {
+  const select = document.getElementById("paste-source");
+  const hint = document.getElementById("paste-hint");
+  if (!select || select.dataset.touched) return;
+  const guess = pasteGuess(document.getElementById("paste-text")?.value || "");
+  select.value = guess.source;
+  if (hint) hint.textContent = guess.hint;
+}
+
+// Inbox cards whose job and kind selects are open ("Other job" / "Change type"); the rest show
+// one button for the suggested job (R5-05).
+const inboxOpen = new Set();
+
 function inboxItemCard(i) {
   const openJobs = state.jobs.filter(j => !j.closed);
   const files = (i.file_ids || []).map(fid => (state.files || []).find(x => x.id === fid)).filter(Boolean);
   const title = i.subject || (files[0] && files[0].name) || (i.text || "").split("\n")[0].slice(0, 80) || "Untitled";
   const preview = (i.text || "").slice(0, 600);
   const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? "selected" : ""}>${v}</option>`).join("");
+  const suggested = i.suggested_job_id && openJobs.find(j => j.id === i.suggested_job_id);
+  const choices = suggested ? [] : choiceJobs(i, openJobs);
   // Nothing suggested and only one open job: that one (R2-07).
   const pick = i.suggested_job_id || defaultJobId(openJobs);
-  const jobs = `<option value="">Pick a job…</option>` + openJobs.map(j => `<option value="${j.id}" ${pick === j.id ? "selected" : ""}>${j.name} (${j.code})</option>`).join("");
-  return `<div class="inbox-item">
+  const jobs = `<option value="">Pick a job…</option>` + jobsInOrder(openJobs, i.candidates || []).map(j => `<option value="${j.id}" ${pick === j.id ? "selected" : ""}>${j.name} (${j.code})</option>`).join("");
+  const selects = !suggested || inboxOpen.has(i.id);
+  const kindName = RECORD_KINDS[i.kind] || i.kind;
+  return `<div class="inbox-item" data-item="${i.id}">
     <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${title}</strong>
       <span class="sub">${i.from ? "from " + i.from + " · " : ""}${fmtDate(i.sent_at || i.received_at)}${i.note_date ? " · dated " + fmtDate(i.note_date) : ""}</span></div>
     ${preview ? `<details><summary>${preview.slice(0, 140)}${preview.length > 140 ? "…" : ""}</summary><pre class="inbox-text">${preview}</pre></details>` : ""}
     ${files.length ? `<div class="sub">Files: ${files.map(f => `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>`).join(" · ")}</div>` : ""}
-    ${(i.amounts || []).length || (i.dates || []).length ? `<div class="sub">Found: ${(i.amounts || []).map(a => money(a)).join(", ")}${(i.amounts || []).length && (i.dates || []).length ? " · " : ""}${(i.dates || []).join(", ")}</div>` : ""}
+    ${(i.amounts || []).length || (i.dates || []).length ? `<div class="sub">Found: ${(i.amounts || []).map(a => money(a)).join(", ")}${(i.amounts || []).length && (i.dates || []).length ? " · " : ""}${(i.dates || []).map(fmtDate).join(", ")}</div>` : ""}
     ${(i.skipped_attachments || []).length ? `<div class="field-error">${i.skipped_attachments.join(" ")}</div>` : ""}
-    <div class="sub">${i.suggested_job_id ? "Suggested because it " + i.match_reason : i.match_reason}</div>
+    ${choices.length ? `<div class="inbox-choices"><span class="sub">${choiceLine(choices, state.payers || [])}</span>
+      ${choices.map(j => `<button class="btn small secondary" data-action="inbox-file-suggested" data-item="${i.id}" data-job="${j.id}">${j.name}</button>`).join("")}</div>`
+      : `<div class="sub">${suggested ? "Suggested because it " + i.match_reason : i.match_reason}</div>`}
     ${i.payments_csv && files[0] ? `<div class="notice">This looks like a payments export. <button class="btn small" data-action="inbox-read-payments" data-file="${files[0].id}">Read as payments (${i.payment_rows} row${i.payment_rows === 1 ? "" : "s"})</button></div>` : ""}
     ${i.says_done_job_id ? `<div class="notice says-done">This says the job is done. <button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark ${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || "the job"} done and draft the pay app</button></div>` : ""}
-    <div class="form-inline">
+    ${suggested ? `<div class="form-inline inbox-one-tap">
+      <button class="btn" data-action="inbox-file-suggested" data-item="${i.id}" data-job="${suggested.id}">Add to ${suggested.name}</button>
+      ${selects ? "" : `<button class="linkish" data-action="inbox-other" data-item="${i.id}" data-focus="job">Other job</button>
+      <button class="linkish" data-action="inbox-other" data-item="${i.id}" data-focus="kind">Change type (${kindName})</button>`}
+      <button class="linkish" data-action="inbox-dismiss" data-item="${i.id}">Dismiss</button>
+    </div>` : ""}
+    ${selects ? `<div class="form-inline">
       <select id="inb-job-${i.id}" aria-label="Job">${jobs}</select>
       <select id="inb-kind-${i.id}" aria-label="Kind">${kinds}</select>
-      <button class="btn small" data-action="inbox-file" data-item="${i.id}">File to job record</button>
-      <button class="btn small secondary" data-action="inbox-dismiss" data-item="${i.id}">Dismiss</button>
-    </div>
+      <button class="btn small${suggested ? " secondary" : ""}" data-action="inbox-file" data-item="${i.id}">Add to job</button>
+      ${suggested ? "" : `<button class="linkish" data-action="inbox-dismiss" data-item="${i.id}">Dismiss</button>`}
+    </div>` : ""}
   </div>`;
 }
 
@@ -2695,25 +2822,16 @@ const views = {
       <h1>Inbox</h1>
       <p class="sub">Bring in photos, PDFs, saved emails, text threads and notes. Duracash suggests the job from the job code, address, name or sender; you file it with one click. Nothing is filed without you.</p>
       <div class="dropzone" tabindex="0">
+        <label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>
         <strong>Drop files anywhere on this page</strong>
-        <span class="sub">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to ${MAX_UPLOAD_MB} MB each. Or <button class="linkish" data-action="pick-files">choose files</button>, or press Ctrl+V / ⌘V to paste a screenshot. On a phone, choose files opens the camera too.</span>
+        <span class="sub">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to ${MAX_UPLOAD_MB} MB each. Or <button class="linkish" data-action="pick-files" data-ask-job="1">choose files</button>, or press Ctrl+V / ⌘V to paste a screenshot. On a phone, choose files opens the camera too. They wait here for you to add them to the job.</span>
       </div>
       <div class="card">
         <h2>Paste an email, a text thread, or notes</h2>
-        <div class="form-inline">
-          <select id="paste-source" aria-label="What are you pasting?">
-            <option value="email">An email</option>
-            <option value="sms">Text messages</option>
-            <option value="notes">Notes: one daily record per date</option>
-            <option value="paste">Something else</option>
-          </select>
-        </div>
-        <textarea id="paste-text" rows="6" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in"></textarea>
-        <div class="form-inline"><button class="btn" data-action="import-text">Add to Inbox</button>
-        <span class="sub">Notes split at every line that starts with a date (10/12, Oct 12, 2026-10-12). Exported Apple Notes or a typed-up notebook work.</span></div>
+        ${pasteBoxHtml()}
       </div>
       <div class="card">
-        <div class="top"><h2>To file (${items.length})</h2>${withSuggestion > 1 ? `<button class="btn small" data-action="inbox-file-all">File all ${withSuggestion} with a suggested job</button>` : ""}</div>
+        <div class="top"><h2>To file (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
         ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting", "Drop files, paste an email or notes above, or set up email and text forwarding below.")}
       </div>
       ${done.length ? `<details class="card"><summary><strong>Recently filed or dismissed</strong></summary>
@@ -3031,9 +3149,10 @@ const views = {
         <h2>Job record</h2>
         ${j.closed ? "" : `<div class="dropzone small" data-job="${j.id}">
           <strong>${(j.records || []).length ? "Add photos, PDFs, saved emails or spreadsheets" : "Nothing in the record yet. Add the contract, photos and tickets"}</strong>
-          <span class="sub">Drop files here, <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button>, <button class="linkish" data-action="pick-files" data-job="${j.id}" data-capture="1">take a photo</button>, or paste a screenshot. Emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
-        </div>`}
-        ${(j.records || []).slice().reverse().map(r => `<div class="list-item"><span class="pill">${RECORD_KINDS[r.kind] || r.kind}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.added_at)}</div>` : ""}</div>`).join("")}
+          <span class="sub">Drop files here, <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button>, <button class="linkish" data-action="pick-files" data-job="${j.id}" data-capture="1">take a photo</button>, or paste a screenshot. Forwarded emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
+        </div>
+        <details class="paste-job"><summary>Paste an email, a text thread, or notes</summary>${pasteBoxHtml(j.id)}</details>`}
+        ${(j.records || []).slice().reverse().map(r => recordRow(j, r)).join("")}
         <details class="add-record"${(j.records || []).length && !formErrors.record ? "" : " open"}><summary>Add a note to the record</summary>
           <div data-form-key="record">${formErrorLine("record")}<div class="form-row">
             ${field({ form: "record", name: "label", id: "rec-label", label: "What it is", placeholder: "Rough-in inspection passed" })}
@@ -3954,7 +4073,7 @@ document.addEventListener("drop", (e) => {
   }
   e.preventDefault();
   const jobId = importTargetJob();
-  uploadFiles(e.dataTransfer.files, jobId, !!jobId);
+  uploadFiles(e.dataTransfer.files, jobId || inboxUploadJob(), !!jobId);
 });
 window.addEventListener("blur", () => { dragDepth = 0; dropOverlay(false); });
 document.addEventListener("dragend", () => { dragDepth = 0; dropOverlay(false); });
@@ -3969,13 +4088,13 @@ document.addEventListener("paste", (e) => {
   if (editable && e.clipboardData.types.includes("text/plain")) return;
   e.preventDefault();
   const jobId = importTargetJob();
-  uploadFiles(files, jobId, !!jobId);
+  uploadFiles(files, jobId || inboxUploadJob(), !!jobId);
 });
 document.addEventListener("scroll", hideHelpTip, true);
 // One file picker for every screen ("choose files" on the Inbox or a job page).
 document.getElementById("file-input").addEventListener("change", (e) => {
   const input = e.target;
-  const jobId = input.dataset.job || "", kind = input.dataset.kind || "";
+  const jobId = input.dataset.job || "", kind = input.dataset.kind || "", suggest = input.dataset.suggest || "";
   const extra = { attach: input.dataset.attach || "", co: input.dataset.co || "" };
   const files = [...input.files];
   input.value = "";
@@ -3983,6 +4102,8 @@ document.getElementById("file-input").addEventListener("change", (e) => {
   input.dataset.kind = "";
   input.dataset.attach = "";
   input.dataset.co = "";
+  input.dataset.suggest = "";
+  if (!jobId) { uploadFiles(files, suggest, false); return; }
   // One file goes on a paperwork item or a change order; the rest of a multi-pick only on the job record.
   if ((extra.attach || extra.co) && files.length > 1) {
     uploadFiles(files.slice(0, 1), jobId, !!jobId, kind, extra).then(() => uploadFiles(files.slice(1), jobId, !!jobId, kind));

@@ -141,6 +141,51 @@ class ImportHttpTests(unittest.TestCase):
         res, state = self.request("POST", f"/api/inbox/{item['id']}/undo", {}, cookie=cookie)
         self.assertNotIn(rec["id"], [r["id"] for r in state["jobs"][0]["records"]])
 
+    def test_a_tie_comes_with_candidates_and_a_forward_keeps_its_sender(self):  # R5-05, R5-06
+        cookie, job = self.company("tie@example.com")
+        second = {"name": "Birch garage", "customer": "Park GC", "address": "4 Birch Road", "approver": "Kim", "ap_email": "ap@park.example",
+                  "contract_cents": 5_000_000, "retainage_pct": 10, "role": "GC"}
+        res, state = self.request("POST", "/api/jobs", second, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual(len({j["payer_id"] for j in state["jobs"]}), 1, "both jobs are Park GC's")
+        forward = ("Can you look at this one?\n\n---------- Forwarded message ---------\nFrom: Kim Park <ap@park.example>\n"
+                   "Date: Mon, Oct 12, 2026 at 9:00 AM\nSubject: Backup for October\nTo: Pat Pine <pat@pine.example>\n\n"
+                   "Please send the delivery tickets with the next one. 12,500.00 is held until then.")
+        res, state = self.request("POST", "/api/import/text", {"text": forward, "source": "paste"}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        item = state["inbox"][-1]
+        self.assertEqual((item["from"], item["subject"]), ("Kim Park <ap@park.example>", "Backup for October"))
+        self.assertTrue(item["text"].startswith("Can you look at this one?"))
+        self.assertNotIn("Forwarded message", item["text"])
+        self.assertEqual(item["amounts"], [1_250_000])
+        # The AP email is both jobs' customer: a tie, with both jobs offered.
+        self.assertIsNone(item["suggested_job_id"])
+        self.assertEqual(sorted(item["candidates"]), sorted(j["id"] for j in state["jobs"]))
+        self.assertEqual(item["tied"], 2)
+        # One of them by name: suggested, for the AP-email reason only when the name is not there.
+        res, state = self.request("POST", "/api/import/text", {"text": forward.replace("Backup for October", "Birch garage backup"), "source": "email"}, cookie=cookie)
+        item = state["inbox"][-1]
+        self.assertEqual(item["suggested_job_id"], next(j["id"] for j in state["jobs"] if j["name"] == "Birch garage"))
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/delete", {}, cookie=cookie)
+        res, state = self.request("POST", "/api/import/text", {"text": forward, "source": "email"}, cookie=cookie)
+        item = state["inbox"][-1]
+        self.assertEqual((item["from"], item["match_reason"]), ("Kim Park <ap@park.example>", "sent from Park GC's AP email"))
+
+    def test_upload_from_the_inbox_with_a_job_picked(self):  # R5-07
+        cookie, job = self.company("pick-job@example.com")
+        res, state = self.request("POST", f"/api/import/file?job={job['id']}", raw=b"\x89PNG fake", cookie=cookie,
+                                  headers={"Content-Type": "image/png", "X-Filename": "IMG_0002.png"})
+        self.assertEqual(res.status, 200, state)
+        item = state["inbox"][-1]
+        self.assertEqual((item["status"], item["suggested_job_id"], item["kind"]), ("new", job["id"], "photo"))
+        self.assertEqual(item["match_reason"], "was uploaded for this job")
+        res, state = self.request("POST", f"/api/inbox/{item['id']}/file", {"job_id": job["id"], "kind": ""}, cookie=cookie)
+        rec = state["jobs"][0]["records"][-1]
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/edit-record/{rec['id']}", {"label": "Lobby floor", "kind": "ticket"}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        rec = next(r for r in state["jobs"][0]["records"] if r["id"] == rec["id"])
+        self.assertEqual((rec["label"], rec["kind"]), ("Lobby floor", "ticket"))
+
     def test_refused_file_types(self):
         cookie, _ = self.company("types@example.com")
         for name in ["page.html", "logo.svg", "run.js"]:

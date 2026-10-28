@@ -2533,6 +2533,31 @@ def _packet_item(job_id: str, kind: str, label: str, blocker: str, required: boo
     }
 
 
+# importer.KINDS: what a record on the job can be.
+RECORD_KINDS = ("note", "daily", "photo", "contract", "change_order", "waiver", "pay_app", "ticket", "other")
+
+
+def edit_record(state: dict[str, Any], job_id: str, record_id: str, label: str, kind: str, actor: str = "owner") -> dict[str, Any]:
+    """Fix a record's label or kind (a supplier invoice filed as a pay app, a photo read as a note) (R5-07).
+    Paperwork it is attached to keeps it; the draft's paperwork check runs again."""
+    job = _job(state, job_id)
+    rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not rec:
+        raise GateError("That record is not on this job.")
+    label = (label or "").strip()[:120]
+    if not label:
+        raise GateError("A record needs a label.", fields={"label": "Enter what this is."})
+    if kind not in RECORD_KINDS:
+        raise GateError("Pick what kind of record this is.", fields={"kind": "Pick a kind."})
+    before = (rec["label"], rec["kind"])
+    rec["label"], rec["kind"] = label, kind
+    if before != (label, kind):
+        audit(state, job_id, "edit_record", f"{actor} changed the record '{before[0]}' ({before[1]}) to '{label}' ({kind}).", actor)
+    if not job.get("closed"):
+        _refresh_draft_gate(job, state)
+    return job
+
+
 def add_job_record(
     state: dict[str, Any],
     job_id: str,

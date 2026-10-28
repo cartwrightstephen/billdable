@@ -1895,6 +1895,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed is None and stored[0]["ext"] in {".csv", ".xlsx"} and not file_now:
             payment_rows = qbo_csv.looks_like_payments(qbo_csv.text_of(stored[0]["ext"], data))
 
+        # Uploaded in the Inbox with "Which job?" answered: suggested there, filed by a person (R5-07).
+        reason = "Added from the job page." if file_now else "was uploaded for this job"
+
         def add(state: dict) -> None:
             for meta in stored:
                 importer.register_file(state, meta)
@@ -1903,12 +1906,13 @@ class Handler(BaseHTTPRequestHandler):
                 item = importer.add_item(
                     state, "upload", text=parsed.get("text", ""), sender=parsed.get("from", ""), subject=parsed.get("subject", ""),
                     file_ids=ids, job_id=job_id, sent_at=parsed.get("sent_at", ""),
-                    extra={"skipped_attachments": skipped} if skipped else None)
+                    extra={"skipped_attachments": skipped} if skipped else None, job_reason=reason)
             else:
                 meta = stored[0]
                 text = data.decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
                 item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=ids, job_id=job_id,
-                                         extra={"payments_csv": True, "payment_rows": payment_rows} if payment_rows else None)
+                                         extra={"payments_csv": True, "payment_rows": payment_rows} if payment_rows else None,
+                                         job_reason=reason)
             if file_now:
                 # Dropped on a job page: the person already chose the job.
                 filed = importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
@@ -1961,9 +1965,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         sender = ""
         subject = ""
-        if source == "email" and text.lower().startswith(("from:", "subject:", "to:", "date:")):
-            parsed = importer.parse_email(text.encode("utf-8"))
-            sender, subject, text = parsed["from"], parsed["subject"], parsed["text"] or text
+        if source in {"email", "paste"}:
+            header = importer.pasted_headers(text, strict=source == "paste")
+            if header is not None:
+                above, block = header
+                parsed = importer.parse_email(block.encode("utf-8"))
+                sender, subject = parsed["from"], parsed["subject"]
+                text = "\n\n".join(t for t in (above, parsed["text"]) if t) or text
         importer.add_item(state, source, text=text, sender=sender, subject=subject, job_id=job_id)
 
     def _inbound_email(self, token: str) -> None:
@@ -2541,6 +2549,7 @@ JOB_ACTIONS = {
     "pencil-response": (False, lambda h, st, j, i, c: domain.record_pencil_response(st, j, c.body.get("agreed") is True, _text(c.body, "note"), c.actor)),
     "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
+    "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor)),
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor)),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor)),

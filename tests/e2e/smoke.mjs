@@ -237,6 +237,41 @@ await step("a job with a draft: three buttons, the rest under More, a change ord
   await ctx.close();
 });
 
+await step("Inbox: a suggested item is added with one tap, and a photo goes with the job picked first", async () => {  // R5-05, R5-07
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => errors.push(e.message));
+  await p.goto(BASE + "/");
+  const ids = await p.evaluate(async (email) => {
+    const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Ina Box", company_name: "Inbox Builders" });
+    await post("/api/jobs", { name: "Maple porch", address: "8 Maple Ave", customer: "Ray Homeowner", role: "Owner", ap_email: "ray@example.com", contract_cents: 900000 });
+    const st = await (await post("/api/jobs", { name: "Cedar bath", address: "3 Cedar Ln", customer: "Sue Homeowner", role: "Owner",
+      ap_email: "sue@example.com", contract_cents: 1500000 })).json();
+    await post("/api/import/text", { text: "Railing posts set on the Maple porch today.", source: "paste" });
+    return Object.fromEntries(st.jobs.map((j) => [j.name, j.id]));
+  }, `inbox-${Date.now()}@example.com`);
+  await p.goto(BASE + "/inbox");
+  // One button for the suggested job; the job and kind selects wait behind "Other job".
+  const card = p.locator(".inbox-item", { hasText: "Railing posts set" });
+  await card.getByRole("button", { name: "Add to Maple porch" }).waitFor();
+  assert.equal(await card.locator("select").count(), 0, "no selects until Other job");
+  await card.getByRole("button", { name: "Add to Maple porch" }).click();
+  await card.waitFor({ state: "detached" });
+  const filed = await p.evaluate(async () => (await (await fetch("/api/state")).json()).inbox.find((i) => i.text.startsWith("Railing posts")));
+  assert.equal(filed.status, "filed");
+  assert.equal(filed.filed_job_id, ids["Maple porch"]);
+  // Which job? first: the upload is suggested to that job, not filed.
+  await p.selectOption("#upload-job", ids["Cedar bath"]);
+  const chooser = p.waitForEvent("filechooser");
+  await p.locator('.dropzone [data-action="pick-files"]').click();
+  await (await chooser).setFiles({ name: "IMG_0412.jpg", mimeType: "image/jpeg", buffer: Buffer.from("not really a jpeg") });
+  const photo = p.locator(".inbox-item", { hasText: "IMG_0412.jpg" });
+  await photo.getByRole("button", { name: "Add to Cedar bath" }).waitFor();
+  assert.match(await photo.innerText(), /Suggested because it was uploaded for this job/);
+  await ctx.close();
+});
+
 await step("refresh keeps the page", async () => {
   await page.goto(BASE + "/money/collections");
   await page.reload();

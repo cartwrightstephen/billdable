@@ -188,27 +188,24 @@ flowchart TD
     B --> C["Toast: 'N files added to the job record.' Done"]
     A -->|"Anywhere else"| D["Inbox"]
     D --> E{"What do you have?"}
-    E -->|"Files or photos"| F["'choose files', drop files, or paste a screenshot"]
+    E -->|"Files or photos"| F["Pick 'Which job?' (or 'Not sure, file later'), then 'choose files', drop files, or paste a screenshot"]
     E -->|"Text"| G["Card 'Paste an email, a text thread, or notes'"]
-    G --> H{"Dated notes, one per day?"}
-    H -->|"Yes"| I["Pick 'Notes: one daily record per date'"]
-    H -->|"No"| J["Leave 'An email' or pick 'Text messages' or 'Something else'"]
-    I --> K["Paste, tap 'Add to Inbox'"]
-    J --> K
+    G --> H["Paste: dated notes switch to 'Notes', an email or a text thread to theirs; else 'Something else'"]
+    H --> K["Tap 'Add to Inbox'"]
     F --> L["Item cards under 'To file'"]
     K --> L
     L --> M{"Job already picked for you?"}
-    M -->|"Yes, more than one"| N["Tap 'File all N with a suggested job'"]
-    M -->|"Yes, one"| O["Check Job and Kind, tap 'File to job record'"]
-    M -->|"No"| P["Pick the job from 'Pick a job…', tap 'File to job record'"]
-    M -->|"Junk"| Q["Tap 'Dismiss'"]
+    M -->|"Yes, one or more"| N["Tap 'Add all N to their suggested jobs'"]
+    M -->|"Yes"| O["Tap 'Add to <job>' (or 'Other job' / 'Change type')"]
+    M -->|"Could be one of a few"| P["Tap the job's name, or pick from 'Pick a job…' and tap 'Add to job'"]
+    M -->|"Junk"| Q["Tap 'Dismiss' (Undo in the toast)"]
     N --> R["Moves to 'Recently filed or dismissed', with 'Undo'"]
     O --> R
     P --> R
     Q --> R
 ```
 
-Code: job page drop zone static/app.js:2276-2279; Inbox drop zone and `choose files` static/app.js:1974; file checks importer.py:122-148 (15 MB, listed types only); paste card static/app.js:1976-1987; notes split importer.py:251-296; job matching importer.py:315-354; `File to job record` static/app.js:1801; `File all` static/app.js:1991; `Dismiss` static/app.js:1802; `Undo` static/app.js:1994-1996.
+Code: job page drop zone static/app.js:2276-2279; Inbox drop zone and `choose files` static/app.js:1974; file checks importer.py:122-148 (15 MB, listed types only); paste card static/app.js:1976-1987; notes split importer.py:251-296; job matching importer.py:315-354; card `inboxItemCard` and its helpers static/js/inbox.js (R5-05); paste guess `pasteGuess` (R5-06); "Which job?" `uploadJobOptions` (R5-07); `Undo` static/app.js:1994-1996.
 
 **Taps from start to done:** 2 from the job page (choose files, pick). From the Inbox: 2 to add (choose files or Add to Inbox), then 1 per item to file, or 1 for all suggested items.
 

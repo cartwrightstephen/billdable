@@ -1,4 +1,4 @@
-"""Reading dates, kinds and jobs from imported notes and file names (R5-01, R5-02)."""
+"""Reading dates, kinds, amounts and jobs from imported notes, file names and pastes (R5-01, R5-02, R5-05, R5-06, R5-07)."""
 
 import sys
 import unittest
@@ -68,6 +68,38 @@ class FileNamesTests(unittest.TestCase):  # R5-02
         item = importer.add_item(state, "upload", text=parsed["text"], sender=parsed["from"], subject=parsed["subject"],
                                  file_ids=["f1", "f2"])
         self.assertEqual((item["suggested_job_id"], item["kind"]), ("j2", "photo"))
+
+
+class InboxCardTests(unittest.TestCase):  # R5-05, R5-06, R5-07
+    def test_amounts_without_a_dollar_sign_need_a_comma_or_cents(self):
+        self.assertEqual(importer.amounts("Total $2,340.00, then 1,250 and 412.50"), [234000, 125000, 41250])
+        self.assertEqual(importer.amounts("4 crew on 10/12, 3.5 hours, call 404.555.1234, v1.25.3"), [])
+
+    def test_a_tie_names_the_tied_jobs_first(self):
+        state = {"jobs": [{"id": "j1", "code": "MILL", "name": "Mill Creek Clubhouse", "payer_id": "p1"},
+                          {"id": "j2", "code": "VEST", "name": "Vesta Phase 2", "payer_id": "p1"},
+                          {"id": "j3", "code": "OAKS", "name": "Oak Street", "payer_id": "p2"}],
+                 "payers": [{"id": "p1", "name": "Harmon Vale", "ap_email": "ap@hv.example"}, {"id": "p2", "name": "Lee"}]}
+        m = importer.match_job(state, "Need the backup", sender="ap@hv.example")
+        self.assertIsNone(m["job_id"])
+        self.assertEqual((sorted(m["candidates"]), m["tied"]), (["j1", "j2"], 2))
+
+    def test_a_supplier_invoice_is_a_ticket_unless_it_names_a_pay_app(self):
+        self.assertEqual(importer.guess_kind("ABC Supply invoice 4471.pdf", "", [".pdf"]), "ticket")
+        self.assertEqual(importer.guess_kind("Invoice", "Backup for PA-VEST-02 attached"), "pay_app")
+        self.assertEqual(importer.guess_kind("Pay application 3", ""), "pay_app")
+
+    def test_a_forwarded_email_is_read_from_its_headers(self):
+        text = ("FYI, see below.\n\n---------- Forwarded message ---------\nFrom: Kim Park <ap@park.example>\n"
+                "Date: Mon, Oct 12, 2026 at 9:00 AM\nSubject: Backup for October\nTo: Pat <pat@pine.example>\n\nSend the tickets.")
+        above, block = importer.pasted_headers(text)
+        parsed = importer.parse_email(block.encode())
+        self.assertEqual((above, parsed["from"], parsed["subject"], parsed["text"]),
+                         ("FYI, see below.", "Kim Park <ap@park.example>", "Backup for October", "Send the tickets."))
+        outlook = "From: Kim Park [mailto:ap@park.example]\nSent: Monday, October 12, 2026 9:00 AM\nSubject: RE: tickets\n\nok"
+        self.assertEqual(importer.parse_email(importer.pasted_headers(outlook, strict=True)[1].encode())["from"], "Kim Park <ap@park.example>")
+        self.assertIsNone(importer.pasted_headers("To: Mike\nbring the saw", strict=True))
+        self.assertIsNone(importer.pasted_headers("\n".join(["line"] * 10 + ["From: late@x.example"])))
 
 
 if __name__ == "__main__":

@@ -70,8 +70,10 @@ Kirkwood Dental Suite was just awarded. Its customer is new, so this job also cr
 ## 3. Imports
 
 Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** with **choose files**
-(or drag the file onto the page). After each upload the card appears under **To file (N)** with
-"Suggested because it ..." and a preselected job and kind. Don't file yet unless the step says so.
+(or drag the file onto the page), with **Which job?** left at **Not sure, file later** so the
+matching is what is tested. After each upload the card appears under **To file (N)** with
+"Suggested because it ..." and one button **Add to <job>** (with **Other job** and **Change type (<kind>)**
+beside it), or, with no suggestion, a job and kind select. Don't file yet unless the step says so.
 
 ### 3a. Files into the Inbox
 
@@ -87,14 +89,15 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 | [ ] 3.8 | Upload | `14_IMG_2231_MILL_lobby-floor.jpg` | same | **Mill Creek Clubhouse** ("mentions job code MILL", read through the underscores), kind **Photo** |
 | [ ] 3.8a | Upload | `01_qbo-payments_partial-nomatch-odd-formats.csv` | same | No job, kind **Note**, and a notice "This looks like a payments export." with **Read as payments (6 rows)**. Tap it: Money > Payments opens with the 6 rows of 3.17 already read (nothing recorded). **Cancel**, then **Dismiss** the card in the Inbox. (An `.xlsx` export works the same way.) |
 
-- [ ] 3.9 File one: on the 3.8 card keep the job and kind, tap **File to job record**. Expected: toast "Saved"; the card moves to **Recently filed or dismissed** as "Filed to Mill Creek Clubhouse as Photo"; MILL's Job record shows it with the file link.
+- [ ] 3.8b Which job? first: set **Which job?** to **Glenwood Retail Shell**, **choose files** `14_IMG_2231_MILL_lobby-floor.jpg` again. Expected: the new card says "Suggested because it was uploaded for this job" with **Add to Glenwood Retail Shell** (the pick beats the MILL in the name; nothing is filed yet). Reload: **Which job?** still says Glenwood. Tap **Dismiss**: the toast "Dismissed." has **Undo**; tap it and the card is back; **Dismiss** it again and set **Which job?** back to **Not sure, file later**.
+- [ ] 3.9 File one: on the 3.8 card tap **Add to Mill Creek Clubhouse**. Expected: toast "Saved"; the card moves to **Recently filed or dismissed** as "Filed to Mill Creek Clubhouse as Photo"; MILL's Job record shows it with the file link and an **Edit** link (try it: change the kind to **Other** and back to **Photo**, **Save**).
 - [ ] 3.10 Undo it: open **Recently filed or dismissed**, tap **Undo** on that row. Expected: the card is back under To file; MILL's record no longer lists it. File it again (you need a MILL record in part 4).
 - [ ] 3.11 Straight onto a job: open **Kennesaw Ortho Clinic**, in the Job record card tap **choose files** and pick `13_Scan_kenn_subcontract.pdf`. Expected: toast "1 file added to the job record."; a **Contract** record with the PDF. Nothing new under **To file** (the upload is listed, already filed, under **Recently filed or dismissed** as "Filed to Kennesaw Ortho Clinic as Contract").
 
 ### 3b. Pasted text (Inbox > "Paste an email, a text thread, or notes")
 
-- [ ] 3.12 Set **What are you pasting?** to **Text messages**, paste all of `11_text-thread_whitfield-done.txt`, **Add to Inbox**. Expected: "Added to the Inbox."; card suggested **Whitfield Kitchen and Baths** ("mentions the job name"), and a notice "This says the job is done." with the button **Mark Whitfield Kitchen and Baths done and draft the pay app**. Today shows the same item tagged "Job's done?" with **Mark done and draft**. Don't press it yet (part 5.3).
-- [ ] 3.13 Set it to **Notes: one daily record per date**, paste all of `12_field-notes_split-into-daily-records.txt`, **Add to Inbox**. Expected: **8** cards, all kind **Daily record**:
+- [ ] 3.12 Paste all of `11_text-thread_whitfield-done.txt`: **What are you pasting?** switches to **Text messages** ("Looks like a text thread."). **Add to Inbox**. Expected: "Added to the Inbox."; card suggested **Whitfield Kitchen and Baths** ("mentions the job name"), and a notice "This says the job is done." with the button **Mark Whitfield Kitchen and Baths done and draft the pay app**. Today shows the same item tagged "Job's done?" with **Mark done and draft**. Don't press it yet (part 5.3).
+- [ ] 3.13 Paste all of `12_field-notes_split-into-daily-records.txt` (after a reload, so the box starts on **Something else**): it switches to **Notes: one daily record per date** with "Looks like notes from 7 days. One daily record per date.". **Add to Inbox**. Expected: **8** cards, all kind **Daily record**:
 
   | Card starts with | Note date | Suggested job |
   | --- | --- | --- |
@@ -109,7 +112,7 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 
   "3/4 inch" and "May 2 guys" must NOT start new records.
 - [ ] 3.14 File the Oct 5 card to Mill Creek Clubhouse. Expected: MILL's Job record gets "Daily record 2026-10-05" (Daily record): the label carries the note's date; the line under it reads "Notes import · " and the day you filed it. **Today > Daily record** lists it dated Oct 5, 2026, not today.
-- [ ] 3.15 Set it to **An email**, paste all of `15_pasted-email_wrenfield-punch-list.txt`, **Add to Inbox**. Expected: suggested **Decatur Library Annex**, "from Joan Pettis <ap@wrenfieldcg.example>", subject "Decatur Library Annex - punch list before retainage release".
+- [ ] 3.15 Paste all of `15_pasted-email_wrenfield-punch-list.txt` (after a reload): it switches to **An email**. **Add to Inbox**. (A Gmail or Outlook forward, banner and a line above it included, reads the same way, even left at **Something else**.) Expected: suggested **Decatur Library Annex**, "from Joan Pettis <ap@wrenfieldcg.example>", subject "Decatur Library Annex - punch list before retainage release".
 - [ ] 3.16 Inbound email (the address a mail provider would post to): in the Inbox open **Bring emails and texts in automatically**, copy the email web address, then in a terminal:
       `curl -s --data-binary @"testdata/test-contractor/import/16_inbound-webhook_crew-says-glenwood-finished.eml" -H "Content-Type: message/rfc822" <the address>`
       Expected: `{"ok": true}`; after a reload, a card from Luis Ortega "Glenwood wrapped", source pill Email, suggested **Glenwood Retail Shell**, with **Mark Glenwood Retail Shell done and draft the pay app**.
