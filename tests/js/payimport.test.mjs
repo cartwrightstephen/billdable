@@ -3,7 +3,7 @@
 // stays on the page after Record.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canRecord, needsPick, pickPayApp, splitTooMuch, picksFrom, afterRecord } from "../../static/js/payimport.js";
+import { canRecord, needsPick, pickPayApp, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "../../static/js/payimport.js";
 
 const cand = (n, owed = 100000) => ({ job_id: `j${n}`, job: `Job ${n}`, invoice_id: `inv-${n}`, number: `PA-J${n}-01`, owed_cents: owed });
 const row = (over = {}) => ({ line: 2, date: "2026-10-14", ref: "4471", customer: "Ironleaf", amount_cents: 100000, memo: "",
@@ -54,4 +54,22 @@ test("the import closes once everything is recorded", () => {
   assert.equal(out.toast, "1 recorded.");
   assert.equal(afterRecord([row(), row({ ref: "2", status: "pick one", job_id: null })], [{ key: 0, ok: true }]).toast,
     "1 recorded. 1 needs a pay app picked below.");
+});
+
+test("after Record the lists show what is owed now, and a paid pay app drops out", () => {
+  const jobs = [
+    { id: "j1", invoices: [{ id: "inv-1", status: "paid", amount_cents: 100000 }], payments: [{ invoice_id: "inv-1", amount_cents: 100000 }] },
+    { id: "j2", invoices: [{ id: "inv-2", status: "partial", amount_cents: 100000 }], payments: [{ invoice_id: "inv-2", amount_cents: 40000 }] },
+  ];
+  const picked = pickPayApp(row({ status: "no match", job_id: null, invoice_id: null }), "1");
+  const [r] = refreshOwed([picked], jobs);
+  assert.deepEqual(r.candidates.map(c => [c.invoice_id, c.owed_cents]), [["inv-2", 60000]]);
+  assert.equal(r.picked, "0", "the pick follows its pay app to its new place");
+  assert.equal(r.invoice_id, "inv-2");
+  const gone = refreshOwed([pickPayApp(row({ status: "no match" }), "0")], jobs)[0];
+  assert.equal(canRecord(gone), false, "a pick of a paid pay app is cleared");
+  const much = refreshOwed([row({ status: "too much", job_id: null, invoice_id: null, split: cand(1) })], jobs)[0];
+  assert.equal(much.status, "no match");
+  assert.equal(much.split, null);
+  assert.deepEqual(splitTooMuch([row({ status: "too much", split: cand(1, 0) })], 0).length, 1, "nothing to split when nothing is owed");
 });

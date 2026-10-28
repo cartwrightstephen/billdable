@@ -30,6 +30,12 @@ class DatesAreDatesTests(unittest.TestCase):  # R5-01
         self.assertIsNone(importer.leading_date('5/8" drywall hung', 2026))
         self.assertIsNone(importer.leading_date("15/16 of the tile set", 2026))
 
+    def test_the_found_line_skips_sizes_and_counts_too(self):
+        # The Inbox card's Found line read "3/4 inch" as Mar 4 and "May 2 guys" as May 2.
+        self.assertEqual(importer.dates("10/5 layout. used 3/4 inch backer screws, 5/8\" board", 2026), ["2026-10-05"])
+        self.assertEqual(importer.dates("10/9 pavers in\nMay 2 guys out sick", 2026), ["2026-10-09"])
+        self.assertEqual(importer.dates("Paid May 15 on 1/2 MILL", 2026), ["2026-01-02", "2026-05-15"])
+
     def test_the_fraction_notes_file_splits_on_every_date(self):
         text = (ROOT / "testdata/test-contractor/app-issues/notes_date-read-as-fraction.txt").read_text()
         self.assertEqual([c["date"] for c in importer.split_notes(text, 2026)],

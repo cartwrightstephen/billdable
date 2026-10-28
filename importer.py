@@ -279,10 +279,27 @@ def dates(text: str, default_year: int | None = None) -> list[str]:
     found = []
     for kind, pattern in enumerate(_DATE_PATTERNS):
         for m in pattern.finditer(text or ""):
+            if _quantity(kind, m, (text or "")[m.end():m.end() + 40]):
+                continue
             d = _to_date(m.groups(), kind, default_year)
             if d and d.isoformat() not in found:
                 found.append(d.isoformat())
     return found[:5]
+
+
+# "May 2 guys out sick": May as a word, not the month.
+_MAY_WORDS = {"guys", "men", "crew", "days", "hours", "people", "more"}
+
+
+def _quantity(kind: int, m: re.Match, rest: str) -> bool:
+    """A size or a count that looks like a date in running text: '3/4 inch backer screws',
+    '5/8" drywall', 'May 2 guys'. Found lines and notes both skip these."""
+    next_word = (re.findall(r"[a-z\"']+", rest.lower()) or [""])[0]
+    if kind == 1 and not m.group(3):
+        return next_word in UNIT_WORDS or rest.lstrip().startswith('"')
+    if kind == 2 and not m.group(3) and m.group(1).lower() == "may":
+        return next_word in _MAY_WORDS
+    return False
 
 
 def leading_date(line: str, default_year: int) -> date | None:

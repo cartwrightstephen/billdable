@@ -9,7 +9,7 @@ import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js"
 import { labelTables, moreButton, askConfirm } from "./js/dom.js";
 import { field, moneyField, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, formDraft, draftValue, clearForm, clearAllForms, watchForms } from "./js/forms.js";
 import { todayQueue, queueHtml, anyPayAppSent } from "./js/today.js";
-import { canRecord, needsPick, pickPayApp, splitTooMuch, picksFrom, afterRecord } from "./js/payimport.js";
+import { canRecord, needsPick, pickPayApp, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "./js/payimport.js";
 import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "./js/inbox.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, setMe, clearSession, setLocation, closeForms } from "./js/state.js";
 
@@ -26,9 +26,10 @@ function rememberDailyJob(id) {
 // "" is "Not sure, file later". Kept in memory too, for a private window.
 const UPLOAD_JOB_KEY = "duracash-upload-job";
 let uploadJob = null;
+// null until a pick is made on this device; "" after "Not sure, file later" was picked.
 function lastUploadJob() {
   if (uploadJob !== null) return uploadJob;
-  try { return localStorage.getItem(UPLOAD_JOB_KEY) || ""; } catch (_) { return ""; }
+  try { return localStorage.getItem(UPLOAD_JOB_KEY); } catch (_) { return null; }
 }
 function rememberUploadJob(id) {
   uploadJob = unesc(id);
@@ -1097,7 +1098,7 @@ const ACTIONS = {
     // Recorded rows go; a refused row stays with its reason, and rows still to pick stay (R5-03).
     const after = afterRecord(paymentImport.rows, escDeep(r.data.import_results));
     setState(r.data);
-    paymentImport = after.rows ? { ...paymentImport, rows: after.rows, warnings: [] } : null;
+    paymentImport = after.rows ? { ...paymentImport, rows: refreshOwed(after.rows, state.jobs), warnings: [] } : null;
     toast(after.toast);
     render();
   },
@@ -2361,7 +2362,7 @@ function qboPayAppCell(row, n) {
       ${row.candidates.map((c, k) => `<option value="${k}"${row.picked === String(k) ? " selected" : ""}>${c.number} · ${c.job} · ${money(c.owed_cents)} owed</option>`).join("")}
     </select>`;
   }
-  if (row.status === "too much" && row.split) {
+  if (row.status === "too much" && row.split && row.split.owed_cents > 0) {
     return `${pill}<button class="btn small secondary" data-action="qbo-split" data-row="${n}">Record ${money(row.split.owed_cents)} to ${row.split.number}</button>`;
   }
   return row.number ? `${row.number} · ${row.job}` : pill;
@@ -2584,7 +2585,9 @@ function recordFiles(r) {
 // The Inbox's "Which job?" for files added there: the last one picked, or the only open job.
 function uploadJobOptions() {
   const openJobs = state.jobs.filter(j => !j.closed);
-  const pick = defaultJobId(openJobs, lastUploadJob());
+  // "Not sure" stays picked once chosen, even with one open job.
+  const last = lastUploadJob();
+  const pick = last === "" ? "" : defaultJobId(openJobs, last || "");
   return `<option value="">Not sure, file later</option>` + openJobs.map(j => `<option value="${j.id}"${pick === j.id ? " selected" : ""}>${j.name} (${j.code})</option>`).join("");
 }
 

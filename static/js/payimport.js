@@ -23,7 +23,7 @@ export function pickPayApp(row, index) {
 // "(rest)" after it, since a reference is recorded once per job.
 export function splitTooMuch(rows, n) {
   const row = rows[n];
-  if (!row || row.status !== "too much" || !row.split) return rows;
+  if (!row || row.status !== "too much" || !row.split || !(row.split.owed_cents > 0)) return rows;
   const s = row.split;
   const restCents = row.amount_cents - s.owed_cents;
   const first = { ...row, status: "match", amount_cents: s.owed_cents, job_id: s.job_id, invoice_id: s.invoice_id, number: s.number, job: s.job,
@@ -62,4 +62,30 @@ export function afterRecord(rows, results) {
   if (toPick) text += ` ${toPick} need${toPick === 1 ? "s" : ""} a pay app picked below.`;
   const open = failed > 0 || toPick > 0;
   return { rows: open ? left : null, toast: text };
+}
+
+// After Record the pay apps' balances have moved: each row's list shows what is owed now, and a pay
+// app paid in full drops out. A "too much" row whose pay app is now paid becomes a row to pick for.
+const OPEN_FOR_PAYMENT = ["sent", "approved", "partial"];   // domain.OPEN_FOR_PAYMENT
+export function refreshOwed(rows, jobs) {
+  const owed = new Map();
+  (jobs || []).forEach(j => { if (j.closed) return; (j.invoices || []).forEach(inv => {
+    if (!OPEN_FOR_PAYMENT.includes(inv.status)) return;
+    const paid = (j.payments || []).filter(p => p.invoice_id === inv.id).reduce((a, p) => a + p.amount_cents, 0);
+    if (inv.amount_cents - paid > 0) owed.set(inv.id, inv.amount_cents - paid);
+  }); });
+  const now = (c) => owed.has(c.invoice_id) ? { ...c, owed_cents: owed.get(c.invoice_id) } : null;
+  return rows.map(row => {
+    let next = { ...row, candidates: (row.candidates || []).map(now).filter(Boolean) };
+    // A pick keeps pointing at its pay app, or is cleared when that one dropped out.
+    if (row.picked) {
+      const at = next.candidates.findIndex(c => c.invoice_id === row.invoice_id);
+      next = at < 0 ? pickPayApp(next, "") : { ...next, picked: String(at) };
+    }
+    if (row.status === "too much" && row.split) {
+      next.split = now(row.split);
+      if (!next.split) Object.assign(next, { status: "no match", reason: "That pay app is paid now. Pick another, or leave it unticked." });
+    }
+    return next;
+  });
 }
