@@ -931,10 +931,21 @@ function render() {
       </main>
     </div>
   `;
+  // A redraw while someone is in a box (a background load finishing, say) puts them back in it,
+  // with the cursor where it was, instead of dropping the focus on the page.
+  const was = document.activeElement;
+  const keep = was && was.id && app.contains(was) ? { id: was.id, start: was.selectionStart, end: was.selectionEnd } : null;
   const whole = shell !== shellHtml || !document.getElementById("view");
   if (whole) { app.innerHTML = shell; shellHtml = shell; }
   const view = document.getElementById("view");
   view.innerHTML = verifyBannerHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Today</button>`));
+  if (keep && !document.activeElement?.id) {
+    const again = document.getElementById(keep.id);
+    if (again && again !== document.activeElement) {
+      again.focus({ preventScroll: true });
+      try { if (typeof keep.start === "number") again.setSelectionRange(keep.start, keep.end); } catch (_) { /* not a text box */ }
+    }
+  }
   document.title = pageTitle();
   finishHtml(whole ? app : view);
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
