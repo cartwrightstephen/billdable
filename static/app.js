@@ -235,7 +235,10 @@ function withPayer(j) {
   return j;
 }
 
+let stateVersion = 0;  // counts state replacements, so a job detail that was loading can tell it is stale
+
 function setState(data) {
+  stateVersion++;
   setData(escDeep(data));
   state.jobs.forEach(withPayer);
   Object.values(jobDetails).forEach(placeJob);
@@ -249,8 +252,11 @@ function placeJob(full) {
 
 async function loadJobDetail(id) {
   jobDetailLoading = id;
+  const version = stateVersion;
   try {
     const res = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
+    // A change saved while this was loading brought newer state: this answer is older, so drop it.
+    if (version !== stateVersion) { jobDetailLoading = null; if (currentJobId === id) render(); return; }
     if (res.ok) { const full = withPayer(escDeep((await readJson(res)).job)); jobDetails[id] = full; placeJob(full); }
     else missingJobs.add(id);
   } catch (_) { setNetBanner(true); missingJobs.add(id); }
@@ -1057,15 +1063,15 @@ const ACTIONS = {
   "onb-go": (el) => {
     nav(el.dataset.view, el.dataset.id || null);
     const sel = el.dataset.focus;
-    if (sel) requestAnimationFrame(() => {
-      const target = document.querySelector(sel);
-      if (!target) return;
-      // A box folded away (the payments import) opens first, or it can't be seen or focused.
-      const folded = target.closest("details");
-      if (folded) folded.open = true;
-      target.scrollIntoView({ block: "center" });
-      if (target.matches("input, select, textarea, [tabindex]")) target.focus({ preventScroll: true });
-    });
+    // nav() has drawn the page, so the part is there now: focus it straight away rather than a
+    // frame later, when anything typed in between would have gone to the page.
+    const target = sel && document.querySelector(sel);
+    if (!target) return;
+    // A box folded away (the payments import) opens first, or it can't be seen or focused.
+    const folded = target.closest("details");
+    if (folded) folded.open = true;
+    target.scrollIntoView({ block: "center" });
+    if (target.matches("input, select, textarea, [tabindex]")) target.focus({ preventScroll: true });
   },
   "onb-dismiss": () => setChecklist(false),
   "onb-show": async () => { if (await setChecklist(true)) nav("dashboard"); },
