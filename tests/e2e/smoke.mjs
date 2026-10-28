@@ -350,7 +350,7 @@ await step("money path: the main button walks a job from blocked to closed", asy
       await confirmIfAsked(page);
       const card = page.locator(".next-card + .action-error");
       await card.waitFor();
-      assert.match(await card.innerText(), /change order/i);
+      assert.match(await card.innerText(), /CO \d+ is not signed|change order/i);  // R3-08 lists blockers as "CO N is not signed yet."
       await page.evaluate(async (co) => { await fetch(`/api/jobs/job-inman/withdraw-co/${co}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); }, coId);
       await page.goto(BASE + "/jobs/job-inman");
     } else {
