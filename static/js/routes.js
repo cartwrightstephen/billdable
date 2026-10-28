@@ -2,7 +2,8 @@
 
 import { unesc } from "./format.js";
 
-export const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-detail": "packets", "co-detail": "cos", "waiver-detail": "waivers" };
+// A page's tab: a detail page's list, and Retainage, which is part of the Closeout tab (R6-01).
+export const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-detail": "packets", "co-detail": "cos", "waiver-detail": "waivers", retainage: "waivers" };
 
 export const VIEW_PATHS = {
   dashboard: "/today", results: "/today/results", calendar: "/today/calendar", daily: "/today/daily",

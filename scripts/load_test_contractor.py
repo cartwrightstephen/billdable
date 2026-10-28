@@ -347,7 +347,7 @@ def check_setup(run: Run) -> None:
     run.record("VEST: Download for QuickBooks adds up to the pay app", status == 200 and total == vest_inv.get("amount_cents")
                and any(r.get("Item") == "Retainage" for r in rows), f"HTTP {status}, {len(rows)} lines, {money(total)}")
     peac = run.job("PEAC")
-    run.record("PEAC: closed for the record", bool(peac.get("closed")))
+    run.record("PEAC: finished", bool(peac.get("closed")))
     deca = run.job("DECA")
     run.record("DECA: retainage $6,400.00 held and open", deca.get("money", {}).get("retainage_open_cents") == 640_000,
                money(deca.get("money", {}).get("retainage_open_cents", 0)))

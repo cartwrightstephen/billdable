@@ -7,6 +7,8 @@
 // sends nothing. The page's state comes in as an argument, so node can test it
 // (tests/js/today.test.mjs).
 
+import { termText } from "./terms.js";
+
 const WENT_OUT = ["sent", "approved", "partial", "paid"];
 export const QUEUE_SHOWN = 3;   // rows shown before "and N more"
 
@@ -46,7 +48,7 @@ export function rowButtons(r) {
 // that, what will show up here.
 export function queueHtml(queue, { expanded = false, anySent = false } = {}) {
   if (!queue.length) return anySent ? `<p class="sub">Nothing is waiting on you.</p>`
-    : `<p class="sub">Work shows up here when a pay app is ready to send, paperwork is missing, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.</p>`;
+    : `<p class="sub">${termText("Work shows up here when a pay app is ready to send, paperwork is missing, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.")}</p>`;
   const rows = expanded ? queue : queue.slice(0, QUEUE_SHOWN);
   const more = queue.length - rows.length;
   return rows.map(r => `

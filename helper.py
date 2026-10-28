@@ -321,7 +321,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None) -> tuple
         rows = [j for j in jobs if not j.get("close_blockers")]
         if not rows:
             return "No job is ready to close yet. A job closes when everything is billed, paid, released and waived.", []
-        return "Ready to close for the record:\n" + "\n".join(f"- {j['name']}" for j in rows), [_job_btn(j) for j in rows[:4]]
+        return "Ready to finish:\n" + "\n".join(f"- {j['name']}" for j in rows), [_job_btn(j) for j in rows[:4]]
     return None
 
 

@@ -111,7 +111,7 @@ export function words(code) {
   return esc(text.charAt(0).toUpperCase() + text.slice(1));
 }
 
-export const INVOICE_WORDS = { draft: "Draft", awaiting_approval: "Ready to send", sent: "Sent", approved: "Approved", partial: "Partly paid", paid: "Paid", void: "Void" };
+export const INVOICE_WORDS = { draft: "Draft", awaiting_approval: "Ready to send", sent: "Sent", approved: "Approved", partial: "Partly paid", paid: "Paid", void: "Cancelled" };
 
 export function invoicePill(inv) {
   const st = unesc(inv.status || "");

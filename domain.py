@@ -258,7 +258,7 @@ def blocker_button(job: dict[str, Any]) -> str:
         return f"Add {n} missing document{'' if n == 1 else 's'}"
     if is_blocked(job) and items and all(b["kind"] == "co" for b in items):
         return f"Get CO {items[0]['number']} signed" if n == 1 else f"Get {n} change orders signed"
-    return f"Clear {n} blocker{'' if n == 1 else 's'}"
+    return f"Fix {n} thing{'' if n == 1 else 's'} before sending"
 
 
 def status_label(job: dict[str, Any]) -> str:
@@ -554,7 +554,7 @@ def draft_invoice(
         "draft_invoice",
         f"Drafted {number} for {money(amount)}"
         + (f" ({money(gross)} less {money(retained)} retainage)" if retained else "")
-        + f" with a {len(packet)}-item packet. Blockers: {len(blockers)}.",
+        + f", with {len(packet)} paperwork item{'' if len(packet) == 1 else 's'}. {len(blockers)} to fix before it can go.",
         actor,
     )
     return job
@@ -565,7 +565,7 @@ def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dic
     job = _open_job(state, job_id)
     draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if not draft:
-        raise GateError("Draft a pay app first. The pencil copy is the draft sent for review.")
+        raise GateError("Draft a pay app first. The draft is what goes for their review.")
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
     subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
@@ -588,7 +588,7 @@ def record_pencil_response(state: dict[str, Any], job_id: str, agreed: bool, not
     job = _open_job(state, job_id)
     draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if not draft or draft.get("pencil_status") != "sent":
-        raise GateError("No pencil copy is waiting for a response.")
+        raise GateError("No draft is out for their review.")
     draft["pencil_status"] = "agreed" if agreed else "corrections"
     draft["pencil_note"] = (note or "").strip()[:2000]
     draft["pencil_answered_at"] = utcnow()
@@ -604,7 +604,7 @@ def resolve_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor:
     job = _open_job(state, job_id)
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
-        raise GateError("Packet item not found.")
+        raise GateError("Paperwork item not found.")
     # "I have this" (R3-05): where it is is optional; when given it is kept and audited.
     reason = (reason or "").strip()[:500] if isinstance(reason, str) else ""
     item["present"] = True
@@ -1316,6 +1316,26 @@ def _day_words(value: Any) -> str:
 
 WENT_OUT = {"sent", "approved", "partial", "paid"}
 # Where an Inbox item came from, as the app names it (jobs.js SOURCE_LABELS).
+# The company's word for a pay app (R6-01): a company that bills homeowners in draws
+# (billing_style "draws") reads "draw" on Today and in the daily email, as in the app
+# (static/js/terms.js termText). keep: names someone typed (a job, a customer) that stay as typed.
+_TERM_WORDS = [(re.compile(r"\bPay apps\b"), "Draws"), (re.compile(r"\bpay apps\b"), "draws"),
+               (re.compile(r"\bPay app\b"), "Draw"), (re.compile(r"\bpay app\b"), "draw")]
+
+
+def term_text(text: str, style: str, keep: tuple[str, ...] = ()) -> str:
+    if style != "draws" or not text:
+        return text
+    kept = [k for k in keep if k]
+    for n, k in enumerate(kept):
+        text = text.replace(k, f"\x00{n}\x00")
+    for pattern, word in _TERM_WORDS:
+        text = pattern.sub(word, text)
+    for n, k in enumerate(kept):
+        text = text.replace(f"\x00{n}\x00", k)
+    return text
+
+
 SOURCE_LABELS = {"upload": "Upload", "paste": "Pasted", "email": "Email", "sms": "Text message", "notes": "Notes", "payer_page": "Customer page"}
 
 
@@ -1339,11 +1359,17 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
     today = now.date()
     jobs = {j["id"]: j for j in state.get("jobs", []) if not j.get("closed")}
     payers = {p["id"]: p for p in state.get("payers", [])}
+    style = (state.get("company") or {}).get("billing_style") or "pay_apps"
     out: list[dict[str, Any]] = []
 
     def add(rank: float, kind: str, job: dict[str, Any], label: str, tone: str, text: str, button: str,
             path: str = "", **ids: str) -> None:
         payer = payers.get(job.get("payer_id"), {})
+        # In the company's word for a pay app (R6-01). A failed email's subject and what came in
+        # through the Inbox are shown as they are.
+        if kind not in {"email_failed", "says_done", "inbox"}:
+            keep = (job.get("name", ""), payer.get("name", ""), payer.get("approver", ""), payer.get("ap_email", ""))
+            label, text, button = (term_text(x, style, keep) for x in (label, text, button))
         out.append({"rank": rank, "kind": kind, "job_id": job["id"], "job": job["name"], "payer": payer.get("name", ""),
                     "label": label, "tone": tone, "text": text, "note": ids.pop("note", ""), "button": button,
                     "path": path or f"/jobs/{job['id']}", "invoice_id": "", "co_id": "", "email_id": "", "item_id": "", **ids})
@@ -1403,8 +1429,9 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         # A cutoff makes the job's row more urgent, and says so.
         if due_soon and len(out) > before:
             row = out[-1]
-            if "Pay app due to" not in row["text"]:
-                row["text"] += f" Pay app due to {payer.get('name', '')} by {_day_words(due[0].isoformat())}."
+            cutoff = term_text("Pay app due to", style)
+            if cutoff not in row["text"]:
+                row["text"] += f" {cutoff} {payer.get('name', '')} by {_day_words(due[0].isoformat())}."
             row["rank"] = min(row["rank"], 1.5)
         # A pay app sent and unpaid past the payer's follow-up window is its own row. One follow-up
         # names every unpaid pay app; after a call ("Spoke to them…") the row waits for the date
@@ -1430,7 +1457,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
     for item in inbox:
         job = jobs.get(item.get("suggested_job_id"))
         if job and not item.get("says_done_job_id"):
-            add(6, "inbox", job, "Inbox", "", (item.get("subject") or item.get("text") or "An item").split("\n")[0][:100], "File to this job",
+            add(6, "inbox", job, "Inbox", "", (item.get("subject") or item.get("text") or "An item").split("\n")[0][:100], "Add to this job",
                 "/inbox", item_id=item.get("id", ""), note=item.get("match_reason") or "")
     return sorted(out, key=lambda r: r["rank"])
 
@@ -1453,7 +1480,8 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     counts: dict[str, int] = {}
     for r in rows:
         counts[r["kind"]] = counts.get(r["kind"], 0) + 1
-    parts = [f"{n} {DIGEST_NOUNS[k][0] if n == 1 else DIGEST_NOUNS[k][1]}" for k, n in counts.items()]
+    style = (state.get("company") or {}).get("billing_style") or "pay_apps"
+    parts = [term_text(f"{n} {DIGEST_NOUNS[k][0] if n == 1 else DIGEST_NOUNS[k][1]}", style) for k, n in counts.items()]
     subject = f"Due today in Duracash: {', '.join(parts)}"
     lines = [f"- {r['job']}: {r['label']}. {r['text']}" + (f"\n  {base}{r['path']}" if base else "") for r in rows]
     company = state.get("company", {}).get("name", "")
@@ -1772,7 +1800,8 @@ def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = 
     errors: dict[str, str] = {}
     if "billing_style" in updates:
         # How the company bills: pay apps to GCs or owners, or draws from homeowners. It sets the
-        # free trial's length (trial.py: 90 days, or 45 for draws).
+        # word the app uses (static/js/terms.js, term_text; R6-01) and the free trial's length
+        # (trial.py: 90 days, or 45 for draws).
         if updates["billing_style"] not in BILLING_STYLES:
             errors["billing_style"] = "Pick how you bill: pay apps or draws."
         else:
@@ -1847,7 +1876,7 @@ def answer_packet_suggestion(state: dict[str, Any], payer_id: str, suggestion_id
     if accept:
         packet = str(payer.get("packet", "")).strip().rstrip(".")
         payer["packet"] = f"{packet}, {sug['text']}" if packet else sug["text"]
-        audit(state, "", "playbook_learned", f"{actor} added \"{sug['text']}\" to {payer['name']}'s packet ({sug['source']}).", actor)
+        audit(state, "", "playbook_learned", f"{actor} added \"{sug['text']}\" to {payer['name']}'s paperwork list ({sug['source']}).", actor)
     return payer
 
 
@@ -2176,7 +2205,7 @@ def learn_rejection(state: dict[str, Any], job_id: str, reason: str, actor: str 
     if reason and reason not in current:
         payer["rejects_when"] = (current + "; " + reason).strip("; ")
     suggest_packet_item(state, payer["id"], reason, "a rejection", job["name"])
-    audit(state, job_id, "learn_rejection", f"{actor} taught playbook: {payer['name']} rejects when {reason}.", actor)
+    audit(state, job_id, "learn_rejection", f"{actor} saved to customer settings: {payer['name']} sends pay apps back when {reason}.", actor)
     return job
 
 
@@ -2187,7 +2216,7 @@ def close_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[
         raise GateError("This job can't be finished yet.", blockers)
     job["closed"] = True
     job["closed_at"] = utcnow()
-    audit(state, job_id, "close_job", f"{actor} closed {job['name']} for the record.", actor)
+    audit(state, job_id, "close_job", f"{actor} finished {job['name']}.", actor)
     return job
 
 
@@ -2228,7 +2257,7 @@ def add_packet_attachment(state: dict[str, Any], job_id: str, item_id: str, name
     job = _open_job(state, job_id)
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
-        raise GateError("Packet item not found.")
+        raise GateError("Paperwork item not found.")
     item.setdefault("attachments", []).append({"name": name, "added_at": utcnow(), "added_by": actor})
     item["present"] = True
     audit(state, job_id, "packet_attachment", f"{actor} attached {name} to {item['label']}.", actor)
@@ -2285,7 +2314,7 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def _payer(state: dict[str, Any], payer_id: str) -> dict[str, Any]:
     payer = next((p for p in state["payers"] if p["id"] == payer_id), None)
     if not payer:
-        raise GateError("Payer not found.")
+        raise GateError("Customer not found.")
     return payer
 
 
@@ -2457,7 +2486,7 @@ def detach_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: 
     job = _open_job(state, job_id)
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
-        raise GateError("Packet item not found.")
+        raise GateError("Paperwork item not found.")
     if item.get("present_reason") == MADE_HERE_REASON:
         raise GateError(f"Duracash makes {item['label']} with the pay app; there is nothing to remove.")
     if _invoice and _invoice.get("status") not in DRAFT_STATUSES:
@@ -2484,7 +2513,7 @@ def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: s
     job = _open_job(state, job_id)
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
-        raise GateError("Packet item not found.")
+        raise GateError("Paperwork item not found.")
     reason = (reason or "").strip()[:500] if isinstance(reason, str) else ""
     item["required"] = False
     item["skipped_reason"] = reason or "Not needed for this customer"
@@ -2596,7 +2625,7 @@ def attach_record_to_packet(
     item, invoice = _find_packet_item(job, item_id)
     record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
     if not item:
-        raise GateError("Packet item not found.")
+        raise GateError("Paperwork item not found.")
     if not record:
         raise GateError("Job record not found.")
     already = next((a for a in item.get("attachments", []) if a.get("record_id") == record_id), None)
@@ -2750,7 +2779,7 @@ def create_job(
         state,
         job["id"],
         "create_job",
-        f"{actor} created {job['name']} for {payer['name']} ({money(job['contract_cents'])}). Packet is created with the first pay app.",
+        f"{actor} created {job['name']} for {payer['name']} ({money(job['contract_cents'])}). The paperwork list comes with the first pay app.",
         actor,
     )
     return job

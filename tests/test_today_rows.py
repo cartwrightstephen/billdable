@@ -153,7 +153,7 @@ class TodayRowsTests(unittest.TestCase):
                                 "match_reason": "names the job"},
                                {"id": "in-3", "status": "filed", "subject": "Old", "suggested_job_id": self.job["id"]}]
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("inbox", 6, "Inbox", "", "File to this job"))
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("inbox", 6, "Inbox", "", "Add to this job"))
         self.assertEqual((r["text"], r["note"], r["item_id"], r["path"]), ("Signed CO 3", "names the job", "in-2", "/inbox"))
 
     def test_closed_jobs_are_left_out(self):
@@ -197,11 +197,35 @@ class TodayRowsTests(unittest.TestCase):
         snap = domain.light_snapshot(self.state, NOW)
         self.assertEqual(snap["totals"]["blocked_jobs"], 1)
         self.job["invoices"][-1]["packet"][0]["present"] = False
-        self.assertEqual(domain.blocker_button(self.job), "Clear 3 blockers")
+        self.assertEqual(domain.blocker_button(self.job), "Fix 3 things before sending")
         # A closed job's summary is never blocked.
         self.job["closed"] = True
         summary = domain.job_summary(self.state, self.job)
         self.assertEqual((summary["blocked"], summary["needs_paperwork"], summary["blocker_button"]), (False, False, ""))
+
+
+    # ---------- draws (R6-01) ----------
+
+    def test_draws_read_draw_on_today_and_in_the_email(self):
+        self.state["company"]["billing_style"] = "draws"
+        self.payer["payapp_due_day"] = 31
+        r = self.only()
+        self.assertEqual(r["text"], "Record this month's progress and draft the draw. Draw due to Dana Lee by Oct 31, 2026.")
+        self.draft()["status"] = "void"
+        self.job["work_status"] = "complete"
+        self.payer["payapp_due_day"] = None
+        r = self.only()
+        self.assertEqual((r["button"], r["text"]), ("Draft draw", "$4,000.00 of finished work has no draw yet. Drafting sends nothing."))
+        subject, _ = domain.daily_digest(self.state, "", NOW)
+        self.assertEqual(subject, "Due today in Duracash: 1 job to bill")
+
+    def test_draws_leave_names_as_typed(self):
+        self.state["company"]["billing_style"] = "draws"
+        self.job["name"] = "Pay app test house"
+        self.assertEqual(self.only()["text"], "Pay app test house has no draw yet. Bill the work done so far, or mark it done.")
+        self.assertEqual(domain.term_text("Pay apps and a pay app", "draws"), "Draws and a draw")
+        self.assertEqual(domain.term_text("Pay apps and a pay app", "pay_apps"), "Pay apps and a pay app")
+        self.assertEqual(domain.term_text("Send pay app to Pay app Co", "draws", ("Pay app Co",)), "Send draw to Pay app Co")
 
 
 if __name__ == "__main__":

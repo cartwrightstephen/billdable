@@ -72,7 +72,7 @@ await step("the job page has one main action, and Back returns to Today", async 
   assert.equal(await primary.count(), 1);
   // Tabs and job-page buttons carry no tooltips; each button says why on its second line (R3-04).
   assert.equal(await page.locator(".tabs .tab[title], .next-card .btn[title], .more-actions-rest .btn[title]").count(), 0);
-  assert.match(await primary.innerText(), /Clear 3 blockers/);
+  assert.match(await primary.innerText(), /Fix 3 things before sending/);  // paperwork and a CO: R6-01 wording
   await page.goBack();
   await page.getByRole("heading", { name: "Today" }).waitFor();
   assert.equal(new URL(page.url()).pathname, "/today");
@@ -229,7 +229,7 @@ await step("a job with a draft: three buttons, the rest under More, a change ord
   // On a phone, a missing paperwork item offers Take a photo.
   await p.setViewportSize({ width: 375, height: 812 });
   await p.locator(".next-card .primary-action").click();
-  await p.getByRole("heading", { name: /packet/i }).waitFor();
+  await p.getByRole("heading", { name: /^Paperwork for/ }).waitFor();
   const missing = p.locator(".packet-item.absent").first();
   await missing.getByRole("button", { name: "Take a photo" }).waitFor({ state: "visible" });
   assert.equal(await missing.locator('[data-action="pick-files"][data-capture="1"][data-attach]').count(), 1);
@@ -302,7 +302,7 @@ await step("a member sees no Make a new address; the owner does", async () => { 
 await step("refresh keeps the page", async () => {
   await page.goto(BASE + "/money/collections");
   await page.reload();
-  await page.getByRole("heading", { name: "Collections" }).waitFor();
+  await page.getByRole("heading", { name: "Unpaid" }).waitFor();
 });
 
 await step("an unsettled job lists what stands before Finish job, each with its buttons", async () => {
@@ -344,10 +344,10 @@ await step("money path: the main button walks a job from blocked to closed", asy
     const main = hasMain ? page.locator(".next-card .primary-action") : page.locator(".next-card .btn.secondary", { hasText: "Record a payment" });
     const label = hasMain ? (await main.innerText()).trim() : "Record a payment";
     seen.push(hasMain ? label : "(waiting) Record a payment");
-    // Paperwork alone reads "Add N missing documents" (R1-08); an unsigned CO keeps "Clear N blockers".
-    if (/^(Clear \d+ blocker|Add \d+ missing document)/.test(label)) {
+    // Paperwork alone reads "Add N missing documents" (R1-08); with an unsigned CO too, "Fix N things before sending" (R6-01).
+    if (/^(Fix \d+ things? before sending|Add \d+ missing document)/.test(label)) {
       await main.click();
-      await page.getByRole("heading", { name: /packet/i }).waitFor();
+      await page.getByRole("heading", { name: /^Paperwork for/ }).waitFor();
       while (await page.locator('[data-form^="resolve-"]').count()) {
         const btn = page.locator('[data-form^="resolve-"]').first();
         const item = (await btn.getAttribute("data-form")).slice("resolve-".length);
@@ -486,7 +486,7 @@ await step("the job page shows what happened, newest first", async () => {
   await page.goto(BASE + "/jobs/job-inman");
   await page.locator(".job-history .timeline li").first().waitFor();
   assert.ok(await page.locator(".job-history .timeline li").count() >= 4, "the money path's actions are in the history");
-  assert.match(await page.locator(".job-history .timeline li").first().innerText(), /clos/i);
+  assert.match(await page.locator(".job-history .timeline li").first().innerText(), /^Job finished/);  // a sentence, not the action code (R6-01)
 });
 
 await step("a confirmation is an in-page dialog, and Escape cancels it", async () => {
@@ -521,6 +521,27 @@ await step("phone: the menu drawer opens and moves between sections", async () =
   await phone.locator('.nav button[data-section="money"]').click();
   await phone.getByRole("heading", { name: "Pay apps" }).waitFor();
   assert.equal(new URL(phone.url()).pathname, "/money");
+});
+
+await step("a company that bills in draws reads Draw, not Pay app", async () => {  // R6-01
+  const ctx = await browser.newContext();
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => errors.push(e.message));
+  await p.goto(BASE + "/");
+  await p.evaluate(async (email) => {
+    const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Dee Draws", company_name: "Draw Builders" });
+    await post("/api/company", { billing_style: "draws" });
+    await post("/api/jobs", { name: "Hill house", address: "9 Hill Rd", customer: "Pat Homeowner", role: "Owner", ap_email: "pat@example.com", contract_cents: 9000000 });
+  }, `draws-${Date.now()}@example.com`);
+  await p.goto(BASE + "/money");
+  await p.locator(".tabs .tab", { hasText: "Draws" }).waitFor();
+  assert.equal(await p.locator(".tabs .tab", { hasText: "Pay apps" }).count(), 0);
+  await p.getByRole("heading", { name: "Draws" }).waitFor();
+  await p.goto(BASE + "/jobs");
+  await p.locator("tr", { hasText: "Hill house" }).locator(".next-action").waitFor();
+  assert.doesNotMatch(await p.locator("tr", { hasText: "Hill house" }).innerText(), /pay app/i);
+  await ctx.close();
 });
 
 await step("unknown paths get the HTML 404 page", async () => {

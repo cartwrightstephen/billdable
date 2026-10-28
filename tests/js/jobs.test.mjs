@@ -27,7 +27,7 @@ test("blocked is the server's flag; before that the blockers are what the next p
   assert.equal(isBlocked(drafted), true);
   assert.equal(isBlocked(job({ blockers: ["Signed contract"], invoices: [inv("draft")] })), false, "no flag, not blocked");
   assert.deepEqual(jobStatus(drafted), ["Blocked", "red"]);
-  assert.equal(nextStep(drafted), "Clear blockers: Signed contract");
+  assert.equal(nextStep(drafted), "Before it can go: Signed contract");
 });
 
 test("missing paperwork alone is amber and says what to attach; an unsigned CO stays red", () => {  // R1-08
@@ -47,12 +47,12 @@ test("missing paperwork alone is amber and says what to attach; an unsigned CO s
 test("each stage of the money path has one status and one next step", () => {
   assert.deepEqual(jobStatus(job({ invoices: [inv("draft")] })), ["Ready to send", "copper"]);
   assert.deepEqual(jobStatus(job({ invoices: [inv("sent")] })), ["Sent", "amber"]);
-  assert.match(nextStep(job({ invoices: [inv("sent")] })), /^Waiting on the payer/);
+  assert.match(nextStep(job({ invoices: [inv("sent")] })), /^Waiting on the customer/);
   assert.deepEqual(jobStatus(job({ invoices: [inv("partial")] })), ["Partly paid", "amber"]);
   assert.deepEqual(jobStatus(job({ waiver_due: true })), ["Waiver due", "amber"]);
   const done = { work_status: "complete" };
   assert.deepEqual(jobStatus(job({ ...done, money: { unbilled_completed_cents: 500, retainage_open_cents: 0, outstanding_cents: 0 } })), ["Ready to bill", "copper"]);
-  assert.deepEqual(jobStatus(job({ ...done, invoices: [inv("paid")], money: { unbilled_completed_cents: 0, retainage_open_cents: 100, outstanding_cents: 0 } })), ["Retainage open", "amber"]);
+  assert.deepEqual(jobStatus(job({ ...done, invoices: [inv("paid")], money: { unbilled_completed_cents: 0, retainage_open_cents: 100, outstanding_cents: 0 } })), ["Held back", "amber"]);
   const paid = job({ ...done, invoices: [inv("paid")] });
   assert.deepEqual(jobStatus(paid), ["Paid", "green"]);
   assert.equal(nextStep(paid), "Ready to finish the job.");

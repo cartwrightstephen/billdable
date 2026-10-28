@@ -1,6 +1,7 @@
 // Where a job stands: blocked or not, the one next step, status pills, change-order signatures and waiver kinds.
 
 import { unesc, fmtDate, fmtDateTime, toDate, centsFrom, percentFrom, money } from "./format.js";
+import { termText } from "./terms.js";
 
 export const RECORD_KINDS = {
   note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
@@ -22,7 +23,7 @@ export function jobStatus(j) {
   if (inv.some(i => i.status === "approved")) return ["Approved", "green"];
   if (j.work_status !== "complete") return ["In progress", ""];
   if (j.money.unbilled_completed_cents > 0) return ["Ready to bill", "copper"];
-  if (j.money.retainage_open_cents > 0) return ["Retainage open", "amber"];
+  if (j.money.retainage_open_cents > 0) return ["Held back", "amber"];
   if (inv.length && j.money.outstanding_cents === 0) return ["Paid", "green"];
   return ["Done", ""];
 }
@@ -58,18 +59,21 @@ export function blockerButton(j) { return j.blocker_button || ""; }
 // follow-up before its date is "Follow up now", the waiting line counts to the date). Today's
 // queue no longer uses any of them.
 
-export function nextStep(j) {
+// In the company's word for a pay app (terms.js): "Draft a draw for..." for draws (R6-01).
+export function nextStep(j) { return termText(nextStepWords(j)); }
+
+function nextStepWords(j) {
   if (j.closed) return "Finished.";
   if (needsPaperwork(j)) return "Attach the paperwork, then send: " + j.missing_paperwork.join(", ");
-  if (isBlocked(j)) return "Clear blockers: " + j.blockers[0];
+  if (isBlocked(j)) return "Before it can go: " + j.blockers[0];
   const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   if (draft) return "Pay app is ready. Review it, then Approve & send.";
   if (j.waiver_due && !j.waiver_sent) return "Payment received. Approve and send the waiver.";
-  if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the payer. Follow up or record a payment.";
+  if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the customer. Follow up or record a payment.";
   if (j.work_status !== "complete") return "Record progress, or mark the job done." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
-  if (j.money.retainage_open_cents > 0) return "Chase retainage once the closeout packet is complete.";
+  if (j.money.retainage_open_cents > 0) return "Ask for the money held back once the closeout paperwork is in.";
   if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before you finish: " + j.close_blockers[0] : "Ready to finish the job.";
-  return "Draft a pay app for unbilled completed work.";
+  return "Draft a pay app for the work done and not billed.";
 }
 
 export function coSignature(co) {
@@ -236,7 +240,8 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   const followDue = !!follow && follow.due <= now;
   const canClose = !(j.close_blockers || []).length;
   const all = [];
-  const add = (key, label, attrs, why, group) => { if (mayTake(KEY_ACTION[key], perms)) all.push({ key, label, attrs, why, group }); };
+  // Labels and reasons in the company's word for a pay app (terms.js, R6-01).
+  const add = (key, label, attrs, why, group) => { if (mayTake(KEY_ACTION[key], perms)) all.push({ key, label: termText(label), attrs, why: termText(why), group }); };
   if (isBlocked(j)) {
     const cos = coBlockers(j);
     if (onlyCoBlockers(j)) add("clear", blockerButton(j), `data-action="open-co" data-job="${j.id}" data-co="${cos[0].co_id}"`, "Send waits until the customer signs it.", "bill");
@@ -283,7 +288,7 @@ export const ACTION_GROUPS = [["bill", "Bill"], ["paid", "Get paid"], ["close", 
 // server's close_blocker_items ({kind, text, invoice_id, co_id, number}): [{label, attrs}].
 // perms as for mayTake: a member doesn't see what only an owner may do.
 export function closeBlockerActions(j, b, perms = null) {
-  return closeBlockerButtons(j, b).filter(a => mayTake(a.needs, perms));
+  return closeBlockerButtons(j, b).filter(a => mayTake(a.needs, perms)).map(a => ({ ...a, label: termText(a.label) }));
 }
 
 function closeBlockerButtons(j, b) {

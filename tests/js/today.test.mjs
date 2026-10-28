@@ -39,7 +39,7 @@ test("each kind of row has its one main button, with the ids it needs", () => {
     [row({ kind: "not_billed", button: "Draft pay app" }), /data-action="draft" data-id="j1">Draft pay app</, true],
     [row({ kind: "due_soon", button: "Bill progress" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Bill progress</, false],
     [row({ kind: "follow_up", button: "Send follow-up" }), /data-action="follow-up" data-id="j1">Send follow-up</, true],
-    [row({ kind: "inbox", button: "File to this job", item_id: "x2" }), /data-action="inbox-file-suggested" data-item="x2" data-job="j1">File to this job</, true],
+    [row({ kind: "inbox", button: "Add to this job", item_id: "x2" }), /data-action="inbox-file-suggested" data-item="x2" data-job="j1">Add to this job</, true],
   ];
   for (const [r, pattern, open] of cases) {
     const html = rowButtons(r);
@@ -61,7 +61,7 @@ test("a pay app the customer approved has no main button, only Open", () => {  /
 });
 
 test("an Inbox row says why it matched the job, after the text", () => {
-  const html = queueHtml([row({ kind: "inbox", label: "Inbox", tone: "", text: "Signed CO 3", note: "names the job", button: "File to this job" })]);
+  const html = queueHtml([row({ kind: "inbox", label: "Inbox", tone: "", text: "Signed CO 3", note: "names the job", button: "Add to this job" })]);
   assert.match(html, /<span class="pill ">Inbox<\/span>/);
   assert.match(html, /Signed CO 3 <span class="sub">\(names the job\)<\/span>/);
 });
