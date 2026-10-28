@@ -347,7 +347,7 @@ await step("money path: the main button walks a job from blocked to closed", asy
     // Paperwork alone reads "Add N missing documents" (R1-08); with an unsigned CO too, "Fix N things before sending" (R6-01).
     if (/^(Fix \d+ things? before sending|Add \d+ missing document)/.test(label)) {
       await main.click();
-      await page.getByRole("heading", { name: /^Paperwork for/ }).waitFor();
+      await page.getByRole("heading", { name: /^Paperwork( for |$)/ }).waitFor();  // "Paperwork" alone when no pay app is drafted yet
       while (await page.locator('[data-form^="resolve-"]').count()) {
         const btn = page.locator('[data-form^="resolve-"]').first();
         const item = (await btn.getAttribute("data-form")).slice("resolve-".length);
