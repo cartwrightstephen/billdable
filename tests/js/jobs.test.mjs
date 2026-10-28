@@ -17,23 +17,28 @@ test("a new job is in progress and asks for progress", () => {
   assert.match(nextStep(job()), /^Record progress/);
 });
 
-test("blockers count only once there is a draft or the work is done", () => {
-  const waiting = job({ blockers: ["Signed contract"] });
+// Whether a job is blocked, and by paperwork only, is the server's answer (domain.is_blocked,
+// needs_paperwork, blocker_button; tests/test_today_rows.py): the app reads it off the job (R4-10).
+test("blocked is the server's flag; before that the blockers are what the next pay app needs", () => {
+  const waiting = job({ blockers: ["Signed contract"], blocked: false });
   assert.equal(isBlocked(waiting), false);
   assert.match(nextStep(waiting), /The next pay app needs: Signed contract/);
-  const drafted = job({ blockers: ["Signed contract"], invoices: [inv("awaiting_approval")] });
+  const drafted = job({ blockers: ["Signed contract"], invoices: [inv("awaiting_approval")], blocked: true, blocker_button: "Clear 1 blocker" });
   assert.equal(isBlocked(drafted), true);
+  assert.equal(isBlocked(job({ blockers: ["Signed contract"], invoices: [inv("draft")] })), false, "no flag, not blocked");
   assert.deepEqual(jobStatus(drafted), ["Blocked", "red"]);
   assert.equal(nextStep(drafted), "Clear blockers: Signed contract");
 });
 
 test("missing paperwork alone is amber and says what to attach; an unsigned CO stays red", () => {  // R1-08
-  const paper = job({ blockers: ["Signed contract is missing.", "Completion photos are missing."], missing_paperwork: ["Signed contract", "Completion photos"], invoices: [inv("draft")] });
+  const paper = job({ blockers: ["Signed contract is missing.", "Completion photos are missing."], missing_paperwork: ["Signed contract", "Completion photos"], invoices: [inv("draft")],
+    blocked: true, needs_paperwork: true, blocker_button: "Add 2 missing documents" });
   assert.equal(needsPaperwork(paper), true);
   assert.deepEqual(jobStatus(paper), ["Needs paperwork", "amber"]);
   assert.equal(nextStep(paper), "Attach the paperwork, then send: Signed contract, Completion photos");
   assert.equal(blockerButton(paper), "Add 2 missing documents");
-  const co = job({ blockers: ["Signed contract is missing.", "Change Order 2 is included in the billing amount but has not been signed."], missing_paperwork: ["Signed contract"], invoices: [inv("draft")] });
+  const co = job({ blockers: ["Signed contract is missing.", "Change Order 2 is included in the billing amount but has not been signed."], missing_paperwork: ["Signed contract"], invoices: [inv("draft")],
+    blocked: true, needs_paperwork: false, blocker_button: "Clear 2 blockers" });
   assert.equal(needsPaperwork(co), false);
   assert.deepEqual(jobStatus(co), ["Blocked", "red"]);
   assert.equal(blockerButton(co), "Clear 2 blockers");
@@ -180,7 +185,7 @@ test("Ask for retainage shows only once the work is done and the closeout paperw
 test("only an unsigned change order in the way: Get CO N signed opens it", () => {  // R3-05
   const text = "Change Order 2 is included in the billing amount but has not been signed.";
   const j = job({ blockers: [text], missing_paperwork: [], invoices: [{ id: "d1", status: "draft" }],
-    blocker_items: [{ kind: "co", text, co_id: "co-x-2", number: 2 }] });
+    blocker_items: [{ kind: "co", text, co_id: "co-x-2", number: 2 }], blocked: true, blocker_button: "Get CO 2 signed" });
   assert.equal(blockerButton(j), "Get CO 2 signed");
   const { primary } = jobActions(j);
   assert.equal(primary.label, "Get CO 2 signed");

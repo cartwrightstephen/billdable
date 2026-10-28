@@ -238,6 +238,29 @@ def blocker_lines(job: dict[str, Any]) -> list[str]:
     return [b["text"] for b in blocker_items(job)]
 
 
+def is_blocked(job: dict[str, Any]) -> bool:
+    """Blockers count once there is a pay app to block (a draft) or the work is done; before
+    that they are what the next pay app will need. job_view sends it as `blocked`."""
+    return bool(blocker_items(job)) and (
+        job.get("work_status") == "complete" or any(i.get("status") in DRAFT_STATUSES for i in job.get("invoices", [])))
+
+
+def needs_paperwork(job: dict[str, Any]) -> bool:
+    """Blocked only by paperwork to attach: amber "Needs paperwork", not red "Blocked" (R1-08)."""
+    return is_blocked(job) and len(missing_packet(job)) == len(blocker_items(job))
+
+
+def blocker_button(job: dict[str, Any]) -> str:
+    """The button that opens the paperwork, or the change order when that is all that blocks (R3-05)."""
+    items = blocker_items(job)
+    n = len(items)
+    if needs_paperwork(job):
+        return f"Add {n} missing document{'' if n == 1 else 's'}"
+    if is_blocked(job) and items and all(b["kind"] == "co" for b in items):
+        return f"Get CO {items[0]['number']} signed" if n == 1 else f"Get {n} change orders signed"
+    return f"Clear {n} blocker{'' if n == 1 else 's'}"
+
+
 def status_label(job: dict[str, Any]) -> str:
     """A status names the blocker. Never return a bare 'Pending'."""
     if job.get("closed"):
@@ -1110,6 +1133,10 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     # The blockers that are paperwork to attach (the rest are unsigned change orders).
     out["missing_paperwork"] = [item["label"] for item in missing_packet(job)]
     out["status_label"] = status_label(job)
+    # Where the job stands, for its pills and buttons (R4-10: the app reads these, not its own rules).
+    out["blocked"] = is_blocked(job)
+    out["needs_paperwork"] = needs_paperwork(job)
+    out["blocker_button"] = blocker_button(job) if out["blocked"] else ""
     out["payer"] = deepcopy(_payer(state, job["payer_id"]))
     out["can_delete"] = can_delete_job(job)
     out["can_undo_done"] = can_undo_done(job)
@@ -1133,11 +1160,7 @@ def _totals(views: list[dict[str, Any]]) -> dict[str, Any]:
         "retainage_cents": sum(j["money"]["retainage_open_cents"] for j in views),
         # Blocked once there is a draft to block or the work is done; before that the
         # blockers are what the next pay app will need (the app shows them that way too).
-        "blocked_jobs": sum(
-            1 for j in views
-            if j["blockers"] and not j.get("closed")
-            and (j.get("work_status") == "complete" or any(i.get("status") in {"draft", "awaiting_approval"} for i in j["invoices"]))
-        ),
+        "blocked_jobs": sum(1 for j in views if j["blocked"] and not j.get("closed")),
     }
 
 
@@ -1167,6 +1190,7 @@ def job_summary(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out["money"] = job_money(job)
     out["status_label"] = status_label(job)
     out["blockers"], out["close_blockers"], out["close_blocker_items"] = [], [], []
+    out["blocked"], out["needs_paperwork"], out["blocker_button"] = False, False, ""
     out.setdefault("done_notes", "")
     for inv in out.get("invoices", []):
         inv.pop("lines", None)
@@ -1262,6 +1286,8 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     out["email_failures"] = [{k: v for k, v in e.items() if k != "body"} for e in failures[:RECENT_EMAILS]]
     out["pending_email_failures"] = len(failures)
     out["audit_total"] = len(state.get("audit", []))
+    # Today's queue, drawn from the same rows as the daily email (R4-10).
+    out["today_rows"] = today_rows(state, now)
     out["closed_jobs_total"] = closed_count
     out["audit_chain"] = check_audit(state)
     out["trial"] = trial.status(state)
@@ -1270,96 +1296,132 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
 
 
 def _day_words(value: Any) -> str:
-    """"Oct 3" from an ISO date or time; "" when there is none."""
+    """"Oct 3, 2026" from an ISO date or time (the app's fmtDate); "" when there is none."""
     try:
         d = date.fromisoformat(str(value)[:10])
     except ValueError:
         return ""
-    return f"{d.strftime('%b')} {d.day}"
+    return f"{d.strftime('%b')} {d.day}, {d.year}"
 
 
 WENT_OUT = {"sent", "approved", "partial", "paid"}
+# Where an Inbox item came from, as the app names it (jobs.js SOURCE_LABELS).
+SOURCE_LABELS = {"upload": "Upload", "paste": "Pasted", "email": "Email", "sms": "Text message", "notes": "Notes", "payer_page": "Customer page"}
+
+
+def _pay_app_list(invoices: list[dict[str, Any]]) -> str:
+    """"PA-01" or "PA-01 and PA-02" or "PA-01, PA-02 and PA-03": the pay apps one follow-up names."""
+    n = [i["number"] for i in invoices]
+    return f"{', '.join(n[:-1])} and {n[-1]}" if len(n) > 1 else (n[0] if n else "the pay app")
 
 
 def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[str, Any]]:
-    """What needs a person today, most urgent first (R4-10): the rules of Today's queue
-    (static/js/today.js todayQueue), for the daily email. Each row: {rank, kind, job_id, job,
-    label, text, path}; `path` is the app page that does it. Kinds: email_failed, says_done,
-    blocked, ready, waiver, not_billed, due_soon, new_job, follow_up, approved, inbox.
-    "approved" is a pay app the customer approved with a date to pay: waiting, not due."""
+    """What needs a person today, most urgent first (R4-10): the one rule set for Today's queue
+    (light_snapshot sends it; static/js/today.js draws it) and the daily email.
+    Each row: {rank, kind, job_id, job, payer, label, tone, text, note, button, path, invoice_id,
+    co_id, email_id, item_id}. label and tone are the pill ("Ready to send", green); text the line
+    under the job name; note a reason shown after it on Today only; button the main button's
+    words (the app maps `kind` to what it does); path the app page that does it.
+    Kinds: email_failed, says_done, blocked, ready, waiver, not_billed, due_soon, new_job,
+    follow_up, approved, inbox. "approved" is a pay app the customer approved with a date to pay:
+    waiting, not due, so it has no button."""
     now = now or datetime.now(timezone.utc)
     today = now.date()
     jobs = {j["id"]: j for j in state.get("jobs", []) if not j.get("closed")}
     payers = {p["id"]: p for p in state.get("payers", [])}
     out: list[dict[str, Any]] = []
 
-    def add(rank: float, kind: str, job: dict[str, Any], label: str, text: str, path: str = "") -> None:
-        out.append({"rank": rank, "kind": kind, "job_id": job["id"], "job": job["name"], "label": label, "text": text,
-                    "path": path or f"/jobs/{job['id']}"})
+    def add(rank: float, kind: str, job: dict[str, Any], label: str, tone: str, text: str, button: str,
+            path: str = "", **ids: str) -> None:
+        payer = payers.get(job.get("payer_id"), {})
+        out.append({"rank": rank, "kind": kind, "job_id": job["id"], "job": job["name"], "payer": payer.get("name", ""),
+                    "label": label, "tone": tone, "text": text, "note": ids.pop("note", ""), "button": button,
+                    "path": path or f"/jobs/{job['id']}", "invoice_id": "", "co_id": "", "email_id": "", "item_id": "", **ids})
 
+    # An email that didn't go out: the latest per pay app or follow-up, open jobs only.
     for e in email_failures(state):
         job = jobs.get(e.get("job_id"))
         if job:
-            add(0.5, "email_failed", job, "Didn't go out", f"{e.get('subject', '')} to {e.get('to', '')}: {e.get('status', '')}", "/today")
+            add(0.5, "email_failed", job, "Didn't go out", "red", f"{e.get('subject', '')} to {e.get('to', '')}: {e.get('status', '')}",
+                "Send again", "/today", email_id=e.get("id", ""), invoice_id=e.get("payapp_invoice_id") or "")
     inbox = [i for i in state.get("inbox", []) if i.get("status") == "new"]
     for item in inbox:
         job = jobs.get(item.get("says_done_job_id"))
         if job:
+            source = SOURCE_LABELS.get(item.get("source", ""), item.get("source", ""))
             first = (item.get("text") or item.get("subject") or "").split("\n")[0][:120]
-            add(0, "says_done", job, "Job's done?", f"{item.get('from') or 'A message'}: {first}", "/today")
+            add(0, "says_done", job, "Job's done?", "copper", f"{source}{' from ' + item['from'] if item.get('from') else ''}: {first}",
+                "Mark done and draft", "/today", item_id=item.get("id", ""))
     for job in jobs.values():
         payer = payers.get(job.get("payer_id"), {})
         invoices = job.get("invoices", [])
         draft = next((i for i in invoices if i["status"] in DRAFT_STATUSES), None)
         m = job_money(job)
         items = blocker_items(job)
-        blocked = bool(items) and (job.get("work_status") == "complete" or draft is not None)
+        # The payer's monthly cutoff (playbook): within five days, and nothing billed since the
+        # last one. Only a pay app that went out counts: a draft stuck on paperwork still leaves
+        # the cutoff ahead.
         due = payapp_due(payer, today)
         billed_this_cycle = bool(due) and any(
             i["status"] in WENT_OUT and (i.get("sent_at") or i.get("created_at") or "")[:10] > due[1].isoformat() for i in invoices)
         may_bill = job.get("work_status") != "complete" or m["unbilled_completed_cents"] > 0
         due_soon = bool(due) and may_bill and not billed_this_cycle and (due[0] - today).days <= 5
         before = len(out)
-        if blocked:
-            paperwork = len(missing_packet(job)) == len(items)
+        # One next step per job, in the job page's order (jobActions): blockers first.
+        if is_blocked(job):
             more = f" And {len(items) - 1} more." if len(items) > 1 else ""
-            add(3, "blocked", job, "Needs paperwork" if paperwork else "Blocked", items[0]["text"] + more,
-                f"/money/packet/{job['id']}/{draft['id']}" if draft else f"/money/packet/{job['id']}")
+            paperwork = needs_paperwork(job)
+            cos = [b for b in items if b["kind"] == "co"]
+            add(3, "blocked", job, "Needs paperwork" if paperwork else "Blocked", "amber" if paperwork else "red", items[0]["text"] + more,
+                blocker_button(job), f"/money/packet/{job['id']}/{draft['id']}" if draft else f"/money/packet/{job['id']}",
+                invoice_id=draft["id"] if draft else "", co_id=cos[0]["co_id"] if cos and len(cos) == len(items) else "")
         elif draft:
-            add(1, "ready", job, "Ready to send", f"{draft['number']} for {money(draft['amount_cents'])} to {payer.get('approver') or payer.get('name', '')}. "
-                "Check what goes out, then send.", f"/money/pay-app/{job['id']}/{draft['id']}")
+            add(1, "ready", job, "Ready to send", "green", f"{draft['number']} for {money(draft['amount_cents'])} to {payer.get('approver') or payer.get('name', '')}. "
+                "Check what goes out, then approve.", "Review & send", f"/money/pay-app/{job['id']}/{draft['id']}", invoice_id=draft["id"])
         elif job.get("waiver_due") and not job.get("waiver_sent"):
-            add(2, "waiver", job, "Waiver due", "Paid in full: the customer is waiting for the lien waiver.", f"/money/waiver/{job['id']}")
+            add(2, "waiver", job, "Waiver due", "amber", "Paid in full: the customer is waiting for the lien waiver.", "Review waiver",
+                f"/money/waiver/{job['id']}")
         elif job.get("work_status") == "complete" and m["unbilled_completed_cents"] > 0:
-            add(5, "not_billed", job, "Not billed", f"{money(m['unbilled_completed_cents'])} of finished work has no pay app yet.")
+            add(5, "not_billed", job, "Not billed", "copper",
+                f"{money(m['unbilled_completed_cents'])} of finished work has no pay app yet. Drafting sends nothing.", "Draft pay app")
         elif due_soon:
-            add(2.5, "due_soon", job, "Due soon", "Record this month's progress and draft the pay app.")
+            add(2.5, "due_soon", job, "Due soon", "amber", "Record this month's progress and draft the pay app.", "Bill progress")
+        # A new job (R2-04): nothing billed on it yet, so Today says what comes next instead of nothing.
         elif not any(i["status"] not in {"void", "replaced"} for i in invoices):
-            add(5, "new_job", job, "Not billed yet", f"{job['name']} has no pay app yet. Bill the work done so far, or mark it done.")
+            add(5, "new_job", job, "Not billed yet", "copper", f"{job['name']} has no pay app yet. Bill the work done so far, or mark it done.",
+                "Bill progress")
+        # A cutoff makes the job's row more urgent, and says so.
         if due_soon and len(out) > before:
             row = out[-1]
             if "Pay app due to" not in row["text"]:
                 row["text"] += f" Pay app due to {payer.get('name', '')} by {_day_words(due[0].isoformat())}."
             row["rank"] = min(row["rank"], 1.5)
+        # A pay app sent and unpaid past the payer's follow-up window is its own row. One follow-up
+        # names every unpaid pay app; after a call ("Spoke to them…") the row waits for the date
+        # noted (R4-06).
         follow = follow_up_due(job, payer)
         if follow:
             unpaid = [i for i in invoices if i["status"] in OPEN_FOR_PAYMENT]
             oldest = unpaid[0]
-            promised = expected_payment(oldest)
+            last = oldest.get("last_follow_up_at") or oldest.get("sent_at") or ""
+            noted = bool(job.get("expected_payment_on")) and (job.get("contact_noted_at") or "") >= last
+            promised = None if noted else expected_payment(oldest)
             if now >= follow:
-                names = ", ".join(i["number"] for i in unpaid)
-                last = f", last follow-up {_day_words(oldest['last_follow_up_at'])}" if oldest.get("last_follow_up_at") else ""
-                add(4, "follow_up", job, "Follow up",
-                    (f"{names} are unpaid; the oldest" if len(unpaid) > 1 else oldest["number"])
-                    + f" was sent {_day_words(oldest.get('sent_at'))}{last}. Emails {payer.get('ap_email') or 'the customer'}.")
+                names = f"{_pay_app_list(unpaid)} are unpaid; the oldest" if len(unpaid) > 1 else oldest["number"]
+                since = f", last follow-up {_day_words(oldest['last_follow_up_at'])}" if oldest.get("last_follow_up_at") else ""
+                add(4, "follow_up", job, "Follow up", "copper",
+                    f"{names} was sent {_day_words(oldest.get('sent_at'))}{since}. Emails {payer.get('ap_email') or 'the customer'}.",
+                    "Send follow-up", invoice_id=oldest["id"])
+            # Approved on the customer's page (R4-08): no follow-up until the day after the date they gave.
             elif promised:
-                add(4.5, "approved", job, "Approved",
+                add(4.5, "approved", job, "Approved", "green",
                     f"Approved by {oldest.get('approved_by_payer') or payer.get('approver') or payer.get('name', '')}, "
-                    f"expect payment {_day_words(promised.isoformat())} ({oldest['number']}).")
+                    f"expect payment {_day_words(promised.isoformat())} ({oldest['number']}).", "", invoice_id=oldest["id"])
     for item in inbox:
         job = jobs.get(item.get("suggested_job_id"))
         if job and not item.get("says_done_job_id"):
-            add(6, "inbox", job, "Inbox", (item.get("subject") or item.get("text") or "An item").split("\n")[0][:100], "/inbox")
+            add(6, "inbox", job, "Inbox", "", (item.get("subject") or item.get("text") or "An item").split("\n")[0][:100], "File to this job",
+                "/inbox", item_id=item.get("id", ""), note=item.get("match_reason") or "")
     return sorted(out, key=lambda r: r["rank"])
 
 

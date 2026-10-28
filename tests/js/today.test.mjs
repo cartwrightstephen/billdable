@@ -1,50 +1,73 @@
-// Today's queue (R2-04): node --test tests/js
+// Today's queue (R2-04, R4-10): node --test tests/js
+// The rules are the server's (domain.today_rows; tests/test_today_rows.py). Here: the rows it sends
+// become one main button each, Open where the button doesn't open the job, three rows until
+// "and N more", and the empty-state wording.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { todayQueue, queueHtml, anyPayAppSent, QUEUE_SHOWN } from "../../static/js/today.js";
+import { todayQueue, rowButtons, queueHtml, anyPayAppSent, QUEUE_SHOWN } from "../../static/js/today.js";
 
-const NOW = new Date("2026-10-27T15:00:00");
-const job = (over = {}) => ({
-  id: "j1", name: "Porch rebuild", code: "PORCH", closed: false, work_status: "in_progress", blockers: [], close_blockers: [], invoices: [],
-  waiver_due: false, waiver_sent: false, payer: { name: "Dana Lee", approver: "Dana Lee", ap_email: "dana@example.com" },
-  money: { unbilled_completed_cents: 0, retainage_open_cents: 0, outstanding_cents: 0 },
-  ...over,
+const row = (over = {}) => ({
+  rank: 5, kind: "new_job", job_id: "j1", job: "Porch rebuild", payer: "Dana Lee", label: "Not billed yet", tone: "copper",
+  text: "Porch rebuild has no pay app yet. Bill the work done so far, or mark it done.", note: "", button: "Bill progress",
+  path: "/jobs/j1", invoice_id: "", co_id: "", email_id: "", item_id: "", ...over,
 });
-const state = (jobs, over = {}) => ({ jobs, inbox: [], email_failures: [], closed_jobs_total: 0, ...over });
+const state = (rows, over = {}) => ({ jobs: [], today_rows: rows, closed_jobs_total: 0, ...over });
+const mainButtons = (html) => (html.match(/class="btn small"/g) || []).length;
 
-test("one new job shows Not billed yet, opening the job at its next step", () => {
-  const [row, ...rest] = todayQueue(state([job()]), NOW);
-  assert.equal(rest.length, 0);
-  assert.equal(row.rank, 5);
-  assert.match(row.pill, /Not billed yet/);
-  assert.equal(row.text, "Porch rebuild has no pay app yet. Bill the work done so far, or mark it done.");
-  assert.match(row.button, /data-action="open-job" data-id="j1" data-focus="\.next-card"/);
-  assert.equal(row.opensJob, true);
+test("the queue is the server's rows, in the order sent", () => {
+  const rows = [row({ kind: "ready", rank: 1 }), row({ rank: 5 })];
+  assert.deepEqual(todayQueue(state(rows)), rows);
+  assert.deepEqual(todayQueue({ jobs: [] }), []);
 });
 
-test("a voided draft doesn't count as billed; a sent pay app does", () => {
-  assert.equal(todayQueue(state([job({ invoices: [{ id: "i1", status: "void" }] })]), NOW).length, 1);
-  const sent = job({ invoices: [{ id: "i1", number: "PA-1", status: "sent", sent_at: NOW.toISOString() }] });
-  assert.deepEqual(todayQueue(state([sent]), NOW), []);
-  assert.equal(anyPayAppSent(state([sent])), true);
-  assert.equal(anyPayAppSent(state([job()])), false);
-  assert.equal(anyPayAppSent(state([], { closed_jobs_total: 2 })), true);
+test("a new job shows Not billed yet; its button opens the job at its next step, so no Open", () => {
+  const html = queueHtml([row()]);
+  assert.match(html, /<span class="pill copper">Not billed yet<\/span> <strong>Porch rebuild<\/strong>/);
+  assert.match(html, /<div class="next-action">Porch rebuild has no pay app yet\. Bill the work done so far, or mark it done\.<\/div>/);
+  assert.match(html, /<button class="btn small" data-action="open-job" data-id="j1" data-focus="\.next-card">Bill progress<\/button><\/div>/);
+  assert.doesNotMatch(html, />Open</);
 });
 
-test("a draft ready to send comes before an unbilled job", () => {
-  const draft = job({ id: "j2", name: "Bath", invoices: [{ id: "i2", number: "PA-BATH-01", status: "draft", amount_cents: 100000 }] });
-  const rows = todayQueue(state([job(), draft]), NOW);
-  assert.deepEqual(rows.map(r => r.j.id), ["j2", "j1"]);
-  assert.match(rows[0].pill, /Ready to send/);
+test("each kind of row has its one main button, with the ids it needs", () => {
+  const cases = [
+    [row({ kind: "email_failed", button: "Send again", email_id: "e1" }), /data-action="email-retry" data-email="e1">Send again</, true],
+    [row({ kind: "says_done", button: "Mark done and draft", item_id: "x1" }), /data-action="inbox-mark-done" data-item="x1">Mark done and draft</, true],
+    [row({ kind: "blocked", button: "Add 1 missing document", invoice_id: "d1" }), /data-action="open-packet" data-job="j1" data-inv="d1">Add 1 missing document</, true],
+    [row({ kind: "blocked", button: "Clear 1 blocker" }), /data-action="open-packet" data-job="j1">Clear 1 blocker</, true],
+    [row({ kind: "ready", button: "Review &amp; send", invoice_id: "d1" }), /data-action="open-payapp" data-job="j1" data-inv="d1" data-focus="\.send-check">Review &amp; send</, false],
+    [row({ kind: "waiver", button: "Review waiver" }), /data-action="open-waiver" data-id="j1">Review waiver</, false],
+    [row({ kind: "not_billed", button: "Draft pay app" }), /data-action="draft" data-id="j1">Draft pay app</, true],
+    [row({ kind: "due_soon", button: "Bill progress" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Bill progress</, false],
+    [row({ kind: "follow_up", button: "Send follow-up" }), /data-action="follow-up" data-id="j1">Send follow-up</, true],
+    [row({ kind: "inbox", button: "File to this job", item_id: "x2" }), /data-action="inbox-file-suggested" data-item="x2" data-job="j1">File to this job</, true],
+  ];
+  for (const [r, pattern, open] of cases) {
+    const html = rowButtons(r);
+    assert.match(html, pattern, r.kind);
+    assert.equal(mainButtons(html), 1, `${r.kind}: one main button`);
+    assert.equal(/data-action="open-job" data-id="j1">Open</.test(html), open, `${r.kind}: Open`);
+  }
 });
 
-test("closed jobs and summaries are left out", () => {
-  assert.deepEqual(todayQueue(state([job({ closed: true }), job({ id: "j3", summary: true })]), NOW), []);
+test("a follow-up offers Spoke to them as a second button", () => {  // R4-06
+  const html = rowButtons(row({ kind: "follow_up", button: "Send follow-up" }));
+  assert.match(html, /<button class="btn small secondary" data-action="spoke" data-id="j1">Spoke to them…<\/button>/);
+});
+
+test("a pay app the customer approved has no main button, only Open", () => {  // R4-08
+  const html = rowButtons(row({ kind: "approved", button: "", label: "Approved", tone: "green" }));
+  assert.equal(mainButtons(html), 0);
+  assert.match(html, /data-action="open-job" data-id="j1">Open</);
+});
+
+test("an Inbox row says why it matched the job, after the text", () => {
+  const html = queueHtml([row({ kind: "inbox", label: "Inbox", tone: "", text: "Signed CO 3", note: "names the job", button: "File to this job" })]);
+  assert.match(html, /<span class="pill ">Inbox<\/span>/);
+  assert.match(html, /Signed CO 3 <span class="sub">\(names the job\)<\/span>/);
 });
 
 test("three rows, then 'and N more' until expanded", () => {
-  const jobs = Array.from({ length: 5 }, (_, n) => job({ id: `j${n}`, name: `Job ${n}` }));
-  const queue = todayQueue(state(jobs), NOW);
+  const queue = Array.from({ length: 5 }, (_, n) => row({ job_id: `j${n}`, job: `Job ${n}` }));
   const short = queueHtml(queue);
   assert.equal(short.match(/class="action-item"/g).length, QUEUE_SHOWN);
   assert.match(short, /data-action="queue-more"[^>]*>and 2 more</);
@@ -60,26 +83,9 @@ test("'Nothing is waiting on you.' only once a pay app has gone out", () => {
   assert.match(queueHtml([], { anySent: false }), /Work shows up here/);
 });
 
-test("a follow-up row names every unpaid pay app and offers Spoke to them; a noted call hides it", () => {  // R4-06
-  const invoices = [{ id: "a", number: "PA-1", status: "sent", sent_at: "2026-10-01T12:00:00+00:00" },
-    { id: "b", number: "PA-2", status: "partial", sent_at: "2026-10-10T12:00:00+00:00" }];
-  const [row] = todayQueue(state([job({ invoices })]), NOW);
-  assert.match(row.pill, /Follow up/);
-  assert.match(row.text, /^PA-1 and PA-2 are unpaid; the oldest was sent/);
-  assert.match(row.button, /data-action="spoke" data-id="j1">Spoke to them…</);
-  const noted = invoices.map(i => ({ ...i, last_follow_up_at: "2026-10-27T12:00:00+00:00" }));
-  assert.deepEqual(todayQueue(state([job({ invoices: noted, contact_noted_at: "2026-10-27T12:00:00+00:00", expected_payment_on: "2026-10-30" })]), NOW), []);
-  assert.equal(todayQueue(state([job({ invoices: noted, contact_noted_at: "2026-10-27T12:00:00+00:00", expected_payment_on: "2026-10-30" })]), new Date("2026-10-30T09:00:00")).length, 1);
-});
-
-test("a pay app approved on the customer's page shows the date to expect payment; no follow-up until after it", () => {  // R4-08
-  const invoices = [{ id: "a", number: "PA-1", status: "approved", sent_at: "2026-10-01T12:00:00+00:00",
-    approved_by_payer: "Kim Park", approved_at: "2026-10-20T12:00:00+00:00", expected_payment_on: "2026-11-05" }];
-  const [row] = todayQueue(state([job({ invoices })]), NOW);
-  assert.match(row.pill, /Approved/);
-  assert.match(row.text, /^Approved by Kim Park, expect payment Nov 5, 2026 \(PA-1\)\.$/);
-  assert.equal(row.button, "");
-  // The day after the date given, the follow-up row is back.
-  const [late] = todayQueue(state([job({ invoices })]), new Date("2026-11-06T09:00:00Z"));
-  assert.match(late.pill, /Follow up/);
+test("a pay app has gone out once one was sent or a job was closed", () => {
+  const sent = { id: "j1", invoices: [{ id: "i1", number: "PA-1", status: "sent", sent_at: "2026-10-27T12:00:00+00:00" }] };
+  assert.equal(anyPayAppSent(state([], { jobs: [sent] })), true);
+  assert.equal(anyPayAppSent(state([], { jobs: [{ id: "j2", invoices: [{ id: "i2", status: "void" }] }] })), false);
+  assert.equal(anyPayAppSent(state([], { closed_jobs_total: 2 })), true);
 });

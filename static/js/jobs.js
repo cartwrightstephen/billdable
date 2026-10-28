@@ -7,6 +7,7 @@ export const RECORD_KINDS = {
   waiver: "Lien waiver", pay_app: "Pay app / invoice backup", ticket: "Delivery or time ticket", other: "Other",
 };
 
+// domain.SOURCE_LABELS has the same words, for Today's rows.
 export const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email", sms: "Text message", notes: "Notes", payer_page: "Customer page" };
 
 // One short word for where a job stands; the full sentence (status_label) goes on the line below it.
@@ -28,16 +29,13 @@ export function jobStatus(j) {
 
 export function statusPill(j) { const [w, c] = jobStatus(j); return `<span class="pill ${c}">${w}</span>`; }
 
-// Blockers count once there is a pay app to block (a draft) or the work is done; before that
-// they are what the next pay app will need.
-export function isBlocked(j) {
-  return !!(j.blockers && j.blockers.length && (j.work_status === "complete" || j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status))));
-}
+// Blocked (blockers count once there is a draft to block or the work is done), and blocked only by
+// paperwork to attach (amber, not red; red stays for an unsigned change order on the bill): the
+// server decides both and sends them on each job (domain.is_blocked / needs_paperwork as blocked /
+// needs_paperwork, R4-10), the same rules Today's rows and the daily email use.
+export function isBlocked(j) { return !!j.blocked; }
 
-// Blocked only by paperwork to attach: amber, not red. Red stays for an unsigned change order on the bill.
-export function needsPaperwork(j) {
-  return isBlocked(j) && (j.missing_paperwork || []).length === j.blockers.length;
-}
+export function needsPaperwork(j) { return !!j.needs_paperwork; }
 
 // The unsigned change orders on the bill that block send: {kind: "co", text, co_id, number} (R3-05).
 export function coBlockers(j) {
@@ -50,13 +48,15 @@ export function onlyCoBlockers(j) {
   return isBlocked(j) && cos.length > 0 && cos.length === j.blockers.length;
 }
 
-// The button that opens the paperwork page, or the change order when that is all that blocks.
-export function blockerButton(j) {
-  const n = j.blockers.length;
-  if (needsPaperwork(j)) return `Add ${n} missing document${n === 1 ? "" : "s"}`;
-  if (onlyCoBlockers(j)) return n === 1 ? `Get CO ${coBlockers(j)[0].number} signed` : `Get ${n} change orders signed`;
-  return `Clear ${n} blocker${n === 1 ? "" : "s"}`;
-}
+// The button that opens the paperwork page, or the change order when that is all that blocks:
+// its words come from the server (domain.blocker_button), the same as on Today's row.
+export function blockerButton(j) { return j.blocker_button || ""; }
+
+// Kept here rather than on the server: jobStatus (the pill's short word; the server's status_label
+// is the sentence under it), nextStep, followUpDue and jobActions. They build on the server's
+// blocked / needs_paperwork above, and followUpDue and jobActions run on the viewer's clock (a
+// follow-up before its date is "Follow up now", the waiting line counts to the date). Today's
+// queue no longer uses any of them.
 
 export function nextStep(j) {
   if (j.closed) return "Finished.";
