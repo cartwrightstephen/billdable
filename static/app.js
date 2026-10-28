@@ -1,7 +1,7 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, shortPayable, shortPayLabel, shortPayAttrs, canPullBack } from "./js/jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, payAppList, shortPayable, shortPayLabel, shortPayAttrs, canPullBack } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
@@ -749,6 +749,32 @@ function shortPayButtons(j) {
   return list.map(i => `<button class="btn small secondary" ${shortPayAttrs(j, i)}>${list.length > 1 ? i.number + ": " : ""}${shortPayLabel(i)}</button>`).join(" ");
 }
 
+// Ask for retainage from the Retainage page (R4-07): an amount box, blank for all of it once
+// the job is done; before that, the part to ask for now.
+function retainageAskHtml(j) {
+  const key = `retask-${j.id}`, done = j.work_status === "complete";
+  return `<div class="retainage-ask" data-form-key="${key}">${formErrorLine(key)}<div class="form-inline">
+    ${moneyField({ form: key, name: "amount_cents", id: `${key}-amt`, label: done ? "Amount ($), blank for all" : "Part to ask for now ($)" })}
+    <button class="btn small" data-action="retainage" data-id="${j.id}">Ask for retainage</button></div></div>`;
+}
+
+// The email subject the pay app goes out with (domain.pay_app_subject, R4-05).
+function subjectPreview(j, inv) {
+  const company = (state.company || {}).name || "";
+  return [`${inv.final ? "Final pay application" : "Pay application"} ${inv.number}`, j.name, money(inv.amount_cents), company,
+    inv.period_to ? `period to ${inv.period_to}` : ""].filter(Boolean).join(" — ");
+}
+
+// "Spoke to them…" (R4-06): what the customer said, and when to check again.
+function contactFormHtml(j) {
+  return `<div class="card form-card" data-form-key="contact"><h2>Spoke to ${j.payer.approver || j.payer.name}</h2>${formErrorLine("contact")}<div class="form-row">
+    ${field({ form: "contact", name: "text", id: "contact-text", label: "What did they say?", required: true, placeholder: "Check goes out Friday", wide: true })}
+    ${field({ form: "contact", name: "next_on", id: "contact-next", label: "Check again on (optional)", type: "date", attrs: `min="${todayIso()}"` })}
+    <button class="btn small" data-action="note-contact" data-id="${j.id}">Save</button>
+    <button class="btn small secondary" data-action="toggle-form" data-form="contact">Cancel</button></div>
+    <p class="sub">Kept on the job record. It counts as a follow-up; with a date, Today waits until then.</p></div>`;
+}
+
 // Pull back a sent pay app (R4-03): a button, then the reason and the button that does it.
 function pullBackHtml(j, i) {
   const key = `voidsent-${i.id}`;
@@ -766,6 +792,17 @@ function pullBackHtml(j, i) {
 function todayIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// The date a new pay app runs to (R4-04): today, or the last sent pay app's when that is later
+// (domain.period_to), which is also the earliest the box takes.
+function lastPeriod(j) {
+  return (j.invoices || []).filter(i => i.period_to && !["void", "draft", "awaiting_approval"].includes(i.status)).map(i => unesc(i.period_to)).sort().pop() || "";
+}
+function periodField(form, j) {
+  const last = lastPeriod(j), today = todayIso();
+  return field({ form, name: "period_to", id: `${form}-period`, label: "Period to", helpKey: "period_to", type: "date",
+    value: last > today ? last : today, attrs: last ? `min="${last}"` : "" });
 }
 
 // The box the progress form shows for its mode, by request key.
@@ -797,6 +834,7 @@ function progressFormHtml(j, openDraft) {
     <div class="filter-bar progress-modes" role="group" aria-label="Enter">${mode("period", "This draw $")}${mode("total", "Total done so far $")}${mode("percent", "% complete")}</div>
     ${formErrorLine("progress")}<div class="form-row">
       ${input}
+      ${periodField("progress", j)}
       ${field({ form: "progress", name: "notes", id: "progress-notes", label: "What was completed", wide: true })}
     </div>
     <p class="progress-preview" id="progress-preview" aria-live="polite">${progressPreviewText(j)}</p>
@@ -1100,7 +1138,8 @@ const ACTIONS = {
     const input = progressInput();
     const f = progressFigures(j, progressMode, v[input]);
     if (refuseForm("progress", f.error ? { [input]: f.error } : {})) return;
-    await post(`/api/jobs/${id}/progress`, { [f.field]: f.field === "period_cents" ? f.period : f.completed, notes: v.notes }, { formKey: "progress", close: "progress" });
+    await post(`/api/jobs/${id}/progress`, { [f.field]: f.field === "period_cents" ? f.period : f.completed, notes: v.notes, period_to: v.period_to || "" },
+      { formKey: "progress", close: "progress" });
   },
   "progress-mode": (el) => { progressMode = el.dataset.mode; render(); document.querySelector('[data-form-key="progress"] [data-money], #progress-pct')?.focus(); },
   // "All of it": the Mark done form instead, which drafts the final pay app for the rest.
@@ -1108,7 +1147,8 @@ const ACTIONS = {
   "done": async (el, id) => {
     const j = state.jobs.find(x => x.id === id);
     if (!(await askConfirm(`Mark ${unesc(j ? j.name : "the job")} done? This bills the rest of the contract on a final pay app.`, "Mark done"))) return;
-    await post(`/api/jobs/${id}/done`, { notes: formValues("done").notes || "" }, { formKey: "done", close: "done" });
+    const v = formValues("done");
+    await post(`/api/jobs/${id}/done`, { notes: v.notes || "", period_to: v.period_to || "" }, { formKey: "done", close: "done" });
   },
   "resolve": async (el, id) => {
     const box = document.getElementById(`resolve-reason-${el.dataset.item}`);
@@ -1120,10 +1160,36 @@ const ACTIONS = {
     const kind = document.getElementById(`waiver-kind-${el.dataset.inv || "job"}`)?.value;
     await post(`/api/jobs/${id}/waiver`, { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(kind ? { kind } : {}) });
   },
+  // All of the retainage, or the part typed on the Retainage page (R4-07): before the job is
+  // done only a part can be asked for.
   "retainage": async (el, id) => {
     const j = state.jobs.find(x => x.id === id);
-    if (j && !(await askConfirm(`Email a request for the ${money(j.money.retainage_open_cents)} retainage to ${sendsTo(j)}?`, "Send the request"))) return;
-    await post(`/api/jobs/${id}/retainage`);
+    const key = `retask-${id}`, form = document.querySelector(`[data-form-key="${key}"]`);
+    const open = j ? j.money.retainage_open_cents : 0;
+    let cents = null;
+    if (form) {
+      const typed = String(formValues(key).amount_cents || "").trim();
+      const a = centsFrom(typed);
+      if (!typed && j && j.work_status !== "complete") { refuseForm(key, { amount_cents: "Enter the part to ask for now. All of it waits until the job is done." }); return; }
+      if (typed && (a.error || a.cents <= 0)) { refuseForm(key, { amount_cents: "Enter the retainage to ask for in dollars, like 5,000." }); return; }
+      if (typed && a.cents > open) { refuseForm(key, { amount_cents: `Enter no more than the ${money(open)} held.` }); return; }
+      if (typed) cents = a.cents;
+    }
+    const part = cents != null && cents < open;
+    if (j && !(await askConfirm(`Email a request for ${part ? `${money(cents)} of the ${money(open)}` : `the ${money(open)}`} retainage to ${sendsTo(j)}?`, "Send the request"))) return;
+    await post(`/api/jobs/${id}/retainage`, cents != null ? { amount_cents: cents } : {}, form ? { formKey: key } : {});
+  },
+  // "Spoke to them" (R4-06): a call counts as a follow-up; with a date, Today waits until then.
+  "note-contact": async (el, id) => {
+    const v = formValues("contact");
+    if (refuseForm("contact", v.text ? {} : { text: "Enter what they said, like \"Check goes out Friday\"." })) return;
+    await post(`/api/jobs/${id}/note-contact`, { text: v.text, next_on: v.next_on || "" }, { formKey: "contact", close: "contact" });
+  },
+  "spoke": (el, id) => {
+    nav("job", id);
+    formOpen.contact = true;
+    render();
+    requestAnimationFrame(() => document.getElementById("contact-text")?.focus());
   },
   "retainage-paid": async (el, id) => {
     const v = formValues("retpay");
@@ -1259,7 +1325,7 @@ const ACTIONS = {
     const follow = j && followUpDue(j);
     // "Follow up now" on the job page goes before the customer's days between follow-ups are up (R3-04).
     const early = !!el.dataset.early && follow && follow.due > new Date();
-    if (j && !(await askConfirm(`Email a follow-up on ${unesc(follow ? follow.invoice.number : "the pay app")} to ${sendsTo(j)}?${early ? ` It's before the follow-up date, ${fmtDate(follow.due)}.` : ""}`, "Send follow-up"))) return;
+    if (j && !(await askConfirm(`Email a follow-up on ${unesc(follow ? payAppList(follow.invoices) : "the pay app")} to ${sendsTo(j)}?${early ? ` It's before the follow-up date, ${fmtDate(follow.due)}.` : ""}`, "Send follow-up"))) return;
     await post(`/api/jobs/${id}/follow-up`, early ? { early: true } : {});
   },
   "match": async (el, id) => {
@@ -1433,7 +1499,7 @@ const ACTIONS = {
     for (const k of ["approver", "ap_email"]) if (!updates[k]) delete updates[k];
     const errors = {};
     if (!updates.name) errors.name = "Enter the customer's name.";
-    for (const [k, label] of [["follow_up_days", "the days between follow-ups"], ["usual_approval_days", "the days they usually take to pay"]]) {
+    for (const [k, label] of [["follow_up_days", "the days between follow-ups"], ["usual_approval_days", "the days they usually take to pay"], ["payment_terms_days", "the payment terms in days"]]) {
       if (updates[k] && !/^\d+$/.test(updates[k])) errors[k] = `Enter ${label} as a whole number from 1 to 365.`;
     }
     if (refuseForm(key, errors)) return;
@@ -1937,7 +2003,7 @@ async function sovProgress(jobId) {
     if (raw !== before) stored[el.dataset.sovs] = raw || "0";
   });
   const notes = document.querySelector("#progress-notes")?.value || "";
-  const r = await post(`/api/jobs/${jobId}/sov-progress`, { done, stored, notes });
+  const r = await post(`/api/jobs/${jobId}/sov-progress`, { done, stored, notes, period_to: formValues("sovprogress").period_to || "" }, { formKey: "sovprogress" });
   if (r && r.ok) { formOpen.progress = false; render(); }
 }
 
@@ -2723,9 +2789,9 @@ const views = {
             ${ejf.address}
             ${ejf.contract_number}
             ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : ejf.contract_cents}
-            ${hasPayApps ? "" : ejf.retainage_pct}
+            ${ejf.retainage_pct}
           </div>
-          <p class="sub">${hasPayApps ? "The contract amount and retainage are fixed once a pay app exists; use a change order. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Who pays you and where pay apps go are in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>
+          <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Who pays you and where pay apps go are in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>
           <div class="form-inline">
             <button class="btn" data-action="save-job" data-id="${j.id}">Save changes</button>
             ${j.can_delete ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
@@ -2749,12 +2815,14 @@ const views = {
           <p class="sub">The reason is kept in this payer's playbook and shown before the next send.</p>
         </details>
       </div>` : ""}
-      ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j) : ""}
+      ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j, periodField("sovprogress", j), formErrorLine("sovprogress")) : ""}
       ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? progressFormHtml(j, openDraft) : ""}
       ${formOpen.pencilchanges ? `<div class="card form-card"><h2>Payer wants changes</h2><div class="form-inline"><input id="pencil-note" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
       ${formOpen.done ? `<div class="card form-card" data-form-key="done"><h2>Mark done</h2>${formErrorLine("done")}<div class="form-row">
         ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true })}
+        ${periodField("done", j)}
         <button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div></div>` : ""}
+      ${formOpen.contact ? contactFormHtml(j) : ""}
       ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Record a payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
         ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${owedText(i)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
         ${moneyField({ form: "match", name: "amount_cents", id: "match-amt", label: "Amount received ($)", cents: (openForPay.find(i => i.id === draftValue("match", "invoice_id", "")) || openForPay[0]).remaining_cents })}
@@ -2800,7 +2868,7 @@ const views = {
           <div class="money-row"><span class="label">Retainage held</span><span>${money(m.retainage_held_cents)}${j.retainage_pct ? " · " + j.retainage_pct + "%" : ""}</span></div>
           <div class="money-row"><span class="label">Retainage released</span><span>${money(m.retainage_released_cents)}</span></div>
           <div class="money-row"><span class="label">Retainage open</span><span>${money(m.retainage_open_cents)}</span></div>
-          ${retNote ? `<p class="sub retainage-note">${closeoutMissing && j.work_status === "complete" ? `<a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout">${retNote}</a>` : retNote}</p>` : ""}
+          ${retNote ? `<p class="sub retainage-note">${closeoutMissing && j.work_status === "complete" ? `<a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout">${retNote}</a>` : `${retNote} <button class="linkish" data-action="nav" data-view="retainage">Ask for part of it</button>`}</p>` : ""}
         </details>
         <div class="card">
           <h2>Pay apps</h2>
@@ -2810,7 +2878,7 @@ const views = {
             const pencil = i.pencil_status ? ` · pencil ${i.pencil_status === "sent" ? "with payer" : words(i.pencil_status)}${i.pencil_note ? ": " + i.pencil_note : ""}` : "";
             return `<div class="list-item row-link">
               <div><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}"><strong>${i.number}</strong></a> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
-              <div class="sub row-sub">${i.status === "void" ? (i.voided_reason ? "Pulled back: " + i.voided_reason : "Voided") : missing ? `${missing} packet item${missing === 1 ? "" : "s"} missing` : "Packet complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by ? " · approved by " + i.approved_by : ""}${i.short_pay_cents ? " · short pay " + money(i.short_pay_cents) : ""}${pencil}</div></div>
+              <div class="sub row-sub">${i.status === "void" ? (i.voided_reason ? "Pulled back: " + i.voided_reason : "Voided") : missing ? `${missing} packet item${missing === 1 ? "" : "s"} missing` : "Packet complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by && i.sent_at ? " · sent by " + i.approved_by : ""}${i.due_on && ["sent", "approved", "partial"].includes(i.status) ? " · due " + fmtDate(i.due_on) : ""}${i.short_pay_cents ? " · short pay " + money(i.short_pay_cents) : ""}${pencil}</div></div>
             </div>`;
           }).join("") : `<p class="sub">No pay apps yet. ${j.work_status === "complete" ? "Draft one from the unbilled work." : "Record progress or mark the job done to draft one."}</p>`}
           ${closeout.length ? `<div class="list-item row-link"><div><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout"><strong>Closeout packet</strong></a> <span class="sub">gates the retainage release · ${closeoutMissing ? closeoutMissing + " missing" : "complete"}</span></div></div>` : ""}
@@ -2988,6 +3056,9 @@ const views = {
     // The PDF's header prints the company's address (R2-05): say so before the first one goes out.
     const noAddress = !String((state.company || {}).address || "").trim();
     const locked = emailUnconfirmed();
+    // The customer's payment terms set the due date from the day it goes out (R4-04).
+    const terms = Number(unesc(String(j.payer.payment_terms_days || ""))) || 0;
+    const dueIso = terms ? new Date(Date.now() + terms * 86400000).toISOString().slice(0, 10) : "";
     return `
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
@@ -3003,6 +3074,10 @@ const views = {
         </div>` : ""}
         <div class="money-row"><span class="label">Copy</span><span>${copies || "Nobody"}</span></div>
         <div class="money-row"><span class="label">Amount</span><span>${money(inv.amount_cents)}</span></div>
+        <div class="money-row"><span class="label">Period to</span><span>${inv.period_to ? fmtDate(inv.period_to) : "—"}</span></div>
+        ${terms ? `<div class="money-row"><span class="label">Payment due</span><span>${fmtDate(dueIso)}, ${terms} days after it goes out</span></div>` : ""}
+        <div class="money-row"><span class="label">Subject</span><span>${subjectPreview(j, inv)}</span></div>
+        ${inv.final ? `<p class="sub final-note">The final pay app: the PDF is marked FINAL APPLICATION.</p>` : ""}
         <div class="money-row"><span class="label">Attached</span><span>Pay app PDF${inv.sov_sheet && inv.sov_sheet.length ? " with continuation sheet" : ""}, packet checklist, ${pkt.filter(p => p.present).length} packet item${pkt.filter(p => p.present).length === 1 ? "" : "s"}</span></div>
         ${noAddress ? `<div class="notice no-address">Your company address is blank on this PDF.
           <button class="btn small secondary" data-action="onb-go" data-view="account" data-focus="#co-address">Company details</button></div>` : ""}
@@ -3034,8 +3109,10 @@ const views = {
       </div>
       <div class="card">
         <h2>Approval</h2>
-        <div class="money-row"><span class="label">Approved by</span><span>${inv.approved_by || "—"}</span></div>
+        <div class="money-row"><span class="label">Sent by</span><span>${inv.approved_by || "—"}</span></div>
         <div class="money-row"><span class="label">Sent</span><span>${fmtDateTime(inv.sent_at)}</span></div>
+        ${inv.period_to ? `<div class="money-row"><span class="label">Period to</span><span>${fmtDate(inv.period_to)}</span></div>` : ""}
+        ${inv.due_on ? `<div class="money-row"><span class="label">Payment due</span><span>${fmtDate(inv.due_on)}</span></div>` : ""}
         <div class="money-row"><span class="label">Received by the payer</span><span>${inv.received_at ? `${inv.received_by || "the payer"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
         ${inv.payer_token ? `<p class="sub">The payer's page for this pay app (it went in the email): <a href="/p/${me.company_id}.${inv.payer_token}" target="_blank" rel="noopener">open it</a>. They can see the pay app and its packet and mark it received.</p>` : ""}
         ${canPullBack(j, inv) ? pullBackHtml(j, inv) : ""}
@@ -3302,7 +3379,7 @@ const views = {
       <p class="sub">What is unpaid, who to contact, and a one-click follow-up.</p>
       ${open.length ? `<div class="table-wrap">
         <table>
-          <tr><th>Job</th><th>Unpaid</th><th>Days since sent</th><th>Contact</th><th>Follow up</th></tr>
+          <tr><th>Job</th><th>Unpaid</th><th>Days since sent</th><th>Due</th><th>Contact</th><th>Follow up</th></tr>
           ${open.map(j => {
             const sent = j.invoices.find(i => ["sent", "partial"].includes(i.status) && i.sent_at);
             const days = sent ? Math.floor((today - toDate(sent.sent_at)) / 86400000) : "—";
@@ -3310,10 +3387,14 @@ const views = {
             // Inside the customer's days between follow-ups the button waits, and says until when (R3-03).
             const follow = followUpDue(j);
             const early = follow && today < follow.due;
+            // From the customer's payment terms, on the oldest unpaid pay app that has them (R4-04).
+            const dueInv = j.invoices.find(i => ["sent", "partial", "approved"].includes(i.status) && i.due_on);
+            const late = dueInv && toDate(dueInv.due_on) < new Date(today.toDateString());
             return `<tr>
               <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a><div class="sub row-sub">${statusPill(j)}</div></td>
               <td>${unpaid}</td>
               <td class="num">${days}</td>
+              <td>${dueInv ? (late ? `<span class="pill red">Overdue</span><div class="sub row-sub">due ${fmtDate(dueInv.due_on)}</div>` : fmtDate(dueInv.due_on)) : "—"}</td>
               <td>${j.payer.approver}<div class="sub row-sub">${j.payer.ap_email}${j.payer.phone ? "<br>" + j.payer.phone : ""}</div></td>
               <td class="actions-cell">
                 ${early ? `<button class="btn small" disabled>Next follow-up ${fmtDate(follow.due.toISOString())}</button>` : `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`}
@@ -3406,7 +3487,7 @@ const views = {
     const open = state.jobs.filter(j => j.money.retainage_open_cents > 0);
     return `
       <h1>Retainage</h1>
-      <p class="sub">What is holding each release, and how to unlock it.</p>
+      <p class="sub">What is holding each release, and how to unlock it. Before a job is done you can ask for part of it, for example at substantial completion.</p>
       ${open.length ? `<div class="table-wrap">
         <table>
           <tr><th>Job</th><th>Open</th><th>Holding it up</th><th>Next</th><th>Contact</th></tr>
@@ -3417,7 +3498,7 @@ const views = {
               <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
               <td class="num">${money(j.money.retainage_open_cents)}</td>
               <td>${missing.length ? missing.map(m => m.label).join(", ") : (j.work_status === "complete" ? "Closeout packet complete" : "Job still in progress")}</td>
-              <td>${j.work_status !== "complete" ? "Mark the job done first" : missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}" ${j.closeout_packet && j.closeout_packet.length ? `data-inv="closeout"` : ""}>Open closeout packet</button>` : `<button class="btn small" data-action="retainage" data-id="${j.id}">Ask for retainage</button>`}</td>
+              <td>${j.work_status === "complete" && missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}" ${j.closeout_packet && j.closeout_packet.length ? `data-inv="closeout"` : ""}>Open closeout packet</button>` : retainageAskHtml(j)}</td>
               <td>${j.payer.approver}<div class="sub row-sub"><a href="mailto:${j.payer.ap_email}">${j.payer.ap_email}</a></div></td>
             </tr>`;
           }).join("")}
@@ -3478,9 +3559,11 @@ const views = {
               ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || ""), placeholder: "7" })}
               ${f({ name: "payapp_due_day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", value: String(p.payapp_due_day || ""), placeholder: "e.g. 25" })}
               ${f({ name: "usual_approval_days", label: "Days they usually take to pay", helpKey: "usual_approval_days", inputmode: "numeric", autocomplete: "off", value: String(p.usual_approval_days || ""), placeholder: "14" })}
+              ${f({ name: "payment_terms_days", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", value: String(p.payment_terms_days || ""), placeholder: "30" })}
               ${f({ name: "packet", label: "Paperwork needed with each pay app", helpKey: "packet", multiline: true, wide: true, value: unesc(clean(p.packet)), placeholder: p.no_paperwork ? "Nothing needed" : "Lien waiver, insurance certificate" })}
               ${f({ name: "rejects_when", label: "They send pay apps back when", helpKey: "rejects_when", multiline: true, wide: true, value: unesc(clean(p.rejects_when)) })}
               ${f({ name: "copy", label: "Also email (CC)", helpKey: "copy", wide: true, autocomplete: "off", value: unesc(clean(p.copy)), placeholder: "other@example.com, pm@example.com" })}
+              ${f({ name: "escalation_email", label: "Also email from the third follow-up", helpKey: "escalation_email", type: "email", autocomplete: "off", value: unesc(clean(p.escalation_email)), placeholder: "owner@example.com" })}
             </div>
             <div class="form-inline"><button type="button" class="btn small" data-action="save-playbook" data-id="${p.id}">Save customer</button></div>
           </div>

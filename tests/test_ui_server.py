@@ -174,6 +174,15 @@ class UiServerTests(unittest.TestCase):
         self.assertIn("change order", " ".join(body["blockers"]))
         res, state = self.post(f"/api/jobs/{job['id']}/edit", {"name": "Oak kitchen, phase 1"}, cookie)
         self.assertEqual(res.status, 200)
+        # Retainage can change after the first pay app (R4-07): the open draft is drafted again at it.
+        res, state = self.post(f"/api/jobs/{job['id']}/edit", {"retainage_pct": 10}, cookie)
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual(state["jobs"][-1]["invoices"][-1]["retainage_cents"], 40_000)
+        res, body = self.post(f"/api/jobs/{job['id']}/note-contact", {"text": "Pays Friday"}, cookie)
+        self.assertEqual((res.status, body["error"]), (409, "No sent pay app is waiting for payment."))
+        res, body = self.post(f"/api/jobs/{job['id']}/retainage", {"amount_cents": "lots"}, cookie)
+        self.assertEqual(res.status, 409)
+        self.assertIn("amount_cents", body["fields"])
 
     def test_delete_job_only_without_pay_apps(self):
         cookie, job = self.company("delete@example.com")

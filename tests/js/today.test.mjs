@@ -59,3 +59,15 @@ test("'Nothing is waiting on you.' only once a pay app has gone out", () => {
   assert.doesNotMatch(queueHtml([], { anySent: false }), /Nothing is waiting/);
   assert.match(queueHtml([], { anySent: false }), /Work shows up here/);
 });
+
+test("a follow-up row names every unpaid pay app and offers Spoke to them; a noted call hides it", () => {  // R4-06
+  const invoices = [{ id: "a", number: "PA-1", status: "sent", sent_at: "2026-10-01T12:00:00+00:00" },
+    { id: "b", number: "PA-2", status: "partial", sent_at: "2026-10-10T12:00:00+00:00" }];
+  const [row] = todayQueue(state([job({ invoices })]), NOW);
+  assert.match(row.pill, /Follow up/);
+  assert.match(row.text, /^PA-1 and PA-2 are unpaid; the oldest was sent/);
+  assert.match(row.button, /data-action="spoke" data-id="j1">Spoke to them…</);
+  const noted = invoices.map(i => ({ ...i, last_follow_up_at: "2026-10-27T12:00:00+00:00" }));
+  assert.deepEqual(todayQueue(state([job({ invoices: noted, contact_noted_at: "2026-10-27T12:00:00+00:00", expected_payment_on: "2026-10-30" })]), NOW), []);
+  assert.equal(todayQueue(state([job({ invoices: noted, contact_noted_at: "2026-10-27T12:00:00+00:00", expected_payment_on: "2026-10-30" })]), new Date("2026-10-30T09:00:00")).length, 1);
+});

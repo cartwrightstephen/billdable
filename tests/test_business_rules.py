@@ -251,3 +251,70 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FollowUpEscalationTests(unittest.TestCase):
+    """R4-06: one follow-up names every unpaid pay app, counts per pay app, gets firmer, copies
+    the escalation email from the third; "Spoke to them" holds the next one until its date."""
+
+    def setUp(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_money import new_state, new_job, send_open
+        self.state = new_state()
+        self.job = new_job(self.state, contract=1_000_000)
+        domain.record_progress(self.state, self.job["id"], 300_000)
+        self.first = send_open(self.state, self.job)
+        domain.record_progress(self.state, self.job["id"], 500_000)
+        self.second = send_open(self.state, self.job)
+        long_ago = (datetime.now(UTC) - timedelta(days=40)).replace(microsecond=0).isoformat()
+        self.first["sent_at"] = long_ago
+        self.second["sent_at"] = (datetime.now(UTC) - timedelta(days=10)).replace(microsecond=0).isoformat()
+
+    def follow_up(self):
+        for inv in (self.first, self.second):
+            if inv.get("last_follow_up_at"):
+                inv["last_follow_up_at"] = (datetime.now(UTC) - timedelta(days=8)).replace(microsecond=0).isoformat()
+        domain.record_follow_up(self.state, self.job["id"], "Owner")
+        return self.state["email_log"][-1]
+
+    def test_two_open_pay_apps_one_email_naming_both(self):
+        mail = self.follow_up()
+        self.assertEqual(sum(1 for e in self.state["email_log"] if e["kind"] == "follow_up"), 1)
+        self.assertIn(f"{self.first['number']}, {self.second['number']}", mail["subject"])
+        self.assertTrue(mail["subject"].startswith("Following up:"))
+        self.assertIn(f"{self.first['number']} $3,000.00 sent", mail["body"])
+        self.assertIn("total $5,000.00", mail["body"])
+        self.assertIn("past the 14 days you usually take to pay", mail["body"], "the oldest is 40 days out")
+        self.assertEqual((self.first["follow_up_count"], self.second["follow_up_count"]), (1, 1))
+        self.assertEqual(self.first["last_follow_up_at"], self.second["last_follow_up_at"])
+
+    def test_counts_and_escalates_from_the_third(self):
+        domain.update_payer(self.state, self.job["payer_id"], {"escalation_email": "owner@jones.example"})
+        with self.assertRaises(domain.GateError):
+            domain.update_payer(self.state, self.job["payer_id"], {"escalation_email": "not an email"})
+        self.assertEqual(self.follow_up()["cc"], [])
+        second = self.follow_up()
+        self.assertTrue(second["subject"].startswith("Second follow-up:"))
+        self.assertEqual(second["cc"], [])
+        third = self.follow_up()
+        self.assertTrue(third["subject"].startswith("Third follow-up:"))
+        self.assertEqual(third["cc"], ["owner@jones.example"])
+
+    def test_note_contact_holds_the_follow_up_until_the_date(self):
+        payer = domain._payer(self.state, self.job["payer_id"])
+        self.assertLess(domain.follow_up_due(self.job, payer), datetime.now(UTC), "due before the call")
+        with self.assertRaises(domain.GateError) as raised:
+            domain.note_contact(self.state, self.job["id"], "", "")
+        self.assertIn("text", raised.exception.fields)
+        next_on = (datetime.now(UTC) + timedelta(days=3)).date()
+        domain.note_contact(self.state, self.job["id"], "Check goes out Friday", next_on.isoformat(), "Owner")
+        self.assertEqual(domain.follow_up_due(self.job, payer).date(), next_on)
+        self.assertEqual(self.job["expected_payment_on"], next_on.isoformat())
+        self.assertEqual(self.job["records"][-1]["label"], "Spoke to Sam Jones")
+        self.assertIn("Spoke to Sam Jones: Check goes out Friday", self.state["audit"][-1]["detail"])
+        with self.assertRaises(domain.GateError) as raised:
+            domain.record_follow_up(self.state, self.job["id"], "Owner")
+        self.assertIn(f"not due until {next_on.isoformat()}", str(raised.exception))
+        # A follow-up sent anyway (Follow up now) goes back to the usual days.
+        domain.record_follow_up(self.state, self.job["id"], "Owner", early=True)
+        self.assertGreater(domain.follow_up_due(self.job, payer), datetime.now(UTC) + timedelta(days=6))

@@ -1,7 +1,8 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, shortPayable, shortPayLabel, canPullBack } from "../../static/js/jobs.js";
+import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
+import { invoicePill } from "../../static/js/format.js";
 
 const job = (over = {}) => ({
   id: "j1", closed: false, work_status: "in_progress", blockers: [], close_blockers: [], invoices: [],
@@ -225,4 +226,31 @@ test("only the newest sent pay app with nothing paid can be pulled back", () => 
   assert.equal(canPullBack(job({ invoices: [first], payments: [{ invoice_id: "a" }] }), first), false);
   assert.equal(canPullBack(job({ invoices: [first], closed: true }), first), false);
   assert.equal(canPullBack(job({ invoices: [{ id: "d", status: "partial" }] }), { id: "d", status: "partial" }), false);
+});
+
+// R4-06: one follow-up for every unpaid pay app; a call noted with a date holds it until then.
+test("follow-ups name every unpaid pay app, and a noted call waits for its date", () => {
+  const a = { id: "a", number: "PA-1", status: "approved", sent_at: "2026-09-30T12:00:00+00:00" };
+  const b = { id: "b", number: "PA-2", status: "sent", sent_at: "2026-10-20T12:00:00+00:00" };
+  const j = job({ payer: { approver: "Sam Jones", follow_up_days: 7 }, invoices: [a, b] });
+  const f = followUpDue(j);
+  assert.equal(f.invoice, a, "the oldest, approved counts too");
+  assert.equal(payAppList(f.invoices), "PA-1 and PA-2");
+  assert.equal(payAppList([a, b, { number: "PA-3" }]), "PA-1, PA-2 and PA-3");
+  assert.ok(jobActions(j, { now: new Date("2026-10-28T12:00:00Z") }).more.some(x => x.key === "contact" && x.label === "Spoke to them…"));
+  const called = job({ ...j, contact_noted_at: "2026-10-28T12:00:00+00:00", expected_payment_on: "2026-11-04",
+    invoices: [{ ...a, last_follow_up_at: "2026-10-28T12:00:00+00:00" }, { ...b, last_follow_up_at: "2026-10-28T12:00:00+00:00" }] });
+  assert.equal(followUpDue(called).due.getDate(), 4);
+  assert.equal(followUpDue(called).noted, true);
+  assert.match(waitingText(called, new Date("2026-10-29T12:00:00")), /^Waiting on Sam Jones\. Spoke to them .+; check again Nov 4, 2026\.$/);
+  // A follow-up emailed since (later than the call) goes back to the usual days.
+  const later = job({ ...called, invoices: [{ ...a, last_follow_up_at: "2026-10-29T12:00:00+00:00" }] });
+  assert.equal(followUpDue(later).noted, undefined);
+});
+
+// R4-04: the final pay app's pill, and its waiver preselected as final.
+test("a final pay app says Final and preselects a final waiver", () => {
+  assert.match(invoicePill({ status: "sent", final: true }), /Final/);
+  assert.doesNotMatch(invoicePill({ status: "void", final: true }), /Final/);
+  assert.match(waiverSendForm(job(), { id: "inv-3", final: true }), /<option value="unconditional_final" selected>/);
 });

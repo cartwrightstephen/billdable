@@ -64,6 +64,8 @@ def events(state: dict[str, Any]) -> list[dict[str, Any]]:
                 add(last + timedelta(days=follow), f"Follow up on {inv['number']} ({j['name']})", f"{inv['id']}-follow",
                     f"Contact {payer.get('approver', '')} {payer.get('ap_email', '')}")
                 add(sent + timedelta(days=approve), f"{inv['number']} expected approval ({j['name']})", f"{inv['id']}-approve")
+            if inv.get("status") in domain.OPEN_FOR_PAYMENT and inv.get("due_on"):
+                add(inv["due_on"], f"{inv['number']} payment due ({j['name']})", f"{inv['id']}-due")   # payment terms (R4-04)
             if inv.get("waiver_sent_at"):
                 add(inv["waiver_sent_at"], f"Waiver sent for {inv['number']} ({j['name']})", f"{inv['id']}-waiver")
         for p in j.get("payments", []):

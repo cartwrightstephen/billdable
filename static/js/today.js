@@ -5,7 +5,7 @@
 // nothing. The page's state comes in as an argument, so node can test it (tests/js/today.test.mjs).
 
 import { money, toDate, fmtDate } from "./format.js";
-import { SOURCE_LABELS, isBlocked, blockerButton, statusPill, followUpDue } from "./jobs.js";
+import { SOURCE_LABELS, isBlocked, blockerButton, statusPill, followUpDue, payAppList } from "./jobs.js";
 
 const DRAFTS = ["draft", "awaiting_approval"];
 const WENT_OUT = ["sent", "approved", "partial", "paid"];
@@ -59,13 +59,15 @@ export function todayQueue(state, now = new Date()) {
       `<button class="btn small" data-action="open-job" data-id="${j.id}" data-focus=".next-card">Bill progress</button>`, true);
     // A cutoff makes the job's row more urgent, and says so.
     if (dueSoon && out.length > before) { const row = out[out.length - 1]; row.text += row.text.includes("Pay app due to") ? "" : dueText; row.rank = Math.min(row.rank, 1.5); }
-    // A pay app already sent and unpaid past the payer's follow-up window is its own row.
+    // A pay app already sent and unpaid past the payer's follow-up window is its own row. One
+    // follow-up names every unpaid pay app; after a call ("Spoke to them…") the row waits for the
+    // date noted (R4-06).
     const follow = followUpDue(j);
     if (follow) {
-      const sent = follow.invoice;
+      const sent = follow.invoice, many = follow.invoices.length > 1;
       if (now.getTime() >= follow.due.getTime())
-        add(4, j, tag("Follow up", "copper"), `${sent.number} was sent ${fmtDate(sent.sent_at)}${sent.last_follow_up_at ? `, last follow-up ${fmtDate(sent.last_follow_up_at)}` : ""}. Emails ${j.payer.ap_email || "the customer"}.`,
-          `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`);
+        add(4, j, tag("Follow up", "copper"), `${many ? `${payAppList(follow.invoices)} are unpaid; the oldest` : sent.number} was sent ${fmtDate(sent.sent_at)}${sent.last_follow_up_at ? `, last follow-up ${fmtDate(sent.last_follow_up_at)}` : ""}. Emails ${j.payer.ap_email || "the customer"}.`,
+          `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button><button class="btn small secondary" data-action="spoke" data-id="${j.id}">Spoke to them…</button>`);
     }
   });
   inbox.filter(i => !i.says_done_job_id && i.suggested_job_id).forEach(i => {

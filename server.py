@@ -2303,9 +2303,16 @@ def _progress(h, st, j, i, c):
     """Progress in dollars: the total done so far, or this draw (period_cents), which the
     domain adds to what is already billed (R3-01)."""
     body = c.body
+    runs_to = _text(body, "period_to")   # the date the pay app runs to (R4-04); blank is today
     if body.get("period_cents") not in (None, ""):
-        return domain.record_progress(st, j, 0, _text(body, "notes"), c.actor, period_cents=_number(body, "period_cents", "this draw"))
-    return domain.record_progress(st, j, _number(body, "completed_cents", "the total done so far", 0), _text(body, "notes"), c.actor)
+        return domain.record_progress(st, j, 0, _text(body, "notes"), c.actor, period_cents=_number(body, "period_cents", "this draw"), period_end=runs_to)
+    return domain.record_progress(st, j, _number(body, "completed_cents", "the total done so far", 0), _text(body, "notes"), c.actor, period_end=runs_to)
+
+
+def _retainage(h, st, j, i, c):
+    """Ask for retainage: all of it, or amount_cents of it (R4-07)."""
+    amount = c.body.get("amount_cents")
+    return domain.chase_retainage(st, j, c.actor, amount_cents=None if amount in (None, "") else _number(c.body, "amount_cents", "the retainage to ask for"))
 
 
 def _received_on(body: dict) -> str | None:
@@ -2339,10 +2346,11 @@ OWNER_ACTIONS = {"reopen"}
 
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
 JOB_ACTIONS = {
-    "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"))),
+    "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"), period_end=_text(c.body, "period_to"))),
     "progress": (False, _progress),
     "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), c.body.get("update_contract") is True, c.actor)),
-    "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"))),
+    "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
+                                                                                        period_end=_text(c.body, "period_to"))),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, _sends("the pay app", lambda h, st, j, i, c: domain.approve_and_send(st, j, c.actor, **_co_args(c)))),
@@ -2350,7 +2358,8 @@ JOB_ACTIONS = {
     "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor,
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None))),
-    "retainage": (False, _sends("the request", lambda h, st, j, i, c: domain.chase_retainage(st, j, c.actor))),
+    "retainage": (False, _sends("the request", _retainage)),
+    "note-contact": (False, lambda h, st, j, i, c: domain.note_contact(st, j, _text(c.body, "text"), _text(c.body, "next_on"), c.actor)),
     "retainage-paid": (False, lambda h, st, j, i, c: domain.record_retainage_payment(st, j, _number(c.body, "amount_cents", "the retainage received"), _text(c.body, "reference"), c.actor)),
     "add-co": (False, lambda h, st, j, i, c: domain.add_change_order(st, j, _text(c.body, "title"), _number(c.body, "amount_cents", "the change order amount", 0), c.actor, description=_text(c.body, "description"),
                                                                     schedule_days=_number(c.body, "schedule_days", "the schedule change in days", 0))),

@@ -116,7 +116,8 @@ export const INVOICE_WORDS = { draft: "Draft", awaiting_approval: "Ready to send
 export function invoicePill(inv) {
   const st = unesc(inv.status || "");
   const colour = st === "paid" ? "green" : ["sent", "approved", "partial"].includes(st) ? "amber" : st === "void" ? "" : "copper";
-  return `<span class="pill ${colour}">${INVOICE_WORDS[st] || words(st)}</span>`;
+  // The last pay app on a finished job (R4-04) says so beside its status.
+  return `<span class="pill ${colour}">${INVOICE_WORDS[st] || words(st)}</span>${inv.final && st !== "void" ? ` <span class="pill">Final</span>` : ""}`;
 }
 
 export function companyLine(c) {

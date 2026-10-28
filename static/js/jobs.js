@@ -90,7 +90,7 @@ export function waiverKindLabel(code) { return WAIVER_KINDS[unesc(code)] || code
 // disabled: sending is off (email not confirmed, or no email for the customer); the page says why.
 export function waiverSendForm(j, inv, disabled = false) {
   const key = inv ? inv.id : "job";
-  const final = j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0;
+  const final = (inv && inv.final) || (j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0);
   const pick = final ? "unconditional_final" : "unconditional_progress";
   return `<div class="form-inline">
     <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}>${v}</option>`).join("")}</select>
@@ -106,6 +106,7 @@ export function defaultJobId(openJobs, lastId = "") {
 }
 
 const DRAFTS = ["draft", "awaiting_approval"];
+const OPEN_FOR_PAYMENT = ["sent", "approved", "partial"];   // domain.OPEN_FOR_PAYMENT
 
 // Work already billed, before retainage, on the pay apps that count, leaving out an open draft
 // (a progress entry replaces it). The server's _billed_gross, which a draw is added to.
@@ -144,15 +145,27 @@ export function progressFigures(j, mode, text) {
   return out;
 }
 
-// When the next follow-up on the oldest unpaid pay app may go (domain.record_follow_up): the
-// customer's days between follow-ups after the last one, or after it was sent. Null with nothing to chase.
+// When the next follow-up may go (domain.follow_up_due): the customer's days between follow-ups
+// after the last one on the oldest unpaid pay app, or after it was sent; or the date noted after a
+// call ("Spoke to them", R4-06) until a follow-up goes out. invoices: every unpaid pay app, which
+// one follow-up names. Null with nothing to chase.
 export function followUpDue(j) {
-  const sent = (j.invoices || []).find(i => ["sent", "partial"].includes(i.status));
+  const unpaid = (j.invoices || []).filter(i => OPEN_FOR_PAYMENT.includes(i.status));
+  const sent = unpaid[0];
   if (!sent) return null;
-  const last = toDate(sent.last_follow_up_at || sent.sent_at);
+  const lastIso = unesc(sent.last_follow_up_at || sent.sent_at || "");
+  const last = toDate(lastIso);
   if (!last) return null;
+  const noted = j.expected_payment_on && unesc(j.contact_noted_at || "") >= lastIso ? toDate(j.expected_payment_on) : null;
+  if (noted) return { invoice: sent, invoices: unpaid, due: noted, noted: true };
   const days = Number(unesc(String((j.payer || {}).follow_up_days || ""))) || 7;
-  return { invoice: sent, due: new Date(last.getTime() + days * 86400000) };
+  return { invoice: sent, invoices: unpaid, due: new Date(last.getTime() + days * 86400000) };
+}
+
+// "PA-01" or "PA-01 and PA-02" or "PA-01, PA-02 and PA-03": the pay apps one follow-up names.
+export function payAppList(invoices) {
+  const n = invoices.map(i => i.number);
+  return n.length > 1 ? `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}` : (n[0] || "the pay app");
 }
 
 // Required closeout items not in yet (the closeout packet gates asking for retainage).
@@ -175,13 +188,14 @@ export function waitingText(j, now = new Date()) {
   if (!f) return "";
   const p = j.payer || {};
   const when = f.due <= now ? `a follow-up has been due since ${fmtDate(f.due)}` : `follow-up due ${fmtDate(f.due)}`;
+  if (f.noted && f.due > now) return `Waiting on ${p.approver || p.name || "the customer"}. Spoke to them ${fmtDate(j.contact_noted_at)}; check again ${fmtDate(f.due)}.`;
   return `Waiting on ${p.approver || p.name || "the customer"}. Sent ${fmtDate(f.invoice.sent_at)}; ${when}.`;
 }
 
 // The job page's buttons (R3-04): one main button (or none while the customer has the pay app and
 // no follow-up is due), then the rest in the order they matter. Each has a group for the "More"
 // list: bill, paid (get paid) or close (close out). demo adds the QuickBooks sample import.
-const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "pencil", "pencil-ok", "pencil-no", "packet",
+const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "contact", "pencil", "pencil-ok", "pencil-no", "packet",
   "draft", "progress", "done", "retainage", "retpay", "co", "close", "undo", "void", "qbo"];
 
 export function jobActions(j, { now = new Date(), demo = false } = {}) {
@@ -206,6 +220,8 @@ export function jobActions(j, { now = new Date(), demo = false } = {}) {
   if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "Money came in. Paid in full opens the waiver step.", "paid");
   if (follow) add("follow", followDue ? "Send follow-up" : "Follow up now", `data-action="follow-up" data-id="${j.id}"${followDue ? "" : ` data-early="1"`}`,
     followDue ? "Email the customer a reminder." : `Before the follow-up date, ${fmtDate(follow.due)}.`, "paid");
+  // A phone call counts as a follow-up (R4-06): what they said, and when to check again.
+  if (follow) add("contact", "Spoke to them…", `data-action="toggle-form" data-form="contact"`, "Note what they said and when to check again.", "paid");
   if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the work done and not billed.", "bill");
   if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "Bill the work done so far without marking the job done.", "bill");
   if (j.work_status !== "complete") add("done", "Mark done", `data-action="toggle-form" data-form="done"`, "Record that the work is finished and draft the final pay app.", "close");

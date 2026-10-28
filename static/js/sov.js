@@ -25,7 +25,8 @@ export function fmtQty(milli) {
 
 export function blankSovLine() { return { id: "", item: "", description: "", quantity: "", unit: "", rate: "" }; }
 
-export function sovProgressHtml(j) {
+// periodHtml: the "Period to" box (R4-04); errorLine: the form's error line.
+export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
   const v = j.sov_view;
   const rows = v.lines.map(l => `
     <tr>
@@ -35,12 +36,13 @@ export function sovProgressHtml(j) {
       <td><input class="sov-in sov-num" data-sovs="${l.id}" value="${l.stored_cents ? (l.stored_cents / 100).toFixed(2) : ""}" placeholder="0.00" inputmode="decimal" aria-label="${l.description}: materials stored, dollars" ${l.done_milli >= l.qty_milli ? "disabled" : ""}></td>
       <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
     </tr>`).join("");
-  return `<div class="card sov-progress">
+  return `<div class="card sov-progress" data-form-key="sovprogress">${errorLine}
     <p class="sub">Enter how much of each line is done to date (not this period), and the dollars of materials delivered and stored on site but not yet installed. Duracash bills the difference since the last pay app, plus overhead and profit, less retainage. Lower the stored amount as materials are installed.</p>
     <div class="table-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th>Stored materials $</th><th></th></tr>
       ${rows}
     </table></div>
+    ${periodHtml ? `<div class="form-row">${periodHtml}</div>` : ""}
     <div class="form-inline"><input id="progress-notes" placeholder="What was completed" class="grow"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>
   </div>`;
 }
@@ -58,7 +60,7 @@ export function sheetColumns(e, retPct) {
 export function continuationHtml(inv, job) {
   const rows = (inv.sov_sheet && inv.sov_sheet.length ? inv.sov_sheet : inv.sov_lines) || [];
   if (!rows.length) return "";
-  const retPct = (job && job.retainage_pct) || 0;
+  const retPct = (inv.retainage_pct ?? (job && job.retainage_pct)) || 0;   // as held on this pay app (R4-07)
   return `<div class="card">
     <h2>Continuation sheet</h2>
     <div class="table-wrap"><table class="sov-table">

@@ -35,6 +35,63 @@ def money(cents: int) -> str:
     return f"{sign}${cents // 100:,}.{cents % 100:02d}"
 
 
+def sign_off(state: dict[str, Any], actor: str) -> str:
+    """How every email to a customer ends (R4-05): who sent it, then the company and its phone,
+    so a GC's accounts-payable desk knows who to call. (It used to read "Approved by {actor}.")"""
+    company = state.get("company") or {}
+    tail = " · ".join(x for x in (str(company.get("name") or "").strip(), str(company.get("phone") or "").strip()) if x)
+    return f"{actor}\n{tail}" if tail else str(actor)
+
+
+def pay_app_subject(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:
+    """"Pay application PA-x — job — amount — company" (R4-05), "Final pay application" for the
+    last one, and the period it covers at the end (R4-04): what an AP desk files it by."""
+    company = str((state.get("company") or {}).get("name") or "").strip()
+    parts = [f"{'Final pay application' if invoice.get('final') else 'Pay application'} {invoice['number']}",
+             job["name"], money(invoice["amount_cents"])]
+    if company:
+        parts.append(company)
+    if invoice.get("period_to"):
+        parts.append(f"period to {invoice['period_to']}")
+    return " — ".join(parts)
+
+
+def _day(value: Any, field: str, message: str) -> date | None:
+    """A YYYY-MM-DD date from a form; blank is None, anything else is refused under `field`."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        _refuse(message, {field: message})
+    return None
+
+
+def period_to(job: dict[str, Any], value: Any = "") -> str:
+    """The last day of work a pay app covers (R4-04). Blank is today; it can't be before the
+    previous pay app's, nor more than a month ahead. A draft about to be replaced doesn't count."""
+    earlier = [inv["period_to"] for inv in job.get("invoices", [])
+               if inv.get("period_to") and inv["status"] not in DRAFT_STATUSES and inv["status"] != "void"]
+    last = max(earlier) if earlier else ""
+    today = datetime.now(timezone.utc).date()
+    day = _day(value, "period_to", "Enter the date this pay app runs to, like 2026-10-31.")
+    if day is None:
+        return max(today.isoformat(), last)
+    if last and day.isoformat() < last:
+        _refuse("", {"period_to": f"Enter {last} or later: the last pay app ran to {last}."})
+    if day > today + timedelta(days=31):
+        _refuse("", {"period_to": "Enter a date no more than a month from today."})
+    return day.isoformat()
+
+
+def is_final(job: dict[str, Any]) -> bool:
+    """The job is marked done and nothing is left to bill: the pay app that gets it there is the
+    final one (R4-04). Retainage still held is asked for separately."""
+    return job.get("work_status") == "complete" and job_money(job)["unbilled_completed_cents"] == 0 \
+        and not any(co["status"] == "pending" and not co.get("included_in_billing") for co in job["change_orders"])
+
+
 class GateError(Exception):
     """A business refusal (the server's 409). `blockers` lists what stands in the way, for the
     card under the button that was tapped; `fields` maps a request field (its JSON key, such as
@@ -271,12 +328,14 @@ def record_progress(
     notes: str = "",
     actor: str = "owner",
     period_cents: int | None = None,
+    period_end: Any = "",
 ) -> dict[str, Any]:
     """Set completed-to-date and draft a progress pay app. Does not mark the job done.
     A correction while the draft is still only here replaces it at the new amount, keeping its
     number and its paperwork; a draft the customer is reviewing has to be answered or voided first.
     period_cents is "this draw" instead (R3-01): the work on this pay app, before retainage, on top
-    of what is already billed; completed_value_cents is then ignored and refusals name period_cents."""
+    of what is already billed; completed_value_cents is then ignored and refusals name period_cents.
+    period_end is the date the pay app runs to (R4-04; blank is today)."""
     job = _open_job(state, job_id)
     if job.get("work_status") == "complete":
         raise GateError("Job is already marked done. Draft the remaining pay app instead.")
@@ -289,6 +348,7 @@ def record_progress(
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
     billed = _billed_gross(job, skip=open_draft)
+    runs_to = period_to(job, period_end)
     if period_cents is not None:
         if period_cents <= 0:
             _refuse("", {"period_cents": "Enter this draw, more than $0."})
@@ -320,8 +380,8 @@ def record_progress(
         open_draft["voided_at"] = utcnow()
         open_draft["replaced"] = True
         audit(state, job_id, "draft_replaced", f"{open_draft['number']} ({money(open_draft['amount_cents'])}) replaced at the new total done so far.", "duracash")
-        return draft_invoice(state, job_id, actor="duracash", replaces=open_draft)
-    return draft_invoice(state, job_id, actor="duracash")
+        return draft_invoice(state, job_id, actor="duracash", replaces=open_draft, period_end=runs_to)
+    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to)
 
 
 def _billed_gross(job: dict[str, Any], skip: dict[str, Any] | None = None) -> int:
@@ -343,7 +403,7 @@ def _next_number(job: dict[str, Any]) -> str:
 
 
 def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: str = "", evidence: list[str] | None = None,
-              note_record: bool = True) -> dict[str, Any]:
+              note_record: bool = True, period_end: Any = "") -> dict[str, Any]:
     job = _open_job(state, job_id)
     if job.get("work_status") == "complete":
         raise GateError("Job is already marked done.")
@@ -352,6 +412,7 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         raise GateError(
             f"{open_draft['number']} is still a draft. Send it first, then mark the job done so the final pay app covers the rest."
         )
+    runs_to = period_to(job, period_end)
     job["work_status"] = "complete"
     job["completed_at"] = job.get("completed_at") or utcnow()
     job["done_at_invoice"] = len(job["invoices"])   # pay apps from here on are the final one(s)
@@ -372,11 +433,12 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         line["done_milli"] = line["qty_milli"]
     audit(state, job_id, "job_done", f"{actor} marked {job['name']} done. Notes: {notes or 'none'}.", actor)
     _ensure_closeout_packet(state, job)
-    return draft_invoice(state, job_id, actor="duracash")
+    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to)
 
 
 def draft_invoice(
     state: dict[str, Any], job_id: str, actor: str = "duracash", strict: bool = False, replaces: dict[str, Any] | None = None,
+    period_end: str = "",
 ) -> dict[str, Any]:
     """Draft a pay app for unbilled completed work, withholding retainage.
 
@@ -384,6 +446,7 @@ def draft_invoice(
     instead of being logged silently, so the user is told why nothing happened.
     replaces is a draft just voided by a progress correction: the new one keeps its number
     (unless the customer saw it) and its paperwork.
+    period_end is the date it runs to, already checked (period_to()); blank is today.
     """
     job = _open_job(state, job_id)
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
@@ -452,10 +515,14 @@ def draft_invoice(
         "sov_lines": period["lines"] if period else [],
         "sov_sheet": period["sheet"] if period else [],
         "op_cents": period["op_cents"] if period else 0,
+        # The percent it was held at: a later change applies from the next pay app (R4-07).
+        "retainage_pct": pct,
+        "period_to": period_end or period_to(job),
     }
     if replaces:
         invoice["replaces"] = replaces["id"]
     job["invoices"].append(invoice)
+    invoice["final"] = is_final(job)
     audit(
         state,
         job_id,
@@ -481,7 +548,7 @@ def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dic
         f"{payer.get('approver') or payer['name']},\n\n"
         f"Here is the pencil copy of {draft['number']} for {job['name']}, attached as a PDF marked PENCIL COPY. "
         "Please confirm the quantities and change orders, or send corrections, before we submit the formal pay app.\n\n"
-        f"{pay_app_text(state, job, draft)}\n\nApproved by {actor}."
+        f"{pay_app_text(state, job, draft)}\n\n{sign_off(state, actor)}"
     )
     _record_email(state, job_id, "pencil", to, subject, body, actor, payapp_invoice_id=draft["id"])
     draft["pencil_sent_at"] = utcnow()
@@ -548,20 +615,26 @@ def approve_and_send(
     to = _send_to(payer)
     invoice["status"] = "sent"
     invoice["sent_at"] = utcnow()
-    invoice["approved_by"] = actor
+    invoice["approved_by"] = actor   # shown as "sent by" (R4-05)
+    # The customer's payment terms set a due date from the day it goes out (R4-04).
+    terms = _int_or(payer.get("payment_terms_days"), None)
+    if terms:
+        invoice["due_on"] = (datetime.now(timezone.utc).date() + timedelta(days=terms)).isoformat()
+    invoice["final"] = is_final(job)
     job["external_status"] = f"Submitted to {payer['name']}, awaiting {payer['approver']}"
-    subject = f"Pay application {invoice['number']} — {job['name']}"
+    subject = pay_app_subject(state, job, invoice)
     files = _packet_file_ids(state, job, invoice)
     body = (
         f"{payer.get('approver') or payer['name']},\n\n"
-        f"Please find pay application {invoice['number']} for {job['name']} attached as a PDF. Every packet item is accounted for"
+        f"Please find {'the final pay application' if invoice['final'] else 'pay application'} {invoice['number']} for {job['name']} attached as a PDF. Every packet item is accounted for"
         + (f"; {len(files)} packet document{'s are' if len(files) != 1 else ' is'} attached too." if files else ".")
+        + (f" Payment due {invoice['due_on']}." if invoice.get("due_on") else "")
         + f"\n\n{pay_app_text(state, job, invoice)}"
     )
     link = payer_link(invoice, link_base, company_id)
     if link:
         body += f"\n\nSee this pay app, its packet and documents, and tell us it reached you:\n{link}"
-    body += f"\n\nApproved by {actor}."
+    body += f"\n\n{sign_off(state, actor)}"
     _record_email(state, job_id, "pay_app", to, subject, body, actor, attachments=files, cc=_copy_list(payer),
                   payapp_invoice_id=invoice["id"])
     audit(
@@ -574,51 +647,132 @@ def approve_and_send(
     return job
 
 
+def _aware(iso: str) -> datetime:
+    when = datetime.fromisoformat(iso)
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def follow_up_due(job: dict[str, Any], payer: dict[str, Any]) -> datetime | None:
+    """When the next follow-up is due (R4-06): the customer's days between follow-ups after the
+    last contact on the oldest unpaid pay app, or the date noted after a call (note_contact) when
+    no follow-up has gone out since. None when nothing is out for payment."""
+    unpaid = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
+    if not unpaid:
+        return None
+    last = unpaid[0].get("last_follow_up_at") or unpaid[0].get("sent_at")
+    if not last:
+        return None
+    if job.get("expected_payment_on") and (job.get("contact_noted_at") or "") >= last:
+        return datetime.combine(date.fromisoformat(job["expected_payment_on"]), datetime.min.time(), tzinfo=timezone.utc)
+    return _aware(last) + timedelta(days=_int_or(payer.get("follow_up_days"), 7))
+
+
+ORDINALS = {2: "Second", 3: "Third", 4: "Fourth", 5: "Fifth", 6: "Sixth", 7: "Seventh", 8: "Eighth", 9: "Ninth"}
+
+
+def _owed_on(job: dict[str, Any], invoice: dict[str, Any]) -> int:
+    paid = sum(p["amount_cents"] for p in job["payments"] if p.get("invoice_id") == invoice["id"])
+    return max(0, invoice["amount_cents"] - paid)
+
+
 def record_follow_up(
     state: dict[str, Any], job_id: str, actor: str = "duracash", link_base: str | None = None, company_id: str = "",
     early: bool = False,
 ) -> dict[str, Any]:
-    """Draft a follow-up on the oldest unpaid pay app once the payer's window has passed.
+    """One follow-up email for every unpaid pay app on the job, once the customer's window has
+    passed (R4-06): "PA-02 $X sent 9/30; PA-03 $Y sent 10/31; total $Z". Each pay app counts its
+    follow-ups ("Second follow-up: ..."); once the customer is past the days they usually take to
+    pay the email is firmer, and from the third it copies their escalation email.
     `early`: the person chose "Follow up now" on the job page before then (R3-04)."""
     job = _open_job(state, job_id)
-    invoice = next((inv for inv in job["invoices"] if inv["status"] in {"sent", "partial"}), None)
-    if not invoice:
+    unpaid = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
+    if not unpaid:
         raise GateError("No sent pay app to follow up.")
+    oldest = unpaid[0]
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
     days = _int_or(payer.get("follow_up_days"), 7)
-    last = invoice.get("last_follow_up_at") or invoice.get("sent_at")
-    if last and not early:
-        due = datetime.fromisoformat(last) + timedelta(days=days)
-        if due.tzinfo is None:
-            due = due.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) < due:
-            raise GateError(
-                f"Follow-up on {invoice['number']} is not due until {due.date().isoformat()} "
-                f"({payer['name']} expects {days} days between contacts)."
-            )
+    due = follow_up_due(job, payer)
+    if due and not early and datetime.now(timezone.utc) < due:
+        raise GateError(
+            f"Follow-up on {oldest['number']} is not due until {due.date().isoformat()} "
+            f"({payer['name']} expects {days} days between contacts)."
+        )
     now = utcnow()
-    invoice["last_follow_up_at"] = now
-    job["external_status"] = f"Follow-up sent to {payer.get('approver') or payer['name']}"
+    for inv in unpaid:
+        inv["last_follow_up_at"] = now
+        inv["follow_up_count"] = int(inv.get("follow_up_count") or 0) + 1
+    count = oldest["follow_up_count"]
+    job.pop("expected_payment_on", None)   # a date noted after a call is used up once a follow-up goes out
+    who = payer.get("approver") or payer["name"]
+    job["external_status"] = f"Follow-up sent to {who}"
     job["follow_ups"] = job.get("follow_ups", 0) + 1
-    subject = f"Following up: {invoice['number']} — {job['name']}"
-    body = (
-        f"Hi {payer.get('approver') or payer['name']}, checking on {invoice['number']} for {job['name']} "
-        f"({money(invoice['amount_cents'])}), sent {(invoice.get('sent_at') or '')[:10]}. "
-        f"Is anything missing on your side?"
-    )
-    link = payer_link(invoice, link_base, company_id)
+    numbers = ", ".join(inv["number"] for inv in unpaid)
+    lead = "Following up" if count == 1 else f"{ORDINALS[count]} follow-up" if count in ORDINALS else f"Follow-up {count}"
+    subject = f"{lead}: {numbers} — {job['name']}"
+    owed = [(inv, _owed_on(job, inv)) for inv in unpaid]
+    listing = "; ".join(f"{inv['number']} {money(cents)} sent {(inv.get('sent_at') or '')[:10]}" for inv, cents in owed)
+    if len(owed) > 1:
+        listing += f"; total {money(sum(cents for _, cents in owed))}"
+    usual = _int_or(payer.get("usual_approval_days"), 14)
+    late = bool(oldest.get("sent_at")) and datetime.now(timezone.utc) >= _aware(oldest["sent_at"]) + timedelta(days=usual)
+    if late:
+        body = (
+            f"{who},\n\nThis is our {lead.lower() if count > 1 else 'follow-up'} on {job['name']}, now past the {usual} days "
+            f"you usually take to pay: {listing}. Please tell us the date payment will go out, or what is holding it up."
+        )
+    else:
+        body = f"Hi {who}, checking on {job['name']}: {listing}. Is anything missing on your side?"
+    link = payer_link(oldest, link_base, company_id)
     if link:
         body += f"\n\nThe pay app, its packet and documents: {link}"
-    body += f"\n\nApproved by {actor}."
-    _record_email(state, job_id, "follow_up", to, subject, body, actor)
+    body += f"\n\n{sign_off(state, actor)}"
+    escalate = str(payer.get("escalation_email") or "").strip()
+    cc = [escalate] if count >= 3 and escalate and escalate.lower() != to.lower() else []
+    _record_email(state, job_id, "follow_up", to, subject, body, actor, cc=cc)
     audit(
         state,
         job_id,
         "follow_up",
-        f"{actor} followed up on {invoice['number']} with {payer.get('approver', '')} at {payer['ap_email']}. Cadence: {days} days.",
+        f"{actor} followed up on {numbers} with {payer.get('approver', '')} at {payer['ap_email']}"
+        + (f" ({lead.lower()}{', copied ' + escalate if cc else ''})" if count > 1 else "") + f". Cadence: {days} days.",
         actor,
     )
+    return job
+
+
+def note_contact(state: dict[str, Any], job_id: str, text: str, next_on: Any = "", actor: str = "owner") -> dict[str, Any]:
+    """"Spoke to them" (R4-06): what the customer said on the phone, kept on the job record and in
+    the Activity log. It counts as a follow-up for the timing, and with a date the next follow-up
+    waits until then."""
+    job = _open_job(state, job_id)
+    if not any(inv["status"] in OPEN_FOR_PAYMENT for inv in job["invoices"]):
+        raise GateError("No sent pay app is waiting for payment.")
+    text = " ".join(str(text or "").split())[:500]
+    problems = {}
+    if not text:
+        problems["text"] = "Enter what they said, like \"Check goes out Friday\"."
+    day = _day(next_on, "next_on", "Enter the date to check again, like 2026-11-07.")
+    if day and day < datetime.now(timezone.utc).date() - timedelta(days=1):
+        problems["next_on"] = "Enter today or a later date to check again."
+    _refuse("Nothing was saved.", problems)
+    payer = _payer(state, job["payer_id"])
+    who = payer.get("approver") or payer["name"]
+    now = utcnow()
+    for inv in job["invoices"]:
+        if inv["status"] in OPEN_FOR_PAYMENT:
+            inv["last_follow_up_at"] = now
+    job["contact_noted_at"] = now
+    if day:
+        job["expected_payment_on"] = day.isoformat()
+    else:
+        job.pop("expected_payment_on", None)
+    job["last_contact"] = {"at": now, "by": actor, "text": text, "next_on": day.isoformat() if day else ""}
+    job.setdefault("records", []).append({
+        "id": "rec-" + secrets.token_hex(3), "kind": "note", "label": f"Spoke to {who}",
+        "note": text + (f" Check again {day.isoformat()}." if day else ""), "added_at": now, "added_by": actor,
+    })
+    audit(state, job_id, "contact_noted", f"Spoke to {who}: {text}" + (f" Next check {day.isoformat()}." if day else "") + f" ({actor})", actor)
     return job
 
 
@@ -763,8 +917,11 @@ WAIVER_KINDS = {
 }
 
 
-def suggested_waiver_kind(job: dict[str, Any]) -> str:
-    """Payment has been matched, so unconditional; final once the job is done and fully paid."""
+def suggested_waiver_kind(job: dict[str, Any], invoice: dict[str, Any] | None = None) -> str:
+    """Payment has been matched, so unconditional; final for the final pay app (R4-04), or once
+    the job is done and fully paid."""
+    if invoice is not None and invoice.get("final"):
+        return "unconditional_final"
     m = job_money(job)
     final = job.get("work_status") == "complete" and m["unbilled_completed_cents"] == 0 and m["outstanding_cents"] == 0
     return "unconditional_final" if final else "unconditional_progress"
@@ -777,10 +934,10 @@ def send_waiver(
     job = _open_job(state, job_id)
     if kind is not None and kind not in WAIVER_KINDS:
         raise GateError("Pick the waiver type: conditional or unconditional, progress or final.")
-    kind = kind or suggested_waiver_kind(job)
     pending = [inv for inv in job["invoices"] if inv.get("waiver_due") and not inv.get("waiver_sent")]
     if invoice_id:
         pending = [inv for inv in pending if inv["id"] == invoice_id]
+    kind = kind or suggested_waiver_kind(job, pending[0] if pending else None)
     payer = _payer(state, job["payer_id"])
     if pending or (not invoice_id and _legacy_waiver_pending(job)):
         to = _send_to(payer)
@@ -810,7 +967,7 @@ def send_waiver(
         f"{payer.get('approver') or payer['name']},\n\n"
         f"Thank you for the {detail} on {job['name']}. "
         + ("Our lien waiver for it is attached." if files else "Our signed lien waiver for it will follow separately.")
-        + f"\n\nApproved by {actor}."
+        + f"\n\n{sign_off(state, actor)}"
     )
     _record_email(state, job_id, "waiver", to, subject, body, actor, attachments=files)
     _sync_waiver(job)
@@ -835,27 +992,37 @@ def _legacy_waiver_pending(job: dict[str, Any]) -> bool:
     return bool(job.get("waiver_due") and not job.get("waiver_sent") and not any("waiver_due" in inv for inv in job["invoices"]))
 
 
-def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash") -> dict[str, Any]:
+def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash", amount_cents: int | None = None) -> dict[str, Any]:
+    """Ask the customer to release retainage. All of it once the work is done and the closeout
+    paperwork is in; `amount_cents` below what is held asks for part of it (R4-07), for example
+    at substantial completion, before the job is marked done (once it is done, the closeout
+    paperwork still has to be in). The request attaches the newest pay app sent."""
     job = _open_job(state, job_id)
     open_retainage = job_money(job)["retainage_open_cents"]
     if open_retainage <= 0:
         raise GateError("No open retainage.")
-    if job.get("work_status") != "complete":
-        raise GateError("Retainage is released at closeout. Mark the job done first.")
-    if job.get("closeout_packet"):
-        missing = [item for item in job["closeout_packet"] if item["required"] and not item["present"]]
-    else:
-        missing = missing_packet(job)
-    if missing:
-        raise GateError("Closeout packet incomplete.", [item["blocker"] for item in missing])
+    if amount_cents is not None:
+        if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
+            _refuse("", {"amount_cents": "Enter the retainage to ask for, more than $0."})
+        if amount_cents > open_retainage:
+            _refuse("", {"amount_cents": f"Enter no more than the {money(open_retainage)} held."})
+    amount = amount_cents or open_retainage
+    partial = amount < open_retainage
+    if job.get("work_status") != "complete" and not partial:
+        raise GateError("Retainage is released at closeout. Mark the job done first, or ask for part of it now.")
+    if job.get("work_status") == "complete":
+        if job.get("closeout_packet"):
+            missing = [item for item in job["closeout_packet"] if item["required"] and not item["present"]]
+        else:
+            missing = missing_packet(job)
+        if missing:
+            raise GateError("Closeout packet incomplete.", [item["blocker"] for item in missing])
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
     days = _int_or(payer.get("follow_up_days"), 7)
     last = job.get("last_retainage_chase_at")
     if last:
-        due = datetime.fromisoformat(last) + timedelta(days=days)
-        if due.tzinfo is None:
-            due = due.replace(tzinfo=timezone.utc)
+        due = _aware(last) + timedelta(days=days)
         if datetime.now(timezone.utc) < due:
             raise GateError(
                 f"The last retainage request went out {last[:10]}. The next is due {due.date().isoformat()} "
@@ -863,22 +1030,31 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash")
             )
     job["retainage_chases"] = job.get("retainage_chases", 0) + 1
     job["last_retainage_chase_at"] = utcnow()
+    job["retainage_asked_cents"] = amount
     job["external_status"] = f"Retainage follow-up sent to {payer['approver']}"
-    subject = f"Retainage release request — {job['name']}"
-    files = _packet_file_ids(state, job, {"packet": job.get("closeout_packet") or job.get("packet") or []})
+    subject = f"Application for release of retainage — {money(amount)} — {job['name']}"
+    files = _packet_file_ids(state, job, {"packet": job.get("closeout_packet") or job.get("packet") or []}) \
+        if job.get("work_status") == "complete" else []
+    newest = next((inv for inv in reversed(job["invoices"]) if inv["status"] in BILLED_STATUSES), None)
+    if partial:
+        ask = (f"The work on {job['name']} is substantially complete. Please release {money(amount)} "
+               f"of the {money(open_retainage)} retainage held on this job.")
+    else:
+        ask = (f"The work on {job['name']} is complete and the closeout items are done. "
+               f"Please release the {money(amount)} retainage held on this job.")
     body = (
-        f"{payer.get('approver') or payer['name']},\n\n"
-        f"The work on {job['name']} is complete and the closeout items are done. "
-        f"Please release the {money(open_retainage)} retainage held on this job."
+        f"{payer.get('approver') or payer['name']},\n\n{ask}"
+        + (f" Our latest pay application, {newest['number']}, is attached." if newest else "")
         + (f" The closeout documents on file are attached ({len(files)})." if files else "")
-        + f"\n\nApproved by {actor}."
+        + f"\n\n{sign_off(state, actor)}"
     )
-    _record_email(state, job_id, "retainage", to, subject, body, actor, attachments=files)
+    _record_email(state, job_id, "retainage", to, subject, body, actor, attachments=files,
+                  payapp_invoice_id=newest["id"] if newest else None)
     audit(
         state,
         job_id,
         "chase_retainage",
-        f"Asked {payer['name']} to release {money(open_retainage)} retainage.",
+        f"Asked {payer['name']} to release {money(amount)}" + (f" of {money(open_retainage)}" if partial else "") + " retainage.",
         actor,
     )
     return job
@@ -1017,7 +1193,7 @@ def email_failures(state: dict[str, Any]) -> list[dict[str, Any]]:
         # Once the money is in, a pay app or follow-up that didn't go out no longer matters.
         if e.get("kind") == "pay_app" and inv and inv.get("status") == "paid":
             continue
-        if e.get("kind") == "follow_up" and not any(i.get("status") in {"sent", "partial"} for i in job.get("invoices", [])):
+        if e.get("kind") == "follow_up" and not any(i.get("status") in OPEN_FOR_PAYMENT for i in job.get("invoices", [])):
             continue
         # A draft for review is moot once the pay app itself went out; a signature request once
         # the change order is signed or withdrawn.
@@ -1177,8 +1353,9 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     payer = _payer(state, payer_id)
     text_fields = {"approver": "who signs off on your bills", "ap_email": "the email pay apps go to",
                    "packet": "the paperwork needed", "rejects_when": "when they send pay apps back", "copy": "who else to email",
-                   "name": "the customer's name", "phone": "the phone number"}
-    day_fields = {"follow_up_days": "the days between follow-ups", "usual_approval_days": "the days they usually take to pay"}
+                   "name": "the customer's name", "phone": "the phone number", "escalation_email": "who to copy on late follow-ups"}
+    day_fields = {"follow_up_days": "the days between follow-ups", "usual_approval_days": "the days they usually take to pay",
+                  "payment_terms_days": "the days they have to pay"}
     clean: dict[str, Any] = {}
     errors: dict[str, str] = {}
     for k, v in updates.items():
@@ -1221,6 +1398,8 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
             clean[k] = days
     if "ap_email" in clean and not EMAIL_RE.match(clean["ap_email"]):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com."
+    if clean.get("escalation_email") and not EMAIL_RE.match(clean["escalation_email"]):
+        errors["escalation_email"] = "Enter one email to copy from the third follow-up, like owner@builder.com, or leave it blank."
     if "approver" in clean and not clean["approver"]:
         errors["approver"] = "Enter who signs off on your bills."
     if "name" in clean:
@@ -1689,7 +1868,7 @@ def void_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, reaso
         f"We have withdrawn pay application {invoice['number']} for {job['name']} ({money(invoice['amount_cents'])}), "
         f"sent {(invoice.get('sent_at') or '')[:10]}. Nothing is due on it; please set it aside.\n\n"
         f"Why: {reason}\n\nIf a corrected pay app is due, it follows separately."
-        f"\n\nApproved by {actor}."
+        f"\n\n{sign_off(state, actor)}"
     )
     _record_email(state, job_id, "pay_app_withdrawn", to, subject, body, actor, cc=_copy_list(payer))
     audit(state, job_id, "void_sent", f"{actor} pulled back {invoice['number']} ({money(invoice['amount_cents'])}): {reason}.", actor)
@@ -2329,9 +2508,10 @@ def create_job(
 
 
 def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
-    """Fix a job's name, address or contract number at any time. The contract amount and
-    retainage can change only before the first pay app, and the contract only without a
-    schedule of values (change that schedule instead). The job code never changes: emails
+    """Fix a job's name, address or contract number at any time. The contract amount can change
+    only before the first pay app, and only without a schedule of values (change that schedule
+    instead). Retainage can change any time and applies from the next pay app (R4-07): pay apps
+    already sent keep what they held, and an open draft is drafted again at the new percent. The job code never changes: emails
     and texts are filed by it. Payer contacts are edited in the Payer Playbook."""
     job = _open_job(state, job_id)
     has_pay_apps = any(i.get("status") != "void" for i in job.get("invoices", []))
@@ -2362,17 +2542,28 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
             changes.append(f"contract from {money(job['contract_cents'])} to {money(cents)}")
             job["contract_cents"] = cents
 
+    redraft = None
     if "retainage_pct" in updates and updates["retainage_pct"] != job.get("retainage_pct", 0):
         pct = updates["retainage_pct"]
-        if has_pay_apps:
-            problems["retainage_pct"] = "Keep the retainage as it is: it is fixed once a pay app exists."
-        elif not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 20:
+        open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+        if not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 20:
             problems["retainage_pct"] = "Enter a retainage from 0 to 20 percent."
+        elif open_draft and open_draft.get("pencil_sent_at"):
+            problems["retainage_pct"] = (f"{open_draft['number']} went to the customer as a draft at {job.get('retainage_pct', 0)}%. "
+                                         "Delete that draft or send it first, then change the retainage.")
         else:
-            changes.append(f"retainage from {job.get('retainage_pct', 0)}% to {pct}%")
+            changes.append(f"retainage from {job.get('retainage_pct', 0)}% to {pct}%" + (" from the next pay app" if has_pay_apps else ""))
             job["retainage_pct"] = pct
+            redraft = open_draft
 
     _refuse("The job was not changed.", problems)
+    if redraft:
+        # The open draft is the next pay app: drafted again at the new percent, keeping its number and paperwork.
+        redraft["status"] = "void"
+        redraft["voided_at"] = utcnow()
+        redraft["replaced"] = True
+        changes.append(f"{redraft['number']} drafted again at {job['retainage_pct']}%")
+        draft_invoice(state, job_id, actor="duracash", replaces=redraft, period_end=redraft.get("period_to") or "")
     if changes:
         audit(state, job_id, "edit_job", f"{actor} changed {job['name']}: " + "; ".join(changes) + ".", actor)
     return job
@@ -2499,10 +2690,11 @@ def record_sov_progress(
     notes: str = "",
     actor: str = "owner",
     stored: Any = None,
+    period_end: Any = "",
 ) -> dict[str, Any]:
     """Record quantities completed to date, and materials stored, on schedule lines; draft the
     progress pay app. `done` maps line id -> quantity to date; `stored` maps line id -> dollars of
-    materials on site and not yet installed (G703 column F)."""
+    materials on site and not yet installed (G703 column F). period_end: the date it runs to (R4-04)."""
     job = _open_job(state, job_id)
     if not sov.has_sov(job):
         raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
@@ -2511,6 +2703,7 @@ def record_sov_progress(
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft:
         raise GateError(f"{open_draft['number']} is still a draft. Send or void it, then record more progress.")
+    runs_to = period_to(job, period_end)
     done = done if isinstance(done, dict) else {}
     stored = stored if isinstance(stored, dict) else {}
     if not done and not stored:
@@ -2572,12 +2765,15 @@ def record_sov_progress(
         + (f" {notes}" if notes else ""),
         actor,
     )
-    return draft_invoice(state, job_id, actor="duracash")
+    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to)
 
 
 def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:
     """The pay app as plain text, for the email body and the pencil copy."""
-    out = [f"{invoice['number']} — {job['name']}", job.get("address", ""), ""]
+    out = [f"{'FINAL APPLICATION ' if invoice.get('final') else ''}{invoice['number']} — {job['name']}", job.get("address", "")]
+    if invoice.get("period_to"):
+        out.append(f"Period to {invoice['period_to']}")
+    out.append("")
     for line in invoice.get("lines", []):
         out.append(f"  {line['label']}: {money(line['amount_cents'])}")
     out.append(f"  Amount due this application: {money(invoice['amount_cents'])}")

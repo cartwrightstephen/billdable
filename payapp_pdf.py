@@ -161,12 +161,23 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
     if mark:
         p.text(MARGIN, y, mark, "F2", 11)
     p.right(PAGE_W - MARGIN, y, f"Date {date}", 10)
-    y -= 26
+    # The period it covers, when payment is due and whether it is the last one (R4-04).
+    if invoice.get("final") and status != "void":
+        p.text(MARGIN, y - 14, "FINAL APPLICATION", "F2", 11)
+    if invoice.get("period_to"):
+        y -= 14
+        p.right(PAGE_W - MARGIN, y, f"Period to {invoice['period_to']}", 10)
+    if invoice.get("due_on"):
+        y -= 14
+        p.right(PAGE_W - MARGIN, y, f"Payment due {invoice['due_on']}", 10)
+    elif invoice.get("final") and status != "void" and not invoice.get("period_to"):
+        y -= 14
+    y -= 20
     blocks = [
         ("TO", [payer.get("name", ""), payer.get("approver", ""), payer.get("ap_email", "")]),
         ("FROM", [company_name, company.get("address", ""),
                   " · ".join(x for x in [company.get("phone", ""), f"Lic. {company['license']}" if company.get("license") else ""] if x)
-                  or (f"Approved by {invoice['approved_by']}" if invoice.get("approved_by") else "")]),
+                  or (f"Sent by {invoice['approved_by']}" if invoice.get("approved_by") else "")]),
         ("PROJECT", [job.get("name", ""), job.get("address", ""), f"Contract {job['contract_number']}" if job.get("contract_number") else ""]),
     ]
     col = (PAGE_W - 2 * MARGIN) / 3
@@ -224,7 +235,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         # G completed and stored to date, G/C, H balance, I retainage at the job's percent.
         widths = [5, 24, 13, 13, 13, 12, 13, 4, 13, 12]
         heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "To date", "%", "Balance", "Retainage"]
-        pct_ret = int(job.get("retainage_pct") or 0)
+        pct_ret = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)   # as held on this pay app (R4-07)
         size = 8
 
         def row_text(cells: list[str]) -> str:

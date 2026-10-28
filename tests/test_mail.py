@@ -141,6 +141,33 @@ class MailerUnitTests(unittest.TestCase):
         self.assertIn("could not connect", closed[0])
 
 
+class SubjectAndSignOffTests(unittest.TestCase):
+    """R4-05: what a GC's accounts-payable desk files an email by, and who to call back."""
+
+    def test_subject_carries_amount_and_company_and_body_has_no_approved_by(self):
+        import domain
+        state = {"company": {"name": "Brightwater Tile", "phone": "404-555-0100"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = domain.create_job(state, "Pine kitchen", "Jones Family", 1_000_000, address="12 Pine St", approver="Sam Jones",
+                                ap_email="ap@jones.example", retainage_pct=10)
+        domain.record_progress(state, job["id"], 400_000, period_end="")
+        domain.send_pencil(state, job["id"], "Alex Rivera")
+        domain.record_pencil_response(state, job["id"], True)
+        for item in job["invoices"][-1]["packet"]:
+            domain.resolve_packet_item(state, job["id"], item["id"])
+        domain.approve_and_send(state, job["id"], "Alex Rivera")
+        inv = job["invoices"][-1]
+        mail = state["email_log"][-1]
+        self.assertTrue(mail["subject"].startswith(f"Pay application {inv['number']} — Pine kitchen — $3,600.00 — Brightwater Tile"))
+        inv["sent_at"] = "2026-01-02T12:00:00+00:00"
+        domain.record_follow_up(state, job["id"], "Alex Rivera")
+        domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1", invoice_id=inv["id"])
+        domain.send_waiver(state, job["id"], "Alex Rivera")
+        for e in state["email_log"]:
+            self.assertNotIn("Approved by", e["body"], e["kind"])
+            self.assertTrue(e["body"].endswith("Alex Rivera\nBrightwater Tile · 404-555-0100"), e["kind"])
+        self.assertEqual([e["kind"] for e in state["email_log"]], ["pencil", "pay_app", "follow_up", "waiver"])
+
+
 class EmailFailureTests(unittest.TestCase):
     """light_snapshot's pending_email_failures: the Outbox entries Today lists as "Didn't go out"."""
 

@@ -673,3 +673,53 @@ def job_route_item(state, job, action, item, body):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetainageChangeTests(unittest.TestCase):
+    """R4-07: retainage that moves, and a partial release before closeout."""
+
+    def test_pct_change_affects_only_the_next_pay_app(self):
+        state = new_state()
+        job = new_job(state, contract=10_000_000, retainage=10)
+        domain.record_progress(state, job["id"], 4_000_000)
+        first = send_open(state, job)
+        domain.edit_job(state, job["id"], {"retainage_pct": 5})
+        self.assertIn("retainage from 10% to 5% from the next pay app", state["audit"][-1]["detail"])
+        self.assertEqual((first["retainage_cents"], first["amount_cents"]), (400_000, 3_600_000), "sent pay app unchanged")
+        domain.record_progress(state, job["id"], 6_000_000)
+        second = job["invoices"][-1]
+        self.assertEqual((second["retainage_cents"], second["amount_cents"], second["retainage_pct"]), (100_000, 1_900_000, 5))
+        self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 0)
+
+    def test_open_draft_is_drafted_again_at_the_new_pct(self):
+        state = new_state()
+        job = new_job(state, contract=10_000_000, retainage=10)
+        domain.record_progress(state, job["id"], 4_000_000)
+        draft = job["invoices"][-1]
+        domain.edit_job(state, job["id"], {"retainage_pct": 0})
+        redone = job["invoices"][-1]
+        self.assertEqual(draft["status"], "void")
+        self.assertEqual((redone["number"], redone["amount_cents"], redone["retainage_cents"]), (draft["number"], 4_000_000, 0))
+        domain.send_pencil(state, job["id"], "Owner")
+        with self.assertRaises(domain.GateError) as raised:
+            domain.edit_job(state, job["id"], {"retainage_pct": 10})
+        self.assertIn("retainage_pct", raised.exception.fields)
+
+    def test_partial_release_of_5000_of_12000(self):
+        state = new_state()
+        job = new_job(state, contract=12_000_000, retainage=10)
+        domain.record_progress(state, job["id"], 12_000_000)  # substantially complete, not marked done
+        inv = send_open(state, job)
+        self.assertEqual(domain.job_money(job)["retainage_open_cents"], 1_200_000)
+        with self.assertRaises(domain.GateError):
+            domain.chase_retainage(state, job["id"])  # all of it waits for closeout
+        with self.assertRaises(domain.GateError) as raised:
+            domain.chase_retainage(state, job["id"], amount_cents=1_300_000)
+        self.assertIn("amount_cents", raised.exception.fields)
+        domain.chase_retainage(state, job["id"], "Owner", amount_cents=500_000)
+        mail = state["email_log"][-1]
+        self.assertEqual(mail["subject"], "Application for release of retainage — $5,000.00 — Pine kitchen")
+        self.assertEqual(mail["payapp_invoice_id"], inv["id"], "the newest pay app sent goes with it")
+        self.assertIn("release $5,000.00 of the $12,000.00 retainage", mail["body"])
+        domain.record_retainage_payment(state, job["id"], 500_000, "CHK-5")
+        self.assertEqual(domain.job_money(job)["retainage_open_cents"], 700_000)

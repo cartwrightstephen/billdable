@@ -285,7 +285,7 @@ def continuation_sheet(job: dict[str, Any], invoice: dict[str, Any]) -> str:
     entries = invoice.get("sov_sheet") or invoice.get("sov_lines") or []
     if not entries:
         return ""
-    pct_ret = int(job.get("retainage_pct") or 0)
+    pct_ret = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)  # as held on this pay app (R4-07)
     rows = [("Item", "Description", "Scheduled", "Previous", "This period", "Stored", "To date", "%", "Balance", "Retainage")]
     for e in entries:
         c = sheet_columns(e, pct_ret)
