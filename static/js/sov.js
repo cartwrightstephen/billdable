@@ -43,7 +43,7 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
       ${rows}
     </table></div>
     ${periodHtml ? `<div class="form-row">${periodHtml}</div>` : ""}
-    <div class="form-inline"><input id="progress-notes" placeholder="What was completed" class="grow"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>
+    <div class="form-inline"><input id="progress-notes" placeholder="What was completed (printed on the pay app)" aria-label="What was completed, printed on the pay app" class="grow"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>
   </div>`;
 }
 

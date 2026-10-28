@@ -11,6 +11,7 @@ Helvetica and Courier fonts (no embedding), landscape US Letter.
 
 from __future__ import annotations
 
+import textwrap
 from typing import Any
 
 import sov
@@ -230,6 +231,27 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         page.right(PAGE_W - MARGIN, header_y, f"{invoice['number']} - {_fit(job.get('name', ''), 40)}", 9)
         return page, header_y - 28
 
+    def notes_on(page: _Page, y: float) -> tuple[_Page, float]:
+        """What the contractor wrote with the progress, under the lines (R4-12)."""
+        notes = str(invoice.get("progress_notes") or "").strip()
+        if not notes:
+            return page, y
+        wrapped = [w for para in notes.splitlines() for w in (textwrap.wrap(para, 120) or [""])]
+        y -= 10
+        if y < 90:
+            pages.append(page)
+            page, y = new_sheet_page("NOTES")
+        else:
+            page.text(MARGIN, y, "Notes", "F2", 10)
+            y -= 15
+        for line in wrapped:
+            if y < 60:
+                pages.append(page)
+                page, y = new_sheet_page("NOTES (continued)")
+            page.text(MARGIN, y, line, "F1", 9.5)
+            y -= 13
+        return page, y
+
     if sheet:
         # G703 columns: C scheduled, D previous work, E work this period, F materials stored,
         # G completed and stored to date, G/C, H balance, I retainage at the job's percent.
@@ -281,11 +303,30 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
             for i, v in enumerate((op_sched, op_prev, op_this, 0, op_to, op_ret)):
                 totals[i] += v
             y -= 13
+        # Change orders billed while unsigned are not schedule lines yet; each gets its own row,
+        # so the totals match line 4 (which counts them, as line 2a does).
+        pending = {co["id"]: co for co in job.get("change_orders", []) if co.get("status") == "pending"}
+        live = [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE]
+        earlier = live[: live.index(invoice)] if invoice in live else live
+        for co_id, co in pending.items():
+            prev = sum(l["amount_cents"] for inv in earlier for l in inv.get("lines", []) if l.get("co_id") == co_id)
+            this = sum(l["amount_cents"] for l in invoice.get("lines", []) if l.get("co_id") == co_id)
+            if not prev and not this:
+                continue
+            sched, to = co["amount_cents"], prev + this
+            ret = sov.retainage_on(to, pct_ret)
+            page.text(MARGIN, y, row_text(["", _fit(f"CO {co.get('number', '')} (unsigned)", 24), f"{sched / 100:,.2f}", f"{prev / 100:,.2f}",
+                                           f"{this / 100:,.2f}", "0.00", f"{to / 100:,.2f}",
+                                           f"{(100 * to) // sched if sched else 0}%", f"{(sched - to) / 100:,.2f}", f"{ret / 100:,.2f}"]), "F3", size)
+            for i, v in enumerate((sched, prev, this, 0, to, ret)):
+                totals[i] += v
+            y -= 13
         page.line(MARGIN, y + 8, PAGE_W - MARGIN, y + 8)
         page.text(MARGIN, y - 4, row_text(["", "Totals", *(f"{t / 100:,.2f}" for t in totals[:5]), "",
                                            f"{(totals[0] - totals[4]) / 100:,.2f}", f"{totals[5] / 100:,.2f}"]), "F3", size)
         if pct_ret:
             page.text(MARGIN, y - 18, f"Retainage column: {pct_ret}% of the total to date on each line, for reference. Line 5 on page 1 is the retainage actually held to date.", "F1", 8)
+        page, y = notes_on(page, y - 30)
         pages.append(page)
     else:
         page, y = new_sheet_page("PAY APP LINES")
@@ -299,6 +340,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         page.line(MARGIN, y + 8, PAGE_W - MARGIN, y + 8)
         page.text(MARGIN, y - 6, "Amount due this pay app", "F2", 10)
         page.right(PAGE_W - MARGIN, y - 6, _money(invoice["amount_cents"]), 10)
+        page, y = notes_on(page, y - 24)
         pages.append(page)
 
     packet = [item for item in invoice.get("packet") or [] if item.get("required")]

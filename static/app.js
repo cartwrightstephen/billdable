@@ -46,6 +46,11 @@ let qboStatus = null;      // /api/qbo/status: configured, connected, environmen
 let qboReconcile = null;   // /api/qbo/reconcile: {rows, invoices}
 const ordinal = (n) => n + ([11, 12, 13].includes(n % 100) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"));
 const BILLING_WORDS = { trialing: "Trial", active: "Active", past_due: "Card declined", unpaid: "Unpaid", canceled: "Cancelled", incomplete: "Incomplete", incomplete_expired: "Expired", paused: "Paused" };
+// Notes typed with progress or Mark done go on that pay app and its PDF (R4-12).
+const NOTES_HELP = "Printed under the lines on this pay app and its PDF, so the customer sees it.";
+// A sent pay app downloads as a QuickBooks invoice-import file (R4-11).
+const QBO_READY = new Set(["sent", "approved", "partial", "paid"]);
+const qboCsvLink = (jobId, invId) => `<a class="btn secondary small qbo-csv" href="/api/jobs/${jobId}/payapp/${invId}.csv" download>Download for QuickBooks</a>`;
 const RECON_WORDS = { missing: "Not in QuickBooks", amount: "Amount differs", paid_in_qbo: "Paid in QuickBooks", open_in_qbo: "Open in QuickBooks" };
 let aiOpen = false;
 let calYear = new Date().getFullYear();
@@ -836,7 +841,7 @@ function progressFormHtml(j, openDraft) {
     ${formErrorLine("progress")}<div class="form-row">
       ${input}
       ${periodField("progress", j)}
-      ${field({ form: "progress", name: "notes", id: "progress-notes", label: "What was completed", wide: true })}
+      ${field({ form: "progress", name: "notes", id: "progress-notes", label: "What was completed (optional)", wide: true, help: NOTES_HELP })}
     </div>
     <p class="progress-preview" id="progress-preview" aria-live="polite">${progressPreviewText(j)}</p>
     <div class="form-inline">
@@ -934,7 +939,7 @@ function render() {
   finishHtml(whole ? app : view);
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
   if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
-  if (currentView === "payments" && !qboStatus) loadQboStatus();
+  if (["payments", "account"].includes(currentView) && !qboStatus) loadQboStatus();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin") { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
@@ -1801,7 +1806,7 @@ async function loadQboStatus() {
     if (!res.ok) { qboStatus = null; return; }
     qboStatus = escDeep(await readJson(res));
   } catch (_) { qboStatus = null; setNetBanner(true); return; }
-  if (currentView === "payments") render();
+  if (["payments", "account"].includes(currentView)) render();
 }
 
 async function loadImportSettings() {
@@ -2220,6 +2225,23 @@ async function companySwitch(box) {
   await post("/api/company", { [box.dataset.companySwitch]: box.checked }, { anchor: box });
 }
 
+// The QuickBooks card, on Payments and on Settings > Team & account (R4-11).
+function qboCardHtml(onPayments) {
+  const q = qboStatus;
+  const owner = me && me.role === "owner";
+  return !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
+      !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Duracash's Intuit app. Until then, use the CSV import ${onPayments ? "below" : "on Payments"}.</p>`
+      : !q.connected ? (owner
+        ? `<p class="sub">Read-only: Duracash reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
+        : `<p class="sub">An owner of this company can connect QuickBooks here.</p>`)
+      : `<p class="sub"><span class="pill green">Connected</span> ${q.environment === "sandbox" ? "Sandbox company. " : ""}Since ${fmtDate(q.connected_at)}${q.connected_by ? ", by " + q.connected_by : ""}. Read-only.</p>
+        <div class="form-inline"><button class="btn" data-action="qbo-sync">Read payments from QuickBooks</button><button class="btn secondary" data-action="qbo-reconcile">Check against QuickBooks</button>${owner ? `<button class="btn secondary" data-action="qbo-disconnect">Disconnect</button>` : ""}</div>
+        ${qboReconcile ? (qboReconcile.rows.length
+          ? `<h3>Where Duracash and QuickBooks differ</h3>${qboReconcile.rows.map(r => `<div class="list-item"><span class="pill">${RECON_WORDS[r.kind] || words(r.kind)}</span> <a href="${pathFor("job", r.job_id)}" data-action="open-job" data-id="${r.job_id}">${r.job}</a>: ${r.detail}${r.kind === "missing" && r.invoice_id ? " " + qboCsvLink(r.job_id, r.invoice_id) : ""}</div>`).join("")}`
+          : `<p class="sub">Duracash and QuickBooks agree on every sent pay app (${qboReconcile.invoices} QuickBooks invoices checked).</p>`) : ""}`}
+    <p class="sub">Each sent pay app also has <strong>Download for QuickBooks</strong>: a file QuickBooks imports as an invoice, with retainage as its own line.</p></div>`;
+}
+
 function accountView() {
   if (!teamData) loadTeam();
   const owner = me.role === "owner";
@@ -2257,6 +2279,7 @@ function accountView() {
     </div>
     <div class="card" id="team-card">${teamCardHtml()}</div>
     ${isDemo ? "" : companySwitchesHtml(owner)}
+    ${qboCardHtml(false)}
     ${!isDemo && owner && billingInfo && billingInfo.configured ? `<div class="card" id="billing">
       <h2>Billing</h2>
       ${billingInfo.status ? `<p class="sub"><span class="pill ${["active", "trialing"].includes(billingInfo.status) ? "green" : "red"}">${BILLING_WORDS[billingInfo.status] || words(billingInfo.status)}</span>${billingInfo.period_end ? ` Next renewal ${fmtDate(new Date(billingInfo.period_end * 1000).toISOString())}.` : ""}</p>`
@@ -2850,7 +2873,7 @@ const views = {
       ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? progressFormHtml(j, openDraft) : ""}
       ${formOpen.pencilchanges ? `<div class="card form-card"><h2>Payer wants changes</h2><div class="form-inline"><input id="pencil-note" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
       ${formOpen.done ? `<div class="card form-card" data-form-key="done"><h2>Mark done</h2>${formErrorLine("done")}<div class="form-row">
-        ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true })}
+        ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true, help: NOTES_HELP })}
         ${periodField("done", j)}
         <button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div></div>` : ""}
       ${formOpen.contact ? contactFormHtml(j) : ""}
@@ -3096,6 +3119,7 @@ const views = {
       <p class="sub">${invoicePill(inv)} <a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(inv.amount_cents)}</p>
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The customer was told nothing is due on it.</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a> <span class="sub">The same PDF goes with the email when the pay app is sent.</span></p>
+      ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
       ${draft ? `<div class="card send-check">
         <h2>Before you send</h2>
         <div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email || '<span class="blocker">no email yet</span>'}</span></div>
@@ -3121,6 +3145,7 @@ const views = {
       <div class="card">
         <h2>Lines</h2>
         ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
+        ${inv.progress_notes ? `<p class="payapp-notes"><span class="label">Notes</span> ${inv.progress_notes}</p>` : ""}
       </div>
       ${continuationHtml(inv, j)}
       <div class="card">
@@ -3464,18 +3489,7 @@ const views = {
       : `<textarea id="qbo-csv" rows="5" placeholder="Paste the CSV here" class="full-input"></textarea>
         <button class="btn small" data-action="qbo-read">Read payments</button>`}
     </details>`;
-    const q = qboStatus;
-    const owner = me && me.role === "owner";
-    const qboCard = !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
-      !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Duracash's Intuit app. Until then, use the CSV import below.</p>`
-      : !q.connected ? (owner
-        ? `<p class="sub">Read-only: Duracash reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
-        : `<p class="sub">An owner of this company can connect QuickBooks here.</p>`)
-      : `<p class="sub"><span class="pill green">Connected</span> ${q.environment === "sandbox" ? "Sandbox company. " : ""}Since ${fmtDate(q.connected_at)}${q.connected_by ? ", by " + q.connected_by : ""}. Read-only.</p>
-        <div class="form-inline"><button class="btn" data-action="qbo-sync">Read payments from QuickBooks</button><button class="btn secondary" data-action="qbo-reconcile">Check against QuickBooks</button>${owner ? `<button class="btn secondary" data-action="qbo-disconnect">Disconnect</button>` : ""}</div>
-        ${qboReconcile ? (qboReconcile.rows.length
-          ? `<h3>Where Duracash and QuickBooks differ</h3>${qboReconcile.rows.map(r => `<div class="list-item"><span class="pill">${RECON_WORDS[r.kind] || words(r.kind)}</span> <a href="${pathFor("job", r.job_id)}" data-action="open-job" data-id="${r.job_id}">${r.job}</a>: ${r.detail}</div>`).join("")}`
-          : `<p class="sub">Duracash and QuickBooks agree on every sent pay app (${qboReconcile.invoices} QuickBooks invoices checked).</p>`) : ""}`}</div>`;
+    const qboCard = qboCardHtml(true);
     return `
       <h1>Payments</h1>
       ${qboCard}

@@ -366,8 +366,7 @@ def record_progress(
     if open_draft and completed_value_cents == job.get("completed_value_cents", 0):
         _refuse("", {"completed_cents": f"{open_draft['number']} is already drafted at that total. Enter the corrected total done so far."})
     job["completed_value_cents"] = int(completed_value_cents)
-    if notes:
-        job["progress_notes"] = notes
+    notes = (notes or "").strip()[:2000]
     audit(
         state,
         job_id,
@@ -380,8 +379,8 @@ def record_progress(
         open_draft["voided_at"] = utcnow()
         open_draft["replaced"] = True
         audit(state, job_id, "draft_replaced", f"{open_draft['number']} ({money(open_draft['amount_cents'])}) replaced at the new total done so far.", "duracash")
-        return draft_invoice(state, job_id, actor="duracash", replaces=open_draft, period_end=runs_to)
-    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to)
+        return draft_invoice(state, job_id, actor="duracash", replaces=open_draft, period_end=runs_to, notes=notes)
+    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
 
 
 def _billed_gross(job: dict[str, Any], skip: dict[str, Any] | None = None) -> int:
@@ -433,12 +432,12 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         line["done_milli"] = line["qty_milli"]
     audit(state, job_id, "job_done", f"{actor} marked {job['name']} done. Notes: {notes or 'none'}.", actor)
     _ensure_closeout_packet(state, job)
-    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to)
+    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
 
 
 def draft_invoice(
     state: dict[str, Any], job_id: str, actor: str = "duracash", strict: bool = False, replaces: dict[str, Any] | None = None,
-    period_end: str = "",
+    period_end: str = "", notes: str = "",
 ) -> dict[str, Any]:
     """Draft a pay app for unbilled completed work, withholding retainage.
 
@@ -447,6 +446,8 @@ def draft_invoice(
     replaces is a draft just voided by a progress correction: the new one keeps its number
     (unless the customer saw it) and its paperwork.
     period_end is the date it runs to, already checked (period_to()); blank is today.
+    notes are what the contractor wrote with the progress (R4-12): kept on the pay app and printed
+    under its lines and on the PDF; a redraft without new notes keeps the replaced draft's.
     """
     job = _open_job(state, job_id)
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
@@ -518,6 +519,7 @@ def draft_invoice(
         # The percent it was held at: a later change applies from the next pay app (R4-07).
         "retainage_pct": pct,
         "period_to": period_end or period_to(job),
+        "progress_notes": (notes or "").strip()[:2000] or (replaces or {}).get("progress_notes", ""),
     }
     if replaces:
         invoice["replaces"] = replaces["id"]
@@ -2908,8 +2910,6 @@ def record_sov_progress(
         line["stored_cents"] = store
     job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
     notes = (notes or "").strip()[:2000]
-    if notes:
-        job["progress_notes"] = notes
     audit(
         state,
         job_id,
@@ -2918,7 +2918,7 @@ def record_sov_progress(
         + (f" {notes}" if notes else ""),
         actor,
     )
-    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to)
+    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
 
 
 def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:

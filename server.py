@@ -954,6 +954,23 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, pdf, "application/pdf", {"Content-Disposition": f'inline; filename="{name}"'})
 
+    def _g_payapp_csv(self, m, user) -> None:
+        """The pay app in QuickBooks Online's invoice-import layout (R4-11)."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        job = next((j for j in state.get("jobs", []) if j["id"] == m.group(1)), None)
+        invoice = next((i for i in (job or {}).get("invoices", []) if i["id"] == m.group(2)), None)
+        if not invoice:
+            self._json(404, {"error": "Pay app not found."})
+            return
+        try:
+            body = qbo.invoice_csv(state, job, invoice)
+        except domain.GateError as exc:
+            self._json(409, _gate(exc))
+            return
+        name = re.sub(r"[^A-Za-z0-9._-]", "-", invoice["number"]) + "-quickbooks.csv"
+        self._send(200, body.encode("utf-8"), "text/csv; charset=utf-8", {"Content-Disposition": f'attachment; filename="{name}"'})
+
     def _g_me(self, m) -> None:
         user = self._session_user()
         if not user:
@@ -2325,6 +2342,7 @@ ROUTES = [
     Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
     Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.pdf", "_g_payapp_pdf", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.csv", "_g_payapp_csv", "user"),
     Route("GET", r"/api/helper/review", "_g_helper_review", "user"),
     Route("GET", r"/api/admin/companies", "_g_admin_companies", "user"),
     # signing in, and links people outside the company use

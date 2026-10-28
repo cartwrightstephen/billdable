@@ -1,6 +1,7 @@
-"""The pay app PDF (R4-04): the period it covers, when payment is due, and the final mark.
-R4-13 adds the line arithmetic across several pay apps here."""
+"""The pay app PDF (R4-04): the period it covers, when payment is due, and the final mark;
+the notes typed with the progress (R4-12); and the line arithmetic across several pay apps (R4-13)."""
 
+import re
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -11,7 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
 import payapp_pdf
+import sov
 from test_money import new_state, new_job, send_open
+from test_sov import line, sov_job
 
 
 def pdf_text(state, job, invoice) -> bytes:
@@ -65,6 +68,111 @@ class PeriodAndDueTests(unittest.TestCase):
         domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-9", invoice_id=inv["id"])
         self.assertEqual(domain.suggested_waiver_kind(job, inv), "unconditional_final")
         self.assertEqual(domain.suggested_waiver_kind(job, first), "unconditional_progress", "the first pay app is still owed")
+
+
+class NotesTests(unittest.TestCase):  # R4-12
+    def test_notes_in_the_pdf_text(self):
+        state = new_state()
+        job = new_job(state)
+        domain.record_progress(state, job["id"], 4_000_000, "Framing done on level 2. Inspection passed (10/20).")
+        inv = send_open(state, job)
+        pdf = pdf_text(state, job, inv)
+        self.assertIn(b"Notes", pdf)
+        self.assertIn(b"Framing done on level 2. Inspection passed \\(10/20\\).", pdf)
+
+    def test_long_notes_wrap_and_a_schedule_job_prints_them_too(self):
+        state = new_state()
+        job = sov_job(state)
+        notes = "Rough-in on the first floor. " * 30
+        domain.record_sov_progress(state, job["id"], {line(job, "1")["id"]: "100"}, notes)
+        inv = job["invoices"][-1]
+        pdf = pdf_text(state, job, inv)
+        self.assertIn(b"Rough-in on the first floor.", pdf)
+        self.assertGreater(pdf.count(b"Rough-in on the first floor."), 3, "wrapped over several lines")
+
+    def test_no_notes_no_block(self):
+        state = new_state()
+        job = new_job(state)
+        domain.record_progress(state, job["id"], 4_000_000)
+        self.assertNotIn(b"(Notes)", pdf_text(state, job, job["invoices"][-1]))
+
+
+def money_text(cents):
+    return f"{cents / 100:,.2f}".encode()
+
+
+class MonthTwoTests(unittest.TestCase):  # R4-13
+    """A schedule-of-values job at 10% retainage across three pay apps: PA-01 sent with stored
+    materials, PA-02 sent and pulled back, PA-03 drafted with an unsigned change order."""
+
+    def setUp(self):
+        self.state = state = new_state()
+        self.job = job = sov_job(state, retainage=10)   # $34,500 with 15% overhead and profit
+        self.rough, self.panel = line(job, "1")["id"], line(job, "2")["id"]
+        # PA-01: 100 ea installed ($4,500) and $3,000 of wire stored on site.
+        domain.record_sov_progress(state, job["id"], {self.rough: "100"}, stored={self.rough: "3000"})
+        self.first = send_open(state, job)
+        # PA-02: sent, then pulled back with the wrong quantity.
+        domain.record_sov_progress(state, job["id"], {self.rough: "200"})
+        self.second = send_open(state, job)
+        domain.void_sent_pay_app(state, job["id"], self.second["id"], "Wrong quantity")
+        # PA-03: 180 ea and half the panel, plus a change order billed before it is signed.
+        domain.add_change_order(state, job["id"], "Extra circuit", 100_000)
+        self.co = job["change_orders"][-1]
+        domain.include_change_order(state, job["id"], self.co["id"])
+        domain.record_sov_progress(state, job["id"], {self.rough: "180", self.panel: "0.5"})
+        self.third = job["invoices"][-1]
+
+    def test_numbers_and_statuses(self):
+        self.assertEqual([i["number"] for i in self.job["invoices"]], ["PA-PINE-01", "PA-PINE-02", "PA-PINE-03"])
+        self.assertEqual([i["status"] for i in self.job["invoices"]], ["sent", "void", "draft"])
+
+    def test_summary_lines_add_up(self):
+        for inv in (self.first, self.third):
+            f = payapp_pdf.summary(self.job, inv)
+            self.assertEqual(f["contract_to_date"], f["original"] + f["net_co"] + f["unsigned_co"], "3 = 1 + 2 + 2a")
+            self.assertEqual(f["earned"], f["completed"] - f["retainage"], "6 = 4 - 5")
+            self.assertEqual(f["due"], f["earned"] - f["previous"], "8 = 6 - 7")
+            self.assertEqual(f["balance"], f["contract_to_date"] - f["earned"], "9 = 3 - 6")
+        f = payapp_pdf.summary(self.job, self.third)
+        self.assertEqual(f["unsigned_co"], 100_000)
+        self.assertEqual(f["previous"], self.first["amount_cents"], "the pulled-back pay app is not a previous certificate")
+        self.assertEqual(f["completed"], self.first["gross_cents"] + self.third["gross_cents"])
+        self.assertEqual(f["retainage"], self.first["retainage_cents"] + self.third["retainage_cents"])
+        self.assertEqual(self.third["retainage_cents"], (self.third["gross_cents"] * 10 + 50) // 100)
+        pdf = pdf_text(self.state, self.job, self.third)
+        for key in ("contract_to_date", "completed", "retainage", "earned", "previous", "due", "balance"):
+            self.assertIn(("$" + money_text(f[key]).decode()).encode(), pdf, key)
+        self.assertIn(b"2a. Change orders billed here, not yet signed", pdf)
+
+    def totals_row(self, inv):
+        pdf = pdf_text(self.state, self.job, inv)
+        found = re.search(rb"\(\s+Totals\s+([^)]*)\) Tj", pdf)
+        self.assertTrue(found, "the continuation sheet has a Totals row")
+        return found.group(1).split()
+
+    def test_sheet_totals_equal_line_4(self):
+        for inv in (self.first, self.third):
+            scheduled, previous, this_period, stored, to_date = self.totals_row(inv)[:5]
+            self.assertEqual(to_date, money_text(payapp_pdf.summary(self.job, inv)["completed"]), inv["number"])
+        # The unsigned change order has its own row on the sheet, and is in the scheduled total.
+        self.assertIn(b"CO 1 \\(unsigned\\)", pdf_text(self.state, self.job, self.third))
+        self.assertEqual(self.totals_row(self.third)[0], money_text(3_450_000 + 100_000))
+
+    def test_stored_materials_feed_to_date_not_this_period(self):
+        entry = next(e for e in self.first["sov_sheet"] if e["line_id"] == self.rough)
+        cols = sov.sheet_columns(entry, 10)
+        self.assertEqual((cols["this_period"], cols["stored"], cols["to_date"]), (450_000, 300_000, 750_000))
+        scheduled, previous, this_period, stored, to_date = self.totals_row(self.first)[:5]
+        self.assertEqual(stored, money_text(300_000))
+        # The overhead and profit row has no stored column: its 15% on the wire ($450) is in its This period.
+        self.assertEqual(this_period, money_text(450_000 + 112_500), "this period: the work and the overhead row, no stored wire")
+        self.assertEqual(to_date, money_text(450_000 + 300_000 + 112_500))
+        # PA-03: the wire is still stored, so it stays in To date and out of This period again.
+        entry = next(e for e in self.third["sov_sheet"] if e["line_id"] == self.rough)
+        cols = sov.sheet_columns(entry, 10)
+        self.assertEqual((cols["previous"], cols["this_period"], cols["stored"]), (450_000, 360_000, 300_000))
+        self.assertEqual(cols["to_date"], cols["previous"] + cols["this_period"] + cols["stored"])
 
 
 if __name__ == "__main__":

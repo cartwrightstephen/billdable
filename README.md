@@ -118,7 +118,7 @@ Approved pay apps, pencil copies, follow-ups, waivers and retainage requests are
 
 ## Pay app PDF
 
-`GET /api/jobs/{id}/payapp/{invoice_id}.pdf`, and attached to pay-app and pencil emails (never for a pay app voided after the email was approved). Older jobs' job-level held retainage counts in lines 4 and 5; unsigned change orders billed on the pay app show as line 2a and count in the contract sum; a voided pay app is marked VOID and keeps its own figures. Page 1 is an application summary (lines 1–9: contract, change orders, completed to date, retainage, previous pay apps, current payment due, balance); then a continuation sheet of every schedule line (or the pay app's lines) and the packet checklist. The layout follows the G702/G703 pattern but it is Duracash's own document and says it is not an AIA form. Drafts and pencil copies are marked. Standard library only; built-in fonts. Lien waivers are not generated: their forms are set by state law.
+`GET /api/jobs/{id}/payapp/{invoice_id}.pdf`, and attached to pay-app and pencil emails (never for a pay app voided after the email was approved). Older jobs' job-level held retainage counts in lines 4 and 5; unsigned change orders billed on the pay app show as line 2a and count in the contract sum; a voided pay app is marked VOID and keeps its own figures. Page 1 is an application summary (lines 1–9: contract, change orders, completed to date, retainage, previous pay apps, current payment due, balance); then a continuation sheet of every schedule line (or the pay app's lines; change orders billed unsigned get their own row, so the sheet's totals match line 4), the notes typed with the progress or Mark done, and the packet checklist. The layout follows the G702/G703 pattern but it is Duracash's own document and says it is not an AIA form. Drafts and pencil copies are marked. Standard library only; built-in fonts. Lien waivers are not generated: their forms are set by state law.
 
 ## Trial
 
@@ -235,6 +235,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/jobs/{id}/sov-progress`: `{done: {line_id: quantity_to_date}, notes}`; lump sums take a fraction (0.35 = 35%)
 - `POST /api/outbox/{id}/retry`: send a failed or unsent email again
 - `GET /api/jobs/{id}/payapp/{invoice_id}.pdf`: the pay app as a PDF
+- `GET /api/jobs/{id}/payapp/{invoice_id}.csv`: a sent pay app in QuickBooks Online's invoice-import layout (one row per line, retainage as a negative line), for **Download for QuickBooks**
 - `POST /api/auth/forgot` `{email}`; `POST /api/auth/reset` `{token, password}`; `POST /api/auth/verify` `{token}`; `POST /api/auth/resend-verify`; `POST /api/auth/password` `{current, new}`
 - `POST /api/auth/invite-info` `{token}`; `POST /api/auth/accept-invite` `{token, name, password}`
 - `POST /api/auth/name` `{name}`: your own name; owners: `POST /api/company` `{name, address, phone, license}` (on every pay app's From block)

@@ -26,6 +26,8 @@ Exit code 0 when everything matched, 1 otherwise. Fictional data only (see compa
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import mimetypes
 import secrets
@@ -330,6 +332,20 @@ def check_setup(run: Run) -> None:
         ok = i.get("status") == status and i.get("amount_cents") == amount
         run.record(f"{code}: {i.get('number', 'no pay app')} is {status} for {money(amount)}", ok,
                    "" if ok else f"got {i.get('status')} {money(i.get('amount_cents', 0))}")
+    # Notes typed with the progress go on that pay app (R4-12), and a sent one downloads for QuickBooks (R4-11).
+    vest, vest_inv = inv("VEST")
+    run.record("VEST: the progress notes are on the pay app", vest_inv.get("progress_notes") == "Corridors and rooms 101-118 set.",
+               repr(vest_inv.get("progress_notes")))
+    req = urllib.request.Request(f"{run.api.base}/api/jobs/{vest.get('id')}/payapp/{vest_inv.get('id')}.csv", headers={"Cookie": run.api.cookie})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            status, text = resp.status, resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        status, text = exc.code, ""
+    rows = list(csv.DictReader(io.StringIO(text))) if status == 200 else []
+    total = sum(round(float(r.get("ItemAmount") or 0) * 100) for r in rows)
+    run.record("VEST: Download for QuickBooks adds up to the pay app", status == 200 and total == vest_inv.get("amount_cents")
+               and any(r.get("Item") == "Retainage" for r in rows), f"HTTP {status}, {len(rows)} lines, {money(total)}")
     peac = run.job("PEAC")
     run.record("PEAC: closed for the record", bool(peac.get("closed")))
     deca = run.job("DECA")

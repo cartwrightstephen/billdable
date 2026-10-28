@@ -291,5 +291,31 @@ class DeleteJobTests(unittest.TestCase):  # R3-09
         self.assertIn("Finish it instead", str(raised.exception))
         self.assertEqual(len(state["jobs"]), 1)
 
+class ProgressNotesTests(unittest.TestCase):  # R4-12
+    def new_job(self, state, **kw):
+        return domain.create_job(state, "Pine kitchen", "Jones Family", 4_500_000, address="12 Pine St",
+                                 approver="Sam Jones", ap_email="ap@jones.example", **kw)
+
+    def test_the_drafted_pay_app_carries_the_notes(self):
+        state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = self.new_job(state)
+        domain.record_progress(state, job["id"], 1_000_000, "  Cabinets set, counters templated.  ")
+        first = job["invoices"][-1]
+        self.assertEqual(first["progress_notes"], "Cabinets set, counters templated.")
+        self.assertNotIn("progress_notes", job, "kept on the pay app, not overwritten on the job")
+        # A correction without new notes keeps them; with new ones, takes those.
+        domain.record_progress(state, job["id"], 1_200_000)
+        self.assertEqual(job["invoices"][-1]["progress_notes"], "Cabinets set, counters templated.")
+        domain.record_progress(state, job["id"], 1_300_000, "Counters in too.")
+        self.assertEqual(job["invoices"][-1]["progress_notes"], "Counters in too.")
+        self.assertEqual(first["progress_notes"], "Cabinets set, counters templated.", "the replaced draft keeps its own")
+
+    def test_mark_done_notes_go_on_the_final_pay_app(self):
+        state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = self.new_job(state)
+        domain.mark_done(state, job["id"], notes="Punch list walked with Sam.")
+        self.assertEqual(job["invoices"][-1]["progress_notes"], "Punch list walked with Sam.")
+
+
 if __name__ == "__main__":
     unittest.main()

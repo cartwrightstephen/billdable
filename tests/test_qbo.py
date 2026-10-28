@@ -2,7 +2,9 @@
 endpoints. The shapes here are what qbo.py expects; the first real sandbox connection checks them."""
 
 import base64
+import csv
 import http.client
+import io
 import json
 import sys
 import tempfile
@@ -14,12 +16,15 @@ from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import auth
+import domain
 import qbo
 import server
 import storage
 from seed import seed_state
+from test_money import new_job, new_state, send_open
 
 CLIENT = ("qbo-client", "qbo-secret")
 REALM = "4620816365"
@@ -81,6 +86,46 @@ class FakeIntuit(BaseHTTPRequestHandler):
         start = int(sql.split("STARTPOSITION ")[1].split()[0])
         size = int(sql.split("MAXRESULTS ")[1].split()[0])
         self._reply(200, {"QueryResponse": {entity: rows[start - 1:start - 1 + size]}})
+
+
+class InvoiceCsvTests(unittest.TestCase):  # R4-11: Download for QuickBooks
+    def rows(self, state, job, inv):
+        return list(csv.DictReader(io.StringIO(qbo.invoice_csv(state, job, inv))))
+
+    def test_columns_and_sums_equal_the_pay_app(self):
+        state = new_state()
+        job = new_job(state, contract=10_000_000, retainage=10)
+        domain.update_payer(state, job["payer_id"], {"payment_terms_days": 30})
+        domain.add_change_order(state, job["id"], "Extra outlet", 50_000)
+        co = job["change_orders"][-1]
+        domain.approve_change_order(state, job["id"], co["id"])
+        domain.record_progress(state, job["id"], 4_000_000)
+        inv = send_open(state, job)
+        text = qbo.invoice_csv(state, job, inv)
+        self.assertEqual(text.splitlines()[0], "InvoiceNo,Customer,InvoiceDate,DueDate,Item,ItemDescription,ItemAmount")
+        rows = self.rows(state, job, inv)
+        self.assertEqual(len(rows), len(inv["lines"]))
+        self.assertEqual({r["InvoiceNo"] for r in rows}, {inv["number"]})
+        self.assertEqual({r["Customer"] for r in rows}, {"Jones Family"})
+        sent, due = inv["sent_at"][:10], inv["due_on"]
+        self.assertEqual(rows[0]["InvoiceDate"], f"{sent[5:7]}/{sent[8:10]}/{sent[:4]}")
+        self.assertEqual(rows[0]["DueDate"], f"{due[5:7]}/{due[8:10]}/{due[:4]}")
+        cents = [round(float(r["ItemAmount"]) * 100) for r in rows]
+        self.assertEqual(sum(cents), inv["amount_cents"], "the lines add up to what the pay app asks for")
+        self.assertEqual(sum(c for c in cents if c > 0), inv["gross_cents"])
+        ret = [r for r in rows if r["Item"] == "Retainage"]
+        self.assertEqual([round(float(r["ItemAmount"]) * 100) for r in ret], [-inv["retainage_cents"]], "retainage as a negative line")
+        self.assertTrue(all(r["ItemDescription"].startswith("Pine kitchen: ") for r in rows))
+
+    def test_drafts_are_refused_and_formulas_are_defused(self):
+        state = new_state()
+        job = new_job(state, name="=HYPERLINK(1)")
+        domain.record_progress(state, job["id"], 1_000_000)
+        draft = job["invoices"][-1]
+        with self.assertRaises(domain.GateError):
+            qbo.invoice_csv(state, job, draft)
+        inv = send_open(state, job)
+        self.assertTrue(all(r["ItemDescription"].startswith("'=") for r in self.rows(state, job, inv)))
 
 
 class QboTests(unittest.TestCase):
@@ -177,6 +222,17 @@ class QboTests(unittest.TestCase):
         self.assertIn(("PA-TRN-01", "open_in_qbo"), kinds)
         self.assertIn(("PA-OAK-01", "missing"), kinds)
         self.assertNotIn("PA-BRK-01", {n for n, _ in kinds}, "paid on both sides, same amount")
+        missing = next(r for r in rec["rows"] if r["kind"] == "missing")
+        res, text = self.request("GET", f"/api/jobs/{missing['job_id']}/payapp/{missing['invoice_id']}.csv", cookie=cookie)
+        self.assertEqual(res.status, 200)
+        self.assertTrue(res.getheader("Content-Type").startswith("text/csv"))
+        self.assertIn("attachment", res.getheader("Content-Disposition"))
+        self.assertTrue(text.startswith("InvoiceNo,Customer,"))
+        self.assertIn(missing["number"], text)
+        res, _ = self.request("GET", f"/api/jobs/{missing['job_id']}/payapp/nope.csv", cookie=cookie)
+        self.assertEqual(res.status, 404)
+        res, _ = self.request("GET", f"/api/jobs/{missing['job_id']}/payapp/{missing['invoice_id']}.csv")
+        self.assertEqual(res.status, 401)
 
         res, st = self.request("POST", "/api/qbo/disconnect", {}, cookie=cookie)
         self.assertFalse(st["connected"])

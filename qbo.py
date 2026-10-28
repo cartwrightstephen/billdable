@@ -25,6 +25,8 @@ restore onto a new disk an owner connects again.
 from __future__ import annotations
 
 import base64
+import csv
+import io
 import json
 import os
 import secrets
@@ -296,7 +298,7 @@ def reconcile(state: dict[str, Any], invoices: list[dict[str, Any]]) -> list[dic
         for inv in job.get("invoices", []):
             if inv.get("status") not in {"sent", "approved", "partial", "paid"}:
                 continue
-            row = {"job_id": job["id"], "job": job["name"], "number": inv["number"]}
+            row = {"job_id": job["id"], "job": job["name"], "number": inv["number"], "invoice_id": inv["id"]}
             hit = by_number.get(inv["number"])
             if not hit:  # no number in common: the same customer and amount, once
                 same = [q for q in unused if _cents(q.get("TotalAmt")) == inv["amount_cents"]
@@ -316,3 +318,59 @@ def reconcile(state: dict[str, Any], invoices: list[dict[str, Any]]) -> list[dic
             elif balance and balance > 0 and inv["status"] == "paid":
                 out.append({**row, "kind": "open_in_qbo", "detail": f"{inv['number']} is paid here; {label} still shows {domain.money(balance)} owed."})
     return out
+
+
+# ----- the pay app as a QuickBooks invoice (R4-11) -----
+
+# QuickBooks Online's invoice import (Sales > Invoices > Import): one row per line, the invoice's
+# own fields repeated on each. Dates as MM/DD/YYYY, the US company default. Writing to QuickBooks
+# stays with the person: Duracash only hands over the file.
+INVOICE_COLUMNS = ["InvoiceNo", "Customer", "InvoiceDate", "DueDate", "Item", "ItemDescription", "ItemAmount"]
+EXPORTABLE = {"sent", "approved", "partial", "paid"}
+
+
+def _qb_date(iso: Any) -> str:
+    try:
+        return date.fromisoformat(str(iso or "")[:10]).strftime("%m/%d/%Y")
+    except ValueError:
+        return ""
+
+
+def _cell(text: Any) -> str:
+    """A text cell a spreadsheet won't run as a formula."""
+    text = " ".join(str(text or "").split())
+    return "'" + text if text[:1] in ("=", "+", "-", "@") else text
+
+
+def _item(line: dict[str, Any]) -> str:
+    if line.get("co_id"):
+        return "Change order"
+    if line["amount_cents"] < 0 and line["label"].startswith("Less retainage"):
+        return "Retainage"
+    if line["label"].startswith("Overhead and profit"):
+        return "Overhead and profit"
+    return "Contract work"
+
+
+def invoice_rows(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, str]]:
+    """The pay app's lines in INVOICE_COLUMNS: retainage is its own negative line, so the
+    amounts add up to what the customer owes on the pay app."""
+    if invoice.get("status") == "void":
+        raise domain.GateError(f"{invoice['number']} was deleted or pulled back, so there is nothing to put in QuickBooks.")
+    if invoice.get("status") not in EXPORTABLE:
+        raise domain.GateError(f"{invoice['number']} hasn't gone to the customer, so it isn't ready for QuickBooks. Send it first.")
+    payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
+    issued = _qb_date(invoice.get("sent_at") or invoice.get("created_at"))
+    head = {"InvoiceNo": _cell(invoice["number"]), "Customer": _cell(payer.get("name", "")),
+            "InvoiceDate": issued, "DueDate": _qb_date(invoice.get("due_on")) or issued}
+    lines = invoice.get("lines") or [{"label": "Pay app " + invoice["number"], "amount_cents": invoice["amount_cents"]}]
+    return [{**head, "Item": _item(line), "ItemDescription": _cell(f"{job['name']}: {line['label']}"),
+             "ItemAmount": f"{line['amount_cents'] / 100:.2f}"} for line in lines]
+
+
+def invoice_csv(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=INVOICE_COLUMNS, lineterminator="\r\n")
+    writer.writeheader()
+    writer.writerows(invoice_rows(state, job, invoice))
+    return out.getvalue()
