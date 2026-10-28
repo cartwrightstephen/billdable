@@ -97,7 +97,7 @@ Approved pay apps, pencil copies, follow-ups, waivers and retainage requests are
 
 ## Accounts and team
 
-- A company has owners and members. Owners invite people (Team & account), change roles, remove people, rotate the inbound addresses, reset the company and delete it; members do everything else. The last owner can't step down or be removed. Removing someone signs them out at once.
+- A company has owners and members. Owners invite people (Team & account), change roles, remove people, rotate the inbound addresses, reset the company and delete it. Owners also take every final or emailed job step (`OWNER_ACTIONS` in `server.py`): sending pay apps, lien waivers and retainage requests, deleting drafts and jobs, pulling back a sent pay app, accepting a short pay, and finishing or reopening a job. A company can let members send pay apps, waivers and retainage requests (**Members can send…** on Team & account). Members do everything else. The last owner can't step down or be removed. Removing someone signs them out at once.
 - Password reset: "Forgot your password?" emails a link that works once, for an hour, and signs the account out everywhere else. At most 3 requests per email per hour; the answer is the same whether or not the account exists. Signed in, the password can be changed on Team & account.
 - Email verification: sign-up sends a link (valid 3 days). An unconfirmed person can use everything but can't have emails sent under their name.
 - Invites last 7 days. Without email set up, the owner gets the link to pass on themselves.

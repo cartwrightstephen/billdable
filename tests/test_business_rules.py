@@ -315,6 +315,7 @@ class FollowUpEscalationTests(unittest.TestCase):
         with self.assertRaises(domain.GateError) as raised:
             domain.record_follow_up(self.state, self.job["id"], "Owner")
         self.assertIn(f"not due until {next_on.isoformat()}", str(raised.exception))
+        self.assertIn("you spoke to them", str(raised.exception))   # the call holds it, not the days between contacts
         # A follow-up sent anyway (Follow up now) goes back to the usual days.
         domain.record_follow_up(self.state, self.job["id"], "Owner", early=True)
         self.assertGreater(domain.follow_up_due(self.job, payer), datetime.now(UTC) + timedelta(days=6))

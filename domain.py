@@ -735,10 +735,16 @@ def record_follow_up(
     days = _int_or(payer.get("follow_up_days"), 7)
     due = follow_up_due(job, payer)
     if due and not early and datetime.now(timezone.utc) < due:
-        raise GateError(
-            f"Follow-up on {oldest['number']} is not due until {due.date().isoformat()} "
-            f"({payer['name']} expects {days} days between contacts)."
-        )
+        # Say what holds it: a date noted after a call, the customer's approval, or the days between contacts.
+        last = oldest.get("last_follow_up_at") or oldest.get("sent_at") or ""
+        promised = expected_payment(oldest)
+        if job.get("expected_payment_on") and (job.get("contact_noted_at") or "") >= last:
+            why = f"you spoke to them {job['contact_noted_at'][:10]} and noted to check again then"
+        elif promised and due.date() == promised + timedelta(days=1):
+            why = f"{oldest.get('approved_by_payer') or payer['name']} approved it for payment by {promised.isoformat()}"
+        else:
+            why = f"{payer['name']} expects {days} days between contacts"
+        raise GateError(f"Follow-up on {oldest['number']} is not due until {due.date().isoformat()} ({why}).")
     now = utcnow()
     for inv in unpaid:
         inv["last_follow_up_at"] = now
@@ -1050,6 +1056,8 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
     amount = amount_cents or open_retainage
     partial = amount < open_retainage
     if job.get("work_status") != "complete" and not partial:
+        if amount_cents is not None:
+            _refuse("", {"amount_cents": f"Enter less than the {money(open_retainage)} held. All of it waits until the job is done."})
         raise GateError("Retainage is released at closeout. Mark the job done first, or ask for part of it now.")
     if job.get("work_status") == "complete":
         if job.get("closeout_packet"):
@@ -2923,7 +2931,10 @@ def record_sov_progress(
     runs_to = period_to(job, period_end)
     done = done if isinstance(done, dict) else {}
     stored = stored if isinstance(stored, dict) else {}
-    if not done and not stored:
+    # Work recorded and not on a pay app (one pulled back, or a draft deleted): the same
+    # quantities draft it again.
+    rebill = job_money(job)["unbilled_completed_cents"] > 0
+    if not done and not stored and not rebill:
         raise GateError("Enter the quantity completed to date on at least one line.")
     by_id = {line["id"]: line for line in sov.lines(job)}
     already = sov.billed(job)
@@ -2960,7 +2971,7 @@ def record_sov_progress(
             changes.append((line, qty, store))
     if errors:
         raise GateError("Progress not recorded.", errors)
-    if not changes:
+    if not changes and not rebill:
         raise GateError("Nothing changed. Enter quantities to date or stored materials that differ from the last ones recorded.")
     summary = []
     for line, qty, store in changes:
@@ -2976,7 +2987,8 @@ def record_sov_progress(
         state,
         job_id,
         "record_progress",
-        f"{actor} recorded progress to date: {'; '.join(summary)}. Completed and stored to date {money(job['completed_value_cents'])}."
+        (f"{actor} recorded progress to date: {'; '.join(summary)}." if summary else f"{actor} billed the work recorded before, unchanged.")
+        + f" Completed and stored to date {money(job['completed_value_cents'])}."
         + (f" {notes}" if notes else ""),
         actor,
     )

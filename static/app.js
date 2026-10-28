@@ -1189,6 +1189,7 @@ const ACTIONS = {
       if (!typed && j && j.work_status !== "complete") { refuseForm(key, { amount_cents: "Enter the part to ask for now. All of it waits until the job is done." }); return; }
       if (typed && (a.error || a.cents <= 0)) { refuseForm(key, { amount_cents: "Enter the retainage to ask for in dollars, like 5,000." }); return; }
       if (typed && a.cents > open) { refuseForm(key, { amount_cents: `Enter no more than the ${money(open)} held.` }); return; }
+      if (typed && a.cents >= open && j && j.work_status !== "complete") { refuseForm(key, { amount_cents: `Enter less than the ${money(open)} held. All of it waits until the job is done.` }); return; }
       if (typed) cents = a.cents;
     }
     const part = cents != null && cents < open;

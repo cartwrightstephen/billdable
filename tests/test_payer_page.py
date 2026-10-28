@@ -143,6 +143,7 @@ class PayerPageTests(unittest.TestCase):
         self.assertEqual(due.date().isoformat(), (date.fromisoformat(day) + timedelta(days=1)).isoformat())
         res, raw = self.request("POST", f"/api/jobs/{job['id']}/follow-up", {}, cookie)
         self.assertEqual(res.status, 409, raw)
+        self.assertIn(f"Kim Park approved it for payment by {day}", json.loads(raw)["error"])   # says what holds it
         res, _ = self.request("POST", link + "/approve", form={"name": "Someone", "expected_on": day})
         self.assertEqual(res.status, 400, "a second approval is refused")
 

@@ -637,6 +637,29 @@ class PullBackTests(unittest.TestCase):  # R4-03
         import payer_page
         self.assertIn("withdrew this pay app", payer_page.render(state, job, inv, "/p/x"))
 
+    def test_schedule_job_bills_the_same_quantities_again_after_a_pull_back(self):
+        # Review fix: the quantities stay after a pull back, so "Draft progress pay app" with them
+        # unchanged drafts the work again instead of refusing "Nothing changed".
+        from test_sov import line, sov_job
+        state = new_state()
+        job = sov_job(state, retainage=10)
+        rough = line(job, "1")["id"]
+        domain.record_sov_progress(state, job["id"], {rough: "100"})
+        send_open(state, job)
+        domain.record_sov_progress(state, job["id"], {rough: "200"})
+        second = send_open(state, job)
+        domain.void_sent_pay_app(state, job["id"], second["id"], "Wrong period date")
+        self.assertGreater(domain.job_money(job)["unbilled_completed_cents"], 0)
+        domain.record_sov_progress(state, job["id"], {rough: "200"})
+        again = job["invoices"][-1]
+        self.assertEqual((again["status"], again["amount_cents"]), ("draft", second["amount_cents"]))
+        self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 0)
+        # With nothing left to bill, the same quantities are refused as before.
+        send_open(state, job)
+        with self.assertRaises(domain.GateError) as raised:
+            domain.record_sov_progress(state, job["id"], {rough: "200"})
+        self.assertIn("Nothing changed", str(raised.exception))
+
     def test_void_sent_refused_after_a_payment(self):
         state = new_state()
         job = new_job(state, contract=1_000_000)
@@ -716,6 +739,10 @@ class RetainageChangeTests(unittest.TestCase):
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"], amount_cents=1_300_000)
         self.assertIn("amount_cents", raised.exception.fields)
+        # All of it typed in the box before the job is done: refused under the box (review fix).
+        with self.assertRaises(domain.GateError) as raised:
+            domain.chase_retainage(state, job["id"], amount_cents=1_200_000)
+        self.assertIn("All of it waits until the job is done", raised.exception.fields["amount_cents"])
         domain.chase_retainage(state, job["id"], "Owner", amount_cents=500_000)
         mail = state["email_log"][-1]
         self.assertEqual(mail["subject"], "Application for release of retainage — $5,000.00 — Pine kitchen")
