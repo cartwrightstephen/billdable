@@ -1,7 +1,7 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, payAppList, shortPayable, shortPayLabel, shortPayAttrs, canPullBack } from "./js/jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, mayTake, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, payAppList, shortPayable, shortPayLabel, shortPayAttrs, canPullBack } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
@@ -745,7 +745,7 @@ function shortPayCardHtml(j, i) {
 
 // The short-pay buttons for a job's part-paid pay apps, naming the pay app when there are several.
 function shortPayButtons(j) {
-  const list = shortPayable(j);
+  const list = may("accept-short-pay") ? shortPayable(j) : [];
   return list.map(i => `<button class="btn small secondary" ${shortPayAttrs(j, i)}>${list.length > 1 ? i.number + ": " : ""}${shortPayLabel(i)}</button>`).join(" ");
 }
 
@@ -753,6 +753,7 @@ function shortPayButtons(j) {
 // the job is done; before that, the part to ask for now.
 function retainageAskHtml(j) {
   const key = `retask-${j.id}`, done = j.work_status === "complete";
+  if (!may("retainage")) return `<span class="sub">An owner asks for it.</span>`;
   return `<div class="retainage-ask" data-form-key="${key}">${formErrorLine(key)}<div class="form-inline">
     ${moneyField({ form: key, name: "amount_cents", id: `${key}-amt`, label: done ? "Amount ($), blank for all" : "Part to ask for now ($)" })}
     <button class="btn small" data-action="retainage" data-id="${j.id}">Ask for retainage</button></div></div>`;
@@ -865,8 +866,18 @@ function jobHistoryHtml(j) {
 
 // The job page's buttons come from jobs.js (R3-04); the sample company also gets the QuickBooks sample.
 function jobActions(j) {
-  return jobActionsFor(j, { demo: !!(me && me.company_id === DEMO_COMPANY_ID) });
+  return jobActionsFor(j, { demo: !!(me && me.company_id === DEMO_COMPANY_ID), perms: perms() });
 }
+
+// What the signed-in person may do (R4-09): members draft and get things ready; an owner sends,
+// deletes and finishes, unless the company lets members send (Team & account).
+function perms() {
+  return { owner: !me || me.role === "owner", membersCanSend: !!(state && state.company && state.company.members_can_send) };
+}
+
+function may(action) { return mayTake(action, perms()); }
+
+const OWNER_SENDS = `<p class="sub owner-only">Only an owner can send this. Tell an owner it is ready.</p>`;
 
 // One job-page button: the label, and why on a second line (no tooltip, so a phone shows it too).
 function actionButton(a) {
@@ -1669,6 +1680,7 @@ function listenForActions() {
   app.addEventListener("change", (e) => {
     if (e.target.id === "nj-role" || e.target.id === "nj-customer") prefillRetainage();
     if (e.target.id === "match-inv") prefillPaymentAmount(e.target.value);
+    if (e.target.dataset && e.target.dataset.companySwitch) companySwitch(e.target);
   });
   // A details' toggle doesn't bubble; catch it on the way down.
   app.addEventListener("toggle", (e) => { if (e.target.dataset && e.target.dataset.more) moreDetails[e.target.dataset.more] = e.target.open; }, true);
@@ -2169,7 +2181,7 @@ function teamCardHtml() {
   const invites = teamData ? teamData.invites : [];
   return `
       <h2>Team</h2>
-      <p class="sub">Owners manage the team, inbound addresses, reset and deletion. Members do everything else. Every action is in the Audit with the person's name.</p>
+      <p class="sub">Owners manage the team, inbound addresses, reset and deletion, and send, delete drafts and finish jobs. Members do everything else: they draft pay apps, record payments and add paperwork. Every action is in the Activity log with the person's name.</p>
       <div class="table-wrap"><table>
         <tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr>
         ${users.map(u => `<tr><td>${u.name}${u.id === me.id ? " (you)" : ""}</td><td>${u.email}</td><td>${words(u.role)}</td><td>${fmtDate(u.created_at)}</td>
@@ -2188,6 +2200,24 @@ function teamCardHtml() {
           <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}
         ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
           <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}`;
+}
+
+// The company's on/off settings (R4-09, R4-10). Saved as soon as a box is ticked; owners only.
+function companySwitchesHtml(owner) {
+  const co = state.company || {};
+  const box = (key, on, label, help) => `<label class="terms-check switch-row"><input type="checkbox" data-company-switch="${key}"${on ? " checked" : ""}${owner ? "" : " disabled"}> <span><strong>${label}</strong><br><span class="sub">${help}</span></span></label>`;
+  return `<div class="card" id="switches-card">
+      <h2>Sending and email</h2>
+      ${box("members_can_send", !!co.members_can_send, "Members can send pay apps, lien waivers and retainage requests",
+        "Off: you approve every send. Members draft and get the paperwork ready; an owner sends, deletes drafts, pulls back pay apps and finishes jobs.")}
+      ${box("daily_email", co.daily_email !== false, "Daily email of what's due",
+        "Each morning owners get one email listing what's due today, with a link to each. Nothing is sent on a day with nothing due.")}
+      ${owner ? "" : `<p class="sub">Owners can change these.</p>`}
+    </div>`;
+}
+
+async function companySwitch(box) {
+  await post("/api/company", { [box.dataset.companySwitch]: box.checked }, { anchor: box });
 }
 
 function accountView() {
@@ -2226,6 +2256,7 @@ function accountView() {
       ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
     <div class="card" id="team-card">${teamCardHtml()}</div>
+    ${isDemo ? "" : companySwitchesHtml(owner)}
     ${!isDemo && owner && billingInfo && billingInfo.configured ? `<div class="card" id="billing">
       <h2>Billing</h2>
       ${billingInfo.status ? `<p class="sub"><span class="pill ${["active", "trialing"].includes(billingInfo.status) ? "green" : "red"}">${BILLING_WORDS[billingInfo.status] || words(billingInfo.status)}</span>${billingInfo.period_end ? ` Next renewal ${fmtDate(new Date(billingInfo.period_end * 1000).toISOString())}.` : ""}</p>`
@@ -2794,7 +2825,7 @@ const views = {
           <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Who pays you and where pay apps go are in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>
           <div class="form-inline">
             <button class="btn" data-action="save-job" data-id="${j.id}">Save changes</button>
-            ${j.can_delete ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
+            ${j.can_delete && may("delete") ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
           </div>
         </div>` : ""}
       <section class="next-card" aria-label="Next step">
@@ -2829,7 +2860,7 @@ const views = {
         ${field({ form: "match", name: "received_on", id: "match-date", label: "Date received", type: "date", value: todayIso(), attrs: `max="${todayIso()}"` })}
         ${field({ form: "match", name: "reference", id: "match-ref", label: "Check or reference no. (optional)", placeholder: "CHK 2207" })}
         <button class="btn small" data-action="match" data-id="${j.id}">Record</button></div>
-        ${shortPayable(j).length ? `<p class="sub short-pay-row">Paid short, and the rest won't come? ${shortPayButtons(j)}</p>` : ""}` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
+        ${shortPayable(j).length && may("accept-short-pay") ? `<p class="sub short-pay-row">Paid short, and the rest won't come? ${shortPayButtons(j)}</p>` : ""}` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
       ${shortPayable(j).map(i => shortPayCardHtml(j, i)).join("")}
       ${formOpen.retpay ? `<div class="card form-card" data-form-key="retpay"><h2>Record retainage paid</h2>${formErrorLine("retpay")}<div class="form-row">
         ${moneyField({ form: "retpay", name: "amount_cents", id: "retpay-amt", label: "Retainage received ($)" })}
@@ -2851,7 +2882,7 @@ const views = {
       ${!j.closed && j.work_status === "complete" && (j.close_blocker_items || []).length ? `
         <section class="card close-blockers" aria-labelledby="close-blockers-h">
           <h2 id="close-blockers-h">Before you can finish this job</h2>
-          <ul class="close-blocker-list">${j.close_blocker_items.map(b => `<li data-blocker="${b.kind}"><span>${b.text}</span><span class="form-inline">${closeBlockerActions(j, b).map((a, n) => `<button class="btn small${n ? " secondary" : ""}" ${a.attrs}>${a.label}</button>`).join("")}</span></li>`).join("")}</ul>
+          <ul class="close-blocker-list">${j.close_blocker_items.map(b => `<li data-blocker="${b.kind}"><span>${b.text}</span><span class="form-inline">${closeBlockerActions(j, b, perms()).map((a, n) => `<button class="btn small${n ? " secondary" : ""}" ${a.attrs}>${a.label}</button>`).join("")}</span></li>`).join("")}</ul>
         </section>` : ""}
       <div class="detail-grid">
         <details class="card money-file"${window.innerWidth >= 800 ? " open" : ""}>
@@ -3085,7 +3116,7 @@ const views = {
         ${missing ? `<p class="blocker">${missing} packet item${missing === 1 ? " is" : "s are"} missing, so sending is blocked.</p>` : ""}
         ${noEmail ? `<p class="blocker">Add the email pay apps go to, then send.</p>` : ""}
         ${locked ? confirmFirstHtml("the pay app") : ""}
-        <button class="btn" data-action="send" data-id="${j.id}" ${missing || (j.blockers || []).length || noEmail || locked ? "disabled" : ""}>Approve & send to ${j.payer.ap_email || "the customer"}</button>
+        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" ${missing || (j.blockers || []).length || noEmail || locked ? "disabled" : ""}>Approve & send to ${j.payer.ap_email || "the customer"}</button>` : OWNER_SENDS}
       </div>` : ""}
       <div class="card">
         <h2>Lines</h2>
@@ -3104,7 +3135,7 @@ const views = {
         <h2>Payments received</h2>
         ${pays.length ? pays.map(p => `<div class="list-item">${money(p.amount_cents)} · ${p.reference} · ${fmtDate(p.matched_at)}</div>`).join("") : `<p class="sub">None yet.</p>`}
         ${inv.short_pay_cents ? `<p class="sub">Short pay accepted ${fmtDate(inv.short_pay_at)}: ${money(inv.short_pay_cents)} not paid. ${inv.short_pay_reason || ""}</p>` : ""}
-        ${inv.status === "partial" && inv.remaining_cents > 0 && !formOpen[`shortpay-${inv.id}`] ? `<p class="sub short-pay-row">Paid short, and the rest won't come? <button class="btn small secondary" ${shortPayAttrs(j, inv)}>${shortPayLabel(inv)}</button></p>` : ""}
+        ${inv.status === "partial" && inv.remaining_cents > 0 && !formOpen[`shortpay-${inv.id}`] && may("accept-short-pay") ? `<p class="sub short-pay-row">Paid short, and the rest won't come? <button class="btn small secondary" ${shortPayAttrs(j, inv)}>${shortPayLabel(inv)}</button></p>` : ""}
         ${inv.status === "partial" ? shortPayCardHtml(j, inv) : ""}
       </div>
       <div class="card">
@@ -3113,9 +3144,11 @@ const views = {
         <div class="money-row"><span class="label">Sent</span><span>${fmtDateTime(inv.sent_at)}</span></div>
         ${inv.period_to ? `<div class="money-row"><span class="label">Period to</span><span>${fmtDate(inv.period_to)}</span></div>` : ""}
         ${inv.due_on ? `<div class="money-row"><span class="label">Payment due</span><span>${fmtDate(inv.due_on)}</span></div>` : ""}
-        <div class="money-row"><span class="label">Received by the payer</span><span>${inv.received_at ? `${inv.received_by || "the payer"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
-        ${inv.payer_token ? `<p class="sub">The payer's page for this pay app (it went in the email): <a href="/p/${me.company_id}.${inv.payer_token}" target="_blank" rel="noopener">open it</a>. They can see the pay app and its packet and mark it received.</p>` : ""}
-        ${canPullBack(j, inv) ? pullBackHtml(j, inv) : ""}
+        <div class="money-row"><span class="label">Received by the customer</span><span>${inv.received_at ? `${inv.received_by || "the customer"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
+        ${inv.approved_at ? `<div class="money-row"><span class="label">Approved by the customer</span><span>${inv.approved_by_payer || "the customer"}, ${fmtDateTime(inv.approved_at)}</span></div>
+        <div class="money-row"><span class="label">Payment expected by</span><span>${fmtDate(inv.expected_payment_on)}</span></div>` : ""}
+        ${inv.payer_token ? `<p class="sub">The customer's page for this pay app (it went in the email): <a href="/p/${me.company_id}.${inv.payer_token}" target="_blank" rel="noopener">open it</a>. They can see the pay app and its paperwork, mark it received, approve it for payment with a date, or send you a question.</p>` : ""}
+        ${canPullBack(j, inv) && may("void-sent") ? pullBackHtml(j, inv) : ""}
       </div>
     `;
   },
@@ -3150,8 +3183,8 @@ const views = {
         ${owed && !j.payer.ap_email ? `<p class="blocker">Add the email pay apps go to in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>, then send.</p>` : ""}
         ${owed && locked ? confirmFirstHtml("the waiver") : ""}
         ${due.concat(sent).length ? due.concat(sent).map(i => `<div class="list-item"><strong>${i.number}</strong> · ${money(i.amount_cents)} · ${i.waiver_sent ? `sent ${fmtDate(i.waiver_sent_at)}${i.waiver_kind ? " · " + waiverKindLabel(i.waiver_kind) : ""}` : `<span class="pill amber">Due</span>`}
-          ${!i.waiver_sent ? waiverSendForm(j, i, locked || !j.payer.ap_email) : ""}</div>`).join("")
-          : j.waiver_due && !j.waiver_sent ? waiverSendForm(j, null, locked || !j.payer.ap_email) : `<p class="sub">${j.waiver_sent ? "Sent " + fmtDate(j.waiver_sent_at) : "No waiver is due yet. One is due after each paid pay app."}</p>`}
+          ${!i.waiver_sent ? (may("waiver") ? waiverSendForm(j, i, locked || !j.payer.ap_email) : OWNER_SENDS) : ""}</div>`).join("")
+          : j.waiver_due && !j.waiver_sent ? (may("waiver") ? waiverSendForm(j, null, locked || !j.payer.ap_email) : OWNER_SENDS) : `<p class="sub">${j.waiver_sent ? "Sent " + fmtDate(j.waiver_sent_at) : "No waiver is due yet. One is due after each paid pay app."}</p>`}
       </div>
     `;
   },
@@ -3379,9 +3412,9 @@ const views = {
       <p class="sub">What is unpaid, who to contact, and a one-click follow-up.</p>
       ${open.length ? `<div class="table-wrap">
         <table>
-          <tr><th>Job</th><th>Unpaid</th><th>Days since sent</th><th>Due</th><th>Contact</th><th>Follow up</th></tr>
+          <tr><th>Job</th><th>Unpaid</th><th>Days since sent</th><th>Due</th><th>Expected</th><th>Contact</th><th>Follow up</th></tr>
           ${open.map(j => {
-            const sent = j.invoices.find(i => ["sent", "partial"].includes(i.status) && i.sent_at);
+            const sent = j.invoices.find(i => ["sent", "partial", "approved"].includes(i.status) && i.sent_at);
             const days = sent ? Math.floor((today - toDate(sent.sent_at)) / 86400000) : "—";
             const unpaid = j.invoices.filter(i => ["sent", "partial", "approved"].includes(i.status)).map(i => i.number + " " + owedText(i)).join(", ") || money(j.money.outstanding_cents);
             // Inside the customer's days between follow-ups the button waits, and says until when (R3-03).
@@ -3390,11 +3423,17 @@ const views = {
             // From the customer's payment terms, on the oldest unpaid pay app that has them (R4-04).
             const dueInv = j.invoices.find(i => ["sent", "partial", "approved"].includes(i.status) && i.due_on);
             const late = dueInv && toDate(dueInv.due_on) < new Date(today.toDateString());
+            // When the money should come: the date given with the customer's approval (R4-08), or
+            // the one noted after a call (R4-06).
+            const approved = j.invoices.find(i => i.status === "approved" && i.expected_payment_on);
+            const expected = approved ? `${fmtDate(approved.expected_payment_on)}<div class="sub row-sub">${approved.number} approved by ${approved.approved_by_payer || "the customer"}</div>`
+              : j.expected_payment_on ? `${fmtDate(j.expected_payment_on)}<div class="sub row-sub">they said on the phone</div>` : "—";
             return `<tr>
               <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a><div class="sub row-sub">${statusPill(j)}</div></td>
               <td>${unpaid}</td>
               <td class="num">${days}</td>
               <td>${dueInv ? (late ? `<span class="pill red">Overdue</span><div class="sub row-sub">due ${fmtDate(dueInv.due_on)}</div>` : fmtDate(dueInv.due_on)) : "—"}</td>
+              <td>${expected}</td>
               <td>${j.payer.approver}<div class="sub row-sub">${j.payer.ap_email}${j.payer.phone ? "<br>" + j.payer.phone : ""}</div></td>
               <td class="actions-cell">
                 ${early ? `<button class="btn small" disabled>Next follow-up ${fmtDate(follow.due.toISOString())}</button>` : `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`}

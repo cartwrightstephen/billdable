@@ -1,7 +1,7 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
+import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
 import { invoicePill } from "../../static/js/format.js";
 
 const job = (over = {}) => ({
@@ -253,4 +253,24 @@ test("a final pay app says Final and preselects a final waiver", () => {
   assert.match(invoicePill({ status: "sent", final: true }), /Final/);
   assert.doesNotMatch(invoicePill({ status: "void", final: true }), /Final/);
   assert.match(waiverSendForm(job(), { id: "inv-3", final: true }), /<option value="unconditional_final" selected>/);
+});
+
+test("a member doesn't see what only an owner may do, unless members can send (R4-09)", () => {
+  const member = { owner: false, membersCanSend: false };
+  assert.equal(mayTake("send", member), false);
+  assert.equal(mayTake("draft", member), true);
+  assert.equal(mayTake("send", { owner: false, membersCanSend: true }), true);
+  assert.equal(mayTake("close", { owner: false, membersCanSend: true }), false);
+  assert.equal(mayTake("close", { owner: true }), true);
+  const j = job({ invoices: [{ id: "d1", status: "draft" }] });
+  const all = (r) => keys([r.primary, ...r.more].filter(Boolean));
+  assert.ok(all(jobActions(j)).includes("send"));
+  const asMember = all(jobActions(j, { perms: member }));
+  assert.ok(!asMember.includes("send") && !asMember.includes("void"), asMember.join());
+  assert.ok(asMember.includes("pencil") && asMember.includes("packet"));
+  assert.ok(all(jobActions(j, { perms: { owner: false, membersCanSend: true } })).includes("send"));
+  const draft = { kind: "draft", invoice_id: "d1", number: "PA-1" };
+  assert.deepEqual(closeBlockerActions(j, draft, member).map(a => a.label), []);
+  assert.deepEqual(closeBlockerActions(j, { kind: "waiver" }, member).map(a => a.label), []);
+  assert.deepEqual(closeBlockerActions(j, { kind: "unbilled" }, member).map(a => a.label), ["Draft pay app"]);
 });

@@ -71,3 +71,15 @@ test("a follow-up row names every unpaid pay app and offers Spoke to them; a not
   assert.deepEqual(todayQueue(state([job({ invoices: noted, contact_noted_at: "2026-10-27T12:00:00+00:00", expected_payment_on: "2026-10-30" })]), NOW), []);
   assert.equal(todayQueue(state([job({ invoices: noted, contact_noted_at: "2026-10-27T12:00:00+00:00", expected_payment_on: "2026-10-30" })]), new Date("2026-10-30T09:00:00")).length, 1);
 });
+
+test("a pay app approved on the customer's page shows the date to expect payment; no follow-up until after it", () => {  // R4-08
+  const invoices = [{ id: "a", number: "PA-1", status: "approved", sent_at: "2026-10-01T12:00:00+00:00",
+    approved_by_payer: "Kim Park", approved_at: "2026-10-20T12:00:00+00:00", expected_payment_on: "2026-11-05" }];
+  const [row] = todayQueue(state([job({ invoices })]), NOW);
+  assert.match(row.pill, /Approved/);
+  assert.match(row.text, /^Approved by Kim Park, expect payment Nov 5, 2026 \(PA-1\)\.$/);
+  assert.equal(row.button, "");
+  // The day after the date given, the follow-up row is back.
+  const [late] = todayQueue(state([job({ invoices })]), new Date("2026-11-06T09:00:00Z"));
+  assert.match(late.pill, /Follow up/);
+});

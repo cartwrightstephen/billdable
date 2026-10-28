@@ -11,12 +11,15 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
+import domain
 import helper
 import importer
 import mailer
@@ -327,6 +330,42 @@ class MailHttpTests(unittest.TestCase):
         self.assertEqual(names, [f"{state['jobs'][0]['invoices'][-1]['number']}.pdf", "contract.pdf"])
         pdf = next(msg.iter_attachments()).get_content()
         self.assertTrue(pdf.startswith(b"%PDF-1.4") and b"APPLICATION FOR PAYMENT" in pdf)
+
+    def test_daily_email_lists_todays_rows_once_and_nothing_on_an_empty_day(self):  # R4-10
+        cookie, job = self.company("daily1@pine.example")
+        self.ready_to_send(cookie, job)
+        # A company with nothing due gets nothing.
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "daily2@pine.example", "password": PASSWORD,
+                                                              "name": "Ed Empty", "company_name": "Empty Co"})
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))
+        quiet = data["user"]["company_id"]
+        company_id = auth.user_by_email("daily1@pine.example")["company_id"]
+        when = datetime(2026, 10, 28, 13, 0, tzinfo=timezone.utc)
+        state = server.load_company(company_id)
+        rows = [r for r in domain.today_rows(state, when) if r["kind"] != "approved"]
+        self.assertEqual([r["kind"] for r in rows], ["ready"])
+        self.assertIsNone(domain.daily_digest(server.load_company(quiet), "", when))
+        self.sink.messages.clear()
+        with mock.patch.dict(os.environ, {"DURACASH_URL": "https://app.duracash.example"}):
+            self.assertEqual(server.send_daily_digests(when.replace(hour=5)), [], "not before the morning hour")
+            lines = server.send_daily_digests(when)
+        mine = [m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]]
+        self.assertEqual(len(mine), 1, lines)
+        self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily2@pine.example"]], "nothing on an empty day")
+        msg = parsed(mine[0])
+        self.assertEqual(msg["Subject"], "Due today in Duracash: 1 pay app to send")
+        body = msg.get_body(("plain",)).get_content()
+        for r in rows:
+            self.assertIn(r["text"], body)
+            self.assertIn("https://app.duracash.example" + r["path"], body)
+        # Once a day: the next hour sends nothing more.
+        self.sink.messages.clear()
+        server.send_daily_digests(when.replace(hour=14))
+        self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]])
+        # Turned off on Team & account: nothing the next day.
+        self.request("POST", "/api/company", {"daily_email": False}, cookie=cookie)
+        server.send_daily_digests(when + timedelta(days=1))
+        self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]])
 
     def test_not_set_up_then_retry(self):
         for key in MAIL_ENV:

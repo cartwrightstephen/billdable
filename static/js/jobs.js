@@ -7,7 +7,7 @@ export const RECORD_KINDS = {
   waiver: "Lien waiver", pay_app: "Pay app / invoice backup", ticket: "Delivery or time ticket", other: "Other",
 };
 
-export const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email", sms: "Text message", notes: "Notes" };
+export const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email", sms: "Text message", notes: "Notes", payer_page: "Customer page" };
 
 // One short word for where a job stands; the full sentence (status_label) goes on the line below it.
 export function jobStatus(j) {
@@ -17,7 +17,8 @@ export function jobStatus(j) {
   if (inv.some(i => ["draft", "awaiting_approval"].includes(i.status))) return ["Ready to send", "copper"];
   if (j.waiver_due && !j.waiver_sent) return ["Waiver due", "amber"];
   if (inv.some(i => i.status === "partial")) return ["Partly paid", "amber"];
-  if (inv.some(i => ["sent", "approved"].includes(i.status))) return ["Sent", "amber"];
+  if (inv.some(i => i.status === "sent")) return ["Sent", "amber"];
+  if (inv.some(i => i.status === "approved")) return ["Approved", "green"];
   if (j.work_status !== "complete") return ["In progress", ""];
   if (j.money.unbilled_completed_cents > 0) return ["Ready to bill", "copper"];
   if (j.money.retainage_open_cents > 0) return ["Retainage open", "amber"];
@@ -159,7 +160,18 @@ export function followUpDue(j) {
   const noted = j.expected_payment_on && unesc(j.contact_noted_at || "") >= lastIso ? toDate(j.expected_payment_on) : null;
   if (noted) return { invoice: sent, invoices: unpaid, due: noted, noted: true };
   const days = Number(unesc(String((j.payer || {}).follow_up_days || ""))) || 7;
-  return { invoice: sent, invoices: unpaid, due: new Date(last.getTime() + days * 86400000) };
+  let due = new Date(last.getTime() + days * 86400000);
+  // Approved on the customer's page with a date to expect payment (R4-08): not before the day after.
+  const promised = expectedPayment(sent);
+  if (promised && promised.getTime() + 86400000 > due.getTime()) due = new Date(promised.getTime() + 86400000);
+  return { invoice: sent, invoices: unpaid, due, promised };
+}
+
+// The date the customer said payment would come when they approved the pay app (R4-08), or null.
+export function expectedPayment(inv) {
+  if (!inv || inv.status !== "approved" || !inv.expected_payment_on) return null;
+  const d = new Date(unesc(inv.expected_payment_on) + "T00:00:00Z");
+  return isNaN(d) ? null : d;
 }
 
 // "PA-01" or "PA-01 and PA-02" or "PA-01, PA-02 and PA-03": the pay apps one follow-up names.
@@ -188,6 +200,8 @@ export function waitingText(j, now = new Date()) {
   if (!f) return "";
   const p = j.payer || {};
   const when = f.due <= now ? `a follow-up has been due since ${fmtDate(f.due)}` : `follow-up due ${fmtDate(f.due)}`;
+  const inv = f.invoice;
+  if (f.promised && f.due > now) return `Approved by ${inv.approved_by_payer || p.approver || p.name || "the customer"} ${fmtDate(inv.approved_at)}; expect payment ${fmtDate(inv.expected_payment_on)}.`;
   if (f.noted && f.due > now) return `Waiting on ${p.approver || p.name || "the customer"}. Spoke to them ${fmtDate(j.contact_noted_at)}; check again ${fmtDate(f.due)}.`;
   return `Waiting on ${p.approver || p.name || "the customer"}. Sent ${fmtDate(f.invoice.sent_at)}; ${when}.`;
 }
@@ -195,10 +209,24 @@ export function waitingText(j, now = new Date()) {
 // The job page's buttons (R3-04): one main button (or none while the customer has the pay app and
 // no follow-up is due), then the rest in the order they matter. Each has a group for the "More"
 // list: bill, paid (get paid) or close (close out). demo adds the QuickBooks sample import.
+// Job actions only an owner may take (server.OWNER_ACTIONS, R4-09): "You approve every send".
+// The company setting members_can_send lets members send pay apps, waivers and retainage requests.
+export const OWNER_ONLY = ["send", "waiver", "retainage", "void-draft", "void-sent", "close", "delete", "accept-short-pay", "reopen"];
+const MEMBER_SEND = ["send", "waiver", "retainage"];
+
+// perms: {owner, membersCanSend}. Without perms (tests, older callers) everything is allowed.
+export function mayTake(action, perms) {
+  if (!perms || perms.owner || !OWNER_ONLY.includes(action)) return true;
+  return MEMBER_SEND.includes(action) && !!perms.membersCanSend;
+}
+
+// The job-page button keys that are owner-only actions.
+const KEY_ACTION = { send: "send", waiver: "waiver", retainage: "retainage", void: "void-draft", close: "close" };
+
 const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "contact", "pencil", "pencil-ok", "pencil-no", "packet",
   "draft", "progress", "done", "retainage", "retpay", "co", "close", "undo", "void", "qbo"];
 
-export function jobActions(j, { now = new Date(), demo = false } = {}) {
+export function jobActions(j, { now = new Date(), demo = false, perms = null } = {}) {
   if (j.closed) return { primary: null, more: [] };
   const m = j.money;
   const draft = (j.invoices || []).find(i => DRAFTS.includes(i.status));
@@ -208,7 +236,7 @@ export function jobActions(j, { now = new Date(), demo = false } = {}) {
   const followDue = !!follow && follow.due <= now;
   const canClose = !(j.close_blockers || []).length;
   const all = [];
-  const add = (key, label, attrs, why, group) => all.push({ key, label, attrs, why, group });
+  const add = (key, label, attrs, why, group) => { if (mayTake(KEY_ACTION[key], perms)) all.push({ key, label, attrs, why, group }); };
   if (isBlocked(j)) {
     const cos = coBlockers(j);
     if (onlyCoBlockers(j)) add("clear", blockerButton(j), `data-action="open-co" data-job="${j.id}" data-co="${cos[0].co_id}"`, "Send waits until the customer signs it.", "bill");
@@ -253,25 +281,30 @@ export const ACTION_GROUPS = [["bill", "Bill"], ["paid", "Get paid"], ["close", 
 
 // The buttons beside one thing that stands between the job and Finish job (R3-08), from the
 // server's close_blocker_items ({kind, text, invoice_id, co_id, number}): [{label, attrs}].
-export function closeBlockerActions(j, b) {
+// perms as for mayTake: a member doesn't see what only an owner may do.
+export function closeBlockerActions(j, b, perms = null) {
+  return closeBlockerButtons(j, b).filter(a => mayTake(a.needs, perms));
+}
+
+function closeBlockerButtons(j, b) {
   const id = j.id;
   switch (b.kind) {
     case "not_done": return [{ label: "Mark done", attrs: `data-action="toggle-form" data-form="done"` }];
     case "draft": return [
-      { label: "Review & send", attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}" data-focus=".send-check"` },
-      { label: "Delete draft", attrs: `data-action="void-draft" data-id="${id}"` }];
+      { label: "Review & send", attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}" data-focus=".send-check"`, needs: "send" },
+      { label: "Delete draft", attrs: `data-action="void-draft" data-id="${id}"`, needs: "void-draft" }];
     case "co": return [
       { label: `Get CO ${b.number} signed`, attrs: `data-action="open-co" data-job="${id}" data-co="${b.co_id}"` },
       { label: "Withdraw", attrs: `data-action="withdraw-co" data-id="${id}" data-co="${b.co_id}"` }];
     case "unbilled": return [{ label: "Draft pay app", attrs: `data-action="draft" data-id="${id}"` }];
     case "outstanding": return [{ label: "Record a payment", attrs: `data-action="toggle-form" data-form="match"` },
-      ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i) }))];
+      ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i), needs: "accept-short-pay" }))];
     case "retainage": return [
       { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"` },
       closeoutMissing(j)
         ? { label: "Open closeout paperwork", attrs: `data-action="open-packet" data-job="${id}" data-inv="closeout"` }
-        : { label: "Ask for retainage", attrs: `data-action="retainage" data-id="${id}"` }];
-    case "waiver": return [{ label: "Send waiver", attrs: `data-action="open-waiver" data-id="${id}"` }];
+        : { label: "Ask for retainage", attrs: `data-action="retainage" data-id="${id}"`, needs: "retainage" }];
+    case "waiver": return [{ label: "Send waiver", attrs: `data-action="open-waiver" data-id="${id}"`, needs: "waiver" }];
     default: return [];
   }
 }

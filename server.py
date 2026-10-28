@@ -433,6 +433,72 @@ def send_monthly_summaries(year: int, month: int) -> list:
     return lines
 
 
+def owner_emails(company_id: str) -> list:
+    """The confirmed email addresses of a company's owners."""
+    return [u["email"] for u in auth.all_users()
+            if u["company_id"] == company_id and u.get("role") == "owner" and u.get("email_verified")]
+
+
+def email_owners_question(company_id: str, asked: dict) -> list:
+    """A question sent from the customer's page (R4-08) goes to the owners, with a link to the
+    job; it is in the Inbox as well. Returns "address: result" lines for the log."""
+    if company_id == auth.DEMO_COMPANY_ID:
+        return []
+    subject = f"Question on {asked['number']} — {asked['job_name']}"
+    link = app_url()
+    body = (f"{asked.get('from') or 'The customer'} asked on the customer page for {asked['number']}:\n\n{asked.get('text', '')}\n\n"
+            + (f"Open the job: {link}/jobs/{asked['job_id']}\n" if link else "")
+            + "It is in your Inbox too. Reply to the customer by email or phone.")
+    lines = [f"{to}: {send_system_email(to, subject, body, company_id)}" for to in owner_emails(company_id)]
+    for line in lines:
+        log_json("info", msg="payer question emailed", company=company_id, result=line.split(": ", 1)[-1][:120])
+    return lines
+
+
+DAILY_PATH_NAME = "daily_jobs.json"
+
+
+def daily_email_hour() -> int:
+    """The hour (UTC) from which the daily "due today" email goes out: DAILY_EMAIL_HOUR_UTC,
+    default 11 (7 in the morning on the US east coast in summer, 6 in winter)."""
+    try:
+        return min(23, max(0, int(os.environ.get("DAILY_EMAIL_HOUR_UTC", "11"))))
+    except ValueError:
+        return 11
+
+
+def send_daily_digests(now: datetime | None = None) -> list:
+    """Once a day per company, from the hourly loop (R4-10): what's due today to each owner with
+    a confirmed email, unless the company turned "Daily email of what's due" off. Nothing on a
+    day with nothing due. The day each company got it is kept in <data dir>/daily_jobs.json so a
+    restart doesn't repeat it. Returns one line per email for the log."""
+    now = now or datetime.now(timezone.utc)
+    if not mailer.configured() or now.hour < daily_email_hour():
+        return []
+    day = now.date().isoformat()
+    path = storage.DATA_DIR / DAILY_PATH_NAME
+    try:
+        done = json.loads(path.read_text())
+    except (OSError, ValueError):
+        done = {}
+    lines, base = [], app_url() or ""
+    for company_id in company_ids():
+        if company_id == auth.DEMO_COMPANY_ID or done.get(company_id) == day or company_id in deleted_companies():
+            continue
+        done[company_id] = day
+        with company_lock(company_id):
+            state = load_company(company_id)
+        if state.get("company", {}).get("daily_email") is False:
+            continue
+        digest = domain.daily_digest(state, base, now)
+        if not digest:
+            continue
+        for to in owner_emails(company_id):
+            lines.append(f"{company_id}  daily email: {send_system_email(to, digest[0], digest[1], company_id)}")
+    storage.write_json(path, done)
+    return lines
+
+
 MONTHLY_PATH_NAME = "monthly_jobs.json"
 
 
@@ -471,7 +537,7 @@ def start_monthly_jobs() -> threading.Thread:
     def loop() -> None:
         while True:
             try:
-                for line in run_monthly_jobs():
+                for line in run_monthly_jobs() + send_daily_digests():
                     log_json("info", msg=line)
             except Exception as exc:  # a failure is logged and alerted; the loop keeps going
                 log_json("error", msg=f"monthly jobs failed: {exc.__class__.__name__}: {exc}")
@@ -1309,6 +1375,12 @@ class Handler(BaseHTTPRequestHandler):
     def _p_payer_received(self, m) -> None:
         self._payer_received(m.group(1), m.group(2))
 
+    def _p_payer_approve(self, m) -> None:
+        self._payer_form(m.group(1), m.group(2), "approve")
+
+    def _p_payer_question(self, m) -> None:
+        self._payer_form(m.group(1), m.group(2), "question")
+
     def _p_co_sign(self, m) -> None:
         self._co_sign_post(m.group(1), m.group(2))
 
@@ -1950,8 +2022,43 @@ class Handler(BaseHTTPRequestHandler):
         elif rest:
             self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
         else:
-            page = payer_page.render(state, job, invoice, f"/p/{company_id}.{token}")
+            asked = (parse_qs(urlparse(self.path).query).get("asked") or [""])[0] == "1"
+            page = payer_page.render(state, job, invoice, f"/p/{company_id}.{token}", asked=asked)
             self._send_compressible(200, page.encode("utf-8"), "text/html; charset=utf-8", private)
+
+    def _payer_form(self, company_id: str, token: str, form: str) -> None:
+        """"Approve for payment" and "Send a question" on the customer's page (R4-08). A refusal
+        shows the page again with why; a question is emailed to the company's owners."""
+        state, job, invoice = self._payer_lookup(company_id, token)
+        if not invoice:
+            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            return
+        fields = dict(parse_qsl(self._read_raw(8_000).decode("utf-8", "replace")))
+        link = f"/p/{company_id}.{token}"
+        if demo_locked(company_id):
+            self._send(303, b"", "text/plain", {"Location": link})
+            return
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        asked: dict = {}
+
+        def act(st: dict) -> None:
+            j, inv = payer_page.find(st, token)
+            if form == "approve":
+                payer_page.approve(st, j, inv, fields.get("name", ""), fields.get("expected_on", ""), now)
+            else:
+                asked.update(payer_page.ask(st, j, inv, fields.get("name", ""), fields.get("email", ""), fields.get("question", "")),
+                             job_id=j["id"], job_name=j["name"], number=inv["number"])
+
+        status, payload = self._change(company_id, act)
+        if status != 200:
+            state, job, invoice = self._payer_lookup(company_id, token)
+            errors = payload.get("fields") or {"form": payload.get("error", "That didn't go through.")}
+            page = payer_page.render(state, job, invoice, link, errors=errors, form=form)
+            self._send_compressible(400, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+            return
+        if asked:
+            threading.Thread(target=email_owners_question, args=(company_id, asked), daemon=True).start()
+        self._send(303, b"", "text/plain", {"Location": link + ("?asked=1" if asked else "")})
 
     def _payer_received(self, company_id: str, token: str) -> None:
         state, job, invoice = self._payer_lookup(company_id, token)
@@ -2133,7 +2240,7 @@ class Handler(BaseHTTPRequestHandler):
         entry = JOB_ACTIONS.get(action)
         if not entry or entry[0] != (item is not None):
             raise UnknownAction()
-        if action in OWNER_ACTIONS and ctx.user["role"] != "owner":
+        if action in OWNER_ACTIONS and not may_take(ctx.user, action, state):
             raise OwnerOnly()
         entry[1](self, state, job_id, item, ctx)
 
@@ -2234,6 +2341,8 @@ ROUTES = [
     Route("POST", r"/api/inbound/sms/([^/]+)", "_p_inbound_sms"),
     Route("POST", r"/api/mail-events/([^/]+)", "_p_mail_events"),
     Route("POST", r"/p/" + TOKEN_LINK + r"/received", "_p_payer_received"),
+    Route("POST", r"/p/" + TOKEN_LINK + r"/approve", "_p_payer_approve"),
+    Route("POST", r"/p/" + TOKEN_LINK + r"/question", "_p_payer_question"),
     Route("POST", r"/s/" + TOKEN_LINK + r"/sign", "_p_co_sign"),
     Route("POST", r"/share", "_p_share"),
     Route("POST", r"/api/stripe/webhook", "_p_stripe_webhook"),
@@ -2341,8 +2450,19 @@ def _edit_job(h, st, j, i, c):
     domain.edit_job(st, j, updates, c.actor)
 
 
-# Job actions only an owner may take (R4-02; R4-09 widens this to every final or emailed step).
-OWNER_ACTIONS = {"reopen"}
+# Job actions only an owner may take (R4-02, R4-09): every final or emailed step. "You approve
+# every send": a member drafts, an owner sends, unless the company lets members send pay apps,
+# waivers and retainage requests (members_can_send, on Team & account).
+OWNER_ACTIONS = {"send", "waiver", "retainage", "void-draft", "void-sent", "close", "delete", "accept-short-pay", "reopen"}
+MEMBER_SEND_ACTIONS = {"send", "waiver", "retainage"}
+
+
+def may_take(user: dict, action: str, state: dict) -> bool:
+    """Whether this person may take this job action (mirrored by mayTake in static/js/jobs.js)."""
+    if action not in OWNER_ACTIONS or user.get("role", "owner") == "owner":
+        return True
+    return action in MEMBER_SEND_ACTIONS and bool(state.get("company", {}).get("members_can_send"))
+
 
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
 JOB_ACTIONS = {

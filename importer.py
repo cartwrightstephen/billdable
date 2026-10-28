@@ -457,7 +457,7 @@ def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor
     files = [f for f in state.get("files", []) if f["id"] in item["file_ids"]]
     label = item["subject"] or (files[0]["name"] if files else "") or (item["text"].strip().splitlines() or ["Imported note"])[0]
     label = label.strip()[:120] or "Imported note"
-    source_line = {"email": "Email", "sms": "Text message", "paste": "Pasted", "notes": "Notes import", "upload": "Upload"}.get(item["source"], item["source"])
+    source_line = {"email": "Email", "sms": "Text message", "paste": "Pasted", "notes": "Notes import", "upload": "Upload", "payer_page": "Customer page"}.get(item["source"], item["source"])
     if item["from"]:
         source_line += f" from {item['from']}"
     record_ids = []

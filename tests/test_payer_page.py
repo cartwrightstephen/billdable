@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 from urllib.parse import urlencode
@@ -15,6 +16,7 @@ from urllib.parse import urlencode
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
+import domain
 import importer
 import server
 import storage
@@ -112,6 +114,54 @@ class PayerPageTests(unittest.TestCase):
         self.request("POST", link + "/received", form={"name": "Someone else"})
         res, raw = self.request("GET", "/api/state", cookie=cookie)
         self.assertEqual(json.loads(raw)["jobs"][-1]["invoices"][-1]["received_at"], first, "only the first receipt counts")
+
+    def test_approve_sets_status_and_date_and_holds_the_follow_up(self):  # R4-08
+        cookie, state, link = self.sent_pay_app("payer3@example.com")
+        res, raw = self.request("GET", link)
+        page = raw.decode()
+        for words in ("Approve for payment", "This job", "Contract to date", "Balance to finish", "Send a question"):
+            self.assertIn(words, page)
+        # A refused approval shows the page again with why, and changes nothing.
+        res, raw = self.request("POST", link + "/approve", form={"name": "", "expected_on": "2020-01-01"})
+        self.assertEqual(res.status, 400)
+        self.assertIn("Enter your name.", raw.decode())
+        self.assertIn("Enter today or a later date.", raw.decode())
+        day = (datetime.now(timezone.utc).date() + timedelta(days=20)).isoformat()
+        res, _ = self.request("POST", link + "/approve", form={"name": "Kim Park", "expected_on": day})
+        self.assertEqual((res.status, res.getheader("Location")), (303, link))
+        res, raw = self.request("GET", link)
+        self.assertIn("Approved for payment</strong> by Kim Park", raw.decode())
+        self.assertNotIn('action="' + link + '/approve"', raw.decode(), "approved once")
+        _, raw = self.request("GET", "/api/state", cookie=cookie)
+        st = json.loads(raw)
+        job, inv = st["jobs"][-1], st["jobs"][-1]["invoices"][-1]
+        self.assertEqual((inv["status"], inv["approved_by_payer"], inv["expected_payment_on"]), ("approved", "Kim Park", day))
+        self.assertTrue(inv["approved_at"])
+        self.assertTrue(job["status_label"].startswith("Approved by Kim Park, expect payment"))
+        # No follow-up is due until the day after the date they gave.
+        due = domain.follow_up_due(job, job.get("payer") or {"follow_up_days": 7})
+        self.assertEqual(due.date().isoformat(), (date.fromisoformat(day) + timedelta(days=1)).isoformat())
+        res, raw = self.request("POST", f"/api/jobs/{job['id']}/follow-up", {}, cookie)
+        self.assertEqual(res.status, 409, raw)
+        res, _ = self.request("POST", link + "/approve", form={"name": "Someone", "expected_on": day})
+        self.assertEqual(res.status, 400, "a second approval is refused")
+
+    def test_question_lands_in_the_inbox_on_the_job(self):  # R4-08
+        cookie, state, link = self.sent_pay_app("payer4@example.com")
+        res, raw = self.request("POST", link + "/question", form={"question": "", "email": "nope"})
+        self.assertEqual(res.status, 400)
+        self.assertIn("Enter your question.", raw.decode())
+        res, _ = self.request("POST", link + "/question", form={"name": "Kim", "email": "kim@park.example",
+                                                                 "question": "Line 3 looks doubled. Can you check?"})
+        self.assertEqual((res.status, res.getheader("Location")), (303, link + "?asked=1"))
+        res, raw = self.request("GET", link + "?asked=1")
+        self.assertIn("Question sent.", raw.decode())
+        _, raw = self.request("GET", "/api/state", cookie=cookie)
+        st = json.loads(raw)
+        item = st["inbox"][-1]
+        self.assertEqual((item["source"], item["suggested_job_id"], item["from"]), ("payer_page", st["jobs"][-1]["id"], "Kim <kim@park.example>"))
+        self.assertIn("Line 3 looks doubled", item["text"])
+        self.assertIn("Question on PA-", item["subject"])
 
     def test_no_link_without_a_site_address(self):
         with mock.patch.dict(os.environ, {"DURACASH_URL": ""}):

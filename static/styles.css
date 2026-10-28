@@ -265,6 +265,8 @@ details.card > summary { cursor: pointer; }
 .btn.danger { background: var(--red, #8d2d2d); color: #fff; border-color: var(--red, #8d2d2d); }
 .terms-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 8px 0; line-height: 1.4; }
 .terms-check input { width: auto; margin-top: 2px; }
+.switch-row { font-size: inherit; margin: 12px 0; }
+.switch-row input { margin-top: 5px; }
 .land-legal { margin-top: 8px; font-size: 13px; }
 .notice { background: #f8efd8; color: var(--amber); border: 1px solid #ecd9ae; border-radius: 8px; padding: 8px 12px; margin: -8px 0 16px; font-size: 14px; }
 .land-notice { margin: 0; border-radius: 0; border-width: 0 0 1px; text-align: center; }

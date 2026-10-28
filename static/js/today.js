@@ -14,6 +14,7 @@ export const QUEUE_SHOWN = 3;   // rows shown before "and N more"
 // A pay app that counts: not voided, not replaced by a progress correction.
 export const billed = (j) => (j.invoices || []).some(i => i.status !== "void" && i.status !== "replaced");
 
+// domain.today_rows has the same rules on the server, for the daily email (R4-10): change both.
 export function todayQueue(state, now = new Date()) {
   const out = [];
   const add = (rank, j, pill, text, button, opensJob = false) => out.push({ rank, j, pill, text, button, opensJob });
@@ -68,6 +69,9 @@ export function todayQueue(state, now = new Date()) {
       if (now.getTime() >= follow.due.getTime())
         add(4, j, tag("Follow up", "copper"), `${many ? `${payAppList(follow.invoices)} are unpaid; the oldest` : sent.number} was sent ${fmtDate(sent.sent_at)}${sent.last_follow_up_at ? `, last follow-up ${fmtDate(sent.last_follow_up_at)}` : ""}. Emails ${j.payer.ap_email || "the customer"}.`,
           `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button><button class="btn small secondary" data-action="spoke" data-id="${j.id}">Spoke to them…</button>`);
+      // Approved on the customer's page (R4-08): no follow-up until the day after the date they gave.
+      else if (follow.promised)
+        add(4.5, j, tag("Approved", "green"), `Approved by ${sent.approved_by_payer || j.payer.approver || j.payer.name}, expect payment ${fmtDate(sent.expected_payment_on)} (${sent.number}).`, "");
     }
   });
   inbox.filter(i => !i.says_done_job_id && i.suggested_job_id).forEach(i => {

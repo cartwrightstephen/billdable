@@ -278,6 +278,40 @@ class AccountHttpTests(ServerCase):
         self.assertEqual(res.status, 409, out)
         self.assertIn("is not finished", out["error"])
 
+    def test_member_sends_only_when_the_company_allows_it(self):  # R4-09
+        owner, _ = self.signup("owner@sends.example", "Sends Co")
+        _, out = self.request("POST", "/api/team/invite", {"email": "member@sends.example", "role": "member"}, cookie=owner)
+        token = out["invite_path"].split("#invite=")[1]
+        res, _ = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
+               "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+        _, state = self.request("POST", "/api/jobs", job, cookie=owner)
+        job_id = state["jobs"][0]["id"]
+        # A member drafts and gets the paperwork ready.
+        res, state = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 400_000}, cookie=member)
+        self.assertEqual(res.status, 200, state)
+        for item in state["jobs"][0]["invoices"][-1].get("packet") or []:
+            if not item["present"]:
+                self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "In the email"}, cookie=member)
+        for action in ("send", "void-draft", "close", "delete"):
+            res, out = self.request("POST", f"/api/jobs/{job_id}/{action}", {}, cookie=member)
+            self.assertEqual((res.status, out["error"]), (403, "Only an owner can do that."), action)
+        # Only an owner turns the setting on.
+        res, _ = self.request("POST", "/api/company", {"members_can_send": True}, cookie=member)
+        self.assertEqual(res.status, 403)
+        res, out = self.request("POST", "/api/company", {"members_can_send": True}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        self.assertTrue(out["company"]["members_can_send"])
+        res, out = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie=member)
+        self.assertEqual(res.status, 200, out)
+        self.assertEqual(out["jobs"][0]["invoices"][-1]["status"], "sent")
+        # Deleting and finishing stay with owners.
+        res, _ = self.request("POST", f"/api/jobs/{job_id}/close", {}, cookie=member)
+        self.assertEqual(res.status, 403)
+        res, out = self.request("POST", "/api/company", {"members_can_send": "yes"}, cookie=owner)
+        self.assertEqual((res.status, out["fields"]["members_can_send"]), (409, "Choose on or off."))
+
     def test_setup_checklist_is_dismissed_per_person(self):  # R2-03
         owner, _ = self.signup("owner@checklist.example", "Checklist Co")
         res, out = self.request("POST", "/api/team/invite", {"email": "member@checklist.example", "role": "member"}, cookie=owner)
