@@ -49,6 +49,29 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(out["op_pct"], "15")
         self.assertTrue(any("Subtotal" in w for w in out["warnings"]))
 
+    def test_a_title_line_above_the_header_still_maps_columns_by_name(self):
+        text = (
+            "Brightwater Tile & Stone - Schedule of values\n"
+            "Mill Creek Clubhouse\n"
+            "Description\tAmount\tQty\tUnit\tRate\n"
+            "Wall tile\t2,000.00\t100\tsf\t20\n"
+            "Thresholds\t500\t\t\t\n"
+        )
+        out = sov.parse_rows(text)
+        self.assertTrue(out["header"])
+        got = [(l["description"], l["quantity"], l["unit"], l["rate"]) for l in out["lines"]]
+        self.assertEqual(got, [("Wall tile", "100", "sf", "20.00"), ("Thresholds", "1", "LS", "500.00")])
+        self.assertEqual(out["warnings"][:2], [
+            "Row 1 (Brightwater Tile & Stone - Schedule of values) skipped: text above the header.",
+            "Row 2 (Mill Creek Clubhouse) skipped: text above the header.",
+        ])
+
+    def test_a_header_past_the_fifth_row_is_not_looked_for(self):
+        text = "a\nb\nc\nd\ne\nDescription,Amount\nWall tile,2000\n"
+        out = sov.parse_rows(text)
+        self.assertFalse(out["header"])
+        self.assertFalse(any("above the header" in w for w in out["warnings"]))
+
     def test_rows_without_header_csv_and_pdf_spacing(self):
         out = sov.parse_rows(
             'Rough-in wiring, 400, ea, 45\nPanel and feeders, 12500\n"Wire, THHN #12","2,500",ft,0.85\n'

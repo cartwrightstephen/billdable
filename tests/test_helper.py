@@ -62,6 +62,15 @@ class HelperTests(unittest.TestCase):
                 wrong[q] = (got, want, round(score, 2))
         self.assertEqual(wrong, {})
 
+    def test_quickbooks_answer_names_what_the_app_has(self):
+        # R5-09: the answer used to say QuickBooks was "not yet" and payments were matched by hand.
+        reply = helper.answer("does it work with quickbooks", seed_state(), "co-x", "u-1")
+        self.assertEqual(reply["matched"], "quickbooks")
+        for words in ("Read payments", "CSV", "Connect QuickBooks", "Download for QuickBooks"):
+            self.assertIn(words, reply["text"])
+        self.assertNotIn("Not yet", reply["text"])
+        self.assertNotIn("Match payment", reply["text"])
+
     def test_unknown_question_is_logged_for_review(self):
         reply = helper.answer("what's the weather in boise", seed_state(), "co-x", "u-1")
         self.assertIsNone(reply["matched"])

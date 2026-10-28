@@ -257,5 +257,31 @@ class QboTests(unittest.TestCase):
             self.assertFalse(st["configured"])
 
 
+REAL = Path(__file__).resolve().parents[1] / "testdata" / "quickbooks"
+
+
+class RealShapeTests(unittest.TestCase):  # R5-10: Intuit's real Payment and Invoice JSON, once saved in testdata/quickbooks
+    def entity(self, name, key):
+        path = REAL / name
+        if not path.exists():
+            self.skipTest(f"No {name} in testdata/quickbooks yet (see its README).")
+        reply = json.loads(path.read_text())
+        return ((reply.get("QueryResponse") or {}).get(key) or []) if "QueryResponse" in reply else reply
+
+    def test_real_payments_become_rows_and_real_invoices_reconcile(self):
+        payments = self.entity("payments.json", "Payment")
+        invoices = self.entity("invoices.json", "Invoice")
+        self.assertTrue(payments)
+        rows = qbo.payment_rows(payments, invoices)
+        self.assertTrue(rows, "no payment read from payments.json")
+        for row in rows:
+            self.assertTrue(row["qbo_id"], row)
+            self.assertGreater(row["amount_cents"], 0)
+            self.assertRegex(row["date"] or "", r"^\d{4}-\d{2}-\d{2}$")
+        state = seed_state()
+        self.assertEqual(len(qbo.propose(state, rows)), len(rows))
+        qbo.reconcile(state, invoices)  # reads every field it uses without raising
+
+
 if __name__ == "__main__":
     unittest.main()

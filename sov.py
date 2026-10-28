@@ -432,7 +432,7 @@ def _header_map(row: list[str]) -> dict[str, int] | None:
 def parse_rows(text: str) -> dict[str, Any]:
     """Read schedule-of-values rows pasted from Excel, Google Sheets, a CSV or a PDF.
 
-    With a header row, columns are taken by name. Without one: the first text
+    With a header row (one of the first 5), columns are taken by name. Without one: the first text
     cell is the description, a short text cell is the unit, and the numbers are
     quantity and rate (two numbers), quantity, rate and amount (three), or a
     lump-sum amount (one). Total and markup rows are skipped and reported.
@@ -440,10 +440,20 @@ def parse_rows(text: str) -> dict[str, Any]:
     rows = _split_rows(text or "")
     lines_out: list[dict[str, str]] = []
     warnings: list[str] = []
-    header = _header_map(rows[0]) if rows else None
-    body = rows[1:] if header else rows
+    # The header can sit under a title line or two (a company name, "Schedule of values"):
+    # look for it in the first 5 rows, the way qbo_csv looks in its first 20.
+    header, at = None, 0
+    for i, row in enumerate(rows[:5]):
+        header = _header_map(row)
+        if header:
+            at = i
+            break
+    for i, row in enumerate(rows[:at]):
+        title = next((c for c in row if c), "")[:80]
+        warnings.append(f"Row {i + 1} ({title}) skipped: text above the header.")
+    body = rows[at + 1:] if header else rows
     op_hint = ""
-    for n, row in enumerate(body, start=2 if header else 1):
+    for n, row in enumerate(body, start=at + 2 if header else 1):
         if header:
             cell = lambda f: row[header[f]].strip() if f in header and header[f] < len(row) else ""
             description, unit, item = cell("description"), cell("unit"), cell("item")

@@ -1356,7 +1356,10 @@ const ACTIONS = {
   },
   "rotate-token": async (el) => {
     if (!(await askConfirm("Make a new address? The old one stops working right away.", "Make a new address"))) return;
-    await fetch("/api/import/rotate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: el.dataset.kind }) });
+    // Through post(), so a refusal (members can't do this) shows like any other.
+    const r = await post("/api/import/rotate", { kind: el.dataset.kind }, { quiet: true });
+    if (!r || !r.ok) return;
+    toast("New address made. The old one no longer works.");
     importSettings = null;
     render();
   },
@@ -2365,6 +2368,11 @@ function qboPayAppCell(row, n) {
 }
 
 // The QuickBooks card, on Payments and on Settings > Team & account (R4-11).
+// Only an owner can replace a private web address (the server refuses members too).
+function newAddressButton(kind) {
+  return me && me.role === "owner" ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
+}
+
 function qboCardHtml(onPayments) {
   const q = qboStatus;
   const owner = me && me.role === "owner";
@@ -2842,12 +2850,12 @@ const views = {
         <h3>Email</h3>
         <p id="email-address" class="sub">Loading…</p>
         <p class="sub">Steps: in an email service that can post incoming mail to a web address (SendGrid Inbound Parse, Mailgun routes or Postmark inbound), set up an inbound address and point it at this private web address. Then forward or BCC job emails to that inbound address. Attachments come in as files.</p>
-        <div class="copy-row"><code id="email-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="email-webhook">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="email">Make a new address</button></div>
+        <div class="copy-row"><code id="email-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="email-webhook">Copy</button>${newAddressButton("email")}</div>
         <h3>Text messages</h3>
         <p id="sms-number" class="sub">Loading…</p>
-        <p class="sub">Steps: in Twilio, buy a number and set its incoming-message webhook to this private web address. Set TWILIO_AUTH_TOKEN on the server so Duracash checks each message really came from Twilio. Photos sent by text show as links for now; they are not downloaded.</p>
-        <div class="copy-row"><code id="sms-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="sms-webhook">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="sms">Make a new address</button></div>
-        <p class="sub">Anyone who knows these addresses can drop items in your Inbox. They are reviewed before filing. Make a new address if one leaks.</p>
+        <p class="sub">Steps: in Twilio, buy a number and set its incoming-message webhook to this private web address. Set TWILIO_AUTH_TOKEN on the server so Duracash checks each message really came from Twilio; with it set, photos and PDFs sent by text are saved with the Inbox item. Without it they show as links.</p>
+        <div class="copy-row"><code id="sms-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="sms-webhook">Copy</button>${newAddressButton("sms")}</div>
+        <p class="sub">Anyone who knows these addresses can drop items in your Inbox. They are reviewed before filing. ${me && me.role === "owner" ? "Make a new address if one leaks." : "If one leaks, an owner can make a new one."}</p>
       </details>
     `;
   },
@@ -3548,8 +3556,8 @@ const views = {
       <details class="card subscribe">
         <summary><strong>Put these dates on your phone (Google Calendar, Apple, Outlook)</strong></summary>
         <p class="sub">Copy this private address. In Google Calendar on a computer: Other calendars, +, From URL, paste, Add calendar. It then shows on your phone. Calendar apps refresh subscribed calendars on their own schedule, often every few hours, so new dates are not instant.</p>
-        <div class="copy-row"><code id="cal-url">Loading…</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button><button class="btn small secondary" data-action="rotate-token" data-kind="calendar">Make a new address</button></div>
-        <p class="sub">Anyone with this address can see the dates and job names. Make a new address if it was shared by mistake.</p>
+        <div class="copy-row"><code id="cal-url">Loading…</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button>${newAddressButton("calendar")}</div>
+        <p class="sub">Anyone with this address can see the dates and job names. ${me && me.role === "owner" ? "Make a new address if it was shared by mistake." : "If it was shared by mistake, an owner can make a new one."}</p>
       </details>
     `;
   },

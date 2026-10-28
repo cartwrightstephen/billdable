@@ -160,5 +160,30 @@ class FinishTheImportTests(unittest.TestCase):
         self.assertEqual(out["warnings"], ["Line 2: the date '14/10/2026' wasn't read; this payment will be dated today unless you fix the cell."])
 
 
+REAL = Path(__file__).resolve().parents[1] / "testdata" / "quickbooks"
+
+
+class RealExportTests(unittest.TestCase):  # R5-10: real exports, once someone drops them in testdata/quickbooks
+    def exports(self):
+        files = sorted(p for p in REAL.glob("*") if p.suffix.lower() in {".csv", ".xlsx"})
+        if not files:
+            self.skipTest("No real QuickBooks export in testdata/quickbooks yet (see its README).")
+        return files
+
+    def test_each_real_export_reads_as_payments(self):
+        for path in self.exports():
+            with self.subTest(path.name):
+                text = qbo_csv.xlsx_to_csv(path.read_bytes()) if path.suffix.lower() == ".xlsx" else path.read_text(encoding="utf-8-sig")
+                out = qbo_csv.parse(text)
+                self.assertTrue(out["rows"], out["warnings"])
+                self.assertFalse(any("No header row" in w for w in out["warnings"]), out["warnings"])
+                for row in out["rows"]:
+                    self.assertGreater(row["amount_cents"], 0)
+                    self.assertTrue(row["date"], row)
+                    self.assertTrue(row["ref"] or row["customer"], row)
+                proposed = qbo_csv.propose(seed_state(), out["rows"])
+                self.assertEqual(len(proposed), len(out["rows"]))
+
+
 if __name__ == "__main__":
     unittest.main()

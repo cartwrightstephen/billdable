@@ -82,7 +82,7 @@ Everything comes into the Inbox, gets a suggested job (job code, address, job na
 - Saved emails (`.eml`): sender, subject, date, body and attachments are read with Python's email parser.
 - Pasted text: an email (with or without headers), a text thread, or notes. Notes split at every line that starts with a date (`10/12`, `Oct 12, 2026`, `2026-10-12`) and file as daily records with that date.
 - Inbound email: `POST /api/inbound/email/<token>` accepts raw MIME, a multipart form post, or JSON. The field names handled are the common ones for SendGrid Inbound Parse, Mailgun routes and Postmark inbound, written from their documentation; none has been tested against the live service.
-- Inbound SMS: `POST /api/inbound/sms/<token>` accepts Twilio's form post and answers with empty TwiML. Photos sent by text are kept as links, not downloaded (Twilio media can require Twilio credentials).
+- Inbound SMS: `POST /api/inbound/sms/<token>` accepts Twilio's form post and answers with empty TwiML. With `TWILIO_AUTH_TOKEN` set, photos and PDFs sent by text are downloaded into the Inbox item (`twilio_media.py`); without it, or when a download fails, they are kept as links.
 
 ## Sending email
 

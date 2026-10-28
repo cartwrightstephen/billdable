@@ -1379,7 +1379,7 @@
         "sync",
         "accounting"
       ],
-      "answer": "Not yet. A read-only QuickBooks Online import of customers, invoices and payments is planned. Today you record payments by hand with Match payment, and you can drop exported QuickBooks reports (CSV, PDF) into the Inbox.",
+      "answer": "Yes. On Money > Payments, paste or choose a QuickBooks payments export (CSV or Excel) and tap Read payments: each payment is matched to its pay app, and you record the ones you tick. Or an owner taps Connect QuickBooks there (when it is set up on the server): Duracash then reads payments and invoices and never changes your books. Each sent pay app also has Download for QuickBooks, a file QuickBooks imports as an invoice.",
       "handler": null,
       "needs_job": false,
       "actions": [],

@@ -272,6 +272,33 @@ await step("Inbox: a suggested item is added with one tap, and a photo goes with
   await ctx.close();
 });
 
+await step("a member sees no Make a new address; the owner does", async () => {  // R5-09
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => errors.push(e.message));
+  await p.goto(BASE + "/");
+  const token = await p.evaluate(async (email) => {
+    const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Owen Owner", company_name: "Address Builders" });
+    const out = await (await post("/api/team/invite", { email: "m-" + email, role: "member" })).json();
+    return out.invite_path.split("#invite=")[1];
+  }, `owner-${Date.now()}@example.com`);
+  await p.goto(BASE + "/inbox");
+  const automatic = p.locator("details.card", { hasText: "Bring emails and texts in automatically" });
+  await automatic.locator("summary").click();
+  await automatic.getByRole("button", { name: "Make a new address" }).first().waitFor();
+  // Accepting the invite signs this browser in as the member.
+  const status = await p.evaluate(async (t) => (await fetch("/api/auth/accept-invite", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accept_terms: true, token: t, name: "Mia Member", password: "member password 1" }) })).status, token);
+  assert.equal(status, 200, "member joined");
+  await p.goto(BASE + "/inbox");
+  await automatic.locator("summary").click();
+  await automatic.getByRole("button", { name: "Copy" }).first().waitFor();
+  assert.equal(await automatic.getByRole("button", { name: "Make a new address" }).count(), 0, "no Make a new address for a member");
+  assert.match(await automatic.innerText(), /an owner can make a new one/);
+  await ctx.close();
+});
+
 await step("refresh keeps the page", async () => {
   await page.goto(BASE + "/money/collections");
   await page.reload();
