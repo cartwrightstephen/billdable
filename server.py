@@ -1521,7 +1521,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _p_summary_email(self, m, ctx: "Ctx") -> None:
         if ctx.company_id == auth.DEMO_COMPANY_ID or not ctx.user.get("email_verified"):
-            self._json(409, {"error": "Confirm your email address first (Team & account)." if ctx.company_id != auth.DEMO_COMPANY_ID
+            self._json(409, {"error": "Confirm your email address first (Settings, My account)." if ctx.company_id != auth.DEMO_COMPANY_ID
                              else "The demo account doesn't send email."})
             return
         first = datetime.now(timezone.utc).date().replace(day=1) - timedelta(days=1)
@@ -2507,7 +2507,7 @@ def _edit_job(h, st, j, i, c):
 
 # Job actions only an owner may take (R4-02, R4-09): every final or emailed step. "You approve
 # every send": a member drafts, an owner sends, unless the company lets members send pay apps,
-# waivers and retainage requests (members_can_send, on Team & account).
+# waivers and retainage requests (members_can_send, on Settings, Company).
 OWNER_ACTIONS = {"send", "waiver", "retainage", "void-draft", "void-sent", "close", "delete", "accept-short-pay", "reopen"}
 MEMBER_SEND_ACTIONS = {"send", "waiver", "retainage"}
 

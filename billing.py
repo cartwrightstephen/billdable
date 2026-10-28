@@ -141,8 +141,8 @@ def checkout_url(state: dict[str, Any], company_id: str, email: str, base_url: s
     data: dict[str, Any] = {
         "mode": "subscription",
         "line_items": [{"price": price_for(state), "quantity": 1}],
-        "success_url": f"{base_url}/settings?billing=done",
-        "cancel_url": f"{base_url}/settings",
+        "success_url": f"{base_url}/settings/billing?billing=done",
+        "cancel_url": f"{base_url}/settings/billing",
         "client_reference_id": company_id,
         "subscription_data": {"metadata": {"company_id": company_id}},
     }
@@ -169,7 +169,7 @@ def portal_url(state: dict[str, Any], base_url: str) -> str:
     customer = record(state).get("customer_id")
     if not customer:
         raise BillingError("There is no subscription to manage yet. Subscribe first.")
-    session = _post("/v1/billing_portal/sessions", {"customer": customer, "return_url": f"{base_url}/settings"})
+    session = _post("/v1/billing_portal/sessions", {"customer": customer, "return_url": f"{base_url}/settings/billing"})
     if not str(session.get("url", "")).startswith("https://"):
         raise BillingError("Stripe didn't return the billing page.")
     return session["url"]

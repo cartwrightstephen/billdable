@@ -74,7 +74,7 @@ A customer's inbound email, text or calendar address that leaked: the owner uses
 
 ## 4. Delete a company on request
 
-The owner can do it in the app: **Settings → Team & account → Delete the company**. When they
+The owner can do it in the app: **Settings → Company → Your data, reset and delete → Delete the company**. When they
 can't (they lost access, or asked by email):
 
 1. Confirm the request comes from the account's owner (reply to the email on the account).

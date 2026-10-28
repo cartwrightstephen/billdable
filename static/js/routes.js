@@ -2,16 +2,21 @@
 
 import { unesc } from "./format.js";
 
-// A page's tab: a detail page's list, and Retainage, which is part of the Closeout tab (R6-01).
-export const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-detail": "packets", "co-detail": "cos", "waiver-detail": "waivers", retainage: "waivers" };
+// A page's tab: a detail page's list, Retainage, which is part of the Closeout tab (R6-01), and
+// Paperwork, which is a column of Pay apps (R6-03).
+export const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-detail": "payapps", packets: "payapps", "co-detail": "cos", "waiver-detail": "waivers", retainage: "waivers" };
 
 export const VIEW_PATHS = {
   dashboard: "/today", results: "/today/results", calendar: "/today/calendar", daily: "/today/daily",
   jobs: "/jobs", history: "/jobs/history", inbox: "/inbox",
   payapps: "/money", packets: "/money/packets", cos: "/money/change-orders", collections: "/money/collections",
   payments: "/money/payments", waivers: "/money/waivers", retainage: "/money/retainage", outbox: "/money/outbox",
-  account: "/settings", playbook: "/settings/playbook", audit: "/settings/audit", help: "/settings/help", "helper-admin": "/settings/helper-answers",
+  company: "/settings/company", team: "/settings/team", account: "/settings/account", billing: "/settings/billing",
+  playbook: "/settings/playbook", audit: "/settings/audit", help: "/settings/help", "helper-admin": "/settings/helper-answers",
 };
+
+// Older addresses that still open a page: /settings was one page before it split (R6-03).
+export const PATH_ALIASES = { "/settings": "company" };
 
 export const DETAIL_PATHS = { "payapp-detail": "/money/pay-app", "packet-detail": "/money/packet", "co-detail": "/money/change-order", "waiver-detail": "/money/waiver" };
 
@@ -28,6 +33,7 @@ export function routeFromPath(path) {
   if (!parts.length) return { view: "dashboard" };
   const joined = "/" + parts.join("/");
   for (const [v, p] of Object.entries(VIEW_PATHS)) if (p === joined) return { view: v };
+  if (PATH_ALIASES[joined]) return { view: PATH_ALIASES[joined] };
   if (parts[0] === "jobs" && parts.length === 2) return { view: "job", jobId: parts[1] };
   for (const [v, p] of Object.entries(DETAIL_PATHS)) {
     const base = p.split("/").filter(Boolean);

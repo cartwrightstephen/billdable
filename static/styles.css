@@ -227,6 +227,15 @@ a.reset-btn { display: block; text-decoration: none; text-align: left; }
 /* Import */
 .dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; margin: 12px 0; background: var(--card); display: flex; flex-direction: column; gap: 6px; }
 .dropzone.small { padding: 12px; }
+/* The camera is a phone's way in (R6-04): Take a photo and Choose files as buttons on a touch
+   screen; the drop-and-paste sentence only where there is a mouse to drop with. */
+.capture-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.touch-only { display: none; }
+@media (pointer: coarse), (max-width: 600px) {
+  .touch-only { display: flex; }
+  span.touch-only { display: block; }
+  .pointer-only { display: none; }
+}
 .drop-overlay { display: none; position: fixed; inset: 0; z-index: 90; align-items: center; justify-content: center; background: rgba(140,63,29,.12); border: 3px dashed var(--copper); font: 600 22px Georgia, serif; color: var(--copper); pointer-events: none; }
 .linkish { background: none; border: 0; padding: 0; color: var(--copper); text-decoration: underline; cursor: pointer; font: inherit; }
 .inbox-item { border-top: 1px solid var(--line); padding: 12px 0; display: flex; flex-direction: column; gap: 6px; }
@@ -296,6 +305,7 @@ details.card > summary { cursor: pointer; }
 .user-meta { margin-top: auto; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -8px 0 20px; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
+.tabs.more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
 .tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 12px; font: inherit; font-size: 14px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .tab:hover { color: var(--ink); }
 .tab.active { color: var(--copper); border-bottom-color: var(--copper); font-weight: 600; }
@@ -383,24 +393,60 @@ textarea { font: inherit; }
   table.stack td.next-action::before { display: block; margin-bottom: 2px; }
   table.stack td.actions-cell { white-space: normal; justify-content: flex-start; flex-wrap: wrap; }
   table.stack td.actions-cell::before { width: 100%; }
-  .table-wrap { overflow: visible; }
+  table.stack td.zero { display: none; }
+  /* Tables are cards here, so nothing scrolls sideways; a schedule of values scrolls in its
+     own box until 600 px, then becomes cards too (below). */
+  .table-wrap:not(.sov-wrap) { overflow: visible; }
   .cal-grid { gap: 2px; }
   .cal-day { min-height: 52px; padding: 4px; align-items: center; }
   .cal-day .cal-event { display: none; }
   .cal-dot { display: inline-block; margin-top: 2px; min-width: 18px; padding: 0 4px; border-radius: 9px; background: var(--copper-soft); color: var(--copper); font-size: 11px; text-align: center; }
   .cal-dow { font-size: 11px; }
+  /* The dot takes the colour of the day's most pressing date, so no legend is needed. */
+  .legend { display: none; }
+  .cal-dot.overdue { background: #f8e8e4; color: var(--red); }
+  .cal-dot.waiver { background: #f8efd8; color: var(--amber); }
+  .cal-dot.paid { background: #e5f2ea; color: var(--green); }
+  .due-strip.week-list { flex-direction: column; flex-wrap: nowrap; }
+  .due-strip.week-list .due-item { width: 100%; }
   .ai-badge { width: 48px; height: 48px; bottom: 16px; right: 16px; }
   .toast { top: 68px; }
   .form-inline > input, .form-inline > select { flex: 1 1 100%; }
   .sov-paste { flex-direction: column; }
+}
+/* A schedule of values below 600 px: one card per line, each box with its own label. */
+@media (max-width: 600px) {
+  table.sov-table, table.sov-table tbody, table.sov-table tr, table.sov-table td { display: block; width: 100%; }
+  table.sov-table tr.head-row { display: none; }
+  table.sov-table tr { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 10px; }
+  table.sov-table td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 0; text-align: right; }
+  table.sov-table td::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-align: left; flex-shrink: 0; }
+  table.sov-table td:empty, table.sov-table td.zero { display: none; }
+  table.sov-table td.sov-desc-cell { display: block; text-align: left; font-size: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  table.sov-table td.sov-desc-cell::before { content: none; }
+  table.sov-table .sov-in, table.sov-table .sov-in.sov-num { width: 8em; max-width: 60%; }
+  /* The editor: Description across the top, then Qty and Unit, Unit rate and Scheduled value. */
+  table.sov-edit tr:not(.head-row) { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+  table.sov-edit td { flex-direction: column; align-items: stretch; text-align: left; gap: 2px; }
+  table.sov-edit td.sov-desc-cell { grid-column: 1 / -1; order: -1; border: 0; padding-bottom: 0; margin: 0; font-size: inherit; }
+  table.sov-edit td.sov-desc-cell::before { content: attr(data-label); }
+  table.sov-edit td.sov-amt { justify-content: flex-end; font-weight: 600; }
+  table.sov-edit td.sov-amt:empty { display: flex; }
+  table.sov-edit td.sov-remove-cell { align-items: flex-end; justify-content: flex-end; }
+  table.sov-edit td.sov-remove-cell::before { content: none; }
+  table.sov-edit .sov-in, table.sov-edit .sov-in.sov-num, table.sov-edit .sov-in.sov-desc, table.sov-edit .sov-in.sov-item, table.sov-edit .sov-in.sov-unit { width: 100%; max-width: none; min-width: 0; }
+  .sov-progress .form-inline { flex-wrap: wrap; }
 }
 @media (max-width: 420px) {
   .metrics { grid-template-columns: 1fr; }
 }
 /* Touch screens: every control at least 44 px tall (WCAG 2.5.5 target size). */
 @media (pointer: coarse) {
-  .btn, .btn.small, .linkish, .tab, .stage, .due-item, .back, select, input:not([type=checkbox]), .filter-bar button, .chip, .nav button { min-height: 44px; }
-  .linkish { display: inline-flex; align-items: center; }
+  .btn, .btn.small, .tab, .stage, .due-item, .back, select, input:not([type=checkbox]), .filter-bar button, .chip, .nav button { min-height: 44px; }
+  /* A link-like button inside a sentence keeps the line's height; its touch area grows
+     invisibly around it instead (R6-02). */
+  .linkish { position: relative; }
+  .linkish::after { content: ""; position: absolute; inset: -12px -6px; }
   .info { width: 24px; height: 24px; font-size: 14px; }
   .help-dismiss, .ai-close { min-width: 44px; min-height: 44px; }
 }

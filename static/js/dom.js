@@ -5,15 +5,25 @@ export function moreButton(kind, page) {
     ? `<p><button class="btn small secondary" data-action="list-more" data-kind="${kind}">Show older (${page.total - page.entries.length} more)</button></p>` : "";
 }
 
+// A money cell that reads $0.00: hidden on a phone, where a card of noughts says nothing
+// (R6-02). The contract total and the next step always show.
+export const KEEP_ZERO = new Set(["Contract total", "Next"]);
+export function isZeroMoney(text) { return /^-?\$0\.00$/.test(String(text ?? "").trim()); }
+
 // Tables become cards on a phone: each cell carries its column's name for the CSS to show.
+// A schedule of values keeps its own layout (sov-table: cards only below 600 px), but its
+// cells get the same names, except where the markup set a better one ("% done").
 export function labelTables(root) {
-  root.querySelectorAll(".main table:not(.sov-table)").forEach(t => {
+  root.querySelectorAll(".main table").forEach(t => {
     const head = t.rows[0];
     if (!head || !head.querySelector("th")) return;
-    t.classList.add("stack");
+    if (!t.classList.contains("sov-table")) t.classList.add("stack");
     head.classList.add("head-row");
     const labels = [...head.cells].map(c => c.textContent.replace(/[↑↓]/g, "").trim());
-    [...t.rows].slice(1).forEach(r => [...r.cells].forEach((c, i) => { if (labels[i] && r.cells.length > 1) c.dataset.label = labels[i]; }));
+    [...t.rows].slice(1).forEach(r => [...r.cells].forEach((c, i) => {
+      if (labels[i] && r.cells.length > 1 && !c.hasAttribute("data-label")) c.dataset.label = labels[i];
+      if (c.classList.contains("num") && isZeroMoney(c.textContent) && !KEEP_ZERO.has(labels[i])) c.classList.add("zero");
+    }));
   });
 }
 

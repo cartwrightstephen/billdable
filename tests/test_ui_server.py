@@ -126,6 +126,23 @@ class UiServerTests(unittest.TestCase):
         _, page = self.get("/")
         self.assertIn(b'rel="manifest"', page)
 
+    def test_manifest_shortcuts_and_share_types(self):  # R6-04
+        _, body = self.get("/manifest.webmanifest")
+        manifest = json.loads(body)
+        names = [s["name"] for s in manifest["shortcuts"]]
+        self.assertEqual(names, ["Take a photo", "Daily record", "New job"])
+        for shortcut in manifest["shortcuts"]:
+            self.assertTrue(shortcut["url"].startswith("/"), shortcut)
+            res, page = self.get(shortcut["url"])
+            self.assertEqual(res.status, 200, shortcut["url"])
+            self.assertIn(b'<div id="app">', page, "each shortcut opens the app")
+            for icon in shortcut.get("icons", []):
+                self.assertEqual(self.get(icon["src"])[0].status, 200)
+        accept = manifest["share_target"]["params"]["files"][0]["accept"]
+        for ext in (".xls", ".doc", ".txt", ".xlsx", ".docx", ".pdf", ".eml", ".csv"):
+            self.assertIn(ext, accept)
+            self.assertIn(ext, importer.ALLOWED_FILES, "a shared file of this type is kept")
+
     def share(self, cookie=None):
         boundary = "----duracash"
         parts = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nOak tickets\r\n"

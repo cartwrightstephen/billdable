@@ -491,7 +491,7 @@ def verify_email(raw: Any) -> dict[str, Any]:
         data = _load()
         key, entry = _find_token(data, "verify", raw)
         if not key:
-            raise AuthError("This verification link is invalid or has expired. Send a new one from the Team & account page.")
+            raise AuthError("This verification link is invalid or has expired. Send a new one from Settings, My account.")
         data["tokens"].pop(key, None)
         user = next((u for u in data["users"] if u["id"] == entry["user_id"]), None)
         if not user:

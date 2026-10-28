@@ -14,7 +14,7 @@ Screen names used below:
 | Inbox | `/inbox` | static/js/routes.js:9 |
 | Pay apps, Packets, Change orders, Collections, Payments, Waivers, Retainage, Outbox | `/money/...` | static/js/routes.js:10-11 |
 | Pay app, Packet, Change order, Waiver detail pages | `/money/pay-app/...`, `/money/packet/...`, `/money/change-order/...`, `/money/waiver/...` | static/js/routes.js:15 |
-| Settings: Team & account, Payer playbook | `/settings`, `/settings/playbook` | static/js/routes.js:12 |
+| Settings: Company, Team, My account, Billing, Customer settings | `/settings/company` (`/settings` opens it), `/settings/team`, `/settings/account`, `/settings/billing`, `/settings/playbook` | static/js/routes.js:12 |
 
 On the job page, one button is the big "next step" button and the rest sit in a row of smaller buttons. The big one is picked in this order: `Clear N blockers`, `Approve & send`, `Send waiver`, `Match payment`, `Draft pay app`, `Progress pay app`, `Close for record`, `Ask for retainage` (static/app.js:672-674).
 
@@ -82,7 +82,7 @@ flowchart TD
     H -->|"No"| J["'Send the link again' on the panel or the banner"]
     J --> G
     F --> K["Checklist step 1: 'Company details'"]
-    K --> L["Settings: Team & account, card 'Company', cursor in Address"]
+    K --> L["Settings: Company, card 'Company details', cursor in Address"]
     L --> M["Fill Company name, Phone, Address, Contractor licence number, How you bill; tap 'Save company details'"]
     M --> N["Step 1 ticked; next: 'New job' (section 3)"]
     N --> O{"Office help?"}

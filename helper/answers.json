@@ -438,14 +438,14 @@
         "owner",
         "role"
       ],
-      "answer": "Yes. An owner opens Team & account and invites people by email, as owner or member. Members do the everyday work (jobs, pay apps, sends); owners also manage the team, the inbound addresses, reset and deleting the company. Every action shows in the Audit with the person's name. If email isn't set up on the server, the owner gets an invite link to pass on; it works once, for 7 days.",
+      "answer": "Yes. An owner opens Settings, Team and invites people by email, as owner or member. Members do the everyday work (jobs, pay apps, sends); owners also manage the team, the inbound addresses, reset and deleting the company. Every action shows in the Audit with the person's name. If email isn't set up on the server, the owner gets an invite link to pass on; it works once, for 7 days.",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
-          "view": "account",
-          "label": "Open Team & account"
+          "view": "team",
+          "label": "Open Team"
         }
       ],
       "follow_ups": []
@@ -1312,14 +1312,14 @@
         "login",
         "reset"
       ],
-      "answer": "On the sign-in screen, click Forgot your password? and enter your email: a reset link arrives that works once, for one hour, and signs you out everywhere else. Signed in, change it on Team & account. After 5 wrong passwords for one email, sign-in pauses for 15 minutes. Passwords need at least 10 characters. If the server can't send email yet, the screen says so; ask the Duracash team.",
+      "answer": "On the sign-in screen, click Forgot your password? and enter your email: a reset link arrives that works once, for one hour, and signs you out everywhere else. Signed in, change it in Settings, My account. After 5 wrong passwords for one email, sign-in pauses for 15 minutes. Passwords need at least 10 characters. If the server can't send email yet, the screen says so; ask the Duracash team.",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
           "view": "account",
-          "label": "Open Team & account"
+          "label": "Open My account"
         }
       ],
       "follow_ups": []
@@ -1584,14 +1584,14 @@
         "close account",
         "delete"
       ],
-      "answer": "An owner can delete the company on Team & account: type your password and the company name. It removes every job, file, payer and record, and every user on the team, at once. Use Export data first if you want a copy. Server backups that already hold the data expire on their own (the newest 14 are kept by default).",
+      "answer": "An owner can delete the company in Settings, Company (under Your data, reset and delete): type your password and the company name. It removes every job, file, payer and record, and every user on the team, at once. Use Export data first if you want a copy. Server backups that already hold the data expire on their own (the newest 14 are kept by default).",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
-          "view": "account",
-          "label": "Open Team & account"
+          "view": "company",
+          "label": "Open Company"
         }
       ],
       "follow_ups": [
@@ -1634,14 +1634,14 @@
         "confirm email",
         "confirmation"
       ],
-      "answer": "Duracash sends pay apps with replies coming back to the person who approved them, so it checks that the address is really yours first. Click the link in the confirmation email (it works for 3 days). Didn't get it? Use Send the link again on Team & account, then check spam. Emails held while you were unconfirmed have Send again in the Outbox.",
+      "answer": "Duracash sends pay apps with replies coming back to the person who approved them, so it checks that the address is really yours first. Click the link in the confirmation email (it works for 3 days). Didn't get it? Use Send the link again in Settings, My account, then check spam. Emails held while you were unconfirmed have Send again in the Outbox.",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
           "view": "account",
-          "label": "Open Team & account"
+          "label": "Open My account"
         }
       ],
       "follow_ups": []

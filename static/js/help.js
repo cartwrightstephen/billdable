@@ -96,15 +96,15 @@ export const FIELD_HELP = {
 
 export const NAV_HELP = {
   today: "What needs you today, the money across open jobs, the calendar and the daily record.",
-  money: "Pay apps, paperwork, change orders, what is unpaid, payments, closeout and the Outbox.",
-  settings: "Your team and account, customer settings, the activity log and help.",
+  money: "Pay apps and their paperwork, change orders, what is unpaid, payments, closeout and the Outbox.",
+  settings: "Your company, team, account and billing, customer settings, the activity log and help.",
   inbox: "Bring in photos, PDFs, emails, texts and notes, then file them to a job in one click.",
   dashboard: "What needs attention and the money across open jobs.",
   daily: "A dated note of what happened on site today, saved on the job record.",
   jobs: "Every job, with its money, paperwork and next steps.",
   calendar: "Follow-ups, expected approvals, payments and closeouts by date. Can be added to Google Calendar.",
   results: "How fast work turns into pay apps and pay apps into money, from your own records.",
-  payapps: "Pay applications (pay apps): the bill for work done this period, with the paperwork the customer needs.",
+  payapps: "Pay applications (pay apps): the bill for work done this period, with the paperwork the customer needs in its Paperwork column.",
   packets: "The paperwork that must go with each pay app: waivers, tickets, photos, signed change orders.",
   cos: "Change orders: extra or changed work. Not billable until the customer signs.",
   collections: "Unpaid: what is owed and who to contact.",
@@ -116,7 +116,10 @@ export const NAV_HELP = {
   outbox: "Every email approved to send, and whether it was delivered.",
   audit: "Activity log: every action, who took it and when.",
   help: "What the terms mean and how to start.",
-  account: "Your password and email, the people on your team, and deleting the company.",
+  company: "What prints on every pay app, how you bill, sending and email, QuickBooks, your data and deleting the company.",
+  team: "The people on your team, their roles and invites.",
+  account: "Your name, password and two-step sign-in.",
+  billing: "Your subscription and free trial. Owners only.",
   "helper-admin": "Questions the helper couldn't answer, and the answers it uses. Team only.",
 };
 

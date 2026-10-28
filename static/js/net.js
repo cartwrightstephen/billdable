@@ -32,3 +32,20 @@ export async function postJson(path, body) {
     return { ok: false, status: 0, data: { error: "Can't reach Duracash." } };
   }
 }
+
+// Runs fn on each item with at most `limit` running at once (R6-04: a phone's five photos go up
+// two or three at a time, not one by one). onDone(done, total) is told after each one finishes.
+// Resolves with fn's results in the items' order.
+export async function inBatches(items, limit, fn, onDone = () => {}) {
+  const out = new Array(items.length);
+  let next = 0, done = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+      onDone(++done, items.length);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return out;
+}

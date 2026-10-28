@@ -362,7 +362,7 @@ class MailHttpTests(unittest.TestCase):
         self.sink.messages.clear()
         server.send_daily_digests(when.replace(hour=14))
         self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]])
-        # Turned off on Team & account: nothing the next day.
+        # Turned off on Settings, Company: nothing the next day.
         self.request("POST", "/api/company", {"daily_email": False}, cookie=cookie)
         server.send_daily_digests(when + timedelta(days=1))
         self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]])

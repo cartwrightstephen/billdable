@@ -25,20 +25,24 @@ export function fmtQty(milli) {
 
 export function blankSovLine() { return { id: "", item: "", description: "", quantity: "", unit: "", rate: "" }; }
 
+// What a progress line's box is called on a phone, where the table is a card per line and the
+// column heading is gone (R6-02): a lump sum is a percent, anything else a quantity in its unit.
+export function doneLabel(l) { return l.lump_sum ? "% done" : `Qty done (${l.unit})`; }
+
 // periodHtml: the "Period to" box (R4-04); errorLine: the form's error line.
 export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
   const v = j.sov_view;
   const rows = v.lines.map(l => `
     <tr>
-      <td>${l.item}</td><td>${l.description}</td>
+      <td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
       <td class="num">${l.lump_sum ? "lump sum" : fmtQty(l.qty_milli) + " " + l.unit}</td>
-      <td><input class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" value="${l.lump_sum ? +(l.done_milli / 10).toFixed(1) : l.done_milli / 1000}" inputmode="decimal" aria-label="${l.description}: done to date" ${l.done_milli >= l.qty_milli ? "disabled" : ""}> ${l.lump_sum ? "%" : l.unit}</td>
+      <td data-label="${doneLabel(l)}"><input class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" value="${l.lump_sum ? +(l.done_milli / 10).toFixed(1) : l.done_milli / 1000}" inputmode="decimal" aria-label="${l.description}: done to date" ${l.done_milli >= l.qty_milli ? "disabled" : ""}> ${l.lump_sum ? "%" : l.unit}</td>
       <td><input class="sov-in sov-num" data-sovs="${l.id}" value="${l.stored_cents ? (l.stored_cents / 100).toFixed(2) : ""}" placeholder="0.00" inputmode="decimal" aria-label="${l.description}: materials stored, dollars" ${l.done_milli >= l.qty_milli ? "disabled" : ""}></td>
       <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
     </tr>`).join("");
   return `<div class="card sov-progress" data-form-key="sovprogress">${errorLine}
     <p class="sub">Enter how much of each line is done to date (not this period), and the dollars of materials delivered and stored on site but not yet installed. Duracash bills the difference since the last pay app, plus overhead and profit, less retainage. Lower the stored amount as materials are installed.</p>
-    <div class="table-wrap"><table class="sov-table">
+    <div class="table-wrap sov-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th>Stored materials $</th><th></th></tr>
       ${rows}
     </table></div>
@@ -63,10 +67,10 @@ export function continuationHtml(inv, job) {
   const retPct = (inv.retainage_pct ?? (job && job.retainage_pct)) || 0;   // as held on this pay app (R4-07)
   return `<div class="card">
     <h2>Continuation sheet</h2>
-    <div class="table-wrap"><table class="sov-table">
+    <div class="table-wrap sov-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Previous</th><th>This period</th><th>Stored</th><th>Total to date</th><th>%</th><th>Balance to finish</th>${retPct ? `<th>Retainage ${retPct}%</th>` : ""}</tr>
-      ${rows.map(e => { const c = sheetColumns(e, retPct); return `<tr><td>${e.item}</td><td>${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(c.previous)}</td><td class="num">${money(c.thisPeriod)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(c.stored)}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${c.pct}%</td><td class="num">${money(c.balance)}</td>${retPct ? `<td class="num">${money(c.retainage)}</td>` : ""}</tr>`; }).join("")}
-      ${inv.op_cents ? `<tr><td></td><td>Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td><td></td>${retPct ? "<td></td>" : ""}</tr>` : ""}
+      ${rows.map(e => { const c = sheetColumns(e, retPct); return `<tr><td>${e.item}</td><td class="sov-desc-cell">${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(c.previous)}</td><td class="num">${money(c.thisPeriod)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(c.stored)}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${c.pct}%</td><td class="num">${money(c.balance)}</td>${retPct ? `<td class="num">${money(c.retainage)}</td>` : ""}</tr>`; }).join("")}
+      ${inv.op_cents ? `<tr><td></td><td class="sov-desc-cell">Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td><td></td>${retPct ? "<td></td>" : ""}</tr>` : ""}
     </table></div>
     ${retPct ? `<p class="sub">The retainage column is ${retPct}% of each line's total to date, for reference.</p>` : ""}
   </div>`;

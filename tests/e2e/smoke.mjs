@@ -127,7 +127,7 @@ await step("sign-up says where the confirmation link went", async () => {
   await checklist.getByRole("button", { name: "Company details" }).click();
   await p.locator("#co-address").waitFor();
   assert.equal(await p.evaluate(() => document.activeElement && document.activeElement.id), "co-address");
-  assert.equal(new URL(p.url()).pathname, "/settings");
+  assert.equal(new URL(p.url()).pathname, "/settings/company");  // Settings split into pages (R6-03)
   await ctx.close();
 });
 
@@ -264,7 +264,7 @@ await step("Inbox: a suggested item is added with one tap, and a photo goes with
   // Which job? first: the upload is suggested to that job, not filed.
   await p.selectOption("#upload-job", ids["Cedar bath"]);
   const chooser = p.waitForEvent("filechooser");
-  await p.locator('.dropzone [data-action="pick-files"]').click();
+  await p.locator('.dropzone .pointer-only [data-action="pick-files"]').click();  // desktop: the "choose files" link (R6-04)
   await (await chooser).setFiles({ name: "IMG_0412.jpg", mimeType: "image/jpeg", buffer: Buffer.from("not really a jpeg") });
   const photo = p.locator(".inbox-item", { hasText: "IMG_0412.jpg" });
   await photo.getByRole("button", { name: "Add to Cedar bath" }).waitFor();
@@ -490,7 +490,8 @@ await step("the job page shows what happened, newest first", async () => {
 });
 
 await step("a confirmation is an in-page dialog, and Escape cancels it", async () => {
-  await page.goto(BASE + "/settings");
+  await page.goto(BASE + "/settings/company");
+  await page.locator("details.danger-zone > summary").click();  // folded at the end of Company (R6-03)
   await page.locator("#reset").click();
   await page.locator("dialog.confirm-dialog").waitFor();
   await page.keyboard.press("Escape");
@@ -504,13 +505,66 @@ await step("phone: no page scrolls sideways at 375 px", async () => {
   const wide = [];
   for (const path of ["/today", "/today/results", "/today/calendar", "/today/daily", "/jobs", "/jobs/job-oak", "/inbox", "/money", "/money/packets",
                       "/money/change-orders", "/money/collections", "/money/payments", "/money/waivers", "/money/retainage",
-                      "/money/outbox", "/settings", "/settings/playbook", "/settings/audit", "/settings/help"]) {
+                      "/money/outbox", "/settings", "/settings/company", "/settings/team", "/settings/account", "/settings/billing",
+                      "/settings/playbook", "/settings/audit", "/settings/help"]) {
     await phone.goto(BASE + path);
     await phone.locator("#view h1").first().waitFor();
     const width = await phone.evaluate(() => document.documentElement.scrollWidth);
     if (width > 375) wide.push(`${path} (${width}px)`);
   }
   assert.deepEqual(wide, [], "pages wider than the screen");
+});
+
+await step("Money has six tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03
+  await page.goto(BASE + "/money");
+  assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout", "Outbox"]);
+  await page.locator("table th", { hasText: "Paperwork" }).waitFor();
+  await page.goto(BASE + "/money/packets");  // the old Paperwork tab's address opens Pay apps
+  await page.getByRole("heading", { name: "Pay apps" }).waitFor();
+  await page.goto(BASE + "/settings/company");
+  assert.equal(await page.locator("#view .card").first().getAttribute("id"), "company-card");
+  assert.deepEqual((await page.locator(".tabs .tab").allInnerTexts()).slice(0, 4), ["Company", "Team", "My account", "Billing"]);
+  await page.goto(BASE + "/settings");
+  await page.getByRole("heading", { name: "Company", exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, "/settings/company");
+});
+
+await step("phone: a schedule of values is one card per line, and the Inbox offers Take a photo first", async () => {  // R6-02, R6-04
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => errors.push(e.message));
+  await p.goto(BASE + "/");
+  const jobId = await p.evaluate(async (email) => {
+    const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Pia Phone", company_name: "Phone Builders" });
+    const st = await (await post("/api/jobs", { name: "Long schedule job", address: "4 Line St", customer: "Gail General", role: "GC",
+      ap_email: "ap@gail.example", contract_cents: 3150000 })).json();
+    const id = st.jobs.find((j) => j.name === "Long schedule job").id;
+    await post(`/api/jobs/${id}/sov`, { op_pct: "5", update_contract: true, lines: [
+      { item: "1", description: "Rough-in wiring for the whole second floor east wing", quantity: "1", unit: "LS", rate: "12000" },
+      { item: "2", description: "Ceramic wall tile in the restrooms", quantity: "1200", unit: "SF", rate: "15" },
+    ] });
+    return id;
+  }, `phone-${Date.now()}@example.com`);
+  const noSideways = async (where) => {
+    const width = await p.evaluate(() => document.documentElement.scrollWidth);
+    assert.ok(width <= 375, `${where} is ${width}px wide`);
+  };
+  await p.goto(BASE + `/jobs/${jobId}`);
+  await p.locator("#sov-card .sov-table").waitFor();
+  await noSideways("the job page with a schedule of values");
+  await p.locator('#sov-card [data-action="sov-start"]').click();
+  await p.locator("#sov-card .sov-edit").waitFor();
+  await noSideways("the schedule editor");
+  await p.goto(BASE + "/inbox");
+  // Waiting first, then the camera; the drop-and-paste sentence is for a mouse.
+  assert.equal(await p.locator("#view .card").first().locator("h2").innerText(), "Waiting (0)");
+  const first = p.locator('.dropzone [data-action="pick-files"]:visible').first();
+  assert.equal(await first.innerText(), "Take a photo");
+  assert.equal(await first.getAttribute("data-capture"), "1");
+  await p.locator(".dropzone").getByRole("button", { name: "Choose files" }).waitFor({ state: "visible" });
+  assert.equal(await p.locator(".dropzone .pointer-only").isVisible(), false);
+  await ctx.close();
 });
 
 await step("phone: the menu drawer opens and moves between sections", async () => {

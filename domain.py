@@ -1487,7 +1487,7 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     company = state.get("company", {}).get("name", "")
     body = (f"What needs you today{' at ' + company if company else ''}:\n\n" + "\n".join(lines)
             + "\n\nNothing goes out until you approve it in Duracash."
-            + "\nTurn this email off in Team & account: Daily email of what's due.")
+            + "\nTurn this email off in Settings, Company: Daily email of what's due.")
     return subject, body
 
 
@@ -1766,7 +1766,7 @@ def payapp_due(payer: dict[str, Any], today: date | None = None) -> tuple[date, 
 
 COMPANY_FIELDS = {"name": 120, "address": 200, "phone": 40, "license": 60}
 BILLING_STYLES = {"pay_apps", "draws"}
-# On/off company settings on Team & account, with their default: members may send pay apps,
+# On/off company settings on Settings, Company, with their default: members may send pay apps,
 # waivers and retainage requests (R4-09); owners get the daily "due today" email (R4-10).
 COMPANY_SWITCHES = {"members_can_send": False, "daily_email": True}
 SWITCH_WORDS = {"members_can_send": "members can send", "daily_email": "daily email of what's due"}

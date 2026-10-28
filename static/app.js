@@ -5,8 +5,9 @@ import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobAct
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
-import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js";
+import { readJson, setNetBanner, postJson, readTokenFromUrl, inBatches } from "./js/net.js";
 import { labelTables, moreButton, askConfirm } from "./js/dom.js";
+import { worstKind, webcalUrl } from "./js/calendar.js";
 import { field, moneyField, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, formDraft, draftValue, clearForm, clearAllForms, watchForms } from "./js/forms.js";
 import { todayQueue, queueHtml, anyPayAppSent } from "./js/today.js";
 import { canRecord, needsPick, pickPayApp, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "./js/payimport.js";
@@ -52,6 +53,8 @@ let authError = "";      // the two-step code screen's error; the sign-in form u
 let actionEl = null;      // the button whose action is running: a refusal is shown under it
 let drawerOpen = false;   // the phone menu
 let pendingPath = null;   // a page address opened while signed out, opened after sign-in
+let pendingSearch = null; // and its ?camera=1 or ?new=1, from a home-screen shortcut
+let cameraAsk = false;    // opened from the Take a photo shortcut: the Inbox's camera button gets the focus
 let lastToastAt = 0;
 let loginCode = null;     // {email, password} while the sign-in asks for a two-step code
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
@@ -214,8 +217,8 @@ const SECTIONS = [
   { key: "today", label: "Today", views: [["dashboard", "Overview"], ["results", "Results"], ["calendar", "Calendar"], ["daily", "Daily record"]] },
   { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["history", "Job history"]] },
   { key: "inbox", label: "Inbox", views: [["inbox", "Inbox"]] },
-  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["packets", "Paperwork"], ["cos", "Change orders"], ["collections", "Unpaid"], ["payments", "Payments"], ["waivers", "Closeout"], ["outbox", "Outbox"]] },
-  { key: "settings", label: "Settings", views: [["account", "Team & account"], ["playbook", "Customer settings"], ["audit", "Activity log"], ["help", "Help"], ["helper-admin", "Helper answers"]] },
+  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["payments", "Payments"], ["waivers", "Closeout"], ["outbox", "Outbox"]] },
+  { key: "settings", label: "Settings", views: [["company", "Company"], ["team", "Team"], ["account", "My account"], ["billing", "Billing"], ["playbook", "Customer settings"], ["audit", "Activity log"], ["help", "Help"], ["helper-admin", "Helper answers"]] },
 ];
 
 function sectionOf(view) {
@@ -233,9 +236,15 @@ function pageTitle() {
   return `${name} · Duracash`;
 }
 // Called once signed in: open the page in the address bar (or the one asked for while signed out).
+// The home-screen shortcuts (manifest.webmanifest, R6-04) add ?camera=1 to the Inbox and ?new=1
+// to Jobs. A page can't open the camera by itself, so Take a photo is put under the thumb.
 function applyLocation() {
   const r = routeFromPath(pendingPath || location.pathname) || { view: "dashboard" };
+  const ask = new URLSearchParams(pendingSearch ?? location.search);
   pendingPath = null;
+  pendingSearch = null;
+  if (r.view === "jobs" && ask.get("new") === "1") formOpen.newjob = true;
+  if (r.view === "inbox" && ask.get("camera") === "1") cameraAsk = true;
   setLocation(r.view, r.jobId, r.detailId);
   history.replaceState(null, "", pathFor(currentView, currentJobId, currentDetailId));
 }
@@ -354,7 +363,7 @@ async function boot(checkLink = true) {
     await load();
   } else {
     dataNotice = (await readJson(res)).data_notice === true;
-    if (location.pathname !== "/" && routeFromPath(location.pathname)) { pendingPath = location.pathname; authMode = "login"; }
+    if (location.pathname !== "/" && routeFromPath(location.pathname)) { pendingPath = location.pathname; pendingSearch = location.search; authMode = "login"; }
     renderLanding();
     checkDemo();
   }
@@ -671,7 +680,7 @@ function showRefusal(anchor, data) {
 
 // opts.fromHistory: Back/Forward already changed the address; opts.replace: don't add a history entry.
 function nav(view, jobId = null, detailId = null, opts = {}) {
-  if (view === "account") teamData = null;  // fresh team list each time the page opens
+  if (view === "team") teamData = null;  // fresh team list each time the page opens
   const moved = view !== currentView || jobId !== currentJobId || detailId !== currentDetailId;
   setLocation(view, jobId, detailId);
   closeForms();
@@ -906,7 +915,7 @@ function jobActions(j) {
 }
 
 // What the signed-in person may do (R4-09): members draft and get things ready; an owner sends,
-// deletes and finishes, unless the company lets members send (Team & account).
+// deletes and finishes, unless the company lets members send (Settings, Company).
 function perms() {
   return { owner: !me || me.role === "owner", membersCanSend: !!(state && state.company && state.company.members_can_send) };
 }
@@ -935,7 +944,8 @@ function render() {
   const tabView = DETAIL_PARENT[currentView] || currentView;
   const inboxCount = newInboxCount();
   const failedEmails = state.pending_email_failures || 0;
-  const tabs = section.views.filter(([v]) => v !== "helper-admin" || helperAdmin);
+  // Helper answers is for the Duracash team; Billing is for owners.
+  const tabs = section.views.filter(([v]) => (v !== "helper-admin" || helperAdmin) && (v !== "billing" || (me && me.role === "owner")));
   const shell = `
     <a class="skip-link" href="#main">Skip to content</a>
     <div class="shell ${drawerOpen ? "drawer-open" : ""}">
@@ -967,7 +977,11 @@ function render() {
   const was = document.activeElement;
   const keep = was && was.id && app.contains(was) ? { id: was.id, start: was.selectionStart, end: was.selectionEnd } : null;
   const whole = shell !== shellHtml || !document.getElementById("view");
-  if (whole) { app.innerHTML = shell; shellHtml = shell; }
+  if (whole) {
+    app.innerHTML = shell;
+    shellHtml = shell;
+    document.querySelector(".tabs")?.addEventListener("scroll", fadeTabs, { passive: true });
+  }
   const view = document.getElementById("view");
   view.innerHTML = verifyBannerHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Today</button>`));
   if (keep && !document.activeElement?.id) {
@@ -978,14 +992,27 @@ function render() {
     }
   }
   document.title = pageTitle();
+  fadeTabs();
   finishHtml(whole ? app : view);
+  if (cameraAsk && currentView === "inbox") {
+    cameraAsk = false;
+    document.querySelector('.dropzone [data-capture="1"]')?.focus();
+  }
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
   if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
-  if (["payments", "account"].includes(currentView) && !qboStatus) loadQboStatus();
+  if (["payments", "company"].includes(currentView) && !qboStatus) loadQboStatus();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin") { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
 }
+
+// The tab row scrolls sideways on a phone: it fades at the right edge until its last tab is in
+// view, so more tabs are seen to be there (R6-03).
+function fadeTabs() {
+  const t = document.querySelector(".tabs");
+  if (t) t.classList.toggle("more-right", t.scrollWidth - t.scrollLeft - t.clientWidth > 2);
+}
+window.addEventListener("resize", fadeTabs);
 
 // Redraw one part of the page (a card, a list) in place, without redrawing the view around it.
 function patch(selector, html) {
@@ -1849,16 +1876,18 @@ function newInboxCount() {
 }
 
 const MAX_UPLOAD_MB = 15;
+const UPLOADS_AT_ONCE = 3;
 
 // extra.attach: a paperwork item the upload is attached to; extra.co: a change order the upload
 // is the signed copy of (R3-05, R3-06). Both need fileNow.
 async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", extra = {}) {
   const files = [...(fileList || [])];
   if (!files.length) return;
-  let ok = 0;
+  let ok = 0, signedOut = false;
   const failed = [];
-  for (const f of files) {
-    if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { failed.push(`${f.name}: larger than ${MAX_UPLOAD_MB} MB`); continue; }
+  const one = async (f) => {
+    if (signedOut) return;
+    if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { failed.push(`${f.name}: larger than ${MAX_UPLOAD_MB} MB`); return; }
     const name = f.name && f.name !== "image.png" ? f.name : `Screenshot ${new Date().toISOString().slice(0, 16).replace("T", " ").replace(":", ".")}.png`;
     const also = fileNow ? `${extra.attach ? `&attach=${encodeURIComponent(extra.attach)}` : ""}${extra.co ? `&co=${encodeURIComponent(extra.co)}` : ""}` : "";
     const query = jobId ? `?job=${encodeURIComponent(jobId)}${fileNow ? "&file=1" : ""}${fileNow && kind ? `&kind=${encodeURIComponent(kind)}` : ""}${also}` : "";
@@ -1869,14 +1898,20 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", ext
         body: f,
       });
       const data = await readJson(res);
-      if (res.status === 401) { clearSession(); renderLanding(); return; }
-      if (res.ok) { ok++; setState(data); setNetBanner(false); }
+      if (res.status === 401) { signedOut = true; return; }
+      if (res.ok) { ok++; setNetBanner(false); }
       else failed.push(data.error || `${name}: upload failed`);
     } catch (_) {
       setNetBanner(true);
       failed.push(`${name}: can't reach Duracash`);
     }
-  }
+  };
+  // Two or three at a time, saying how far it has got (R6-04).
+  if (files.length > 1) toast(`Uploading 1 of ${files.length}…`);
+  await inBatches(files, UPLOADS_AT_ONCE, one, (done, total) => { if (done < total) toast(`Uploading ${done + 1} of ${total}…`); });
+  if (signedOut) { clearSession(); renderLanding(); return; }
+  // The answers can arrive out of order, so the page reads the company once at the end.
+  if (ok) { jobDetails = {}; await load(); }
   const where = !fileNow ? "in the Inbox" : extra.attach ? "added to the job record and attached" : extra.co ? "added to the job record; the change order is signed" : "added to the job record";
   toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "));
   render();
@@ -1912,7 +1947,7 @@ async function loadQboStatus() {
     if (!res.ok) { qboStatus = null; return; }
     qboStatus = escDeep(await readJson(res));
   } catch (_) { qboStatus = null; setNetBanner(true); return; }
-  if (["payments", "account"].includes(currentView)) render();
+  if (["payments", "company"].includes(currentView)) render();
 }
 
 async function loadImportSettings() {
@@ -1936,6 +1971,10 @@ function fillImportSettings() {
   set("email-webhook", s.email_webhook);
   set("sms-webhook", s.sms_webhook);
   set("cal-url", s.calendar_url);
+  // The same address as webcal://, which a phone's calendar app opens as a subscription (R6-04).
+  const webcal = document.getElementById("cal-webcal");
+  const feed = webcalUrl(unesc(String(s.calendar_url || "")));
+  if (webcal && feed) { webcal.href = feed; webcal.hidden = false; }
   set("email-address", s.email_address ? `Forward or BCC job email to <strong>${s.email_address}</strong>.` : "No forwarding address is set up yet (an email provider has to be connected first; see steps).");
   set("sms-number", s.sms_number ? `Text photos and notes to <strong>${s.sms_number}</strong>.` : "No texting number is set up yet (a Twilio number has to be connected first; see steps).");
 }
@@ -2002,13 +2041,13 @@ function updateSovTotals() {
 function sovEditorHtml(j) {
   const rows = sovDraft.lines.map((l, i) => `
     <tr>
-      <td><input class="sov-in sov-item" data-sov-row="${i}" data-sov-field="item" value="${esc(l.item)}" placeholder="${i + 1}"></td>
-      <td><input class="sov-in sov-desc" data-sov-row="${i}" data-sov-field="description" value="${esc(l.description)}" placeholder="Rough-in wiring"></td>
-      <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="quantity" value="${esc(l.quantity)}" placeholder="1" inputmode="decimal"></td>
-      <td><input class="sov-in sov-unit" data-sov-row="${i}" data-sov-field="unit" value="${esc(l.unit)}" placeholder="LS"></td>
-      <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="rate" value="${esc(l.rate)}" placeholder="0.00" inputmode="decimal"></td>
-      <td class="num" id="sov-amt-${i}"></td>
-      <td><button class="btn small secondary" data-action="sov-remove" data-row="${i}" title="Remove line">×</button></td>
+      <td class="sov-item-cell"><input class="sov-in sov-item" data-sov-row="${i}" data-sov-field="item" value="${esc(l.item)}" placeholder="${i + 1}" aria-label="Line ${i + 1}: item"></td>
+      <td class="sov-desc-cell"><input class="sov-in sov-desc" data-sov-row="${i}" data-sov-field="description" value="${esc(l.description)}" placeholder="Rough-in wiring" aria-label="Line ${i + 1}: description"></td>
+      <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="quantity" value="${esc(l.quantity)}" placeholder="1" inputmode="decimal" aria-label="Line ${i + 1}: quantity"></td>
+      <td><input class="sov-in sov-unit" data-sov-row="${i}" data-sov-field="unit" value="${esc(l.unit)}" placeholder="LS" aria-label="Line ${i + 1}: unit"></td>
+      <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="rate" value="${esc(l.rate)}" placeholder="0.00" inputmode="decimal" aria-label="Line ${i + 1}: unit rate, dollars"></td>
+      <td class="num sov-amt" id="sov-amt-${i}"></td>
+      <td class="sov-remove-cell"><button class="btn small secondary" data-action="sov-remove" data-row="${i}" aria-label="Remove line ${i + 1}">×</button></td>
     </tr>`).join("");
   return `
     <p class="sub">Each line is a quantity at a unit rate; a lump sum is quantity 1 (unit LS) at its amount. Overhead and profit goes on top of the base lines. Approved change orders add their own lines.</p>
@@ -2017,7 +2056,7 @@ function sovEditorHtml(j) {
       <button class="btn small" data-action="sov-read">Read pasted rows</button>
     </div>
     ${sovDraft.warnings.length ? `<div class="sov-warn">${sovDraft.warnings.map(w => `<div>${esc(w)}</div>`).join("")}</div>` : ""}
-    <div class="table-wrap"><table class="sov-table">
+    <div class="table-wrap sov-wrap"><table class="sov-table sov-edit">
       <tr><th>Item</th><th>Description</th><th>Qty</th><th>Unit</th><th>Unit rate $</th><th>Scheduled value</th><th></th></tr>
       ${rows}
     </table></div>
@@ -2056,7 +2095,7 @@ function sovCardHtml(j) {
   const rows = v.lines.map(l => `
     <tr>
       <td>${l.item}</td>
-      <td>${l.description}${l.co_id ? ' <span class="pill green">CO</span>' : ""}</td>
+      <td class="sov-desc-cell">${l.description}${l.co_id ? ' <span class="pill green">CO</span>' : ""}</td>
       <td class="num">${l.lump_sum ? "" : fmtQty(l.qty_milli) + " " + l.unit}</td>
       <td class="num">${l.lump_sum ? "LS" : money(l.rate_cents)}</td>
       <td class="num">${money(l.scheduled_cents)}</td>
@@ -2067,11 +2106,11 @@ function sovCardHtml(j) {
     </tr>`).join("");
   return `<div class="card" id="sov-card">
     <h2>Schedule of values</h2>
-    <div class="table-wrap"><table class="sov-table">
+    <div class="table-wrap sov-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Qty</th><th>Unit rate</th><th>Scheduled value</th><th>Done to date</th><th>Earned to date</th><th>Billed</th><th>Balance to finish</th></tr>
       ${rows}
-      ${v.op_bp ? `<tr><td></td><td>Overhead and profit ${v.op_bp / 100}%</td><td></td><td></td><td class="num">${money(t.op_scheduled_cents)}</td><td></td><td class="num">${money(t.op_to_date_cents)}</td><td class="num">${money(v.op_billed_cents)}</td><td class="num">${money(t.op_scheduled_cents - t.op_to_date_cents)}</td></tr>` : ""}
-      <tr class="sov-total"><td></td><td>Total</td><td></td><td></td><td class="num">${money(t.scheduled_cents)}</td><td></td><td class="num">${money(t.to_date_cents)}</td><td class="num">${money(v.lines.reduce((a, l) => a + l.billed_cents, 0) + v.op_billed_cents)}</td><td class="num">${money(t.scheduled_cents - t.to_date_cents)}</td></tr>
+      ${v.op_bp ? `<tr><td></td><td class="sov-desc-cell">Overhead and profit ${v.op_bp / 100}%</td><td></td><td></td><td class="num">${money(t.op_scheduled_cents)}</td><td></td><td class="num">${money(t.op_to_date_cents)}</td><td class="num">${money(v.op_billed_cents)}</td><td class="num">${money(t.op_scheduled_cents - t.op_to_date_cents)}</td></tr>` : ""}
+      <tr class="sov-total"><td></td><td class="sov-desc-cell">Total</td><td></td><td></td><td class="num">${money(t.scheduled_cents)}</td><td></td><td class="num">${money(t.to_date_cents)}</td><td class="num">${money(v.lines.reduce((a, l) => a + l.billed_cents, 0) + v.op_billed_cents)}</td><td class="num">${money(t.scheduled_cents - t.to_date_cents)}</td></tr>
     </table></div>
     ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">Edit schedule</button>` : `<p class="sub">Fixed once the first pay app exists. Scope changes go through change orders, which add their own lines when approved.</p>`}
   </div>`;
@@ -2141,7 +2180,7 @@ document.addEventListener("paste", (e) => {
   if (e.target && e.target.id === "sov-paste") setTimeout(sovReadPaste, 0);
 });
 
-// ---------- accounts: reset, verify, invite links; Team & account ----------
+// ---------- accounts: reset, verify, invite links; Settings: Company, Team, My account, Billing ----------
 // Links in emails carry a one-time token after "#", which browsers never send to a server.
 let mailReady = false;
 let checkEmail = null;    // { email, verification } (escaped) right after sign-up: the "Check your email" panel
@@ -2239,7 +2278,7 @@ async function loadTeam() {
     if (!res.ok) return;
     teamData = escDeep(await readJson(res));
   } catch (_) { setNetBanner(true); return; }
-  if (currentView === "account" && !patch("#team-card", teamCardHtml())) render();
+  if (currentView === "team" && !patch("#team-card", teamCardHtml())) render();
 }
 
 async function teamPost(path, body, okMessage) {
@@ -2276,7 +2315,7 @@ function checkEmailHtml() {
 
 function verifyBannerHtml() {
   if (readOnly) return `<div class="verify-banner read-only-banner" role="status">${readOnly}</div>`;
-  if (billingInfo && billingInfo.warning) return `<div class="verify-banner" role="status">${billingInfo.warning}${me && me.role === "owner" ? ` <button class="linkish" data-action="nav" data-view="account">Billing</button>` : ""}</div>`;
+  if (billingInfo && billingInfo.warning) return `<div class="verify-banner" role="status">${billingInfo.warning}${me && me.role === "owner" ? ` <button class="linkish" data-action="nav" data-view="billing">Billing</button>` : ""}</div>`;
   if (checkEmail && me && !me.email_verified) return checkEmailHtml();
   if (!mailReady || !me || me.email_verified || me.company_id === DEMO_COMPANY_ID) return "";
   return `<div class="verify-banner">Confirm your email (${me.email}) so Duracash can send pay apps for you; replies come back to it.
@@ -2373,7 +2412,7 @@ function qboPayAppCell(row, n) {
   return row.number ? `${row.number} · ${row.job}` : pill;
 }
 
-// The QuickBooks card, on Payments and on Settings > Team & account (R4-11).
+// The QuickBooks card, on Payments and on Settings > Company (R4-11).
 // Only an owner can replace a private web address (the server refuses members too).
 function newAddressButton(kind) {
   return me && me.role === "owner" ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
@@ -2395,28 +2434,15 @@ function qboCardHtml(onPayments) {
     <p class="sub">Each sent pay app also has <strong>Download for QuickBooks</strong>: a file QuickBooks imports as an invoice, with retainage as its own line.</p></div>`;
 }
 
-function accountView() {
-  if (!teamData) loadTeam();
+// Settings, one page each (R6-03): Company, Team, My account and, for owners, Billing.
+// Your data and Delete the company sit folded at the end of Company.
+function companyView() {
   const owner = me.role === "owner";
   const isDemo = me.company_id === DEMO_COMPANY_ID;
-  const verified = me.email_verified
-    ? `<span class="pill green">confirmed</span>`
-    : `<span class="pill amber">not confirmed</span> ${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : `<span class="sub">Confirming needs email set up on the server.</span>`}`;
   return `
-    <h1>Team & account</h1>
-    <div class="card">
-      <h2>You</h2>
-      ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-inline"><label for="my-name" class="inline-label">Name</label><input id="my-name" value="${me.name}" autocomplete="name" class="grow"><button class="btn small secondary" data-action="save-my-name">Save name</button></div>`}
-      <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
-      <div class="money-row"><span class="label">Role</span><span>${words(me.role)}</span></div>
-      ${isDemo ? "" : `<div data-form-key="password">${formErrorLine("password")}<div class="form-row">
-        ${field({ form: "password", name: "current", id: "pw-current", label: "Current password", type: "password", autocomplete: "current-password" })}
-        ${field({ form: "password", name: "new", id: "pw-new", label: "New password (10+ characters)", type: "password", autocomplete: "new-password" })}
-        <button class="btn small" data-action="change-password">Change password</button>
-      </div></div>`}
-    </div>
+    <h1>Company</h1>
     <div class="card" id="company-card">
-      <h2>Company</h2>
+      <h2>Company details</h2>
       <p class="sub">On every pay app and its PDF, in the From block.${owner ? "" : " Owners can change these."}</p>
       <div class="form-grid">
         <div><label for="co-name">Company name</label><input id="co-name" value="${state.company.name || ""}"${owner ? "" : " disabled"}></div>
@@ -2430,19 +2456,58 @@ function accountView() {
       </div>
       ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
-    <div class="card" id="team-card">${teamCardHtml()}</div>
     ${isDemo ? "" : companySwitchesHtml(owner)}
     ${qboCardHtml(false)}
-    ${!isDemo && owner && billingInfo && billingInfo.configured ? `<div class="card" id="billing">
-      <h2>Billing</h2>
-      ${billingInfo.status ? `<p class="sub"><span class="pill ${["active", "trialing"].includes(billingInfo.status) ? "green" : "red"}">${BILLING_WORDS[billingInfo.status] || words(billingInfo.status)}</span>${billingInfo.period_end ? ` Next renewal ${fmtDate(new Date(billingInfo.period_end * 1000).toISOString())}.` : ""}</p>`
-        : `<p class="sub">No subscription yet. The free trial still applies: the first charge comes when it ends.</p>`}
-      ${billingInfo.warning ? `<p class="blocker">${billingInfo.warning}</p>` : ""}
-      <div class="form-inline">${billingInfo.has_customer && billingInfo.status && !["canceled", "incomplete_expired"].includes(billingInfo.status)
-        ? `<button class="btn" data-action="billing-portal">Manage billing</button>` : `<button class="btn" data-action="billing-checkout">Subscribe</button>`}</div>
-      ${billingInfo.partner ? `<p class="sub"><span class="pill copper">Design partner</span> The design-partner price applies.</p>` : ""}
-      <p class="sub">Charged on the ${ordinal(Number(billingInfo.billing_day) || 5)} of each month, after your own pay apps are out. Payment by card through Stripe. Duracash never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
-    </div>` : ""}
+    <details class="card danger-zone" data-more="danger"${formOpen.reset || moreDetails.danger ? " open" : ""}>
+      <summary><strong>${owner ? "Your data, reset and delete" : "Your data"}</strong></summary>
+      <h2>Your data</h2>
+      <p class="sub">Download everything in your company as one file, or start over.</p>
+      <div class="form-inline">
+        <a class="btn small secondary" href="/api/export" download>Export data</a>
+        ${owner ? `<button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>` : ""}
+      </div>
+      ${formOpen.reset && !isDemo ? `<div class="form-inline">
+        <label for="reset-confirm" class="inline-label">Reset deletes every job, customer and record; a snapshot is kept on the server. Type the company name to confirm:</label>
+        <input id="reset-confirm" placeholder="${state.company.name}" class="grow">
+        <button class="btn small danger" data-action="reset-confirm">Reset everything</button></div>` : ""}
+      ${owner && !isDemo ? `
+      <h2>Delete the company</h2>
+      <p class="sub">Deletes every job, file, customer and record, and every user on this team. Export your data first if you want a copy. Server backups that already hold it expire on their own (the newest 14 are kept by default).</p>
+      <div class="form-inline">
+        <input id="del-password" type="password" placeholder="Your password" autocomplete="current-password">
+        <input id="del-confirm" placeholder="Type the company name: ${state.company.name}" class="grow">
+        <button class="btn small danger" data-action="delete-account">Delete everything</button>
+      </div>` : ""}
+    </details>
+  `;
+}
+
+function teamView() {
+  if (!teamData) loadTeam();
+  return `
+    <h1>Team</h1>
+    <div class="card" id="team-card">${teamCardHtml()}</div>
+  `;
+}
+
+function myAccountView() {
+  const isDemo = me.company_id === DEMO_COMPANY_ID;
+  const verified = me.email_verified
+    ? `<span class="pill green">confirmed</span>`
+    : `<span class="pill amber">not confirmed</span> ${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : `<span class="sub">Confirming needs email set up on the server.</span>`}`;
+  return `
+    <h1>My account</h1>
+    <div class="card">
+      <h2>You</h2>
+      ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-inline"><label for="my-name" class="inline-label">Name</label><input id="my-name" value="${me.name}" autocomplete="name" class="grow"><button class="btn small secondary" data-action="save-my-name">Save name</button></div>`}
+      <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
+      <div class="money-row"><span class="label">Role</span><span>${words(me.role)}</span></div>
+      ${isDemo ? "" : `<div data-form-key="password">${formErrorLine("password")}<div class="form-row">
+        ${field({ form: "password", name: "current", id: "pw-current", label: "Current password", type: "password", autocomplete: "current-password" })}
+        ${field({ form: "password", name: "new", id: "pw-new", label: "New password (10+ characters)", type: "password", autocomplete: "new-password" })}
+        <button class="btn small" data-action="change-password">Change password</button>
+      </div></div>`}
+    </div>
     ${isDemo ? "" : `<div class="card" id="two-step">
       <h2>Two-step sign-in</h2>
       ${recoveryCodes ? `<div class="invite-result" role="status"><strong>Two-step sign-in is on.</strong> Save these recovery codes somewhere safe, such as your password manager. Each one signs you in once if you lose your phone. They are not shown again.
@@ -2460,28 +2525,27 @@ function accountView() {
       : `<p class="sub"><span class="pill">Off</span> Add a code from your phone to every sign-in, so a stolen password isn't enough. Recommended for owners.</p>
         <button class="btn small" data-action="2fa-begin">Set up two-step sign-in</button>`}
     </div>`}
-    <div class="card">
-      <h2>Your data</h2>
-      <p class="sub">Download everything in your company as one file, or start over.</p>
-      <div class="form-inline">
-        <a class="btn small secondary" href="/api/export" download>Export data</a>
-        ${owner ? `<button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>` : ""}
-      </div>
-      ${formOpen.reset && !isDemo ? `<div class="form-inline">
-        <label for="reset-confirm" class="inline-label">Reset deletes every job, customer and record; a snapshot is kept on the server. Type the company name to confirm:</label>
-        <input id="reset-confirm" placeholder="${state.company.name}" class="grow">
-        <button class="btn small danger" data-action="reset-confirm">Reset everything</button></div>` : ""}
-    </div>
-    ${owner && !isDemo ? `
-    <div class="card danger-zone">
-      <h2>Delete the company</h2>
-      <p class="sub">Deletes every job, file, customer and record, and every user on this team. Export your data first if you want a copy. Server backups that already hold it expire on their own (the newest 14 are kept by default).</p>
-      <div class="form-inline">
-        <input id="del-password" type="password" placeholder="Your password" autocomplete="current-password">
-        <input id="del-confirm" placeholder="Type the company name: ${state.company.name}" class="grow">
-        <button class="btn small danger" data-action="delete-account">Delete everything</button>
-      </div>
+  `;
+}
+
+function billingView() {
+  const owner = me.role === "owner";
+  const isDemo = me.company_id === DEMO_COMPANY_ID;
+  if (!owner) return `<h1>Billing</h1>` + emptyState("An owner manages billing", "Ask an owner of this company to change the subscription.");
+  return `
+    <h1>Billing</h1>
+    ${trialBannerHtml()}
+    ${!isDemo && owner && billingInfo && billingInfo.configured ? `<div class="card" id="billing">
+      <h2>Billing</h2>
+      ${billingInfo.status ? `<p class="sub"><span class="pill ${["active", "trialing"].includes(billingInfo.status) ? "green" : "red"}">${BILLING_WORDS[billingInfo.status] || words(billingInfo.status)}</span>${billingInfo.period_end ? ` Next renewal ${fmtDate(new Date(billingInfo.period_end * 1000).toISOString())}.` : ""}</p>`
+        : `<p class="sub">No subscription yet. The free trial still applies: the first charge comes when it ends.</p>`}
+      ${billingInfo.warning ? `<p class="blocker">${billingInfo.warning}</p>` : ""}
+      <div class="form-inline">${billingInfo.has_customer && billingInfo.status && !["canceled", "incomplete_expired"].includes(billingInfo.status)
+        ? `<button class="btn" data-action="billing-portal">Manage billing</button>` : `<button class="btn" data-action="billing-checkout">Subscribe</button>`}</div>
+      ${billingInfo.partner ? `<p class="sub"><span class="pill copper">Design partner</span> The design-partner price applies.</p>` : ""}
+      <p class="sub">Charged on the ${ordinal(Number(billingInfo.billing_day) || 5)} of each month, after your own pay apps are out. Payment by card through Stripe. Duracash never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
     </div>` : ""}
+    ${isDemo || !(billingInfo && billingInfo.configured) ? `<p class="sub">Billing isn't live on this server yet, so there is nothing to pay.</p>` : ""}
   `;
 }
 
@@ -2493,7 +2557,7 @@ function trialBannerHtml() {
   if (t.state === "active") {
     return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Duracash is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.${live ? "" : " Billing isn't live yet."}</div>`;
   }
-  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : " Subscribe in Settings, Team &amp; account, Billing.") : " Billing isn't live yet, so nothing changes for now."}</div>`;
+  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : " Subscribe in Settings, Billing.") : " Billing isn't live yet, so nothing changes for now."}</div>`;
 }
 
 // The setup checklist on Today (R2-03). Each step's button goes to where that step is done:
@@ -2512,7 +2576,7 @@ function onboardingHtml() {
   const draft = draftJob && draftJob.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   const steps = [
     { text: "Add your company address, phone and licence number (they print on every pay app).", done: !!String(state.company.address || "").trim(),
-      label: "Company details", attrs: `data-action="onb-go" data-view="account" data-focus="#co-address"`, always: true },
+      label: "Company details", attrs: `data-action="onb-go" data-view="company" data-focus="#co-address"`, always: true },
     { text: "Create your first job: contract amount, customer and where pay apps go.", done: jobs.length > 0,
       label: "New job", attrs: `data-action="onb-newjob"`, always: true },
     { text: "Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
@@ -2821,8 +2885,19 @@ function renderHelperAdminBody() {
   });
 }
 
+// Pay apps' Paperwork column (R6-03, was its own tab): what is missing, linked to the list.
+function paperworkCell(a) {
+  const pkt = a.packet || a.jobPacket || [];
+  if (!pkt.length && !a.packet) return "—";
+  const missing = pkt.filter(p => p.required && !p.present).length;
+  return `<a href="${pathFor("packet-detail", a.jobId, a.id)}" data-action="open-packet" data-job="${a.jobId}" data-inv="${a.id}">${missing ? `<span class="pill red">${missing} missing</span>` : `<span class="pill green">Complete</span>`}</a>`;
+}
+
 const views = {
-  account() { return accountView(); },
+  company() { return companyView(); },
+  team() { return teamView(); },
+  account() { return myAccountView(); },
+  billing() { return billingView(); },
   "helper-admin"() {
     return `<h1>Helper answers</h1>
       <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
@@ -2837,18 +2912,25 @@ const views = {
     return `
       <h1>Inbox</h1>
       <p class="sub">Bring in photos, PDFs, saved emails, text threads and notes. Duracash suggests the job from the job code, address, name or sender; you file it with one click. Nothing is filed without you.</p>
+      <div class="card inbox-waiting">
+        <div class="top"><h2>Waiting (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
+        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting", "Take a photo, add files, paste an email or notes below, or set up email and text forwarding.")}
+      </div>
       <div class="dropzone" tabindex="0">
         <label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>
-        <strong>Drop files anywhere on this page</strong>
-        <span class="sub">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to ${MAX_UPLOAD_MB} MB each. Or <button class="linkish" data-action="pick-files" data-ask-job="1">choose files</button>, or press Ctrl+V / ⌘V to paste a screenshot. On a phone, choose files opens the camera too. They wait here for you to add them to the job.</span>
+        <div class="capture-buttons touch-only">
+          <button class="btn" data-action="pick-files" data-ask-job="1" data-capture="1">Take a photo</button>
+          <button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button>
+        </div>
+        <span class="sub touch-only">Photos, PDFs, Word, Excel, CSV, saved emails, up to ${MAX_UPLOAD_MB} MB each. They wait below for you to add them to the job.</span>
+        <div class="pointer-only">
+          <strong>Drop files anywhere on this page</strong>
+          <span class="sub">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to ${MAX_UPLOAD_MB} MB each. Or <button class="linkish" data-action="pick-files" data-ask-job="1">choose files</button>, or press Ctrl+V / ⌘V to paste a screenshot. They wait below for you to add them to the job.</span>
+        </div>
       </div>
       <div class="card">
         <h2>Paste an email, a text thread, or notes</h2>
         ${pasteBoxHtml()}
-      </div>
-      <div class="card">
-        <div class="top"><h2>Waiting (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
-        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting", "Drop files, paste an email or notes above, or set up email and text forwarding below.")}
       </div>
       ${done.length ? `<details class="card"><summary><strong>Recently added or dismissed</strong></summary>
         ${done.map(i => `<div class="list-item">${i.status === "filed" ? `${i.auto_filed ? "Reply filed automatically" : "Filed"} to ${jobName(i.filed_job_id)} as ${RECORD_KINDS[i.filed_kind] || i.filed_kind}` : "Dismissed"}: ${i.subject || (i.text || "").slice(0, 60) || "item"} <button class="btn small secondary" data-action="inbox-undo" data-item="${i.id}">Undo</button></div>`).join("")}
@@ -3165,7 +3247,12 @@ const views = {
         <h2>Job record</h2>
         ${j.closed ? "" : `<div class="dropzone small" data-job="${j.id}">
           <strong>${(j.records || []).length ? "Add photos, PDFs, saved emails or spreadsheets" : "Nothing in the record yet. Add the contract, photos and tickets"}</strong>
-          <span class="sub">Drop files here, <button class="linkish" data-action="pick-files" data-job="${j.id}">choose files</button>, <button class="linkish" data-action="pick-files" data-job="${j.id}" data-capture="1">take a photo</button>, or paste a screenshot. Forwarded emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
+          <div class="capture-buttons">
+            <button class="btn small" data-action="pick-files" data-job="${j.id}" data-capture="1">Take a photo</button>
+            <button class="btn small secondary" data-action="pick-files" data-job="${j.id}">Add a file</button>
+          </div>
+          <span class="sub pointer-only">Or drop files here or paste a screenshot.</span>
+          <span class="sub">Forwarded emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
         </div>
         <details class="paste-job"><summary>Paste an email, a text thread, or notes</summary>${pasteBoxHtml(j.id)}</details>`}
         ${(j.records || []).slice().reverse().map(r => recordRow(j, r)).join("")}
@@ -3239,7 +3326,7 @@ const views = {
   },
   packetDetail() {
     const j = state.jobs.find(x => x.id === currentJobId);
-    if (!j) return backButton("packets", "Paperwork") + emptyState("Paperwork not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="packets">Go to Paperwork</button>`);
+    if (!j) return backButton("payapps", termText("Pay apps")) + emptyState("Paperwork not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="payapps">${termText("Go to Pay apps")}</button>`);
     const isCloseout = currentDetailId === "closeout";
     const inv = isCloseout ? null : (j.invoices.find(i => i.id === currentDetailId) || [...j.invoices].reverse().find(i => i.packet) || j.invoices[j.invoices.length - 1]);
     const packet = isCloseout ? (j.closeout_packet || []) : ((inv && inv.packet) || j.packet || []);
@@ -3354,7 +3441,7 @@ const views = {
         ${inv.final ? `<p class="sub final-note">The final pay app: the PDF is marked FINAL APPLICATION.</p>` : ""}
         <div class="money-row"><span class="label">Attached</span><span>Pay app PDF${inv.sov_sheet && inv.sov_sheet.length ? " with continuation sheet" : ""}, paperwork checklist, ${pkt.filter(p => p.present).length} paperwork item${pkt.filter(p => p.present).length === 1 ? "" : "s"}</span></div>
         ${noAddress ? `<div class="notice no-address">Your company address is blank on this PDF.
-          <button class="btn small secondary" data-action="onb-go" data-view="account" data-focus="#co-address">Company details</button></div>` : ""}
+          <button class="btn small secondary" data-action="onb-go" data-view="company" data-focus="#co-address">Company details</button></div>` : ""}
         ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>` : ""}
         ${missing ? `<p class="blocker">${missing} paperwork item${missing === 1 ? " is" : "s are"} missing. Add ${missing === 1 ? "it" : "them"}, then send.</p>` : ""}
         ${noEmail ? `<p class="blocker">Add the email pay apps go to, then send.</p>` : ""}
@@ -3527,7 +3614,7 @@ const views = {
           ${state.jobs.map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
         </select>
       </div>
-      ${thisWeek.length ? `<h2>This week</h2><div class="due-strip">${thisWeek.slice(0, 8).map(e => `<button class="due-item ${e.kind === "overdue" ? "overdue" : ""}" data-action="cal-day" data-day="${e.date}">${fmtDate(e.date).replace(/, \d{4}$/, "")} · ${e.label}</button>`).join("")}</div>` : ""}
+      ${thisWeek.length ? `<h2>This week</h2><div class="due-strip week-list">${thisWeek.slice(0, 8).map(e => `<button class="due-item ${e.kind === "overdue" ? "overdue" : ""}" data-action="cal-day" data-day="${e.date}">${fmtDate(e.date).replace(/, \d{4}$/, "")} · ${e.label}</button>`).join("")}</div>` : ""}
       ${dayCard}
       <div class="cal-header">
         <div>
@@ -3557,13 +3644,14 @@ const views = {
                  const labels = { paid: "complete / paid", waiver: "waivers", overdue: "overdue", other: "other" };
                  return Object.entries(cats).map(([k, n]) => `<span class="cal-event ${k}">${n} ${labels[k] || k}</span>`).join("");
                })()}
-               ${c.events.length ? `<span class="cal-dot" aria-hidden="true">${c.events.length}</span>` : ""}
+               ${c.events.length ? `<span class="cal-dot ${worstKind(c.events)}" aria-hidden="true">${c.events.length}</span>` : ""}
              </button>`
         ).join("")}
       </div>
       <details class="card subscribe">
         <summary><strong>Put these dates on your phone (Google Calendar, Apple, Outlook)</strong></summary>
-        <p class="sub">Copy this private address. In Google Calendar on a computer: Other calendars, +, From URL, paste, Add calendar. It then shows on your phone. Calendar apps refresh subscribed calendars on their own schedule, often every few hours, so new dates are not instant.</p>
+        <p><a class="btn" id="cal-webcal" href="/today/calendar" hidden>Add to my phone's calendar</a></p>
+        <p class="sub">On an iPhone or a Mac that button adds them in one tap. Or copy this private address. In Google Calendar on a computer: Other calendars, +, From URL, paste, Add calendar. It then shows on your phone. Calendar apps refresh subscribed calendars on their own schedule, often every few hours, so new dates are not instant.</p>
         <div class="copy-row"><code id="cal-url">Loading…</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button>${newAddressButton("calendar")}</div>
         <p class="sub">Anyone with this address can see the dates and job names. ${me && me.role === "owner" ? "Make a new address if it was shared by mistake." : "If it was shared by mistake, an owner can make a new one."}</p>
       </details>
@@ -3571,7 +3659,7 @@ const views = {
   },
   payapps() {
     let apps = [];
-    state.jobs.forEach(j => j.invoices.forEach(inv => apps.push({ ...inv, job: j.name, jobId: j.id, blockers: ["draft", "awaiting_approval"].includes(inv.status) ? j.blockers : [] })));
+    state.jobs.forEach(j => j.invoices.forEach(inv => apps.push({ ...inv, job: j.name, jobId: j.id, jobPacket: j.packet, blockers: ["draft", "awaiting_approval"].includes(inv.status) ? j.blockers : [] })));
     // "Unpaid" (the sent filter) holds every pay app out for payment, part-paid ones too (R3-02).
     const shown = { draft: ["draft", "awaiting_approval"], sent: ["sent", "approved", "partial"] };
     if (payappFilter !== "all") apps = apps.filter(a => (shown[payappFilter] || [payappFilter]).includes(a.status));
@@ -3581,12 +3669,13 @@ const views = {
       <div class="filter-bar" role="group" aria-label="Show">${f("all", "All")}${f("draft", "Ready to send")}${f("sent", "Unpaid")}${f("paid", "Paid")}</div>
       ${apps.length ? `<div class="table-wrap">
         <table>
-          <tr><th>Number</th><th>Job</th><th>Amount</th><th>Status</th><th>Sent</th><th>Before it can go</th></tr>
+          <tr><th>Number</th><th>Job</th><th>Amount</th><th>Status</th><th>Paperwork</th><th>Sent</th><th>Before it can go</th></tr>
           ${apps.slice().reverse().map(a => `<tr>
             <td><a href="${pathFor("payapp-detail", a.jobId, a.id)}" data-action="open-payapp" data-job="${a.jobId}" data-inv="${a.id}">${a.number}</a></td>
             <td><a href="${pathFor("job", a.jobId)}" data-action="open-job" data-id="${a.jobId}">${a.job}</a></td>
             <td class="num">${a.status === "partial" ? owedText(a) : money(a.amount_cents)}</td>
             <td>${invoicePill(a)}</td>
+            <td>${paperworkCell(a)}</td>
             <td>${a.sent_at ? fmtDate(a.sent_at) : "—"}${emailFailed(a.id) ? " · email failed" : ""}</td>
             <td>${a.blockers.join("; ") || "—"}</td>
           </tr>`).join("")}
@@ -3594,29 +3683,8 @@ const views = {
       </div>` : emptyState(payappFilter === "all" ? termText("No pay apps yet") : "None in this view", payappFilter === "all" ? "Draft one from a job. Its paperwork list comes with it." : "Pick another filter above.")}
     `;
   },
-  packets() {
-    const rows = [];
-    state.jobs.forEach(j => j.invoices.forEach(inv => {
-      const pkt = inv.packet || j.packet || [];
-      if (!pkt.length && !inv.packet) return;
-      rows.push({ j, inv, missing: pkt.filter(p => p.required && !p.present).length });
-    }));
-    return `
-      <h1>Paperwork</h1>
-      <p class="sub">The paperwork that goes with each pay app. Open one to add what is missing.</p>
-      ${rows.length ? `<div class="table-wrap">
-        <table>
-          <tr><th>Pay app</th><th>Job</th><th>Missing</th><th>Pay app status</th></tr>
-          ${rows.slice().reverse().map(({ j, inv, missing }) => `<tr>
-            <td><a href="${pathFor("packet-detail", j.id, inv.id)}" data-action="open-packet" data-job="${j.id}" data-inv="${inv.id}">${inv.number}</a></td>
-            <td>${j.name}</td>
-            <td>${missing ? `<span class="pill red">${missing} missing</span>` : `<span class="pill green">Complete</span>`}</td>
-            <td>${invoicePill(inv)}</td>
-          </tr>`).join("")}
-        </table>
-      </div>` : emptyState("No paperwork yet", "Draft a pay app. Its paperwork list comes with it and stays with that pay app.")}
-    `;
-  },
+  // Paperwork is a column of Pay apps now (R6-03); /money/packets still opens it.
+  packets() { return views.payapps(); },
   cos() {
     const cos = [];
     state.jobs.forEach(j => j.change_orders.forEach(co => cos.push({ ...co, job: j.name, jobId: j.id })));

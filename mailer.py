@@ -44,7 +44,7 @@ MAX_ATTACH_BYTES = 15 * 1024 * 1024
 TIMEOUT_SECONDS = 20
 NOT_SET_UP = "not sent: email delivery is not set up"
 DEMO = "not sent: demo account"
-UNVERIFIED = "not sent: verify your email address first (Team & account page), then Send again"
+UNVERIFIED = "not sent: verify your email address first (Settings, My account), then Send again"
 
 
 def settings() -> dict[str, Any]:
