@@ -35,7 +35,10 @@ NOT_CODES = {
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "SEPT", "OCT", "NOV", "DEC",
     "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN", "THE", "AND", "FOR", "INC", "LLC", "USA", "NEW",
     "OLD", "ASAP", "FYI", "PDF", "JPG", "PNG", "TOTAL", "DUE", "PAID", "CO", "PO", "GC", "AP", "SOV",
+    # What phones and scanners put in file names.
+    "IMG", "SCAN", "DOC", "JPEG", "HEIC", "EML", "CSV", "TXT", "XLS", "XLSX", "DOCX", "PHOTO", "FILE",
 }
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"}
 UNIT_WORDS = {"inch", "inches", "in", "ft", "foot", "feet", "yd", "yard", "lb", "lbs", "bath", "hp", "ton", "pipe", "sheet", "sheets", "mile"}
 
 # Extension -> (content type served back, shown inline in the browser?)
@@ -251,7 +254,7 @@ def dates(text: str, default_year: int | None = None) -> list[str]:
 def leading_date(line: str, default_year: int) -> date | None:
     """A date at the very start of a line, e.g. '10/12', 'Oct 12, 2026:', '2026-10-12 -'.
 
-    Not a date: fractions and quantities ('3/4 inch pipe', '1/2 bath'), and 'May' used as a
+    Not a date: quantities with a unit ('3/4 inch pipe', '1/2 bath', '5/8" drywall'), and 'May' used as a
     word ('May 2 guys out sick') unless a separator or year follows.
     """
     stripped = line.strip().lstrip("#*-• ").strip()
@@ -264,8 +267,9 @@ def leading_date(line: str, default_year: int) -> date | None:
         separated = rest == "" or bool(re.match(r"\s*[:\-–—,.)]", rest))
         next_word = (re.findall(r"[a-z\"']+", rest.lower()) or [""])[0]
         if kind == 1 and not m.group(3) and not separated:
-            num, den = int(m.group(1)), int(m.group(2))
-            if (num < den and den in {2, 4, 8, 16, 32, 64}) or next_word in UNIT_WORDS or next_word.startswith('"'):
+            # "10/16 VEST corridor" and "1/2 MILL tile" are dates; "3/4 inch pipe" and "1/2 bath" are
+            # not. Only a unit, an inch mark or a first number that can't be a month makes it a fraction.
+            if next_word in UNIT_WORDS or next_word.startswith('"') or int(m.group(1)) > 12:
                 return None
         if kind == 2 and not m.group(3) and not separated and m.group(1).lower() == "may":
             return None
@@ -296,12 +300,22 @@ def split_notes(text: str, default_year: int | None = None) -> list[dict[str, An
     return out
 
 
-def guess_kind(name: str, text: str, ext: str = "") -> str:
-    hay = f"{name}\n{text[:4000]}".lower()
+def spaced(name: str) -> str:
+    """A file name as words: 'Scan_KENN_sub-contract.pdf' -> 'Scan KENN sub contract pdf'.
+    Phones and scanners join words with _ - and ., which regex word boundaries don't split."""
+    return re.sub(r"[_\-.]+", " ", name or "")
+
+
+def guess_kind(name: str, text: str, exts: str | list[str] | tuple = ()) -> str:
+    """The kind from words in the name or text; else a photo when the only files besides a
+    saved email are images (an email with a picture attached is the picture)."""
+    hay = f"{spaced(name)}\n{text[:4000]}".lower()
     for kind, pattern in _KIND_RULES:
         if re.search(pattern, hay):
             return kind
-    if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"}:
+    exts = [exts] if isinstance(exts, str) else list(exts)
+    files = [e for e in exts if e and e != ".eml"]
+    if files and all(e in IMAGE_EXTS for e in files):
         return "photo"
     return "note"
 
@@ -312,9 +326,20 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
-def match_job(state: dict[str, Any], text: str, sender: str = "") -> dict[str, Any]:
-    """Suggest the job this item belongs to, with the reason. Never files anything."""
+def _street(address: str) -> str:
+    """Street number and street name, '3895 Cherokee St NW, Kennesaw' -> '3895 cherokee'."""
+    m = re.match(r"(\d+[a-z]?) ([a-z]{3,})\b", _norm(address))
+    return f"{m.group(1)} {m.group(2)}" if m else ""
+
+
+def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "") -> dict[str, Any]:
+    """Suggest the job this item belongs to, with the reason. Never files anything.
+
+    `names` are the item's file names: a job code standing alone there counts in any case
+    ('kenn_subcontract.pdf'); in the text it has to be written in capitals, so 'the mill' is
+    not job MILL."""
     jobs = [j for j in state.get("jobs", []) if not j.get("closed")]
+    text = f"{text}\n{spaced(names)}" if names else text
     hay = _norm(text)
     hay_padded = f" {hay} "
     scores: dict[str, tuple[int, str]] = {}
@@ -323,7 +348,9 @@ def match_job(state: dict[str, Any], text: str, sender: str = "") -> dict[str, A
         if score > scores.get(job["id"], (0, ""))[0]:
             scores[job["id"]] = (score, reason)
 
-    upper_tokens = set(re.findall(r"\b[A-Z0-9]{3,8}\b", text or "")) - NOT_CODES
+    upper_tokens = set(re.findall(r"\b[A-Z0-9]{3,8}\b", text or ""))
+    upper_tokens |= {t.upper() for t in re.findall(r"\b[A-Za-z0-9]{3,8}\b", spaced(names))}
+    upper_tokens -= NOT_CODES
     sender_addr = (email.utils.parseaddr(sender)[1] or sender).lower().strip()
     payers = {p["id"]: p for p in state.get("payers", [])}
     for job in jobs:
@@ -333,8 +360,11 @@ def match_job(state: dict[str, Any], text: str, sender: str = "") -> dict[str, A
             # A bare code is weaker than the job's name or address, which are harder to hit by accident.
             bump(job, 70, f"mentions job code {job['code']}")
         addr = _norm(job.get("address", ""))
+        street = _street(job.get("address", ""))
         if addr and len(addr) >= 6 and f" {addr} " in hay_padded:
             bump(job, 90, f"mentions the address {job.get('address')}")
+        elif street and f" {street} " in hay_padded:
+            bump(job, 85, f"mentions the street {street.title()}")
         name = _norm(job.get("name", ""))
         if name and len(name) >= 4 and f" {name} " in hay_padded:
             bump(job, 80, f"mentions the job name {job.get('name')}")
@@ -390,11 +420,10 @@ def add_item(
         raise domain.GateError(f"The Inbox has {MAX_NEW_INBOX} items waiting. File or dismiss some first.")
     files = [f for f in state.get("files", []) if f["id"] in (file_ids or [])]
     names = " ".join(f["name"] for f in files)
-    ext = files[0]["ext"] if files else ""
     if job_id and not any(j["id"] == job_id and not j.get("closed") for j in state.get("jobs", [])):
         job_id = None
     match = {"job_id": job_id, "reason": "Added from the job page.", "candidates": [job_id]} if job_id else match_job(
-        state, f"{subject}\n{names}\n{text}", sender
+        state, f"{subject}\n{text}", sender, names=names
     )
     item = {
         "id": "inb-" + secrets.token_hex(5),
@@ -405,7 +434,7 @@ def add_item(
         "subject": subject[:300],
         "text": text,
         "file_ids": [f["id"] for f in files],
-        "kind": "daily" if source == "notes" else guess_kind(f"{subject} {names}", text, ext),
+        "kind": "daily" if source == "notes" else guess_kind(f"{subject} {names}", text, [f["ext"] for f in files]),
         "amounts": amounts(f"{subject}\n{text}"),
         "dates": dates(f"{subject}\n{text}"),
         "note_date": note_date,

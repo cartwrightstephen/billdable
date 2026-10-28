@@ -5,7 +5,10 @@ Found on 2026-10-22 by running `scripts/load_test_contractor.py` and the steps i
 location and a repro that runs from the repo folder (`DURACASH_DATA_DIR` points at a scratch
 folder so nothing real is touched).
 
-## 1. Notes lines starting with dates like 10/16, 9/16, 1/2 or 3/4 are read as fractions, not dates (medium)
+## 1. Notes lines starting with dates like 10/16, 9/16, 1/2 or 3/4 are read as fractions, not dates (medium) — fixed in R5-01
+
+Fixed: a line like "10/16 VEST …" or "1/2 MILL …" is a date; only a unit ("3/4 inch pipe", "1/2 bath"),
+an inch mark or a first number over 12 makes it a quantity. The report as it was:
 
 **Where:** `importer.py:266-269`, in `leading_date`. A date without a year and without a
 separator after it is refused when the first number is smaller than the second and the second is
@@ -30,7 +33,12 @@ which is why the main notes file in `import/` uses separators.
 **Fix idea:** only treat it as a fraction when a unit word or `"` follows (the `UNIT_WORDS` check
 already does that), or when the numerator is not a valid month.
 
-## 2. Underscores in file names stop job codes and kinds from matching (medium)
+## 2. Underscores in file names stop job codes and kinds from matching (medium) — fixed in R5-02
+
+Fixed: file names are read with `_`, `-` and `.` as spaces, a job code standing alone in a file
+name counts in any case (`kenn_subcontract.pdf`), and a street number with its street name
+("3895 Cherokee") matches the job's address. Files 13 and 14 are now named with underscores. The
+report as it was:
 
 **Where:** `importer.py:326` finds job codes with `\b[A-Z0-9]{3,8}\b`, and the kind rules at
 `importer.py:72-79` (used by `guess_kind`, `importer.py:299-306`) use `\b...\b`. In regular
@@ -54,14 +62,17 @@ is not affected (it normalizes punctuation first, `importer.py:311-312`). The te
 
 **Fix idea:** run the code and kind patterns on the file name with `_` replaced by a space.
 
-## 3. An email whose attachment is a photo is filed as a Note, not a Photo (low)
+## 3. An email whose attachment is a photo is filed as a Note, not a Photo (low) — fixed in R5-02
+
+Fixed: the kind looks at every file, and an email whose only attachments are pictures is a
+**Photo**. The report as it was:
 
 **Where:** `importer.py:393` takes the kind's file extension from the item's first file. For an
 uploaded `.eml` the first stored file is the email itself (`server.py:1746`), so the extension is
 `.eml` and the image rule in `guess_kind` (`importer.py:304-305`) never applies.
 
 **Repro:** upload `import/08_email_photo-attachment-from-foreman.eml` in the Inbox. The card's
-kind is **Note**; its only attachment is `IMG_2240.jpg`. (`14 photo MILL lobby floor IMG_2231.jpg`
+kind is **Note**; its only attachment is `IMG_2240.jpg`. (`14_IMG_2231_MILL_lobby-floor.jpg`
 uploaded on its own is a **Photo**.)
 
 **Fix idea:** guess from the attachments' extensions when the email text gives no kind.

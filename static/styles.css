@@ -251,6 +251,7 @@ details.card > summary { cursor: pointer; }
 .sov-paste { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; }
 .sov-paste textarea { flex: 1; font: inherit; padding: 6px 8px; border: 1px dashed var(--line, #d8d2c8); border-radius: 8px; }
 .sov-warn { background: #f8efd8; border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 13px; display: grid; gap: 2px; }
+.qbo-pick { display: block; margin-top: 4px; max-width: 100%; }
 .sov-sums { max-width: 520px; margin: 8px 0; }
 #sov-sum-diff.ok { color: var(--green); }
 .email-body { white-space: pre-wrap; max-height: 9em; overflow: auto; }

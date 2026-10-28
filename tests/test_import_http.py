@@ -29,6 +29,34 @@ EML = (b"From: Kim Park <ap@park.example>\r\nTo: jobs@example.com\r\nSubject: CO
        b"--XYZ\r\nContent-Type: text/html\r\nContent-Disposition: attachment; filename=\"evil.html\"\r\n\r\n<script>x</script>\r\n--XYZ--\r\n")
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def xlsx_bytes(rows):
+    """A minimal Excel file: shared strings for text, numbers as numbers, the first column of later rows as a date."""
+    import io
+    import zipfile
+    strings, sheet = [], []
+    for r, row in enumerate(rows, start=1):
+        cells = []
+        for c, value in enumerate(row):
+            ref = f"{chr(65 + c)}{r}"
+            if isinstance(value, str):
+                strings.append(value)
+                cells.append(f'<c r="{ref}" t="s"><v>{len(strings) - 1}</v></c>')
+            else:
+                style = ' s="1"' if c == 0 else ""
+                cells.append(f'<c r="{ref}"{style}><v>{value}</v></c>')
+        sheet.append(f'<row r="{r}">{"".join(cells)}</row>')
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("xl/worksheets/sheet1.xml", f'<worksheet {ns}><sheetData>{"".join(sheet)}</sheetData></worksheet>')
+        z.writestr("xl/sharedStrings.xml", f'<sst {ns}>{"".join(f"<si><t>{s}</t></si>" for s in strings)}</sst>')
+        z.writestr("xl/styles.xml", f'<styleSheet {ns}><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>')
+    return buf.getvalue()
+
+
 class ImportHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -198,12 +226,46 @@ class ImportHttpTests(unittest.TestCase):
         self.assertEqual((row["status"], row["invoice_id"]), ("match", inv["id"]))
         pick = {"job_id": row["job_id"], "invoice_id": row["invoice_id"], "amount_cents": row["amount_cents"], "reference": row["ref"], "date": row["date"]}
         res, state = self.request("POST", "/api/import/payments-apply", {"payments": [pick]}, cookie=cookie)
-        self.assertEqual(state["import_results"], [{"reference": "5521", "ok": True}])
+        self.assertEqual(state["import_results"], [{"key": None, "reference": "5521", "ok": True}])
         self.assertEqual(state["jobs"][0]["invoices"][-1]["status"], "paid")
         res, state = self.request("POST", "/api/import/payments-apply", {"payments": [pick]}, cookie=cookie)
         self.assertFalse(state["import_results"][0]["ok"], "the same check twice is refused")
         res, read = self.request("POST", "/api/import/payments-csv", {"csv": csv_text}, cookie=cookie)
         self.assertEqual(read["rows"][0]["status"], "already recorded")
+
+    def test_a_dropped_payments_file_reads_on_payments(self):  # R5-04
+        cookie, job = self.company("dropcsv@example.com")
+        path = ROOT / "testdata/test-contractor/import/01_qbo-payments_partial-nomatch-odd-formats.csv"
+        res, state = self.request("POST", "/api/import/file", raw=path.read_bytes(), cookie=cookie,
+                                  headers={"Content-Type": "text/csv", "X-Filename": quote(path.name)})
+        self.assertEqual(res.status, 200, state)
+        item = state["inbox"][-1]
+        self.assertTrue(item["payments_csv"])
+        self.assertEqual(item["payment_rows"], 6)
+        res, read = self.request("POST", "/api/import/payments-csv", {"file_id": item["file_ids"][0]}, cookie=cookie)
+        self.assertEqual(res.status, 200, read)
+        self.assertEqual(len(read["rows"]), 6)
+        # A CSV that isn't payments is an ordinary Inbox item.
+        res, state = self.request("POST", "/api/import/file", raw=b"Item,Qty\nTile,4\n", cookie=cookie,
+                                  headers={"Content-Type": "text/csv", "X-Filename": "takeoff.csv"})
+        self.assertNotIn("payments_csv", state["inbox"][-1])
+        # Another company can't read the file by its id.
+        other, _ = self.company("dropcsv-other@example.com")
+        res, read = self.request("POST", "/api/import/payments-csv", {"file_id": item["file_ids"][0]}, cookie=other)
+        self.assertEqual(res.status, 409)
+
+    def test_an_excel_payments_export(self):  # R5-04
+        cookie, _ = self.company("xlsx@example.com")
+        data = xlsx_bytes([["Date", "Num", "Customer", "Amount"], [46309, "4471", "Park GC", 1250.5]])
+        res, state = self.request("POST", "/api/import/file", raw=data, cookie=cookie,
+                                  headers={"Content-Type": "application/octet-stream", "X-Filename": "payments.xlsx"})
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual(state["inbox"][-1]["payment_rows"], 1)
+        res, read = self.request("POST", "/api/import/payments-csv", {"xlsx": base64.b64encode(data).decode()}, cookie=cookie)
+        row = read["rows"][0]
+        self.assertEqual((row["date"], row["ref"], row["customer"], row["amount_cents"]), ("2026-10-14", "4471", "Park GC", 125_050))
+        res, read = self.request("POST", "/api/import/payments-csv", {"xlsx": base64.b64encode(b"not a zip").decode()}, cookie=cookie)
+        self.assertEqual(res.status, 409)
 
     def test_reply_to_a_sent_pay_app_files_itself(self):  # P1-3
         cookie, job = self.company("reply@example.com")

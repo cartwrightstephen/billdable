@@ -103,5 +103,62 @@ class UnfilteredReportTests(unittest.TestCase):
         self.assertEqual([(r["status"], r["number"]) for r in rows], [("match", owed["TRN"]["number"]), ("match", owed["BRK"]["number"])])
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class FinishTheImportTests(unittest.TestCase):
+    """R5-03: a pay app to pick from on every row that needs one, more header spellings, and dates that warn."""
+
+    def test_a_tie_returns_both_pay_apps_first(self):
+        state = seed_state()
+        brk = next(j for j in state["jobs"] if j["code"] == "BRK")
+        twin = {**brk["invoices"][0], "id": "inv-brk-2", "number": "PA-BRK-02"}
+        brk["invoices"].append(twin)
+        payer = next(p["name"] for p in state["payers"] if p["id"] == brk["payer_id"])
+        row = qbo_csv.propose(state, [{"line": 2, "date": None, "ref": "77", "customer": payer, "amount_cents": twin["amount_cents"], "memo": ""}])[0]
+        self.assertEqual(row["status"], "pick one")
+        self.assertIsNone(row["job_id"])
+        self.assertEqual([c["number"] for c in row["candidates"][:2]], ["PA-BRK-01", "PA-BRK-02"])
+        self.assertEqual(row["candidates"][0]["owed_cents"], twin["amount_cents"])
+        self.assertEqual(len({c["invoice_id"] for c in row["candidates"]}), len(row["candidates"]), "each pay app once")
+
+    def test_no_match_still_lists_open_pay_apps_and_too_much_offers_the_split(self):
+        state = seed_state()
+        rows = qbo_csv.propose(state, [
+            {"line": 2, "date": None, "ref": "9001", "customer": "Someone Else", "amount_cents": 100_000, "memo": ""},
+            {"line": 3, "date": None, "ref": "5", "customer": "Northline GC", "amount_cents": 20_000_000, "memo": "PA-TRN-01"},
+        ])
+        self.assertEqual(rows[0]["status"], "no match")
+        self.assertTrue(rows[0]["candidates"])
+        self.assertEqual(rows[1]["status"], "too much")
+        self.assertIsNone(rows[1]["job_id"])
+        self.assertEqual(rows[1]["split"]["number"], "PA-TRN-01")
+        self.assertLess(rows[1]["split"]["owed_cents"], 20_000_000)
+
+    def test_other_header_spellings(self):
+        out = qbo_csv.parse("Client,Payment Date,Amount Paid,Check\nNorthline GC,10/09/2026,\"1,000.00\",4417\n")
+        self.assertEqual([(r["customer"], r["ref"], r["amount_cents"]) for r in out["rows"]], [("Northline GC", "4417", 100_000)])
+        out = qbo_csv.parse("Payer Name,Ref,Amt\nNorthline GC,X1,10\n")
+        self.assertEqual(out["rows"][0]["amount_cents"], 1_000)
+
+    def test_the_customer_date_paid_check_number_file_now_reads(self):
+        out = qbo_csv.parse((ROOT / "testdata/test-contractor/bad/bad_02_payments-wrong-headers.csv").read_text())
+        self.assertEqual([(r["customer"], r["ref"]) for r in out["rows"]],
+                         [("Ironleaf General Contractors", "4471"), ("Corbel Street Properties", "ACH-30211")])
+
+    def test_no_header_names_the_columns_seen(self):
+        warning = qbo_csv.parse("Customer,Date,Paid out,Cheque\nIronleaf,10/15/2026,10.00,4471\n")["warnings"][0]
+        self.assertTrue(warning.startswith("No header row"))
+        self.assertIn("The columns seen: Customer, Date, Paid out, Cheque.", warning)
+
+    def test_more_date_formats_and_a_warning_for_one_not_read(self):
+        for raw, iso in (("10-14-2026", "2026-10-14"), ("October 14, 2026", "2026-10-14"),
+                         ("Wednesday, October 14, 2026", "2026-10-14"), ("14.10.2026", "2026-10-14")):
+            self.assertEqual(qbo_csv._date(raw), iso, raw)
+        out = qbo_csv.parse("Date,Name,Num,Amount\n14/10/2026,Northline GC,1,10.00\n")
+        self.assertIsNone(out["rows"][0]["date"])
+        self.assertEqual(out["warnings"], ["Line 2: the date '14/10/2026' wasn't read; this payment will be dated today unless you fix the cell."])
+
+
 if __name__ == "__main__":
     unittest.main()

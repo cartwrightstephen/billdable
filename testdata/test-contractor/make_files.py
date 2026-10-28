@@ -138,7 +138,7 @@ def main() -> None:
         "",
         "FICTIONAL TEST DOCUMENT - Duracash test data. Not a real agreement.",
     ])
-    (IMPORT / "13 Subcontract KENN Kennesaw Ortho Clinic.pdf").write_bytes(contract_pdf)
+    (IMPORT / "13_Scan_kenn_subcontract.pdf").write_bytes(contract_pdf)
 
     waiver_pdf = make_pdf([
         "CONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT",
@@ -154,7 +154,7 @@ def main() -> None:
         "FICTIONAL TEST DOCUMENT - Duracash test data. Not a legal form.",
     ])
 
-    jpg_path = IMPORT / "14 photo MILL lobby floor IMG_2231.jpg"
+    jpg_path = IMPORT / "14_IMG_2231_MILL_lobby-floor.jpg"
     jpg = make_jpeg(jpg_path)
     if jpg:
         jpg_path.write_bytes(jpg)

@@ -1464,10 +1464,32 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True, "message": "Password changed. Every other device is signed out."})
 
     def _p_payments_csv(self, m, ctx: "Ctx") -> None:
-        # Read a QuickBooks payments export and propose matches; nothing is recorded (P2-1).
-        parsed = qbo_csv.parse(_text(ctx.body, "csv", limit=2_000_000))
+        # Read a QuickBooks payments export and propose matches; nothing is recorded (P2-1). The
+        # export comes pasted (csv), chosen on Payments as an Excel file (xlsx, base64), or as a
+        # file already in the Inbox (file_id, R5-04).
+        file_id = _text(ctx.body, "file_id")
+        xlsx = _text(ctx.body, "xlsx", limit=4_000_000)
         with company_lock(ctx.company_id):
             state = load_company(ctx.company_id)
+        if file_id:
+            meta = next((f for f in state.get("files", []) if f["id"] == file_id), None)
+            if not meta or meta["ext"] not in {".csv", ".xlsx", ".txt"}:
+                raise domain.GateError("That file isn't a payments export.")
+            try:
+                text = qbo_csv.text_of(meta["ext"], importer.file_path(ctx.company_id, meta).read_bytes())
+            except OSError:
+                raise domain.GateError("That file is no longer on the server. Upload it again.")
+        elif xlsx:
+            try:
+                raw = base64.b64decode(xlsx, validate=True)
+            except ValueError:
+                raise BadRequest("Send the Excel file again.")
+            text = qbo_csv.xlsx_to_csv(raw)
+            if not text:
+                raise domain.GateError("That Excel file couldn't be read. In QuickBooks, export the report to CSV instead.")
+        else:
+            text = _text(ctx.body, "csv", limit=2_000_000)
+        parsed = qbo_csv.parse(text)
         self._json(200, {"rows": qbo_csv.propose(state, parsed["rows"]), "warnings": parsed["warnings"]})
 
     def _p_payments_apply(self, m, ctx: "Ctx") -> None:
@@ -1481,14 +1503,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(pick, dict):
                     continue
                 ref = str(pick.get("reference") or "")[:60]
+                # The page's row number comes back with its result, so a refused row stays on the page (R5-03).
+                key = pick.get("key") if isinstance(pick.get("key"), (int, str)) else None
                 try:
                     domain.match_payment(st, str(pick.get("job_id") or ""), pick.get("amount_cents"), ref,
                                          ctx.actor, invoice_id=str(pick.get("invoice_id") or "") or None,
                                          received_on=str(pick.get("date") or "") or None,
                                          qbo_payment_id=str(pick.get("qbo_id") or "") or None)
-                    results.append({"reference": ref, "ok": True})
+                    results.append({"key": key, "reference": ref, "ok": True})
                 except domain.GateError as exc:
-                    results.append({"reference": ref, "ok": False, "error": str(exc)})
+                    results.append({"key": key, "reference": ref, "ok": False, "error": str(exc)})
 
         status, payload = self._change(ctx.company_id, apply)
         if status == 200:
@@ -1866,6 +1890,10 @@ class Handler(BaseHTTPRequestHandler):
         except domain.GateError as exc:
             self._json(409, _gate(exc))
             return
+        # A QuickBooks payments export dropped in the Inbox: the card offers to read it on Payments (R5-04).
+        payment_rows = 0
+        if parsed is None and stored[0]["ext"] in {".csv", ".xlsx"} and not file_now:
+            payment_rows = qbo_csv.looks_like_payments(qbo_csv.text_of(stored[0]["ext"], data))
 
         def add(state: dict) -> None:
             for meta in stored:
@@ -1879,7 +1907,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 meta = stored[0]
                 text = data.decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
-                item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=ids, job_id=job_id)
+                item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=ids, job_id=job_id,
+                                         extra={"payments_csv": True, "payment_rows": payment_rows} if payment_rows else None)
             if file_now:
                 # Dropped on a job page: the person already chose the job.
                 filed = importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)

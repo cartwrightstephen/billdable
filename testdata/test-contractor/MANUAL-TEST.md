@@ -80,15 +80,16 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 | [ ] 3.1 | Upload | `05_email_co-request-from-gc-super.eml` | "1 file in the Inbox." | Suggested **Brookhaven Townhomes Bldg C** ("mentions the job name"), kind **Change order**, from Travis Mendez, Found: $2,340.00 |
 | [ ] 3.2 | Upload | `06_email_signed-waiver-pdf-attached.eml` | same | **Decatur Library Annex** ("mentions pay app PA-DECA"), kind **Lien waiver**, two files: the .eml and `Conditional-Waiver-PA-DECA-01-signed.pdf` (opens as a PDF) |
 | [ ] 3.3 | Upload | `07_email_payer-says-backup-missing.eml` | same | **Vesta Senior Living Phase 2** ("mentions pay app PA-VEST"), kind **Pay app / invoice backup** |
-| [ ] 3.4 | Upload | `08_email_photo-attachment-from-foreman.eml` | same | **Mill Creek Clubhouse** ("mentions job code MILL"), kind **Note** (not Photo: see APP-ISSUES 3), files: .eml and `IMG_2240.jpg` |
+| [ ] 3.4 | Upload | `08_email_photo-attachment-from-foreman.eml` | same | **Mill Creek Clubhouse** ("mentions job code MILL"), kind **Photo** (the only attachment is a picture), files: .eml and `IMG_2240.jpg` |
 | [ ] 3.5 | Upload | `09_email_matches-no-job.eml` | same | No job: "No job name, code, address or customer found.", kind **Note**, Found: $24.10, $18.75 |
 | [ ] 3.6 | Upload | `10_email_portal-notice-html-only.eml` | same | **Ashby Lofts Amenity Deck** ("mentions pay app PA-ASHB"), kind **Pay app / invoice backup**; the text is readable (HTML turned into text) |
-| [ ] 3.7 | Upload | `13 Subcontract KENN Kennesaw Ortho Clinic.pdf` | same | **Kennesaw Ortho Clinic** (matched by the file name only; PDFs are not read), kind **Contract** |
-| [ ] 3.8 | Upload | `14 photo MILL lobby floor IMG_2231.jpg` | same | **Mill Creek Clubhouse** ("mentions job code MILL"), kind **Photo** |
+| [ ] 3.7 | Upload | `13_Scan_kenn_subcontract.pdf` | same | **Kennesaw Ortho Clinic** ("mentions job code KENN": the file name, as a scanner writes it, with underscores and the code in lower case; PDFs are not read), kind **Contract** |
+| [ ] 3.8 | Upload | `14_IMG_2231_MILL_lobby-floor.jpg` | same | **Mill Creek Clubhouse** ("mentions job code MILL", read through the underscores), kind **Photo** |
+| [ ] 3.8a | Upload | `01_qbo-payments_partial-nomatch-odd-formats.csv` | same | No job, kind **Note**, and a notice "This looks like a payments export." with **Read as payments (6 rows)**. Tap it: Money > Payments opens with the 6 rows of 3.17 already read (nothing recorded). **Cancel**, then **Dismiss** the card in the Inbox. (An `.xlsx` export works the same way.) |
 
 - [ ] 3.9 File one: on the 3.8 card keep the job and kind, tap **File to job record**. Expected: toast "Saved"; the card moves to **Recently filed or dismissed** as "Filed to Mill Creek Clubhouse as Photo"; MILL's Job record shows it with the file link.
 - [ ] 3.10 Undo it: open **Recently filed or dismissed**, tap **Undo** on that row. Expected: the card is back under To file; MILL's record no longer lists it. File it again (you need a MILL record in part 4).
-- [ ] 3.11 Straight onto a job: open **Kennesaw Ortho Clinic**, in the Job record card tap **choose files** and pick `13 Subcontract KENN Kennesaw Ortho Clinic.pdf`. Expected: toast "1 file added to the job record."; a **Contract** record with the PDF. Nothing new under **To file** (the upload is listed, already filed, under **Recently filed or dismissed** as "Filed to Kennesaw Ortho Clinic as Contract").
+- [ ] 3.11 Straight onto a job: open **Kennesaw Ortho Clinic**, in the Job record card tap **choose files** and pick `13_Scan_kenn_subcontract.pdf`. Expected: toast "1 file added to the job record."; a **Contract** record with the PDF. Nothing new under **To file** (the upload is listed, already filed, under **Recently filed or dismissed** as "Filed to Kennesaw Ortho Clinic as Contract").
 
 ### 3b. Pasted text (Inbox > "Paste an email, a text thread, or notes")
 
@@ -121,13 +122,14 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
   | --- | --- | --- | --- | --- | --- |
   | ACH-30211 | Corbel Street Properties | $36,020.00 | Oct 14, 2026 | PA-ASHB-01 · Ashby Lofts Amenity Deck ("The memo or number names PA-ASHB-01.") | yes |
   | 4471 | Ironleaf General Contractors | $28,750.00 | Oct 15, 2026 (from `2026-10-15`) | PA-GLEN-01 · Glenwood Retail Shell | yes |
-  | 9902 | Harmon & Vale Construction | $42,000.00 | Oct 16, 2026 (from `10/16/26`) | "Too much": $42,000.00 is more than the $37,800.00 owed on PA-VEST-01 | no |
+  | 9902 | Harmon & Vale Construction | $42,000.00 | Oct 16, 2026 (from `10/16/26`) | "Too much": $42,000.00 is more than the $37,800.00 owed on PA-VEST-01, with a button **Record $37,800.00 to PA-VEST-01** | no |
   | CHK 40871 | Wrenfield Construction Group | $57,600.00 | Oct 17, 2026 (from `17-Oct-2026`) | "Already recorded" ("Payment CHK 40871 from Wrenfield Construction Group for $57,600.00 is already recorded on Decatur Library Annex.") | no |
   | 1187 | Priya Whitfield | $8,412.50 | Oct 20, 2026 (from `"Oct 20, 2026"`) | PA-WHIT-01 ("Same customer and exactly the $8,412.50 still owed.") | yes |
-  | 2210 | Lakeside Fellowship Church | $1,850.00 | Oct 21, 2026 | "No match" | no |
+  | 2210 | Lakeside Fellowship Church | $1,850.00 | Oct 21, 2026 | "No match", with a **Pick a pay app…** list of the open pay apps | no (greyed out until a pay app is picked) |
 
-  The TOTAL row and the report title lines are not shown.
-- [ ] 3.18 **Record the ticked payments**. Expected: "3 payments recorded." Then: Ashby Lofts PA-ASHB-01 **Paid**, Whitfield PA-WHIT-01 **Paid**, Glenwood PA-GLEN-01 **Partly paid** with $1,250.00 outstanding.
+  The TOTAL row and the report title lines are not shown. Before payments are read, the card is open (there are no payments yet) and has **Choose the file** beside **Read payments**, which reads a .csv or .xlsx file without pasting.
+- [ ] 3.18 **Record the ticked payments**. Expected: "3 recorded. 2 need a pay app picked below." The three recorded rows leave the table; 9902 and 2210 (and the already-recorded CHK 40871) stay. Then: Ashby Lofts PA-ASHB-01 **Paid**, Whitfield PA-WHIT-01 **Paid**, Glenwood PA-GLEN-01 **Partly paid** with $1,250.00 outstanding.
+- [ ] 3.18a Still on the table, don't record: on 9902 tap **Record $37,800.00 to PA-VEST-01**. Expected: that row becomes $37,800.00, ticked, PA-VEST-01, "… the rest, $4,200.00, is on the next line."; a new row "9902 (rest)" $4,200.00 "No match" with a **Pick a pay app…** list. On 2210 pick any pay app: its box becomes ticked. Untick both, tap **Cancel** (VEST stays unpaid for part 6).
 - [ ] 3.19 Paste the same CSV again and **Read payments**. Expected: ACH-30211, 4471, 1187 and CHK 40871 now say "Already recorded"; nothing is ticked. **Cancel**.
 
 ### 3d. Schedule of values paste (read only, nothing saved)
@@ -140,7 +142,7 @@ Files are in `testdata/test-contractor/import/` and `bad/`. Upload in **Inbox** 
 
 - [ ] 3.23 Upload `bad/bad_01_page.html`. Expected toast: "bad_01_page.html: this file type can't be imported. Allowed: csv, doc, docx, eml, gif, heic, jpeg, jpg, pdf, png, txt, webp, xls, xlsx."
 - [ ] 3.24 Upload `bad/bad_03_empty-file.txt`. Expected toast: "bad_03_empty-file.txt is empty."
-- [ ] 3.25 Money > Payments CSV: paste `bad/bad_02_payments-wrong-headers.csv`, **Read payments**. Expected: "No header row with an Amount column and a Customer or Num column was found." and no rows.
+- [ ] 3.25 Money > Payments CSV: paste `bad/bad_02_payments-wrong-headers.csv`, **Read payments**. Expected (since R5-03 reads Customer, Date, Paid and Check Number): two rows, 4471 and ACH-30211, both "Already recorded". Then change its first line to `Customer,Date,Paid out,Cheque` and read it again: "No header row with an Amount column and a Customer or Num column was found. The columns seen: Customer, Date, Paid out, Cheque." and no rows. Change a date to `14/10/2026`: "Line 2: the date '14/10/2026' wasn't read; this payment will be dated today unless you fix the cell."
 - [ ] 3.26 SOV paste box (on KENN, then Cancel): `bad/bad_04_sov-quantity-without-rate.txt`. Expected: "Read 0 lines." and three "has a quantity but no rate or amount; skipped." lines.
 - [ ] 3.27 Upload `bad/bad_05_email-with-zip-attachment.eml`. Expected: imported (suggested **Ashby Lofts Amenity Deck**) with a red line "Ashby-paver-drawings-rev3.zip: this file type can't be imported. Allowed: ..."; the PDF attachment is kept.
 

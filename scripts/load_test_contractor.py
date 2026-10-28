@@ -121,11 +121,11 @@ EXPECTED_UPLOADS = {
     "05_email_co-request-from-gc-super.eml": ("BROO", "change_order"),
     "06_email_signed-waiver-pdf-attached.eml": ("DECA", "waiver"),
     "07_email_payer-says-backup-missing.eml": ("VEST", "pay_app"),
-    "08_email_photo-attachment-from-foreman.eml": ("MILL", "note"),
+    "08_email_photo-attachment-from-foreman.eml": ("MILL", "photo"),
     "09_email_matches-no-job.eml": (None, "note"),
     "10_email_portal-notice-html-only.eml": ("ASHB", "pay_app"),
-    "13 Subcontract KENN Kennesaw Ortho Clinic.pdf": ("KENN", "contract"),
-    "14 photo MILL lobby floor IMG_2231.jpg": ("MILL", "photo"),
+    "13_Scan_kenn_subcontract.pdf": ("KENN", "contract"),
+    "14_IMG_2231_MILL_lobby-floor.jpg": ("MILL", "photo"),
 }
 EXPECTED_NOTES = [  # (note_date, job code)
     (None, None), ("2026-10-05", "MILL"), ("2026-10-06", "KENN"), ("2026-10-08", "GLEN"),
@@ -391,8 +391,21 @@ def imports(run: Run) -> None:
                    f"suggested {got[0] or 'no job'} ({it.get('match_reason')}), kind {got[1]}"
                    + ("" if got == (code, kind) else f"; expected {code or 'no job'}, {kind}"))
 
+    # A payments export dropped in the Inbox is offered on Payments (R5-04); reading it records nothing.
+    csv_path = IMPORT / "01_qbo-payments_partial-nomatch-odd-formats.csv"
+    before = {i["id"] for i in run.state().get("inbox", [])}
+    status, payload = upload(run, csv_path)
+    items = new_items(before, payload) if status == 200 else []
+    it = items[0] if items else {}
+    run.record(f"Upload {csv_path.name}: offered as payments (6 rows)", it.get("payments_csv") is True and it.get("payment_rows") == 6,
+               f"HTTP {status}, payments_csv {it.get('payments_csv')}, rows {it.get('payment_rows')}")
+    if it.get("file_ids"):
+        read = run.post("Read the Inbox CSV as payments", "/api/import/payments-csv", {"file_id": it["file_ids"][0]}, quiet=True)
+        run.record("Inbox CSV read on Payments: 6 rows proposed", len(read.get("rows", [])) == 6, f"{len(read.get('rows', []))} rows")
+        run.post("Dismiss the CSV item", f"/api/inbox/{it['id']}/dismiss", {}, quiet=True)
+
     print("\nImports: straight onto a job record (POST /api/import/file?job=...&file=1)")
-    pdf = IMPORT / "13 Subcontract KENN Kennesaw Ortho Clinic.pdf"
+    pdf = IMPORT / "13_Scan_kenn_subcontract.pdf"
     status, payload = upload(run, pdf, f"?job={run.jobs['KENN']}&file=1")
     recs = run.job("KENN").get("records", []) if status == 200 else []
     run.record("KENN job page: contract PDF filed as a Contract record", status == 200 and any(r.get("kind") == "contract" and r.get("file_ids") for r in recs),
@@ -475,8 +488,11 @@ def bad_files(run: Run) -> None:
     status, payload = upload(run, BAD / "bad_01_page.html")
     run.record("bad_01_page.html refused", status == 409 and "can't be imported" in payload.get("error", ""), f"HTTP {status} {payload.get('error', '')}")
     proposal = run.post("bad_02 wrong-header CSV read", "/api/import/payments-csv", {"csv": (BAD / "bad_02_payments-wrong-headers.csv").read_text()}, quiet=True)
-    run.record("bad_02_payments-wrong-headers.csv: no rows, header warning",
-               not proposal.get("rows") and any("No header row" in w for w in proposal.get("warnings", [])), " | ".join(proposal.get("warnings", [])))
+    # Customer, Date, Paid and Check Number are read since R5-03; both payments are already recorded by now.
+    rows = proposal.get("rows", [])
+    run.record("bad_02_payments-wrong-headers.csv: Paid and Check Number read, both already recorded",
+               [r.get("ref") for r in rows] == ["4471", "ACH-30211"] and all(r.get("status") == "already recorded" for r in rows),
+               "; ".join(f"{r.get('ref')}: {r.get('status')}" for r in rows) or " | ".join(proposal.get("warnings", [])))
     status, payload = upload(run, BAD / "bad_03_empty-file.txt")
     run.record("bad_03_empty-file.txt refused", status == 409 and "is empty" in payload.get("error", ""), f"HTTP {status} {payload.get('error', '')}")
     parsed = run.post("bad_04 SOV read", "/api/sov/parse", {"text": (BAD / "bad_04_sov-quantity-without-rate.txt").read_text()}, quiet=True)

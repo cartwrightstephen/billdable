@@ -9,6 +9,7 @@ import { readJson, setNetBanner, postJson, readTokenFromUrl } from "./js/net.js"
 import { labelTables, moreButton, askConfirm } from "./js/dom.js";
 import { field, moneyField, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, formDraft, draftValue, clearForm, clearAllForms, watchForms } from "./js/forms.js";
 import { todayQueue, queueHtml, anyPayAppSent } from "./js/today.js";
+import { canRecord, needsPick, pickPayApp, splitTooMuch, picksFrom, afterRecord } from "./js/payimport.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, setMe, clearSession, setLocation, closeForms } from "./js/state.js";
 
 // The Daily record starts on the job last used on this device (R2-07).
@@ -1065,17 +1066,36 @@ const ACTIONS = {
     paymentImport = escDeep(r.data); render();
   },
   "qbo-apply": async () => {
-    const picks = [...document.querySelectorAll("[data-qbo-row]:checked")].map(cb => paymentImport.rows[+cb.dataset.qboRow])
-      .map(row => ({ job_id: row.job_id, invoice_id: row.invoice_id, amount_cents: row.amount_cents, reference: unesc(row.ref), date: row.date, qbo_id: row.qbo_id ? unesc(row.qbo_id) : undefined }));
+    const picks = picksFrom(paymentImport.rows, unesc);
     if (!picks.length) { toast("Tick the payments to record."); return; }
     const r = await postJson("/api/import/payments-apply", { payments: picks });
     if (!r.ok) { toast(r.data.error || "Nothing was recorded."); return; }
-    const done = r.data.import_results.filter(x => x.ok).length, failed = r.data.import_results.filter(x => !x.ok);
-    setState(r.data); paymentImport = null;
-    toast(`${done} payment${done === 1 ? "" : "s"} recorded.${failed.length ? " Not recorded: " + failed.map(f => `${f.reference}: ${f.error}`).join("; ") : ""}`);
+    // Recorded rows go; a refused row stays with its reason, and rows still to pick stay (R5-03).
+    const after = afterRecord(paymentImport.rows, escDeep(r.data.import_results));
+    setState(r.data);
+    paymentImport = after.rows ? { ...paymentImport, rows: after.rows, warnings: [] } : null;
+    toast(after.toast);
+    render();
+  },
+  "qbo-split": (el) => {
+    paymentImport = { ...paymentImport, rows: splitTooMuch(paymentImport.rows, +el.dataset.row) };
     render();
   },
   "qbo-cancel": () => { paymentImport = null; render(); },
+  // A payments export dropped in the Inbox, read on Payments (R5-04).
+  "inbox-read-payments": async (el) => {
+    const r = await postJson("/api/import/payments-csv", { file_id: el.dataset.file });
+    if (!r.ok) { toast(r.data.error || "Couldn't read it."); return; }
+    paymentImport = escDeep(r.data);
+    nav("payments");
+  },
+  "qbo-choose-file": () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,.xlsx,.txt";
+    input.addEventListener("change", () => { if (input.files[0]) readPaymentsFile(input.files[0]); });
+    input.click();
+  },
   "use-approval-days": async (el, id) => { await post(`/api/payers/${id}/update`, { usual_approval_days: Number(el.dataset.days) }); },
   "save-company": async () => {
     const v = (k) => document.getElementById(k)?.value || "";
@@ -1698,6 +1718,15 @@ function listenForActions() {
     if (e.target.id === "nj-role" || e.target.id === "nj-customer") prefillRetainage();
     if (e.target.id === "match-inv") prefillPaymentAmount(e.target.value);
     if (e.target.dataset && e.target.dataset.companySwitch) companySwitch(e.target);
+    // The Payments import: a pay app picked for a row ticks it; a tick is remembered across redraws (R5-03).
+    if (e.target.dataset && e.target.dataset.qboPick !== undefined && paymentImport) {
+      const n = +e.target.dataset.qboPick;
+      paymentImport.rows[n] = pickPayApp(paymentImport.rows[n], e.target.value);
+      render();
+    }
+    if (e.target.dataset && e.target.dataset.qboRow !== undefined && paymentImport && paymentImport.rows[+e.target.dataset.qboRow]) {
+      paymentImport.rows[+e.target.dataset.qboRow].ticked = e.target.checked;
+    }
   });
   // A details' toggle doesn't bubble; catch it on the way down.
   app.addEventListener("toggle", (e) => { if (e.target.dataset && e.target.dataset.more) moreDetails[e.target.dataset.more] = e.target.open; }, true);
@@ -2237,6 +2266,48 @@ async function companySwitch(box) {
   await post("/api/company", { [box.dataset.companySwitch]: box.checked }, { anchor: box });
 }
 
+// A payments export chosen on Payments: a CSV is read here, an Excel file on the server (R5-04).
+const MAX_PAYMENTS_XLSX = 700 * 1024;   // base64 of it has to fit in a 1 MB request
+async function readPaymentsFile(file) {
+  const xlsx = /\.xlsx$/i.test(file.name);
+  if (xlsx && file.size > MAX_PAYMENTS_XLSX) { toast("That Excel file is too large. In QuickBooks, export the report to CSV instead."); return; }
+  let body;
+  if (xlsx) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let bin = "";
+    for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode(...bytes.subarray(k, k + 0x8000));
+    body = { xlsx: btoa(bin) };
+  } else {
+    body = { csv: await file.text() };
+  }
+  const r = await postJson("/api/import/payments-csv", body);
+  if (!r.ok) { toast(r.data.error || "Couldn't read it."); return; }
+  paymentImport = escDeep(r.data); render();
+}
+
+// The Payments import's tick box: on for a match, off until a pay app is picked (R5-03).
+function qboTick(row, n) {
+  const label = `Record ${row.ref || "this payment"}`;
+  if (canRecord(row)) return `<input type="checkbox" data-qbo-row="${n}"${row.ticked === false ? "" : " checked"} aria-label="${label}">`;
+  return needsPick(row) ? `<input type="checkbox" data-qbo-row="${n}" disabled aria-label="${label}">` : "";
+}
+
+// The Payments import's pay-app cell: the matched pay app, a select of open pay apps for a row
+// that needs one, or "Record $owed to PA-X" for a payment larger than its pay app (R5-03).
+function qboPayAppCell(row, n) {
+  const pill = row.status === "not recorded" ? `<span class="pill red">Not recorded</span>` : `<span class="pill">${words(row.status)}</span>`;
+  if (needsPick(row)) {
+    return `${pill}<select class="qbo-pick" data-qbo-pick="${n}" aria-label="Pay app for ${row.ref || "this payment"}">
+      <option value="">Pick a pay app…</option>
+      ${row.candidates.map((c, k) => `<option value="${k}"${row.picked === String(k) ? " selected" : ""}>${c.number} · ${c.job} · ${money(c.owed_cents)} owed</option>`).join("")}
+    </select>`;
+  }
+  if (row.status === "too much" && row.split) {
+    return `${pill}<button class="btn small secondary" data-action="qbo-split" data-row="${n}">Record ${money(row.split.owed_cents)} to ${row.split.number}</button>`;
+  }
+  return row.number ? `${row.number} · ${row.job}` : pill;
+}
+
 // The QuickBooks card, on Payments and on Settings > Team & account (R4-11).
 function qboCardHtml(onPayments) {
   const q = qboStatus;
@@ -2447,6 +2518,7 @@ function inboxItemCard(i) {
     ${(i.amounts || []).length || (i.dates || []).length ? `<div class="sub">Found: ${(i.amounts || []).map(a => money(a)).join(", ")}${(i.amounts || []).length && (i.dates || []).length ? " · " : ""}${(i.dates || []).join(", ")}</div>` : ""}
     ${(i.skipped_attachments || []).length ? `<div class="field-error">${i.skipped_attachments.join(" ")}</div>` : ""}
     <div class="sub">${i.suggested_job_id ? "Suggested because it " + i.match_reason : i.match_reason}</div>
+    ${i.payments_csv && files[0] ? `<div class="notice">This looks like a payments export. <button class="btn small" data-action="inbox-read-payments" data-file="${files[0].id}">Read as payments (${i.payment_rows} row${i.payment_rows === 1 ? "" : "s"})</button></div>` : ""}
     ${i.says_done_job_id ? `<div class="notice says-done">This says the job is done. <button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark ${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || "the job"} done and draft the pay app</button></div>` : ""}
     <div class="form-inline">
       <select id="inb-job-${i.id}" aria-label="Job">${jobs}</select>
@@ -3488,18 +3560,18 @@ const views = {
     const pays = [];
     state.jobs.forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     const imp = paymentImport;
-    const importCard = `<details class="card"${imp ? " open" : ""}><summary><strong>Import payments from QuickBooks (CSV)</strong></summary>
+    const importCard = `<details class="card"${imp || !pays.length ? " open" : ""}><summary><strong>Import payments from QuickBooks (CSV)</strong></summary>
       <p class="sub">In QuickBooks, export a report to CSV and paste it here. Any QuickBooks report with payments in it works; invoices and refunds are skipped. Duracash proposes a pay app for each payment and records nothing until you tick and apply. A check already recorded from the same customer is skipped, so importing the same file twice is safe.</p>
       ${imp ? `${imp.warnings.length ? `<div class="sov-warn">${imp.warnings.map(w => `<div>${w}</div>`).join("")}</div>` : ""}
         <div class="table-wrap"><table>
           <tr><th>Record</th><th>Date</th><th>Customer</th><th>Number</th><th>Amount</th><th>Pay app</th><th>Why</th></tr>
-          ${imp.rows.map((row, n) => `<tr><td>${row.status === "match" ? `<input type="checkbox" data-qbo-row="${n}" checked aria-label="Record ${row.ref || "this payment"}">` : ""}</td>
+          ${imp.rows.map((row, n) => `<tr><td>${qboTick(row, n)}</td>
             <td>${row.date ? fmtDate(row.date) : "—"}</td><td>${row.customer}</td><td>${row.ref}</td><td class="num">${money(row.amount_cents)}</td>
-            <td>${row.number ? `${row.number} · ${row.job}` : `<span class="pill">${words(row.status)}</span>`}</td><td class="sub">${row.reason}</td></tr>`).join("")}
+            <td>${qboPayAppCell(row, n)}</td><td class="sub">${row.reason}</td></tr>`).join("")}
         </table></div>
         <div class="form-inline"><button class="btn" data-action="qbo-apply">Record the ticked payments</button><button class="btn secondary" data-action="qbo-cancel">Cancel</button></div>`
       : `<textarea id="qbo-csv" rows="5" placeholder="Paste the CSV here" class="full-input"></textarea>
-        <button class="btn small" data-action="qbo-read">Read payments</button>`}
+        <div class="form-inline"><button class="btn small" data-action="qbo-read">Read payments</button><button class="btn small secondary" data-action="qbo-choose-file">Choose the file</button></div>`}
     </details>`;
     const qboCard = qboCardHtml(true);
     return `
@@ -3521,7 +3593,7 @@ const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("No payments yet", "Record a payment from the job once the customer has paid.")}
+      </div>` : emptyState("No payments yet", "Paste your QuickBooks payments export above, or record one from a job page with Record a payment.")}
     `;
   },
   waivers() {
