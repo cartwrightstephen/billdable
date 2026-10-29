@@ -791,14 +791,21 @@ def match_payment(
     invoice_id: str | None = None,
     received_on: str | None = None,
     qbo_payment_id: str | None = None,
+    qbo_total_cents: int | None = None,
 ) -> dict[str, Any]:
     """Record money received against a pay app. `received_on` (YYYY-MM-DD) is the date the books
     show, for imports; without it the payment is dated now. `qbo_payment_id` is QuickBooks' id
-    for the payment (qbo.py): one QuickBooks payment is recorded once in the whole company."""
+    for the payment (qbo.py) and `qbo_total_cents` its whole amount: one QuickBooks payment is
+    recorded no more than its amount in the whole company, in parts when it was split over pay
+    apps (R5-03), and once when its amount isn't given."""
     job = _open_job(state, job_id)
     qbo_payment_id = str(qbo_payment_id or "").strip()[:40] or None
-    if qbo_payment_id and any(p.get("qbo_payment_id") == qbo_payment_id for j in state["jobs"] for p in j.get("payments", [])):
-        raise GateError("This QuickBooks payment is already recorded.")
+    if qbo_payment_id:
+        parts = [p["amount_cents"] for j in state["jobs"] for p in j.get("payments", []) if p.get("qbo_payment_id") == qbo_payment_id]
+        whole = qbo_total_cents if isinstance(qbo_total_cents, int) and not isinstance(qbo_total_cents, bool) else None
+        amount = amount_cents if isinstance(amount_cents, int) and not isinstance(amount_cents, bool) else 0
+        if parts and (whole is None or sum(parts) + amount > whole):
+            raise GateError("This QuickBooks payment is already recorded.")
     open_invoices = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
     # A pay app settled short still takes the rest if the customer pays it after all (R4-01):
     # named by id, or on its own when nothing else is open.

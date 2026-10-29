@@ -6,7 +6,8 @@ money in, such as invoices and refunds, are skipped) and pastes
 them in. Duracash proposes a pay app for each row and records nothing until someone
 applies the matches. Matching is keyed on the payment's reference (check number or QuickBooks
 number) together with the customer, since two customers can send the same check number; a
-reference can be recorded once per job, so importing the same file twice is harmless.
+reference can be recorded once per job, and a payment with no number is known by its customer,
+amount and day, so importing the same file twice is harmless.
 
 The column names QuickBooks uses are from memory, not from a real export, so the reader
 accepts several spellings and finds the header row below any report-title lines.
@@ -196,8 +197,9 @@ def parse(text: str) -> dict[str, Any]:
 
 
 def _same(cust: str, payer: str) -> bool:
-    """A report's customer names this payer: one normalized name contains the other."""
-    return bool(cust and payer) and (payer in cust or cust in payer)
+    """A report's customer names this payer: one normalized name holds the other's whole words
+    ("Northline GC Inc" and "Northline GC"; not "Grace Roofing" and "Ace Roofing")."""
+    return bool(cust and payer) and (f" {payer} " in f" {cust} " or f" {cust} " in f" {payer} ")
 
 
 def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -223,12 +225,22 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
         # A check number is only unique per customer: two customers can both send check 1001.
         # Without a customer column the number alone decides, to stay on the safe side.
         cust = _norm(row["customer"])
-        seen = next((j for j, p, name in recorded if p["reference"] == row["ref"] and (not cust or _same(cust, name))), None) if row["ref"] else None
+        if row["ref"]:
+            seen = next((j for j, p, name in recorded if p["reference"] == row["ref"] and (not cust or _same(cust, name))), None)
+        else:
+            # No number (an ACH, say): recorded with a made-up manual-N reference, so the same
+            # customer, amount and day stand in for it, and the same file read again stays harmless.
+            seen = next((j for j, p, name in recorded if row["date"] and p["reference"].startswith("manual-")
+                         and p["amount_cents"] == row["amount_cents"] and str(p.get("matched_at") or "")[:10] == row["date"]
+                         and (not cust or _same(cust, name))), None)
         if seen:
-            what = "Check" if row["ref"].isdigit() else "Payment"
             who = f" from {row['customer']}" if row["customer"] else ""
-            result.update(status="already recorded",
-                          reason=f"{what} {row['ref']}{who} for {domain.money(row['amount_cents'])} is already recorded on {seen['name']}.")
+            if row["ref"]:
+                what = "Check" if row["ref"].isdigit() else "Payment"
+                reason = f"{what} {row['ref']}{who} for {domain.money(row['amount_cents'])} is already recorded on {seen['name']}."
+            else:
+                reason = f"A payment{who} for {domain.money(row['amount_cents'])} on {row['date']} is already recorded on {seen['name']}."
+            result.update(status="already recorded", reason=reason)
             out.append(result)
             continue
         named = set(PAYAPP_RE.findall(f"{row['memo']} {row['ref']}"))
