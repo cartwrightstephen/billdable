@@ -5,6 +5,7 @@ import { readJson, setNetBanner, postJson } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues, formErrors, clearForm } from "../forms.js";
 import { actionWords, STYLE_NOTE } from "../terms.js";
+import { inviteLocked, inviteLockHtml } from "../setup.js";
 import { state, me, currentView, formOpen, setMe, clearSession, setTeamData, teamData, mailReady, billingInfo } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding } from "../app-core.js";
 import { ROLE_OPTIONS, roleLabel, sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount } from "./jobs.js";
@@ -61,6 +62,9 @@ function teamCardHtml() {
   const isDemo = me.company_id === DEMO_COMPANY_ID;
   const users = teamData ? teamData.users : [];
   const invites = teamData ? teamData.invites : [];
+  // An unconfirmed owner can't invite on a server that sends mail (the server refuses): say so
+  // before the tap, with the confirmation link to send again (Oct 23 note 2).
+  const locked = inviteLocked(me, mailReady, DEMO_COMPANY_ID);
   return `
       <h2>Team</h2>
       <p class="sub">Owners manage the team, inbound addresses, reset and deletion, and send, delete drafts and finish jobs. Members do everything else: they draft pay apps, record payments and add paperwork. Every action is in the Activity log with the person's name.</p>
@@ -73,10 +77,11 @@ function teamCardHtml() {
       </table></div>
       ${owner && !isDemo ? `
         <h3>Invite someone</h3>
+        ${locked ? inviteLockHtml() : ""}
         <div data-form-key="invite">${formErrorLine("invite")}<div class="form-row">
           ${field({ form: "invite", name: "email", id: "invite-email", label: "Their email", type: "email", autocomplete: "off", wide: true })}
           ${field({ form: "invite", name: "role", id: "invite-role", label: "They join as", options: [["member", "Member"], ["owner", "Owner"]] })}
-          <button class="btn small" data-action="team-invite">Invite</button>
+          <button class="btn small" data-action="team-invite"${locked ? " disabled" : ""}>Invite</button>
         </div></div>
         ${lastInvite ? `<div class="invite-result">${lastInvite.emailed ? `Invite emailed to ${esc(lastInvite.email)}.` : `Not emailed (${esc(lastInvite.email_status)}). Send them this link yourself; it works once, for 7 days:`}
           <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}

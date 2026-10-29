@@ -163,6 +163,11 @@ def is_helper_admin(user: dict) -> bool:
     return bool(user) and user.get("id", "") in allowed
 
 
+# What a contractor reads when no email can go out from this server (Oct 23 note 17): plain
+# words, with the missing setting (DURACASH_URL or the mail service) in the server log only.
+EMAIL_NOT_SET_UP = "email isn't set up on this server yet; contact Duracash support"
+
+
 def app_url() -> str | None:
     """The public address used in emailed links (password reset, verification, invites).
     Never taken from the request's Host header, which a stranger controls."""
@@ -1111,8 +1116,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _p_billing_checkout(self, m, ctx: "Ctx") -> None:
         if ctx.company_id == auth.DEMO_COMPANY_ID or not app_url():
+            if ctx.company_id != auth.DEMO_COMPANY_ID:
+                log_json("warn", msg="Subscribe needs DURACASH_URL set on the server; Stripe sends people back to it",
+                         company=ctx.company_id)
             self._json(409, {"error": "The demo account can't subscribe." if ctx.company_id == auth.DEMO_COMPANY_ID
-                             else "Set DURACASH_URL first; Stripe sends people back to it."})
+                             else "Subscribing isn't available on this server yet. Contact Duracash support."})
             return
         with company_lock(ctx.company_id):
             state = load_company(ctx.company_id)
@@ -1199,6 +1207,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, {"error": "The demo account can't connect QuickBooks. Use the sample import on a job instead."})
             return
         try:
+            if qbo.configured() and not qbo.redirect_ok(self._qbo_redirect_uri()):
+                log_json("warn", msg="Connect QuickBooks needs DURACASH_URL set to the site's https address", company=ctx.company_id)
             self._json(200, {"url": qbo.authorize_url(ctx.company_id, ctx.actor, self._qbo_redirect_uri())})
         except qbo.QboError as exc:
             self._json(409, {"error": str(exc)})
@@ -1682,7 +1692,9 @@ class Handler(BaseHTTPRequestHandler):
         if user["company_id"] == auth.DEMO_COMPANY_ID:
             return "the demo account isn't verified"
         if not (mailer.configured() and url):
-            return "email delivery or DURACASH_URL is not set up on this server"
+            if not url:
+                log_json("warn", msg="no confirmation email: DURACASH_URL is not set on the server", company=user["company_id"])
+            return EMAIL_NOT_SET_UP
         if not _within_limit(f"verify:{user['id']}", 3, 3600):
             return "three links were already sent in the last hour; use the newest, or try later"
         raw = auth.verify_email_token(user["id"])
@@ -1719,7 +1731,9 @@ class Handler(BaseHTTPRequestHandler):
             raw, invite = auth.create_invite(company_id, ctx.body.get("email"), ctx.body.get("role") or "member", user["name"], actor_id=user["id"])
             url = app_url()
             note = {"invite_path": f"/#invite={raw}", "invite_link": f"{url}/#invite={raw}" if url else None, "emailed": False,
-                    "email_status": "DURACASH_URL is not set on this server" if not url else "not sent"}
+                    "email_status": EMAIL_NOT_SET_UP if not url else "not sent"}
+            if not url:
+                log_json("warn", msg="invite not emailed: DURACASH_URL is not set on the server", company=company_id)
             if url:
                 with company_lock(company_id):
                     company_name = load_company(company_id).get("company", {}).get("name", "")
@@ -2464,6 +2478,13 @@ def _co_args(ctx: Ctx) -> dict:
     return {"link_base": app_url(), "company_id": ctx.company_id}
 
 
+def _request_co_signature(st: dict, job_id: str, co_id: str, c: Ctx) -> str:
+    """The contractor reads plain words when signing links can't be made; the reason is logged here."""
+    if not app_url():
+        log_json("warn", msg="no signing link: DURACASH_URL is not set on the server", company=c.company_id)
+    return domain.request_co_signature(st, job_id, co_id, c.actor, **_co_args(c))
+
+
 def _confirmed(c: Ctx, what: str = "the pay app") -> None:
     """Emails go out from the signed-in person's address, so on a server that sends mail it must
     be confirmed first. The Outbox used to hold them without a word (mailer.UNVERIFIED); now the
@@ -2564,7 +2585,7 @@ JOB_ACTIONS = {
     # A change order is approved by a signature: online (request-co-signature) or a signed
     # copy on the job record. A bare status flip is not accepted (P2-3).
     "approve-co": (True, lambda h, st, j, i, c: domain.mark_co_signed(st, j, i, _text(c.body, "record_id"), c.actor)),
-    "request-co-signature": (True, _sends("the request", lambda h, st, j, i, c: domain.request_co_signature(st, j, i, c.actor, **_co_args(c)))),
+    "request-co-signature": (True, _sends("the request", lambda h, st, j, i, c: _request_co_signature(st, j, i, c))),
     "include-co": (True, lambda h, st, j, i, c: domain.include_change_order(st, j, i, c.actor)),
     "withdraw-co": (True, lambda h, st, j, i, c: domain.withdraw_change_order(st, j, i, c.actor)),
     "void-draft": (False, lambda h, st, j, i, c: domain.void_draft(st, j, c.actor)),

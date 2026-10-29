@@ -445,7 +445,7 @@
         "owner",
         "role"
       ],
-      "answer": "Yes. An owner opens Settings, Team, enters Their email, picks They join as (Member or Owner) and taps Invite. Members draft pay apps, record payments and add paperwork. Owners also send, delete drafts, finish jobs, and manage the team, the inbound addresses, reset and deleting the company. To let members send, an owner turns on Members can send pay apps, lien waivers and retainage requests in Settings, Company. Every action is in the Activity log with the person's name. If the invite can't be emailed, the owner gets a link to pass on; it works once, for 7 days.",
+      "answer": "Yes. An owner opens Settings, Team, enters Their email, picks They join as (Member or Owner) and taps Invite. Invite stays off until your own email is confirmed; the Team page says so, with Send the link again. Members draft pay apps, record payments and add paperwork. Owners also send, delete drafts, finish jobs, and manage the team, the inbound addresses, reset and deleting the company. To let members send, an owner turns on Members can send pay apps, lien waivers and retainage requests in Settings, Company. Every action is in the Activity log with the person's name. If the invite can't be emailed, the owner gets a link to pass on; it works once, for 7 days.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -550,7 +550,7 @@
         "send",
         "approve"
       ],
-      "answer": "Open the job and tap Review & send. The pay app page shows Before you send: who it goes to, Also email (CC), the amount, the subject and what is attached; Open the PDF to check it. Then tap Approve & send to. While paperwork is missing or an unsigned change order is on the pay app, the job shows Fix N things before sending (or Add N missing documents, or Get CO N signed) instead. It goes to the customer's Email for pay apps with the PDF and paperwork attached, from your company name, and replies come back to you. Only owners send, unless an owner turns on Members can send in Settings, Company. Money, Outbox shows whether it was delivered.",
+      "answer": "Open the job and tap Review & send. The pay app page shows Before you send: who it goes to, Also email (CC), the amount, the subject and what is attached; Open the PDF to check it. If your company address, phone or licence number is blank, it says so there with a Company details button; you can still send. Then tap Approve & send to. While paperwork is missing or an unsigned change order is on the pay app, the job shows Fix N things before sending (or Add N missing documents, or Get CO N signed) instead. It goes to the customer's Email for pay apps with the PDF and paperwork attached, from your company name, and replies come back to you. Only owners send, unless an owner turns on Members can send in Settings, Company. Money, Outbox shows whether it was delivered.",
       "handler": "blockers",
       "needs_job": false,
       "actions": [],

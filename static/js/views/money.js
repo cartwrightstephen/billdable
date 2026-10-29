@@ -9,6 +9,7 @@ import { moreButton, askConfirm } from "../dom.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { canRecord, needsPick, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "../payimport.js";
 import { termText } from "../terms.js";
+import { companyGapsHtml } from "../setup.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, mailReady } from "../state.js";
 import { may, render, DEMO_COMPANY_ID, toast, post, backButton, emptyState, nav, listPage, setState, EMAIL_PATTERN } from "../app-core.js";
 import { coFormFields, coSignControls, shortPayCardHtml, owedText, emailFailed, shortPayButtons, sendsTo, addChangeOrder } from "./job.js";
@@ -242,8 +243,8 @@ export const views = {
     const copies = (j.payer.copy && unesc(j.payer.copy) !== "None") ? j.payer.copy : "";
     const firstSend = draft && !j.payer.sent_before && !state.jobs.some(x => x.payer_id === j.payer_id && x.invoices.some(i => i.sent_at));
     const noEmail = !j.payer.ap_email;
-    // The PDF's header prints the company's address (R2-05): say so before the first one goes out.
-    const noAddress = !String((state.company || {}).address || "").trim();
+    // The PDF's From block prints the company's address, phone and licence number (R2-05, Oct 23
+    // note 1): a blank one is said here before it goes out, as a warning only.
     const locked = emailUnconfirmed();
     // The customer's payment terms set the due date from the day it goes out (R4-04).
     const terms = Number(unesc(String(j.payer.payment_terms_days || ""))) || 0;
@@ -269,8 +270,7 @@ export const views = {
         <div class="money-row"><span class="label">Subject</span><span>${subjectPreview(j, inv)}</span></div>
         ${inv.final ? `<p class="sub final-note">${termText("The final pay app: the PDF is marked FINAL APPLICATION.")}</p>` : ""}
         <div class="money-row"><span class="label">Attached</span><span>Pay app PDF${inv.sov_sheet && inv.sov_sheet.length ? " with continuation sheet" : ""}, paperwork checklist, ${pkt.filter(p => p.present).length} paperwork item${pkt.filter(p => p.present).length === 1 ? "" : "s"}</span></div>
-        ${noAddress ? `<div class="notice no-address">Your company address is blank on this PDF.
-          <button class="btn small secondary" data-action="onb-go" data-view="company" data-focus="#co-address">Company details</button></div>` : ""}
+        ${companyGapsHtml(state.company)}
         ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>` : ""}
         ${missing ? `<p class="blocker">${missing} paperwork item${missing === 1 ? " is" : "s are"} missing. Add ${missing === 1 ? "it" : "them"}, then send.</p>` : ""}
         ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}

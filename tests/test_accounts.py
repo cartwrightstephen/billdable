@@ -211,6 +211,20 @@ class AccountHttpTests(ServerCase):
 
     # ----- team -----
 
+    def test_unconfirmed_owner_is_told_before_inviting_and_refused(self):
+        """Oct 23 note 2: the page reads mail_ready and email_verified to turn Invite off with the
+        reason (static/js/setup.js inviteLocked); the server still refuses the tap itself."""
+        self.mail_on()
+        owner, _ = self.signup("unconfirmed@team.example", "Unconfirmed Co")
+        self.wait_for_mail(1)
+        res, me = self.request("GET", "/api/auth/me", cookie=owner)
+        self.assertEqual((me["mail_ready"], me["user"]["email_verified"]), (True, False))
+        res, out = self.request("POST", "/api/team/invite", {"email": "helper@team.example", "role": "member"}, cookie=owner)
+        self.assertEqual(res.status, 409)
+        self.assertEqual(out["error"], "Confirm your own email address before inviting people.")
+        res, team = self.request("GET", "/api/team", cookie=owner)
+        self.assertEqual(team["invites"], [])
+
     def test_team_invites_roles_and_removal(self):
         owner, data = self.signup("owner@team.example", "Team Co")
         res, out = self.request("POST", "/api/team/invite", {"email": "member@team.example", "role": "member"}, cookie=owner)
