@@ -215,8 +215,10 @@ def billed(job: dict[str, Any]) -> dict[str, Any]:
     for inv in live_invoices(job):
         for entry in inv.get("sov_lines", []):
             by_line[entry["line_id"]] = by_line.get(entry["line_id"], 0) + entry["amount_cents"]
-            qty_by_line[entry["line_id"]] = max(qty_by_line.get(entry["line_id"], 0), entry["qty_milli_to_date"])
+        # Quantities come from the whole continuation sheet: a line can move on a $0 period
+        # (stored materials installed) and still be on the pay app at its new quantity.
         for entry in inv.get("sov_sheet") or inv.get("sov_lines", []):
+            qty_by_line[entry["line_id"]] = max(qty_by_line.get(entry["line_id"], 0), entry.get("qty_milli_to_date", 0))
             work = entry.get("work_to_date_cents", entry["to_date_cents"])
             work_by_line[entry["line_id"]] = max(work_by_line.get(entry["line_id"], 0), work)
         op += inv.get("op_cents", 0)
@@ -352,7 +354,7 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
         while line_id in used or (not prior and line_id in old):
             line_id = new_id()
         used.add(line_id)
-        out.append({
+        entry = {
             "id": line_id,
             "item": str(raw.get("item") or "").strip()[:12] or str(n),
             "description": description,
@@ -361,8 +363,12 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
             "rate_cents": rate,
             "scheduled_cents": scheduled,
             "done_milli": min(prior["done_milli"], qty) if prior else 0,
+            "stored_cents": 0,
             "co_id": None,
-        })
+        }
+        if prior:  # materials stored on the line stay, within what the edited line has left
+            entry["stored_cents"] = max(0, min(int(prior.get("stored_cents") or 0), scheduled - line_completed(entry)))
+        out.append(entry)
     if errors:
         raise SovError(" ".join(errors[:10]) + (f" And {len(errors) - 10} more." if len(errors) > 10 else ""))
     return out
