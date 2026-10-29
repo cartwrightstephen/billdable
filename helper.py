@@ -193,47 +193,44 @@ def _followup_due(snap: dict[str, Any], j: dict[str, Any]) -> tuple[dict[str, An
     return inv, since
 
 
-def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None) -> tuple[str, list[dict[str, Any]]] | None:
+def _follow_up_btn(r: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "post", "path": f"/api/jobs/{r['job_id']}/follow-up", "label": f"Follow up: {r['job']}",
+            "confirm": f"Send a follow-up on {r['job']}? It is emailed when email is set up, and listed in the Outbox either way."}
+
+
+# A Today row whose button is on Today or in the Inbox opens that page.
+PAGE_LABELS = {"/today": "Open Today", "/inbox": "Open Inbox"}
+
+
+def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
+           state: dict[str, Any] | None = None) -> tuple[str, list[dict[str, Any]]] | None:
     jobs = [j for j in snap["jobs"] if not j.get("closed")]
     company = snap.get("company", {}).get("name", "your company")
     if name == "today":
-        lines, actions = [], []
-        for j in jobs:
-            draft = next((i for i in j["invoices"] if i["status"] in domain.DRAFT_STATUSES), None)
-            if draft and j["blockers"]:
-                lines.append(f"- {j['name']}: {draft['number']} is blocked: {j['blockers'][0]}")
-                actions.append({"type": "packet", "job_id": j["id"], "inv": draft["id"], "label": f"Open {draft['number']} packet"})
-            elif draft:
-                lines.append(f"- {j['name']}: {draft['number']} ({domain.money(draft['amount_cents'])}) is ready to approve and send.")
-                actions.append(_job_btn(j))
-            due = _followup_due(snap, j)
-            if due:
-                inv, since = due
-                lines.append(f"- {j['name']}: {inv['number']} was sent {since} days ago; a follow-up is due.")
-                actions.append({"type": "post", "path": f"/api/jobs/{j['id']}/follow-up", "label": f"Follow up on {inv['number']}",
-                                "confirm": f"Log a follow-up to {j['payer'].get('approver') or j['payer']['name']} on {inv['number']}?"})
-            if j.get("waiver_due") and not j.get("waiver_sent"):
-                lines.append(f"- {j['name']}: payment matched, the waiver is not sent.")
-                actions.append({"type": "job", "job_id": j["id"], "label": f"Send waiver on {j['name']}"})
-            if j["money"]["unbilled_completed_cents"] > 0 and not draft:
-                lines.append(f"- {j['name']}: {domain.money(j['money']['unbilled_completed_cents'])} of finished work is not billed.")
-                actions.append({"type": "post", "path": f"/api/jobs/{j['id']}/draft", "label": f"Draft pay app for {j['name']}",
-                                "confirm": f"Draft a pay app for {j['name']}?"})
-        new = len([i for i in snap.get("inbox", []) if i["status"] == "new"])
-        if new:
-            lines.append(f"- {new} item{'s' if new != 1 else ''} waiting in the Inbox to be filed.")
-            actions.append({"type": "nav", "view": "inbox", "label": "Open Inbox"})
-        if not lines:
-            return f"Nothing needs action right now at {company}. Nice.", [{"type": "nav", "view": "dashboard", "label": "Open Dashboard"}]
-        return "Here is what needs you, most urgent first:\n" + "\n".join(lines[:8]), actions[:6]
+        # Today's own queue (domain.today_rows), so the helper, the Today page and the daily email
+        # never disagree on what is due.
+        rows = domain.today_rows(state) if state is not None else []
+        if not rows:
+            return f"Nothing needs action right now at {company}. Nice.", [{"type": "nav", "view": "dashboard", "label": "Open Today"}]
+        lines = [f"- {r['job']}: {r['label']}. {r['text']}" for r in rows[:8]]
+        actions, seen = [], set()
+        for r in rows:
+            label = PAGE_LABELS.get(r["path"]) or (f"{r['button']}: {r['job']}" if r["button"] else "")
+            if label and label not in seen:
+                seen.add(label)
+                if r["kind"] == "follow_up":
+                    actions.append(_follow_up_btn(r))
+                else:
+                    actions.append({"type": "path", "path": r["path"], "label": label})
+        return "Here is what needs you, most urgent first:\n" + "\n".join(lines), actions[:6]
     if name == "money":
         t = snap["totals"]
         billed_month = sum(i["amount_cents"] for j in snap["jobs"] for i in j["invoices"]
                            if i.get("sent_at") and i["sent_at"][:7] == datetime.now(timezone.utc).strftime("%Y-%m"))
         return (f"Across open jobs:\n- Finished but not billed: {domain.money(t['unbilled_cents'])}\n"
                 f"- Billed and not paid: {domain.money(t['outstanding_cents'])}\n- Retainage still held: {domain.money(t['retainage_cents'])}\n"
-                f"- Billed this month: {domain.money(billed_month)}"), [{"type": "nav", "view": "dashboard", "label": "Open Dashboard"},
-                                                                       {"type": "nav", "view": "collections", "label": "Open Collections"}]
+                f"- Billed this month: {domain.money(billed_month)}"), [{"type": "nav", "view": "dashboard", "label": "Open Today"},
+                                                                       {"type": "nav", "view": "collections", "label": "Open Unpaid"}]
     if name == "who_owes":
         owing = sorted((j for j in jobs if j["money"]["outstanding_cents"] > 0), key=lambda j: -j["money"]["outstanding_cents"])
         if not owing:
@@ -244,14 +241,15 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None) -> tuple
             since = _days_since(inv.get("sent_at")) if inv else None
             lines.append(f"- {j['payer']['name']} on {j['name']}: {domain.money(j['money']['outstanding_cents'])}"
                          + (f", sent {since} days ago" if since is not None else ""))
-        return "Who owes you, largest first:\n" + "\n".join(lines), [{"type": "nav", "view": "collections", "label": "Open Collections"}] + [_job_btn(j) for j in owing[:3]]
+        return "Who owes you, largest first:\n" + "\n".join(lines), [{"type": "nav", "view": "collections", "label": "Open Unpaid"}] + [_job_btn(j) for j in owing[:3]]
     if name == "followups":
-        due = [(j, *d) for j in jobs if (d := _followup_due(snap, j))]
+        # The same follow-up rule as Today, including a call noted with a date to check again.
+        due = [r for r in domain.today_rows(state) if r["kind"] == "follow_up"] if state is not None else []
         if not due:
-            return "No follow-ups are due. Each payer's window comes from its playbook (follow-up days).", [{"type": "nav", "view": "collections", "label": "Open Collections"}]
-        lines = [f"- {j['name']}: {inv['number']}, {since} days since the last contact" for j, inv, since in due]
-        actions = [{"type": "post", "path": f"/api/jobs/{j['id']}/follow-up", "label": f"Follow up: {inv['number']}",
-                    "confirm": f"Send a follow-up on {inv['number']} to {j['payer'].get('ap_email', 'the payer')}? It is emailed when email is set up, and listed in the Outbox either way."} for j, inv, _ in due[:4]]
+            return ("No follow-ups are due. Each customer's wait comes from Days between follow-ups in Customer settings.",
+                    [{"type": "nav", "view": "collections", "label": "Open Unpaid"}])
+        lines = [f"- {r['job']}: {r['text']}" for r in due]
+        actions = [_follow_up_btn(r) for r in due[:4]]
         return "These follow-ups are due now:\n" + "\n".join(lines), actions
     if name == "draft_followup":
         if not job:
@@ -265,7 +263,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None) -> tuple
         actions = [{"type": "copy", "text": note, "label": "Copy note"}]
         if _followup_due(snap, job):
             actions.append({"type": "post", "path": f"/api/jobs/{job['id']}/follow-up", "label": "Send the follow-up",
-                            "confirm": f"Send a follow-up on {inv['number']} to {p.get('ap_email', 'the payer')}? It is emailed when email is set up, and listed in the Outbox either way."})
+                            "confirm": f"Send a follow-up on {inv['number']} to {p.get('ap_email') or 'the customer'}? It is emailed when email is set up, and listed in the Outbox either way."})
         return f"Here is a follow-up for {job['name']}:\n\n{note}", actions + [_job_btn(job)]
     if name == "blockers":
         if not job:
@@ -275,7 +273,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None) -> tuple
             return "Blocked jobs:\n" + "\n".join(f"- {j['name']}: {j['blockers'][0]}" for j in blocked[:8]), [_job_btn(j) for j in blocked[:4]]
         if not job["blockers"]:
             return f"{job['name']} has nothing blocking it. Status: {job['status_label']}.", [_job_btn(job)]
-        return f"{job['name']} is blocked by:\n" + "\n".join(f"- {b}" for b in job["blockers"]), [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open the packet"}]
+        return f"{job['name']} is blocked by:\n" + "\n".join(f"- {b}" for b in job["blockers"]), [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open paperwork"}]
     if name == "job_status":
         if not job:
             return None
@@ -316,7 +314,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None) -> tuple
         if not rows:
             return "No change orders are waiting on a signature.", []
         return "Change orders waiting on a signature:\n" + "\n".join(f"- {j['name']}: CO {co['number']} {co['title']} ({domain.money(co['amount_cents'])})" for j, co in rows), \
-            [{"type": "nav", "view": "cos", "label": "Open Change Orders"}]
+            [{"type": "nav", "view": "cos", "label": "Open Change orders"}]
     if name == "closeable":
         rows = [j for j in jobs if not j.get("close_blockers")]
         if not rows:
@@ -355,7 +353,7 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
                 text = "Which job do you mean?"
                 actions = [{"type": "ask", "q": f"{question} {j['name']}", "label": j["name"]} for j in snap["jobs"] if not j.get("closed")][:6]
             else:
-                live = handle(top["handler"], snap, job)
+                live = handle(top["handler"], snap, job, state)
                 if live:
                     text, extra = live
                     actions = extra + actions

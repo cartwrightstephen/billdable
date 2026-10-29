@@ -115,5 +115,28 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(helper.review()["stats"]["unhelpful"], 1)
 
 
+    def test_today_answer_is_todays_queue(self):
+        # One rule set: the helper lists Today's rows (domain.today_rows), most urgent first.
+        state = seed_state()
+        rows = domain.today_rows(state)
+        self.assertTrue(rows)
+        reply = helper.answer("what should i do today", state, "co-x", "u-1")
+        listed = [line for line in reply["text"].split("\n") if line.startswith("- ")]
+        self.assertEqual(listed, [f"- {r['job']}: {r['label']}. {r['text']}" for r in rows[:8]])
+        paths = {r["path"] for r in rows}
+        for a in reply["actions"]:
+            if a["type"] == "path":
+                self.assertIn(a["path"], paths)
+        self.assertNotIn("packet", " ".join(a["label"] for a in reply["actions"]).lower())
+
+    def test_followups_answer_matches_today(self):
+        state = seed_state()
+        due = [r for r in domain.today_rows(state) if r["kind"] == "follow_up"]
+        reply = helper.answer("which follow-ups are due", state, "co-x", "u-1")
+        for r in due:
+            self.assertIn(f"- {r['job']}: {r['text']}", reply["text"])
+        if not due:
+            self.assertIn("No follow-ups are due", reply["text"])
+
 if __name__ == "__main__":
     unittest.main()

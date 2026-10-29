@@ -4110,6 +4110,7 @@ async function helperRunAction(a) {
   if (a.type === "nav") nav(a.view);
   else if (a.type === "job") nav("job", a.job_id);
   else if (a.type === "packet") nav("packet-detail", a.job_id, a.inv || null);
+  else if (a.type === "path") { const r = routeFromPath(a.path); if (r) nav(r.view, r.jobId || null, r.detailId || null); }
   else if (a.type === "ask") helperAsk(a.q);
   else if (a.type === "copy") {
     try { await navigator.clipboard.writeText(a.text); toast("Copied"); }
