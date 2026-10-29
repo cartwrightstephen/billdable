@@ -117,11 +117,18 @@ def status(company_id: str) -> dict[str, Any]:
 
 # ----- connecting -----
 
+def redirect_ok(redirect_uri: str) -> bool:
+    """Intuit sends people back to an https address (or this machine, for trying it out)."""
+    return redirect_uri.startswith(("https://", "http://localhost", "http://127.0.0.1"))
+
+
 def authorize_url(company_id: str, user_name: str, redirect_uri: str) -> str:
     if not configured():
         raise QboError("The QuickBooks connection isn't set up on this server (QBO_CLIENT_ID and QBO_CLIENT_SECRET).")
-    if not redirect_uri.startswith(("https://", "http://localhost", "http://127.0.0.1")):
-        raise QboError("Set DURACASH_URL to the site's https address first; QuickBooks sends people back to it.")
+    if not redirect_ok(redirect_uri):
+        # The owner reads plain words; the server logs that DURACASH_URL is missing (Oct 23 note 17).
+        raise QboError("Connecting QuickBooks isn't available on this server yet. Contact Duracash support. "
+                       "Until then, use the CSV import on Payments.")
     state = secrets.token_urlsafe(24)
     now = time.time()
     with LOCK:

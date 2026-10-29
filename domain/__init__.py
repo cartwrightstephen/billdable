@@ -1972,13 +1972,20 @@ def _pending_co(state: dict[str, Any], job_id: str, co_id: str) -> tuple[dict[st
     return job, co
 
 
+# What the contractor reads when the server has no site address for signing links (Oct 23 note 17).
+NO_SIGNING_LINKS = ("Signing links aren't available on this server yet. Contact Duracash support. "
+                    "Meanwhile, get it signed on paper and tap Signed on paper….")
+
+
 def request_co_signature(
     state: dict[str, Any], job_id: str, co_id: str, actor: str = "owner", link_base: str | None = None, company_id: str = ""
 ) -> str:
-    """Make the change order's signing link and, with a site address, email it to the payer. Returns the link."""
+    """Make the change order's signing link and, with a site address, email it to the payer. Returns the link.
+    Without the site's address (DURACASH_URL, which the server logs) the contractor reads plain words
+    and is pointed to signing on paper."""
     job, co = _pending_co(state, job_id, co_id)
     if not link_base or not company_id:
-        raise GateError("Signing links need the site's address (DURACASH_URL) set on the server.")
+        raise GateError(NO_SIGNING_LINKS)
     co["sign_token"] = co.get("sign_token") or secrets.token_urlsafe(24)
     co["signature_requested_at"] = utcnow()
     link = f"{link_base.rstrip('/')}/s/{company_id}.{co['sign_token']}"
