@@ -474,6 +474,8 @@ textarea { font: inherit; }
 
 /* Today's queue: the action and Open side by side, wrapping under the text on a phone */
 .action-buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.row-kind { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
+.row-kind select { padding: 4px 6px; border: 1px solid var(--field); border-radius: 6px; font: inherit; color: var(--ink); background: white; min-height: 34px; }
 
 /* Job page: the history, and the money file's one-line summary when it is folded */
 .timeline { list-style: none; margin: 0; padding: 0; }

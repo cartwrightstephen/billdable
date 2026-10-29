@@ -1443,8 +1443,9 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
     for item in inbox:
         job = jobs.get(item.get("suggested_job_id"))
         if job and not item.get("says_done_job_id"):
+            # item_kind: the kind the Inbox guessed, which the row shows and lets you change before filing.
             add(6, "inbox", job, "Inbox", "", (item.get("subject") or item.get("text") or "An item").split("\n")[0][:100], "Add to this job",
-                "/inbox", item_id=item.get("id", ""), note=item.get("match_reason") or "")
+                "/inbox", item_id=item.get("id", ""), note=item.get("match_reason") or "", item_kind=item.get("kind") or "note")
     return sorted(out, key=lambda r: r["rank"])
 
 

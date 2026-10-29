@@ -418,6 +418,6 @@ export const actions = {
     importSettings = null;
     render();
   },
-  // The card's kind select counts when it is open; Today's row has none and keeps the guessed kind.
+  // The kind select counts: the card's when it is open, else Today's row's (it starts at the guessed kind).
   "inbox-file-suggested": (el) => post(`/api/inbox/${el.dataset.item}/file`, { job_id: el.dataset.job, kind: document.querySelector(`#inb-kind-${el.dataset.item}`)?.value || "" }),
 };
