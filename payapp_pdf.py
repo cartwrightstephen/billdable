@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import textwrap
+from datetime import datetime, timezone
 from typing import Any
 
 import sov
@@ -96,6 +97,37 @@ def _build(pages: list[_Page]) -> bytes:
     return bytes(out)
 
 
+def _as_of(invoice: dict[str, Any]) -> datetime | None:
+    """When a pay app's figures were fixed: when it went out, or when a draft was deleted. None
+    for an open draft, which reads as of now."""
+    stamp = invoice.get("sent_at") or (invoice.get("voided_at") if invoice.get("status") == "void" else None)
+    return _when(stamp)
+
+
+def _when(stamp: Any) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def _co_status(co: dict[str, Any], as_of: datetime | None) -> str:
+    """A change order's status as it stood at `as_of`: one signed or withdrawn later was pending."""
+    status = co.get("status", "")
+    changed = _when(co.get("approved_at") if status == "approved" else co.get("withdrawn_at") if status == "withdrawn" else None)
+    return "pending" if as_of and changed and changed > as_of else status
+
+
+def _released(job: dict[str, Any], as_of: datetime | None) -> int:
+    """Retainage released to date, as of `as_of`. Releases recorded without a date count as earlier."""
+    released = int(job.get("retainage_released_cents") or 0)
+    if as_of:
+        released -= sum(int(p.get("amount_cents") or 0) for p in job.get("retainage_payments", [])
+                        if (_when(p.get("at")) or as_of) > as_of)
+    return released
+
+
 def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
     """Lines 1-9 of the application, from the pay apps up to and including this one, in the order
     they were made. A voided pay app keeps its own position, so its figures read as they were."""
@@ -104,10 +136,11 @@ def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
     up_to = [inv for inv in order[:position] if inv.get("status") in LIVE] + [invoice]
     earlier = up_to[:-1]
     original = job["contract_cents"]
-    net_co = sum(co["amount_cents"] for co in job.get("change_orders", []) if co.get("status") == "approved")
+    as_of = _as_of(invoice)
+    net_co = sum(co["amount_cents"] for co in job.get("change_orders", []) if _co_status(co, as_of) == "approved")
     # Change orders billed while still unsigned are in the work completed, so they are shown in the
     # contract sum too, as their own line, rather than leaving the balance short.
-    pending_ids = {co["id"] for co in job.get("change_orders", []) if co.get("status") == "pending"}
+    pending_ids = {co["id"] for co in job.get("change_orders", []) if _co_status(co, as_of) == "pending"}
     unsigned = {}
     for inv in up_to:
         for line in inv.get("lines", []):
@@ -129,7 +162,7 @@ def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
         "contract_to_date": contract_to_date,
         "completed": completed,
         "retainage": retained,
-        "released": int(job.get("retainage_released_cents") or 0),
+        "released": _released(job, as_of),
         "earned": earned,
         "previous": previous,
         "due": invoice["amount_cents"],
@@ -306,7 +339,8 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
             y -= 13
         # Change orders billed while unsigned are not schedule lines yet; each gets its own row,
         # so the totals match line 4 (which counts them, as line 2a does).
-        pending = {co["id"]: co for co in job.get("change_orders", []) if co.get("status") == "pending"}
+        as_of = _as_of(invoice)
+        pending = {co["id"]: co for co in job.get("change_orders", []) if _co_status(co, as_of) == "pending"}
         live = [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE]
         earlier = live[: live.index(invoice)] if invoice in live else live
         for co_id, co in pending.items():
