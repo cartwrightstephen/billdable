@@ -47,7 +47,7 @@ export const ACTION_WORDS = {
   daily_record: "Daily record saved", pencil_sent: "Draft sent for their review", pencil_response: "Customer answered the draft",
   payer_received: "Customer opened it", payer_approved: "Customer approved", payer_question: "Customer asked a question",
   reply_captured: "Customer replied", learn_rejection: "Customer's reason saved", playbook_learned: "Customer settings learned",
-  playbook_update: "Customer settings changed", payer_add: "Customer added", payer_merge: "Customers merged", payer_kept: "Customer kept",
+  playbook_update: "Customer settings changed", payer_add: "Customer added", payer_merge: "Customers merged", payer_delete: "Customer deleted", payer_kept: "Customer kept",
   import_filed: "Added to the job", import_undone: "Taken off the job", sov_saved: "Schedule of values saved", sov_removed: "Schedule of values removed",
   billing: "Billing changed", company_update: "Company changed", team: "Team changed", team_join: "Joined the team",
   qbo_connected: "QuickBooks connected", qbo_disconnected: "QuickBooks disconnected", read_only: "Read-only changed",

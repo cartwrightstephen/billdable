@@ -1266,8 +1266,13 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     # "First pay app to this payer" must not depend on which jobs were sent.
     sent = {j["payer_id"] for j in state["jobs"] if any(i.get("sent_at") for i in j.get("invoices", []))}
     timings = payer_timing(state)
+    # Every job of each customer, finished ones too: one with none can be deleted (note 47).
+    job_counts: dict[str, int] = {}
+    for j in state["jobs"]:
+        job_counts[j.get("payer_id", "")] = job_counts.get(j.get("payer_id", ""), 0) + 1
     for payer in out.get("payers", []):
         payer["sent_before"] = payer["id"] in sent
+        payer["job_count"] = job_counts.get(payer["id"], 0)
         timing = timings.get(payer["id"])
         if timing:
             payer["paid_days_avg"], payer["paid_count"] = timing
@@ -1772,6 +1777,18 @@ def merge_payer(state: dict[str, Any], payer_id: str, into_id: str, actor: str =
     audit(state, "", "payer_merge", f"{actor} merged {payer['name']} into {into['name']} ({names}); kept {into['name']}'s settings.", actor)
     return into
 
+
+def delete_payer(state: dict[str, Any], payer_id: str, actor: str = "owner") -> None:
+    """Remove a customer no job uses, open or finished (Oct 23 note 47). One with jobs is kept:
+    its jobs need it, so it can only be merged into another customer."""
+    payer = _payer(state, payer_id)
+    used = [j for j in state["jobs"] if j.get("payer_id") == payer["id"]]
+    if used:
+        jobs = "1 job uses" if len(used) == 1 else f"{len(used)} jobs use"
+        raise GateError(f"{payer['name']} can't be deleted: {jobs} this customer, counting finished jobs. "
+                        "To remove it, merge it into another customer.")
+    state["payers"].remove(payer)
+    audit(state, "", "payer_delete", f"{actor} deleted the customer {payer['name']}.", actor)
 
 
 def payapp_due(payer: dict[str, Any], today: date | None = None) -> tuple[date, date] | None:

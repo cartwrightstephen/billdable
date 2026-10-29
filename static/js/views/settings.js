@@ -7,7 +7,7 @@ import { field, formErrorLine, refuseForm, formValues, formErrors, clearForm } f
 import { actionWords, STYLE_NOTE } from "../terms.js";
 import { state, me, currentView, formOpen, setMe, clearSession, setTeamData, teamData, mailReady, billingInfo } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding } from "../app-core.js";
-import { ROLE_OPTIONS, roleLabel, sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames } from "./jobs.js";
+import { ROLE_OPTIONS, roleLabel, sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml } from "./jobs.js";
 import { qboCardHtml } from "./money.js";
 
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
@@ -483,6 +483,7 @@ export const views = {
             </div>
             <p class="sub">Every job of ${p.name} moves to the customer you pick, which keeps its own settings. ${p.name} is then removed.</p>
           </details>` : ""}
+          ${deletePayerHtml(p, { owner: !me || me.role === "owner", jobs: state.jobs })}
         </details>`;
       }).join("") : emptyState("No customers yet", "Add one here, or one is added with the first job for that customer.", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add customer</button>`)}
     `;
@@ -618,6 +619,11 @@ export const actions = {
     keptNames.addpayer = el.dataset.name || "";
     hideSameCustomer("addpayer");
     return actions["add-payer"]();
+  },
+  "delete-payer": async (el, id) => {
+    const name = unesc(el.dataset.name || "this customer");
+    if (!(await askConfirm(`Delete ${name}? No job uses this customer. It is removed from Customer settings, and the activity log keeps a note of it.`, "Delete customer", true))) return;
+    await post(`/api/payers/${id}/delete`, {});
   },
   "merge-payer": async (el, id) => {
     const select = el.closest(".merge-payer").querySelector("[data-merge-into]");

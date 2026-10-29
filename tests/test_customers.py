@@ -1,4 +1,5 @@
-"""Customers (Oct 23 review): a near-match name is asked about, never merged (note 5)."""
+"""Customers (Oct 23 review): a near-match name is asked about, never merged (note 5); a customer
+no job uses can be deleted by an owner (note 47)."""
 
 import http.client
 import json
@@ -14,6 +15,7 @@ import auth
 import domain
 import server
 import storage
+from seed import seed_state
 
 
 def empty_state():
@@ -96,6 +98,36 @@ class SameCustomerTests(unittest.TestCase):
             domain.add_payer(state, {"name": "ABC Builders Corp", "new_customer": "yes"}, "Pat")  # only true keeps it
 
 
+class DeleteCustomerTests(unittest.TestCase):
+    def test_only_a_customer_no_job_uses(self):
+        state = empty_state()
+        spare = domain.add_payer(state, {"name": "Spare Customer"}, "Pat")
+        job = domain.create_job(state, "Porch", "Dana Lee", 100_000, address="1 Elm St")
+        used = next(p for p in state["payers"] if p["id"] == job["payer_id"])
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.delete_payer(state, used["id"], "Pat")
+        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 1 job uses this customer, counting finished jobs. "
+                                             "To remove it, merge it into another customer.")
+        job["closed"] = True  # a finished job still needs its customer
+        with self.assertRaises(domain.GateError):
+            domain.delete_payer(state, used["id"], "Pat")
+        self.assertIn(used, state["payers"])
+
+        domain.delete_payer(state, spare["id"], "Pat")
+        self.assertNotIn(spare, state["payers"])
+        self.assertEqual((state["audit"][-1]["action"], state["audit"][-1]["detail"]), ("payer_delete", "Pat deleted the customer Spare Customer."))
+        with self.assertRaises(domain.GateError):
+            domain.delete_payer(state, spare["id"], "Pat")
+
+    def test_the_page_data_counts_every_job(self):
+        state = seed_state()
+        snap = domain.light_snapshot(state)
+        counts = {p["id"]: p["job_count"] for p in snap["payers"]}
+        for payer_id, n in counts.items():
+            self.assertEqual(n, sum(1 for j in state["jobs"] if j["payer_id"] == payer_id))
+        self.assertNotIn("job_count", state["payers"][0], "counted for the page, never stored")
+
+
 class CustomerHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -122,16 +154,20 @@ class CustomerHttpTests(unittest.TestCase):
         conn.close()
         return res, data
 
-    def test_same_as_over_http(self):
+    def test_same_as_and_delete_over_http(self):
         res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "own@example.com", "password": "correct horse battery",
                                                               "name": "Pat Pine", "company_name": "Pine Builders"})
         self.assertEqual(res.status, 200, data)
         owner = res.getheader("Set-Cookie").split(";")[0]
+        auth.create_user("mem@example.com", "member password 12", "Mo Member", data["user"]["company_id"], role="member")
+        res, data = self.request("POST", "/api/auth/login", {"email": "mem@example.com", "password": "member password 12"})
+        member = res.getheader("Set-Cookie").split(";")[0]
 
         job = {"name": "Porch", "address": "1 Elm St", "contract_cents": 100_000}
         res, state = self.request("POST", "/api/jobs", {**job, "customer": "ABC Builders"}, owner)
         self.assertEqual(res.status, 200, state)
         saved = state["payers"][0]
+        self.assertEqual(saved["job_count"], 1)
         res, data = self.request("POST", "/api/jobs", {**job, "name": "Deck", "customer": "ABC Builders Inc"}, owner)
         self.assertEqual(res.status, 409)
         self.assertEqual(data["same_customer"], {"id": saved["id"], "name": "ABC Builders", "typed": "ABC Builders Inc"})
@@ -142,6 +178,18 @@ class CustomerHttpTests(unittest.TestCase):
 
         res, data = self.request("POST", "/api/payers", {"name": "ABC Builders Co"}, owner)
         self.assertEqual((res.status, data["same_customer"]["name"]), (409, "ABC Builders"))
+        res, state = self.request("POST", "/api/payers", {"name": "Spare Customer"}, owner)
+        spare = next(p for p in state["payers"] if p["name"] == "Spare Customer")
+        self.assertEqual(spare["job_count"], 0)
+
+        res, data = self.request("POST", f"/api/payers/{spare['id']}/delete", {}, member)
+        self.assertEqual((res.status, data["error"]), (403, "Only an owner can do that."))
+        res, data = self.request("POST", f"/api/payers/{saved['id']}/delete", {}, owner)
+        self.assertEqual(res.status, 409)
+        self.assertIn("can't be deleted", data["error"])
+        res, state = self.request("POST", f"/api/payers/{spare['id']}/delete", {}, owner)
+        self.assertEqual(res.status, 200, state)
+        self.assertNotIn(spare["id"], {p["id"] for p in state["payers"]})
 
 
 if __name__ == "__main__":

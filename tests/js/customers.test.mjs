@@ -1,7 +1,8 @@
-// Customers (Oct 23 review): "Same as ABC Builders?" under the name box (note 5). node --test tests/js
+// Customers (Oct 23 review): "Same as ABC Builders?" under the name box (note 5) and Delete
+// customer for a customer no job uses (note 47). node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sameCustomerBox, showSameCustomer, hideSameCustomer } from "../../static/js/views/jobs.js";
+import { sameCustomerBox, showSameCustomer, hideSameCustomer, deletePayerHtml } from "../../static/js/views/jobs.js";
 
 // The one element the helpers touch, without a browser.
 function withBox(fn) {
@@ -35,4 +36,16 @@ test("any other refusal leaves the question hidden", () => {
     assert.equal(showSameCustomer("addpayer", "ap", undefined), false);
     assert.equal(box.hidden, true);
   });
+});
+
+test("Delete customer: owners only, and only with no job, finished ones included", () => {
+  const p = { id: "payer-1", name: "Spare Co", job_count: 0 };
+  assert.equal(deletePayerHtml(p, { owner: false }), "", "a member never sees it");
+  assert.match(deletePayerHtml(p, { owner: true }), /data-action="delete-payer" data-id="payer-1" data-name="Spare Co">Delete customer<\/button>/);
+  const used = deletePayerHtml({ ...p, job_count: 2 }, { owner: true, jobs: [] });
+  assert.doesNotMatch(used, /data-action="delete-payer"/);
+  assert.match(used, /can't be deleted, finished jobs included\. To remove Spare Co, merge it into another customer\./);
+  // Without the server's count (an older page), the jobs on the page decide.
+  assert.doesNotMatch(deletePayerHtml({ id: "payer-1", name: "Spare Co" }, { owner: true, jobs: [{ payer_id: "payer-1" }] }), /data-action/);
+  assert.match(deletePayerHtml({ id: "payer-1", name: "Spare Co" }, { owner: true, jobs: [] }), /Delete customer/);
 });

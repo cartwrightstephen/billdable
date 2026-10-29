@@ -65,6 +65,16 @@ export function hideSameCustomer(formKey) {
   if (box) { box.hidden = true; box.innerHTML = ""; }
 }
 
+// Delete customer, on Customer settings (Oct 23 note 47): owners only, and only for a customer
+// no job uses, finished jobs included (job_count counts them all; state.jobs holds only the
+// open and recent ones). The server refuses the rest with the reason. p is escaped, as in state.
+export function deletePayerHtml(p, { owner = false, jobs = [] } = {}) {
+  if (!owner) return "";
+  const n = Number.isInteger(p.job_count) ? p.job_count : jobs.filter(j => j.payer_id === p.id).length;
+  if (n > 0) return `<p class="sub delete-payer">A customer with jobs can't be deleted, finished jobs included. To remove ${p.name}, merge it into another customer.</p>`;
+  return `<div class="form-inline delete-payer"><button type="button" class="btn small danger" data-action="delete-payer" data-id="${p.id}" data-name="${p.name}">Delete customer</button><span class="sub">No job uses ${p.name}.</span></div>`;
+}
+
 // As the Customer box is typed in: swap the two contact boxes for the saved contact, or back.
 export function syncNewJobCustomer() {
   const form = document.querySelector('[data-form-key="newjob"]');

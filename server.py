@@ -2331,6 +2331,9 @@ class Handler(BaseHTTPRequestHandler):
     def _m_payer_merge(self, state: dict, m, ctx: "Ctx") -> None:
         domain.merge_payer(state, m.group(1), _text(ctx.body, "into"), ctx.actor)
 
+    def _m_payer_delete(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.delete_payer(state, m.group(1), ctx.actor)
+
 
 
 class UnknownAction(Exception):
@@ -2448,6 +2451,7 @@ ROUTES = [
     Route("POST", r"/api/payers", "_m_payer_add", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", owner=True),
     Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate"),
     Route("POST", r"/api/import/text", "_m_import_text", "mutate"),
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_m_inbox", "mutate"),
