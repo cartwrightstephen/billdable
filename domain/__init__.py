@@ -2037,7 +2037,7 @@ def withdraw_change_order(state: dict[str, Any], job_id: str, co_id: str, actor:
         raise GateError(f"CO {co['number']} is {co['status']}; only a pending CO can be withdrawn.")
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if co.get("included_in_billing") and open_draft:
-        raise GateError(f"CO {co['number']} is on {open_draft['number']}. Void that draft first, then withdraw the CO.")
+        raise GateError(f"CO {co['number']} is on {open_draft['number']}. Delete that draft first, then withdraw the CO.")
     co["status"] = "withdrawn"
     co["included_in_billing"] = False
     co["withdrawn_at"] = utcnow()
