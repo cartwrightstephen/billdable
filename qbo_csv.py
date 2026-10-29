@@ -162,10 +162,15 @@ def looks_like_payments(text: str) -> int:
 
 def parse(text: str) -> dict[str, Any]:
     """{"rows": [{"line", "date", "ref", "customer", "amount_cents", "memo"}], "warnings": [...]}"""
+    unreadable = {"rows": [], "warnings": ["The file couldn't be read. Save it again as CSV (UTF-8) and add it again."]}
+    # A NUL byte means a UTF-16 or binary file. Newer Pythons' csv reads it without complaint, so
+    # it is checked here rather than left to csv.Error, the same on every version.
+    if "\x00" in (text or ""):
+        return unreadable
     try:
         rows = list(csv.reader(io.StringIO(text or "")))[: MAX_ROWS + 20]
-    except csv.Error:  # a NUL byte (a UTF-16 file) or one cell over 128 KB
-        return {"rows": [], "warnings": ["The file couldn't be read. Save it again as CSV (UTF-8) and add it again."]}
+    except csv.Error:  # one cell over 128 KB
+        return unreadable
     header_at, cols = None, {}
     for n, row in enumerate(rows[:20]):
         found = {}

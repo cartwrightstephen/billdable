@@ -237,6 +237,7 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(got("Tile 1200 SF @ 8.50\t")[0], [("Tile", "1200", "SF", "8.50")])
 
     def test_garbage_is_reported_not_crashed(self):
+        self.assertEqual([l["rate"] for l in sov.parse_rows("Demo\x00, $3,500")["lines"]], ["3500.00"])
         out = sov.parse_rows("hello\n\n,,,\n$$$, abc\n")
         self.assertEqual(out["lines"], [])
         self.assertTrue(out["warnings"])

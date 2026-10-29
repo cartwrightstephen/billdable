@@ -431,7 +431,8 @@ TOTAL_RE = re.compile(r"^(sub\s*-?\s*total|grand\s+total|total|totals|overhead|o
 
 def _split_rows(text: str) -> list[list[str]]:
     # Bounded before any pattern runs: 2,000 lines of 2,000 characters, 30 cells of 200.
-    lines_in = [line[:2000] for line in text.splitlines()[:2000]]
+    # A NUL byte (pasted from a binary file) would stop csv on older Pythons; it never means anything here.
+    lines_in = [line[:2000].replace("\x00", "") for line in text.splitlines()[:2000]]
     rows = []
     if any("\t" in line for line in lines_in):
         # Copied from Excel or Google Sheets.
