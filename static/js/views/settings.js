@@ -10,6 +10,7 @@ import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, se
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding } from "../app-core.js";
 import { ROLE_OPTIONS, roleLabel, sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount } from "./jobs.js";
 import { qboCardHtml } from "./money.js";
+import { forgetImportSettings } from "./inbox.js";
 
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
 let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
@@ -465,9 +466,11 @@ export const views = {
           </div>`).join("")}
           ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${Math.round(Number(unesc(String(p.paid_days_avg))))} days after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
             const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
-            return p.paid_count >= 2 && Math.abs(avg - set) >= 2
+            if (!(p.paid_count >= 2 && Math.abs(avg - set) >= 2)) return "That matches your setting.";
+            // Offered only for a number the server takes: 1 to 365 days (domain.update_payer).
+            return avg >= 1 && avg <= 365
               ? `Your setting says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} days</button>`
-              : "That matches your setting.";
+              : `Your setting says ${set}.`;
           })()}</p>` : ""}
           <div data-form-key="${key}">
             ${formErrorLine(key)}
@@ -554,7 +557,8 @@ export const actions = {
   "team-role": async (el) => { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); },
   "team-remove": async (el) => {
     if (!(await askConfirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`, "Remove", true))) return;
-    await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed and signed out. The inbound email, text and calendar addresses changed too: update any forwarding rule or calendar subscription.");
+    // The server made new inbound email, text and calendar addresses: the Inbox and Calendar show those.
+    if (await teamPost(`/api/team/${el.dataset.user}/remove`, {}, "Removed and signed out. The inbound email, text and calendar addresses changed too: update any forwarding rule or calendar subscription.")) forgetImportSettings();
   },
   "team-revoke": async (el) => { await teamPost(`/api/team/invites/${el.dataset.invite}/revoke`, {}, "Invite revoked."); },
   "delete-account": async () => {

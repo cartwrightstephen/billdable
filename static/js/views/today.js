@@ -7,6 +7,7 @@ import { readJson, setNetBanner, postJson } from "../net.js";
 import { worstKind, followUpEvent } from "../calendar.js";
 import { todayQueue, queueHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
+import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd } from "../state.js";
 import { post, toast, render, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
 import { qboStatus } from "./money.js";
@@ -245,11 +246,11 @@ export const views = {
     return `
       <h1>Daily record</h1>
       <p class="sub">What happened on site today, saved on the job record. ${termText("Add it to a pay app's paperwork later.")}</p>
-      <div class="card">
+      <div class="card" data-form-key="daily">
         <h2>New record</h2>
         ${openJobs.length ? `<div class="form-grid">
           <div><label>Job</label><select id="daily-job"><option value="">Pick a job…</option>${openJobs.map(j => `<option value="${j.id}"${j.id === pick ? " selected" : ""}>${j.name}</option>`).join("")}</select></div>
-          <div class="span-2"><label>What happened today</label><textarea id="daily-notes" rows="3" placeholder="Framing done on the east wall, 4 crew, inspector booked for Thursday"></textarea></div>
+          <div class="span-2"><label>What happened today</label><textarea id="daily-notes" data-field="notes" rows="3" placeholder="Framing done on the east wall, 4 crew, inspector booked for Thursday">${esc(draftValue("daily", "notes"))}</textarea></div>
         </div>
         <button class="btn" data-action="daily-save">Save to job record</button>` : `<p class="sub">Create a job first; daily records are saved on a job.</p>`}
       </div>
@@ -403,7 +404,8 @@ export const actions = {
     if (!notes.trim()) { toast("Write what happened today."); document.querySelector("#daily-notes")?.focus(); return; }
     // Remembered before saving: the save redraws the page, which picks the job last used.
     rememberDailyJob(job);
-    await post(`/api/jobs/${job}/daily-record`, { notes });
+    const r = await post(`/api/jobs/${job}/daily-record`, { notes });
+    if (r && r.ok) { clearForm("daily"); render(); }   // saved: the box is empty for the next one
   },
   "cal-prev": () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } calSelectedDay = null; render(); },
   "cal-next": () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } calSelectedDay = null; render(); },

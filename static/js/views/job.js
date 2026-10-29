@@ -443,11 +443,13 @@ document.addEventListener("paste", (e) => {
 let editingRecord = "";
 function recordRow(j, r) {
   if (editingRecord === r.id && !j.closed) {
-    return `<div class="list-item record-edit">
+    // What was typed stays through a redraw until saved or cancelled (a form: watchForms keeps it).
+    const key = `record-${r.id}`, kind = draftValue(key, "kind", unesc(r.kind));
+    return `<div class="list-item record-edit" data-form-key="${key}">
       <label class="inline-label" for="rec-edit-label-${r.id}">What it is</label>
-      <input id="rec-edit-label-${r.id}" value="${r.label}" maxlength="120">
+      <input id="rec-edit-label-${r.id}" data-field="label" value="${esc(draftValue(key, "label", unesc(r.label)))}" maxlength="120">
       <label class="inline-label" for="rec-edit-kind-${r.id}">Kind</label>
-      <select id="rec-edit-kind-${r.id}">${Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}"${r.kind === k ? " selected" : ""}>${termText(v)}</option>`).join("")}</select>
+      <select id="rec-edit-kind-${r.id}" data-field="kind">${Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}"${kind === k ? " selected" : ""}>${termText(v)}</option>`).join("")}</select>
       <button class="btn small" data-action="record-save" data-id="${j.id}" data-item="${r.id}">Save</button>
       <button class="btn small secondary" data-action="record-edit" data-item="">Cancel</button>
     </div>`;
@@ -527,7 +529,7 @@ export const views = {
       </div>` : ""}
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j, periodField("sovprogress", j), formErrorLine("sovprogress")) : ""}
       ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? progressFormHtml(j, openDraft) : ""}
-      ${formOpen.pencilchanges ? `<div class="card form-card"><h2>Customer wants changes</h2><div class="form-inline"><input id="pencil-note" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
+      ${formOpen.pencilchanges ? `<div class="card form-card" data-form-key="pencilchanges"><h2>Customer wants changes</h2><div class="form-inline"><input id="pencil-note" data-field="note" value="${esc(draftValue("pencilchanges", "note"))}" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
       ${formOpen.done ? `<div class="card form-card" data-form-key="done"><h2>Mark done</h2>${formErrorLine("done")}<div class="form-row">
         ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true, help: NOTES_HELP })}
         ${periodField("done", j)}
@@ -688,7 +690,8 @@ export const actions = {
     const note = (document.getElementById("pencil-note")?.value || "").trim();
     if (!note) { toast("Say what the customer wants changed."); document.getElementById("pencil-note")?.focus(); return; }
     formOpen.pencilchanges = false;
-    await post(`/api/jobs/${id}/pencil-response`, { agreed: false, note });
+    const r = await post(`/api/jobs/${id}/pencil-response`, { agreed: false, note });
+    if (r && r.ok) clearForm("pencilchanges");
   },
   "reopen": async (el, id) => {
     const v = formValues("reopen");
@@ -744,6 +747,7 @@ export const actions = {
     await post(`/api/jobs/${id}/add-record`, { label: v.label, note: v.note, kind: v.kind || "note" }, { formKey: "record" });
   },
   "record-edit": (el) => {
+    if (editingRecord) clearForm(`record-${editingRecord}`);   // Cancel, or another record's Edit, drops what was typed
     editingRecord = el.dataset.item || "";
     render();
     if (editingRecord) document.getElementById(`rec-edit-label-${editingRecord}`)?.focus();
@@ -754,7 +758,7 @@ export const actions = {
     const kind = document.getElementById(`rec-edit-kind-${rid}`)?.value || "";
     if (!label.trim()) { toast("Enter what this is."); document.getElementById(`rec-edit-label-${rid}`)?.focus(); return; }
     const r = await post(`/api/jobs/${id}/edit-record/${rid}`, { label, kind });
-    if (r && r.ok) { editingRecord = ""; render(); }
+    if (r && r.ok) { clearForm(`record-${rid}`); editingRecord = ""; render(); }
   },
   "open-job": (el, id) => {
     nav("job", id);

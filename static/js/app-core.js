@@ -21,6 +21,20 @@ export function boot(checkLink) { return page.boot(checkLink); }
 
 let actionEl = null;      // the button whose action is running: a refusal is shown under it
 export function setActionEl(el) { actionEl = el; }
+
+// Run a tapped button's action: ACTIONS[name](el, el.dataset.id, event). While it is still
+// waiting on the server, another tap on the same button (same action and data) does nothing, so
+// a double tap on Record doesn't record the payment twice. One that finishes at once isn't held.
+const runningActions = new Set();
+export function runAction(run, el, e) {
+  const key = JSON.stringify(Object.entries(el.dataset || {}).sort());
+  if (runningActions.has(key)) return undefined;
+  setActionEl(el);
+  const out = run(el, el.dataset.id, e);
+  if (!out || typeof out.then !== "function") return out;
+  runningActions.add(key);
+  return Promise.resolve(out).finally(() => runningActions.delete(key));
+}
 let lastToastAt = 0;
 // /api/state carries open jobs in full and recently closed jobs as summaries (P2-6). A job opened
 // from history is fetched whole and kept here until the next change; long lists are paged.
