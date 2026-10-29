@@ -60,9 +60,9 @@ export function blockerButton(j) { return j.blocker_button || ""; }
 // queue no longer uses any of them.
 
 // In the company's word for a pay app (terms.js): "Draft a draw for..." for draws (R6-01).
-export function nextStep(j) { return termText(nextStepWords(j)); }
+export function nextStep(j, now = new Date()) { return termText(nextStepWords(j, now)); }
 
-function nextStepWords(j) {
+function nextStepWords(j, now) {
   if (j.closed) return "Finished.";
   if (needsPaperwork(j)) return "Attach the paperwork, then send: " + j.missing_paperwork.join(", ");
   if (isBlocked(j)) return "Before it can go: " + j.blockers[0];
@@ -71,6 +71,8 @@ function nextStepWords(j) {
   if (j.waiver_due && !j.waiver_sent) return "Payment received. Approve and send the waiver.";
   if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the customer. Follow up or record a payment.";
   if (j.work_status !== "complete") return "Record progress, or mark the job done." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
+  const asked = retainageAskWaits(j, now);
+  if (j.money.retainage_open_cents > 0 && asked) return `Asked for the money held back ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}, or record it when it is paid.`;
   if (j.money.retainage_open_cents > 0) return "Ask for the money held back once the closeout paperwork is in.";
   if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before you finish: " + j.close_blockers[0] : "Ready to finish the job.";
   return "Draft a pay app for the work done and not billed.";
@@ -222,12 +224,30 @@ export function closeoutMissing(j) {
   return (j.closeout_missing || []).length;
 }
 
+// When the next retainage request may go (domain.chase_retainage): the customer's days between
+// contacts after the last request, whole or part. last and due are moments (the server's clock).
+// Null when none has gone out.
+export function retainageAskDue(j) {
+  const last = toDate(unesc(j.last_retainage_chase_at || ""));
+  if (!last) return null;
+  const days = Number(unesc(String((j.payer || {}).follow_up_days || ""))) || 7;
+  return { last, due: new Date(last.getTime() + days * 86400000) };
+}
+
+// The last request, while the server would still refuse the next one; else null.
+export function retainageAskWaits(j, now = new Date()) {
+  const r = retainageAskDue(j);
+  return r && now < r.due ? r : null;
+}
+
 // Why the job page has no "Ask for retainage" while retainage is held (R3-04). Empty when it has one.
-export function retainageNote(j) {
+export function retainageNote(j, now = new Date()) {
   if (!(j.money.retainage_open_cents > 0) || j.closed) return "";
-  if (j.work_status !== "complete") return "Released at closeout.";
+  const asked = retainageAskWaits(j, now);
+  if (j.work_status !== "complete") return "Released at closeout." + (asked ? ` Asked for part of it ${fmtDate(asked.last)}; ask again from ${fmtDate(asked.due)}.` : "");
   const n = closeoutMissing(j);
-  return n ? `Closeout paperwork: ${n} item${n === 1 ? "" : "s"} missing.` : "";
+  if (n) return `Closeout paperwork: ${n} item${n === 1 ? "" : "s"} missing.`;
+  return asked ? `Asked for it ${fmtDate(asked.last)}; ask again from ${fmtDate(asked.due)}.` : "";
 }
 
 // "Waiting on Sam. Sent Oct 3; follow-up due Oct 10." while a sent pay app is unpaid. Empty otherwise.
@@ -294,9 +314,9 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   if (canClose) add("close", "Finish job", `data-action="close" data-id="${j.id}"`, "Moves the settled job to Job history.", "close");
   // Mark done by mistake (R4-02): while the final pay app has not gone out.
   if (j.can_undo_done) add("undo", "Undo done", `data-action="undo-done" data-id="${j.id}"`, "Back to in progress. The final draft is deleted.", "close");
-  // Asking for retainage only once the work is done and the closeout paperwork is in; until then
-  // the Money card says why it isn't here.
-  if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "Email the customer for the retainage held back.", "paid");
+  // Asking for retainage only once the work is done and the closeout paperwork is in, and not again
+  // before the customer's days between contacts (chase_retainage); the Money card says why.
+  if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0 && !retainageAskWaits(j, now)) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "Email the customer for the retainage held back.", "paid");
   if (draft && !pencilOut) add("pencil", "Send draft for their review", `data-action="pencil" data-id="${j.id}"`, "The customer checks the numbers before the real one goes.", "bill");
   if (pencilOut) add("pencil-ok", "Customer agreed to the draft", `data-action="pencil-agreed" data-id="${j.id}"`, "Record that the customer agreed to the draft.", "bill");
   if (pencilOut) add("pencil-no", "Customer wants changes", `data-action="toggle-form" data-form="pencilchanges"`, "Record what the customer wants changed.", "bill");
@@ -320,11 +340,11 @@ export const ACTION_GROUPS = [["bill", "Bill"], ["paid", "Get paid"], ["close", 
 // The buttons beside one thing that stands between the job and Finish job (R3-08), from the
 // server's close_blocker_items ({kind, text, invoice_id, co_id, number}): [{label, attrs}].
 // perms as for mayTake: a member doesn't see what only an owner may do.
-export function closeBlockerActions(j, b, perms = null) {
-  return closeBlockerButtons(j, b).filter(a => mayTake(a.needs, perms)).map(a => ({ ...a, label: termText(a.label) }));
+export function closeBlockerActions(j, b, perms = null, now = new Date()) {
+  return closeBlockerButtons(j, b, now).filter(a => mayTake(a.needs, perms)).map(a => ({ ...a, label: termText(a.label) }));
 }
 
-function closeBlockerButtons(j, b) {
+function closeBlockerButtons(j, b, now) {
   const id = j.id;
   switch (b.kind) {
     case "not_done": return [{ label: "Mark done", attrs: `data-action="toggle-form" data-form="done"` }];
@@ -339,10 +359,10 @@ function closeBlockerButtons(j, b) {
       ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i), needs: "accept-short-pay" }))];
     case "retainage": return [
       { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"` },
-      closeoutMissing(j)
+      ...(retainageAskWaits(j, now) && !closeoutMissing(j) ? [] : [closeoutMissing(j)
         // An older job without a closeout packet keeps those items in the job paperwork (as on Closeout).
         ? { label: "Open closeout paperwork", attrs: `data-action="open-packet" data-job="${id}"${(j.closeout_packet || []).length ? ` data-inv="closeout"` : ""}` }
-        : { label: "Ask for retainage", attrs: `data-action="retainage" data-id="${id}"`, needs: "retainage" }];
+        : { label: "Ask for retainage", attrs: `data-action="retainage" data-id="${id}"`, needs: "retainage" }])];
     case "waiver": return [{ label: "Send waiver", attrs: `data-action="open-waiver" data-id="${id}"`, needs: "waiver" }];
     default: return [];
   }

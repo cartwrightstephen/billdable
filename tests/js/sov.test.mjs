@@ -1,7 +1,7 @@
 // Schedule of values arithmetic, the same as sov.py: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../../static/js/sov.js";
+import { sovMilli, sovCents, lumpDone, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../../static/js/sov.js";
 import { formDraft, clearForm } from "../../static/js/forms.js";
 
 test("quantities in thousandths and money in cents, from what people type", () => {
@@ -88,4 +88,15 @@ test("the progress form keeps what was typed on each line, and the note", () => 
   assert.match(typed, /data-sovs="l2"[^>]* value=""/);
   assert.match(typed, /id="progress-notes" data-field="notes" value="East &quot;wall&quot; &lt;done&gt;"/);
   clearForm("sovprogress");
+});
+
+test("a lump-sum percent goes to the server exactly, never rounded (99.95% is not 100%)", () => {
+  assert.equal(lumpDone("99.9"), "0.999");
+  assert.equal(lumpDone("50"), "0.500");
+  assert.equal(lumpDone("100"), "1.000");
+  assert.equal(lumpDone("12.0"), "0.120");
+  assert.equal(lumpDone("99.95"), null, "a hundredth of a percent can't be held, so it is refused, not rounded up");
+  assert.equal(lumpDone("33.33"), null);
+  assert.equal(lumpDone("12.25"), null);
+  assert.equal(lumpDone("lots"), "lots", "not a number: the server says what is wrong");
 });
