@@ -172,7 +172,8 @@ await step("a first job: Today, the Daily record and the company address", async
   await p.goto(BASE + "/today/daily");
   await p.locator("#daily-job").waitFor();
   assert.equal(await p.inputValue("#daily-job"), jobId);
-  // No company address yet: Before you send says so; once it is filled in, the notice is gone.
+  // No company address, phone or licence yet: Before you send says so; once the address is filled
+  // in, the notice names only the phone and licence number (a warning: Approve & send stays on).
   const invId = await p.evaluate(async (id) => {
     const st = await (await fetch(`/api/jobs/${id}/done`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes: "" }) })).json();
     return st.jobs.find((j) => j.id === id).invoices[0].id;
@@ -180,7 +181,7 @@ await step("a first job: Today, the Daily record and the company address", async
   await p.goto(`${BASE}/money/pay-app/${jobId}/${invId}`);
   const warn = p.locator(".send-check .no-address");
   await warn.waitFor();
-  assert.match(await warn.innerText(), /Your company address is blank on this PDF/);
+  assert.match(await warn.innerText(), /Your company address, phone and licence number are blank on this PDF/);
   await warn.getByRole("button", { name: "Company details" }).click();
   await p.locator("#co-address").waitFor();
   await p.fill("#co-address", "2 Elm St, Decatur, GA 30030");
@@ -193,6 +194,8 @@ await step("a first job: Today, the Daily record and the company address", async
   await p.goto(`${BASE}/money/pay-app/${jobId}/${invId}`);
   await p.locator(".send-check").waitFor();
   assert.equal(await p.locator(".send-check .no-address").count(), 0);
+  assert.match(await p.locator(".send-check .company-gaps").innerText(), /Your company phone and licence number are blank on this PDF/);
+  assert.equal(await p.locator('.send-check .company-gaps [data-focus="#co-phone"]').count(), 1);
   await ctx.close();
 });
 
