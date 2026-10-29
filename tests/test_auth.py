@@ -3,6 +3,8 @@
 import json
 import secrets
 import sys
+import threading
+import time
 from unittest import mock
 import tempfile
 import unittest
@@ -125,6 +127,93 @@ class AuthTests(unittest.TestCase):
             self.assertIsNone(auth.verify_login("another@example.com", "wrong password", ip="198.51.100.4"))
             clock[0] += auth.LOGIN_WINDOW_SECONDS
             self.assertIsNone(auth.verify_login("another@example.com", "wrong password", ip="203.0.113.9"))
+
+    def _all_at_once(self, count, call):
+        """Run call(i) on count threads that start together; return what each gave or 'limited'."""
+        barrier, results = threading.Barrier(count), []
+
+        def run(i):
+            barrier.wait()
+            try:
+                results.append(call(i))
+            except auth.RateLimited:
+                results.append("limited")
+            except auth.AuthError as exc:
+                results.append("limited" if "Too many" in str(exc) else "wrong")
+        threads = [threading.Thread(target=run, args=(i,)) for i in range(count)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return results
+
+    def test_parallel_guesses_are_throttled_like_ones_in_a_row(self):
+        auth.create_user(self.email, self.password, "Test Owner", self.company)
+        real = auth._matches
+
+        def slow(user, password):  # the hash takes long enough for all the requests to arrive
+            time.sleep(0.3)
+            return real(user, password)
+        with mock.patch.object(auth, "_matches", slow):
+            results = self._all_at_once(12, lambda i: auth.verify_login(self.email, f"wrong {i}", ip="203.0.113.7"))
+        self.assertEqual(sum(1 for r in results if r != "limited"), auth.LOGIN_FREE_FAILURES)
+
+    def test_parallel_wrong_current_passwords_are_throttled(self):
+        user = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        real = auth._matches
+
+        def slow(u, password):
+            time.sleep(0.3)
+            return real(u, password)
+        with mock.patch.object(auth, "_matches", slow):
+            results = self._all_at_once(10, lambda i: auth.change_password(user["id"], f"wrong {i}", "a brand new password"))
+        self.assertEqual(results.count("wrong"), auth.LOGIN_FREE_FAILURES)
+
+    def test_right_passwords_count_as_no_failure(self):
+        user = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        for _ in range(auth.IP_MAX_FAILURES + 2):
+            self.assertEqual(auth.verify_login(self.email, self.password, ip="203.0.113.8")["id"], user["id"])
+        self.assertFalse(auth._FAILURES.get(self.email))
+        self.assertFalse(auth._IP_FAILURES.get("203.0.113.8"))
+        auth.change_password(user["id"], self.password, "a brand new password")
+        self.assertFalse(auth._FAILURES.get(self.email))
+        # With two-step sign-in a right password neither clears nor adds to the count.
+        data = json.loads(auth.AUTH_PATH.read_text())
+        data["users"][0]["totp_enabled"] = True
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        self.assertIsNone(auth.verify_login(self.email, "wrong password", ip="203.0.113.8"))
+        self.assertIsNotNone(auth.verify_login(self.email, "a brand new password", ip="203.0.113.8"))
+        self.assertEqual(len(auth._FAILURES[self.email]), 1)
+        self.assertEqual(len(auth._IP_FAILURES["203.0.113.8"]), 1)
+
+    def test_user_ids_never_repeat(self):
+        real, repeats = secrets.token_hex, [6]
+
+        def token_hex(n=None):  # auth's first few short ids all come out the same
+            if n == 4 and repeats[0] and sys._getframe(1).f_globals.get("__name__") == "auth":
+                repeats[0] -= 1
+                return "0badc0de"
+            return real(n)
+        with mock.patch.object(auth.secrets, "token_hex", token_hex):
+            first = auth.create_user(self.email, self.password, "Test Owner", self.company)
+            second = auth.create_user("second@example.com", self.password, "Second", "co-other")
+            raw, _ = auth.create_invite(self.company, "third@example.com", "member", "Test Owner", first["id"])
+            third = auth.accept_invite(raw, "Third", self.password)
+        self.assertEqual(len({first["id"], second["id"], third["id"]}), 3)
+        token = auth.create_session(second)
+        self.assertEqual(auth.session_user(token)["email"], "second@example.com")
+
+    def test_demo_sessions_are_capped(self):
+        demo = auth.create_user(auth.DEMO_EMAIL, auth.DEMO_PASSWORD, "Demo", auth.DEMO_COMPANY_ID, enforce_policy=False)
+        owner = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        mine = auth.create_session(owner)
+        with mock.patch.object(auth, "DEMO_MAX_SESSIONS", 5):
+            tokens = [auth.create_session(demo) for _ in range(9)]
+        sessions = json.loads(auth.AUTH_PATH.read_text())["sessions"]
+        self.assertEqual(sum(1 for v in sessions.values() if v["user_id"] == demo["id"]), 5)
+        self.assertIsNone(auth.session_user(tokens[0]), "the oldest demo session gives way")
+        self.assertIsNotNone(auth.session_user(tokens[-1]))
+        self.assertIsNotNone(auth.session_user(mine), "real accounts' sessions are untouched")
 
     def test_old_hash_is_upgraded_at_sign_in(self):  # P1-15
         user = auth.create_user(self.email, self.password, "Test Owner", self.company)

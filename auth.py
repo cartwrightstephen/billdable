@@ -60,6 +60,9 @@ DEMO_EMAIL = "owner@hartline.example"
 DEMO_PASSWORD = "demo"
 DEMO_COMPANY_ID = "co-hartline"
 SESSION_DAYS = 14
+# The demo account is shared and signed in without a password, so its sessions are capped:
+# the oldest gives way, and calling the demo sign-in in a loop can't grow the file without end.
+DEMO_MAX_SESSIONS = 500
 
 
 def _utcnow() -> datetime:
@@ -114,6 +117,34 @@ def _failed(email: str, ip: str | None, now: float) -> None:
     _FAILURES.setdefault(email, []).append(now)
     if ip:
         _IP_FAILURES.setdefault(ip, []).append(now)
+
+
+def _not_failed(email: str, ip: str | None, now: float) -> None:
+    """Take back the failure counted before a check that turned out right. Call under LOCK.
+
+    Each try is counted as a failure before its slow hash, under the same lock as the
+    throttle check, so tries sent all at once are throttled like tries one after another."""
+    for table, key in ((_FAILURES, email), (_IP_FAILURES, ip)):
+        times = table.get(key) if key else None
+        if times and now in times:
+            times.remove(now)
+
+
+def _new_user_id(data: dict[str, Any]) -> str:
+    """A user id no one has yet. Call under LOCK with the loaded file."""
+    taken = {u["id"] for u in data["users"]}
+    while True:
+        user_id = "user-" + secrets.token_hex(4)
+        if user_id not in taken:
+            return user_id
+
+
+def company_in_use(company_id: str) -> bool:
+    """Whether any user or open invite belongs to this company id."""
+    with LOCK:
+        data = _load()
+    return (any(u["company_id"] == company_id for u in data["users"])
+            or any(v.get("company_id") == company_id for v in data["tokens"].values()))
 
 
 def _load() -> dict[str, Any]:
@@ -210,7 +241,6 @@ def create_user(
         raise ValueError("Role must be owner or member.")
     salt, digest = _hash(password)
     user = {
-        "id": "user-" + secrets.token_hex(4),
         "email": email,
         "name": name.strip()[:120],
         "company_id": company_id,
@@ -227,6 +257,7 @@ def create_user(
         data = _load()
         if any(u["email"] == email for u in data["users"]):
             raise ValueError("An account with that email already exists.")
+        user = {"id": _new_user_id(data), **user}
         data["users"].append(user)
         _save(data)
     return _public(user)
@@ -240,6 +271,7 @@ def verify_login(email: str, password: str, ip: str | None = None) -> dict[str, 
     with LOCK:
         now = time.monotonic()
         _throttle(email, ip, now)
+        _failed(email, ip, now)
         user = next((u for u in _load()["users"] if u["email"] == email), None)
     # Hash outside the lock so one slow login does not hold up every session check.
     if user:
@@ -248,9 +280,9 @@ def verify_login(email: str, password: str, ip: str | None = None) -> dict[str, 
         ok = False
         _hash(password, "0" * 32)  # same work for an unknown email, so timing doesn't reveal which emails exist
     if not ok:
-        with LOCK:
-            _failed(email, ip, now)
         return None
+    with LOCK:
+        _not_failed(email, ip, now)
     if int(user.get("kdf_iterations") or LEGACY_ITERATIONS) < KDF_ITERATIONS:
         salt, digest = _hash(password)
         with LOCK:
@@ -281,6 +313,12 @@ def create_session(user: dict[str, Any]) -> str:
             "company_id": user["company_id"],
             "expires_at": _iso(expires),
         }
+        if user["company_id"] == DEMO_COMPANY_ID:
+            # Oldest first; sessions made in the same second keep the order they were made in.
+            demo = sorted((k for k, v in data["sessions"].items() if v["user_id"] == user["id"]),
+                          key=lambda k: data["sessions"][k]["expires_at"])
+            for key in demo[:max(0, len(demo) - DEMO_MAX_SESSIONS)]:
+                data["sessions"].pop(key, None)
         _save(data)
     return token
 
@@ -462,11 +500,12 @@ def change_password(user_id: str, current: Any, new: Any, keep_session: str | No
             raise AuthError("The demo account's password can't be changed.")
         now = time.monotonic()
         _throttle(user["email"], None, now)
+        _failed(user["email"], None, now)
     ok = isinstance(current, str) and _matches(user, current)
     if not ok:
-        with LOCK:
-            _failed(user["email"], None, now)
         raise AuthError("Current password is wrong.")
+    with LOCK:
+        _not_failed(user["email"], None, now)
     salt, new_digest = _hash(new)
     keep = _digest(keep_session) if keep_session else None
     with LOCK:
@@ -581,7 +620,7 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
             raise AuthError("That email already has a Duracash account.")
         data["tokens"].pop(key, None)
         user = {
-            "id": "user-" + secrets.token_hex(4),
+            "id": _new_user_id(data),
             "email": entry["email"],
             "name": name.strip()[:120],
             "company_id": entry["company_id"],

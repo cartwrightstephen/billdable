@@ -399,7 +399,8 @@ def deleted_companies() -> set:
 
 def send_system_email(to: str, subject: str, body: str, company_id: str = "", rid: str = "") -> str:
     """An email from Duracash itself (reset, verification, invite, monthly summary). Returns "sent"
-    or the reason it wasn't. It counts against the company's daily limit like any other email."""
+    or the reason it wasn't. With a company_id it counts against that company's daily limit like
+    any other email; a reset link, which anyone can ask for, is sent without one."""
     if not mailer.configured():
         return "email delivery is not set up on this server"
     # However many companies or reset requests there are, the server sends at most 300 of
@@ -451,6 +452,14 @@ def delete_company_data(company_id: str) -> int:
     helper.forget_company(company_id)
     mailer.forget_company(company_id)
     return removed
+
+
+def new_company_id() -> str:
+    """A company id no company, user or invite has, now or before (a deleted id stays taken)."""
+    while True:
+        company_id = "co-" + secrets.token_hex(4)
+        if not (company_exists(company_id) or company_id in deleted_companies() or auth.company_in_use(company_id)):
+            return company_id
 
 
 def save_company(company_id: str, state: dict) -> None:
@@ -1078,7 +1087,8 @@ class Handler(BaseHTTPRequestHandler):
             raise BadRequest("Status must be open, closed or all.")
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
-            self._json(200, domain.jobs_page(state, status, offset, limit, (q.get("q") or [""])[0][:100]))
+            page = domain.jobs_page(state, status, offset, limit, (q.get("q") or [""])[0][:100])
+        self._json(200, page)  # written after the lock is let go: a slow client can't stall the company
 
     def _g_job(self, m, user) -> None:
         with company_lock(user["company_id"]):
@@ -1095,7 +1105,8 @@ class Handler(BaseHTTPRequestHandler):
         key = "email_log" if m.group(1) == "outbox" else "audit"
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
-            self._json(200, domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0]))
+            page = domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0])
+        self._json(200, page)
 
     # ----- Billing with Stripe (billing.py) -----
 
@@ -1184,7 +1195,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if arg("error"):
                 raise qbo.QboError("QuickBooks wasn't connected." + (" You cancelled it." if arg("error") == "access_denied" else ""))
-            company_id = qbo.finish(arg("state"), arg("code"), arg("realmId"), self._qbo_redirect_uri())
+            # Intuit sends the browser back here with a top-level link, so the (Lax) session cookie comes along.
+            user = self._session_user()
+            company_id = qbo.finish(arg("state"), arg("code"), arg("realmId"), self._qbo_redirect_uri(),
+                                    user["company_id"] if user else None)
         except qbo.QboError as exc:
             page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
                     f'<title>QuickBooks - Duracash</title></head><body><main><h1>QuickBooks</h1><p>{html_escape(str(exc))}</p>'
@@ -1373,7 +1387,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(429, {"error": "Too many new accounts from this network. Try again in an hour."})
             return
         try:
-            company_id = "co-" + secrets.token_hex(4)
+            company_id = new_company_id()
             user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
                                     terms_version=legal.TERMS_VERSION)
             # The company name can wait (R2-02): until it is typed in Account, it is the person's name.
@@ -1419,7 +1433,8 @@ class Handler(BaseHTTPRequestHandler):
                     f"Someone asked to reset the password for {account['email']} on Duracash.\n\n"
                     f"Choose a new password here (the link works once, for one hour):\n{url}/#reset={raw}\n\n"
                     "If it wasn't you, ignore this email; your password stays the same.",
-                    company_id=account["company_id"],
+                    # Not counted against the company: anyone can ask for a reset, and a stranger
+                    # asking again and again must not use up the allowance its pay apps go out on.
                 )
 
         # All the work happens in the background, so the answer takes the same time
