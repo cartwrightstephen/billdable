@@ -590,12 +590,14 @@ NOT_UNDERSTOOD = "Something in the form was not understood. Check the fields and
 
 
 def _gate(exc: "domain.GateError") -> dict:
-    """The 409 reply for a business refusal: the message, what stands in the way, and the
-    fields to fix, each under its request key."""
+    """The 409 reply for a business refusal: the message, what stands in the way, the
+    fields to fix, each under its request key, and a link to the page that fixes it."""
     out = {"error": str(exc), "blockers": exc.blockers}
     if exc.fields:
         out["fields"] = exc.fields
     out.update(getattr(exc, "extra", None) or {})
+    if getattr(exc, "action", None):
+        out["action"] = exc.action
     return out
 
 
@@ -1662,7 +1664,7 @@ class Handler(BaseHTTPRequestHandler):
         elif verb == "dismiss":
             importer.dismiss_item(state, item_id, actor)
         elif verb == "undo":
-            importer.undo_item(state, item_id, actor)
+            importer.undo_item(state, item_id, actor, can_pull_back=may_take(ctx.user, "void-sent", state))
         elif verb == "mark-done":
             importer.file_and_mark_done(state, item_id, actor)
         else:

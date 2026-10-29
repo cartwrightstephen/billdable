@@ -155,6 +155,10 @@ class TodayRowsTests(unittest.TestCase):
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("inbox", 6, "Inbox", "", "Add to this job"))
         self.assertEqual((r["text"], r["note"], r["item_id"], r["path"]), ("Signed CO 3", "names the job", "in-2", "/inbox"))
+        # The kind it will be filed as goes with the row, to show and change there (Oct 23 note #46).
+        self.assertEqual(r["item_kind"], "note")
+        self.state["inbox"][0]["kind"] = "change_order"
+        self.assertEqual(self.only()["item_kind"], "change_order")
 
     def test_closed_jobs_are_left_out(self):
         self.job["closed"] = True

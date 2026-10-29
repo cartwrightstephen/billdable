@@ -8,6 +8,7 @@
 // (tests/js/today.test.mjs).
 
 import { termText } from "./terms.js";
+import { RECORD_KINDS } from "./jobs.js";
 
 const WENT_OUT = ["sent", "approved", "partial", "paid"];
 export const QUEUE_SHOWN = 3;   // rows shown before "and N more"
@@ -33,11 +34,20 @@ export function todayQueue(state) {
   return state.today_rows || [];
 }
 
+// An Inbox row files under the kind the Inbox guessed: the row shows it after its button
+// ("Add to this job as Lien waiver") in the Inbox's own kind select, so it can be changed first
+// and what is shown is what is filed. The select has the Inbox card's id, which the button reads.
+export function inboxKindSelect(r) {
+  const guessed = RECORD_KINDS[r.item_kind] ? r.item_kind : "note";
+  const options = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}"${k === guessed ? " selected" : ""}>${termText(v)}</option>`).join("");
+  return `<label class="row-kind">as <select id="inb-kind-${r.item_id}" aria-label="File as">${options}</select></label>`;
+}
+
 // One row's buttons: the main one, a phone call for a follow-up (R4-06), and Open unless the
 // main button already opens the job. A pay app the customer approved (R4-08) has no main button.
 export function rowButtons(r) {
   const attrs = ACTIONS[r.kind];
-  const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` : "";
+  const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` + (r.kind === "inbox" ? inboxKindSelect(r) : "") : "";
   const spoke = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="spoke" data-id="${r.job_id}">Spoke to them…</button>` : "";
   const open = OPENS_JOB.includes(r.kind) ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${r.job_id}">Open</button>`;
   return main + spoke + open;

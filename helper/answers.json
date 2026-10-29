@@ -1172,7 +1172,7 @@
         "suggest",
         "match"
       ],
-      "answer": "It looks for the job code (like OAK), the job address, the job name, the customer's name, or an email from the customer's email for pay apps. If a few jobs fit, it lists them to pick from. Tip: put the job code in email subjects and texts. Tap Other job to change it before adding, and Undo under Recently added or dismissed takes an added item back off.",
+      "answer": "It looks for the job code (like VEST), the job address, the job name or a part of it no other job has (like Oak Street for Oak Street kitchen), the customer's name, or an email from the customer's email for pay apps. A code in small letters (vest) or one word of a job name (Vesta) counts less than who sent it, so everyday words don't pull an item to another customer's job. If a few jobs fit equally, it lists them to pick from and doesn't guess. Tip: put the job code in capitals in email subjects and texts. Tap Other job to change it before adding, and Undo under Recently added or dismissed takes an added item back off. If a pay app's paperwork uses it, Undo says so and links there: tap Remove on a draft's paperwork first; one that went to the customer stays as sent.",
       "handler": null,
       "needs_job": false,
       "actions": [],

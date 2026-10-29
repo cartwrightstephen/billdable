@@ -396,12 +396,69 @@ def _street(address: str) -> str:
     return f"{m.group(1)} {m.group(2)}" if m else ""
 
 
+# Words that say what kind of job or place it is, not which one: "kitchen" or "Street" alone
+# names no job, so a part of a job name counts only with a word that is not one of these.
+GENERIC_NAME_WORDS = {
+    "the", "and", "of", "at", "on", "in", "for", "to", "a", "an", "job", "project", "phase", "new", "old", "main",
+    "street", "st", "avenue", "ave", "road", "rd", "drive", "dr", "lane", "ln", "way", "court", "ct", "place", "pl",
+    "boulevard", "blvd", "parkway", "pkwy", "highway", "hwy", "circle", "cir", "trail", "north", "south", "east", "west",
+    "n", "s", "e", "w", "nw", "ne", "sw", "se", "kitchen", "bath", "bathroom", "remodel", "renovation", "addition",
+    "house", "home", "residence", "building", "bldg", "office", "offices", "clinic", "school", "church", "center",
+    "centre", "clubhouse", "store", "shop", "plaza", "tower", "apartments", "apts", "unit", "suite", "floor", "level",
+    "garage", "basement", "deck", "porch", "roof", "repair", "repairs", "interior", "exterior", "tenant", "ti",
+    "finish", "buildout", "build", "out", "closed", "inc", "llc", "co", "company", "group", "park", "creek", "hill",
+    "lake", "river", "lobby", "hall", "room", "rooms", "work", "site",
+    # Kinds of building or tenant ("Vesta Senior Living", "Glenwood Retail Shell", "Kennesaw Ortho Clinic").
+    "living", "senior", "retail", "shell", "ortho", "dental", "medical", "suite", "lofts", "loft", "amenity",
+    "townhomes", "townhouses", "condo", "condos", "baths", "library", "annex", "hills", "apartment", "hotel",
+    "restaurant", "warehouse", "hospital", "campus", "academy", "bank", "space", "studio", "gym", "pool",
+    # Trades and phases (PHASE_RE below): "Peachtree drywall" is not named by "drywall delivery friday".
+    "framing", "drywall", "rough", "demo", "demolition", "tile", "tiling", "paint", "painting", "inspection",
+    "punch", "trim", "cabinet", "cabinets", "plumbing", "electrical", "hvac", "roofing", "foundation", "footing",
+    "footings", "slab", "insulation", "siding", "flooring", "floors", "concrete", "masonry", "stone", "carpentry",
+    "millwork", "glazing", "windows", "doors", "landscaping", "paving", "pavers", "waterproofing", "stucco",
+}
+
+
+def _phrase_in(words: list[str], hay_padded: str) -> bool:
+    return f" {' '.join(words)} " in hay_padded
+
+
+def _name_parts(name_words: list[str]) -> list[list[str]]:
+    """The runs of a job name's words that could name it on their own, longest first, the full
+    name left out: two or more words with one that is not generic ('oak street' of 'Oak Street
+    kitchen'), or one word of five letters or more that is not generic ('vesta')."""
+    parts = []
+    n = len(name_words)
+    for size in range(n - 1, 0, -1):
+        for start in range(0, n - size + 1):
+            run = name_words[start:start + size]
+            telling = [w for w in run if w not in GENERIC_NAME_WORDS and not w.isdigit()]
+            if not telling:
+                continue
+            if size == 1 and (len(run[0]) < 5 or not run[0].isalpha()):
+                continue
+            parts.append(run)
+    return parts
+
+
+def _shown_part(name: str, part: list[str]) -> str:
+    """The part as the job name writes it: ['oak', 'street'] of 'Oak Street kitchen' -> 'Oak Street'."""
+    m = re.search(r"(?<![A-Za-z0-9])" + r"[^A-Za-z0-9]+".join(map(re.escape, part)) + r"(?![A-Za-z0-9])", name, re.IGNORECASE)
+    return m.group(0) if m else " ".join(part)
+
+
 def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "") -> dict[str, Any]:
     """Suggest the job this item belongs to, with the reason. Never files anything.
 
-    `names` are the item's file names: a job code standing alone there counts in any case
-    ('kenn_subcontract.pdf'); in the text it has to be written in capitals, so 'the mill' is
-    not job MILL."""
+    A job code in capitals counts (70), and in a file name in any case. In small letters it is
+    a weak sign (55, under the sender's AP email at 60): it must stand alone ('kenn', not
+    'Kennesaw'), and not be a word of any open job's name or address, since 'the mill shop' is
+    not job MILL of 'Mill Creek Clubhouse'. A job name counts in full (80), or by a part only
+    that job's name and address have: two words or more ('Oak Street' for 'Oak Street kitchen',
+    75), or one telling word written with a capital ('Vesta', 55; never 'Street' or 'drywall').
+    So an everyday word in an email from a customer's AP email never pulls the item to another
+    customer's job. When two jobs fit equally, it does not guess."""
     jobs = [j for j in state.get("jobs", []) if not j.get("closed")]
     text = f"{text}\n{spaced(names)}" if names else text
     hay = _norm(text)
@@ -415,14 +472,23 @@ def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "
     upper_tokens = set(re.findall(r"\b[A-Z0-9]{3,8}\b", text or ""))
     upper_tokens |= {t.upper() for t in re.findall(r"\b[A-Za-z0-9]{3,8}\b", spaced(names))}
     upper_tokens -= NOT_CODES
+    # Each job's name and address words, to tell a part of a name only it has.
+    words_of = {j["id"]: f" {_norm(j.get('name', ''))} {_norm(j.get('address', ''))} " for j in jobs}
+    name_words = {w.upper() for ws in words_of.values() for w in ws.split()}
+    any_tokens = {t.upper() for t in re.findall(r"[A-Za-z0-9]+", text or "") if 3 <= len(t) <= 8} - NOT_CODES - name_words
+    # Words written with a capital, and every word of a file name: a single word of a job name counts only there.
+    capitalized = {w.lower() for w in re.findall(r"\b[A-Z][A-Za-z]*", text or "")} | set(_norm(spaced(names)).split())
     sender_addr = (email.utils.parseaddr(sender)[1] or sender).lower().strip()
     payers = {p["id"]: p for p in state.get("payers", [])}
     for job in jobs:
-        if job.get("code") and f"PA-{job['code']}-" in (text or ""):
-            bump(job, 100, f"mentions pay app PA-{job['code']}")
-        elif job.get("code") and job["code"] in upper_tokens:
+        code = str(job.get("code") or "")
+        if code and f"PA-{code}-" in (text or ""):
+            bump(job, 100, f"mentions pay app PA-{code}")
+        elif code and code in upper_tokens:
             # A bare code is weaker than the job's name or address, which are harder to hit by accident.
-            bump(job, 70, f"mentions job code {job['code']}")
+            bump(job, 70, f"mentions job code {code}")
+        elif code and code.upper() in any_tokens:
+            bump(job, 55, f"mentions job code {code}")
         addr = _norm(job.get("address", ""))
         street = _street(job.get("address", ""))
         if addr and len(addr) >= 6 and f" {addr} " in hay_padded:
@@ -432,6 +498,15 @@ def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "
         name = _norm(job.get("name", ""))
         if name and len(name) >= 4 and f" {name} " in hay_padded:
             bump(job, 80, f"mentions the job name {job.get('name')}")
+        elif name:
+            others = [w for jid, w in words_of.items() if jid != job["id"]]
+            for part in _name_parts(name.split()):
+                phrase = f" {' '.join(part)} "
+                if len(part) == 1 and part[0] not in capitalized:
+                    continue
+                if phrase in hay_padded and not any(phrase in o for o in others):
+                    bump(job, 75 if len(part) > 1 else 55, f"mentions {_shown_part(job['name'], part)}, part of the job name {job['name']}")
+                    break
         payer = payers.get(job.get("payer_id"), {})
         if sender_addr and sender_addr == str(payer.get("ap_email", "")).lower():
             bump(job, 60, f"sent from {payer.get('name')}'s AP email")
@@ -641,8 +716,52 @@ def dismiss_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, A
     return item
 
 
-def undo_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]:
-    """Take a filed item back off the job record, unless a packet already uses it."""
+def _paperwork_refusal(job: dict[str, Any], rids: set[str], can_pull_back: bool = True) -> "domain.GateError | None":
+    """Why Undo can't take these records off (attached by hand to some paperwork), with a link to
+    where that is settled (Oct 23 note #13). A sent pay app comes first: what went with it stays
+    as it was sent, so its page is the way, not Remove. Else the paperwork page, where Remove is.
+    Only an owner can pull a pay app back (void-sent), so a member is told to ask one."""
+    def holds(packet: list[dict[str, Any]] | None) -> bool:
+        return any(a.get("record_id") in rids and not a.get("auto") for p in packet or [] for a in p.get("attachments", []))
+
+    def link(label: str, view: str, detail: str = "") -> dict[str, str]:
+        return {"label": label, "view": view, "job_id": job["id"], "detail": detail}
+
+    went = [inv for inv in job.get("invoices", []) if inv.get("status") not in domain.DRAFT_STATUSES and holds(inv.get("packet"))]
+    if went:
+        inv = went[-1]
+        number = inv.get("number") or "a pay app"
+        open_it = link(f"Open {number}", "payapp-detail", inv["id"])
+        paid = inv.get("status") in {"partial", "paid"} or any(p.get("invoice_id") == inv["id"] for p in job.get("payments", []))
+        if inv.get("status") == "void":
+            text = (f"This record went to the customer with {number}. {number} was pulled back, but what it sent "
+                    "stays as it was, so the record stays on the job.")
+        elif paid:
+            text = f"This record went to the customer with {number}, and a payment is recorded on it, so the record stays on the job."
+        elif can_pull_back:
+            text = (f"This record went to the customer with {number}, so it stays on the job. To change what went out, "
+                    f"open {number} and pull it back, then send a new one.")
+        else:
+            text = (f"This record went to the customer with {number}, so it stays on the job. "
+                    f"Ask an owner to pull {number} back if it needs to change.")
+        return domain.GateError(text, action=open_it)
+    drafts = [inv for inv in job.get("invoices", []) if inv.get("status") in domain.DRAFT_STATUSES and holds(inv.get("packet"))]
+    if drafts:
+        number = drafts[-1].get("number") or "the pay app"
+        return domain.GateError(f"The paperwork for {number} uses this record. Tap Remove on it there first.",
+                                action=link(f"Open the paperwork for {number}", "packet-detail", drafts[-1]["id"]))
+    if holds(job.get("packet")):
+        return domain.GateError("The job's paperwork uses this record. Tap Remove on it there first.",
+                                action=link("Open the paperwork", "packet-detail"))
+    if holds(job.get("closeout_packet")):
+        return domain.GateError("The closeout paperwork uses this record. Tap Remove on it there first.",
+                                action=link("Open the closeout paperwork", "packet-detail", "closeout"))
+    return None
+
+
+def undo_item(state: dict[str, Any], item_id: str, actor: str, can_pull_back: bool = True) -> dict[str, Any]:
+    """Take a filed item back off the job record, unless paperwork uses it (the refusal links there).
+    can_pull_back: whether this person may pull a sent pay app back, which words the refusal."""
     item = _item(state, item_id)
     if item["status"] == "dismissed":
         item["status"] = "new"
@@ -652,8 +771,9 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]
     job = domain._open_job(state, item["filed_job_id"])
     rids = set(item.get("record_ids", []))
     packets = [p for inv in job["invoices"] for p in (inv.get("packet") or [])] + (job.get("packet") or []) + (job.get("closeout_packet") or [])
-    if any(a.get("record_id") in rids and not a.get("auto") for p in packets for a in p.get("attachments", [])):
-        raise domain.GateError("A pay app's paperwork uses this record. Tap Remove on it there first.")
+    refusal = _paperwork_refusal(job, rids, can_pull_back)
+    if refusal:
+        raise refusal
     for p in packets:  # attached automatically from the job record: it comes off with the record
         if any(a.get("record_id") in rids for a in p.get("attachments", [])):
             p["attachments"] = [a for a in p["attachments"] if a.get("record_id") not in rids]

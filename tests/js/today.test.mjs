@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { todayQueue, rowButtons, queueHtml, anyPayAppSent, QUEUE_SHOWN } from "../../static/js/today.js";
+import { RECORD_KINDS } from "../../static/js/jobs.js";
 
 const row = (over = {}) => ({
   rank: 5, kind: "new_job", job_id: "j1", job: "Porch rebuild", payer: "Dana Lee", label: "Not billed yet", tone: "copper",
@@ -88,4 +89,19 @@ test("a pay app has gone out once one was sent or a job was closed", () => {
   assert.equal(anyPayAppSent(state([], { jobs: [sent] })), true);
   assert.equal(anyPayAppSent(state([], { jobs: [{ id: "j2", invoices: [{ id: "i2", status: "void" }] }] })), false);
   assert.equal(anyPayAppSent(state([], { closed_jobs_total: 2 })), true);
+});
+
+test("an Inbox row shows the kind it files as, in a select to change it first", () => {  // Oct 23 note #46
+  const html = rowButtons(row({ kind: "inbox", button: "Add to this job", item_id: "x2", item_kind: "waiver" }));
+  // "Add to this job as Lien waiver": the button, then the kind, then Open.
+  assert.match(html, /data-item="x2" data-job="j1">Add to this job<\/button><label class="row-kind">as <select id="inb-kind-x2" aria-label="File as">/);
+  assert.match(html, /<option value="waiver" selected>Lien waiver<\/option>/);
+  assert.equal((html.match(/ selected>/g) || []).length, 1);
+  assert.equal((html.match(/<option /g) || []).length, Object.keys(RECORD_KINDS).length, "the Inbox's kinds list");
+  assert.ok(html.indexOf("inb-kind-x2") < html.indexOf(">Open<"));
+  // A kind the list doesn't have starts at Note rather than showing one thing and filing another.
+  assert.match(rowButtons(row({ kind: "inbox", button: "Add to this job", item_id: "x3", item_kind: "nope" })), /<option value="note" selected>Note<\/option>/);
+  // Other rows have no kind select.
+  assert.doesNotMatch(rowButtons(row({ kind: "says_done", button: "Mark done and draft", item_id: "x1" })), /<select/);
+  assert.doesNotMatch(queueHtml([row()]), /<select/);
 });
