@@ -604,14 +604,14 @@ def approve_and_send(
     files = _packet_file_ids(state, job, invoice)
     body = (
         f"{payer.get('approver') or payer['name']},\n\n"
-        f"Please find {'the final pay application' if invoice['final'] else 'pay application'} {invoice['number']} for {job['name']} attached as a PDF. Every packet item is accounted for"
-        + (f"; {len(files)} packet document{'s are' if len(files) != 1 else ' is'} attached too." if files else ".")
+        f"Please find {'the final pay application' if invoice['final'] else 'pay application'} {invoice['number']} for {job['name']} attached as a PDF. Every item of paperwork is accounted for"
+        + (f"; {len(files)} paperwork document{'s are' if len(files) != 1 else ' is'} attached too." if files else ".")
         + (f" Payment due {invoice['due_on']}." if invoice.get("due_on") else "")
         + f"\n\n{pay_app_text(state, job, invoice)}"
     )
     link = payer_link(invoice, link_base, company_id)
     if link:
-        body += f"\n\nSee this pay app, its packet and documents, and tell us it reached you:\n{link}"
+        body += f"\n\nSee this pay app, its paperwork and documents, and tell us it reached you:\n{link}"
     body += f"\n\n{sign_off(state, actor)}"
     _record_email(state, job_id, "pay_app", to, subject, body, actor, attachments=files, cc=_copy_list(payer),
                   payapp_invoice_id=invoice["id"])
@@ -725,7 +725,7 @@ def record_follow_up(
         body = f"Hi {who}, checking on {job['name']}: {listing}. Is anything missing on your side?"
     link = payer_link(oldest, link_base, company_id)
     if link:
-        body += f"\n\nThe pay app, its packet and documents: {link}"
+        body += f"\n\nThe pay app, its paperwork and documents: {link}"
     body += f"\n\n{sign_off(state, actor)}"
     escalate = str(payer.get("escalation_email") or "").strip()
     cc = [escalate] if count >= 3 and escalate and escalate.lower() != to.lower() else []
@@ -1018,7 +1018,7 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
         else:
             missing = missing_packet(job)
         if missing:
-            raise GateError("Closeout packet incomplete.", [item["blocker"] for item in missing])
+            raise GateError("The closeout paperwork isn't complete.", [item["blocker"] for item in missing])
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
     days = _int_or(payer.get("follow_up_days"), 7)
@@ -1677,7 +1677,7 @@ def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_em
         "packet": packet_rule,
         "follow_up_days": 5 if role == "GC" else 7,
         "usual_approval_days": 21 if role == "GC" else 14,
-        "rejects_when": "Missing required packet items.",
+        "rejects_when": "Missing required paperwork.",
         "copy": "",
     }
     state["payers"].append(payer)
@@ -2633,7 +2633,7 @@ def attach_record_to_packet(
     })
     item["present"] = True
     item["resolved_at"] = utcnow()
-    which = invoice["number"] if invoice else "the job packet"
+    which = invoice["number"] if invoice else "the job's paperwork"
     audit(state, job_id, "attach_record", f"{actor} attached {record['label']} to {item['label']} on {which}.", actor)
     _refresh_draft_gate(job, state)
     return job
@@ -3052,7 +3052,7 @@ def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, 
         out += ["", "Schedule of values (continuation sheet, dollars):", sheet]
     packet = [p for p in invoice.get("packet") or [] if p.get("required")]
     if packet:
-        out += ["", "Packet:"]
+        out += ["", "Paperwork:"]
         out += [f"  [{'x' if p.get('present') else ' '}] {p['label']}" for p in packet]
     return "\n".join(out).strip()
 

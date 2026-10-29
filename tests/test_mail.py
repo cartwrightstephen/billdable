@@ -326,7 +326,8 @@ class MailHttpTests(unittest.TestCase):
         self.assertIn("billing@duracash.test", str(msg["From"]))
         self.assertIn("Pay application PA-", msg["Subject"])
         self.assertIn("Amount due this application", msg.get_body(("plain",)).get_content())
-        self.assertIn("1 packet document is attached", msg.get_body(("plain",)).get_content())
+        self.assertIn("1 paperwork document is attached", msg.get_body(("plain",)).get_content())
+        self.assertNotIn("packet", msg.get_body(("plain",)).get_content().lower())  # the glossary's word is paperwork
         names = [p.get_filename() for p in msg.iter_attachments()]
         self.assertEqual(names, [f"{state['jobs'][0]['invoices'][-1]['number']}.pdf", "contract.pdf"])
         pdf = next(msg.iter_attachments()).get_content()
@@ -403,7 +404,7 @@ class MailHttpTests(unittest.TestCase):
         _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
         entry = state["email_log"][-1]
         self.assertTrue(entry["status"].startswith("failed: recipient refused"), entry["status"])
-        self.assertNotIn("packet document", entry["body"])  # no packet files, so the email doesn't claim any
+        self.assertNotIn("paperwork document", entry["body"])  # no paperwork files, so the email doesn't claim any
         self.assertEqual(state["jobs"][0]["invoices"][-1]["status"], "sent")  # the approval stands
         self.sink.reject.clear()
         _, state = self.request("POST", f"/api/outbox/{entry['id']}/retry", {}, cookie=cookie)

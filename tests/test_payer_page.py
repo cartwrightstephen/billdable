@@ -115,6 +115,7 @@ class PayerPageTests(unittest.TestCase):
         self.assertIn("Mark as received", page)
         self.assertIn("Pine &lt;Builders&gt;", page)
         self.assertNotIn("<b>addition</b>", page, "job names are escaped")
+        self.assertNotIn("packet", re.sub(r'(href|src|action)="[^"]*"', "", page).lower(), "the customer reads Paperwork")
         res, raw = self.request("GET", link + "/pdf")
         self.assertEqual((res.status, raw[:4]), (200, b"%PDF"))
         self.assertEqual(self.request("GET", link + "/file/not-in-this-packet")[0].status, 404)
