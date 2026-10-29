@@ -1,11 +1,11 @@
 // Today: the overview with what needs you and the setup checklist, Results, Calendar and the
 // Daily record.
 import { esc, unesc, escDeep, money, toDate, fmtDate } from "../format.js";
-import { isBlocked, nextStep, statusPill, defaultJobId, followUpDue } from "../jobs.js";
+import { isBlocked, nextStep, statusPill, defaultJobId } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
-import { worstKind } from "../calendar.js";
-import { todayQueue, queueHtml, anyPayAppSent } from "../today.js";
+import { worstKind, followUpEvent } from "../calendar.js";
+import { todayQueue, queueHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
 import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd } from "../state.js";
 import { post, toast, render, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
@@ -139,17 +139,6 @@ function filteredJobs() {
   return jobs;
 }
 
-function billedThisMonth() {
-  const now = new Date();
-  let total = 0;
-  state.jobs.forEach(j => j.invoices.forEach(inv => {
-    if (inv.sent_at && new Date(inv.sent_at).getMonth() === now.getMonth() && new Date(inv.sent_at).getFullYear() === now.getFullYear()) {
-      total += inv.amount_cents;
-    }
-  }));
-  return total;
-}
-
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   dashboard() {
@@ -180,7 +169,7 @@ export const views = {
         <div class="metric ${hero === "unbilled" ? "highlight" : ""}"><div class="k">Done, not billed</div><div class="v">${money(t.unbilled_cents)}</div></div>
         <div class="metric ${hero === "outstanding" ? "highlight" : ""}"><div class="k">Outstanding</div><div class="v">${money(t.outstanding_cents)}</div></div>
         <div class="metric"><div class="k">Held back, still owed</div><div class="v">${money(t.retainage_cents)}</div></div>
-        <div class="metric"><div class="k">Billed this month</div><div class="v">${money(billedThisMonth())}</div></div>
+        <div class="metric"><div class="k">Billed this month</div><div class="v">${money(billedThisMonth(state.jobs))}</div></div>
       </div>
       <p class="sub">${open.length} active job${open.length === 1 ? "" : "s"}${t.blocked_jobs ? ` · ${t.blocked_jobs} can't be sent yet` : ""}</p>
       ${state.jobs.length ? `
@@ -289,10 +278,9 @@ export const views = {
     const todayKey = localDay(today);
     state.jobs.filter(j => calJobFilter === "all" || j.id === calJobFilter).forEach(j => {
       if (j.completed_at) add(j.completed_at, `${j.code} work complete`, "paid", j.id);
-      // The next follow-up, the same date as Today and the job page give (followUpDue): after the
-      // last one went out, or the date noted after a call, for any pay app still unpaid.
-      const follow = followUpDue(j);
-      if (follow) add(localDay(follow.due), `${j.code} follow-up`, follow.due < today ? "overdue" : "", j.id);
+      // One follow-up per job, on the day Today raises it (followUpEvent).
+      const follow = followUpEvent(j, today);
+      if (follow) add(follow.day, `${j.code} follow-up`, follow.overdue ? "overdue" : "", j.id);
       j.invoices.forEach(inv => {
         if (inv.sent_at) add(inv.sent_at, `${inv.number} sent`, "", j.id);
         if (inv.status === "sent" && inv.sent_at) {

@@ -450,7 +450,7 @@ export const views = {
               <td>${expected}</td>
               <td>${j.payer.approver}<div class="sub row-sub">${j.payer.ap_email}${j.payer.phone ? "<br>" + j.payer.phone : ""}</div></td>
               <td class="actions-cell">
-                ${early ? `<button class="btn small" disabled>Next follow-up ${fmtDate(follow.due.toISOString())}</button>` : `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`}
+                ${early ? `<button class="btn small" disabled>Next follow-up ${fmtDate(follow.day)}</button>` : `<button class="btn small" data-action="follow-up" data-id="${j.id}">Send follow-up</button>`}
                 ${shortPayButtons(j)}
                 <a class="btn small secondary" href="mailto:${j.payer.ap_email}">Email</a>
                 ${j.payer.phone ? `<a class="btn small secondary" href="tel:${(j.payer.phone || "").replace(/[^0-9+]/g, "")}">Call</a>` : ""}
@@ -540,12 +540,11 @@ export const views = {
           <table>
             <tr><th>Job</th><th>Held back</th><th>Holding it up</th><th>Next</th><th>Contact</th></tr>
             ${open.map(j => {
-              const closeoutItems = (j.closeout_packet && j.closeout_packet.length) ? j.closeout_packet : (j.packet || []);
-              const missing = closeoutItems.filter(p => p.required && !p.present);
+              const missing = j.closeout_missing || [];   // labels (domain.closeout_missing)
               return `<tr>
                 <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
                 <td class="num">${money(j.money.retainage_open_cents)}</td>
-                <td>${missing.length ? missing.map(m => m.label).join(", ") : (j.work_status === "complete" ? "Closeout paperwork complete" : "Job still in progress")}</td>
+                <td>${missing.length ? missing.join(", ") : (j.work_status === "complete" ? "Closeout paperwork complete" : "Job still in progress")}</td>
                 <td>${j.work_status === "complete" && missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}" ${j.closeout_packet && j.closeout_packet.length ? `data-inv="closeout"` : ""}>Open closeout paperwork</button>` : retainageAskHtml(j)}</td>
                 <td>${j.payer.approver}<div class="sub row-sub"><a href="mailto:${j.payer.ap_email}">${j.payer.ap_email}</a></div></td>
               </tr>`;
@@ -722,7 +721,7 @@ export const actions = {
     const follow = j && followUpDue(j);
     // "Follow up now" on the job page goes before the customer's days between follow-ups are up (R3-04).
     const early = !!el.dataset.early && follow && follow.due > new Date();
-    if (j && !(await askConfirm(`Email a follow-up on ${unesc(follow ? payAppList(follow.invoices) : "the pay app")} to ${sendsTo(j)}?${early ? ` It's before the follow-up date, ${fmtDate(follow.due)}.` : ""}`, "Send follow-up"))) return;
+    if (j && !(await askConfirm(`Email a follow-up on ${unesc(follow ? payAppList(follow.invoices) : "the pay app")} to ${sendsTo(j)}?${early ? ` It's before the follow-up date, ${fmtDate(follow.day)}.` : ""}`, "Send follow-up"))) return;
     await post(`/api/jobs/${id}/follow-up`, early ? { early: true } : {});
   },
   "add-co": async (el, id) => {

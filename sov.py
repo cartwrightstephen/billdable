@@ -331,7 +331,9 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
             if not description:
                 raise SovError("needs a description")
             unit = str(raw.get("unit") or "").strip()[:12]
-            qty = to_milli(raw.get("quantity", 1) if raw.get("quantity") not in (None, "") else 1, "quantity")
+            # A blank quantity (spaces too, as the editor reads it) is one: a lump sum.
+            quantity = raw.get("quantity")
+            qty = to_milli(1 if quantity is None or str(quantity).strip() == "" else quantity, "quantity")
             if str(raw.get("rate") if raw.get("rate") is not None else "").strip() == "":
                 raise SovError("needs a price (unit rate)")
             rate = to_cents(raw.get("rate"), "rate")

@@ -2,7 +2,7 @@
 // the money, pay apps and change orders, the job record, the schedule of values and the history.
 import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
 import { RECORD_KINDS, isBlocked, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, mayTake, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, statusPill, coSignature, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs } from "../jobs.js";
-import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../sov.js";
+import { sovNum, sovMilli, sovCents, sovBp, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
@@ -258,7 +258,7 @@ function sovDraftTotals() {
     return a;
   });
   const bpRaw = String(sovDraft.op_pct || "").trim();
-  const bp = bpRaw ? Math.round(sovNum(bpRaw) * 100) : 0;
+  const bp = bpRaw ? sovBp(bpRaw) : 0;
   const op = isNaN(bp) ? 0 : sovMarkup(base, bp);
   return { amounts, base, bp, op, total: base + op, bad, noPrice, badBp: isNaN(bp) || bp < 0 || bp > 5000 };
 }

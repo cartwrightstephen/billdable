@@ -11,9 +11,21 @@ export function sovNum(v) {
   return parseFloat(t);
 }
 
-export function sovMilli(v) { const n = sovNum(v); return isNaN(n) ? NaN : Math.round(n * 1000); }
+// A number scaled to whole units of 10^-places, or NaN when it has more decimals than that: the
+// server refuses those (sov.to_milli, to_cents, to_bp) rather than rounding them.
+function scaled(v, places) {
+  const n = sovNum(v);
+  if (isNaN(n)) return NaN;
+  const frac = (plainNumber(v).split(".")[1] || "").replace(/0+$/, "");
+  return frac.length > places ? NaN : Math.round(n * 10 ** places);
+}
 
-export function sovCents(v) { const n = sovNum(v); return isNaN(n) ? NaN : Math.round(n * 100); }
+export function sovMilli(v) { return scaled(v, 3); }
+
+export function sovCents(v) { return scaled(v, 2); }
+
+// Overhead and profit in basis points ("15.5" -> 1550), at most two decimals.
+export function sovBp(v) { return scaled(v, 2); }
 
 export function sovExtend(q, r) { return Math.floor((q * r + 500) / 1000); }
 

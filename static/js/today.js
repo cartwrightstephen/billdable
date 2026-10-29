@@ -70,5 +70,16 @@ export function queueHtml(queue, { expanded = false, anySent = false } = {}) {
 }
 
 // A pay app has gone out from this company: open jobs carry their pay apps; a closed job was billed.
+// The Today tile "Billed this month": pay apps sent this calendar month and not pulled back, the
+// same sum as the helper's (domain.BILLED_STATUSES, by the month of sent_at in UTC).
+export function billedThisMonth(jobs, now = new Date()) {
+  const month = now.toISOString().slice(0, 7);
+  let total = 0;
+  (jobs || []).forEach(j => (j.invoices || []).forEach(inv => {
+    if (WENT_OUT.includes(inv.status) && inv.sent_at && String(inv.sent_at).slice(0, 7) === month) total += inv.amount_cents;
+  }));
+  return total;
+}
+
 export const anyPayAppSent = (state) => (state.jobs || []).some(j => (j.invoices || []).some(i => i.sent_at || WENT_OUT.includes(i.status)))
   || (state.closed_jobs_total || 0) > 0;
