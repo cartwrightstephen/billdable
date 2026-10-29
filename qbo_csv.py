@@ -69,12 +69,18 @@ def _date(raw: str) -> str | None:
 _XL = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _XL_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 MAX_XLSX_XML = 20 * 1024 * 1024
+# A payments export has a dozen columns. Cells past column IV (256) are left out, so a cell
+# addressed far to the right can't make a row of millions of empty cells.
+MAX_COLS = 256
 
 
 def _col(ref: str) -> int:
+    """The column number of a cell reference ("A1" is 0), or MAX_COLS for one past the limit."""
     n = 0
     for ch in re.match(r"[A-Z]*", ref or "").group(0):
         n = n * 26 + ord(ch) - 64
+        if n > MAX_COLS:
+            return MAX_COLS
     return max(n - 1, 0)
 
 
@@ -124,10 +130,15 @@ def xlsx_to_csv(data: bytes) -> str:
                     elif kind == "s":
                         value = shared[int(v.text)] if int(v.text) < len(shared) else ""
                     elif int(c.get("s", 0) or 0) in date_styles and re.fullmatch(r"\d+(\.\d+)?", v.text):
-                        value = (datetime(1899, 12, 30) + timedelta(days=float(v.text))).strftime("%m/%d/%Y")
+                        try:
+                            value = (datetime(1899, 12, 30) + timedelta(days=float(v.text))).strftime("%m/%d/%Y")
+                        except OverflowError:  # past the year 9999: not a date, keep the number
+                            value = v.text
                     else:
                         value = v.text
-                    cells[_col(c.get("r", ""))] = value.strip()
+                    col = _col(c.get("r", ""))
+                    if col < MAX_COLS:
+                        cells[col] = value.strip()
                 if cells:
                     writer.writerow([cells.get(i, "") for i in range(max(cells) + 1)])
             return out.getvalue()
@@ -149,7 +160,10 @@ def looks_like_payments(text: str) -> int:
 
 def parse(text: str) -> dict[str, Any]:
     """{"rows": [{"line", "date", "ref", "customer", "amount_cents", "memo"}], "warnings": [...]}"""
-    rows = list(csv.reader(io.StringIO(text or "")))[: MAX_ROWS + 20]
+    try:
+        rows = list(csv.reader(io.StringIO(text or "")))[: MAX_ROWS + 20]
+    except csv.Error:  # a NUL byte (a UTF-16 file) or one cell over 128 KB
+        return {"rows": [], "warnings": ["The file couldn't be read. Save it again as CSV (UTF-8) and add it again."]}
     header_at, cols = None, {}
     for n, row in enumerate(rows[:20]):
         found = {}

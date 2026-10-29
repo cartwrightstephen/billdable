@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
 import server
+import trial
 
 PASSWORD = "correct horse battery"
 
@@ -206,6 +207,43 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(results[:300], ["sent"] * 300)
         self.assertIn("hourly email limit", results[300])
         server._LIMITS.clear()
+
+    def test_deeply_nested_json_is_a_bad_request(self):
+        for path in ("/api/auth/login", "/api/auth/signup", "/api/auth/forgot"):
+            res, data = self.request("POST", path, raw=b"[" * 100_000)
+            self.assertEqual(res.status, 400, path)
+            self.assertEqual(data["error"], "Request body must be valid JSON.")
+
+    def test_a_refused_company_name_leaves_no_half_made_account(self):
+        body = {"accept_terms": True, "email": "half@example.com", "password": PASSWORD, "name": "Pat Pine"}
+        for bad in ("x" * 5_001, 42):
+            res, data = self.request("POST", "/api/auth/signup", {**body, "company_name": bad})
+            self.assertEqual(res.status, 400, data)
+            self.assertIsNone(auth.user_by_email("half@example.com"))
+        cookie, user = self.signup("half@example.com", company="Half Co")
+        res, state = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual(state["company"]["name"], "Half Co")
+
+    def test_reset_keeps_the_subscription_and_how_the_trial_ended(self):
+        cookie, user = self.signup("reset-billing@example.com", company="Billing Co")
+        company_id = user["company_id"]
+        with server.company_lock(company_id):
+            st = server.load_company(company_id)
+            st["company"]["billing"] = {"customer_id": "cus_1", "subscription_id": "sub_1", "status": "active", "partner": True}
+            st["jobs"] = [{"id": "job-x", "name": "Oak deck", "invoices": [
+                {"id": "inv-x", "number": "PA-OAK-01", "status": "paid", "sent_at": "2026-10-01T12:00:00+00:00"}],
+                "payments": [{"invoice_id": "inv-x", "amount_cents": 100, "matched_at": "2026-10-05T12:00:00+00:00"}]}]
+            st["company"]["trial"] = {"started_at": "2026-09-01T12:00:00+00:00"}
+            server.save_company(company_id, st)
+        res, state = self.request("POST", "/api/reset", {"confirm": "Billing Co", "password": PASSWORD}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        after = server.load_company(company_id)
+        self.assertEqual(after["jobs"], [])
+        self.assertEqual(after["company"]["billing"], {"customer_id": "cus_1", "subscription_id": "sub_1", "status": "active", "partner": True})
+        t = trial.status(after)
+        self.assertEqual((t["state"], t["reason"], t["ended_at"], t["first_paid"], t["first_paid_job"]),
+                         ("ended", "paid", "2026-10-05T12:00:00+00:00", "PA-OAK-01", "Oak deck"))
 
     def test_actor_comes_from_session_and_reset_needs_confirmation(self):
         cookie, user = self.signup("actor@example.com", company="Actor Co")

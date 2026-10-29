@@ -879,7 +879,7 @@ def provider_fields(data: bytes, raw_ctype: str) -> dict:
     if "application/json" in ctype:
         try:
             raw = json.loads(data.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
+        except (UnicodeDecodeError, ValueError, RecursionError):
             return {}
         if not isinstance(raw, dict):
             return {}
@@ -906,7 +906,7 @@ def parse_inbound_email(data: bytes, raw_ctype: str) -> dict:
     if "application/json" in ctype:
         try:
             raw = json.loads(data.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
             raise BadPayload("Request body must be valid JSON.")
         if not isinstance(raw, dict):
             raise BadPayload("Request body must be a JSON object.")

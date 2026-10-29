@@ -185,9 +185,6 @@ class RealExportTests(unittest.TestCase):  # R5-10: real exports, once someone d
                 self.assertEqual(len(proposed), len(out["rows"]))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class BlankNumberTests(unittest.TestCase):
     """A payment with no Num (an ACH, say) imported twice is recorded once."""
@@ -250,3 +247,44 @@ class CustomerNameTests(unittest.TestCase):
         qb = [{"Id": "1", "DocNumber": "G-9", "TotalAmt": inv["amount_cents"] / 100, "Balance": 0, "CustomerRef": {"name": "Grace Roofing"}}]
         rows = qbo.reconcile(state, qb)
         self.assertIn(("PA-X-01", "missing"), {(r["number"], r["kind"]) for r in rows})
+
+
+def _sheet_zip(cells_xml, styles=False):
+    """A minimal Excel file with this sheetData, and a date style s="1" when asked."""
+    import io
+    import zipfile
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("xl/worksheets/sheet1.xml", f'<worksheet {ns}><sheetData>{cells_xml}</sheetData></worksheet>')
+        if styles:
+            z.writestr("xl/styles.xml", f'<styleSheet {ns}><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>')
+    return buf.getvalue()
+
+
+class UnsafeFilesTests(unittest.TestCase):
+    def test_a_cell_far_to_the_right_does_not_blow_up_the_row(self):
+        # One cell at column ZZZZ used to make a 475,000-character row (ZZZZZZZZ: billions, out of memory).
+        for ref in ("ZZZZ", "ZZZZZZZZ"):
+            data = _sheet_zip(f'<row r="1"><c r="A1" t="inlineStr"><is><t>Amount</t></is></c>'
+                              f'<c r="{ref}1" t="inlineStr"><is><t>x</t></is></c></row>')
+            text = qbo_csv.xlsx_to_csv(data)
+            self.assertLess(len(text), 2_000, ref)
+            self.assertTrue(text.startswith("Amount"), ref)
+
+    def test_a_date_cell_out_of_range_keeps_its_number(self):
+        data = _sheet_zip('<row r="1"><c r="A1" s="1"><v>46309</v></c><c r="B1" s="1"><v>' + "9" * 400 + '</v></c>'
+                          '<c r="C1" s="1"><v>99999999999</v></c></row>', styles=True)
+        self.assertEqual(qbo_csv.xlsx_to_csv(data), f"10/14/2026,{'9' * 400},99999999999\n")
+
+    def test_a_nul_byte_or_a_huge_cell_is_a_warning_not_a_crash(self):
+        for text in ("Date,Num,Customer,Amount\n10/09/2026,4417,Park\x00 GC,100.00\n",
+                     'Date,Num,Customer,Amount\n10/09/2026,4417,"' + "x" * 140_000 + '",100.00\n'):
+            parsed = qbo_csv.parse(text)
+            self.assertEqual(parsed["rows"], [])
+            self.assertIn("couldn't be read", parsed["warnings"][0])
+            self.assertEqual(qbo_csv.looks_like_payments(text), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

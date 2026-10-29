@@ -377,6 +377,31 @@ class ImportHttpTests(unittest.TestCase):
         res, read = self.request("POST", "/api/import/payments-csv", {"file_id": item["file_ids"][0]}, cookie=other)
         self.assertEqual(res.status, 409)
 
+    def test_a_csv_that_cant_be_read_is_an_ordinary_inbox_item(self):
+        # A NUL byte (a UTF-16 export) or a cell over 128 KB used to answer 500 and leave the file on disk.
+        cookie, _ = self.company("nulcsv@example.com")
+        for n, raw in enumerate((b"Date,Num,Customer,Amount\n10/09/2026,1,Park\x00 GC,100.00\n",
+                                 b'Date,Num,Customer,Amount\n10/09/2026,1,"' + b"x" * 140_000 + b'",100.00\n')):
+            res, state = self.request("POST", "/api/import/file", raw=raw, cookie=cookie,
+                                      headers={"Content-Type": "text/csv", "X-Filename": f"payments{n}.csv"})
+            self.assertEqual(res.status, 200, state)
+            self.assertNotIn("payments_csv", state["inbox"][-1])
+            res, read = self.request("POST", "/api/import/payments-csv", {"csv": raw.decode()}, cookie=cookie)
+            self.assertEqual(res.status, 200, read)
+            self.assertEqual(read["rows"], [])
+            self.assertIn("couldn't be read", read["warnings"][0])
+
+    def test_deeply_nested_json_is_refused_not_a_crash(self):
+        cookie, _ = self.company("nested-inbound@example.com")
+        _, settings = self.request("GET", "/api/import/settings", cookie=cookie)
+        email_path = "/api/inbound/email/" + settings["email_webhook"].rsplit("/", 1)[-1]
+        res, _ = self.request("POST", email_path, raw=b"[" * 100_000, headers={"Content-Type": "application/json"})
+        self.assertEqual(res.status, 400)
+        self.assertEqual(importer.provider_fields(b"[" * 100_000, "application/json"), {})
+        with unittest.mock.patch.dict(os.environ, {"INBOUND_SIGNING_KEY": "k" * 20}):
+            res, _ = self.request("POST", email_path, raw=b"[" * 100_000, headers={"Content-Type": "application/json"})
+        self.assertEqual(res.status, 401)
+
     def test_an_excel_payments_export(self):  # R5-04
         cookie, _ = self.company("xlsx@example.com")
         data = xlsx_bytes([["Date", "Num", "Customer", "Amount"], [46309, "4471", "Park GC", 1250.5]])
