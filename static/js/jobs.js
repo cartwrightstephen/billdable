@@ -1,11 +1,11 @@
 // Where a job stands: blocked or not, the one next step, status pills, change-order signatures and waiver kinds.
 
-import { unesc, fmtDate, fmtDateTime, toDate, centsFrom, percentFrom, money } from "./format.js";
+import { unesc, fmtDate, fmtDateTime, toDate, centsFrom, percentFrom, money, words } from "./format.js";
 import { termText } from "./terms.js";
 
 export const RECORD_KINDS = {
   note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
-  waiver: "Lien waiver", pay_app: "Pay app / invoice backup", ticket: "Delivery or time ticket", other: "Other",
+  waiver: "Lien waiver", pay_app: "Backup for the pay app", ticket: "Delivery or time ticket", other: "Other",
 };
 
 // domain.SOURCE_LABELS has the same words, for Today's rows.
@@ -92,6 +92,11 @@ export const WAIVER_KINDS = {
 
 export function waiverKindLabel(code) { return WAIVER_KINDS[unesc(code)] || code; }
 
+// A change order's pill (the glossary): Signed or Unsigned; "Approved" is kept for the customer's approval of a pay app.
+export const CO_WORDS = { pending: "Unsigned", approved: "Signed", withdrawn: "Withdrawn" };
+
+export function coStatusWords(status) { return CO_WORDS[unesc(status || "")] || words(status); }
+
 // One line on when each type fits (R6-10), under the type picker and on Closeout.
 export const WAIVER_HINTS = {
   conditional_progress: "Before the money arrives: it counts only once their payment clears.",
@@ -100,7 +105,7 @@ export const WAIVER_HINTS = {
   unconditional_final: "You have the last payment, and nothing more is owed on the job.",
 };
 
-export function waiverHint(code) { return WAIVER_HINTS[unesc(code)] || ""; }
+export function waiverHint(code) { return termText(WAIVER_HINTS[unesc(code)] || ""); }
 
 // The Type column on Closeout: the type of the waiver sent or chosen, else "Not chosen yet".
 export function waiverTypeText(j, paid) {
@@ -117,7 +122,7 @@ export function waiverSendForm(j, inv, disabled = false) {
     <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}>${v}</option>`).join("")}</select>
     <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}${disabled ? " disabled" : ""}>Approve & send</button>
   </div>
-  <p class="sub waiver-hint" data-waiver-hint="${key}">${WAIVER_HINTS[pick]}</p>`;
+  <p class="sub waiver-hint" data-waiver-hint="${key}">${waiverHint(pick)}</p>`;
 }
 
 // The job a form starts on (R2-07): the one last used when it is still open, else the only open

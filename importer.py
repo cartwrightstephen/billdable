@@ -69,7 +69,7 @@ ALLOWED_FILES = {
 KINDS = {
     "change_order": "Change order",
     "waiver": "Lien waiver",
-    "pay_app": "Pay app / invoice backup",
+    "pay_app": "Backup for the pay app",
     "ticket": "Delivery or time ticket",
     "photo": "Photo",
     "contract": "Contract",

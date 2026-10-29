@@ -1,7 +1,7 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, waiverHint, waiverTypeText, WAIVER_KINDS, WAIVER_HINTS, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
+import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, coStatusWords, waiverSendForm, waiverHint, waiverTypeText, WAIVER_KINDS, WAIVER_HINTS, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
 import { invoicePill } from "../../static/js/format.js";
 
 const job = (over = {}) => ({
@@ -289,4 +289,11 @@ test("a member doesn't see what only an owner may do, unless members can send (R
   assert.deepEqual(closeBlockerActions(j, draft, member).map(a => a.label), []);
   assert.deepEqual(closeBlockerActions(j, { kind: "waiver" }, member).map(a => a.label), []);
   assert.deepEqual(closeBlockerActions(j, { kind: "unbilled" }, member).map(a => a.label), ["Draft pay app"]);
+});
+
+test("a change order's pill reads Signed or Unsigned, never Approved or Pending (glossary)", () => {
+  assert.equal(coStatusWords("pending"), "Unsigned");
+  assert.equal(coStatusWords("approved"), "Signed");
+  assert.equal(coStatusWords("withdrawn"), "Withdrawn");
+  assert.equal(coStatusWords("some_new"), "Some new");
 });

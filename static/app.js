@@ -1,7 +1,7 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, mayTake, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, WAIVER_HINTS, waiverKindLabel, waiverHint, waiverTypeText, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, payAppList, shortPayable, shortPayLabel, shortPayAttrs, canPullBack } from "./js/jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, mayTake, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, WAIVER_HINTS, waiverKindLabel, coStatusWords, waiverHint, waiverTypeText, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, payAppList, shortPayable, shortPayLabel, shortPayAttrs, canPullBack } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
@@ -841,9 +841,9 @@ function contactFormHtml(j) {
 // Pull back a sent pay app (R4-03): a button, then the reason and the button that does it.
 function pullBackHtml(j, i) {
   const key = `voidsent-${i.id}`;
-  if (!formOpen[key]) return `<button class="btn small secondary danger-text" data-action="toggle-form" data-form="${key}" aria-expanded="false">Pull back this pay app…</button>`;
+  if (!formOpen[key]) return `<button class="btn small secondary danger-text" data-action="toggle-form" data-form="${key}" aria-expanded="false">${termText("Pull back this pay app…")}</button>`;
   return `<div class="pull-back" data-form-key="${key}"><h3>Pull back ${i.number}</h3>
-    <p class="sub">For a pay app that went out with a mistake. ${j.payer.name || "The customer"} is emailed that it is withdrawn; you can then bill again.</p>
+    <p class="sub">${termText("For a pay app that went out with a mistake.")} ${j.payer.name || "The customer"} is emailed that it is withdrawn; you can then bill again.</p>
     ${formErrorLine(key)}<div class="form-row">
       ${field({ form: key, name: "reason", id: `voidsent-reason-${i.id}`, label: "Why pull it back", required: true, placeholder: "Wrong quantity on line 3", wide: true })}
       <button class="btn small danger" data-action="void-sent" data-id="${j.id}" data-inv="${i.id}">Pull back ${i.number}</button>
@@ -1280,7 +1280,7 @@ const ACTIONS = {
   "progress-all": () => { formOpen.progress = false; clearForm("progress"); formOpen.done = true; render(); document.getElementById("done-notes")?.focus(); },
   "done": async (el, id) => {
     const j = state.jobs.find(x => x.id === id);
-    if (!(await askConfirm(`Mark ${unesc(j ? j.name : "the job")} done? This bills the rest of the contract on a final pay app.`, "Mark done"))) return;
+    if (!(await askConfirm(`Mark ${unesc(j ? j.name : "the job")} done? ${termText("This bills the rest of the contract on a final pay app.")}`, "Mark done"))) return;
     const v = formValues("done");
     await post(`/api/jobs/${id}/done`, { notes: v.notes || "", period_to: v.period_to || "" }, { formKey: "done", close: "done" });
   },
@@ -1404,7 +1404,7 @@ const ACTIONS = {
   "inbox-mark-done": async (el) => {
     const it = (state.inbox || []).find(x => x.id === el.dataset.item);
     const j = it && state.jobs.find(x => x.id === it.says_done_job_id);
-    const answer = await askConfirm(`Mark ${unesc(j ? j.name : "the job")} done? This bills the rest of the contract on a final pay app.`, "Mark done and draft", false, "Just file the message");
+    const answer = await askConfirm(`Mark ${unesc(j ? j.name : "the job")} done? ${termText("This bills the rest of the contract on a final pay app.")}`, "Mark done and draft", false, "Just file the message");
     if (!answer) return;
     if (answer === "alt") { if (it) await post(`/api/inbox/${it.id}/file`, { job_id: it.says_done_job_id, kind: it.kind }); return; }
     const r = await post(`/api/inbox/${el.dataset.item}/mark-done`);
@@ -1455,7 +1455,7 @@ const ACTIONS = {
     const i = j && j.invoices.find(x => x.id === inv);
     const v = formValues(key);
     if (refuseForm(key, v.reason ? {} : { reason: "Enter why you are pulling it back, like a wrong quantity on line 3." })) return;
-    if (j && !(await askConfirm(`Pull back ${unesc(i ? i.number : "this pay app")}? An email to ${sendsTo(j)} says it is withdrawn and nothing is due on it.`, "Pull back", true))) return;
+    if (j && !(await askConfirm(`Pull back ${unesc(i ? i.number : termText("this pay app"))}? An email to ${sendsTo(j)} says it is withdrawn and nothing is due on it.`, "Pull back", true))) return;
     await post(`/api/jobs/${id}/void-sent/${inv}`, { reason: v.reason }, { formKey: key, close: key });
   },
   "reopen": async (el, id) => {
@@ -1470,7 +1470,7 @@ const ACTIONS = {
     await post(`/api/jobs/${id}/undo-done`);
   },
   "void-draft": async (el, id) => {
-    if (!(await askConfirm("Delete the open draft pay app? You can draft it again from the job page.", "Delete draft", true))) return;
+    if (!(await askConfirm(termText("Delete the open draft pay app? You can draft it again from the job page."), "Delete draft", true))) return;
     await post(`/api/jobs/${id}/void-draft`);
   },
   "follow-up": async (el, id) => {
@@ -2125,7 +2125,7 @@ function sovCardHtml(j) {
     if (!v.editable) return "";
     return `<div class="card" id="sov-card">
       <h2>Schedule of values</h2>
-      <p class="sub">Bill line by line, the way subs bill: quantity × unit rate plus overhead and profit. Each pay app then shows what was done on each line this period. Optional; without it, progress is entered in dollars. Set it before the first pay app.</p>
+      <p class="sub">Bill line by line, the way subs bill: quantity × unit rate plus overhead and profit. ${termText("Each pay app then shows what was done on each line this period. Optional; without it, progress is entered in dollars. Set it before the first pay app.")}</p>
       <button class="btn secondary" data-action="sov-start" data-id="${j.id}">Set up schedule of values</button>
     </div>`;
   }
@@ -2639,15 +2639,15 @@ function onboardingHtml() {
   const draftJob = open.find(j => j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status)));
   const draft = draftJob && draftJob.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   const steps = [
-    { text: "Add your company address, phone and licence number (they print on every pay app).", done: !!String(state.company.address || "").trim(),
+    { text: termText("Add your company address, phone and licence number (they print on every pay app)."), done: !!String(state.company.address || "").trim(),
       label: "Company details", attrs: `data-action="onb-go" data-view="company" data-focus="#co-address"`, always: true },
-    { text: "Create your first job: contract amount, customer and where pay apps go.", done: jobs.length > 0,
+    { text: termText("Create your first job: contract amount, customer and where pay apps go."), done: jobs.length > 0,
       label: "New job", attrs: `data-action="onb-newjob"`, always: true },
     { text: "Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
     { text: "Set up a schedule of values to bill line by line (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present),
       label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.editable) || j.sov_view.present, "#sov-card"), needsJob: true },
-    { text: "Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the customer needs.", done: invoices.length > 0,
+    { text: termText("Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the customer needs."), done: invoices.length > 0,
       label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
     { text: "Add the missing paperwork, then Approve & send.", done: invoices.some(i => i.sent_at),
       label: draft ? "Review & send" : "Open the job",
@@ -2666,7 +2666,7 @@ function onboardingHtml() {
     : ` <button class="btn small${st === next ? "" : " secondary"}" ${st.attrs}>${st.label}</button>`;
   return `<div class="card onboarding">
     <button class="help-dismiss" data-action="onb-dismiss" title="Hide this" aria-label="Hide the setup checklist">×</button>
-    <h2>Get your first pay app out</h2>
+    <h2>${termText("Get your first pay app out")}</h2>
     <p class="sub">${done} of ${required.length} steps done. Steps marked optional don't count. You can bring this back from Help.</p>
     <ol class="onb-steps">${steps.map(st => `<li class="${st.done ? "done" : st === next ? "next" : ""}">${st.done ? "✓ " : ""}${st.optional ? "Optional: " : ""}${st.text}${st === next || st.optional || st.always ? button(st) : ""}</li>`).join("")}</ol>
   </div>`;
@@ -2700,12 +2700,12 @@ function recordRow(j, r) {
       <label class="inline-label" for="rec-edit-label-${r.id}">What it is</label>
       <input id="rec-edit-label-${r.id}" value="${r.label}" maxlength="120">
       <label class="inline-label" for="rec-edit-kind-${r.id}">Kind</label>
-      <select id="rec-edit-kind-${r.id}">${Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}"${r.kind === k ? " selected" : ""}>${v}</option>`).join("")}</select>
+      <select id="rec-edit-kind-${r.id}">${Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}"${r.kind === k ? " selected" : ""}>${termText(v)}</option>`).join("")}</select>
       <button class="btn small" data-action="record-save" data-id="${j.id}" data-item="${r.id}">Save</button>
       <button class="btn small secondary" data-action="record-edit" data-item="">Cancel</button>
     </div>`;
   }
-  return `<div class="list-item"><span class="pill">${RECORD_KINDS[r.kind] || r.kind}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${j.closed ? "" : ` <button class="linkish" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.added_at)}</div>` : ""}</div>`;
+  return `<div class="list-item"><span class="pill">${termText(RECORD_KINDS[r.kind] || r.kind)}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${j.closed ? "" : ` <button class="linkish" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.added_at)}</div>` : ""}</div>`;
 }
 
 function recordFiles(r) {
@@ -2765,14 +2765,14 @@ function inboxItemCard(i) {
   const files = (i.file_ids || []).map(fid => (state.files || []).find(x => x.id === fid)).filter(Boolean);
   const title = i.subject || (files[0] && files[0].name) || (i.text || "").split("\n")[0].slice(0, 80) || "Untitled";
   const preview = (i.text || "").slice(0, 600);
-  const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? "selected" : ""}>${v}</option>`).join("");
+  const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? "selected" : ""}>${termText(v)}</option>`).join("");
   const suggested = i.suggested_job_id && openJobs.find(j => j.id === i.suggested_job_id);
   const choices = suggested ? [] : choiceJobs(i, openJobs);
   // Nothing suggested and only one open job: that one (R2-07).
   const pick = i.suggested_job_id || defaultJobId(openJobs);
   const jobs = `<option value="">Pick a job…</option>` + jobsInOrder(openJobs, i.candidates || []).map(j => `<option value="${j.id}" ${pick === j.id ? "selected" : ""}>${j.name} (${j.code})</option>`).join("");
   const selects = !suggested || inboxOpen.has(i.id);
-  const kindName = RECORD_KINDS[i.kind] || i.kind;
+  const kindName = termText(RECORD_KINDS[i.kind] || i.kind);
   return `<div class="inbox-item" data-item="${i.id}">
     <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${title}</strong>
       <span class="sub">${i.from ? "from " + i.from + " · " : ""}${fmtDate(i.sent_at || i.received_at)}${i.note_date ? " · dated " + fmtDate(i.note_date) : ""}</span></div>
@@ -2998,7 +2998,7 @@ const views = {
         ${pasteBoxHtml()}
       </div>
       ${done.length ? `<details class="card"><summary><strong>Recently added or dismissed</strong></summary>
-        ${done.map(i => `<div class="list-item">${i.status === "filed" ? `${i.auto_filed ? "Reply filed automatically" : "Filed"} to ${jobName(i.filed_job_id)} as ${RECORD_KINDS[i.filed_kind] || i.filed_kind}` : "Dismissed"}: ${i.subject || (i.text || "").slice(0, 60) || "item"} <button class="btn small secondary" data-action="inbox-undo" data-item="${i.id}">Undo</button></div>`).join("")}
+        ${done.map(i => `<div class="list-item">${i.status === "filed" ? `${i.auto_filed ? "Reply filed automatically" : "Filed"} to ${jobName(i.filed_job_id)} as ${termText(RECORD_KINDS[i.filed_kind] || i.filed_kind)}` : "Dismissed"}: ${i.subject || (i.text || "").slice(0, 60) || "item"} <button class="btn small secondary" data-action="inbox-undo" data-item="${i.id}">Undo</button></div>`).join("")}
       </details>` : ""}
       <details class="card">
         <summary><strong>Bring emails and texts in automatically</strong></summary>
@@ -3228,7 +3228,7 @@ const views = {
       ${blocked ? `<div class="card blockers-card" role="note">
         <strong class="blocker">Blocking send:</strong>
         <ul class="blocker-list">${j.blockers.map(b => `<li>${b}</li>`).join("")}</ul>
-        <details><summary>Customer sent a pay app back? Note why.</summary>
+        <details><summary>${termText("Customer sent a pay app back? Note why.")}</summary>
           <div class="form-inline">
             <input id="learn-reason" placeholder="For example: needs a revised schedule of values" class="grow">
             <button class="btn small secondary" data-action="learn" data-id="${j.id}">Save to customer settings</button>
@@ -3272,7 +3272,7 @@ const views = {
       ${!j.closed && j.work_status === "complete" && (j.close_blocker_items || []).length ? `
         <section class="card close-blockers" aria-labelledby="close-blockers-h">
           <h2 id="close-blockers-h">Before you can finish this job</h2>
-          <ul class="close-blocker-list">${j.close_blocker_items.map(b => `<li data-blocker="${b.kind}"><span>${b.text}</span><span class="form-inline">${closeBlockerActions(j, b, perms()).map((a, n) => `<button class="btn small${n ? " secondary" : ""}" ${a.attrs}>${a.label}</button>`).join("")}</span></li>`).join("")}</ul>
+          <ul class="close-blocker-list">${j.close_blocker_items.map(b => `<li data-blocker="${b.kind}"><span>${termText(b.text)}</span><span class="form-inline">${closeBlockerActions(j, b, perms()).map((a, n) => `<button class="btn small${n ? " secondary" : ""}" ${a.attrs}>${a.label}</button>`).join("")}</span></li>`).join("")}</ul>
         </section>` : ""}
       <div class="detail-grid">
         <details class="card money-file"${window.innerWidth >= 800 ? " open" : ""}>
@@ -3305,7 +3305,7 @@ const views = {
           ${closeout.length ? `<div class="list-item row-link"><div><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout"><strong>Closeout paperwork</strong></a> <span class="sub">needed before held-back money is paid · ${closeoutMissing ? closeoutMissing + " missing" : "complete"}</span></div></div>` : ""}
           <h2 class="h2-gap">Change orders</h2>
           ${j.change_orders.length ? j.change_orders.map(co => `
-            <div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${words(co.status)}</span>${co.included_in_billing ? ` <span class="sub">on a pay app</span>` : ""}
+            <div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${coStatusWords(co.status)}</span>${co.included_in_billing ? ` <span class="sub">${termText("on a pay app")}</span>` : ""}
               ${coSignControls(j, co, !co.included_in_billing && !openDraft && co.amount_cents > 0 ? `<button class="btn small secondary" data-action="include-co" data-id="${j.id}" data-co="${co.id}">Bill now (send waits for signature)</button>` : "")}
             </div>`).join("") : `<p class="sub">No change orders. Add one if the scope changed.</p>`}
         </div>
@@ -3327,7 +3327,7 @@ const views = {
           <div data-form-key="record">${formErrorLine("record")}<div class="form-row">
             ${field({ form: "record", name: "label", id: "rec-label", label: "What it is", placeholder: "Rough-in inspection passed" })}
             ${field({ form: "record", name: "note", id: "rec-note", label: "Note (optional)" })}
-            ${field({ form: "record", name: "kind", id: "rec-kind", label: "Kind", options: Object.entries(RECORD_KINDS) })}
+            ${field({ form: "record", name: "kind", id: "rec-kind", label: "Kind", options: Object.entries(RECORD_KINDS).map(([k, v]) => [k, termText(v)]) })}
             <button class="btn small" data-action="add-record" data-id="${j.id}">Add to record</button>
           </div></div>
         </details>
@@ -3339,7 +3339,7 @@ const views = {
   results() {
     const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
     const head = `<h1>Results</h1>
-      <p class="sub">What Duracash recorded for your company, counted from your own pay apps and payments. Nothing here is estimated.</p>
+      <p class="sub">${termText("What Duracash recorded for your company, counted from your own pay apps and payments. Nothing here is estimated.")}</p>
       <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}
         <button class="btn small secondary" data-action="metrics-email">Email me last month's summary</button></div>`;
     if (!metricsData || metricsData.period !== metricsPeriod) return head + `<p class="sub">Loading…</p>`;
@@ -3347,14 +3347,14 @@ const views = {
     const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
     return head + `
       <div class="metrics">
-        <div class="metric"><div class="k">Work done to pay app sent</div><div class="v">${days(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
-        <div class="metric"><div class="k">Pay app sent to paid</div><div class="v">${days(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${days(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
-        <div class="metric"><div class="k">Follow-ups per pay app</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} pay apps sent</div></div>
+        <div class="metric"><div class="k">${termText("Work done to pay app sent")}</div><div class="v">${days(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
+        <div class="metric"><div class="k">${termText("Pay app sent to paid")}</div><div class="v">${days(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${days(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
+        <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
         <div class="metric"><div class="k">Sent back by the customer</div><div class="v">${m.sent_back}</div><div class="sub row-sub">reasons saved to customer settings and draft changes</div></div>
       </div>
       <div class="metrics">
-        <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} pay apps</div></div>
-        <div class="metric"><div class="k">Paid</div><div class="v">${money(m.paid_cents)}</div><div class="sub row-sub">${m.pay_apps_paid} pay apps</div></div>
+        <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} ${termText("pay apps")}</div></div>
+        <div class="metric"><div class="k">Paid</div><div class="v">${money(m.paid_cents)}</div><div class="sub row-sub">${m.pay_apps_paid} ${termText("pay apps")}</div></div>
         <div class="metric"><div class="k">Change orders billed</div><div class="v">${money(m.change_orders_billed_cents)}</div><div class="sub row-sub">signed, all time</div></div>
         <div class="metric"><div class="k">Held-back money received</div><div class="v">${money(m.retainage_collected_cents)}</div><div class="sub row-sub">all time</div></div>
       </div>
@@ -3373,7 +3373,7 @@ const views = {
     const records = state.daily_records || [];
     return `
       <h1>Daily record</h1>
-      <p class="sub">What happened on site today, saved on the job record. Add it to a pay app's paperwork later.</p>
+      <p class="sub">What happened on site today, saved on the job record. ${termText("Add it to a pay app's paperwork later.")}</p>
       <div class="card">
         <h2>New record</h2>
         ${openJobs.length ? `<div class="form-grid">
@@ -3434,7 +3434,7 @@ const views = {
             </div>
             ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Where is it? (optional)" aria-label="Where is it? (optional)" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save</button></div>` : ""}` : ""}
           </div>`;
-        }).join("") : `<p class="sub">This pay app needs no paperwork.</p>`}
+        }).join("") : `<p class="sub">${termText("This pay app needs no paperwork.")}</p>`}
       </div>
       ${!isCloseout && cosBlocking.length ? `<div class="card also-blocking" role="note">
         <h2>Also blocking send</h2>
@@ -3458,12 +3458,12 @@ const views = {
     return `
       ${backButton("cos", "Change orders")}
       <h1>CO ${co.number}: ${co.title}</h1>
-      <p class="sub"><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(co.amount_cents)} · <span class="pill ${co.status === "approved" ? "green" : "amber"}">${words(co.status)}</span></p>
+      <p class="sub"><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(co.amount_cents)} · <span class="pill ${co.status === "approved" ? "green" : "amber"}">${coStatusWords(co.status)}</span></p>
       <div class="card">
         <h2>Summary</h2>
         ${co.description ? `<p>${co.description}</p>` : ""}
         <div class="money-row"><span class="label">Waiting on</span><span>${co.waiting_on || (co.status === "pending" ? "Customer signature" : "Nothing")}</span></div>
-        <div class="money-row"><span class="label">On a pay app</span><span>${co.included_in_billing ? "Yes" : "No"}</span></div>
+        <div class="money-row"><span class="label">${termText("On a pay app")}</span><span>${co.included_in_billing ? "Yes" : "No"}</span></div>
         ${coSignature(co)}
         ${coSignControls(j, co)}
       </div>
@@ -3491,7 +3491,7 @@ const views = {
       <h1>${inv.number}</h1>
       <p class="sub">${invoicePill(inv)} <a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(inv.amount_cents)}</p>
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The customer was told nothing is due on it.</p>` : ""}
-      <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a> <span class="sub">The same PDF goes with the email when the pay app is sent.</span></p>
+      <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a> <span class="sub">${termText("The same PDF goes with the email when the pay app is sent.")}</span></p>
       ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
       ${draft ? `<div class="card send-check">
         <h2>Before you send</h2>
@@ -3505,14 +3505,14 @@ const views = {
         <div class="money-row"><span class="label">Period to</span><span>${inv.period_to ? fmtDate(inv.period_to) : "—"}</span></div>
         ${terms ? `<div class="money-row"><span class="label">Payment due</span><span>${fmtDate(dueIso)}, ${terms} days after it goes out</span></div>` : ""}
         <div class="money-row"><span class="label">Subject</span><span>${subjectPreview(j, inv)}</span></div>
-        ${inv.final ? `<p class="sub final-note">The final pay app: the PDF is marked FINAL APPLICATION.</p>` : ""}
+        ${inv.final ? `<p class="sub final-note">${termText("The final pay app: the PDF is marked FINAL APPLICATION.")}</p>` : ""}
         <div class="money-row"><span class="label">Attached</span><span>Pay app PDF${inv.sov_sheet && inv.sov_sheet.length ? " with continuation sheet" : ""}, paperwork checklist, ${pkt.filter(p => p.present).length} paperwork item${pkt.filter(p => p.present).length === 1 ? "" : "s"}</span></div>
         ${noAddress ? `<div class="notice no-address">Your company address is blank on this PDF.
           <button class="btn small secondary" data-action="onb-go" data-view="company" data-focus="#co-address">Company details</button></div>` : ""}
         ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>` : ""}
         ${missing ? `<p class="blocker">${missing} paperwork item${missing === 1 ? " is" : "s are"} missing. Add ${missing === 1 ? "it" : "them"}, then send.</p>` : ""}
-        ${noEmail ? `<p class="blocker">Add the email pay apps go to, then send.</p>` : ""}
-        ${locked ? confirmFirstHtml("the pay app") : ""}
+        ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
+        ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
         ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" ${missing || (j.blockers || []).length || noEmail || locked ? "disabled" : ""}>Approve & send to ${j.payer.ap_email || "the customer"}</button>` : OWNER_SENDS}
       </div>` : ""}
       <div class="card">
@@ -3526,7 +3526,7 @@ const views = {
         ${pkt.length ? pkt.map(p => {
           const skipped = !p.required && !p.present;
           return `<div class="list-item"><span aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> ${p.label}${skipped ? ` <span class="sub">not needed</span>` : `<span class="visually-hidden">${p.present ? " in" : " missing"}</span>`}</div>`;
-        }).join("") : `<p class="sub">This pay app needs no paperwork.</p>`}
+        }).join("") : `<p class="sub">${termText("This pay app needs no paperwork.")}</p>`}
         <button class="btn secondary small" data-action="open-packet" data-job="${j.id}" data-inv="${inv.id}">Open paperwork</button>
       </div>
       <div class="card">
@@ -3576,13 +3576,13 @@ const views = {
         </div>
       </div>` : ""}
       <div class="card send-check">
-        <h2>By pay app</h2>
+        <h2>${termText("By pay app")}</h2>
         ${owed && j.payer.ap_email ? `<div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email}</span></div>` : ""}
         ${owed && !j.payer.ap_email ? `<p class="blocker">Add the email pay apps go to in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>, then send.</p>` : ""}
         ${owed && locked ? confirmFirstHtml("the waiver") : ""}
         ${due.concat(sent).length ? due.concat(sent).map(i => `<div class="list-item"><strong>${i.number}</strong> · ${money(i.amount_cents)} · ${i.waiver_sent ? `sent ${fmtDate(i.waiver_sent_at)}${i.waiver_kind ? " · " + waiverKindLabel(i.waiver_kind) : ""}` : `<span class="pill amber">Due</span>`}
           ${!i.waiver_sent ? (may("waiver") ? waiverSendForm(j, i, locked || !j.payer.ap_email) : OWNER_SENDS) : ""}</div>`).join("")
-          : j.waiver_due && !j.waiver_sent ? (may("waiver") ? waiverSendForm(j, null, locked || !j.payer.ap_email) : OWNER_SENDS) : `<p class="sub">${j.waiver_sent ? "Sent " + fmtDate(j.waiver_sent_at) : "No waiver is due yet. One is due after each paid pay app."}</p>`}
+          : j.waiver_due && !j.waiver_sent ? (may("waiver") ? waiverSendForm(j, null, locked || !j.payer.ap_email) : OWNER_SENDS) : `<p class="sub">${j.waiver_sent ? "Sent " + fmtDate(j.waiver_sent_at) : termText("No waiver is due yet. One is due after each paid pay app.")}</p>`}
       </div>
     `;
   },
@@ -3650,7 +3650,7 @@ const views = {
       if (j.closed_at) add(j.closed_at, `${j.code} finished`, "paid", j.id);
       const dueDay = Number(unesc(String(j.payer.payapp_due_day || "")));
       if (dueDay && !j.closed && (j.work_status !== "complete" || j.money.unbilled_completed_cents > 0))
-        add(localDay(new Date(calYear, calMonth, Math.min(dueDay, daysInMonth))), `${j.code} pay app due to ${j.payer.name}`, "", j.id);
+        add(localDay(new Date(calYear, calMonth, Math.min(dueDay, daysInMonth))), `${j.code} ${termText("pay app due to")} ${j.payer.name}`, "", j.id);
     });
     const cells = [];
     for (let i = 0; i < startDow; i++) cells.push({ other: true });
@@ -3770,12 +3770,12 @@ const views = {
       </div>` : ""}
       ${cos.length ? `<div class="table-wrap">
         <table>
-          <tr><th>Change order</th><th>Job</th><th>Amount</th><th>Status</th><th>Waiting on</th><th>On a pay app</th></tr>
+          <tr><th>Change order</th><th>Job</th><th>Amount</th><th>Status</th><th>Waiting on</th><th>${termText("On a pay app")}</th></tr>
           ${cos.slice().reverse().map(c => `<tr>
             <td><a href="${pathFor("co-detail", c.jobId, c.id)}" data-action="open-co" data-job="${c.jobId}" data-co="${c.id}">CO ${c.number}: ${c.title}</a>${c.description ? `<div class="sub row-sub">${c.description.slice(0, 80)}</div>` : ""}</td>
             <td>${c.job}</td>
             <td class="num">${money(c.amount_cents)}</td>
-            <td><span class="pill ${c.status === "approved" ? "green" : c.status === "withdrawn" ? "" : "amber"}">${words(c.status)}</span></td>
+            <td><span class="pill ${c.status === "approved" ? "green" : c.status === "withdrawn" ? "" : "amber"}">${coStatusWords(c.status)}</span></td>
             <td>${c.waiting_on || (c.status === "pending" ? "Signature" : "—")}</td>
             <td>${c.included_in_billing ? "Yes" : "No"}</td>
           </tr>`).join("")}
@@ -3823,7 +3823,7 @@ const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("Nothing unpaid", "Unpaid pay apps show up here after one is sent.")}
+      </div>` : emptyState("Nothing unpaid", termText("Unpaid pay apps show up here after one is sent."))}
     `;
   },
   payments() {
@@ -3875,12 +3875,12 @@ const views = {
     const open = state.jobs.filter(j => j.money.retainage_open_cents > 0);
     return `
       <h1>Closeout</h1>
-      <p class="sub">Lien waivers for each paid pay app, and the money held back until the job is closed out.</p>
+      <p class="sub">${termText("Lien waivers for each paid pay app, and the money held back until the job is closed out.")}</p>
       <section class="card closeout-waivers" aria-labelledby="closeout-waivers-h">
         <h2 id="closeout-waivers-h">Lien waivers</h2>
-        <p class="sub">One lien waiver per paid pay app. Duracash never writes the waiver; it sends the signed one on the job record.</p>
+        <p class="sub">${termText("One lien waiver per paid pay app. Duracash never writes the waiver; it sends the signed one on the job record.")}</p>
         <details class="waiver-hints"><summary>Which type?</summary>
-          <ul>${Object.entries(WAIVER_KINDS).map(([k, v]) => `<li><strong>${v}.</strong> ${WAIVER_HINTS[k]}</li>`).join("")}</ul>
+          <ul>${Object.entries(WAIVER_KINDS).map(([k, v]) => `<li><strong>${v}.</strong> ${waiverHint(k)}</li>`).join("")}</ul>
         </details>
         ${rows.length ? `<div class="table-wrap">
           <table>

@@ -167,7 +167,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 
 ## Project layout
 
-- `domain.py`: money rules, packet gates, status labels, audit, playbook, email log
+- `domain/`: money rules, paperwork gates, status labels, playbook, email log (`domain/__init__.py`), and the audit chain (`domain/trail.py`); every name imports from `domain`
 - `auth.py`: users and roles, password hashes, sessions, login throttling, reset/verify/invite tokens
 - `storage.py`: data directory and atomic JSON writes
 - `importer.py`: files, email parsing, notes splitting, job matching, the Inbox
@@ -180,6 +180,9 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `offsite.py`: encrypted off-site copies of backups (age, S3-compatible upload)
 - `alerts.py`: crash and backup-failure alerts to a webhook
 - `totp.py`: two-step sign-in codes (RFC 6238)
+- `qr.py`: the QR code shown when two-step sign-in is set up (SVG, no library)
+- `outbox.py`: sends the emails a change approved, and Send again from the Outbox
+- `monthly.py`: the daily and monthly emails, the restore drill and the hourly loop that runs them
 - `billing.py`: Stripe Checkout and Customer Portal, the signed webhook, ending Stripe's trial when the first pay app is paid, and whether a company is held read-only. Stripe's names are from their documentation as remembered, checked only against a stand-in (`tests/test_billing.py`)
 - `qbo_csv.py`: payments from a QuickBooks CSV export, proposed against open pay apps
 - `qbo.py`: the QuickBooks Online connection, read-only: OAuth connect and token refresh, payments proposed with the same matcher (each recorded once, by its QuickBooks id), and a reconciliation report against QuickBooks invoices. Intuit's endpoints and field names are from their documentation as remembered, checked only against a stand-in (`tests/test_qbo.py`) until the first sandbox connection

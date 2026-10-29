@@ -235,7 +235,7 @@ flowchart TD
     N --> O["The pay app can't be sent until it is signed: 'Get CO N signed'"]
     O --> F
     F -->|"Dropped"| P["Tap 'Withdraw', confirm"]
-    K --> Q["Change order Approved and billable"]
+    K --> Q["Change order Signed and billable"]
     M --> Q
 ```
 

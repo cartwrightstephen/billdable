@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { setBillingStyle, billingStyle, term, termText, actionWords, ACTION_WORDS, STYLE_NOTE } from "../../static/js/terms.js";
-import { nextStep, jobActions, closeBlockerActions, jobStatus } from "../../static/js/jobs.js";
+import { nextStep, jobActions, closeBlockerActions, jobStatus, waiverHint, waiverSendForm, RECORD_KINDS } from "../../static/js/jobs.js";
 import { queueHtml } from "../../static/js/today.js";
 import { INVOICE_WORDS } from "../../static/js/format.js";
 import { NEW, OLD } from "./glossary.mjs";
@@ -68,6 +68,24 @@ test("draws: next steps, job buttons, Today and the settings note", () => {
   assert.equal(STYLE_NOTE, "Changes the word used across the app and sets the free trial: 90 days, or 45 for draws.");
   setBillingStyle("monthly");
   assert.equal(billingStyle(), "pay_apps", "an unknown style reads pay apps");
+});
+
+test("draws: Closeout's waiver lines and the record kind read draw too (review)", () => {
+  try {
+    setBillingStyle("draws");
+    assert.equal(waiverHint("unconditional_progress"), "You already have the money for this draw.");
+    assert.match(waiverSendForm({ id: "j1", invoices: [] }, { id: "inv-1" }), /data-waiver-hint="inv-1">You already have the money for this draw\./);
+    assert.equal(termText(RECORD_KINDS.pay_app), "Backup for the draw");
+  } finally {
+    setBillingStyle("pay_apps");
+  }
+  assert.equal(waiverHint("unconditional_progress"), "You already have the money for this pay app.");
+  // The app's own sentences on the job page, Closeout and Today go through termText (app.js).
+  const app = text["app.js"];
+  for (const s of ["Pull back this pay app…", "By pay app", "Get your first pay app out", "One lien waiver per paid pay app.", "Follow-ups per pay app"]) {
+    assert.ok(app.includes(`termText("${s}`), s);
+  }
+  assert.ok(app.includes("${termText(b.text)}"), "the Before you can finish list");
 });
 
 test("History pills are sentences, not action codes", () => {

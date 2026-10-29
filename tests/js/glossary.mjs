@@ -12,7 +12,7 @@ export const NEW = [
   "Delete draft", "Activity log", "Unpaid", "Closeout", "Waiting (", "Also email (CC)", "Paperwork needed with each pay app",
   "They send pay apps back when", "Days they usually take to pay", "Days between follow-ups", "Total done so far $",
   "Anything to note? (optional)", "sent by ", "Notes (kept on the job record)", "Recommended for owners.",
-  "Homeowner: their email. GC: their accounts-payable address.",
+  "Homeowner: their email. GC: their accounts-payable address.", "Backup for the pay app",
 ];
 
 // The words they replace. Each is a label, button, heading or sentence the page must not show;
@@ -23,5 +23,5 @@ export const OLD = [
   /[Cc]lose for (the )?record/, /Closed for the record/, /Money file/i, /Approved COs/, /Pending COs/, /Put on next pay app/,
   /Retainage open/, /Void draft/, />Audit</, /"Audit"/, /"Collections"/, />Collections</, /File to job record/, /To file \(/,
   /Completed to date/, /Completion notes/, /Notes for the job record/, /Owners should turn this on/, /"AP email"/, /AP email \(/,
-  /"Approver"/, />Approver</, /Approve send/, /Draft skipped/, /\bthe payer\b/, /\bPayer\b(?!s)/,
+  /"Approver"/, />Approver</, /Approve send/, /Draft skipped/, /\bthe payer\b/, /\bPayer\b(?!s)/, /Pay app \/ invoice backup/,
 ];
