@@ -717,19 +717,21 @@ def dismiss_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, A
 
 
 def _paperwork_refusal(job: dict[str, Any], rids: set[str], can_pull_back: bool = True) -> "domain.GateError | None":
-    """Why Undo can't take these records off (attached by hand to some paperwork), with a link to
-    where that is settled (Oct 23 note #13). A sent pay app comes first: what went with it stays
-    as it was sent, so its page is the way, not Remove. Else the paperwork page, where Remove is.
+    """Why Undo can't take these records off, with a link to where that is settled (Oct 23 note #13).
+    A sent pay app comes first: what went with it stays as it was sent, however it was attached,
+    so its page is the way, not Remove. Else the paperwork page, where Remove is, for a record
+    attached by hand (one attached automatically comes off with the record).
     Only an owner can pull a pay app back (void-sent), so a member is told to ask one."""
-    def holds(packet: list[dict[str, Any]] | None) -> bool:
-        return any(a.get("record_id") in rids and not a.get("auto") for p in packet or [] for a in p.get("attachments", []))
+    def holds(packet: list[dict[str, Any]] | None, auto_too: bool = False) -> bool:
+        return any(a.get("record_id") in rids and (auto_too or not a.get("auto"))
+                   for p in packet or [] for a in p.get("attachments", []))
 
     def link(label: str, view: str, detail: str = "") -> dict[str, str]:
         return {"label": label, "view": view, "job_id": job["id"], "detail": detail}
 
     # A deleted draft is void too, but it never went out (no sent_at): nothing it held went to anyone.
     went = [inv for inv in job.get("invoices", []) if inv.get("status") not in domain.DRAFT_STATUSES
-            and (inv.get("status") != "void" or inv.get("sent_at")) and holds(inv.get("packet"))]
+            and (inv.get("status") != "void" or inv.get("sent_at")) and holds(inv.get("packet"), auto_too=True)]
     if went:
         inv = went[-1]
         number = inv.get("number") or "a pay app"

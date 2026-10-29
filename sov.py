@@ -424,6 +424,8 @@ def _desc_qty_unit(cell: str) -> "re.Match[str] | None":
     return m if m and m["unit"].lower().rstrip(".") in UNIT_WORDS else None
 
 
+# "Mobilization 12,500" or "Demo $3,500" on its own line: a description and a lump sum.
+DESC_AMOUNT_RE = re.compile(r"^(?P<desc>[^,\"]*?[A-Za-z][^,\"]*?)\s+(?P<amount>\$?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)$")
 TOTAL_RE = re.compile(r"^(sub\s*-?\s*total|grand\s+total|total|totals|overhead|o\s*&\s*p|profit|markup|retainage)\b", re.I)
 
 
@@ -444,8 +446,13 @@ def _split_rows(text: str) -> list[list[str]]:
                 # "Floor tile 1,200 sf at $8.50/sf" or "Concrete 2,400 SF": the comma is a thousands
                 # separator, not a column.
                 rows.append([line.strip()])
+            elif d := DESC_AMOUNT_RE.match(line.strip()):
+                # "Mobilization 12,500": the comma is a thousands separator, not a column.
+                rows.append([d["desc"], d["amount"]])
             else:
-                rows.extend(_join_thousands(row, ", " in line) for row in csv.reader([line]))
+                # Typed when a cell starts with a space (", " between cells); a ", " inside a quoted
+                # cell ("Doors, solid") doesn't count.
+                rows.extend(_join_thousands(row, any(c[:1].isspace() for c in row[1:])) for row in csv.reader([line]))
     rows = [[c.strip()[:200] for c in row[:MAX_CELLS]] for row in rows]
     return [r for r in rows if any(c for c in r)]
 
@@ -455,12 +462,20 @@ def _join_thousands(row: list[str], spaced: bool) -> list[str]:
     Without a $ sign, "Demo, 3,500" is joined too when the row puts a space after its other commas
     (`spaced`): the comma with no space is then a thousands separator. A row with no ", " at all is
     a saved CSV file, where "Demo,3,500" means quantity 3 at $500, so it stays split. The joined part may
-    run on into a unit and a rate ("Tile, 1,200 SF @ 8.50")."""
+    run on into a unit and a rate ("Tile, 1,200 SF @ 8.50", "6 mo at 2,500/mo"). The number may also end
+    a text cell ("6 mo at 2" then "500/mo"); a description that then ends in a plain amount
+    ("Mobilization 12" then "500") gives the amount its own cell, so the row keeps its cell count."""
+    groups = r"\$\d{1,3}(,\d{3})*" if not spaced else r"\$?\d{1,3}(,\d{3})*"
     out: list[str] = []
     for cell in row:
-        groups = r"^\s*\$\d{1,3}(,\d{3})*$" if not spaced else r"^\s*\$?\d{1,3}(,\d{3})*$"
-        if out and re.match(groups, out[-1]) and re.match(r"^\d{3}(\.\d{1,2})?(?=$|\s+\D)", cell):
-            out[-1] = out[-1] + "," + cell
+        m = out and re.match(r"^(?P<head>(?:.*\s)?)(?P<num>" + groups + r")$", out[-1])
+        if m and re.match(r"^\d{3}(\.\d{1,2})?(?=$|\s+\D|\s*/)", cell):
+            joined = out[-1] + "," + cell
+            if (re.search(r"[A-Za-z]", m["head"]) and re.match(r"^\d{3}(\.\d{1,2})?$", cell)
+                    and not (_at_rate(joined) or _desc_qty_unit(joined))):
+                out[-1:] = [m["head"].rstrip(), m["num"] + "," + cell]
+            else:
+                out[-1] = joined
         else:
             out.append(cell)
     return out
