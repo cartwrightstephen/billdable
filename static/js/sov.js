@@ -39,12 +39,22 @@ export function sovLineProblem(l) {
 // The schedule card's note when the only thing keeping the schedule fixed is an unsent draft
 // (sov_view.draft_lock from the server; Oct 23 note 8). The rule is the server's; this only says
 // why and offers Delete draft (the void-draft action, with its own confirm) to whoever may use it.
+// Someone who may not delete drafts is told an owner can. A job with no schedule yet gets one
+// quiet line saying how to set one up, since its card would otherwise be empty.
 // j comes escaped from the state, so its fields go in as they are.
-// A job with no schedule gets nothing: its card stays hidden once a pay app is drafted.
 export function sovDraftLockHtml(j, canDelete) {
-  const lock = j.sov_view && j.sov_view.present && j.sov_view.draft_lock;
+  const v = j.sov_view || {};
+  const lock = v.draft_lock;
   if (!lock) return "";
-  const text = `The schedule is fixed while ${lock.number} is a draft. Delete the draft to change it.`;
+  let text;
+  if (v.present) {
+    text = `The schedule is fixed while ${lock.number} is a draft. ` +
+      (canDelete ? "Delete the draft to change it." : "An owner can delete the draft to change it.");
+  } else {
+    text = canDelete
+      ? `To bill line by line, delete draft ${lock.number} first, then set up a schedule of values.`
+      : `To bill line by line, an owner has to delete draft ${lock.number} first. Then you can set up a schedule of values.`;
+  }
   const button = canDelete ? ` <button class="btn small secondary" data-action="void-draft" data-id="${j.id}">Delete draft</button>` : "";
   return `<p class="sub sov-lock">${text}${button}</p>`;
 }

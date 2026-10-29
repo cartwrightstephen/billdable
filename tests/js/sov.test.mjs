@@ -52,7 +52,18 @@ test("a schedule fixed only by a draft says so and offers Delete draft (Oct 23 n
   assert.match(html, /<button class="btn small secondary" data-action="void-draft" data-id="job-1">Delete draft<\/button>/);
   assert.doesNotMatch(html, /style=|onclick=/);
   const member = sovDraftLockHtml(job(true, { id: "inv-1", number: "PA-2" }), false);
-  assert.match(member, /Delete the draft to change it/);
+  assert.match(member, /The schedule is fixed while PA-2 is a draft\. An owner can delete the draft to change it\./);
   assert.doesNotMatch(member, /<button/, "only someone who may delete the draft gets the button");
-  assert.equal(sovDraftLockHtml(job(false, { id: "inv-1", number: "PA-1" }), true), "", "no schedule: the card stays hidden");
+});
+
+test("a job with no schedule and only a draft says how to set one up (Oct 23 note 8)", () => {
+  const job = (lock) => ({ id: "job-1", sov_view: { present: false, editable: false, draft_lock: lock } });
+  assert.equal(sovDraftLockHtml(job(null), true), "", "a sent pay app: the card stays hidden");
+  const owner = sovDraftLockHtml(job({ id: "inv-1", number: "PA-1" }), true);
+  assert.match(owner, /To bill line by line, delete draft PA-1 first, then set up a schedule of values\./);
+  assert.match(owner, /data-action="void-draft" data-id="job-1">Delete draft<\/button>/);
+  assert.doesNotMatch(owner, /style=|onclick=/);
+  const member = sovDraftLockHtml(job({ id: "inv-1", number: "PA-1" }), false);
+  assert.match(member, /an owner has to delete draft PA-1 first\. Then you can set up a schedule of values\./);
+  assert.doesNotMatch(member, /<button/);
 });

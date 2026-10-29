@@ -111,6 +111,29 @@ class ParseTests(unittest.TestCase):
         self.assertEqual((out["lines"][0]["item"], out["lines"][0]["quantity"]), ("4", "3"))
         self.assertEqual(sov.parse_rows("Haul, 0 loads")["lines"], [])
 
+    def test_a_count_with_the_unit_first_or_under_a_header_needs_a_price(self):  # Oct 23 note 9
+        # A sheet with Unit before Qty: the unit word sits just before the number.
+        for text in ("Site cleanup, loads, 3", "Site cleanup\tloads\t3", "Site cleanup  loads  3"):
+            out = sov.parse_rows(text)
+            self.assertEqual(out["lines"], [{
+                "item": "", "description": "Site cleanup", "unit": "loads", "quantity": "3", "rate": "", "needs_price": True,
+            }], text)
+            self.assertEqual(out["warnings"], ["Row 1 (Site cleanup): 3 loads has no price. Enter the unit rate before you save."], text)
+        # The description is never taken as the unit, and a $ amount is money either way.
+        self.assertEqual(sov.parse_rows("Loads, 3")["lines"][0]["rate"], "3.00")
+        self.assertEqual(sov.parse_rows("Haul, loads, $300")["lines"][0]["rate"], "300.00")
+        # Under a header, a quantity with the rate left blank comes in the same way, not skipped.
+        for text in ("Description\tQty\tUnit\tRate\nSite cleanup\t3\tloads\t\nTile\t1200\tSF\t8.50",
+                     "Description,Unit,Qty,Rate\nSite cleanup,loads,3,\nTile,SF,1200,8.50"):
+            out = sov.parse_rows(text)
+            self.assertEqual(out["lines"], [
+                {"item": "", "description": "Site cleanup", "unit": "loads", "quantity": "3", "rate": "", "needs_price": True},
+                {"item": "", "description": "Tile", "unit": "SF", "quantity": "1200", "rate": "8.50"},
+            ], text)
+            self.assertEqual(out["warnings"], ["Row 2 (Site cleanup): 3 loads has no price. Enter the unit rate before you save."], text)
+        out = sov.parse_rows("Description,Qty\nPrep,40")
+        self.assertEqual(out["warnings"], ["Row 2 (Prep): 40 has no price. Enter the unit rate before you save."])
+
     def test_money_rows_still_read_as_before(self):  # Oct 23 note 9
         def got(text):
             return [(l["description"], l["quantity"], l["unit"], l["rate"], l.get("needs_price")) for l in sov.parse_rows(text)["lines"]]
@@ -121,10 +144,21 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(got("Tile, 1200 SF, 8.50"), [("Tile", "1200", "SF", "8.50", None)])
         self.assertEqual(got("Tile\t1200\tSF\t8.50"), [("Tile", "1200", "SF", "8.50", None)])
         self.assertEqual(got("Paint, 3 ea, 45"), [("Paint", "3", "ea", "45.00", None)])
-        # Unchanged readings, kept as they were: a typed "3,500" with no $ splits at the comma
-        # into quantity 3 at $500, and "1200 SF @ 8.50" in one cell is not read.
-        self.assertEqual(got("Demo, 3,500"), [("Demo", "3", "ea", "500.00", None)])
-        self.assertEqual(sov.parse_rows("Tile 1200 SF @ 8.50")["warnings"], ["Row 1 (Tile 1200 SF @ 8.50) has no numbers; skipped."])
+        self.assertEqual(got("Demo\t3,500"), [("Demo", "1", "LS", "3500.00", None)])
+
+    # Known misreads, left for a follow-up (Oct 23 note 9 names both as money rows). They are
+    # expected failures, not locked-in readings: when one starts to pass, remove its decorator.
+    @unittest.expectedFailure
+    def test_known_misread_typed_comma_thousands(self):
+        # Today a typed "3,500" with no $ splits at the comma: quantity 3 at $500, so $1,500.
+        lines = sov.parse_rows("Demo, 3,500")["lines"]
+        self.assertEqual([(l["quantity"], l["rate"]) for l in lines], [("1", "3500.00")])
+
+    @unittest.expectedFailure
+    def test_known_misread_qty_unit_at_rate_in_one_cell(self):
+        # Today "1200 SF @ 8.50" in one cell is skipped as having no numbers.
+        lines = sov.parse_rows("Tile 1200 SF @ 8.50")["lines"]
+        self.assertEqual([(l["quantity"], l["unit"], l["rate"]) for l in lines], [("1200", "SF", "8.50")])
 
     def test_garbage_is_reported_not_crashed(self):
         out = sov.parse_rows("hello\n\n,,,\n$$$, abc\n")
@@ -199,6 +233,10 @@ class SaveTests(unittest.TestCase):
         view = domain._sov_view(job)
         self.assertEqual((view["present"], view["editable"]), (False, False))
         self.assertEqual(view["draft_lock"]["number"], job["invoices"][-1]["number"])
+        # The server refuses what the card holds back, with the same reason.
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.save_sov(state, job["id"], LINES, "15")
+        self.assertEqual(str(ctx.exception), f"The schedule is fixed while {view['draft_lock']['number']} is a draft. Delete the draft to change it.")
 
     def test_dollar_progress_refused_and_removal_restores_it(self):
         state = new_state()

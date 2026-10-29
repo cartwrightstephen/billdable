@@ -331,9 +331,12 @@ function sovCardHtml(j) {
     return `<div class="card" id="sov-card"><h2>Schedule of values</h2>${sovEditorHtml(j)}</div>`;
   }
   if (!v.present) {
-    // No schedule and a pay app already drafted: the card stays hidden, so a job billed in dollars
-    // isn't nudged to delete its draft.
-    if (!v.editable) return "";
+    // No schedule and a pay app already exists. While that pay app is only a draft, one quiet line
+    // says how to set a schedule up (Oct 23 note 8); otherwise the card stays hidden.
+    if (!v.editable) {
+      const note = sovDraftLockHtml(j, mayTake("void-draft", perms()));
+      return note ? `<div class="card" id="sov-card"><h2>Schedule of values</h2>${note}</div>` : "";
+    }
     return `<div class="card" id="sov-card">
       <h2>Schedule of values</h2>
       <p class="sub">Bill line by line, the way subs bill: quantity × unit rate plus overhead and profit. ${termText("Each pay app then shows what was done on each line this period. Optional; without it, progress is entered in dollars. Set it before the first pay app.")}</p>

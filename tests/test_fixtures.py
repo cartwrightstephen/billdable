@@ -308,10 +308,16 @@ class FixtureTests(unittest.TestCase):
         self.assertIn("The columns seen: Customer, Date, Paid out, Cheque.", " ".join(out["warnings"]))
 
     def test_3_26_sov_rows_with_a_quantity_and_no_rate(self):
+        # The rows come in with the rate blank and needs_price; nothing is priced for them, and the
+        # server refuses to save until each has a rate (Oct 23 note 9, the same with or without a header).
         parsed = self.sov_parse(BAD / "bad_04_sov-quantity-without-rate.txt")
-        self.assertEqual(parsed["lines"], [])
-        self.assertEqual(len(parsed["warnings"]), 3)
-        self.assertTrue(all(w.endswith("has a quantity but no rate or amount; skipped.") for w in parsed["warnings"]))
+        self.assertEqual([(l["description"], l["quantity"], l["rate"], l["needs_price"]) for l in parsed["lines"]],
+                         [("Rough-in prep", "40", "", True), ("Wall tile", "1450", "", True), ("Thresholds", "12", "", True)])
+        self.assertEqual(parsed["warnings"], [
+            "Row 2 (Rough-in prep): 40 has no price. Enter the unit rate before you save.",
+            "Row 3 (Wall tile): 1,450 has no price. Enter the unit rate before you save.",
+            "Row 4 (Thresholds): 12 has no price. Enter the unit rate before you save.",
+        ])
 
     def test_3_27_email_with_a_zip_keeps_the_pdf(self):
         status, payload, items = self.upload(BAD / "bad_05_email-with-zip-attachment.eml")

@@ -423,12 +423,16 @@ def _join_dollars(row: list[str]) -> list[str]:
     return out
 
 
-def _counts_units(row: list[str], at: int) -> bool:
-    """True when the number at row[at] is followed by a unit word ("3 loads", "12 hrs"), so it counts
-    things rather than dollars. A number with a $ sign is always money."""
-    if "$" in row[at] or at + 1 >= len(row):
-        return False
-    return row[at + 1].lower().rstrip(".") in UNIT_WORDS
+def _counts_units(row: list[str], at: int, description_at: int) -> str:
+    """The unit word next to the number at row[at] ("3 loads", "12 hrs", or "loads, 3" from a sheet with
+    Unit before Qty), so it counts things rather than dollars; "" when there is none. The description
+    cell is never the unit. A number with a $ sign is always money."""
+    if "$" in row[at]:
+        return ""
+    for i in (at + 1, at - 1):
+        if 0 <= i < len(row) and i != description_at and row[i].lower().rstrip(".") in UNIT_WORDS:
+            return row[i]
+    return ""
 
 
 def _is_number(cell: str) -> bool:
@@ -455,10 +459,11 @@ def parse_rows(text: str) -> dict[str, Any]:
     With a header row (one of the first 5), columns are taken by name. Without one: the first text
     cell is the description, a short text cell is the unit, and the numbers are
     quantity and rate (two numbers), quantity, rate and amount (three), or a
-    lump-sum amount (one). One number followed by a unit word ("3 loads") is a
-    quantity with no price: the line comes back with a blank rate and
-    needs_price set, and a warning says to enter the rate. Total and markup rows
-    are skipped and reported.
+    lump-sum amount (one). One number next to a unit word ("3 loads", or
+    "loads, 3" when Unit comes before Qty) is a quantity with no price: the line
+    comes back with a blank rate and needs_price set, and a warning says to enter
+    the rate. Under a header, a quantity with the rate and amount blank comes back
+    the same way. Total and markup rows are skipped and reported.
     """
     rows = _split_rows(text or "")
     lines_out: list[dict[str, str]] = []
@@ -476,7 +481,6 @@ def parse_rows(text: str) -> dict[str, Any]:
         warnings.append(f"Row {i + 1} ({title}) skipped: text above the header.")
     body = rows[at + 1:] if header else rows
     op_hint = ""
-    needs_price: set[int] = set()
     for n, row in enumerate(body, start=at + 2 if header else 1):
         if header:
             cell = lambda f: row[header[f]].strip() if f in header and header[f] < len(row) else ""
@@ -499,10 +503,10 @@ def parse_rows(text: str) -> dict[str, Any]:
             description = texts[0][1] if texts else ""
             unit = next((c for _, c in texts[1:] if len(c) <= 8), "")
             qty = rate = amount = ""
-            if len(numbers) == 1 and _counts_units(row, at_numbers[0]):
+            count_unit = _counts_units(row, at_numbers[0], texts[0][0] if texts else -1) if len(numbers) == 1 else ""
+            if count_unit:
                 # "Site cleanup, 3 loads": how many, not how much. No price is made up.
-                qty, unit = numbers[0], row[at_numbers[0] + 1]
-                needs_price.add(n)
+                qty, unit = numbers[0], count_unit
             elif len(numbers) == 1:
                 amount = numbers[0]
             elif len(numbers) == 2:
@@ -542,12 +546,14 @@ def parse_rows(text: str) -> dict[str, Any]:
                 unit = unit or "LS"
                 if qty:
                     warnings.append(f"Row {n} ({description}): amount doesn't divide evenly by the quantity, so it was read as a lump sum.")
-            elif qty and n in needs_price:
+            elif qty:
+                # A quantity with no rate or amount, under a header or as "3 loads": the line comes in
+                # with the rate blank and needs_price, never skipped and never priced.
                 q, r = to_milli(qty, "quantity"), 0
                 if q <= 0:
                     warnings.append(f"Row {n} ({description}) has a zero or negative number; skipped.")
                     continue
-                warnings.append(f"Row {n} ({description}): {fmt_qty(q)} {unit} has no price. Enter the unit rate before you save.")
+                warnings.append(f"Row {n} ({description}): {(fmt_qty(q) + ' ' + unit).strip()} has no price. Enter the unit rate before you save.")
                 lines_out.append({
                     "item": item[:12],
                     "description": description[:200],
@@ -559,9 +565,6 @@ def parse_rows(text: str) -> dict[str, Any]:
                 if len(lines_out) >= MAX_LINES:
                     warnings.append(f"Stopped at {MAX_LINES} lines.")
                     break
-                continue
-            elif qty:
-                warnings.append(f"Row {n} ({description}) has a quantity but no rate or amount; skipped.")
                 continue
             else:
                 warnings.append(f"Row {n} ({description}) has no numbers; skipped.")
