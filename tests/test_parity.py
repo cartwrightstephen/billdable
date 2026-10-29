@@ -111,6 +111,48 @@ class CalendarFeedTests(unittest.TestCase):
         self.assertEqual(self._follow_ups(state), [(due, f"Follow up on {job['invoices'][0]['number']} (Pine)")])
 
 
+class DrawsWordTests(unittest.TestCase):
+    """A company that bills in draws (billing_style "draws", R6-01) reads "draw" in the job's
+    status line, the calendar feed and the helper's live answers, as on Today and in the app."""
+
+    def _draws(self):
+        state = _state()
+        state["company"]["billing_style"] = "draws"
+        job = domain.create_job(state, "Pay app house", "Jones GC", 10000000, address="12 Pine", approver="Sam", ap_email="ap@j.example")
+        return state, job
+
+    def test_status_line(self):
+        state, job = self._draws()
+        self.assertEqual(domain.job_view(state, job)["status_label"], "In progress")
+        domain.record_progress(state, job["id"], 1000000, "a")
+        _clear(job)
+        self.assertEqual(domain.job_view(state, job)["status_label"], "Draw draft in progress")
+        job["invoices"][-1]["status"] = "awaiting_approval"
+        self.assertEqual(domain.job_view(state, job)["status_label"], "Draw ready for review")
+        job["invoices"][-1]["status"] = "void"
+        domain.mark_done(state, job["id"])
+        job["invoices"] = [i for i in job["invoices"] if i["status"] == "void"]
+        self.assertEqual(domain.status_label(job, "draws"), "Draw not drafted")
+        self.assertEqual(domain.job_summary(state, job)["status_label"], "Draw not drafted")
+        self.assertEqual(domain.status_label(job), "Pay app not drafted", "pay apps by default")
+
+    def test_calendar_feed(self):
+        state, job = self._draws()
+        state["payers"][0]["payapp_due_day"] = 25
+        titles = [e["title"] for e in calendar_feed.events(state) if "due to" in e["title"]]
+        self.assertTrue(titles)
+        self.assertTrue(all(t.startswith("Draw due to Jones GC") for t in titles), titles)
+        self.assertNotIn("pay app", calendar_feed.render(state).lower().replace("pay app house", ""))
+
+    def test_helper_live_answers(self):
+        state, job = self._draws()
+        snap = domain.snapshot(state)
+        self.assertEqual(helper.handle("who_owes", snap, None, state)[0], "Nobody owes you on a sent draw right now.")
+        self.assertEqual(helper.handle("unbilled", snap, None, state)[0], "All finished work is on a draw.")
+        view = next(j for j in snap["jobs"] if j["id"] == job["id"])
+        self.assertEqual(helper.handle("draft_followup", snap, view, state)[0], "Pay app house has no sent, unpaid draw to follow up on.")
+
+
 class CloseoutMissingTests(unittest.TestCase):
     def test_job_view_names_the_closeout_items_the_server_checks(self):
         state = seed_state()

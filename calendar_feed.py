@@ -42,6 +42,7 @@ def _day(value: str) -> date | None:
 
 def events(state: dict[str, Any]) -> list[dict[str, Any]]:
     payers = {p["id"]: p for p in state.get("payers", [])}
+    style = domain.billing_style(state)   # "draw" for a company that bills in draws (R6-01)
     out = []
 
     def add(when: str | date | None, title: str, uid: str, detail: str = "") -> None:
@@ -80,8 +81,8 @@ def events(state: dict[str, Any]) -> list[dict[str, Any]]:
         if due and not j.get("closed") and (j.get("work_status") != "complete" or domain.job_money(j)["unbilled_completed_cents"] > 0):
             when = due[0]
             for _ in range(3):
-                add(when, f"Pay app due to {payer.get('name', 'the payer')} ({j['name']})", f"{j['id']}-due-{when:%Y%m}",
-                    "The payer's cutoff for this month's pay app, from the payer playbook.")
+                add(when, f"{domain.term_text('Pay app due to', style)} {payer.get('name', 'the payer')} ({j['name']})", f"{j['id']}-due-{when:%Y%m}",
+                    domain.term_text("The payer's cutoff for this month's pay app, from the payer playbook.", style))
                 when = domain.payapp_due(payer, when + timedelta(days=1))[0]
     return out
 

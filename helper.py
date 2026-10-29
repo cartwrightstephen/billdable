@@ -206,6 +206,9 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
            state: dict[str, Any] | None = None) -> tuple[str, list[dict[str, Any]]] | None:
     jobs = [j for j in snap["jobs"] if not j.get("closed")]
     company = snap.get("company", {}).get("name", "your company")
+    # The helper's own words in the company's word for a pay app (R6-01); names stay as typed.
+    style = domain.billing_style(snap)
+    pay_app = domain.term_text("pay app", style)
     if name == "today":
         # Today's own queue (domain.today_rows), so the helper, the Today page and the daily email
         # never disagree on what is due.
@@ -234,7 +237,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
     if name == "who_owes":
         owing = sorted((j for j in jobs if j["money"]["outstanding_cents"] > 0), key=lambda j: -j["money"]["outstanding_cents"])
         if not owing:
-            return "Nobody owes you on a sent pay app right now.", []
+            return f"Nobody owes you on a sent {pay_app} right now.", []
         lines = []
         for j in owing[:8]:
             inv = next((i for i in j["invoices"] if i["status"] in {"sent", "partial", "approved"}), None)
@@ -256,7 +259,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
             return None
         inv = next((i for i in job["invoices"] if i["status"] in domain.OPEN_FOR_PAYMENT), None)
         if not inv:
-            return f"{job['name']} has no sent, unpaid pay app to follow up on.", [_job_btn(job)]
+            return f"{job['name']} has no sent, unpaid {pay_app} to follow up on.", [_job_btn(job)]
         p = job["payer"]
         note = (f"Hi {p.get('approver') or p['name']},\n\nChecking on {inv['number']} for {job['name']} "
                 f"({domain.money(inv['amount_cents'])}), sent {(inv.get('sent_at') or '')[:10]}. Is anything missing on your side?\n\nThanks,\n{company}")
@@ -275,7 +278,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
             return f"{job['name']} has nothing blocking it. Status: {job['status_label']}.", [_job_btn(job)]
         if not job["blocked"]:
             # Missing paperwork before there is a draft is what the next pay app will need, not a block.
-            return (f"{job['name']} isn't blocked yet. The next pay app will need:\n" + "\n".join(f"- {b}" for b in job["blockers"]),
+            return (f"{job['name']} isn't blocked yet. The next {pay_app} will need:\n" + "\n".join(f"- {b}" for b in job["blockers"]),
                     [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open paperwork"}])
         return f"{job['name']} is blocked by:\n" + "\n".join(f"- {b}" for b in job["blockers"]), [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open paperwork"}]
     if name == "job_status":
@@ -288,9 +291,9 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
     if name == "unbilled":
         rows = [j for j in jobs if j["money"]["unbilled_completed_cents"] > 0]
         if not rows:
-            return "All finished work is on a pay app.", []
+            return f"All finished work is on a {pay_app}.", []
         return "Finished work not billed yet:\n" + "\n".join(f"- {j['name']}: {domain.money(j['money']['unbilled_completed_cents'])}" for j in rows), \
-            [{"type": "post", "path": f"/api/jobs/{j['id']}/draft", "label": f"Draft for {j['name']}", "confirm": f"Draft a pay app for {j['name']}?"} for j in rows[:4]]
+            [{"type": "post", "path": f"/api/jobs/{j['id']}/draft", "label": f"Draft for {j['name']}", "confirm": f"Draft a {pay_app} for {j['name']}?"} for j in rows[:4]]
     if name == "retainage_list":
         rows = [j for j in jobs if j["money"]["retainage_open_cents"] > 0]
         if not rows:
@@ -304,7 +307,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
     if name == "waivers_due":
         rows = [j for j in jobs if j.get("waiver_due") and not j.get("waiver_sent")]
         if not rows:
-            return "No waivers are due. A waiver comes due when a pay app is paid in full.", []
+            return f"No waivers are due. A waiver comes due when a {pay_app} is paid in full.", []
         return "Waivers due:\n" + "\n".join(f"- {j['name']}" for j in rows), [_job_btn(j) for j in rows[:4]]
     if name == "inbox":
         new = [i for i in snap.get("inbox", []) if i["status"] == "new"]

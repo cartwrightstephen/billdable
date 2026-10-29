@@ -1,8 +1,8 @@
 // The job page: its next step and forms (progress, mark done, record a payment, change orders),
 // the money, pay apps and change orders, the job record, the schedule of values and the history.
 import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
-import { RECORD_KINDS, isBlocked, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, mayTake, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, statusPill, coSignature, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs } from "../jobs.js";
-import { sovNum, sovMilli, sovCents, sovBp, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../sov.js";
+import { RECORD_KINDS, isBlocked, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, mayTake, waitingText, retainageNote, retainageAskWaits, closeoutMissing as closeoutMissingCount, statusPill, coSignature, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs } from "../jobs.js";
+import { sovMilli, lumpDone, sovCents, sovBp, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
@@ -406,15 +406,18 @@ async function sovSave(jobId, updateContract) {
 
 async function sovProgress(jobId) {
   const done = {};
+  let tooFine = false;
   document.querySelectorAll("[data-sovp]").forEach(el => {
     if (el.disabled) return;
     const raw = el.value.trim();
     if (!raw) return;
     if (el.dataset.lump === "1") {
-      const pct = sovNum(raw);
-      done[el.dataset.sovp] = isNaN(pct) ? raw : (Math.round(pct * 10) / 1000).toFixed(3);
+      const qty = lumpDone(raw);
+      if (qty === null) tooFine = true;
+      else done[el.dataset.sovp] = qty;
     } else done[el.dataset.sovp] = raw;
   });
+  if (tooFine) { toast("A lump-sum % done can have at most one decimal, like 99.9."); return; }
   const stored = {};
   document.querySelectorAll("[data-sovs]").forEach(el => {
     if (el.disabled) return;
@@ -580,7 +583,7 @@ export const views = {
           <div class="money-row"><span class="label">Retainage held</span><span>${money(m.retainage_held_cents)}${j.retainage_pct ? " · " + j.retainage_pct + "%" : ""}</span></div>
           <div class="money-row"><span class="label">Retainage released</span><span>${money(m.retainage_released_cents)}</span></div>
           <div class="money-row"><span class="label">Held back, still owed</span><span>${money(m.retainage_open_cents)}</span></div>
-          ${retNote ? `<p class="sub retainage-note">${closeoutMissing && j.work_status === "complete" ? `<a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout">${retNote}</a>` : `${retNote} <button class="linkish" data-action="nav" data-view="retainage">Ask for part of it</button>`}</p>` : ""}
+          ${retNote ? `<p class="sub retainage-note">${closeoutMissing && j.work_status === "complete" ? `<a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout">${retNote}</a>` : `${retNote}${j.work_status !== "complete" && !retainageAskWaits(j) ? ` <button class="linkish" data-action="nav" data-view="retainage">Ask for part of it</button>` : ""}`}</p>` : ""}
         </details>
         <div class="card">
           <h2>${termText("Pay apps")}</h2>

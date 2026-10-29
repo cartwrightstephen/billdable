@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import textwrap
+from datetime import datetime, timezone
 from typing import Any
 
 import sov
@@ -127,8 +128,10 @@ def contract_terms(job: dict[str, Any], at: str | None = None) -> dict[str, Any]
 
 
 def terms_for(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, Any]:
-    """As it was sent; a draft, as things stand now."""
-    return invoice.get("contract_at_send") or contract_terms(job, invoice.get("sent_at"))
+    """As it was sent; a deleted draft, as things stood when it was deleted; an open draft, as
+    things stand now."""
+    at = invoice.get("sent_at") or (invoice.get("voided_at") if invoice.get("status") == "void" else None)
+    return invoice.get("contract_at_send") or contract_terms(job, at)
 
 
 def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:

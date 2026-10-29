@@ -159,6 +159,26 @@ class MonthTwoTests(unittest.TestCase):  # R4-13
         self.assertIn(b"CO 1 \\(unsigned\\)", pdf_text(self.state, self.job, self.third))
         self.assertEqual(self.totals_row(self.third)[0], money_text(3_450_000 + 100_000))
 
+    # Read as it was when deleted: a change order signed or withdrawn after that does not change it.
+    def test_unsigned_change_order_signed_after_the_draft_was_deleted_stays_unsigned_there(self):
+        before = payapp_pdf.summary(self.job, self.third)
+        totals = self.totals_row(self.third)
+        domain.void_draft(self.state, self.job["id"])
+        self.third["voided_at"] = _earlier(self.third["voided_at"])
+        domain.approve_change_order(self.state, self.job["id"], self.co["id"])
+        self.assertEqual(payapp_pdf.summary(self.job, self.third), before)
+        self.assertEqual(before["unsigned_co"], 100_000)
+        self.assertIn(b"CO 1 \\(unsigned\\)", pdf_text(self.state, self.job, self.third))
+        self.assertEqual(self.totals_row(self.third), totals)
+
+    def test_withdrawn_after_the_draft_was_deleted_still_reads_as_it_was(self):
+        before = payapp_pdf.summary(self.job, self.third)
+        domain.void_draft(self.state, self.job["id"])
+        self.third["voided_at"] = _earlier(self.third["voided_at"])
+        domain.withdraw_change_order(self.state, self.job["id"], self.co["id"])
+        self.assertEqual(payapp_pdf.summary(self.job, self.third)["unsigned_co"], before["unsigned_co"])
+        self.assertEqual(payapp_pdf.summary(self.job, self.third)["contract_to_date"], before["contract_to_date"])
+
     def test_stored_materials_feed_to_date_not_this_period(self):
         entry = next(e for e in self.first["sov_sheet"] if e["line_id"] == self.rough)
         cols = sov.sheet_columns(entry, 10)
@@ -174,6 +194,43 @@ class MonthTwoTests(unittest.TestCase):  # R4-13
         self.assertEqual((cols["previous"], cols["this_period"], cols["stored"]), (450_000, 360_000, 300_000))
         self.assertEqual(cols["to_date"], cols["previous"] + cols["this_period"] + cols["stored"])
 
+
+def _earlier(iso, days=1):
+    return (datetime.fromisoformat(iso) - timedelta(days=days)).isoformat()
+
+
+class FiguresAsSentTests(unittest.TestCase):
+    """An old pay app's lines 1-9 read as they were when it went out: change orders signed, and
+    retainage released, after that do not change it (its PDF, its customer page, a resend)."""
+
+    def test_change_order_signed_after_sending_is_not_on_the_old_pay_app(self):
+        import payer_page
+        state = new_state()
+        job = new_job(state, contract=10_000_000)
+        domain.record_progress(state, job["id"], 4_500_000)
+        first = send_open(state, job)
+        before = payapp_pdf.summary(job, first)
+        first["sent_at"] = _earlier(first["sent_at"])
+        domain.add_change_order(state, job["id"], "Extra outlets", 1_000_000)
+        domain.approve_change_order(state, job["id"], job["change_orders"][-1]["id"])
+        after = payapp_pdf.summary(job, first)
+        self.assertEqual(after, before)
+        self.assertEqual(after["net_co"], 0)
+        self.assertEqual(after["contract_to_date"], 10_000_000)
+        self.assertIn("$100,000.00", payer_page._job_card(job, first))
+        self.assertNotIn("$110,000.00", payer_page._job_card(job, first))
+        # The next pay app is drafted now, so it has the change order.
+        domain.record_progress(state, job["id"], 6_000_000)
+        self.assertEqual(payapp_pdf.summary(job, job["invoices"][-1])["contract_to_date"], 11_000_000)
+
+    def test_retainage_released_after_sending_is_not_on_the_old_pay_app(self):
+        state = new_state()
+        job = new_job(state, contract=10_000_000, retainage=10)
+        domain.record_progress(state, job["id"], 10_000_000)
+        first = send_open(state, job)
+        first["sent_at"] = _earlier(first["sent_at"])
+        domain.record_retainage_payment(state, job["id"], 500_000)
+        self.assertEqual(payapp_pdf.summary(job, first)["released"], 0)
 
 if __name__ == "__main__":
     unittest.main()

@@ -193,6 +193,31 @@ test("Ask for retainage shows only once the work is done and the closeout paperw
   assert.equal(retainageNote(ready), "");
 });
 
+// domain.chase_retainage waits the customer's days between contacts after the last request.
+test("after a retainage request, Ask for retainage waits for the customer's days between contacts", () => {
+  const money = { unbilled_completed_cents: 0, retainage_open_cents: 500000, outstanding_cents: 0 };
+  const now = new Date("2026-10-29T15:00:00Z");
+  const asked = jobOf({ money, work_status: "complete", closeout_missing: [], invoices: [inv("paid")],
+    close_blockers: ["$5,000.00 of retainage is still open."], payer: { name: "ABC", follow_up_days: 7 },
+    last_retainage_chase_at: "2026-10-28T15:00:00+00:00" });
+  const a = jobActions(asked, { now });
+  assert.ok(!keys([a.primary, ...a.more].filter(Boolean)).includes("retainage"), "the server would refuse it until Nov 4");
+  assert.ok(keys(a.more).includes("retpay"), "recording it paid stays");
+  assert.match(nextStep(asked, now), /^Asked for the money held back Oct 28, 2026\. Ask again from Nov 4, 2026/);
+  assert.match(retainageNote(asked, now), /Asked for it Oct 28, 2026; ask again from Nov 4, 2026\./);
+  assert.deepEqual(closeBlockerActions(asked, { kind: "retainage" }, null, now).map(x => x.label), ["Record retainage paid"]);
+  // From the due moment on, it is the main step again.
+  const later = new Date("2026-11-04T15:00:00Z");
+  assert.equal(jobActions(asked, { now: later }).primary.key, "retainage");
+  assert.equal(nextStep(asked, later), "Ask for the money held back once the closeout paperwork is in.");
+  assert.equal(retainageNote(asked, later), "");
+  assert.deepEqual(closeBlockerActions(asked, { kind: "retainage" }, null, later).map(x => x.label), ["Record retainage paid", "Ask for retainage"]);
+  // A part asked for before the job is done waits the same way.
+  const part = jobOf({ money, payer: { follow_up_days: 7 }, last_retainage_chase_at: "2026-10-28T15:00:00+00:00" });
+  assert.equal(retainageNote(part, now), "Released at closeout. Asked for part of it Oct 28, 2026; ask again from Nov 4, 2026.");
+  assert.equal(retainageNote(part, later), "Released at closeout.");
+});
+
 test("only an unsigned change order in the way: Get CO N signed opens it", () => {  // R3-05
   const text = "Change Order 2 is included in the billing amount but has not been signed.";
   const j = job({ blockers: [text], missing_paperwork: [], invoices: [{ id: "d1", status: "draft" }],

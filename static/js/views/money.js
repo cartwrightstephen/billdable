@@ -1,7 +1,7 @@
 // Money: Pay apps (with their paperwork), Change orders, Unpaid, Payments (with QuickBooks),
 // Closeout (lien waivers and retainage) and Outbox, and the detail pages they open.
 import { esc, unesc, escDeep, money, centsFrom, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
-import { RECORD_KINDS, isBlocked, coBlockers, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, coStatusWords, waiverHint, waiverTypeText, waiverSendForm, followUpDue, defaultJobId, payAppList, shortPayLabel, shortPayAttrs, canPullBack } from "../jobs.js";
+import { RECORD_KINDS, isBlocked, coBlockers, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, coStatusWords, waiverHint, waiverTypeText, waiverSendForm, followUpDue, retainageAskWaits, defaultJobId, payAppList, shortPayLabel, shortPayAttrs, canPullBack } from "../jobs.js";
 import { continuationHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
@@ -41,6 +41,9 @@ function recordKindFor(item) {
 function retainageAskHtml(j) {
   const key = `retask-${j.id}`, done = j.work_status === "complete";
   if (!may("retainage")) return `<span class="sub">An owner asks for it.</span>`;
+  // chase_retainage waits the customer's days between contacts after the last request.
+  const asked = retainageAskWaits(j);
+  if (asked) return `<span class="sub">Asked ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}.</span>`;
   return `<div class="retainage-ask" data-form-key="${key}">${formErrorLine(key)}<div class="form-inline">
     ${moneyField({ form: key, name: "amount_cents", id: `${key}-amt`, label: done ? "Amount ($), blank for all" : "Part to ask for now ($)" })}
     <button class="btn small" data-action="retainage" data-id="${j.id}">Ask for retainage</button></div></div>`;

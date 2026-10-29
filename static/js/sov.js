@@ -27,6 +27,16 @@ export function sovCents(v) { return scaled(v, 2); }
 // Overhead and profit in basis points ("15.5" -> 1550), at most two decimals.
 export function sovBp(v) { return scaled(v, 2); }
 
+// A lump-sum line's "% done" as the quantity to send (the line's quantity is 1, held in thousandths,
+// so a tenth of a percent is the finest step). null when the percent has more than one decimal:
+// rounding it would bill a different amount than was typed. Not a number: sent as typed for the
+// server to explain.
+export function lumpDone(raw) {
+  if (isNaN(sovNum(raw))) return raw;
+  const tenths = scaled(raw, 1);
+  return isNaN(tenths) ? null : (tenths / 1000).toFixed(3);
+}
+
 export function sovExtend(q, r) { return Math.floor((q * r + 500) / 1000); }
 
 export function sovMarkup(base, bp) { return Math.floor((base * bp + 5000) / 10000); }
