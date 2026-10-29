@@ -369,6 +369,40 @@ class MailHttpTests(unittest.TestCase):
         monthly.send_daily_digests(server.SITE, when + timedelta(days=1))
         self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]])
 
+    def test_the_sent_message_id_is_kept_for_bounces(self):
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "msgid@pine.example", "password": PASSWORD,
+                                                             "name": "Pat Pine", "company_name": "Pine & Sons"})
+        cookie = res.getheader("Set-Cookie").split(";")[0]
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))
+        job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+        _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
+        self.ready_to_send(cookie, state["jobs"][0])
+        _, state = self.request("POST", f"/api/jobs/{state['jobs'][0]['id']}/send", {}, cookie=cookie)
+        self.assertEqual(state["email_log"][-1]["status"], "sent")
+        stored = server.load_company(data["user"]["company_id"])["email_log"][-1]
+        self.assertEqual(stored["message_id"], parsed(self.sink.messages[0])["Message-ID"])
+
+    def test_another_persons_change_does_not_deliver_an_email_it_did_not_queue(self):
+        # Owner B's Send saved a queued email; before B's own delivery runs, owner A (email not
+        # confirmed) saves something unrelated. A's request must not judge or send B's email.
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "owner-b@pine.example", "password": PASSWORD,
+                                                             "name": "Bo B", "company_name": "Pine & Sons"})
+        company_id = data["user"]["company_id"]
+        auth.create_user("owner-a@pine.example", PASSWORD, "Al A", company_id, role="owner")
+        res, _ = self.request("POST", "/api/auth/login", {"email": "owner-a@pine.example", "password": PASSWORD})
+        cookie_a = res.getheader("Set-Cookie").split(";")[0]
+        with server.company_lock(company_id):
+            st = server.load_company(company_id)
+            domain._record_email(st, "", "pay_app", "ap@park.example", "Pay application PA-1", "Body", "Bo B")
+            server.save_company(company_id, st)
+        job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+        res, state = self.request("POST", "/api/jobs", job, cookie=cookie_a)
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual(server.load_company(company_id)["email_log"][-1]["status"], "queued")
+        self.assertEqual(self.sink.messages, [])
+
     def test_not_set_up_then_retry(self):
         for key in MAIL_ENV:
             os.environ.pop(key, None)

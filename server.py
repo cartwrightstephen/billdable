@@ -691,7 +691,7 @@ class Handler(BaseHTTPRequestHandler):
         raw = self._read_body(length)
         try:
             body = json.loads(raw.decode("utf-8") or "{}")
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):  # nested too deep to read
             raise BadRequest("Request body must be valid JSON.")
         if not isinstance(body, dict):
             raise BadRequest("Request body must be a JSON object.")
@@ -776,13 +776,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with company_lock(company_id):
                 state = load_company(company_id)
+                waiting = {e.get("id") for e in state.get("email_log", []) if e.get("status") == "queued"}
                 fn(state)
                 # The first paid pay app ends the free trial (trial.py): tell Stripe, once.
                 trial_sub = billing.trial_end_due(state) if end_trial and billing.configured() else None
                 save_company(company_id, state)
                 payload = domain.light_snapshot(state)
-                # Most changes queue no email: don't load the company again just to find that out.
-                queued = deliver and user is not None and any(e.get("status") == "queued" for e in state.get("email_log", []))
+                # Only the emails this change queued: one another person approved (queued, not yet
+                # delivered by their own request) goes out under their name, not this user's.
+                # Most changes queue none: then the company isn't loaded again just to find that out.
+                queued = {e.get("id") for e in state.get("email_log", []) if e.get("status") == "queued" and e.get("id") not in waiting} \
+                    if deliver and user is not None else set()
         except UnknownAction:
             return 404, {"error": "Unknown action"}
         except OwnerOnly:
@@ -798,7 +802,7 @@ class Handler(BaseHTTPRequestHandler):
         if queued:
             # Approved emails go out after the change is saved and the lock is released; the reply
             # is written after that too, so a slow client can't stall other companies.
-            payload = outbox.deliver_queued(SITE, company_id, user, rid=self._rid) or payload
+            payload = outbox.deliver_queued(SITE, company_id, user, only=queued, rid=self._rid) or payload
         return 200, payload
 
     def _token(self) -> str | None:
@@ -1387,10 +1391,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             company_id = new_company_id()
+            # Read before the account is saved: a refused name must not leave a user with no company.
+            company_name = _text(body, "company_name").strip()
             user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
                                     terms_version=legal.TERMS_VERSION)
             # The company name can wait (R2-02): until it is typed in Account, it is the person's name.
-            fresh = empty_state(_text(body, "company_name").strip() or str(user.get("name") or "").strip() or "New company")
+            fresh = empty_state(company_name or str(user.get("name") or "").strip() or "New company")
             trial.start(fresh["company"])
             with company_lock(company_id):
                 save_company(company_id, fresh)
@@ -2005,17 +2011,29 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             body = json.loads(self._read_raw(MAX_BODY_BYTES) or b"null")
-        except ValueError:
+        except (ValueError, RecursionError):
             raise BadRequest("Send JSON.")
         failures = mail_events.normalize(body)
         marked = 0
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if failures:
-            # The provider doesn't know our companies: find each address's latest sent email.
+            # The provider doesn't know our companies. Each failure is about one email: find the best
+            # match across every company first (mail_events.find), then mark only that one.
+            best: dict[int, tuple] = {}
             for company_id in company_ids():
                 with company_lock(company_id):
                     state = load_company(company_id)
-                    hit = [f for f in failures if mail_events.apply(state, f["email"], f["reason"], now)]
+                for n, f in enumerate(failures):
+                    found = mail_events.find(state, f)
+                    if found and (n not in best or found[0] > best[n][0]):
+                        best[n] = (found[0], company_id, found[1]["id"])
+            chosen: dict[str, list] = {}
+            for n, (_, company_id, entry_id) in best.items():
+                chosen.setdefault(company_id, []).append((failures[n], entry_id))
+            for company_id, items in chosen.items():
+                with company_lock(company_id):
+                    state = load_company(company_id)
+                    hit = [f for f, entry_id in items if mail_events.apply(state, f["email"], f["reason"], now, entry_id=entry_id)]
                     if hit:
                         save_company(company_id, state)
                         marked += len(hit)
@@ -2311,9 +2329,14 @@ class Handler(BaseHTTPRequestHandler):
         if company_exists(company_id):
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             storage.write_json(COMPANIES / "snapshots" / f"{company_id}-before-reset-{stamp}.json", state)
-        kept = {k: v for k, v in state.get("company", {}).items() if k == "trial"}
+        # A reset doesn't restart the trial or drop the Stripe subscription (billing.record).
+        kept = {k: v for k, v in state.get("company", {}).items() if k in {"trial", "billing"}}
+        t = trial.status(state)
+        if t.get("state") == "ended" and t.get("reason") == "paid":
+            # Worked out from the pay apps the reset deletes: write down how it ended.
+            kept["trial"] = {**kept.get("trial", {}), "ended": {k: t[k] for k in ("ended_at", "first_paid", "first_paid_job")}}
         fresh = empty_state(name)
-        fresh["company"].update(kept)  # a reset doesn't restart the trial
+        fresh["company"].update(kept)
         return fresh
 
     def _m_create_job(self, state: dict, m, ctx: "Ctx") -> None:

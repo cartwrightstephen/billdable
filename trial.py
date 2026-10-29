@@ -50,6 +50,10 @@ def status(state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]
             if when:
                 paid.append((when, inv["number"], job["name"]))
     base = {"tracked": True, "started_at": begun.isoformat(timespec="seconds"), "pay_apps_sent": len(sent)}
+    # Ended on a paid pay app before a reset deleted it (server _m_reset).
+    ended = ((state.get("company") or {}).get("trial") or {}).get("ended") or {}
+    if _when(ended.get("ended_at", "")):
+        paid.append((_when(ended["ended_at"]), str(ended.get("first_paid") or ""), str(ended.get("first_paid_job") or "")))
     if paid:
         when, number, job_name = min(paid)
         return {**base, "state": "ended", "reason": "paid", "ended_at": when.isoformat(timespec="seconds"),
