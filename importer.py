@@ -716,10 +716,11 @@ def dismiss_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, A
     return item
 
 
-def _paperwork_refusal(job: dict[str, Any], rids: set[str]) -> "domain.GateError | None":
+def _paperwork_refusal(job: dict[str, Any], rids: set[str], can_pull_back: bool = True) -> "domain.GateError | None":
     """Why Undo can't take these records off (attached by hand to some paperwork), with a link to
     where that is settled (Oct 23 note #13). A sent pay app comes first: what went with it stays
-    as it was sent, so its page is the way, not Remove. Else the paperwork page, where Remove is."""
+    as it was sent, so its page is the way, not Remove. Else the paperwork page, where Remove is.
+    Only an owner can pull a pay app back (void-sent), so a member is told to ask one."""
     def holds(packet: list[dict[str, Any]] | None) -> bool:
         return any(a.get("record_id") in rids and not a.get("auto") for p in packet or [] for a in p.get("attachments", []))
 
@@ -737,9 +738,12 @@ def _paperwork_refusal(job: dict[str, Any], rids: set[str]) -> "domain.GateError
                     "stays as it was, so the record stays on the job.")
         elif paid:
             text = f"This record went to the customer with {number}, and a payment is recorded on it, so the record stays on the job."
-        else:
+        elif can_pull_back:
             text = (f"This record went to the customer with {number}, so it stays on the job. To change what went out, "
                     f"open {number} and pull it back, then send a new one.")
+        else:
+            text = (f"This record went to the customer with {number}, so it stays on the job. "
+                    f"Ask an owner to pull {number} back if it needs to change.")
         return domain.GateError(text, action=open_it)
     drafts = [inv for inv in job.get("invoices", []) if inv.get("status") in domain.DRAFT_STATUSES and holds(inv.get("packet"))]
     if drafts:
@@ -755,8 +759,9 @@ def _paperwork_refusal(job: dict[str, Any], rids: set[str]) -> "domain.GateError
     return None
 
 
-def undo_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]:
-    """Take a filed item back off the job record, unless paperwork uses it (the refusal links there)."""
+def undo_item(state: dict[str, Any], item_id: str, actor: str, can_pull_back: bool = True) -> dict[str, Any]:
+    """Take a filed item back off the job record, unless paperwork uses it (the refusal links there).
+    can_pull_back: whether this person may pull a sent pay app back, which words the refusal."""
     item = _item(state, item_id)
     if item["status"] == "dismissed":
         item["status"] = "new"
@@ -766,7 +771,7 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]
     job = domain._open_job(state, item["filed_job_id"])
     rids = set(item.get("record_ids", []))
     packets = [p for inv in job["invoices"] for p in (inv.get("packet") or [])] + (job.get("packet") or []) + (job.get("closeout_packet") or [])
-    refusal = _paperwork_refusal(job, rids)
+    refusal = _paperwork_refusal(job, rids, can_pull_back)
     if refusal:
         raise refusal
     for p in packets:  # attached automatically from the job record: it comes off with the record

@@ -276,6 +276,19 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
             self.assertNotIn("Remove", str(exc))
             self.assertEqual(exc.action, {"label": "Open PA-OAK-3", "view": "payapp-detail", "job_id": "j1", "detail": "inv1"})
 
+    def test_someone_who_cannot_pull_back_is_told_to_ask_an_owner(self):  # review: pull back is owner-only
+        for status in ("sent", "approved"):
+            with self.assertRaises(importer.domain.GateError) as caught:
+                importer.undo_item(self.state(status), "inb1", "member", can_pull_back=False)
+            exc = caught.exception
+            self.assertEqual(str(exc), "This record went to the customer with PA-OAK-3, so it stays on the job. "
+                                       "Ask an owner to pull PA-OAK-3 back if it needs to change.")
+            self.assertEqual(exc.action, {"label": "Open PA-OAK-3", "view": "payapp-detail", "job_id": "j1", "detail": "inv1"})
+        # The draft's paperwork has Remove for everyone: same words either way.
+        with self.assertRaises(importer.domain.GateError) as caught:
+            importer.undo_item(self.state("draft"), "inb1", "member", can_pull_back=False)
+        self.assertEqual(str(caught.exception), "The paperwork for PA-OAK-3 uses this record. Tap Remove on it there first.")
+
     def test_a_paid_or_pulled_back_pay_app_does_not_offer_pulling_back(self):
         state = self.state("sent")
         state["jobs"][0]["payments"] = [{"id": "pay1", "invoice_id": "inv1"}]

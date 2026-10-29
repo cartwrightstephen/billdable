@@ -1653,7 +1653,7 @@ class Handler(BaseHTTPRequestHandler):
         elif verb == "dismiss":
             importer.dismiss_item(state, item_id, actor)
         elif verb == "undo":
-            importer.undo_item(state, item_id, actor)
+            importer.undo_item(state, item_id, actor, can_pull_back=may_take(ctx.user, "void-sent", state))
         elif verb == "mark-done":
             importer.file_and_mark_done(state, item_id, actor)
         else:

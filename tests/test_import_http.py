@@ -291,6 +291,24 @@ class ImportHttpTests(unittest.TestCase):
         res, state = self.request("GET", "/api/state", cookie=cookie)
         self.assertEqual(len(state["jobs"][0]["records"]), records)
 
+    def test_undo_words_a_sent_pay_app_by_who_may_pull_it_back(self):  # Oct 23 note #13, review
+        cookie, job = self.company("undo-role@example.com")
+        me = auth.session_user(cookie.split("=", 1)[1])
+        auth.create_user("undo-member@example.com", PASSWORD, "Mo", me["company_id"], role="member")
+        res, _ = self.request("POST", "/api/auth/login", {"email": "undo-member@example.com", "password": PASSWORD})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        seen = []
+
+        def spy(state, item_id, actor, can_pull_back=True):
+            seen.append(can_pull_back)
+            raise importer.domain.GateError("stop here")
+
+        with unittest.mock.patch.object(importer, "undo_item", spy):
+            for who in (cookie, member):
+                res, data = self.request("POST", "/api/inbox/inb-x/undo", {}, cookie=who)
+                self.assertEqual((res.status, data["error"]), (409, "stop here"))
+        self.assertEqual(seen, [True, False])
+
     def test_photo_of_a_signed_change_order_signs_it(self):  # R3-06
         cookie, job = self.company("co-photo@example.com")
         res, state = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Owner buys fixtures", "amount_cents": -150_000, "schedule_days": "2"}, cookie=cookie)
