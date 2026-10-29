@@ -1785,8 +1785,11 @@ def delete_payer(state: dict[str, Any], payer_id: str, actor: str = "owner") -> 
     used = [j for j in state["jobs"] if j.get("payer_id") == payer["id"]]
     if used:
         jobs = "1 job uses" if len(used) == 1 else f"{len(used)} jobs use"
-        raise GateError(f"{payer['name']} can't be deleted: {jobs} this customer, counting finished jobs. "
-                        "To remove it, merge it into another customer.")
+        finished = ", counting finished jobs" if any(j.get("closed") for j in used) else ""
+        # Point at Merge only when there is another customer to merge into (the box is hidden otherwise).
+        advice = ("To remove it, merge it into another customer." if len(state["payers"]) > 1
+                  else "Its jobs need it.")
+        raise GateError(f"{payer['name']} can't be deleted: {jobs} this customer{finished}. {advice}")
     state["payers"].remove(payer)
     audit(state, "", "payer_delete", f"{actor} deleted the customer {payer['name']}.", actor)
 

@@ -7,7 +7,7 @@ import { field, formErrorLine, refuseForm, formValues, formErrors, clearForm } f
 import { actionWords, STYLE_NOTE } from "../terms.js";
 import { state, me, currentView, formOpen, setMe, clearSession, setTeamData, teamData, mailReady, billingInfo } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding } from "../app-core.js";
-import { ROLE_OPTIONS, roleLabel, sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml } from "./jobs.js";
+import { ROLE_OPTIONS, roleLabel, sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount } from "./jobs.js";
 import { qboCardHtml } from "./money.js";
 
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
@@ -414,7 +414,7 @@ export const views = {
   },
   playbook() {
     const clean = (v) => (v && unesc(v) !== "None" ? v : "");
-    const jobsOf = (p) => state.jobs.filter(j => j.payer_id === p.id).length;
+    const jobsOf = (p) => payerJobCount(p, state.jobs);
     const addForm = formOpen.addpayer ? `
       <div class="card" data-form-key="addpayer">
         <h2>Add customer</h2>
@@ -483,7 +483,7 @@ export const views = {
             </div>
             <p class="sub">Every job of ${p.name} moves to the customer you pick, which keeps its own settings. ${p.name} is then removed.</p>
           </details>` : ""}
-          ${deletePayerHtml(p, { owner: !me || me.role === "owner", jobs: state.jobs })}
+          ${deletePayerHtml(p, { owner: !me || me.role === "owner", jobs: state.jobs, canMerge: others.length > 0 })}
         </details>`;
       }).join("") : emptyState("No customers yet", "Add one here, or one is added with the first job for that customer.", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add customer</button>`)}
     `;
@@ -628,8 +628,9 @@ export const actions = {
   "merge-payer": async (el, id) => {
     const select = el.closest(".merge-payer").querySelector("[data-merge-into]");
     const into = state.payers.find(p => p.id === select.value);
+    const from = state.payers.find(p => p.id === id);
     if (!into) return;
-    const n = state.jobs.filter(j => j.payer_id === id).length;
+    const n = from ? payerJobCount(from, state.jobs) : state.jobs.filter(j => j.payer_id === id).length;
     const name = unesc(el.dataset.name || "this customer");
     const jobs = n === 0 ? "It has no jobs." : `${n === 1 ? "Its job moves" : `Its ${n} jobs move`} to ${unesc(into.name)}.`;
     if (!(await askConfirm(`Merge ${name} into ${unesc(into.name)}? ${jobs} ${unesc(into.name)} keeps its own settings, and ${name} is removed.`, "Merge", true))) return;

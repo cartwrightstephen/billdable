@@ -65,13 +65,20 @@ export function hideSameCustomer(formKey) {
   if (box) { box.hidden = true; box.innerHTML = ""; }
 }
 
+// How many jobs use a customer, finished ones included. The server's job_count counts them all;
+// state.jobs holds only the open and recent ones, so it is the fallback for an older page.
+// The card's "N jobs", the Merge question and Delete customer all count this one way.
+export function payerJobCount(p, jobs = []) {
+  return Number.isInteger(p.job_count) ? p.job_count : jobs.filter(j => j.payer_id === p.id).length;
+}
+
 // Delete customer, on Customer settings (Oct 23 note 47): owners only, and only for a customer
-// no job uses, finished jobs included (job_count counts them all; state.jobs holds only the
-// open and recent ones). The server refuses the rest with the reason. p is escaped, as in state.
-export function deletePayerHtml(p, { owner = false, jobs = [] } = {}) {
+// no job uses, finished jobs included. The server refuses the rest with the reason. canMerge:
+// another customer exists, so the Merge box is there to point at. p is escaped, as in state.
+export function deletePayerHtml(p, { owner = false, jobs = [], canMerge = false } = {}) {
   if (!owner) return "";
-  const n = Number.isInteger(p.job_count) ? p.job_count : jobs.filter(j => j.payer_id === p.id).length;
-  if (n > 0) return `<p class="sub delete-payer">A customer with jobs can't be deleted, finished jobs included. To remove ${p.name}, merge it into another customer.</p>`;
+  const n = payerJobCount(p, jobs);
+  if (n > 0) return `<p class="sub delete-payer">A customer with jobs can't be deleted, finished jobs included. ${canMerge ? `To remove ${p.name}, merge it into another customer.` : "Its jobs need it."}</p>`;
   return `<div class="form-inline delete-payer"><button type="button" class="btn small danger" data-action="delete-payer" data-id="${p.id}" data-name="${p.name}">Delete customer</button><span class="sub">No job uses ${p.name}.</span></div>`;
 }
 

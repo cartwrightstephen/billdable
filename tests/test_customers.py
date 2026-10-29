@@ -106,11 +106,13 @@ class DeleteCustomerTests(unittest.TestCase):
         used = next(p for p in state["payers"] if p["id"] == job["payer_id"])
         with self.assertRaises(domain.GateError) as ctx:
             domain.delete_payer(state, used["id"], "Pat")
-        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 1 job uses this customer, counting finished jobs. "
+        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 1 job uses this customer. "
                                              "To remove it, merge it into another customer.")
         job["closed"] = True  # a finished job still needs its customer
-        with self.assertRaises(domain.GateError):
+        with self.assertRaises(domain.GateError) as ctx:
             domain.delete_payer(state, used["id"], "Pat")
+        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 1 job uses this customer, counting finished jobs. "
+                                             "To remove it, merge it into another customer.")
         self.assertIn(used, state["payers"])
 
         domain.delete_payer(state, spare["id"], "Pat")
@@ -118,6 +120,15 @@ class DeleteCustomerTests(unittest.TestCase):
         self.assertEqual((state["audit"][-1]["action"], state["audit"][-1]["detail"]), ("payer_delete", "Pat deleted the customer Spare Customer."))
         with self.assertRaises(domain.GateError):
             domain.delete_payer(state, spare["id"], "Pat")
+
+    def test_no_merge_advice_without_another_customer(self):
+        state = empty_state()
+        job = domain.create_job(state, "Porch", "Dana Lee", 100_000, address="1 Elm St")
+        domain.create_job(state, "Deck", "Dana Lee", 50_000, address="1 Elm St")
+        self.assertEqual(len(state["payers"]), 1)
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.delete_payer(state, job["payer_id"], "Pat")
+        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 2 jobs use this customer. Its jobs need it.")
 
     def test_the_page_data_counts_every_job(self):
         state = seed_state()
