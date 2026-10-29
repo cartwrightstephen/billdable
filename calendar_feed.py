@@ -52,17 +52,20 @@ def events(state: dict[str, Any]) -> list[dict[str, Any]]:
     for j in state.get("jobs", []):
         payer = payers.get(j.get("payer_id"), {})
         add(j.get("completed_at"), f"{j['name']}: work complete", f"{j['id']}-done")
+        # One follow-up per job, on the day Today raises it (domain.follow_up_due): the oldest unpaid
+        # pay app, after its last follow-up, or the date noted after a call, or after a promised date.
+        due = domain.follow_up_due(j, payer)
+        if due:
+            oldest = next(inv for inv in j["invoices"] if inv["status"] in domain.OPEN_FOR_PAYMENT)
+            add(due.date(), f"Follow up on {oldest['number']} ({j['name']})", f"{oldest['id']}-follow",
+                f"Contact {payer.get('approver', '')} {payer.get('ap_email', '')}")
         for inv in j.get("invoices", []):
             if inv.get("status") == "void":
                 continue
             add(inv.get("sent_at"), f"{inv['number']} sent ({j['name']})", f"{inv['id']}-sent")
             if inv.get("status") in {"sent", "partial"} and inv.get("sent_at"):
                 sent = _day(inv["sent_at"])
-                follow = int(payer.get("follow_up_days") or 7) if str(payer.get("follow_up_days") or "7").isdigit() else 7
                 approve = int(payer.get("usual_approval_days") or 14) if str(payer.get("usual_approval_days") or "14").isdigit() else 14
-                last = _day(inv.get("last_follow_up_at") or "") or sent
-                add(last + timedelta(days=follow), f"Follow up on {inv['number']} ({j['name']})", f"{inv['id']}-follow",
-                    f"Contact {payer.get('approver', '')} {payer.get('ap_email', '')}")
                 add(sent + timedelta(days=approve), f"{inv['number']} expected approval ({j['name']})", f"{inv['id']}-approve")
             if inv.get("status") in domain.OPEN_FOR_PAYMENT and inv.get("due_on"):
                 add(inv["due_on"], f"{inv['number']} payment due ({j['name']})", f"{inv['id']}-due")   # payment terms (R4-04)

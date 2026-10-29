@@ -172,10 +172,16 @@ export function progressFigures(j, mode, text) {
   return out;
 }
 
+// A date the server keeps as a day ("2026-11-05") counts from midnight UTC, as domain.follow_up_due
+// reads it; the day people see is that same calendar day.
+const utcMidnight = (iso) => { const d = new Date(unesc(iso) + "T00:00:00Z"); return isNaN(d) ? null : d; };
+const sameDayLocal = (d) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+
 // When the next follow-up may go (domain.follow_up_due): the customer's days between follow-ups
 // after the last one on the oldest unpaid pay app, or after it was sent; or the date noted after a
 // call ("Spoke to them", R4-06) until a follow-up goes out. invoices: every unpaid pay app, which
-// one follow-up names. Null with nothing to chase.
+// one follow-up names. due is the moment it falls due (the server's clock); day is the date to
+// show for it. Null with nothing to chase.
 export function followUpDue(j) {
   const unpaid = (j.invoices || []).filter(i => OPEN_FOR_PAYMENT.includes(i.status));
   const sent = unpaid[0];
@@ -183,21 +189,24 @@ export function followUpDue(j) {
   const lastIso = unesc(sent.last_follow_up_at || sent.sent_at || "");
   const last = toDate(lastIso);
   if (!last) return null;
-  const noted = j.expected_payment_on && unesc(j.contact_noted_at || "") >= lastIso ? toDate(j.expected_payment_on) : null;
-  if (noted) return { invoice: sent, invoices: unpaid, due: noted, noted: true };
+  const noted = j.expected_payment_on && unesc(j.contact_noted_at || "") >= lastIso ? utcMidnight(j.expected_payment_on) : null;
+  if (noted) return { invoice: sent, invoices: unpaid, due: noted, day: sameDayLocal(noted), noted: true };
   const days = Number(unesc(String((j.payer || {}).follow_up_days || ""))) || 7;
   let due = new Date(last.getTime() + days * 86400000);
+  let day = due;
   // Approved on the customer's page with a date to expect payment (R4-08): not before the day after.
   const promised = expectedPayment(sent);
-  if (promised && promised.getTime() + 86400000 > due.getTime()) due = new Date(promised.getTime() + 86400000);
-  return { invoice: sent, invoices: unpaid, due, promised };
+  if (promised && promised.getTime() + 86400000 > due.getTime()) {
+    due = new Date(promised.getTime() + 86400000);
+    day = sameDayLocal(due);
+  }
+  return { invoice: sent, invoices: unpaid, due, day, promised };
 }
 
 // The date the customer said payment would come when they approved the pay app (R4-08), or null.
 export function expectedPayment(inv) {
   if (!inv || inv.status !== "approved" || !inv.expected_payment_on) return null;
-  const d = new Date(unesc(inv.expected_payment_on) + "T00:00:00Z");
-  return isNaN(d) ? null : d;
+  return utcMidnight(inv.expected_payment_on);
 }
 
 // "PA-01" or "PA-01 and PA-02" or "PA-01, PA-02 and PA-03": the pay apps one follow-up names.
@@ -206,9 +215,11 @@ export function payAppList(invoices) {
   return n.length > 1 ? `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}` : (n[0] || "the pay app");
 }
 
-// Required closeout items not in yet (the closeout packet gates asking for retainage).
+// Required closeout items not in yet, which gate asking for retainage: the server sends them
+// (domain.closeout_missing, the rule chase_retainage uses), so older jobs without a closeout
+// packet count their job paperwork the same way here.
 export function closeoutMissing(j) {
-  return (j.closeout_packet || []).filter(p => p.required && !p.present).length;
+  return (j.closeout_missing || []).length;
 }
 
 // Why the job page has no "Ask for retainage" while retainage is held (R3-04). Empty when it has one.
@@ -225,10 +236,10 @@ export function waitingText(j, now = new Date()) {
   const f = followUpDue(j);
   if (!f) return "";
   const p = j.payer || {};
-  const when = f.due <= now ? `a follow-up has been due since ${fmtDate(f.due)}` : `follow-up due ${fmtDate(f.due)}`;
+  const when = f.due <= now ? `a follow-up has been due since ${fmtDate(f.day)}` : `follow-up due ${fmtDate(f.day)}`;
   const inv = f.invoice;
   if (f.promised && f.due > now) return `Approved by ${inv.approved_by_payer || p.approver || p.name || "the customer"} ${fmtDate(inv.approved_at)}; expect payment ${fmtDate(inv.expected_payment_on)}.`;
-  if (f.noted && f.due > now) return `Waiting on ${p.approver || p.name || "the customer"}. Spoke to them ${fmtDate(j.contact_noted_at)}; check again ${fmtDate(f.due)}.`;
+  if (f.noted && f.due > now) return `Waiting on ${p.approver || p.name || "the customer"}. Spoke to them ${fmtDate(j.contact_noted_at)}; check again ${fmtDate(f.day)}.`;
   return `Waiting on ${p.approver || p.name || "the customer"}. Sent ${fmtDate(f.invoice.sent_at)}; ${when}.`;
 }
 
@@ -274,7 +285,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver on the job record.", "paid");
   if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "Money came in. Paid in full opens the waiver step.", "paid");
   if (follow) add("follow", followDue ? "Send follow-up" : "Follow up now", `data-action="follow-up" data-id="${j.id}"${followDue ? "" : ` data-early="1"`}`,
-    followDue ? "Email the customer a reminder." : `Before the follow-up date, ${fmtDate(follow.due)}.`, "paid");
+    followDue ? "Email the customer a reminder." : `Before the follow-up date, ${fmtDate(follow.day)}.`, "paid");
   // A phone call counts as a follow-up (R4-06): what they said, and when to check again.
   if (follow) add("contact", "Spoke to them…", `data-action="toggle-form" data-form="contact"`, "Note what they said and when to check again.", "paid");
   if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the work done and not billed.", "bill");
@@ -329,7 +340,8 @@ function closeBlockerButtons(j, b) {
     case "retainage": return [
       { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"` },
       closeoutMissing(j)
-        ? { label: "Open closeout paperwork", attrs: `data-action="open-packet" data-job="${id}" data-inv="closeout"` }
+        // An older job without a closeout packet keeps those items in the job paperwork (as on Closeout).
+        ? { label: "Open closeout paperwork", attrs: `data-action="open-packet" data-job="${id}"${(j.closeout_packet || []).length ? ` data-inv="closeout"` : ""}` }
         : { label: "Ask for retainage", attrs: `data-action="retainage" data-id="${id}"`, needs: "retainage" }];
     case "waiver": return [{ label: "Send waiver", attrs: `data-action="open-waiver" data-id="${id}"`, needs: "waiver" }];
     default: return [];

@@ -185,10 +185,10 @@ test("Ask for retainage shows only once the work is done and the closeout paperw
   const running = job({ money });
   assert.ok(!keys(jobActions(running).more).includes("retainage"));
   assert.equal(retainageNote(running), "Released at closeout.");
-  const missing = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: false }] });
+  const missing = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: false }], closeout_missing: ["Punch-list signoff"] });
   assert.ok(!keys([jobActions(missing).primary, ...jobActions(missing).more].filter(Boolean)).includes("retainage"));
   assert.equal(retainageNote(missing), "Closeout paperwork: 1 item missing.");
-  const ready = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: true }] });
+  const ready = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: true }], closeout_missing: [] });
   assert.equal(jobActions(ready).primary.key, "retainage");
   assert.equal(retainageNote(ready), "");
 });
@@ -204,7 +204,7 @@ test("only an unsigned change order in the way: Get CO N signed opens it", () =>
 });
 
 test("each thing standing between the job and Finish job has its buttons (R3-08)", () => {
-  const done = jobOf({ work_status: "complete", closeout_packet: [{ required: true, present: false }] });
+  const done = jobOf({ work_status: "complete", closeout_packet: [{ required: true, present: false }], closeout_missing: ["Punch-list signoff"] });
   const labels = (b, j = done) => closeBlockerActions(j, b).map(a => a.label);
   assert.deepEqual(labels({ kind: "outstanding", text: "$500.00 is still owed on pay apps sent." }), ["Record a payment"]);
   assert.deepEqual(labels({ kind: "co", text: "CO 2 is not signed yet.", co_id: "co-2", number: 2 }), ["Get CO 2 signed", "Withdraw"]);
@@ -256,7 +256,7 @@ test("follow-ups name every unpaid pay app, and a noted call waits for its date"
   assert.ok(jobActions(j, { now: new Date("2026-10-28T12:00:00Z") }).more.some(x => x.key === "contact" && x.label === "Spoke to them…"));
   const called = job({ ...j, contact_noted_at: "2026-10-28T12:00:00+00:00", expected_payment_on: "2026-11-04",
     invoices: [{ ...a, last_follow_up_at: "2026-10-28T12:00:00+00:00" }, { ...b, last_follow_up_at: "2026-10-28T12:00:00+00:00" }] });
-  assert.equal(followUpDue(called).due.getDate(), 4);
+  assert.equal(followUpDue(called).day.getDate(), 4);
   assert.equal(followUpDue(called).noted, true);
   assert.match(waitingText(called, new Date("2026-10-29T12:00:00")), /^Waiting on Sam Jones\. Spoke to them .+; check again Nov 4, 2026\.$/);
   // A follow-up emailed since (later than the call) goes back to the usual days.

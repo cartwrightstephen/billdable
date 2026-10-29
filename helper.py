@@ -297,8 +297,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
             return "No retainage is being held on open jobs.", [{"type": "nav", "view": "retainage", "label": "Open Closeout"}]
         lines = []
         for j in rows:
-            items = (j.get("closeout_packet") or []) or [p for p in j.get("packet", []) if p.get("kind") == "closeout"]
-            missing = [p["label"] for p in items if p.get("required") and not p.get("present")]
+            missing = j.get("closeout_missing") or []
             state_txt = "job still in progress" if j.get("work_status") != "complete" else (f"waiting on {', '.join(missing)}" if missing else "ready to ask for release")
             lines.append(f"- {j['name']}: {domain.money(j['money']['retainage_open_cents'])}, {state_txt}")
         return "Retainage held:\n" + "\n".join(lines), [{"type": "nav", "view": "retainage", "label": "Open Closeout"}]

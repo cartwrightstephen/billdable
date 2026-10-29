@@ -42,11 +42,12 @@ export function escDeep(value) {
   return value;
 }
 
+// Always US style, like domain.money, the pay app PDF and the emails, whatever the browser's locale.
 export const money = (cents) => {
   if (cents == null) return "$0.00";
   const sign = cents < 0 ? "-" : "";
   const abs = Math.abs(cents);
-  return `${sign}$${(abs / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${sign}$${(abs / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 // ---------- numbers people type ----------

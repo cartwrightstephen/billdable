@@ -226,6 +226,14 @@ def missing_packet(job: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in active_packet(job) if item["required"] and not item["present"]]
 
 
+def closeout_missing(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """The closeout items not in yet, which hold back asking for all the retainage: the closeout
+    packet, or for older jobs without one, the paperwork still missing on the job."""
+    if job.get("closeout_packet"):
+        return [item for item in job["closeout_packet"] if item["required"] and not item["present"]]
+    return missing_packet(job)
+
+
 def unsigned_cos_in_billing(job: dict[str, Any]) -> list[dict[str, Any]]:
     return [co for co in job["change_orders"] if co["status"] == "pending" and co.get("included_in_billing")]
 
@@ -284,11 +292,17 @@ def status_label(job: dict[str, Any]) -> str:
         return "Pay app ready for review"
     if draft_open:
         return "Pay app draft in progress"
-    if open_invoice and open_invoice["status"] == "sent":
-        return job.get("external_status") or "Submitted, awaiting acknowledgment"
-    if open_invoice and open_invoice["status"] == "approved":
-        return job.get("external_status") or "Approved, payment not received"
-    if open_invoice and open_invoice["status"] == "partial":
+    # Still owed: the newest pay app, or an older one still unpaid when a newer one was paid (the
+    # pill, jobs.js jobStatus, looks at every pay app too). The job's external status describes the
+    # newest pay app's last event, so an older one gets the plain words.
+    owed = open_invoice if open_invoice and open_invoice["status"] in OPEN_FOR_PAYMENT else \
+        next((inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT), None)
+    external = job.get("external_status") if owed is open_invoice else None
+    if owed and owed["status"] == "sent":
+        return external or "Submitted, awaiting acknowledgment"
+    if owed and owed["status"] == "approved":
+        return external or "Approved, payment not received"
+    if owed and owed["status"] == "partial":
         return "Partial payment received"
     if job.get("work_status") == "complete" and lines and job_money(job)["unbilled_completed_cents"] > 0:
         return lines[0]
@@ -1019,10 +1033,7 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
             _refuse("", {"amount_cents": f"Enter less than the {money(open_retainage)} held. All of it waits until the job is done."})
         raise GateError("Retainage is released at closeout. Mark the job done first, or ask for part of it now.")
     if job.get("work_status") == "complete":
-        if job.get("closeout_packet"):
-            missing = [item for item in job["closeout_packet"] if item["required"] and not item["present"]]
-        else:
-            missing = missing_packet(job)
+        missing = closeout_missing(job)
         if missing:
             raise GateError("The closeout paperwork isn't complete.", [item["blocker"] for item in missing])
     payer = _payer(state, job["payer_id"])
@@ -1141,6 +1152,9 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out["can_undo_done"] = can_undo_done(job)
     out["close_blocker_items"] = close_blocker_items(job)
     out["close_blockers"] = [b["text"] for b in out["close_blocker_items"]]
+    # What still holds back asking for the retainage (chase_retainage's rule), for the job page,
+    # Closeout and the helper.
+    out["closeout_missing"] = [item["label"] for item in closeout_missing(job)]
     out.setdefault("closeout_packet", [])
     out.setdefault("evidence", [])
     out.setdefault("done_notes", "")
