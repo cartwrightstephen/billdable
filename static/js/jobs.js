@@ -293,7 +293,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   add("co", "New change order", `data-action="new-co"`, "Extra or changed work, or a credit.", "bill");
   if (draft) add("packet", "Open paperwork", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "Add the documents that go with the pay app.", "bill");
   if (draft) add("void", "Delete draft", `data-action="void-draft" data-id="${j.id}"`, "Throw away the open draft. You can draft it again.", "bill");
-  if (demo) add("qbo", "Import QBO sample", `data-action="import-qbo" data-id="${j.id}"`, "Sample company only: a stand-in for a QuickBooks payment read.", "paid");
+  if (demo) add("qbo", "Import QuickBooks sample", `data-action="import-qbo" data-id="${j.id}"`, "Sample company only: a stand-in for a QuickBooks payment read.", "paid");
   const order = ["clear", "send", "waiver"];
   // While the customer has the pay app, nothing is the main step until a follow-up is due, unless
   // finished work is still to bill.

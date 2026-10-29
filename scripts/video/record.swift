@@ -90,9 +90,9 @@ final class Recorder: NSObject, WKNavigationDelegate {
           document.querySelectorAll('.notice, .toast, [role=status], [role=alert]').forEach(el => {
             if (/demo/i.test(el.textContent || '')) el.style.display = 'none';
           });
-          // Intuit's brand rules: "QuickBooks" in full, never "QBO" (the demo-only sample button).
-          document.querySelectorAll('button').forEach(b => {
-            if (b.textContent.trim() === 'Import QBO sample') b.textContent = 'Import QuickBooks sample';
+          // The demo never emails, so its sends read "email failed"; a real account's don't.
+          document.querySelectorAll('.row-sub, td').forEach(el => {
+            for (const n of el.childNodes) if (n.nodeType === 3 && n.data.includes(' · email failed')) n.data = n.data.replace(' · email failed', '');
           });
         };
         hide();
@@ -106,7 +106,12 @@ final class Recorder: NSObject, WKNavigationDelegate {
         let found = await js("""
         const want = \(jsString(text)).toLowerCase();
         const starts = e => e.offsetParent !== null && (e.innerText || e.getAttribute('aria-label') || '').trim().toLowerCase().startsWith(want);
-        let els = [...document.querySelectorAll('button, a, [role=button], summary, label')].filter(starts);
+        // An open confirm dialog first: its button shares a name with the one that opened it.
+        const scope = document.querySelector('dialog[open]') || document;
+        let els = [...scope.querySelectorAll('button, a, [role=button], summary, label')].filter(starts);
+        // An exact name wins over a longer one that starts the same ("Record" vs "Record a payment").
+        const exact = els.filter(e => (e.innerText || e.getAttribute('aria-label') || '').trim().toLowerCase() === want);
+        if (exact.length) els = exact;
         // A clickable card (no button inside): the innermost element whose text starts with it.
         if (!els.length) els = [...document.querySelectorAll('main *')].filter(e => starts(e) && ![...e.children].some(starts));
         const el = els[\(nth)];
@@ -274,7 +279,7 @@ guard args.count >= 3 else { fail("usage: duracash-record shots.json out_folder"
 guard let data = try? Data(contentsOf: URL(fileURLWithPath: args[1])),
       let spec = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let steps = spec["steps"] as? [[String: Any]] else { fail("bad shots file \(args[1])") }
-let base = URL(string: spec["base"] as? String ?? "http://127.0.0.1:8766")!
+let base = URL(string: spec["base"] as? String ?? "http://127.0.0.1:8765")!
 let out = URL(fileURLWithPath: args[2])
 
 let app = NSApplication.shared

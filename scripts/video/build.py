@@ -9,7 +9,7 @@ Needs <out>/raw/*.mp4 (record.swift against a local server on the demo company),
 `say` voice and the compiled editor. <out> is DURACASH_VIDEO_OUT, by default <tmp>/duracash-video
 (set it to keep the clips somewhere lasting); the editor is DURACASH_EDIT, by default
 <tmp>/duracash-edit. <tmp> is the system's temporary folder. Writes <out>/duracash-promo.mp4
-(about 45 s).
+(about 50 s).
 """
 
 from __future__ import annotations
@@ -52,18 +52,20 @@ PROMO = [
     {"title": "Duracash", "subtitle": "Finished work, billed and paid", "min": 2.5, "say": ["Meet Duracash."]},
     {"src": "01_today", "title": "Today",
      "say": ["Every morning, see what's holding up your money."]},
-    {"src": "02_packet", "title": "Packet check",
+    {"src": "02_paperwork", "title": "Paperwork check",
      "say": ["Nothing goes out with a missing waiver or photo."]},
     {"src": "03_payapp", "title": "Pay app",
-     "say": ["Draft the pay app from finished work.", "Approve it, and it goes out with its packet."]},
+     "say": ["Draft the pay app from finished work.", "Check it, then send it with its paperwork."]},
     {"src": "04_followup", "title": "Follow-up",
-     "say": ["If the payer goes quiet, one tap sends the follow-up."]},
+     "say": ["If the customer goes quiet, one tap sends the follow-up."]},
     {"src": "05_paid", "title": "Paid",
-     "say": ["Payments from QuickBooks are matched to the right pay app."]},
+     "say": ["Record the payment when it comes in, by hand or from QuickBooks."]},
     {"src": "06_waiver", "title": "Lien waiver",
-     "say": ["Send the waiver, and close the job for the record."]},
-    {"src": "07_playbook", "title": "Payer playbook",
-     "say": ["Every payer's rules, cutoff and real payment time, in one place."]},
+     "say": ["Paid in full? Send the lien waiver."]},
+    {"src": "07_finish", "title": "Finish the job",
+     "say": ["Then finish the job, with everything on the record."]},
+    {"src": "08_customers", "title": "Customer settings",
+     "say": ["Every customer's rules, and how fast they really pay, in one place."]},
     {"title": "Duracash", "subtitle": "You finish the work. Duracash gets it billed and collected.", "min": 3.5,
      "say": ["You finish the work. Duracash gets it billed and collected."]},
 ]
