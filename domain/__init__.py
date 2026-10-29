@@ -279,8 +279,9 @@ def blocker_button(job: dict[str, Any]) -> str:
     return f"Fix {n} thing{'' if n == 1 else 's'} before sending"
 
 
-def status_label(job: dict[str, Any]) -> str:
-    """A status names the blocker. Never return a bare 'Pending'."""
+def status_label(job: dict[str, Any], style: str = "pay_apps") -> str:
+    """A status names the blocker. Never return a bare 'Pending'. style: the company's
+    billing_style, for its word for a pay app in the fixed words (term_text, R6-01)."""
     if job.get("closed"):
         return "Closed"
     lines = blocker_lines(job)
@@ -289,9 +290,9 @@ def status_label(job: dict[str, Any]) -> str:
     if draft_open and lines:
         return lines[0]
     if draft_open and open_invoice["status"] == "awaiting_approval":
-        return "Pay app ready for review"
+        return term_text("Pay app ready for review", style)
     if draft_open:
-        return "Pay app draft in progress"
+        return term_text("Pay app draft in progress", style)
     # Still owed: the newest pay app, or an older one still unpaid when a newer one was paid (the
     # pill, jobs.js jobStatus, looks at every pay app too). The job's external status describes the
     # newest pay app's last event, so an older one gets the plain words.
@@ -311,7 +312,7 @@ def status_label(job: dict[str, Any]) -> str:
     if job.get("work_status") == "complete" and job_money(job)["retainage_open_cents"] > 0:
         return "Retainage outstanding"
     if not open_invoice:
-        return "Pay app not drafted" if job.get("work_status") == "complete" else "In progress"
+        return term_text("Pay app not drafted", style) if job.get("work_status") == "complete" else "In progress"
     if open_invoice["status"] == "paid":
         return "Paid"
     return open_invoice["status"].replace("_", " ").capitalize()
@@ -1149,7 +1150,7 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out["blockers"] = [b["text"] for b in out["blocker_items"]]
     # The blockers that are paperwork to attach (the rest are unsigned change orders).
     out["missing_paperwork"] = [item["label"] for item in missing_packet(job)]
-    out["status_label"] = status_label(job)
+    out["status_label"] = status_label(job, billing_style(state))
     # Where the job stands, for its pills and buttons (R4-10: the app reads these, not its own rules).
     out["blocked"] = is_blocked(job)
     out["needs_paperwork"] = needs_paperwork(job)
@@ -1208,7 +1209,7 @@ def job_summary(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     """A closed job for lists: money, pay apps, payments and change orders, without the history."""
     out = hide_link_secrets({k: deepcopy(v) for k, v in job.items() if k not in SUMMARY_DROPS})
     out["money"] = job_money(job)
-    out["status_label"] = status_label(job)
+    out["status_label"] = status_label(job, billing_style(state))
     out["blockers"], out["close_blockers"], out["close_blocker_items"] = [], [], []
     out["blocked"], out["needs_paperwork"], out["blocker_button"] = False, False, ""
     out.setdefault("done_notes", "")
@@ -1338,6 +1339,10 @@ _TERM_WORDS = [(re.compile(r"\bPay apps\b"), "Draws"), (re.compile(r"\bpay apps\
                (re.compile(r"\bPay app\b"), "Draw"), (re.compile(r"\bpay app\b"), "draw")]
 
 
+def billing_style(state: dict[str, Any]) -> str:
+    return (state.get("company") or {}).get("billing_style") or "pay_apps"
+
+
 def term_text(text: str, style: str, keep: tuple[str, ...] = ()) -> str:
     if style != "draws" or not text:
         return text
@@ -1374,7 +1379,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
     today = now.date()
     jobs = {j["id"]: j for j in state.get("jobs", []) if not j.get("closed")}
     payers = {p["id"]: p for p in state.get("payers", [])}
-    style = (state.get("company") or {}).get("billing_style") or "pay_apps"
+    style = billing_style(state)
     out: list[dict[str, Any]] = []
 
     def add(rank: float, kind: str, job: dict[str, Any], label: str, tone: str, text: str, button: str,
@@ -1496,7 +1501,7 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     counts: dict[str, int] = {}
     for r in rows:
         counts[r["kind"]] = counts.get(r["kind"], 0) + 1
-    style = (state.get("company") or {}).get("billing_style") or "pay_apps"
+    style = billing_style(state)
     parts = [term_text(f"{n} {DIGEST_NOUNS[k][0] if n == 1 else DIGEST_NOUNS[k][1]}", style) for k, n in counts.items()]
     subject = f"Due today in Duracash: {', '.join(parts)}"
     lines = [f"- {r['job']}: {r['label']}. {r['text']}" + (f"\n  {base}{r['path']}" if base else "") for r in rows]
