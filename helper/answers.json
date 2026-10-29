@@ -366,7 +366,7 @@
         "rename",
         "change contract"
       ],
-      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, address, contract number and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; after that, use a change order. The job code stays the same. Tap Save changes. Who signs off, the email for pay apps and the paperwork list are in Settings, Customer settings. An owner sees Delete job there while the job has no payments and no pay app was ever sent; otherwise finish the job instead.",
+      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, address, contract number and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; after that, use a change order. The job code stays the same. Tap Save changes. Who signs off, the email for pay apps and the paperwork list are in Settings, Customer settings. In the Edit job form an owner also sees Delete job. It shows while the job has no payments and no pay app other than a deleted draft, so tap Delete draft first if one is open. If a pay app was sent or a payment came in, finish the job instead.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -573,7 +573,7 @@
         "pencil",
         "review before"
       ],
-      "answer": "A draft for their review (pencil copy) is the draft pay app sent to the customer to agree quantities and change orders before the real one, so nothing gets pushed to next month. It's optional. With a draft open, tap Send draft for their review on the job (under More). When they answer, tap Customer agreed to the draft, or Customer wants changes and note what they said.",
+      "answer": "A draft for their review (pencil copy) is the draft pay app sent to the customer to agree quantities and change orders before the real one, so nothing gets pushed to next month. It's optional. With a draft open, tap Send draft for their review on the job. If you don't see it, look under More. When they answer, tap Customer agreed to the draft, or Customer wants changes and note what they said.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -596,7 +596,7 @@
         "wrong amount",
         "delete draft"
       ],
-      "answer": "Open the job, tap Delete draft (under More) and confirm; only an owner can. The draft stays in the pay app list as Cancelled, any change order on it comes off, and you can draft again from the job page. A pay app already sent, with nothing paid on it, can be withdrawn instead: an owner taps Pull back this pay app… on the pay app page, and the customer is emailed that nothing is due on it.",
+      "answer": "Open the job, tap Delete draft (under More) and confirm; only an owner can. The draft stays in the pay app list as Cancelled, any change order on it comes off, and you can draft again from the job page. The newest pay app on an open job can be withdrawn instead, if it was sent and nothing is paid on it (delete any newer draft first): an owner taps Pull back this pay app… on the pay app page, and the customer is emailed that nothing is due on it.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -734,7 +734,7 @@
         "requirement",
         "rules"
       ],
-      "answer": "Settings, Customer settings keeps each customer's rules. Open a customer to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Paperwork needed with each pay app (separated by commas), They send pay apps back when, Also email (CC) and more, then tap Save customer. New pay apps use the paperwork list. When a customer sends a pay app back, open Customer sent a pay app back? Note why. on the job, type the reason and tap Save to customer settings.",
+      "answer": "Settings, Customer settings keeps each customer's rules. Open a customer to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Paperwork needed with each pay app (separated by commas), They send pay apps back when, Also email (CC) and more, then tap Save customer. New pay apps use the paperwork list. When a customer sends a pay app back, add the reason to They send pay apps back when and tap Save customer. While something is blocking send on a job, you can also note it there under Customer sent a pay app back? Note why.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -806,7 +806,7 @@
         "remove",
         "won't sign"
       ],
-      "answer": "Tap Withdraw on the unsigned change order and confirm. If it is on an open draft, delete that draft first (Delete draft), then withdraw the change order and draft again. A withdrawn change order stays in history.",
+      "answer": "Tap Withdraw on the unsigned change order and confirm. If it is on an open draft, an owner deletes that draft first (Delete draft), then withdraw the change order and draft again. A withdrawn change order stays in history.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -896,7 +896,7 @@
         "send waiver"
       ],
       "answer": "When a pay app is paid in full, the job shows Choose waiver and send (Today shows Waiver due). Put your signed waiver on the job record first (kind: Lien waiver), or tap Take a photo on the waiver page. Pick the type; the line under it says when it fits. Then tap Approve & send. The email attaches the newest lien waiver on the job record; with none, it tells the customer the signed waiver follows separately. One waiver per paid pay app, and only after the payment is recorded. Duracash doesn't write waiver forms; states set them.",
-      "handler": "waivers_due",
+      "handler": null,
       "needs_job": false,
       "actions": [
         {
@@ -905,7 +905,9 @@
           "label": "Open Closeout"
         }
       ],
-      "follow_ups": []
+      "follow_ups": [
+        "Which waivers are due?"
+      ]
     },
     {
       "id": "what-retainage",
@@ -944,8 +946,8 @@
         "punch",
         "closeout"
       ],
-      "answer": "Retainage is paid at closeout. A job with retainage gets closeout paperwork: the punch list signoff and whatever the customer's settings list. Mark the job done, add those items (Open closeout paperwork), then tap Ask for retainage and confirm. Before the job is done you can ask for part of it on Money, Closeout (Part to ask for now). When the money arrives, tap Record retainage paid on the job.",
-      "handler": "retainage_list",
+      "answer": "Retainage is paid at closeout. A job with retainage gets closeout paperwork: the items in the customer's Paperwork needed with each pay app that mention closeout, retainage or punch, or a closeout and punch list signoff if none do. Mark the job done, add those items (Open closeout paperwork), then tap Ask for retainage and confirm. Before the job is done you can ask for part of it on Money, Closeout (Part to ask for now). When the money arrives, tap Record retainage paid on the job.",
+      "handler": null,
       "needs_job": false,
       "actions": [
         {
@@ -954,7 +956,9 @@
           "label": "Open Closeout"
         }
       ],
-      "follow_ups": []
+      "follow_ups": [
+        "Which jobs are holding my retainage?"
+      ]
     },
     {
       "id": "followup-how",
@@ -994,7 +998,7 @@
         "collections"
       ],
       "answer": "Money, Unpaid lists every job with money owed: what is unpaid, days since it was sent, when it's due, when they said they'd pay, who to contact, and buttons to send a follow-up, email or call.",
-      "handler": "who_owes",
+      "handler": null,
       "needs_job": false,
       "actions": [
         {
@@ -1003,7 +1007,9 @@
           "label": "Open Unpaid"
         }
       ],
-      "follow_ups": []
+      "follow_ups": [
+        "Who owes me money?"
+      ]
     },
     {
       "id": "email-sent",
@@ -1305,7 +1311,7 @@
         "download",
         "backup"
       ],
-      "answer": "An owner taps Export data in Settings, Company, under Your data, reset and delete. It downloads everything in your company as one file. Keep a copy if you want your own backup.",
+      "answer": "An owner taps Export data in Settings, Company, under Your data, reset and delete. It downloads your company's jobs, customers, pay apps and records as one file. Photos and documents you uploaded are not in it, so keep your own copies of those.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1359,7 +1365,7 @@
         "login",
         "reset"
       ],
-      "answer": "On the sign-in screen, click Forgot your password? and enter your email: a reset link arrives that works once, for one hour, and signs you out everywhere else. Signed in, change it in Settings, My account. After 5 wrong passwords for one email, sign-in pauses for 15 minutes. Passwords need at least 10 characters. If the server can't send email yet, the screen says so; ask the Duracash team.",
+      "answer": "On the sign-in screen, click Forgot your password? and enter your email: a reset link arrives that works once, for one hour, and signs you out everywhere else. Signed in, change it in Settings, My account. After 3 wrong passwords for one email, each new try has to wait a little longer, up to a minute. After 20 wrong passwords from one network, sign-in from that network pauses for 15 minutes. Passwords need at least 10 characters. If the server can't send email yet, the screen says so; ask the Duracash team.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1386,7 +1392,7 @@
         "privacy",
         "who see"
       ],
-      "answer": "Each company's data is kept separate; only your team's logins can see it, and owners decide who is on the team. Passwords are stored as one-way hashes; reset links work once and expire. Duracash is still early: keep your own copies of signed documents, and use Export data (Settings, Company) for a copy. Questions you ask here are saved so the team can add better answers.",
+      "answer": "Each company's data is kept separate; only your team's logins can open it, apart from the private links you share: the Calendar address and each customer's page. Owners decide who is on the team. Passwords are stored as one-way hashes; reset links work once and expire. Duracash is still early: keep your own copies of signed documents, and use Export data (Settings, Company) for a copy. Questions you ask here are saved so the team can add better answers.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1426,7 +1432,7 @@
         "sync",
         "accounting"
       ],
-      "answer": "Yes. On Money, Payments, open Import payments from QuickBooks (CSV), paste or choose a QuickBooks payments export (CSV or Excel) and tap Read payments: each payment is matched to its pay app, and Record the ticked payments records the ones you tick. Or an owner taps Connect QuickBooks (when it is set up on the server): Duracash then reads payments and invoices and never changes your books. Each sent pay app also has Download for QuickBooks, a file QuickBooks imports as an invoice.",
+      "answer": "Yes. On Money, Payments, open Import payments from QuickBooks (CSV), paste or choose a QuickBooks payments export (CSV or Excel) and tap Read payments: each payment is matched to its pay app where Duracash can tell (pick one from the Pick a pay app… list for the rest), and Record the ticked payments records the ones you tick. Or an owner taps Connect QuickBooks (when it is set up on the server): Then tap Read payments from QuickBooks, tick the ones to keep and tap Record the ticked payments. Duracash never changes your books. Each sent pay app also has Download for QuickBooks, a file QuickBooks imports as an invoice.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1473,7 +1479,7 @@
         "charge",
         "trial"
       ],
-      "answer": "The free trial is timed to the payment cycle: nothing to pay until the first pay app you send through Duracash is paid, or 90 days, whichever comes first (120 if a pay app is still unpaid on day 90). A company that bills homeowners in draws gets 45 days or the first paid draw. Today and Settings, Billing show where your trial stands. When billing is live, an owner taps Subscribe in Settings, Billing and pays by card through Stripe; if the Billing page says billing isn't live, there is nothing to pay.",
+      "answer": "The free trial is timed to the payment cycle: nothing to pay until the first pay app you send through Duracash is paid, or 90 days, whichever comes first (120 if a pay app is still unpaid on day 90). After the trial it is $299 a month, with no cut of what you collect. A company that bills homeowners in draws gets 45 days or the first paid draw. Today and Settings, Billing show where your trial stands. When billing is live, an owner taps Subscribe in Settings, Billing and pays by card through Stripe; if the Billing page says billing isn't live, there is nothing to pay.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1500,7 +1506,7 @@
         "human",
         "bug"
       ],
-      "answer": "Contact the Duracash founders directly by email for now. Tell them what you clicked and what you expected; a screenshot helps. Questions you ask here are saved, so they also see what's missing.",
+      "answer": "Email the Duracash founders at the address under Contact at the end of the Privacy Policy (/privacy). Tell them what you clicked and what you expected; a screenshot helps. Questions you ask here are saved, so they also see what's missing.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1614,7 +1620,7 @@
         "record",
         "history"
       ],
-      "answer": "Finish job appears when the work is done and nothing is left: no open draft, no unsigned change order, nothing unbilled or unpaid, retainage paid and waivers sent. Until then the job page shows Before you can finish this job, one line per thing with a button for each. Tap Finish job and confirm: the job moves to Jobs, Job history and becomes read-only. An owner can tap Reopen job… there if a late payment comes in.",
+      "answer": "An owner finishes a job. Finish job appears for an owner when the work is done and nothing is left: no open draft, no unsigned change order, nothing unbilled or unpaid, retainage paid and waivers sent. Until then the job page shows Before you can finish this job, one line per thing with a button for each. Tap Finish job and confirm: the job moves to Jobs, Job history and becomes read-only. An owner can tap Reopen job… there if a late payment comes in.",
       "handler": "closeable",
       "needs_job": false,
       "actions": [],
@@ -1663,7 +1669,7 @@
         "lose data",
         "restore"
       ],
-      "answer": "Yes. The server makes a backup every 24 hours (and on start-up when the last one is older) and keeps the newest 14. They sit on the same server as your data, so they guard against mistakes and bugs, not against losing the server itself. Keep your own copy with Export data, and keep signed documents outside Duracash too.",
+      "answer": "Yes. The server makes a backup every 24 hours (and on start-up when the last one is older) and keeps the newest 14. Those copies sit on the server and guard against mistakes and bugs. When off-site backup is set up, each one is also encrypted and copied off the server. Keep your own copy with Export data too, and keep signed documents outside Duracash.",
       "handler": null,
       "needs_job": false,
       "actions": [],

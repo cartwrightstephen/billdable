@@ -183,14 +183,14 @@ def _job_btn(j: dict[str, Any]) -> dict[str, Any]:
 
 
 def _followup_due(snap: dict[str, Any], j: dict[str, Any]) -> tuple[dict[str, Any], int] | None:
-    inv = next((i for i in j["invoices"] if i["status"] in {"sent", "partial"}), None)
-    if not inv:
+    """The oldest pay app out for payment and the days since the last contact, when the server's
+    rule (domain.follow_up_due: the customer's days between follow-ups, a date noted after a call,
+    a promised pay date) says a follow-up is due now."""
+    unpaid = [i for i in j["invoices"] if i["status"] in domain.OPEN_FOR_PAYMENT]
+    due = domain.follow_up_due(j, j["payer"]) if unpaid else None
+    if not due or datetime.now(timezone.utc) < due:
         return None
-    days = domain._int_or(j["payer"].get("follow_up_days"), 7)
-    since = _days_since(inv.get("last_follow_up_at") or inv.get("sent_at"))
-    if since is None or since < days:
-        return None
-    return inv, since
+    return unpaid[0], _days_since(unpaid[0].get("last_follow_up_at") or unpaid[0].get("sent_at")) or 0
 
 
 def _follow_up_btn(r: dict[str, Any]) -> dict[str, Any]:
@@ -226,7 +226,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
     if name == "money":
         t = snap["totals"]
         billed_month = sum(i["amount_cents"] for j in snap["jobs"] for i in j["invoices"]
-                           if i.get("sent_at") and i["sent_at"][:7] == datetime.now(timezone.utc).strftime("%Y-%m"))
+                           if i["status"] in domain.BILLED_STATUSES and i.get("sent_at") and i["sent_at"][:7] == datetime.now(timezone.utc).strftime("%Y-%m"))
         return (f"Across open jobs:\n- Finished but not billed: {domain.money(t['unbilled_cents'])}\n"
                 f"- Billed and not paid: {domain.money(t['outstanding_cents'])}\n- Retainage still held: {domain.money(t['retainage_cents'])}\n"
                 f"- Billed this month: {domain.money(billed_month)}"), [{"type": "nav", "view": "dashboard", "label": "Open Today"},
@@ -254,7 +254,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
     if name == "draft_followup":
         if not job:
             return None
-        inv = next((i for i in job["invoices"] if i["status"] in {"sent", "partial"}), None)
+        inv = next((i for i in job["invoices"] if i["status"] in domain.OPEN_FOR_PAYMENT), None)
         if not inv:
             return f"{job['name']} has no sent, unpaid pay app to follow up on.", [_job_btn(job)]
         p = job["payer"]
@@ -267,12 +267,16 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         return f"Here is a follow-up for {job['name']}:\n\n{note}", actions + [_job_btn(job)]
     if name == "blockers":
         if not job:
-            blocked = [j for j in jobs if j["blockers"]]
+            blocked = [j for j in jobs if j["blocked"]]
             if not blocked:
                 return "No open job is blocked.", []
             return "Blocked jobs:\n" + "\n".join(f"- {j['name']}: {j['blockers'][0]}" for j in blocked[:8]), [_job_btn(j) for j in blocked[:4]]
         if not job["blockers"]:
             return f"{job['name']} has nothing blocking it. Status: {job['status_label']}.", [_job_btn(job)]
+        if not job["blocked"]:
+            # Missing paperwork before there is a draft is what the next pay app will need, not a block.
+            return (f"{job['name']} isn't blocked yet. The next pay app will need:\n" + "\n".join(f"- {b}" for b in job["blockers"]),
+                    [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open paperwork"}])
         return f"{job['name']} is blocked by:\n" + "\n".join(f"- {b}" for b in job["blockers"]), [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open paperwork"}]
     if name == "job_status":
         if not job:
@@ -290,14 +294,14 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
     if name == "retainage_list":
         rows = [j for j in jobs if j["money"]["retainage_open_cents"] > 0]
         if not rows:
-            return "No retainage is being held on open jobs.", [{"type": "nav", "view": "retainage", "label": "Open Retainage"}]
+            return "No retainage is being held on open jobs.", [{"type": "nav", "view": "retainage", "label": "Open Closeout"}]
         lines = []
         for j in rows:
             items = (j.get("closeout_packet") or []) or [p for p in j.get("packet", []) if p.get("kind") == "closeout"]
             missing = [p["label"] for p in items if p.get("required") and not p.get("present")]
             state_txt = "job still in progress" if j.get("work_status") != "complete" else (f"waiting on {', '.join(missing)}" if missing else "ready to ask for release")
             lines.append(f"- {j['name']}: {domain.money(j['money']['retainage_open_cents'])}, {state_txt}")
-        return "Retainage held:\n" + "\n".join(lines), [{"type": "nav", "view": "retainage", "label": "Open Retainage"}]
+        return "Retainage held:\n" + "\n".join(lines), [{"type": "nav", "view": "retainage", "label": "Open Closeout"}]
     if name == "waivers_due":
         rows = [j for j in jobs if j.get("waiver_due") and not j.get("waiver_sent")]
         if not rows:
@@ -318,7 +322,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
     if name == "closeable":
         rows = [j for j in jobs if not j.get("close_blockers")]
         if not rows:
-            return "No job is ready to close yet. A job closes when everything is billed, paid, released and waived.", []
+            return "No job is ready to finish yet. A job can be finished once the work is marked done, every change order is signed or withdrawn, and everything is billed, paid, released and waived. Open a job to see what is left. Only an owner can finish a job.", []
         return "Ready to finish:\n" + "\n".join(f"- {j['name']}" for j in rows), [_job_btn(j) for j in rows[:4]]
     return None
 

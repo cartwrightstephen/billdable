@@ -138,5 +138,36 @@ class HelperTests(unittest.TestCase):
         if not due:
             self.assertIn("No follow-ups are due", reply["text"])
 
+    def test_blocked_means_what_today_means(self):
+        # Grant Park has paperwork missing but no draft yet: what the next pay app will need, not a block.
+        state = seed_state()
+        reply = helper.answer("which jobs are blocked", state, "co-x", "u-1")
+        self.assertNotIn("Grant Park addition", reply["text"])
+        self.assertIn("Oak Street kitchen", reply["text"])
+        reply = helper.answer("what's blocking grant park", state, "co-x", "u-1")
+        self.assertIn("isn't blocked yet", reply["text"])
+
+    def test_follow_up_answer_covers_an_approved_pay_app(self):
+        # A pay app the customer approved is still out for payment; the server follows up on it.
+        state = seed_state()
+        job = next(j for j in state["jobs"] if j["id"] == "job-turner")
+        job["invoices"][0]["status"] = "approved"
+        reply = helper.answer("draft a follow-up for turner", state, "co-x", "u-1")
+        self.assertNotIn("has no sent, unpaid pay app", reply["text"])
+        self.assertIn(job["invoices"][0]["number"], reply["text"])
+        self.assertTrue(any(a.get("label") == "Send the follow-up" for a in reply["actions"]))
+
+    def test_billed_this_month_leaves_out_a_pulled_back_pay_app(self):
+        state = seed_state()
+        month = domain.datetime.now(domain.timezone.utc).strftime("%Y-%m")
+        job = next(j for j in state["jobs"] if j["id"] == "job-turner")
+        inv = job["invoices"][0]
+        inv["sent_at"] = month + "-01T12:00:00+00:00"
+        counted = helper.answer("what are my totals", state, "co-x", "u-1")["text"]
+        inv["status"] = "void"
+        pulled = helper.answer("what are my totals", state, "co-x", "u-1")["text"]
+        cents = lambda text: round(float(text.split("Billed this month: $")[1].split()[0].replace(",", "")) * 100)
+        self.assertEqual(cents(counted) - cents(pulled), inv["amount_cents"])
+
 if __name__ == "__main__":
     unittest.main()
