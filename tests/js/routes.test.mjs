@@ -1,7 +1,7 @@
 // Page addresses: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { VIEW_PATHS, DETAIL_PATHS, DETAIL_PARENT, pathFor, routeFromPath, refusalLink } from "../../static/js/routes.js";
+import { VIEW_PATHS, DETAIL_PATHS, DETAIL_PARENT, pathFor, routeFromPath, refusalLink, refusalLinkData, refusalToastAction } from "../../static/js/routes.js";
 
 test("every view's address leads back to that view", () => {
   for (const [view, path] of Object.entries(VIEW_PATHS)) assert.deepEqual(routeFromPath(path), { view }, path);
@@ -50,4 +50,25 @@ test("a refusal's link opens the page that fixes it, and nothing else", () => { 
   for (const bad of [undefined, null, "x", {}, { label: "Go", view: "settings", job_id: "j1" }, { label: "Go", view: "packet-detail" }, { view: "packet-detail", job_id: "j1" }]) {
     assert.equal(refusalLink(bad), null, JSON.stringify(bad));
   }
+});
+
+test("the refusal card's button and the toast's both open the page", () => {  // Oct 23 note #13, review
+  const navs = [];
+  const go = (view, jobId, detailId) => navs.push([view, jobId, detailId]);
+  // What static/app.js's "nav" handler does with the card button's data-*.
+  const click = (data) => go(data.view, data.id || null, data.detail || null);
+  const draft = refusalLink({ label: "Open the paperwork for PA-OAK-3", view: "packet-detail", job_id: "j1", detail: "inv1" });
+  assert.deepEqual(refusalLinkData(draft), { action: "nav", view: "packet-detail", id: "j1", detail: "inv1" });
+  click(refusalLinkData(draft));
+  const toastAction = refusalToastAction(draft, go);
+  assert.equal(toastAction.label, "Open the paperwork for PA-OAK-3");
+  toastAction.run();
+  const jobPaperwork = refusalLink({ label: "Open the paperwork", view: "packet-detail", job_id: "j1", detail: "" });
+  assert.deepEqual(refusalLinkData(jobPaperwork), { action: "nav", view: "packet-detail", id: "j1" });
+  click(refusalLinkData(jobPaperwork));
+  refusalToastAction(jobPaperwork, go).run();
+  assert.deepEqual(navs, [["packet-detail", "j1", "inv1"], ["packet-detail", "j1", "inv1"], ["packet-detail", "j1", null], ["packet-detail", "j1", null]]);
+  // No link from the server: no button on the card, a plain toast.
+  assert.equal(refusalLinkData(null), null);
+  assert.equal(refusalToastAction(null, go), null);
 });

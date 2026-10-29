@@ -35,6 +35,17 @@ export function refusalLink(action) {
   return { label: String(action.label), view: action.view, jobId: String(action.job_id), detailId, href: pathFor(action.view, action.job_id, detailId) };
 }
 
+// The refusal card's button: the data-* the "nav" click handler reads (view, id, detail).
+export function refusalLinkData(link) {
+  if (!link) return null;
+  return Object.assign({ action: "nav", view: link.view, id: link.jobId }, link.detailId ? { detail: link.detailId } : {});
+}
+
+// The toast's button when there is no card: its label, and a run that goes to the page.
+export function refusalToastAction(link, go) {
+  return link ? { label: link.label, run: () => go(link.view, link.jobId, link.detailId) } : null;
+}
+
 export function routeFromPath(path) {
   let parts;
   try { parts = path.split("/").filter(Boolean).map(decodeURIComponent); } catch (_) { return null; }

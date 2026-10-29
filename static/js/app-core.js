@@ -2,7 +2,7 @@
 // going to a page (nav), redrawing (render, patch), toasts and refusals, and the (i) help.
 import { unesc, escDeep, emailOutcome } from "./format.js";
 import { mayTake } from "./jobs.js";
-import { pathFor, routeFromPath, refusalLink } from "./routes.js";
+import { pathFor, routeFromPath, refusalLink, refusalLinkData, refusalToastAction } from "./routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./help.js";
 import { readJson, setNetBanner } from "./net.js";
 import { labelTables } from "./dom.js";
@@ -300,7 +300,7 @@ function showRefusal(anchor, data) {
     anchor = document.querySelector(sel);
   }
   if (!anchor || !anchor.isConnected) {
-    toast([message, ...lines].join(" "), link ? { label: link.label, run: () => nav(link.view, link.jobId, link.detailId) } : null);
+    toast([message, ...lines].join(" "), refusalToastAction(link, nav));
     return;
   }
   const card = document.createElement("div");
@@ -318,7 +318,7 @@ function showRefusal(anchor, data) {
     const a = document.createElement("a");
     a.className = "btn small secondary action-error-link";
     a.href = link.href;
-    Object.assign(a.dataset, { action: "nav", view: link.view, id: link.jobId }, link.detailId ? { detail: link.detailId } : {});
+    Object.assign(a.dataset, refusalLinkData(link));
     a.textContent = link.label;
     card.append(a);
   }
