@@ -296,9 +296,21 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
             exc = self.refusal(st)
             self.assertIn("a payment is recorded on it", str(exc))
             self.assertNotIn("pull it back", str(exc))
-        exc = self.refusal(self.state("void"))
+        pulled = self.state("void")
+        pulled["jobs"][0]["invoices"][0]["sent_at"] = "2026-10-20T10:00:00Z"
+        exc = self.refusal(pulled)
         self.assertIn("was pulled back, but what it sent stays as it was", str(exc))
         self.assertEqual(exc.action["view"], "payapp-detail")
+
+    def test_a_deleted_draft_never_went_to_the_customer(self):
+        # Delete draft sets status "void" but nothing was sent: Undo goes ahead, and the record
+        # comes off the deleted draft's paperwork with it.
+        state = self.state("void")
+        importer.undo_item(state, "inb1", "owner")
+        job = state["jobs"][0]
+        self.assertEqual(job["records"], [])
+        self.assertEqual(job["invoices"][0]["packet"][0]["attachments"], [])
+        self.assertEqual(state["inbox"][0]["status"], "new")
 
     def test_attached_automatically_still_comes_off_with_the_record(self):
         state = self.state("draft", auto=True)
