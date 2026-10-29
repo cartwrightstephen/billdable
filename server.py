@@ -590,6 +590,7 @@ def _gate(exc: "domain.GateError") -> dict:
     out = {"error": str(exc), "blockers": exc.blockers}
     if exc.fields:
         out["fields"] = exc.fields
+    out.update(getattr(exc, "extra", None) or {})
     return out
 
 
@@ -2294,6 +2295,8 @@ class Handler(BaseHTTPRequestHandler):
             # "packet_notes" is what pages from before R1-04 send; it is a note on the job record now.
             note=_text(body, "note") or _text(body, "packet_notes"),
             contract_number=_text(body, "contract_number"), actor=ctx.actor,
+            # "Same as ABC Builders?" answered with "keep the new name" (Oct 23 note 5).
+            new_customer=body.get("new_customer") is True,
         )
 
     def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:
@@ -2327,6 +2330,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _m_payer_merge(self, state: dict, m, ctx: "Ctx") -> None:
         domain.merge_payer(state, m.group(1), _text(ctx.body, "into"), ctx.actor)
+
+    def _m_payer_delete(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.delete_payer(state, m.group(1), ctx.actor)
 
 
 
@@ -2445,6 +2451,7 @@ ROUTES = [
     Route("POST", r"/api/payers", "_m_payer_add", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", owner=True),
     Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate"),
     Route("POST", r"/api/import/text", "_m_import_text", "mutate"),
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_m_inbox", "mutate"),

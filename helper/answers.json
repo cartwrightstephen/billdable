@@ -747,6 +747,38 @@
       "follow_ups": []
     },
     {
+      "id": "customer-twice",
+      "category": "Getting started",
+      "questions": [
+        "I have the same customer twice",
+        "How do I delete a customer?",
+        "How do I merge two customers?",
+        "How do I rename a customer?",
+        "Remove a customer",
+        "Why does it ask Same as another customer?"
+      ],
+      "keywords": [
+        "same customer",
+        "delete customer",
+        "merge customers",
+        "duplicate customer",
+        "same as"
+      ],
+      "answer": "All three are in Settings, Customer settings. To rename a customer, open it, change Customer name and tap Save customer. Saved the same customer twice? Open the one to drop, use Same customer as another one?, pick the one to keep and tap Merge. Its jobs move over. An owner can tap Delete customer on a customer no job uses, finished jobs included. One with jobs can't be deleted, but you can merge it into another customer. When you add a job or a customer with a name close to a saved one, like ABC Builders Inc for ABC Builders, Duracash asks Same as ABC Builders? Tap Use ABC Builders, or keep the new name to add a second customer.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "playbook",
+          "label": "Open Customer settings"
+        }
+      ],
+      "follow_ups": [
+        "How do I change what a customer needs?"
+      ]
+    },
+    {
       "id": "change-orders",
       "category": "Change orders",
       "questions": [

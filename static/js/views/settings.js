@@ -7,7 +7,7 @@ import { field, formErrorLine, refuseForm, formValues, formErrors, clearForm } f
 import { actionWords, STYLE_NOTE } from "../terms.js";
 import { state, me, currentView, formOpen, setMe, clearSession, setTeamData, teamData, mailReady, billingInfo } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding } from "../app-core.js";
-import { ROLE_OPTIONS, roleLabel } from "./jobs.js";
+import { ROLE_OPTIONS, roleLabel, sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount } from "./jobs.js";
 import { qboCardHtml } from "./money.js";
 
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
@@ -414,13 +414,14 @@ export const views = {
   },
   playbook() {
     const clean = (v) => (v && unesc(v) !== "None" ? v : "");
-    const jobsOf = (p) => state.jobs.filter(j => j.payer_id === p.id).length;
+    const jobsOf = (p) => payerJobCount(p, state.jobs);
     const addForm = formOpen.addpayer ? `
       <div class="card" data-form-key="addpayer">
         <h2>Add customer</h2>
         ${formErrorLine("addpayer")}
         <div class="form-grid">
           ${field({ form: "addpayer", name: "name", id: "ap-name", label: "Customer name", helpKey: "customer_name", required: true, autocomplete: "off" })}
+          ${sameCustomerBox("addpayer")}
           ${field({ form: "addpayer", name: "role", id: "ap-role", label: "Who pays you?", helpKey: "role", options: ROLE_OPTIONS })}
           ${field({ form: "addpayer", name: "approver", id: "ap-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The customer, unless you say otherwise" })}
           ${field({ form: "addpayer", name: "ap_email", id: "ap-email", label: "Email for pay apps (can add later)", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com" })}
@@ -442,7 +443,7 @@ export const views = {
         const others = state.payers.filter(o => o.id !== p.id);
         const n = jobsOf(p);
         return `
-        <details class="card playbook-card"${(p.packet_suggestions || []).some(x => x.status === "open") || formErrors[key] ? " open" : ""}>
+        <details class="card playbook-card" data-payer-card="${p.id}"${(p.packet_suggestions || []).some(x => x.status === "open") || formErrors[key] ? " open" : ""}>
           <summary><strong>${p.name}</strong> <span class="sub">${roleLabel(p.role)} · ${p.approver || "no one signs off yet"} · ${p.ap_email || "no email yet"} · ${n === 1 ? "1 job" : `${n} jobs`}</span>${(p.packet_suggestions || []).some(x => x.status === "open") ? ` <span class="pill copper">${p.packet_suggestions.filter(x => x.status === "open").length} suggested</span>` : ""}</summary>
           ${(p.packet_suggestions || []).filter(x => x.status === "open").map(x => `<div class="list-item suggestion">
             <div><strong>Add to the paperwork?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
@@ -482,6 +483,7 @@ export const views = {
             </div>
             <p class="sub">Every job of ${p.name} moves to the customer you pick, which keeps its own settings. ${p.name} is then removed.</p>
           </details>` : ""}
+          ${deletePayerHtml(p, { owner: !me || me.role === "owner", jobs: state.jobs, canMerge: others.length > 0 })}
         </details>`;
       }).join("") : emptyState("No customers yet", "Add one here, or one is added with the first job for that customer.", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add customer</button>`)}
     `;
@@ -600,13 +602,35 @@ export const actions = {
   "add-payer": async () => {
     const v = formValues("addpayer");
     if (refuseForm("addpayer", v.name ? {} : { name: "Enter the customer's name." })) return;
-    await post("/api/payers", v, { formKey: "addpayer", close: "addpayer" });
+    const r = await post("/api/payers", { ...v, new_customer: keptNames.addpayer === v.name }, { formKey: "addpayer", close: "addpayer" });
+    if (r && !r.ok) showSameCustomer("addpayer", "ap", r.data);
+    if (r && r.ok) delete keptNames.addpayer;
+  },
+  // "Same as ABC Builders?" while adding a customer: open the saved one instead...
+  "ap-same-use": (el) => {
+    formOpen.addpayer = false;
+    clearForm("addpayer");
+    render();
+    const card = document.querySelector(`[data-payer-card="${CSS.escape(el.dataset.id || "")}"]`);
+    if (card) { card.open = true; card.scrollIntoView({ block: "start", behavior: "smooth" }); }
+  },
+  // ...or add the typed name as a new customer, on purpose.
+  "ap-same-keep": (el) => {
+    keptNames.addpayer = el.dataset.name || "";
+    hideSameCustomer("addpayer");
+    return actions["add-payer"]();
+  },
+  "delete-payer": async (el, id) => {
+    const name = unesc(el.dataset.name || "this customer");
+    if (!(await askConfirm(`Delete ${name}? No job uses this customer. It is removed from Customer settings, and the activity log keeps a note of it.`, "Delete customer", true))) return;
+    await post(`/api/payers/${id}/delete`, {});
   },
   "merge-payer": async (el, id) => {
     const select = el.closest(".merge-payer").querySelector("[data-merge-into]");
     const into = state.payers.find(p => p.id === select.value);
+    const from = state.payers.find(p => p.id === id);
     if (!into) return;
-    const n = state.jobs.filter(j => j.payer_id === id).length;
+    const n = from ? payerJobCount(from, state.jobs) : state.jobs.filter(j => j.payer_id === id).length;
     const name = unesc(el.dataset.name || "this customer");
     const jobs = n === 0 ? "It has no jobs." : `${n === 1 ? "Its job moves" : `Its ${n} jobs move`} to ${unesc(into.name)}.`;
     if (!(await askConfirm(`Merge ${name} into ${unesc(into.name)}? ${jobs} ${unesc(into.name)} keeps its own settings, and ${name} is removed.`, "Merge", true))) return;

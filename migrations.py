@@ -22,7 +22,18 @@ def _v1_to_v2(state: dict[str, Any]) -> None:
     domain.seal_audit(state)
 
 
-STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2]
+def _v2_to_v3(state: dict[str, Any]) -> None:
+    """Paperwork, not packet (Oct 23 note 21): a customer still holding the old default for
+    "They send pay apps back when" gets the new one. Anything the person typed is left alone."""
+    for payer in state.get("payers", []):
+        if payer.get("rejects_when") == OLD_REJECTS_WHEN:
+            payer["rejects_when"] = NEW_REJECTS_WHEN
+
+
+OLD_REJECTS_WHEN = "Missing required packet items."
+NEW_REJECTS_WHEN = "Missing required paperwork."
+
+STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3]
 SCHEMA_VERSION = len(STEPS) + 1
 
 

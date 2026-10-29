@@ -1,5 +1,5 @@
 // Jobs: the open jobs with New job, and Job history. The job's own fields are shared with Edit job.
-import { unesc, money, centsFrom, percentFrom, fmtDate } from "../format.js";
+import { esc, unesc, money, centsFrom, percentFrom, fmtDate } from "../format.js";
 import { nextStep, statusPill } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { moreButton } from "../dom.js";
@@ -36,10 +36,57 @@ function knownPayerText(p) {
   return p ? `Pay apps go to ${p.approver || p.name} · ${p.ap_email || "no email yet"}` : "";
 }
 
+// "Same as ABC Builders?" (Oct 23 note 5): a new customer name that nearly matches a saved one
+// ("ABC Builders Inc", "abc builders, LLC") is refused by the server with the saved customer in
+// same_customer, and the form asks. Nothing is merged without the person saying so: one button
+// uses the saved customer, the other keeps the typed name as a new customer.
+// keptNames[form] is the name the person chose to keep, sent again as new_customer: true.
+export const keptNames = {};
+
+// The place under the name box where the question's two buttons go.
+export function sameCustomerBox(formKey) {
+  return `<div class="span-2 same-customer form-inline" data-same-customer="${formKey}" hidden></div>`;
+}
+
+// After a refusal: show the two buttons when it carries same_customer. prefix names the form's
+// actions, `${prefix}-same-use` and `${prefix}-same-keep`. Returns whether it showed them.
+export function showSameCustomer(formKey, prefix, data) {
+  const box = document.querySelector(`[data-same-customer="${formKey}"]`);
+  const same = data && data.same_customer;
+  if (!box || !same || !same.name) return false;
+  box.innerHTML = `<button type="button" class="btn small" data-action="${prefix}-same-use" data-name="${esc(same.name)}" data-id="${esc(same.id || "")}">Use ${esc(same.name)}</button>`
+    + `<button type="button" class="btn small secondary" data-action="${prefix}-same-keep" data-name="${esc(same.typed || "")}">Keep “${esc(same.typed || "")}” as a new customer</button>`;
+  box.hidden = false;
+  return true;
+}
+
+export function hideSameCustomer(formKey) {
+  const box = document.querySelector(`[data-same-customer="${formKey}"]`);
+  if (box) { box.hidden = true; box.innerHTML = ""; }
+}
+
+// How many jobs use a customer, finished ones included. The server's job_count counts them all;
+// state.jobs holds only the open and recent ones, so it is the fallback for an older page.
+// The card's "N jobs", the Merge question and Delete customer all count this one way.
+export function payerJobCount(p, jobs = []) {
+  return Number.isInteger(p.job_count) ? p.job_count : jobs.filter(j => j.payer_id === p.id).length;
+}
+
+// Delete customer, on Customer settings (Oct 23 note 47): owners only, and only for a customer
+// no job uses, finished jobs included. The server refuses the rest with the reason. canMerge:
+// another customer exists, so the Merge box is there to point at. p is escaped, as in state.
+export function deletePayerHtml(p, { owner = false, jobs = [], canMerge = false } = {}) {
+  if (!owner) return "";
+  const n = payerJobCount(p, jobs);
+  if (n > 0) return `<p class="sub delete-payer">A customer with jobs can't be deleted, finished jobs included. ${canMerge ? `To remove ${p.name}, merge it into another customer.` : "Its jobs need it."}</p>`;
+  return `<div class="form-inline delete-payer"><button type="button" class="btn small danger" data-action="delete-payer" data-id="${p.id}" data-name="${p.name}">Delete customer</button><span class="sub">No job uses ${p.name}.</span></div>`;
+}
+
 // As the Customer box is typed in: swap the two contact boxes for the saved contact, or back.
 export function syncNewJobCustomer() {
   const form = document.querySelector('[data-form-key="newjob"]');
   if (!form) return;
+  hideSameCustomer("newjob");
   const p = knownPayer(form.querySelector('[data-field="customer"]')?.value);
   const note = form.querySelector("[data-known-payer]");
   if (note) { note.hidden = !p; note.querySelector("[data-known-payer-text]").innerHTML = knownPayerText(p); }
@@ -107,6 +154,7 @@ export const views = {
             ${jf.address}
             ${f({ name: "customer", id: "nj-customer", label: "Customer", required: true, autocomplete: "off", attrs: 'list="nj-customers"' })}
             <datalist id="nj-customers">${(state.payers || []).map(p => `<option value="${p.name}"></option>`).join("")}</datalist>
+            ${sameCustomerBox("newjob")}
             ${f({ name: "role", id: "nj-role", label: "Who pays you?", helpKey: "role", help: "Sets the paperwork they usually need and when to follow up. You can change both later.", options: ROLE_OPTIONS })}
             ${jf.contract_cents}
             <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
@@ -197,11 +245,30 @@ export const actions = {
       ap_email: apEmail, phone: v.phone, role: v.role || "Owner",
       contract_number: v.contract_number, note: v.note,
       contract_cents: amount.cents, retainage_pct: ret.value,
+      new_customer: !known && keptNames.newjob === v.customer,
     }, { formKey: "newjob", close: "newjob" });
+    if (r && !r.ok) showSameCustomer("newjob", "nj", r.data);
     if (!r || !r.ok) return;
+    delete keptNames.newjob;
     delete moreDetails.newjob;
     toast("Job saved");
     const made = state.jobs[state.jobs.length - 1];
     if (made) nav("job", made.id);
+  },
+  // "Same as ABC Builders?": put the saved name in the Customer box and save the job with it.
+  "nj-same-use": (el) => {
+    const box = document.querySelector('[data-form-key="newjob"] [data-field="customer"]');
+    if (!box) return;
+    box.value = el.dataset.name || "";
+    (formDraft.newjob ||= {}).customer = box.value;
+    syncNewJobCustomer();
+    prefillApprover();
+    return actions["create-job"]();
+  },
+  // ...or keep the name as typed: a new customer, on purpose.
+  "nj-same-keep": (el) => {
+    keptNames.newjob = el.dataset.name || "";
+    hideSameCustomer("newjob");
+    return actions["create-job"]();
   },
 };
