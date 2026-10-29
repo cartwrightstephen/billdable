@@ -850,7 +850,9 @@ def match_payment(
     if amount_cents > remaining:
         _refuse("", {"amount_cents": f"Enter no more than the {money(remaining)} still owed on {invoice['number']}. You entered {money(amount_cents)}."})
     reference = reference.strip() if isinstance(reference, str) else ""
-    if reference and any(p.get("reference") == reference for p in job["payments"]):
+    # Two QuickBooks payments with different ids are two payments, even with one reference ("ACH").
+    if reference and any(p.get("reference") == reference and not (qbo_payment_id and p.get("qbo_payment_id") and p["qbo_payment_id"] != qbo_payment_id)
+                         for p in job["payments"]):
         _refuse("", {"reference": f"Use another reference: {reference} is already recorded on this job."})
     if not reference:
         used = {p.get("reference") for p in job["payments"]}

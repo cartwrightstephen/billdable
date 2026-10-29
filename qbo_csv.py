@@ -6,8 +6,10 @@ money in, such as invoices and refunds, are skipped) and pastes
 them in. Duracash proposes a pay app for each row and records nothing until someone
 applies the matches. Matching is keyed on the payment's reference (check number or QuickBooks
 number) together with the customer, since two customers can send the same check number; a
-reference can be recorded once per job, and a payment with no number is known by its customer,
-amount and day, so importing the same file twice is harmless.
+reference can be recorded once per job (the amount must agree too: one check can pay two jobs,
+and a word like ACH can be every payment's reference), and a payment with no number is known by
+its customer, amount and day, so importing the same file twice is harmless. One recorded a few
+days from the row's date, keyed in by hand say, leaves the row unticked with the reason.
 
 The column names QuickBooks uses are from memory, not from a real export, so the reader
 accepts several spellings and finds the header row below any report-title lines.
@@ -216,6 +218,83 @@ def _same(cust: str, payer: str) -> bool:
     return bool(cust and payer) and (f" {payer} " in f" {cust} " or f" {cust} " in f" {payer} ")
 
 
+NEAR_DAYS = 7   # a payment with no number keyed in this many days from the books' date is the same one
+
+
+def _day(payment: dict[str, Any]) -> str:
+    return str(payment.get("matched_at") or "")[:10]
+
+
+def _apart(a: str, b: str) -> int | None:
+    try:
+        return abs((datetime.strptime(a, "%Y-%m-%d") - datetime.strptime(b, "%Y-%m-%d")).days)
+    except ValueError:
+        return None
+
+
+def _made_up(payment: dict[str, Any]) -> bool:
+    """Recorded with no number: Duracash's manual-N, or a QuickBooks payment's "QBO <id>"."""
+    ref, qid = payment["reference"], payment.get("qbo_payment_id")
+    return ref.startswith("manual-") or bool(qid and ref.split(" (rest)")[0] == f"QBO {qid}")
+
+
+def _already(row: dict[str, Any], recorded: list, used: set[int], near: bool) -> tuple[dict[str, Any], str] | None:
+    """(job, day) of the recorded payment (or the parts of a split one) this row already is, or
+    None; what it finds is marked used. `day` is "" when it is surely this row. With `near`, a
+    payment of the same amount dated a few days apart, which may be this one, and `day` is its date."""
+    cust, qid = _norm(row["customer"]), row.get("qbo_id") or ""
+    amount, day = row["amount_cents"], row["date"]
+
+    def free(p: dict[str, Any]) -> bool:
+        # A QuickBooks payment's own parts are counted by its id (qbo.propose), another's are not this one.
+        return id(p) not in used and not (qid and p.get("qbo_payment_id"))
+
+    def take(found: list, when: str = "") -> tuple[dict[str, Any], str]:
+        used.update(id(p) for _, p in found)
+        return found[0][0], when
+
+    def nearest(found: list) -> tuple[dict[str, Any], str] | None:
+        close = sorted(((gap, n, j, p) for n, (j, p) in enumerate(found) if p["amount_cents"] == amount
+                        for gap in [_apart(_day(p), day)] if gap is not None and gap <= NEAR_DAYS), key=lambda t: t[:2])
+        return take([close[0][2:]], _day(close[0][3])) if close else None
+
+    number = "" if row.get("no_number") else row["ref"]
+    if number:
+        # A check number is only unique per customer: two customers can both send check 1001.
+        # Without a customer column the number alone decides, to stay on the safe side. One check
+        # can pay two jobs, so the amount must agree too (the parts of a split add up to it, its
+        # rest on any job), and a word used for every payment, like ACH, needs the same day.
+        word = not any(c.isdigit() for c in number)
+        same = [(j, p) for j, p, name in recorded if free(p) and p["reference"] == number and (not cust or _same(cust, name))]
+        if near:
+            return nearest(same) if word and day else None
+        if word and day:
+            same = [(j, p) for j, p in same if _day(p) == day]
+        one = next(((j, p) for j, p in same if p["amount_cents"] == amount), None)
+        if one:
+            return take([one])
+        rest = [(j, p) for j, p, _ in recorded if free(p) and p["reference"].startswith(f"{number} (rest)")
+                and (not word or not day or _day(p) == day)]
+        parts = same + rest
+        return take(parts) if same and sum(p["amount_cents"] for _, p in parts) == amount else None
+    if not day:
+        return None
+    # No number (an ACH, say): recorded with a made-up reference, so the same customer, amount and
+    # day stand in for it, and the same file read again stays harmless.
+    loose = [(j, p, name) for j, p, name in recorded if free(p) and _made_up(p)]
+    mine = [(j, p) for j, p, name in loose if not cust or _same(cust, name)]
+    if near:
+        return nearest(mine)
+    today = [(j, p) for j, p in mine if _day(p) == day]
+    one = next(((j, p) for j, p in today if p["amount_cents"] == amount), None)
+    if one:
+        return take([one])
+    # Split over two pay apps: the rest may be on another customer's job, recorded the same day.
+    rest = [(j, p) for j, p, _ in loose if _day(p) == day]
+    pair = next(([a, b] for a in today for b in rest if b[1] is not a[1] and a[1]["amount_cents"] + b[1]["amount_cents"] == amount), None)
+    return take(pair) if pair else None
+
+
 def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """A proposed pay app for each row, and why. Changes nothing."""
     payers = {p["id"]: p for p in state.get("payers", [])}
@@ -232,24 +311,24 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
     def choice(job: dict[str, Any], inv: dict[str, Any], owed: int) -> dict[str, Any]:
         return {"job_id": job["id"], "job": job["name"], "invoice_id": inv["id"], "number": inv["number"], "owed_cents": owed}
 
+    # Which recorded payment each row already is: each one stands for one row only, the same day
+    # first and then a few days apart, so one payment keyed in by hand doesn't hide a second.
+    used: set[int] = set()
+    seen_as: list[tuple[dict[str, Any], str] | None] = [None] * len(rows)
+    for near in (False, True):
+        for n, row in enumerate(rows):
+            if seen_as[n] is None:
+                seen_as[n] = _already(row, recorded, used, near)
+
     out = []
-    for row in rows:
+    for n, row in enumerate(rows):
         result = {**row, "status": "no match", "reason": "No open pay app has this number, or this customer and amount.",
                   "job_id": None, "invoice_id": None, "number": None, "candidates": []}
-        # A check number is only unique per customer: two customers can both send check 1001.
-        # Without a customer column the number alone decides, to stay on the safe side.
         cust = _norm(row["customer"])
-        if row["ref"]:
-            seen = next((j for j, p, name in recorded if p["reference"] == row["ref"] and (not cust or _same(cust, name))), None)
-        else:
-            # No number (an ACH, say): recorded with a made-up manual-N reference, so the same
-            # customer, amount and day stand in for it, and the same file read again stays harmless.
-            seen = next((j for j, p, name in recorded if row["date"] and p["reference"].startswith("manual-")
-                         and p["amount_cents"] == row["amount_cents"] and str(p.get("matched_at") or "")[:10] == row["date"]
-                         and (not cust or _same(cust, name))), None)
-        if seen:
-            who = f" from {row['customer']}" if row["customer"] else ""
-            if row["ref"]:
+        seen, maybe = seen_as[n] or (None, "")
+        who = f" from {row['customer']}" if row["customer"] else ""
+        if seen and not maybe:
+            if row["ref"] and not row.get("no_number"):
                 what = "Check" if row["ref"].isdigit() else "Payment"
                 reason = f"{what} {row['ref']}{who} for {domain.money(row['amount_cents'])} is already recorded on {seen['name']}."
             else:
@@ -269,6 +348,12 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
                 hit, reason = same[0], f"Same customer and exactly the {domain.money(row['amount_cents'])} still owed."
             elif len(same) > 1:
                 result.update(status="pick one", reason=f"{len(same)} open pay apps for this customer are for this amount. Pick one.")
+        if maybe:
+            # Recorded a few days from this date (keyed in by hand, say): likely this payment, so
+            # nothing is ticked, and the pay apps stay to pick from if it is another one.
+            hit, same = None, []
+            result.update(status="no match", reason=f"A payment{who} for {domain.money(row['amount_cents'])} dated {maybe} is already "
+                                                    f"recorded on {seen['name']}. If this is a different payment, pick its pay app.")
         # The pay apps a person can pick from: the ones that fit, then this customer's, then the rest.
         mine = [(j, i, r) for j, i, r in open_apps if cust and _same(cust, _norm(payers.get(j.get("payer_id"), {}).get("name", "")))]
         ordered = (same if len(same) > 1 else []) + mine + open_apps

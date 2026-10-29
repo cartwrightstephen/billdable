@@ -432,8 +432,8 @@ def inbound_address(company_id: str) -> str:
 
 
 def delete_company_data(company_id: str) -> int:
-    """Remove a company: its users and sessions, company file, reset snapshots, uploads, inbound
-    and calendar addresses, helper and mail records. Backups that hold it expire on their own.
+    """Remove a company: its users and sessions, company file (and the copy of an imported JSON
+    file), reset snapshots, uploads, inbound and calendar addresses, helper and mail records. Backups that hold it expire on their own.
     Used by the owner's Delete the company and by admin.py for a deletion request. Returns how
     many users were removed."""
     removed = auth.delete_company_users(company_id)  # every session of the company ends here
@@ -442,7 +442,8 @@ def delete_company_data(company_id: str) -> int:
             gone = sorted(deleted_companies() | {company_id})
             storage.write_json(_deleted_path(), gone)
         company_store().delete(company_id)
-        for path in (COMPANIES / "snapshots").glob(f"{company_id}-*.json"):
+        # Reset snapshots, and the copy of its JSON-layout file the SQLite store moved aside on import.
+        for path in [*(COMPANIES / "snapshots").glob(f"{company_id}-*.json"), *COMPANIES.glob(f"imported-json-*/{company_id}.json")]:
             try:
                 path.unlink()
             except OSError:

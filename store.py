@@ -8,7 +8,7 @@ server.load_company() and save_company() go through here. Two layouts:
 - json (DURACASH_STORAGE=json): the original one file per company, rewritten on every save.
 
 On its first start the SQLite store imports any company JSON files it finds and moves them to
-companies/imported-json-<time>/ (never deletes them). Export stays JSON (/api/export).
+companies/imported-json-<time>/ (never deletes them; deleting a company removes its copy). Export stays JSON (/api/export).
 """
 
 from __future__ import annotations
