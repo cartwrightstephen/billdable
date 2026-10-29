@@ -7,22 +7,22 @@
   "boards": {
     "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 900, "title": "Map: five destinations and the money path", "is_interactive": true},
     "Landing.dc.html": {"x": 1520, "y": 0, "w": 1280, "h": 980, "title": "Landing and sign-up", "expand": "fill"},
-    "Today.dc.html": {"x": 0, "y": 1400, "w": 1280, "h": 1680, "title": "Today: one action list", "expand": "fill", "is_interactive": true},
+    "Today.dc.html": {"x": 0, "y": 1400, "w": 1280, "h": 2200, "title": "Today: Needs you, three at a time", "expand": "fill", "is_interactive": true},
     "Jobs.dc.html": {"x": 1360, "y": 1400, "w": 1280, "h": 1450, "title": "Jobs", "expand": "fill", "is_interactive": true},
     "Job.dc.html": {"x": 2720, "y": 1400, "w": 1280, "h": 3450, "title": "Job page: Next step, More, Before you can finish, Money", "expand": "fill", "is_interactive": true},
-    "Packet.dc.html": {"x": 4080, "y": 1400, "w": 1280, "h": 1120, "title": "Paperwork for a pay app", "expand": "fill", "is_interactive": true},
-    "SendCheck.dc.html": {"x": 5440, "y": 1400, "w": 1280, "h": 1900, "title": "Pay app: before you send", "expand": "fill", "is_interactive": true},
+    "Packet.dc.html": {"x": 4080, "y": 1400, "w": 1280, "h": 1400, "title": "Paperwork for a pay app", "expand": "fill", "is_interactive": true},
+    "SendCheck.dc.html": {"x": 5440, "y": 1400, "w": 1280, "h": 2200, "title": "Pay app: before you send", "expand": "fill", "is_interactive": true},
     "Money.dc.html": {"x": 0, "y": 5270, "w": 1280, "h": 1850, "title": "Money: pay apps, Unpaid and Closeout", "expand": "fill", "is_interactive": true},
     "Inbox.dc.html": {"x": 1360, "y": 5270, "w": 1280, "h": 2150, "title": "Inbox: Waiting first, one tap to add", "expand": "fill", "is_interactive": true},
     "Calendar.dc.html": {"x": 2720, "y": 5270, "w": 1280, "h": 1240, "title": "Calendar, with customers' pay-app cutoffs", "expand": "fill", "is_interactive": true},
     "Settings.dc.html": {"x": 4080, "y": 5270, "w": 1280, "h": 2550, "title": "Settings: company, team, my account, billing", "expand": "fill", "is_interactive": true},
-    "PhoneToday.dc.html": {"x": 0, "y": 8240, "w": 390, "h": 1300, "title": "Phone: Today", "is_interactive": true},
+    "PhoneToday.dc.html": {"x": 0, "y": 8240, "w": 390, "h": 2200, "title": "Phone: Today", "is_interactive": true},
     "PhoneMenu.dc.html": {"x": 470, "y": 8240, "w": 390, "h": 844, "title": "Phone: menu open", "is_interactive": true},
     "PhoneJob.dc.html": {"x": 940, "y": 8240, "w": 390, "h": 2400, "title": "Phone: job page", "is_interactive": true},
-    "PhonePacket.dc.html": {"x": 1410, "y": 8240, "w": 390, "h": 1200, "title": "Phone: packet", "is_interactive": true},
+    "PhonePacket.dc.html": {"x": 1410, "y": 8240, "w": 390, "h": 1150, "title": "Phone: paperwork", "is_interactive": true},
     "Results.dc.html": {"x": 0, "y": 11060, "w": 1280, "h": 1250, "title": "Today: Results", "expand": "fill", "is_interactive": true},
     "PaymentsImport.dc.html": {"x": 1360, "y": 11060, "w": 1280, "h": 1850, "title": "Money: payments, QuickBooks and the payments import", "expand": "fill", "is_interactive": true},
-    "Playbook.dc.html": {"x": 2720, "y": 11060, "w": 1280, "h": 1290, "title": "Settings: customer settings, learned suggestion, timing, cutoff", "expand": "fill", "is_interactive": true},
+    "Playbook.dc.html": {"x": 2720, "y": 11060, "w": 1280, "h": 1600, "title": "Settings: customer settings, a suggested paperwork item, timing", "expand": "fill", "is_interactive": true},
     "History.dc.html": {"x": 4080, "y": 11060, "w": 1280, "h": 900, "title": "Jobs: job history, paged", "expand": "fill", "is_interactive": true},
     "TwoStep.dc.html": {"x": 5440, "y": 11060, "w": 1400, "h": 760, "title": "Two-step sign-in", "expand": "fill"},
     "PayerPage.dc.html": {"x": 0, "y": 13330, "w": 1280, "h": 2450, "title": "Customer page for one pay app", "expand": "fill"},
@@ -59,7 +59,7 @@
     "phone": {"x": 1880, "y": 8240, "w": 380, "maxH": 560, "fill": "purple", "size": "m", "text": "Phone layout\n\nTop bar with a menu button; the five destinations open in a drawer.\nTabs scroll sideways and fade at the right edge.\nEvery table becomes one card per row, each value labelled; a schedule of values is one card per line.\nThe main action is full width; on Today the buttons sit under each row's text.\nEvery control is at least 44 px tall.\nThe Inbox, the job record and each missing paperwork item have Take a photo, which opens the camera."},
     "newrow": {"x": 6920, "y": 11060, "w": 380, "maxH": 700, "fill": "teal", "size": "m", "text": "What these add\n\nResults: counted from the company's own pay apps and payments; nothing estimated. A monthly summary email goes to the owner.\n\nPayments: QuickBooks payments are proposed, never recorded until ticked, from a CSV or Excel export or, once connected, from QuickBooks itself (read-only); each is recorded once, and a row with no match gets a pay app to pick. \"Check against QuickBooks\" lists the differences.\n\nCustomer settings: a pay app sent back or a draft the customer wanted changed becomes a suggested paperwork item; nothing changes until Add to paperwork. Each customer shows how long they actually take to pay, with \"Use N days\" when the setting is off. The pay-app cutoff is a contract date, not a legal one.\n\nJob history, Outbox and Activity log load 50 rows at a time."},
     "outside": {"x": 2720, "y": 13330, "w": 380, "maxH": 560, "fill": "teal", "size": "m", "text": "Outside the app\n\nThe customer page is linked from each pay app email. It shows the job's figures, the lines, the paperwork and the PDF; Mark as received, Approve for payment (with a date) and Send a question update the job.\n\nThe signing page is emailed for an unsigned change order. The typed name, consent, time, network address and a fingerprint of what was shown are kept. Counsel should check the consent wording."},
-    "redrawn": {"x": 3340, "y": 0, "w": 380, "maxH": 560, "fill": "orange", "size": "m", "text": "Redrawn Oct 29 (R6-11)\n\nJob, Phone: job page, Money, Payments, Inbox, Settings and the customer page were redrawn from the code after Round 6, in the plain words of the wording glossary (docs/improvement-plan.md section 4).\n\nThe other boards are as of Oct 13 or Oct 27 and still use some older words (packet, payer, playbook). The app uses the plain ones everywhere."}
+    "redrawn": {"x": 3340, "y": 0, "w": 380, "maxH": 560, "fill": "orange", "size": "m", "text": "Redrawn Oct 29 (R6-11 and the final pass)\n\nJob, Phone: job page, Money, Payments, Inbox, Settings and the customer page were redrawn from the code after Round 6 (R6-11). The final pass redrew Today, Phone: Today, Paperwork, Phone: paperwork, Before you send and Customer settings, and brought every other board's words and tabs up to the app: the plain words of the wording glossary (docs/improvement-plan.md section 4), Money's six tabs and Settings' seven."}
   },
   "designSystems": []
 }

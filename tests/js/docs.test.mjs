@@ -9,8 +9,11 @@ import { NEW, OLD } from "./glossary.mjs";
 const repo = new URL("../../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, repo), "utf8");
 
-// The boards redrawn from the code after Round 6.
-const BOARDS = ["Job", "PhoneJob", "Money", "PaymentsImport", "Inbox", "Settings", "PayerPage"];
+// The boards redrawn from the code after Round 6 (R6-11) and in the final pass.
+const BOARDS = ["Job", "PhoneJob", "Money", "PaymentsImport", "Inbox", "Settings", "PayerPage",
+  "Today", "PhoneToday", "Packet", "PhonePacket", "SendCheck", "Playbook"];
+// Every board in the folder: the final pass brought the others' words up to the app too.
+const ALL = readdirSync(new URL("docs/wireframes/", repo)).filter(f => f.endsWith(".dc.html")).map(f => f.replace(".dc.html", ""));
 
 // A board as a person reads it: no styles, links or the canvas's script, entities decoded. The
 // tags stay, so ">Audit<" style checks still work; labels in placeholder and aria-label stay too.
@@ -26,9 +29,9 @@ const staticDir = new URL("static/", repo);
 const appFiles = ["app.js", "index.html", ...readdirSync(new URL("js/", staticDir)).filter(f => f.endsWith(".js")).map(f => `js/${f}`)];
 const appText = appFiles.map(f => readFileSync(new URL(f, staticDir), "utf8")).join("\n");
 
-test("the redrawn wireframes use no old word from the glossary", () => {
+test("no wireframe uses an old word from the glossary", () => {
   const left = [];
-  for (const name of BOARDS) {
+  for (const name of ALL) {
     const text = shown(name);
     for (const re of [...OLD, /\bAudit\b/, /Team &(amp;)? account/, /Money file/, /\bTo file\b/])
       if (re.test(text)) left.push(`${name}: ${text.match(re)[0]}`);
@@ -47,6 +50,14 @@ test("the redrawn wireframes use the plain words the screens use, and the app ha
     Inbox: ["Waiting (", "Which job?", "Other job", "Change type (", "Add to job", "Read as payments (", "Recently added or dismissed"],
     Settings: ["Customer settings", "Activity log", "Recommended for owners.", "Sending and email", "They join as", "Delete everything"],
     PayerPage: ["Approve for payment", "Payment expected by", "Something not right?", "Send a question", "Mark as received"],
+    Today: ["Needs you", "missing document", "Spoke to them…", "Done, not billed", "Held back, still owed",
+      "Can't send yet", "Open and recent"],
+    PhoneToday: ["Needs you", "Done, not billed", "Held back, still owed"],
+    Packet: ["Paperwork for ", "Required items", "Take a photo", "Choose file", "I have this…", "Not needed for this customer", "Also blocking send"],
+    PhonePacket: ["Paperwork for ", "Take a photo", "I have this…", "Also blocking send"],
+    SendCheck: ["Before you send", "Also email (CC)", "Period to", "Your company address is blank on this PDF.", "Save email", "Open paperwork"],
+    Playbook: ["Customer settings", "Add customer", "Add to the paperwork?", "Add to paperwork", "Save customer", "Same customer as another one?",
+      "Days they usually take to pay", "Also email from the third follow-up"],
   };
   const missing = [];
   for (const [name, phrases] of Object.entries(want)) {

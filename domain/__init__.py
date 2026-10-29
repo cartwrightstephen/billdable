@@ -1925,6 +1925,12 @@ def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
         contract_total = job["contract_cents"] + sum(c["amount_cents"] for c in job["change_orders"] if c["status"] == "approved")
         # A credit lowers the whole contract, so the work done comes down with it.
         job["completed_value_cents"] = contract_total if co["amount_cents"] < 0 else max(job.get("completed_value_cents", 0), contract_total)
+    # An open draft that billed it unsigned no longer says so on its line (and so on the PDF).
+    for inv in job["invoices"]:
+        if inv["status"] in DRAFT_STATUSES:
+            for line in inv.get("lines", []):
+                if line.get("co_id") == co_id:
+                    line["label"] = f"CO {co['number']} — {co['title']}"
     audit(state, job_id, "approve_co", f"{actor} approved CO {co['number']} — {co['title']}.", actor)
     _refresh_draft_gate(job, state)
     return job

@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import auth
 import domain
 import importer
+import payapp_pdf
 import server
 import sov
 import storage
@@ -64,6 +65,22 @@ class DomainTests(unittest.TestCase):
         domain.mark_co_signed(state, job["id"], co["id"], rec, "owner")
         self.assertEqual(co["status"], "approved")
         self.assertEqual(co["signed_evidence"]["record_id"], rec)
+
+    def test_signing_takes_unsigned_off_the_open_drafts_line(self):
+        # Oak Street bills CO 7 unsigned on its draft; once signed, the line (and so the PDF) no
+        # longer says "(unsigned)".
+        state = seed_state()
+        job = next(j for j in state["jobs"] if j["id"] == "job-oak")
+        co = next(c for c in job["change_orders"] if c["status"] == "pending")
+        domain.draft_invoice(state, job["id"], "owner")
+        draft = job["invoices"][-1]
+        line = next(l for l in draft["lines"] if l.get("co_id") == co["id"])
+        self.assertIn("(unsigned)", line["label"])
+        domain.add_job_record(state, job["id"], "Signed CO scan", "change_order", "", "owner")
+        domain.mark_co_signed(state, job["id"], co["id"], job["records"][-1]["id"], "owner")
+        self.assertEqual(line["label"], f"CO {co['number']} — {co['title']}")
+        pdf = next(x for x in payapp_pdf.for_invoice(state, job["id"], draft["id"]) if isinstance(x, (bytes, bytearray)))
+        self.assertNotIn(b"unsigned", pdf)
 
 
 class CreditTests(unittest.TestCase):

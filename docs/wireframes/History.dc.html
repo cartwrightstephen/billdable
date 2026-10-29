@@ -26,7 +26,7 @@ a{color:#1F4FD1}a:hover{color:#16389A}
       <a href="Money.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Money</a>
       <a href="Settings.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Settings</a>
     </nav>
-    <div style="margin-top: 40px; padding-top: 12px; border-top: 1px solid #BDBDBD; font-size: 13px; color: #555555">Alex Hartline<br>alex@hartline.example<br><a href="Landing.dc.html">Log out</a></div>
+    <div style="margin-top: 40px; padding-top: 12px; border-top: 1px solid #BDBDBD; font-size: 13px; color: #555555">Alex Hartline<br>owner@hartline.example<br><a href="Landing.dc.html">Log out</a></div>
   </aside>
   <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 20px 32px 48px; display: flex; flex-direction: column; gap: 18px; max-width: 1200px">
     <nav aria-label="Jobs" style="display: flex; gap: 4px; border-bottom: 1px solid #BDBDBD; overflow-x: auto; white-space: nowrap">
@@ -35,10 +35,10 @@ a{color:#1F4FD1}a:hover{color:#16389A}
       <span style="margin-left: auto; align-self: center; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">/jobs/history</span>
     </nav>
     <h1 style="margin: 0; font-size: 36px; font-weight: 600">Job history</h1>
-    <p style="margin: 0; font-size: 15px; color: #555555">Closed jobs, kept for the record. Newest closing first; opening one loads its full record.</p>
+    <p style="margin: 0; font-size: 15px; color: #555555">Finished jobs, kept on record.</p>
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; max-width: 520px">
-      <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 16px"><div style="font-size: 13px; color: #555555">Closed jobs</div><div style="font-size: 28px; font-weight: 600">3</div></div>
-      <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 16px"><div style="font-size: 13px; color: #555555">Collected on closed</div><div style="font-size: 28px; font-weight: 600">$437,300.00</div></div>
+      <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 16px"><div style="font-size: 13px; color: #555555">Finished jobs</div><div style="font-size: 28px; font-weight: 600">3</div></div>
+      <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 16px"><div style="font-size: 13px; color: #555555">Received on finished jobs</div><div style="font-size: 28px; font-weight: 600">$437,300.00</div></div>
     </div>
     <div style="overflow-x: auto; background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px">
       <table style="width: 100%; border-collapse: collapse; font-size: 14px">
@@ -46,18 +46,19 @@ a{color:#1F4FD1}a:hover{color:#16389A}
           <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Job</th>
           <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Customer</th>
           <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Contract total</th>
-          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Collected</th>
-          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Closed</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Received</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Finished</th>
+          <th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Notes</th>
         </tr></thead>
         <tbody>
-          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Maple Residence</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Ellison Residential</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$286,000.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$286,000.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Jun 28, 2026</td></tr>
-          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Cedar Way kitchen</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Ponce Property Co.</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$97,300.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$97,300.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">May 22, 2026</td></tr>
-          <tr><td style="padding: 12px"><a href="Job.dc.html">Wells Street bath</a></td><td style="padding: 12px">Ellison Residential</td><td style="padding: 12px; text-align: right">$54,000.00</td><td style="padding: 12px; text-align: right">$54,000.00</td><td style="padding: 12px">Apr 18, 2026</td></tr>
+          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Maple Residence</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Ellison Residential</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$286,000.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$286,000.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Jun 28, 2026</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Closed</td></tr>
+          <tr><td style="padding: 12px; border-bottom: 1px solid #DADADA"><a href="Job.dc.html">Cedar Way kitchen</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Ponce Property Co.</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$97,300.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; text-align: right">$97,300.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">May 22, 2026</td><td style="padding: 12px; border-bottom: 1px solid #DADADA">Closed</td></tr>
+          <tr><td style="padding: 12px"><a href="Job.dc.html">Wells Street bath</a></td><td style="padding: 12px">Ellison Residential</td><td style="padding: 12px; text-align: right">$54,000.00</td><td style="padding: 12px; text-align: right">$54,000.00</td><td style="padding: 12px">Apr 18, 2026</td><td style="padding: 12px">Closed</td></tr>
         </tbody>
       </table>
     </div>
     <div><button type="button" style="height: 44px; padding: 0 16px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Show older ([N] more)</button></div>
-    <p style="margin: 0; font-size: 14px; color: #555555">The button appears when there are more than 50 rows. Outbox and Audit page the same way, newest first.</p>
+    <p style="margin: 0; font-size: 14px; color: #555555">The button appears when there are more than 50 rows. Outbox and the Activity log page the same way, newest first. With none finished yet: "No finished jobs yet. Once a job is paid in full, use Finish job."</p>
   </main>
 </div>
 </x-dc>

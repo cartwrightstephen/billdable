@@ -1,8 +1,8 @@
 # Duracash client flows
 
-For Stephen to review. Each chart shows what a contractor taps, screen by screen, to get one task done. Every screen name and button label is copied from the app code (`static/app.js`, `static/js/*.js`, `payer_page.py`, `domain/__init__.py`, `server.py`), regenerated from the code on Oct 29, 2026 after Round 6 (R6-11); the file:line after a label is where it lives today. Read each chart from top to bottom. Diamonds are real branches the code takes.
+For Stephen to review. Each chart shows what a contractor taps, screen by screen, to get one task done. Every screen name and button label is copied from the app code (`static/app.js`, `static/js/*.js`, `payer_page.py`, `domain/__init__.py`, `server.py`), regenerated from the code on Oct 29, 2026 after Round 6 (R6-11) and checked again against the code in the final pass the same day; the file:line after a label is where it lives today (a bare `:N` is in the file named last before it). Read each chart from top to bottom. Diamonds are real branches the code takes.
 
-The demo company is Hartline Remodeling (`seed.py`), opened with **Look around a sample company** on the landing page (no account) or the login `owner@hartline.example` / `demo`. The demo can't send email, so some steps end at "Not sent: demo account". The wireframes in `docs/wireframes/` draw the same screens; `Job`, `PhoneJob`, `Money`, `PaymentsImport`, `Inbox`, `Settings` and `PayerPage` were redrawn with this file.
+The demo company is Hartline Remodeling (`seed.py`), opened with **Look around a sample company** on the landing page (no account) or the login `owner@hartline.example` / `demo`. The demo can't send email, so some steps end at "Not sent: demo account". The wireframes in `docs/wireframes/` draw the same screens; `Job`, `PhoneJob`, `Money`, `PaymentsImport`, `Inbox`, `Settings` and `PayerPage` were redrawn with this file in R6-11, and `Today`, `PhoneToday`, `Packet`, `PhonePacket`, `SendCheck` and `Playbook` in the final pass.
 
 Screen names used below (pages and tabs: `SECTIONS`, static/app.js:217-223; addresses: static/js/routes.js:9-21):
 
@@ -17,7 +17,7 @@ Screen names used below (pages and tabs: `SECTIONS`, static/app.js:217-223; addr
 | Settings: Company, Team, My account, Billing, Customer settings, Activity log, Help | `/settings/company` (`/settings` opens it), `/settings/team`, `/settings/account`, `/settings/billing`, `/settings/playbook`, `/settings/audit`, `/settings/help` |
 | The customer's page for one pay app; the signing page for one change order | `/p/<link>`, `/s/<link>` (no sign-in; `payer_page.py`) |
 
-On the job page the **Next step** card holds one main button and, beside it, the next two as two-line buttons (the label, then why). The rest sit under **More (N)**, grouped Bill, Get paid and Close out. The main button is picked in this order: the blocker button (**Fix N things before sending**, **Add N missing documents** or **Get CO N signed**), **Review & send**, **Choose waiver and send**, then, while a sent pay app is unpaid, **Send follow-up** once it is due and **Draft pay app**; otherwise **Draft pay app**, **Progress pay app**, **Finish job**, **Ask for retainage** (`jobActions`, static/js/jobs.js:250-300). While the customer has the pay app and no follow-up is due there is no main button. A member does not see what only an owner may do (send, waivers, retainage requests, delete a draft, pull back, finish, delete, accept short pay, reopen; `OWNER_ONLY`, static/js/jobs.js:235, `OWNER_ACTIONS`, server.py:2526) unless the company turned on **Members can send pay apps, lien waivers and retainage requests** (Settings, Company).
+On the job page the **Next step** card holds one main button and, beside it, the next two as two-line buttons (the label, then why). The rest sit under **More (N)**, grouped Bill, Get paid and Close out. The main button is picked in this order: the blocker button (**Fix N things before sending**, **Add N missing documents** or **Get CO N signed**), **Review & send**, **Choose waiver and send**, then, while a sent pay app is unpaid, **Send follow-up** once it is due and **Draft pay app**; otherwise **Draft pay app**, **Progress pay app**, **Finish job**, **Ask for retainage** (`jobActions`, static/js/jobs.js:255-305). While the customer has the pay app and no follow-up is due there is no main button. A member does not see what only an owner may do (send, waivers, retainage requests, delete a draft, pull back, finish, delete, accept short pay, reopen; `OWNER_ONLY`, static/js/jobs.js:240, `OWNER_ACTIONS`, server.py:2526) unless the company turned on **Members can send pay apps, lien waivers and retainage requests** (Settings, Company).
 
 A company set to **Draws from homeowners** (Settings, Company, How you bill) reads Draw and Draws wherever this file says pay app (`termText`, static/js/terms.js; `domain.term_text`).
 
@@ -98,7 +98,7 @@ flowchart TD
     T --> Q
 ```
 
-Code: landing and sign-up card `renderLanding`, static/app.js:404 (Sign in first when this browser has signed in, static/app.js:41-47; the terms box static/app.js:450); **Look around a sample company** static/app.js:430 and `lookAround` static/app.js:572, server `_p_demo`; "Check your email" panel `checkEmailHtml`, static/app.js:2353 (**Send the link again**, **Got it**); checklist `onboardingHtml`, static/app.js:2629-2673, its step 1 **Company details** opens Settings, Company at `#co-address`; Company page `companyView`, static/app.js:2496; **Save company details** static/app.js:1187; Team `teamCardHtml`, static/app.js:2384, **Invite** static/app.js:1103. Two-step sign-in is on Settings, My account (`myAccountView`, static/app.js:2551): **Set up two-step sign-in**, scan the QR code, **Turn on**, save the recovery codes.
+Code: landing and sign-up card `renderLanding`, static/app.js:404 (Sign in first when this browser has signed in, static/app.js:41-47; the terms box static/app.js:450); **Look around a sample company** static/app.js:430 and `lookAround` static/app.js:572, server `_p_demo`; "Check your email" panel `checkEmailHtml`, static/app.js:2353 (**Send the link again**, **Got it**); checklist `onboardingHtml`, static/app.js:2629-2673, its step 1 **Company details** opens Settings, Company at `#co-address`; Company page `companyView`, static/app.js:2496; **Save company details** `save-company` static/app.js:1187; Team `teamCardHtml`, static/app.js:2384, **Invite** `team-invite` static/app.js:1103. Two-step sign-in is on Settings, My account (`myAccountView`, static/app.js:2551): **Set up two-step sign-in**, scan the QR code, **Turn on**, save the recovery codes.
 
 **Taps from start to done:** about 5. Create account (1, after typing 3 boxes and the tick), the email link (1), Company details on the checklist (1, lands in the Address box), Save company details (1), Invite (1, optional).
 
@@ -132,7 +132,7 @@ flowchart TD
     J --> K
 ```
 
-Code: `views.jobs`, static/app.js:3121-3178 (**New job**, the five boxes, **More details (optional)**, **Save job**); `jobFields` static/app.js:1718; the saved-customer line `knownPayerText` static/app.js:1745; **Save job** `create-job` static/app.js:1595; server `create_job`, domain/__init__.py:2636 (a refusal is keyed by field and shown under its box, `showFieldErrors` in static/js/forms.js). Notes become a "Job notes" record, never paperwork (R1-04).
+Code: `views.jobs`, static/app.js:3121-3178 (**New job**, the five boxes, **More details (optional)**, **Save job**); `jobFields` static/app.js:1718; the saved-customer line `knownPayerText` static/app.js:1745; **Save job** `create-job` static/app.js:1595; server `create_job`, domain/__init__.py:2642 (a refusal is keyed by field and shown under its box, `showFieldErrors` in static/js/forms.js). Notes become a "Job notes" record, never paperwork (R1-04).
 
 **Taps from start to done:** 2 taps (New job, Save job) and 5 boxes, one of them a select.
 
@@ -166,7 +166,7 @@ flowchart TD
     N --> K
 ```
 
-Code: `sovCardHtml`, static/app.js:2119-2155 (**Set up schedule of values** :2129, **Edit schedule** :2153); editor `sovEditorHtml`, static/app.js:2079-2117 (**Read pasted rows** :2094, **Add line** :2102, **Save schedule** :2113, **Save and change the contract to $X** :2075 and :2114); the confirm static/app.js:2180; parse `sov.parse_rows`, sov.py:432 (a header found in the first 5 rows, R5-08); save `save_sov`, domain/__init__.py:2877. On a phone each line is a card with the description on top (R6-02).
+Code: `sovCardHtml`, static/app.js:2119-2155 (**Set up schedule of values** :2129, **Edit schedule** :2153); editor `sovEditorHtml`, static/app.js:2079-2117 (**Read pasted rows** :2094, **Add line** :2102, **Save schedule** :2113, **Save and change the contract to $X** :2075 and :2114); the confirm static/app.js:2180; parse `sov.parse_rows`, sov.py:432 (a header found in the first 5 rows, R5-08); save `save_sov`, domain/__init__.py:2883. On a phone each line is a card with the description on top (R6-02).
 
 **Taps from start to done:** 3 with a paste (Set up schedule of values, Read pasted rows, Save schedule). One more (the confirm) if the contract changes to match.
 
@@ -239,7 +239,7 @@ flowchart TD
     M --> Q
 ```
 
-Code: **New change order** `new-co` static/app.js:1499 (a job action, static/js/jobs.js:288); card `newCoCardHtml` static/app.js:1874 and `coFormFields` static/app.js:1889; **Create change order** `add-co-here` static/app.js:1501, server `add_change_order` domain/__init__.py:1869 (refuses only zero and a credit larger than the contract total); sign controls `coSignControls` static/app.js:764 (**Request signature**, **Signed on paper…**, **Withdraw**, **Take a photo of the signed copy**, **Save as signed**); server `request_co_signature` domain/__init__.py:1969, `mark_co_signed` :2013, `withdraw_change_order` :2024; **Bill now (send waits for signature)** in `views.job`, server `include_change_order` :2158; signing page `render_co`, payer_page.py:254. The Change orders tab (`views.cos`, static/app.js:3755) lists every change order and also has a New change order form.
+Code: **New change order** `new-co` static/app.js:1499 (a job action, static/js/jobs.js:293); card `newCoCardHtml` static/app.js:1874 and `coFormFields` static/app.js:1889; **Create change order** `add-co-here` static/app.js:1501, server `add_change_order` domain/__init__.py:1869 (refuses only zero and a credit larger than the contract total); sign controls `coSignControls` static/app.js:764 (**Request signature**, **Signed on paper…**, **Withdraw**, **Take a photo of the signed copy**, **Save as signed**); server `request_co_signature` domain/__init__.py:1975, `mark_co_signed` :2019 (signing, online or on paper, takes "(unsigned)" off the line of an open draft that billed it, so the PDF no longer says so), `withdraw_change_order` :2030; **Bill now (send waits for signature)** in `views.job`, server `include_change_order`, domain/__init__.py:2164; signing page `render_co`, payer_page.py:254. The Change orders tab (`views.cos`, static/app.js:3755) lists every change order and also has a New change order form.
 
 **Taps from start to done:** 2 to create (New change order, Create change order) after typing, then 1 for online signing (Request signature) or 2 on paper (Signed on paper…, Take a photo of the signed copy).
 
@@ -271,7 +271,7 @@ flowchart TD
     K -->|"Yes"| L["'Customer sent a pay app back? Note why.': type the reason, 'Save to customer settings'"]
 ```
 
-Code: the blocker button's words `domain.blocker_button`, domain/__init__.py:257; paperwork page `views.packetDetail`, static/app.js:3394-3444 (**Take a photo** / **Choose file** upload with `?attach=`, **Choose a record…** / **Attach** `attach-record` static/app.js:1584, **I have this…** / **Save** `resolve` static/app.js:1287, **Not needed for this customer** `packet-skip` static/app.js:1583, **Remove** on a draft's, the job's and closeout paperwork `packet-detach` static/app.js:1582, **Also blocking send**); server `attach_record_to_packet` domain/__init__.py:2600, `resolve_packet_item` :556, `skip_packet_item` :2493, `detach_packet_item` :2465; the note-why card in `views.job` (`learn` static/app.js:1560, server `learn_rejection` :2184). The list comes from Customer settings, Paperwork needed with each pay app; a pay app, schedule of values or continuation sheet item is in from the start ("Produced by Duracash with the pay app").
+Code: the blocker button's words `domain.blocker_button`, domain/__init__.py:257; paperwork page `views.packetDetail`, static/app.js:3394-3444 (**Take a photo** / **Choose file** upload with `?attach=`, **Choose a record…** / **Attach** `attach-record` static/app.js:1584, **I have this…** / **Save** `resolve` static/app.js:1287, **Not needed for this customer** `packet-skip` static/app.js:1583, **Remove** on a draft's, the job's and closeout paperwork `packet-detach` static/app.js:1582, **Also blocking send**); server `attach_record_to_packet` domain/__init__.py:2606, `resolve_packet_item` :556, `skip_packet_item` :2499, `detach_packet_item` :2471; the note-why card in `views.job` (`learn` static/app.js:1560, server `learn_rejection`, domain/__init__.py:2190). The list comes from Customer settings, Paperwork needed with each pay app; a pay app, schedule of values or continuation sheet item is in from the start ("Produced by Duracash with the pay app").
 
 **Taps from start to done:** 1 to open, then 2 per missing item (Take a photo, take it) or 2 to attach a record (pick, Attach).
 
@@ -314,7 +314,7 @@ flowchart TD
     R -->|"No"| T["Today row 'Didn't go out' with 'Send again'; the Outbox has it too"]
 ```
 
-Code: **Progress pay app** and **Mark done** in `jobActions`, static/js/jobs.js:276-277; progress card `progressFormHtml`, static/app.js:885-910 (`progressFigures`, static/js/jobs.js:143, checks it as the server does), line-by-line card `sovProgressHtml` static/js/sov.js:33-55; **Draft progress pay app** `progress` static/app.js:1269 and `sov-progress` :1258; Mark done card in `views.job` and its confirm static/app.js:1283; server `record_progress` domain/__init__.py:300, `record_sov_progress` :2948, `mark_done` :380, `draft_invoice` :414; **Review & send** opens the pay app page at `.send-check` (static/js/jobs.js:268, static/js/today.js:21); pay app page `views.payappDetail`, static/app.js:3472-3551 (**Before you send**, **Open the PDF**, **Download for QuickBooks**, **Approve & send to …**); server `approve_and_send` :582; **Send again** `email-retry` static/app.js:1259. Mistakes: **Undo done** (before the final pay app goes out, `undo_mark_done` :2127), **Delete draft** (`void_draft` :2042), **Pull back this pay app…** on a sent one with nothing paid (`void_sent_pay_app` :2068).
+Code: **Progress pay app** and **Mark done** in `jobActions`, static/js/jobs.js:281-282; progress card `progressFormHtml`, static/app.js:885-910 (`progressFigures`, static/js/jobs.js:148, checks it as the server does), line-by-line card `sovProgressHtml` static/js/sov.js:33-55; **Draft progress pay app** `progress` static/app.js:1269 and `sov-progress` :1258; Mark done card in `views.job` and its confirm static/app.js:1283; server `record_progress` domain/__init__.py:300, `record_sov_progress` :2954, `mark_done` :380, `draft_invoice` :414; **Review & send** opens the pay app page at `.send-check` (static/js/jobs.js:273, static/js/today.js:21); pay app page `views.payappDetail`, static/app.js:3472-3551 (**Before you send**, **Open the PDF**, **Download for QuickBooks**, **Approve & send to …**); server `approve_and_send`, domain/__init__.py:582; **Send again** `email-retry` static/app.js:1259. Mistakes: **Undo done** (before the final pay app goes out, `undo_mark_done`, domain/__init__.py:2133), **Delete draft** (`void_draft`, domain/__init__.py:2048), **Pull back this pay app…** on a sent one with nothing paid (`void_sent_pay_app`, domain/__init__.py:2074).
 
 **Taps from start to done:** 3 for a progress bill with nothing missing (Progress pay app, Draft progress pay app, Review & send) plus Approve & send: 4.
 
@@ -344,7 +344,7 @@ flowchart TD
     K --> J
 ```
 
-Code: Today row kind `follow_up` in `domain.today_rows`, domain/__init__.py:1331-1452 (with **Spoke to them…**, static/js/today.js:41); Unpaid `views.collections`, static/app.js:3786; job page **Send follow-up** / **Follow up now** static/js/jobs.js:271; the confirm static/app.js:1481; server `record_follow_up`, domain/__init__.py:672 (not-due refusal :700, from the third follow-up it also emails the customer's **Also email from the third follow-up** address); **Spoke to them…** `contactFormHtml` static/app.js:832 and `note_contact` :744; the customer's page `payer_page.render`, payer_page.py:125 (**Mark as received** :176, **Approve for payment** :191).
+Code: Today row kind `follow_up` in `domain.today_rows`, domain/__init__.py:1331-1452 (with **Spoke to them…**, static/js/today.js:41); Unpaid `views.collections`, static/app.js:3786; job page **Send follow-up** / **Follow up now** static/js/jobs.js:276; the confirm static/app.js:1481; server `record_follow_up`, domain/__init__.py:672 (not-due refusal :700, from the third follow-up it also emails the customer's **Also email from the third follow-up** address); **Spoke to them…** `contactFormHtml` static/app.js:832 and `note_contact`, domain/__init__.py:744; the customer's page `payer_page.render`, payer_page.py:125 (**Mark as received** `mark_received` :176, **Approve for payment** `approve` :191).
 
 **Taps from start to done:** 2 (Send follow-up, then the confirm).
 
@@ -386,7 +386,7 @@ flowchart TD
     O --> K
 ```
 
-Code: **Record a payment** card in `views.job` (`match` static/app.js:1484, prefill `prefillPaymentAmount` :1806), server `match_payment`, domain/__init__.py:779 (takes `received_on`); short pay `shortPayCardHtml` static/app.js:796, `accept-short-pay` :1442, server `settle_short_pay` :868; Payments `views.payments`, static/app.js:3829-3869 (**Read payments** `qbo-read` :1148, **Choose the file** :1179, **Record the ticked payments** `qbo-apply` :1155, the split :1167); row cells `qboTick` / `qboPayAppCell` static/app.js:2450-2472 with static/js/payimport.js (`pickPayApp`, `splitTooMuch`, `afterRecord`); server `qbo_csv.parse` qbo_csv.py:149 and `propose` :203; Inbox **Read as payments** `inbox-read-payments` static/app.js:1173; QuickBooks card `qboCardHtml` static/app.js:2478 (**Connect QuickBooks**, **Read payments from QuickBooks**, **Check against QuickBooks**, **Disconnect**). The wireframe is `PaymentsImport`.
+Code: **Record a payment** card in `views.job` (`match` static/app.js:1484, prefill `prefillPaymentAmount` :1806), server `match_payment`, domain/__init__.py:779 (takes `received_on`); short pay `shortPayCardHtml` static/app.js:796, `accept-short-pay` :1442, server `settle_short_pay`, domain/__init__.py:868; Payments `views.payments`, static/app.js:3829-3869 (**Read payments** `qbo-read` :1148, **Choose the file** `qbo-choose-file` :1179, **Record the ticked payments** `qbo-apply` :1155, the split :1167); row cells `qboTick` / `qboPayAppCell` static/app.js:2450-2472 with static/js/payimport.js (`pickPayApp`, `splitTooMuch`, `afterRecord`); server `qbo_csv.parse` qbo_csv.py:149 and `propose` :203; Inbox **Read as payments** `inbox-read-payments` static/app.js:1173; QuickBooks card `qboCardHtml` static/app.js:2478 (**Connect QuickBooks**, **Read payments from QuickBooks**, **Check against QuickBooks**, **Disconnect**). The wireframe is `PaymentsImport`.
 
 **Taps from start to done:** 2 by hand (Record a payment, Record); 3 for a CSV (Read payments, a pick if needed, Record the ticked payments).
 
@@ -417,7 +417,7 @@ flowchart TD
     H -->|"No"| J["Emailed saying the signed waiver will follow separately"]
 ```
 
-Code: Today row kind `waiver` (**Review waiver**, `open-waiver`); job page **Choose waiver and send** static/js/jobs.js:269; Closeout `views.waivers`, static/app.js:3871 (**Which type?**, **Not chosen yet**, **Choose type and send**); waiver page `views.waiverDetail`, static/app.js:3553-3590; type picker and hint `waiverSendForm` / `WAIVER_HINTS`, static/js/jobs.js:96-121; server `send_waiver`, domain/__init__.py:930 (the "will follow separately" wording :969).
+Code: Today row kind `waiver` (**Review waiver**, `open-waiver`); job page **Choose waiver and send** static/js/jobs.js:274; Closeout `views.waivers`, static/app.js:3871 (**Which type?**, **Not chosen yet**, **Choose type and send**); waiver page `views.waiverDetail`, static/app.js:3553-3590; type picker and hint `waiverSendForm` / `WAIVER_HINTS`, static/js/jobs.js:101-126; server `send_waiver`, domain/__init__.py:930 (the "will follow separately" wording :969).
 
 **Taps from start to done:** 2 (Review waiver, Approve & send), plus the type if it isn't the one picked for you.
 
@@ -448,7 +448,7 @@ flowchart TD
     L -->|"No"| N["Recorded; the job can finish if nothing else is open"]
 ```
 
-Code: Closeout's held-back table in `views.waivers`, static/app.js:3871-3922, `retainageAskHtml` static/app.js:816; job page **Ask for retainage** only once the work is done and the closeout paperwork is in (static/js/jobs.js:283; the Money card says why otherwise, `retainageNote` :210); the confirm static/app.js:1314; server `chase_retainage`, domain/__init__.py:995 (before done: :1014); **Record retainage paid** card in `views.job`, `retainage-paid` static/app.js:1329, server `record_retainage_payment` :1065.
+Code: Closeout's held-back table in `views.waivers`, static/app.js:3871-3922, `retainageAskHtml` static/app.js:816; job page **Ask for retainage** only once the work is done and the closeout paperwork is in (static/js/jobs.js:288; the Money card says why otherwise, `retainageNote` static/js/jobs.js:215); the confirm static/app.js:1314; server `chase_retainage`, domain/__init__.py:995 (before done: :1014); **Record retainage paid** card in `views.job`, `retainage-paid` static/app.js:1329, server `record_retainage_payment`, domain/__init__.py:1065.
 
 **Taps from start to done:** 4 (Ask for retainage and the confirm, then later Record retainage paid, Record).
 
@@ -474,7 +474,7 @@ flowchart TD
     H -->|"Yes, owner"| I["'Reopen job…': 'Why reopen it?', 'Reopen job'"]
 ```
 
-Code: the card in `views.job` from `close_blocker_items`, domain/__init__.py:180, buttons `closeBlockerActions`, static/js/jobs.js:307-332; **Finish job** static/js/jobs.js:278 and its confirm static/app.js:1537; server `close_job` :2195; **Reopen job…** in `views.job`, server `reopen_job` :2206 (owners only); a job with only drafts deleted before they were sent and no payments can be deleted instead (**Delete job** under Edit job, `can_delete_job` :2848).
+Code: the card in `views.job` from `close_blocker_items`, domain/__init__.py:180, buttons `closeBlockerActions`, static/js/jobs.js:312-337; **Finish job** static/js/jobs.js:283 and its confirm static/app.js:1537; server `close_job`, domain/__init__.py:2201; **Reopen job…** in `views.job`, server `reopen_job`, domain/__init__.py:2212 (owners only); a job with only drafts deleted before they were sent and no payments can be deleted instead (**Delete job** under Edit job, `can_delete_job` :2854).
 
 **Taps from start to done:** 2 (Finish job, the confirm).
 
@@ -543,7 +543,7 @@ flowchart TD
     D --> MG["'Same customer as another one?': 'Merge into', 'Merge', confirm"]
 ```
 
-Code: page `views.playbook`, static/app.js:3924-3996 (**Add customer** `add-payer` static/app.js:1675, server `add_payer` domain/__init__.py:1687; **Save customer** `save-playbook` :1661, server `update_payer` :1573; **Add to paperwork** / **Dismiss** `sug-add` / `sug-dismiss` :1659-1660; **Use N days** `use-approval-days` :1186; **Merge** `merge-payer` :1680, server `merge_payer` :1708). Every label has an (i) with the trade term (`FIELD_HELP`, static/js/help.js).
+Code: page `views.playbook`, static/app.js:3924-3996 (**Add customer** `add-payer` static/app.js:1675, server `add_payer` domain/__init__.py:1687; **Save customer** `save-playbook` static/app.js:1661, server `update_payer`, domain/__init__.py:1573; **Add to paperwork** / **Dismiss** `sug-add` / `sug-dismiss` static/app.js:1659-1660; **Use N days** `use-approval-days` static/app.js:1186; **Merge** `merge-payer` static/app.js:1680, server `merge_payer`, domain/__init__.py:1708). Every label has an (i) with the trade term (`FIELD_HELP`, static/js/help.js).
 
 **Taps from start to done:** 2 (open the card, Save customer), plus 1 per suggestion.
 
@@ -556,5 +556,5 @@ Code: page `views.playbook`, static/app.js:3924-3996 (**Add customer** `add-paye
 - **QuickBooks connection** (**Connect QuickBooks**, Settings, Company and Money, Payments): the Intuit sign-in in the middle happens off our site. Charted as one branch in section 10.
 - **Email forwarding, text messages and sharing from the phone into the Inbox** (`views.inbox`, **Bring emails and texts in automatically**): need an owner to set up an email service or Twilio. Shared while signed out, files wait 30 minutes for sign-in (**Finish adding N shared items**, `heldShareHtml` static/app.js:2364).
 - **Daily record** (Today, Daily record: **What happened today**, **Save to job record**, `views.daily` static/app.js:3370): one box and one button.
-- **Draft for the customer's review** (**Send draft for their review**, **Customer agreed to the draft**, **Customer wants changes**, static/js/jobs.js:284-286): an optional side path before send.
+- **Draft for the customer's review** (**Send draft for their review**, **Customer agreed to the draft**, **Customer wants changes**, static/js/jobs.js:289-291): an optional side path before send.
 - **Tap counts** are the fewest taps on the happy path with fields already filled, counted from the code, not timed with a user. Confirms count as a tap.
