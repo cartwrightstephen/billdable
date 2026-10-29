@@ -10,7 +10,7 @@ import { formDraft, watchForms } from "./js/forms.js";
 import { pickPayApp } from "./js/payimport.js";
 import { termText } from "./js/terms.js";
 import { state, me, currentView, currentJobId, setMe, clearSession, setAccount, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
-import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, setActionEl, moreDetails, setPage } from "./js/app-core.js";
+import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage } from "./js/app-core.js";
 import { views as todayViews, metricsData, metricsPeriod, loadMetrics, actions as todayActions, setCalJobFilter } from "./js/views/today.js";
 import { views as jobsViews, actions as jobsActions, syncNewJobCustomer, prefillApprover, prefillRetainage, hideSameCustomer } from "./js/views/jobs.js";
 import { views as jobPageViews, sovDraft, updateSovTotals, actions as jobPageActions, updateProgressPreview, prefillPaymentAmount } from "./js/views/job.js";
@@ -219,8 +219,7 @@ function listenForActions() {
     e.preventDefault();
     const run = ACTIONS[el.dataset.action];
     if (!run) { if (DEV) console.warn(`No action named "${el.dataset.action}".`); return; }
-    setActionEl(el);
-    run(el, el.dataset.id, e);
+    runAction(run, el, e);
   });
   app.addEventListener("input", (e) => {
     if (e.target.closest && e.target.closest('[data-form-key="progress"]')) updateProgressPreview();

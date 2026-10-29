@@ -1,12 +1,12 @@
 // Money: Pay apps (with their paperwork), Change orders, Unpaid, Payments (with QuickBooks),
 // Closeout (lien waivers and retainage) and Outbox, and the detail pages they open.
-import { unesc, escDeep, money, centsFrom, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
-import { RECORD_KINDS, isBlocked, coBlockers, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, coStatusWords, waiverHint, waiverTypeText, waiverSendForm, followUpDue, payAppList, shortPayLabel, shortPayAttrs, canPullBack } from "../jobs.js";
+import { esc, unesc, escDeep, money, centsFrom, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
+import { RECORD_KINDS, isBlocked, coBlockers, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, coStatusWords, waiverHint, waiverTypeText, waiverSendForm, followUpDue, defaultJobId, payAppList, shortPayLabel, shortPayAttrs, canPullBack } from "../jobs.js";
 import { continuationHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
-import { field, moneyField, formErrorLine, refuseForm, formValues } from "../forms.js";
+import { field, moneyField, formErrorLine, refuseForm, formValues, draftValue, clearForm } from "../forms.js";
 import { canRecord, needsPick, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "../payimport.js";
 import { termText } from "../terms.js";
 import { companyGapsHtml } from "../setup.js";
@@ -398,7 +398,7 @@ export const views = {
         <h2>New change order</h2>
         ${formErrorLine("newco")}
         <div class="form-grid">
-          ${field({ form: "newco", name: "job", id: "new-co-job", label: "Job", value: unesc(coPreselectJob || ""), options: openJobs.map(j => [unesc(j.id), unesc(j.name)]) })}
+          ${field({ form: "newco", name: "job", id: "new-co-job", label: "Job", value: unesc(defaultJobId(openJobs, coPreselectJob || "")), options: [["", "Pick a job…"], ...openJobs.map(j => [unesc(j.id), unesc(j.name)])] })}
           ${coFormFields()}
         </div>
         <button class="btn" data-action="add-co-from-list">Create change order</button>
@@ -475,7 +475,7 @@ export const views = {
             <td>${qboPayAppCell(row, n)}</td><td class="sub">${row.reason}</td></tr>`).join("")}
         </table></div>
         <div class="form-inline"><button class="btn" data-action="qbo-apply">Record the ticked payments</button><button class="btn secondary" data-action="qbo-cancel">Cancel</button></div>`
-      : `<textarea id="qbo-csv" rows="5" placeholder="Paste the CSV here" class="full-input"></textarea>
+      : `<div data-form-key="qbocsv"><textarea id="qbo-csv" data-field="csv" rows="5" placeholder="Paste the CSV here" class="full-input">${esc(draftValue("qbocsv", "csv"))}</textarea></div>
         <div class="form-inline"><button class="btn small" data-action="qbo-read">Read payments</button><button class="btn small secondary" data-action="qbo-choose-file">Choose the file</button></div>`}
     </details>`;
     const qboCard = qboCardHtml(true);
@@ -586,6 +586,7 @@ export const actions = {
     if (!text.trim()) { toast("Paste the CSV first."); return; }
     const r = await postJson("/api/import/payments-csv", { csv: text });
     if (!r.ok) { toast(r.data.error || "Couldn't read it."); return; }
+    clearForm("qbocsv");   // read: Cancel shows an empty box again, as before
     paymentImport = escDeep(r.data); render();
   },
   "qbo-apply": async () => {

@@ -1,12 +1,13 @@
 // The Inbox, and bringing things in: uploads (choose, drop or paste a file anywhere), pasted
 // text, and the forwarding addresses for email, texts and the calendar.
-import { unesc, escDeep, money, fmtDate } from "../format.js";
+import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
 import { RECORD_KINDS, SOURCE_LABELS, defaultJobId } from "../jobs.js";
 import { readJson, setNetBanner, inBatches } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { webcalUrl } from "../calendar.js";
 import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "../inbox.js";
 import { termText } from "../terms.js";
+import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
 import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
 
@@ -25,6 +26,8 @@ export function rememberUploadJob(id) {
 }
 const FILE_ACCEPT = document.getElementById("file-input")?.getAttribute("accept") || "";
 let importSettings = null;
+// The addresses changed on the server (a team member removed): ask for them again when shown.
+export function forgetImportSettings() { importSettings = null; }
 
 export function newInboxCount() {
   return (state && state.inbox ? state.inbox.filter(i => i.status === "new").length : 0);
@@ -141,19 +144,24 @@ function inboxUploadJob() {
 
 // The paste box, on the Inbox and (with jobId) on a job page, where it files straight to the job.
 // "Something else" until the text looks like notes or an email (R5-06).
+// What was pasted, and the kind (picked, else guessed from it), stay through a redraw until added.
 export function pasteBoxHtml(jobId = "") {
-  return `<div class="form-inline">
-          <select id="paste-source" aria-label="What are you pasting?">
-            <option value="email">An email</option>
-            <option value="sms">Text messages</option>
-            <option value="notes">Notes: one daily record per date</option>
-            <option value="paste" selected>Something else</option>
+  const text = draftValue("paste", "text");
+  const picked = draftValue("paste", "source");
+  const source = picked || (text ? pasteGuess(text).source : "paste");
+  const opt = (value, label) => `<option value="${value}"${value === source ? " selected" : ""}>${label}</option>`;
+  return `<div data-form-key="paste"><div class="form-inline">
+          <select id="paste-source" data-field="source" aria-label="What are you pasting?"${picked ? ' data-touched="1"' : ""}>
+            ${opt("email", "An email")}
+            ${opt("sms", "Text messages")}
+            ${opt("notes", "Notes: one daily record per date")}
+            ${opt("paste", "Something else")}
           </select>
         </div>
-        <textarea id="paste-text" rows="6" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in"></textarea>
+        <textarea id="paste-text" data-field="text" rows="6" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in">${esc(text)}</textarea>
         <p id="paste-hint" class="sub paste-hint" role="status"></p>
         <div class="form-inline"><button class="btn" data-action="import-text"${jobId ? ` data-job="${jobId}"` : ""}>${jobId ? "Add to job" : "Add to Inbox"}</button>
-        <span class="sub">Notes split at every line that starts with a date (10/12, Oct 12, 2026-10-12). Exported Apple Notes or a typed-up notebook work.</span></div>`;
+        <span class="sub">Notes split at every line that starts with a date (10/12, Oct 12, 2026-10-12). Exported Apple Notes or a typed-up notebook work.</span></div></div>`;
 }
 
 // Typing or pasting in the box: pick what it looks like, unless the person already chose.
@@ -370,7 +378,8 @@ export const actions = {
     const jobId = el.dataset.job || "";
     if (!text.trim()) { toast("Paste some text first."); return; }
     const ok = await postImport("/api/import/text" + (jobId ? "?file=1" : ""), { text, source, job_id: jobId });
-    if (ok) { const box = document.querySelector("#paste-text"); if (box) box.value = ""; }
+    // Added: the box and its kind start over, as for the next paste.
+    if (ok) { clearForm("paste"); const box = document.querySelector("#paste-text"); if (box) box.value = ""; render(); }
   },
   "inbox-file": async (el) => {
     const itemId = el.dataset.item;
