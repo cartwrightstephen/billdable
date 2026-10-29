@@ -727,7 +727,9 @@ def _paperwork_refusal(job: dict[str, Any], rids: set[str], can_pull_back: bool 
     def link(label: str, view: str, detail: str = "") -> dict[str, str]:
         return {"label": label, "view": view, "job_id": job["id"], "detail": detail}
 
-    went = [inv for inv in job.get("invoices", []) if inv.get("status") not in domain.DRAFT_STATUSES and holds(inv.get("packet"))]
+    # A deleted draft is void too, but it never went out (no sent_at): nothing it held went to anyone.
+    went = [inv for inv in job.get("invoices", []) if inv.get("status") not in domain.DRAFT_STATUSES
+            and (inv.get("status") != "void" or inv.get("sent_at")) and holds(inv.get("packet"))]
     if went:
         inv = went[-1]
         number = inv.get("number") or "a pay app"

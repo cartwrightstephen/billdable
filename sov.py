@@ -523,11 +523,16 @@ def parse_rows(text: str) -> dict[str, Any]:
         else:
             # "1,200 lf" in one cell is a quantity and a unit; "Tile 1200 SF @ 8.50" is a description,
             # a quantity, a unit and a rate; "Haul 3 loads" a description, a quantity and a unit.
+            # A description is split only when it is the only cell on the row: next to other cells,
+            # "General conditions 16 wks" or "Ceiling grid 2 x 2" is a name, and its numbers stay in it.
+            alone = sum(1 for c in row if c) == 1
             split_row: list[str] = []
             for c in row:
                 m = QTY_UNIT_RE.match(c)
                 r = None if m else AT_RATE_RE.match(c.strip())
-                d = None if m or r else _desc_qty_unit(c)
+                if r and r["desc"] and not alone:
+                    r = None
+                d = None if m or r or not alone else _desc_qty_unit(c)
                 if m:
                     split_row.extend([m.group(1), m.group(2)])
                 elif r:
