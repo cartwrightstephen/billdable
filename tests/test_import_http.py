@@ -123,6 +123,27 @@ class ImportHttpTests(unittest.TestCase):
         body += f"--{boundary}--\r\n".encode()
         return self.request("POST", "/share", raw=body, cookie=cookie, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
 
+    def test_another_website_cannot_share_into_the_inbox(self):
+        cookie, _ = self.company("cross-site-share@example.com")
+        _, before = self.request("GET", "/api/state", cookie=cookie)
+        boundary = "----duracash"
+        body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nPlanted\r\n"
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nCall me about the invoice\r\n--{boundary}--\r\n").encode()
+        for site in ("cross-site",):
+            res, _ = self.request("POST", "/share", raw=body, cookie=cookie,
+                                  headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Sec-Fetch-Site": site})
+            self.assertEqual((res.status, res.getheader("Set-Cookie")), (303, None))
+        res, _ = self.request("POST", "/share", raw=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
+                                                                   "Sec-Fetch-Site": "cross-site"})
+        self.assertIsNone(res.getheader("Set-Cookie"), "nothing held for a signed-out browser either")
+        _, after = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual(len(after.get("inbox", [])), len(before.get("inbox", [])))
+        # The phone's share menu, from the installed app, still works.
+        res, _ = self.request("POST", "/share", raw=body, cookie=cookie,
+                              headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Sec-Fetch-Site": "none"})
+        _, after = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual(len(after.get("inbox", [])), len(before.get("inbox", [])) + 1)
+
     def test_shared_while_signed_out_waits_for_sign_in(self):  # R6-10, D8
         photos = [(f"ticket-{n}.jpg", b"\xff\xd8fake" + bytes([n])) for n in range(3)]
         res, _ = self.share(photos)

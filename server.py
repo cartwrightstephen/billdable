@@ -69,6 +69,8 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 COOKIE = "duracash_session"
 SHARE_COOKIE = "duracash_share"  # the key of what this browser shared while signed out (R6-10)
 SHARE_HOLDS_PER_HOUR = 10  # holds an hour from one network
+PAYER_QUESTIONS_PER_HOUR = 5   # questions from one customer-page link an hour
+PAYER_QUESTIONS_PER_DAY = 20   # from all of a company's customer pages a day (the daily email limit is 50)
 _COMPANY_LOCKS: dict = {}
 _COMPANY_LOCKS_GUARD = threading.Lock()
 _DELETED_LOCK = threading.Lock()
@@ -1111,6 +1113,8 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             page = domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0])
+            if key == "email_log":
+                domain.mark_moot(state, page["entries"])
         self._json(200, page)
 
     # ----- Billing with Stripe (billing.py) -----
@@ -2102,6 +2106,14 @@ class Handler(BaseHTTPRequestHandler):
         if demo_locked(company_id):
             self._send(303, b"", "text/plain", {"Location": link})
             return
+        if form == "question" and not (_within_limit(f"payer-question:{company_id}:{token}", PAYER_QUESTIONS_PER_HOUR, 3600)
+                                       and _within_limit(f"payer-questions:{company_id}", PAYER_QUESTIONS_PER_DAY, 24 * 3600)):
+            # Each question emails the owners and counts toward the company's daily email limit,
+            # so a link passed around can't use it up and stop the pay apps going out.
+            errors = {"form": "Too many questions have been sent from this page. Please call or email the contractor instead."}
+            page = payer_page.render(state, job, invoice, link, errors=errors, form=form)
+            self._send_compressible(429, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+            return
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         asked: dict = {}
 
@@ -2148,6 +2160,12 @@ class Handler(BaseHTTPRequestHandler):
         """Photos, PDFs and text shared to the installed app from the phone's share menu (P3).
         They land in the Inbox like any upload; nothing is filed without a person. Shared while
         signed out, they are held for this browser until someone signs in (R6-10)."""
+        # The phone's share menu posts from the installed app itself (Sec-Fetch-Site "none" or
+        # "same-origin"); a form on another website is "cross-site" and could fill this person's
+        # Inbox, or the shared-items prompt, with its own files.
+        if (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
+            self._send(303, b"", "text/plain", {"Location": "/inbox"})
+            return
         user = self._session_user()
         data = self._read_raw(MAX_INBOUND_BYTES)
         parsed = importer.parse_share(data, self.headers.get("Content-Type") or "")

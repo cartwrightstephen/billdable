@@ -410,6 +410,32 @@ class MailHttpTests(unittest.TestCase):
         self.assertEqual(server.load_company(company_id)["email_log"][-1]["status"], "queued")
         self.assertEqual(self.sink.messages, [])
 
+    def test_send_again_refuses_an_email_that_no_longer_applies(self):
+        for key in MAIL_ENV:
+            os.environ.pop(key, None)
+        cookie, job = self.company("mail-moot@pine.example")
+        self.ready_to_send(cookie, job)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/follow-up", {"early": True}, cookie=cookie)
+        emails = {e["kind"]: e for e in state["email_log"]}
+        self.assertTrue(emails["follow_up"]["status"].startswith("not sent"), emails)
+        self.assertNotIn("moot", emails["follow_up"])
+        inv = next(i for i in state["jobs"][-1]["invoices"] if i["status"] == "sent")
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/match-payment", {"amount_cents": inv["amount_cents"], "invoice_id": inv["id"]}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        emails = {e["kind"]: e for e in state["email_log"]}
+        self.assertEqual(emails["follow_up"]["moot"], "Nothing on this job is waiting for payment now.")
+        self.assertIn("is paid", emails["pay_app"]["moot"])
+        self.assertEqual(state["email_failures"], [], "Today doesn't list them either")
+        self.mail_on()
+        for kind in ("follow_up", "pay_app"):
+            res, out = self.request("POST", f"/api/outbox/{emails[kind]['id']}/retry", {}, cookie=cookie)
+            self.assertEqual(res.status, 409, out)
+            self.assertIn("doesn't need to go out any more", out["error"])
+        self.assertEqual(self.sink.messages, [], "nothing was sent")
+        _, page = self.request("GET", "/api/outbox", cookie=cookie)
+        self.assertTrue(all(e.get("moot") for e in page["entries"] if e["kind"] in {"follow_up", "pay_app"}), page)
+
     def test_not_set_up_then_retry(self):
         for key in MAIL_ENV:
             os.environ.pop(key, None)

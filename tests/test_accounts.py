@@ -713,8 +713,10 @@ class ReviewFourTests(ServerCase):
         self.request("POST", f"/api/jobs/{job_id}/void-draft", {}, cookie=cookie)
         self.mail_on()
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))
-        _, state = self.request("POST", f"/api/outbox/{email_id}/retry", {}, cookie=cookie)
-        self.assertIn("voided", state["email_log"][-1]["status"])
+        res, out = self.request("POST", f"/api/outbox/{email_id}/retry", {}, cookie=cookie)
+        # Send again is refused up front with the reason; the delivery check stays as a backstop.
+        self.assertEqual(res.status, 409, out)
+        self.assertIn("was deleted", out["error"])
         self.assertEqual([m for m in self.sink.messages if "ap@park.example" in m["to"]], [])
 
     def test_deleted_company_stays_deleted(self):  # L2

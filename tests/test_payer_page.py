@@ -187,6 +187,19 @@ class PayerPageTests(unittest.TestCase):
         self.assertIn("Line 3 looks doubled", item["text"])
         self.assertIn("Question on PA-", item["subject"])
 
+    def test_questions_from_one_page_are_limited(self):
+        cookie, state, link = self.sent_pay_app("payer-limit@example.com")
+        question = {"name": "Kim", "email": "kim@park.example", "question": "Is line 3 right?"}
+        for _ in range(server.PAYER_QUESTIONS_PER_HOUR):
+            res, _ = self.request("POST", link + "/question", form=question)
+            self.assertEqual(res.status, 303)
+        res, raw = self.request("POST", link + "/question", form=question)
+        self.assertEqual(res.status, 429)
+        self.assertIn("Too many questions", raw.decode())
+        _, raw = self.request("GET", "/api/state", cookie=cookie)
+        asked = [i for i in json.loads(raw)["inbox"] if i["source"] == "payer_page"]
+        self.assertEqual(len(asked), server.PAYER_QUESTIONS_PER_HOUR)
+
     def test_no_link_without_a_site_address(self):
         with mock.patch.dict(os.environ, {"DURACASH_URL": ""}):
             res, _ = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "nolink@example.com", "password": PASSWORD,

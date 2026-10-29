@@ -143,6 +143,10 @@ def retry_email(site, company_id: str, user: dict, email_id: str, rid: str = "")
         stuck = status in {"sending", "queued"} and (entry.get("sending_at") or entry.get("at") or "") < stale
         if not (status.startswith("failed") or status.startswith("not sent") or stuck):
             return 409, {"error": f"This email is {status}; only a failed or unsent email can be sent again."}
+        job = next((j for j in state.get("jobs", []) if j["id"] == entry.get("job_id")), None)
+        moot = domain.email_moot(job, entry) if job else ""
+        if moot:
+            return 409, {"error": f"{moot} This email doesn't need to go out any more."}
         entry["status"] = "queued"
         entry["retried"] = entry.get("retried", 0) + 1
         site.save(company_id, state)

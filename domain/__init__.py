@@ -1255,25 +1255,52 @@ def email_failures(state: dict[str, Any]) -> list[dict[str, Any]]:
         sample = e.get("sample") or e.get("id") == f"eml-{e.get('payapp_invoice_id')}"
         if not _email_failed(e) or sample or not job or job.get("closed"):
             continue
-        inv = next((i for i in job.get("invoices", []) if i["id"] == e.get("payapp_invoice_id")), None)
-        if inv and (inv.get("status") == "void" or inv.get("replaced")):
-            continue
-        # Once the money is in, a pay app or follow-up that didn't go out no longer matters.
-        if e.get("kind") == "pay_app" and inv and inv.get("status") == "paid":
-            continue
-        if e.get("kind") == "follow_up" and not any(i.get("status") in OPEN_FOR_PAYMENT for i in job.get("invoices", [])):
-            continue
-        # A draft for review is moot once the pay app itself went out; a signature request once
-        # the change order is signed or withdrawn.
-        if e.get("kind") == "pencil" and inv and inv.get("status") not in DRAFT_STATUSES:
-            continue
-        if e.get("kind") == "co_signature" and not any(
-            co.get("status") == "pending" and f"change order {co['number']} " in (e.get("subject") or "")
-            for co in job.get("change_orders", [])
-        ):
+        if email_moot(job, e):
             continue
         out.append(e)
     return sorted(out, key=lambda e: e.get("at", ""), reverse=True)
+
+
+def mark_moot(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The same email rows, each one that didn't go out and no longer needs to carrying "moot" (the
+    reason), so the page shows why instead of a Send again that would be refused."""
+    jobs = {j["id"]: j for j in state.get("jobs", [])}
+    for r in rows:
+        status = str(r.get("status") or "")
+        job = jobs.get(r.get("job_id"))
+        if job and (status.startswith("failed") or status.startswith("not sent")):
+            # Job history rows keep the email's kind in email_kind and its subject in text.
+            reason = email_moot(job, {**r, "kind": r.get("email_kind") or r.get("kind"), "subject": r.get("subject") or r.get("text")})
+            if reason:
+                r["moot"] = reason
+    return rows
+
+
+def email_moot(job: dict[str, Any], e: dict[str, Any]) -> str:
+    """Why an email that didn't go out no longer needs to, or "" when it still does. Today leaves
+    these off its list, and Send again refuses them, so an old follow-up never goes out after the
+    money is in."""
+    inv = next((i for i in job.get("invoices", []) if i["id"] == e.get("payapp_invoice_id")), None)
+    if inv and (inv.get("status") == "void" or inv.get("replaced")):
+        number = inv.get("number", "That pay app")
+        if inv.get("replaced"):
+            return f"{number} was replaced."
+        return f"{number} was pulled back." if inv.get("sent_at") else f"The draft {number} was deleted."
+    # Once the money is in, a pay app or follow-up that didn't go out no longer matters.
+    if e.get("kind") == "pay_app" and inv and inv.get("status") == "paid":
+        return f"{inv.get('number', 'That pay app')} is paid."
+    if e.get("kind") == "follow_up" and not any(i.get("status") in OPEN_FOR_PAYMENT for i in job.get("invoices", [])):
+        return "Nothing on this job is waiting for payment now."
+    # A draft for review is moot once the pay app itself went out; a signature request once
+    # the change order is signed or withdrawn.
+    if e.get("kind") == "pencil" and inv and inv.get("status") not in DRAFT_STATUSES:
+        return f"{inv.get('number', 'That pay app')} has gone out already."
+    if e.get("kind") == "co_signature" and not any(
+        co.get("status") == "pending" and f"change order {co['number']} " in (e.get("subject") or "")
+        for co in job.get("change_orders", [])
+    ):
+        return "That change order is signed or withdrawn."
+    return ""
 
 
 def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
@@ -1312,7 +1339,7 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
         if due:
             payer["payapp_due_next"], payer["payapp_due_prev"] = due[0].isoformat(), due[1].isoformat()
     emails = state.get("email_log", [])
-    out["email_log"] = deepcopy(emails[-RECENT_EMAILS:])
+    out["email_log"] = mark_moot(state, deepcopy(emails[-RECENT_EMAILS:]))
     out["email_log_total"] = len(emails)
     # Today lists these with Send again, however old they are; the count is for the Today badge.
     failures = email_failures(state)
@@ -1546,7 +1573,7 @@ def timeline_page(state: dict[str, Any], job_id: str, offset: int, limit: int) -
                                    "who": e.get("approved_by", "")}))
     keyed.sort(key=lambda kr: kr[0], reverse=True)
     rows = [r for _, r in keyed]
-    return {"entries": deepcopy(rows[offset:offset + limit]), "total": len(rows), "offset": offset, "limit": limit}
+    return {"entries": mark_moot(state, deepcopy(rows[offset:offset + limit])), "total": len(rows), "offset": offset, "limit": limit}
 
 
 def jobs_page(state: dict[str, Any], status: str, offset: int, limit: int, q: str = "") -> dict[str, Any]:
