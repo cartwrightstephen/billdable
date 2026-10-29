@@ -50,7 +50,7 @@ class ProposeAndApplyTests(unittest.TestCase):
         trn = next(j for j in state["jobs"] if j["code"] == "TRN")
         domain.match_payment(state, trn["id"], 100_000, "4417", "owner", received_on="2026-10-09")
         self.assertEqual(trn["payments"][-1]["matched_at"], "2026-10-09T12:00:00+00:00", "dated from the books")
-        rows = qbo_csv.propose(state, qbo_csv.parse(EXPORT)["rows"])
+        rows = qbo_csv.propose(state, [{"line": 7, "date": "2026-10-09", "ref": "4417", "customer": "Northline GC", "amount_cents": 100_000, "memo": ""}])
         self.assertEqual(rows[0]["status"], "already recorded")
         big = qbo_csv.propose(state, [{"line": 2, "date": None, "ref": "5", "customer": "Northline GC", "amount_cents": 20_000_000, "memo": "PA-TRN-01"}])
         self.assertEqual(big[0]["status"], "too much")
@@ -213,7 +213,11 @@ class BlankNumberTests(unittest.TestCase):
     def test_another_day_or_amount_is_a_new_payment(self):
         state = seed_state()
         self.record(state)
+        # A day apart may be the same payment keyed in by hand: not ticked, but it can still be picked.
         other = qbo_csv.propose(state, qbo_csv.parse(self.TEXT.replace("10/09/2026", "10/10/2026"))["rows"])
+        self.assertEqual(other[0]["status"], "no match")
+        self.assertIn("PA-TRN-01", [c["number"] for c in other[0]["candidates"]])
+        other = qbo_csv.propose(state, qbo_csv.parse(self.TEXT.replace("10/09/2026", "10/30/2026"))["rows"])
         self.assertEqual(other[0]["status"], "match")
         other = qbo_csv.propose(state, qbo_csv.parse(self.TEXT.replace('"1,000.00"', '"1,000.01"'))["rows"])
         self.assertEqual(other[0]["status"], "match")
@@ -250,3 +254,102 @@ class CustomerNameTests(unittest.TestCase):
         qb = [{"Id": "1", "DocNumber": "G-9", "TotalAmt": inv["amount_cents"] / 100, "Balance": 0, "CustomerRef": {"name": "Grace Roofing"}}]
         rows = qbo.reconcile(state, qb)
         self.assertIn(("PA-X-01", "missing"), {(r["number"], r["kind"]) for r in rows})
+
+
+def _row(ref, amount, day, customer="Northline GC", memo="", **more):
+    return {"line": 2, "date": day, "ref": ref, "customer": customer, "amount_cents": amount, "memo": memo, **more}
+
+
+def _qbo_row(state, pid, amount, day, ref=None, linked="PA-TRN-01"):
+    import qbo
+    payment = {"Id": pid, "TxnDate": day, "TotalAmt": amount / 100, "CustomerRef": {"name": "Northline GC"},
+               "Line": [{"LinkedTxn": [{"TxnId": "10", "TxnType": "Invoice"}]}]}
+    if ref:
+        payment["PaymentRefNum"] = ref
+    return qbo.payment_rows([payment], [{"Id": "10", "DocNumber": linked}])[0]
+
+
+class NoNumberAlreadyRecordedTests(unittest.TestCase):
+    """A payment recorded with no number (by hand, or from a blank-Num row) is not offered again
+    when QuickBooks is read, or when the CSV dates it a few days apart."""
+
+    def test_a_quickbooks_payment_with_no_number_is_already_recorded_by_hand(self):
+        import qbo
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 100_000, "", "owner", received_on="2026-10-09")
+        row = _qbo_row(state, "55", 100_000, "2026-10-09")
+        self.assertEqual(qbo.propose(state, [row])[0]["status"], "already recorded")
+        # Keyed in two days after the books date: likely the same payment, so it is not ticked,
+        # and the pay apps stay to pick from in case it is another one.
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 100_000, "", "owner", received_on="2026-10-11")
+        for got in (qbo.propose(state, [row])[0], qbo_csv.propose(state, [_row("", 100_000, "2026-10-09", memo="PA-TRN-01")])[0]):
+            self.assertEqual((got["status"], got["job_id"]), ("no match", None))
+            self.assertIn("dated 2026-10-11 is already recorded on", got["reason"])
+            self.assertIn("PA-TRN-01", [c["number"] for c in got["candidates"]])
+        self.assertEqual(qbo_csv.propose(state, [_row("", 100_000, "2026-10-30", memo="PA-TRN-01")])[0]["status"], "match", "weeks apart")
+
+    def test_a_paid_draw_is_not_matched_to_the_next_one_of_the_same_amount(self):
+        import qbo
+        state = seed_state()
+        trn = next(j for j in state["jobs"] if j["id"] == "job-turner")
+        trn["invoices"].append({**trn["invoices"][0], "id": "inv-trn-2", "number": "PA-TRN-02"})
+        domain.match_payment(state, "job-turner", 11_970_000, "", "owner", invoice_id=trn["invoices"][0]["id"], received_on="2026-10-09")
+        october = _qbo_row(state, "55", 11_970_000, "2026-10-09", linked="")
+        november = _qbo_row(state, "56", 11_970_000, "2026-11-09", linked="")
+        rows = qbo.propose(state, [october, november])
+        self.assertEqual(rows[0]["status"], "already recorded")
+        self.assertEqual((rows[1]["status"], rows[1]["number"]), ("match", "PA-TRN-02"))
+
+    def test_one_recorded_payment_stands_for_one_row(self):
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 100_000, "", "owner", received_on="2026-10-09")
+        rows = qbo_csv.propose(state, [_row("", 100_000, "2026-10-09", memo="PA-TRN-01"), _row("", 100_000, "2026-10-09", memo="PA-TRN-01")])
+        self.assertEqual([r["status"] for r in rows], ["already recorded", "match"])
+
+    def test_a_split_payment_with_no_number_is_not_offered_again(self):
+        state = seed_state()
+        owed = 11_970_000
+        row = _row("", owed + 50_000, "2026-10-09", memo="PA-TRN-01")
+        self.assertEqual(qbo_csv.propose(state, [row])[0]["status"], "too much")
+        domain.match_payment(state, "job-turner", owed, "", "owner", received_on="2026-10-09")
+        domain.match_payment(state, "job-brook", 50_000, "", "owner", received_on="2026-10-09")
+        self.assertEqual(qbo_csv.propose(state, [row])[0]["status"], "already recorded")
+
+    def test_a_split_payment_with_a_number_is_not_offered_again(self):
+        state = seed_state()
+        owed = 11_970_000
+        row = _row("1001", owed + 50_000, "2026-10-09", memo="PA-TRN-01")
+        domain.match_payment(state, "job-turner", owed, "1001", "owner", received_on="2026-10-09")
+        domain.match_payment(state, "job-brook", 50_000, "1001 (rest)", "owner", received_on="2026-10-09")
+        self.assertEqual(qbo_csv.propose(state, [row])[0]["status"], "already recorded")
+
+
+class ReusedReferenceTests(unittest.TestCase):
+    """'ACH' typed for every electronic payment, or one check paying two jobs, doesn't hide the next payment."""
+
+    def test_ach_every_month(self):
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 100_000, "ACH", "owner", received_on="2026-10-09")
+        rows = qbo_csv.propose(state, [_row("ACH", 100_000, "2026-10-09"), _row("ACH", 200_000, "2026-11-09"), _row("ACH", 100_000, "2026-11-09")])
+        self.assertEqual([r["status"] == "already recorded" for r in rows], [True, False, False])
+
+    def test_ach_from_quickbooks_is_known_by_its_id_and_can_be_recorded(self):
+        import qbo
+        state = seed_state()
+        trn = next(j for j in state["jobs"] if j["id"] == "job-turner")
+        domain.match_payment(state, "job-turner", 100_000, "ACH", "owner", received_on="2026-10-09", qbo_payment_id="76", qbo_total_cents=100_000)
+        row = _qbo_row(state, "77", 100_000, "2026-10-09", ref="ACH")
+        got = qbo.propose(state, [row])[0]
+        self.assertEqual((got["status"], got["number"]), ("match", "PA-TRN-01"))
+        domain.match_payment(state, "job-turner", 100_000, "ACH", "owner", invoice_id=got["invoice_id"], received_on="2026-10-09",
+                             qbo_payment_id="77", qbo_total_cents=100_000)
+        self.assertEqual(len(trn["payments"]), 2)
+        self.assertEqual(qbo.propose(state, [row])[0]["status"], "already recorded")
+
+    def test_one_check_paying_two_jobs(self):
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 600_000, "1001", "owner", received_on="2026-10-09")
+        rows = qbo_csv.propose(state, [_row("1001", 600_000, "2026-10-09"), _row("1001", 400_000, "2026-10-09")])
+        self.assertEqual([r["status"] == "already recorded" for r in rows], [True, False])
+        self.assertNotEqual(qbo_csv.propose(state, [_row("1001", 400_000, "2026-10-09")])[0]["status"], "already recorded")

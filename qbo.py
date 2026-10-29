@@ -268,6 +268,9 @@ def payment_rows(payments: list[dict[str, Any]], invoices: list[dict[str, Any]])
             "line": None,
             "date": str(p.get("TxnDate") or "")[:10] or None,
             "ref": str(p.get("PaymentRefNum") or f"QBO {p.get('Id')}")[:60],
+            # No number in QuickBooks: "QBO <id>" is made up, so a payment recorded here with no
+            # number is found by its customer, amount and day instead (qbo_csv.propose).
+            "no_number": not p.get("PaymentRefNum"),
             "customer": str((p.get("CustomerRef") or {}).get("name") or "")[:120],
             "amount_cents": amount,
             "memo": " ".join([str(p.get("PrivateNote") or ""), *[n for n in linked if n]])[:200],
