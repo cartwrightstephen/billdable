@@ -1,7 +1,8 @@
 // First-day setup hints (Oct 23 review): node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { companyGaps, companyGapsText, companyGapsHtml } from "../../static/js/setup.js";
+import { companyGaps, companyGapsText, companyGapsHtml, inviteLocked, inviteLockHtml, INVITE_LOCKED } from "../../static/js/setup.js";
+import { readFileSync } from "node:fs";
 
 const full = { name: "Pine", address: "2 Elm St, Decatur, GA", phone: "404-555-0100", license: "GA-123" };
 
@@ -33,4 +34,29 @@ test("Company details opens the first blank box, and only an address gap keeps t
 test("the warning never blocks sending: it has no disabled button and no blocker", () => {
   const html = companyGapsHtml({});
   assert.doesNotMatch(html, /disabled|blocker/);
+});
+
+// Note 2: an owner whose email isn't confirmed learns why Invite is off before tapping it.
+
+test("Invite is locked only for an unconfirmed user on a server that sends mail, never on the demo", () => {
+  const owner = { email_verified: false, company_id: "co-1" };
+  assert.equal(inviteLocked(owner, true, "demo"), true);
+  assert.equal(inviteLocked({ ...owner, email_verified: true }, true, "demo"), false);
+  assert.equal(inviteLocked(owner, false, "demo"), false, "no mail on this server: the server doesn't refuse either");
+  assert.equal(inviteLocked({ ...owner, company_id: "demo" }, true, "demo"), false);
+  assert.equal(inviteLocked(null, true, "demo"), false);
+});
+
+test("the locked note gives the server's own reason and the link to send again", () => {
+  assert.equal(INVITE_LOCKED, "Confirm your own email address before inviting people.");
+  const html = inviteLockHtml();
+  assert.ok(html.includes(INVITE_LOCKED));
+  assert.match(html, /data-action="resend-verify">Send the link again<\/button>/);
+});
+
+test("the server refuses with the same words the Team page shows", () => {
+  const server = readFileSync(new URL("../../server.py", import.meta.url), "utf8");
+  assert.ok(server.includes(`"${INVITE_LOCKED}"`));
+  const settings = readFileSync(new URL("../../static/js/views/settings.js", import.meta.url), "utf8");
+  assert.match(settings, /data-action="team-invite"\$\{locked \? " disabled" : ""\}>Invite<\/button>/);
 });

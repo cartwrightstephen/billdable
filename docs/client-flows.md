@@ -89,7 +89,10 @@ flowchart TD
     L --> M["Fill Company name, Phone, Address, Contractor licence number, How you bill; tap 'Save company details'"]
     M --> N["Step 1 ticked; next: 'New job' (section 3)"]
     N --> O{"Office help?"}
-    O -->|"Yes"| P["Settings, Team: 'Their email', 'They join as' Member or Owner, 'Invite'"]
+    O -->|"Yes"| P0{"Your own email confirmed, or no mail on this server?"}
+    P0 -->|"No"| P1["Settings, Team: Invite is off, with 'Confirm your own email address before inviting people.' and 'Send the link again'"]
+    P1 --> G
+    P0 -->|"Yes"| P["Settings, Team: 'Their email', 'They join as' Member or Owner, 'Invite'"]
     O -->|"No"| Q["Done: the checklist leads to the first job, its paperwork and the first send"]
     P --> R{"Email confirmed and mail set up?"}
     R -->|"Yes"| S["Invite emailed, good once for 7 days"]
@@ -98,14 +101,13 @@ flowchart TD
     T --> Q
 ```
 
-Code: landing and sign-up card `renderLanding`, static/js/views/auth.js:45 (Sign in first when this browser has signed in, static/js/views/auth.js:11-17; the terms box static/js/views/auth.js:91); **Look around a sample company** static/js/views/auth.js:71 and `lookAround` static/js/views/auth.js:213, server `_p_demo`; "Check your email" panel `checkEmailHtml`, static/js/views/auth.js:357 (**Send the link again**, **Got it**); checklist `onboardingHtml`, static/js/views/today.js:58-102, its step 1 **Company details** opens Settings, Company at `#co-address`; Company page `companyView`, static/js/views/settings.js:107; **Save company details** `save-company` static/js/views/settings.js:573; Team `teamCardHtml`, static/js/views/settings.js:59, **Invite** `team-invite` static/js/views/settings.js:527. Two-step sign-in is on Settings, My account (`myAccountView`, static/js/views/settings.js:162): **Set up two-step sign-in**, scan the QR code, **Turn on**, save the recovery codes.
+Code: landing and sign-up card `renderLanding`, static/js/views/auth.js:45 (Sign in first when this browser has signed in, static/js/views/auth.js:11-17; the terms box static/js/views/auth.js:91); **Look around a sample company** static/js/views/auth.js:71 and `lookAround` static/js/views/auth.js:213, server `_p_demo`; "Check your email" panel `checkEmailHtml`, static/js/views/auth.js:357 (**Send the link again**, **Got it**); checklist `onboardingHtml`, static/js/views/today.js:58-102, its step 1 **Company details** opens Settings, Company at `#co-address`; Company page `companyView`, static/js/views/settings.js:112; **Save company details** `save-company` static/js/views/settings.js:578; Team `teamCardHtml`, static/js/views/settings.js:60, **Invite** `team-invite` static/js/views/settings.js:532 (off, with the reason and **Send the link again**, while `inviteLocked` static/js/setup.js:41; the server still refuses, `_p_team_invite`). Two-step sign-in is on Settings, My account (`myAccountView`, static/js/views/settings.js:167): **Set up two-step sign-in**, scan the QR code, **Turn on**, save the recovery codes.
 
 **Taps from start to done:** about 5. Create account (1, after typing 3 boxes and the tick), the email link (1), Company details on the checklist (1, lands in the Address box), Save company details (1), Invite (1, optional).
 
 **What changed since Round 2:** Settings is four pages (Company, Team, My account, Billing) instead of one long Team & account page (R6-03); the checklist and Before you send name Settings, Company. Sign-up is limited to 5 an hour per network (R6-05). The Company page has **Sending and email** (who may send, the daily email) for owners.
 
 **Where it could still be simpler:**
-- `Invite` is refused with "Confirm your own email address before inviting people." only after it is tapped; the Team page doesn't say so beforehand.
 - Hiding the checklist is per person, so a teammate who joins later sees it until they hide it (it can be brought back from Help).
 
 ---
@@ -546,7 +548,7 @@ flowchart TD
     D --> MG["'Same customer as another one?': 'Merge into', 'Merge', confirm"]
 ```
 
-Code: page `views.playbook`, static/js/views/settings.js:415-487 (**Add customer** `add-payer` static/js/views/settings.js:600, server `add_payer` domain/__init__.py:1687; **Save customer** `save-playbook` static/js/views/settings.js:586, server `update_payer`, domain/__init__.py:1573; **Add to paperwork** / **Dismiss** `sug-add` / `sug-dismiss` static/js/views/settings.js:584-585; **Use N days** `use-approval-days` static/js/views/settings.js:572; **Merge** `merge-payer` static/js/views/settings.js:605, server `merge_payer`, domain/__init__.py:1708). Every label has an (i) with the trade term (`FIELD_HELP`, static/js/help.js).
+Code: page `views.playbook`, static/js/views/settings.js:420-492 (**Add customer** `add-payer` static/js/views/settings.js:605, server `add_payer` domain/__init__.py:1687; **Save customer** `save-playbook` static/js/views/settings.js:591, server `update_payer`, domain/__init__.py:1573; **Add to paperwork** / **Dismiss** `sug-add` / `sug-dismiss` static/js/views/settings.js:589-590; **Use N days** `use-approval-days` static/js/views/settings.js:577; **Merge** `merge-payer` static/js/views/settings.js:610, server `merge_payer`, domain/__init__.py:1708). Every label has an (i) with the trade term (`FIELD_HELP`, static/js/help.js).
 
 **Taps from start to done:** 2 (open the card, Save customer), plus 1 per suggestion.
 
@@ -554,7 +556,7 @@ Code: page `views.playbook`, static/js/views/settings.js:415-487 (**Add customer
 
 ## Flows not charted, or charted with less confidence
 
-- **Billing** (Settings, Billing: **Subscribe** / **Manage billing** through Stripe, `billingView` static/js/views/settings.js:201): shows only when Stripe is set up on the server; members see it read-only.
+- **Billing** (Settings, Billing: **Subscribe** / **Manage billing** through Stripe, `billingView` static/js/views/settings.js:206): shows only when Stripe is set up on the server; members see it read-only.
 - **The customer's page** (`payer_page.render`, payer_page.py:125; wireframe `PayerPage`): Mark as received, Approve for payment with a date, Send a question (an Inbox item for the contractor). Charted as branches in section 9.
 - **QuickBooks connection** (**Connect QuickBooks**, Settings, Company and Money, Payments): the Intuit sign-in in the middle happens off our site. Charted as one branch in section 10.
 - **Email forwarding, text messages and sharing from the phone into the Inbox** (`views.inbox`, **Bring emails and texts in automatically**): need an owner to set up an email service or Twilio. Shared while signed out, files wait 30 minutes for sign-in (**Finish adding N shared items**, `heldShareHtml` static/js/views/auth.js:368).

@@ -445,7 +445,7 @@
         "owner",
         "role"
       ],
-      "answer": "Yes. An owner opens Settings, Team, enters Their email, picks They join as (Member or Owner) and taps Invite. Members draft pay apps, record payments and add paperwork. Owners also send, delete drafts, finish jobs, and manage the team, the inbound addresses, reset and deleting the company. To let members send, an owner turns on Members can send pay apps, lien waivers and retainage requests in Settings, Company. Every action is in the Activity log with the person's name. If the invite can't be emailed, the owner gets a link to pass on; it works once, for 7 days.",
+      "answer": "Yes. An owner opens Settings, Team, enters Their email, picks They join as (Member or Owner) and taps Invite. Invite stays off until your own email is confirmed; the Team page says so, with Send the link again. Members draft pay apps, record payments and add paperwork. Owners also send, delete drafts, finish jobs, and manage the team, the inbound addresses, reset and deleting the company. To let members send, an owner turns on Members can send pay apps, lien waivers and retainage requests in Settings, Company. Every action is in the Activity log with the person's name. If the invite can't be emailed, the owner gets a link to pass on; it works once, for 7 days.",
       "handler": null,
       "needs_job": false,
       "actions": [
