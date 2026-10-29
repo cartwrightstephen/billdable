@@ -522,6 +522,7 @@ await step("phone: no page scrolls sideways at 375 px", async () => {
 
 await step("Money has six tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03
   await page.goto(BASE + "/money");
+  await page.locator(".tabs .tab", { hasText: "Outbox" }).waitFor();  // allInnerTexts doesn't wait for the page to draw
   assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout", "Outbox"]);
   await page.locator("table th", { hasText: "Paperwork" }).waitFor();
   await page.goto(BASE + "/money/packets");  // the old Paperwork tab's address opens Pay apps
