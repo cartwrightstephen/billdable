@@ -176,13 +176,33 @@ class ParseTests(unittest.TestCase):
         # A description, a quantity and a unit word in one cell: a quantity that needs a price.
         self.assertEqual(got("Concrete 2,400 SF"), [("Concrete", "2400", "SF", "")])
         self.assertEqual(got("Haul 3 loads"), [("Haul", "3", "loads", "")])
-        self.assertEqual(got("Tile 1200 SF, 8.50"), [("Tile", "1200", "SF", "8.50")])
+        # With other cells on the row, a quantity at the end of the description stays in it
+        # ("General conditions 16 wks<TAB>24000" is a lump sum), so this is $8.50, not 1200 SF.
+        self.assertEqual(got("Tile 1200 SF, 8.50"), [("Tile 1200 SF", "1", "LS", "8.50")])
         self.assertEqual(got("Level 2 tile, 500"), [("Level 2 tile", "1", "LS", "500.00")])
         # A number inside the description stays in the description.
         self.assertEqual(got("Level 2 tile 1200 SF @ 8.50"), [("Level 2 tile", "1200", "SF", "8.50")])
         # Rows without "@", "at" or "x" read as before.
         self.assertEqual(got("Paint, 3 ea, 45"), [("Paint", "3", "ea", "45.00")])
         self.assertEqual(got("Demo, $3,500"), [("Demo", "1", "LS", "3500.00")])
+
+    def test_a_number_in_the_description_cell_stays_there_on_a_row_with_columns(self):
+        # Before the one-cell readings, these were read the same way; the description's own
+        # "16 wks" or "2 x 2" is part of the name, not a quantity or a rate.
+        def got(text):
+            out = sov.parse_rows(text)
+            return [(l["description"], l["quantity"], l["unit"], l["rate"]) for l in out["lines"]], out["warnings"]
+        self.assertEqual(got("General conditions 16 wks\t24000"), ([("General conditions 16 wks", "1", "LS", "24000.00")], []))
+        self.assertEqual(got("Supervision 12 weeks\t18,000"), ([("Supervision 12 weeks", "1", "LS", "18000.00")], []))
+        self.assertEqual(got("Electrical rough-in 40 hrs\t2500"), ([("Electrical rough-in 40 hrs", "1", "LS", "2500.00")], []))
+        self.assertEqual(got("General conditions 16 wks, 24000"), ([("General conditions 16 wks", "1", "LS", "24000.00")], []))
+        self.assertEqual(got("Ceiling grid 2 x 2\t1\tLS\t5000"), ([("Ceiling grid 2 x 2", "1", "LS", "5000.00")], []))
+        self.assertEqual(got("Retaining wall 4 ft\t120\tLF\t85"), ([("Retaining wall 4 ft", "120", "LF", "85.00")], []))
+        self.assertEqual(got("Skylight 2 x 4\t3\tea\t850"), ([("Skylight 2 x 4", "3", "ea", "850.00")], []))
+        self.assertEqual(got("1\tSkylight 2 x 4\t3\tea\t850"), ([("Skylight 2 x 4", "3", "ea", "850.00")], []))
+        # Empty cells around one cell still leave it the only cell on the row.
+        self.assertEqual(got("Concrete 2,400 SF\t\t")[0], [("Concrete", "2400", "SF", "")])
+        self.assertEqual(got("Tile 1200 SF @ 8.50\t")[0], [("Tile", "1200", "SF", "8.50")])
 
     def test_garbage_is_reported_not_crashed(self):
         out = sov.parse_rows("hello\n\n,,,\n$$$, abc\n")
