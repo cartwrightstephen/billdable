@@ -531,7 +531,7 @@ def _seed() -> dict:
                 "job_id": "job-oak",
                 "actor": "owner",
                 "action": "job_done",
-                "detail": "Owner marked Oak Street kitchen done. Packet check ran the same night.",
+                "detail": "Owner marked Oak Street kitchen done. Paperwork check ran the same night.",
             }
         ],
         "adapters": {

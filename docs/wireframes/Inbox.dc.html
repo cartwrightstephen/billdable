@@ -22,69 +22,90 @@ a{color:#1F4FD1}a:hover{color:#16389A}
     <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 4px">
       <a href="Today.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Today</a>
       <a href="Jobs.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Jobs</a>
-      <a href="Inbox.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 12px; display: flex; justify-content: space-between">Inbox <span style="background: #1B1B1B; color: #FFFFFF; border-radius: 10px; padding: 0 8px; font-size: 13px">2</span></a>
+      <a href="Inbox.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 12px; display: flex; justify-content: space-between">Inbox <span style="background: #1B1B1B; color: #FFFFFF; border-radius: 10px; padding: 0 8px; font-size: 13px">4</span></a>
       <a href="Money.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Money</a>
       <a href="Settings.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Settings</a>
     </nav>
     <div style="margin-top: 40px; padding-top: 12px; border-top: 1px solid #BDBDBD; font-size: 13px; color: #555555">Alex Hartline<br>owner@hartline.example<br><a href="Landing.dc.html">Log out</a></div>
   </aside>
   <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 20px 32px 48px; display: flex; flex-direction: column; gap: 18px; max-width: 1200px">
-    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 16px">
-      <h1 style="margin: 0; font-size: 36px; font-weight: 600">Inbox</h1>
+    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px">
+      <h1 style="margin: 0; font-size: 32px; font-weight: 600">Inbox</h1>
       <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">/inbox</span>
     </div>
-    <p style="margin: -6px 0 0; font-size: 15px; color: #555555; max-width: 760px">Bring in photos, PDFs, saved emails, text threads and notes. Duracash suggests the job from the job code, address, name or sender; you file it with one click. Nothing is filed without you.</p>
-    <div style="border: 2px dashed #8C8C8C; border-radius: 12px; padding: 22px; background: #FFFFFF; display: flex; flex-direction: column; gap: 6px">
-      <strong>Drop files anywhere on this page</strong>
-      <span style="font-size: 14px; color: #555555">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to 15 MB each. Or <a href="#choose">choose files</a> (opens the camera on a phone), or paste a screenshot.</span>
-    </div>
+    <p style="margin: 0; font-size: 14px; color: #555555; font-size: 15px">Bring in photos, PDFs, saved emails, text threads and notes. Duracash suggests the job from the job code, address, name or sender; you file it with one click. Nothing is filed without you.</p>
 
-    <section aria-labelledby="tofile" style="background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column">
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px">
-        <h2 id="tofile" style="margin: 0; font-size: 20px; font-weight: 600">To file (2)</h2>
-        <button type="button" style="height: 44px; padding: 0 16px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">File both to their suggested jobs</button>
+    <section aria-labelledby="waiting" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; gap: 12px">
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap">
+        <h2 id="waiting" style="margin: 0; font-size: 18px; font-weight: 600">Waiting (4)</h2>
+        <button type="button" style="display: inline-block; text-decoration: none; height: 36px; box-sizing: border-box; line-height: 34px; padding: 0 12px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B; font: inherit; font-size: 14px; white-space: nowrap">Add all 3 to their suggested jobs</button>
       </div>
-      <article style="padding: 16px 0; border-top: 1px solid #DADADA; display: flex; flex-direction: column; gap: 8px">
-        <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px">Email</span><strong>Conditional waiver, OAK</strong><span style="font-size: 14px; color: #555555">from billing@atlantamillwork.example · Oct 12, 2026</span></div>
-        <span style="font-size: 14px">File: <a href="#file">Millwork-conditional-waiver.pdf</a></span>
-        <span style="font-size: 14px; color: #555555">Suggested because the subject has the job code OAK.</span>
-        <div style="display: flex; flex-wrap: wrap; gap: 8px">
-          <label for="j1" style="position: absolute; left: -9999px">Job</label>
-          <select id="j1" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 8px; font: inherit; background: #FFFFFF; min-width: 240px"><option>Oak Street kitchen (OAK)</option></select>
-          <label for="k1" style="position: absolute; left: -9999px">Kind</label>
-          <select id="k1" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 8px; font: inherit; background: #FFFFFF"><option>Lien waiver</option></select>
-          <button type="button" style="height: 40px; padding: 0 14px; border: 1px solid #1B1B1B; border-radius: 8px; background: #FFFFFF; font: inherit; font-weight: 600">File to job record</button>
-          <button type="button" style="height: 40px; padding: 0 14px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Dismiss</button>
+      <article style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px; white-space: nowrap">Email</span><strong>Conditional waiver, OAK</strong><span style="font-size: 14px; color: #555555">from billing@atlantamillwork.example · Oct 12, 2026</span></div>
+        <span style="font-size: 14px; color: #555555">Files: <a href="#file">Millwork-conditional-waiver.pdf</a></span>
+        <span style="font-size: 14px; color: #555555">Suggested because it mentions job code OAK</span>
+        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap"><button type="button" style="display: inline-block; text-decoration: none; box-sizing: border-box; background: #1F4FD1; color: #FFFFFF; border: 0; border-radius: 8px; padding: 11px 18px; font: inherit; font-weight: 600; font-size: 15px; white-space: nowrap">Add to Oak Street kitchen</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Other job</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Change type (Lien waiver)</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Dismiss</button></div>
+      </article>
+      <article style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px; white-space: nowrap">Email</span><strong>Updated insurance certificate</strong><span style="font-size: 14px; color: #555555">from Mara Ellison &lt;ap@ellisonresidential.example&gt; · Oct 13, 2026</span></div>
+        <span style="font-size: 14px; color: #555555">Files: <a href="#file">COI-2026.pdf</a></span>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap"><span style="font-size: 14px; color: #555555">Could be Oak Street kitchen, Decatur addition or Inman Park bath (all Ellison Residential jobs). Pick one.</span><button type="button" style="display: inline-block; text-decoration: none; height: 36px; box-sizing: border-box; line-height: 34px; padding: 0 12px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B; font: inherit; font-size: 14px; white-space: nowrap">Oak Street kitchen</button><button type="button" style="display: inline-block; text-decoration: none; height: 36px; box-sizing: border-box; line-height: 34px; padding: 0 12px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B; font: inherit; font-size: 14px; white-space: nowrap">Decatur addition</button><button type="button" style="display: inline-block; text-decoration: none; height: 36px; box-sizing: border-box; line-height: 34px; padding: 0 12px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B; font: inherit; font-size: 14px; white-space: nowrap">Inman Park bath</button></div>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+          <select aria-label="Job" style="height: 40px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; background: #FFFFFF"><option>Pick a job…</option><option>Oak Street kitchen (OAK)</option><option>Decatur addition (DEC)</option><option>Inman Park bath (INM)</option></select>
+          <select aria-label="Kind" style="height: 40px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; background: #FFFFFF"><option>Note</option><option>Daily record</option><option>Photo</option><option>Contract</option><option>Change order</option><option>Lien waiver</option><option>Pay app / invoice backup</option><option>Delivery or time ticket</option><option>Other</option></select>
+          <button type="button" style="display: inline-block; text-decoration: none; height: 36px; box-sizing: border-box; line-height: 34px; padding: 0 12px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B; font: inherit; font-size: 14px; white-space: nowrap; background: #1B1B1B; color: #FFFFFF; border-color: #1B1B1B">Add to job</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Dismiss</button>
         </div>
       </article>
-      <article style="padding: 16px 0; border-top: 1px solid #DADADA; display: flex; flex-direction: column; gap: 8px">
-        <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px">Text message</span><strong>Grant Park tickets 9/12 to 9/14</strong><span style="font-size: 14px; color: #555555">from the site lead · Oct 12, 2026</span></div>
-        <span style="font-size: 14px">3 photos</span>
-        <span style="font-size: 14px; color: #555555">Suggested because it names the job, Grant Park.</span>
-        <div style="display: flex; flex-wrap: wrap; gap: 8px">
-          <label for="j2" style="position: absolute; left: -9999px">Job</label>
-          <select id="j2" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 8px; font: inherit; background: #FFFFFF; min-width: 240px"><option>Grant Park addition (GRT)</option></select>
-          <label for="k2" style="position: absolute; left: -9999px">Kind</label>
-          <select id="k2" style="height: 40px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 8px; font: inherit; background: #FFFFFF"><option>Delivery or time ticket</option></select>
-          <button type="button" style="height: 40px; padding: 0 14px; border: 1px solid #1B1B1B; border-radius: 8px; background: #FFFFFF; font: inherit; font-weight: 600">File to job record</button>
-          <button type="button" style="height: 40px; padding: 0 14px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Dismiss</button>
-        </div>
+      <article style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px; white-space: nowrap">Text message</span><strong>[10/14/26, 4:12 PM] Luis Ortega: Grant Park addition is done, all trim in</strong><span style="font-size: 14px; color: #555555">Oct 14, 2026</span></div>
+        <span style="font-size: 14px; color: #555555">Found: Oct 14, 2026</span>
+        <span style="font-size: 14px; color: #555555">Suggested because it mentions the job name Grant Park addition</span>
+        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap"><button type="button" style="display: inline-block; text-decoration: none; box-sizing: border-box; background: #1F4FD1; color: #FFFFFF; border: 0; border-radius: 8px; padding: 11px 18px; font: inherit; font-weight: 600; font-size: 15px; white-space: nowrap">Add to Grant Park addition</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Other job</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Change type (Note)</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Dismiss</button></div>
       </article>
+      <article style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap"><span style="border: 1px solid #8C8C8C; border-radius: 999px; padding: 1px 10px; font-size: 13px; white-space: nowrap">Upload</span><strong>Payments-Oct.csv</strong><span style="font-size: 14px; color: #555555">Oct 14, 2026</span></div>
+        <span style="font-size: 14px; color: #555555">Files: <a href="#file">Payments-Oct.csv</a></span>
+        <span style="font-size: 14px; color: #555555">Found: $119,700.00, $57,950.00 · Oct 10, 2026, Oct 9, 2026</span>
+        <span style="font-size: 14px; color: #555555">Suggested because it mentions pay app PA-BRK</span>
+        <div style="background: #F5F5F3; border: 1px solid #BDBDBD; border-radius: 8px; padding: 8px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 15px">This looks like a payments export. <a href="PaymentsImport.dc.html" style="display: inline-block; text-decoration: none; height: 36px; box-sizing: border-box; line-height: 34px; padding: 0 12px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B; font: inherit; font-size: 14px; white-space: nowrap; background: #1B1B1B; color: #FFFFFF; border-color: #1B1B1B">Read as payments (2 rows)</a></div>
+        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap"><button type="button" style="display: inline-block; text-decoration: none; box-sizing: border-box; background: #1F4FD1; color: #FFFFFF; border: 0; border-radius: 8px; padding: 11px 18px; font: inherit; font-weight: 600; font-size: 15px; white-space: nowrap">Add to Brookhaven kitchen</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Other job</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Change type (Note)</button> <button type="button" style="border: 0; background: none; padding: 0; font: inherit; font-size: 14px; color: #1F4FD1; text-decoration: underline; cursor: pointer">Dismiss</button></div>
+      </article>
+    </section>
+
+    <section style="border: 2px dashed #8C8C8C; border-radius: 12px; padding: 18px 22px; display: flex; flex-direction: column; gap: 8px; background: #FFFFFF">
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap"><label for="upload-job" style="font-size: 15px">Which job?</label><select id="upload-job" style="height: 40px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; background: #FFFFFF"><option>Not sure, file later</option><option>Oak Street kitchen (OAK)</option><option>Grant Park addition (GRT)</option></select></div>
+      <strong>Drop files anywhere on this page</strong>
+      <span style="font-size: 14px; color: #555555">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to 15 MB each. Or <a href="#choose">choose files</a>, or press Ctrl+V / ⌘V to paste a screenshot. They wait below for you to add them to the job.</span>
     </section>
 
     <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
       <h2 style="margin: 0; font-size: 18px; font-weight: 600">Paste an email, a text thread, or notes</h2>
-      <label for="src" style="font-size: 14px; color: #555555">What are you pasting?</label>
-      <select id="src" style="height: 40px; max-width: 320px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 8px; font: inherit; background: #FFFFFF"><option>An email</option><option>Text messages</option><option>Notes: one daily record per date</option></select>
-      <label for="paste" style="position: absolute; left: -9999px">Pasted text</label>
-      <textarea id="paste" rows="4" placeholder="Paste here. For notes, start each day with a date: 10/12 Framing done on Oak Street, 4 crew" style="border: 1px solid #8C8C8C; border-radius: 8px; padding: 10px; font: inherit; resize: vertical"></textarea>
-      <button type="button" style="align-self: flex-start; height: 40px; padding: 0 14px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit">Add to Inbox</button>
+      <div><select aria-label="What are you pasting?" style="height: 40px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; background: #FFFFFF"><option>Something else</option><option>An email</option><option>Text messages</option><option>Notes: one daily record per date</option></select></div>
+      <textarea aria-label="Pasted text" rows="5" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in" style="height: 40px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; background: #FFFFFF; height: auto; padding: 10px"></textarea>
+      <p style="margin: 0; font-size: 14px; color: #555555">Looks like notes from 3 days. One daily record per date.</p>
+      <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap"><button type="button" style="display: inline-block; text-decoration: none; box-sizing: border-box; background: #1F4FD1; color: #FFFFFF; border: 0; border-radius: 8px; padding: 11px 18px; font: inherit; font-weight: 600; font-size: 15px; white-space: nowrap">Add to Inbox</button><span style="font-size: 14px; color: #555555">Notes split at every line that starts with a date (10/12, Oct 12, 2026-10-12). Exported Apple Notes or a typed-up notebook work.</span></div>
     </section>
-    <details style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px"><summary style="cursor: pointer; font-weight: 600">Bring emails and texts in automatically</summary><p style="margin: 10px 0 0; font-size: 14px; color: #555555">A private forwarding address for email and a texting number, once an email service and a Twilio number are connected.</p></details>
+
+    <details style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px"><summary style="cursor: pointer; font-weight: 600">Recently added or dismissed</summary></details>
+    <details style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px"><summary style="cursor: pointer; font-weight: 600">Bring emails and texts in automatically</summary></details>
+
+    <section style="background: #EFEFEC; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 20px; display: flex; flex-direction: column; gap: 8px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">HOW THE CARDS WORK</div><ul style="margin: 0; padding-left: 20px; font-size: 14px; display: flex; flex-direction: column; gap: 4px">
+        <li>A card with a suggested job has one button, <strong>Add to (job)</strong>; Other job and Change type open the two selects. Under the select, the item's likely jobs come first.</li>
+        <li>No suggestion: the jobs it could be are one-tap buttons ("Could be A or B (both Northline GC jobs). Pick one."), else Pick a job… and a kind.</li>
+        <li>The paste box picks An email, Text messages or Notes when the text looks like one, and says so under the box; a choice made by hand stays.</li>
+        <li>A text that says a job is done adds "This says the job is done." with <strong>Mark (job) done and draft the pay app</strong>; Today shows it first.</li>
+        <li>Dismiss and every add can be undone from <strong>Recently added or dismissed</strong> (the last 20).</li>
+      </ul></section>
+
+    <section style="background: #EFEFEC; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 20px; display: flex; flex-direction: column; gap: 8px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">ON A PHONE, AND FOR MEMBERS</div><ul style="margin: 0; padding-left: 20px; font-size: 14px; display: flex; flex-direction: column; gap: 4px">
+        <li>On a touch screen the drop zone is two buttons, <strong>Take a photo</strong> and <strong>Choose files</strong>, under Which job?; the drop-and-paste sentence shows only with a mouse. Several files go up three at a time ("Uploading 2 of 5…").</li>
+        <li>The home-screen shortcut Take a photo opens /inbox?camera=1 with the camera button in focus. Files shared to Duracash while signed out wait 30 minutes: after sign-in every page offers <strong>Finish adding N shared items</strong> or <strong>Discard</strong>.</li>
+        <li>Bring emails and texts in automatically: owners see the steps and the private web addresses with Copy and Make a new address; members see "An owner connects the email service and the texting number. Items sent to them wait here to be reviewed before filing."</li>
+      </ul></section>
   </main>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1300}}'>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":2150}}'>
 class Component extends DCLogic {
   renderVals() {
     return {};

@@ -1,22 +1,25 @@
 # Duracash client flows
 
-For Stephen to review. Each chart shows what a contractor taps, screen by screen, to get one task done. Every screen name and button label is copied from the app code (`static/app.js`, `static/js/*.js`, `payer_page.py`, `server.py`). The file:line after a label is where it lives. Read each chart from top to bottom. Diamonds are real branches the code takes.
+For Stephen to review. Each chart shows what a contractor taps, screen by screen, to get one task done. Every screen name and button label is copied from the app code (`static/app.js`, `static/js/*.js`, `payer_page.py`, `domain/__init__.py`, `server.py`), regenerated from the code on Oct 29, 2026 after Round 6 (R6-11); the file:line after a label is where it lives today. Read each chart from top to bottom. Diamonds are real branches the code takes.
 
-The demo company is Hartline Remodeling (`seed.py`), login `owner@hartline.example` / `demo`. The demo can't send email, so some steps end at "not sent: demo account".
+The demo company is Hartline Remodeling (`seed.py`), opened with **Look around a sample company** on the landing page (no account) or the login `owner@hartline.example` / `demo`. The demo can't send email, so some steps end at "Not sent: demo account". The wireframes in `docs/wireframes/` draw the same screens; `Job`, `PhoneJob`, `Money`, `PaymentsImport`, `Inbox`, `Settings` and `PayerPage` were redrawn with this file.
 
-Screen names used below:
+Screen names used below (pages and tabs: `SECTIONS`, static/app.js:217-223; addresses: static/js/routes.js:9-21):
 
-| Screen | Address | Code |
-|---|---|---|
-| Today | `/today` | static/js/routes.js:8 |
-| Jobs, Job history | `/jobs`, `/jobs/history` | static/js/routes.js:9 |
-| Job page | `/jobs/<id>` | static/js/routes.js:19 |
-| Inbox | `/inbox` | static/js/routes.js:9 |
-| Pay apps, Packets, Change orders, Collections, Payments, Waivers, Retainage, Outbox | `/money/...` | static/js/routes.js:10-11 |
-| Pay app, Packet, Change order, Waiver detail pages | `/money/pay-app/...`, `/money/packet/...`, `/money/change-order/...`, `/money/waiver/...` | static/js/routes.js:15 |
-| Settings: Company, Team, My account, Billing, Customer settings | `/settings/company` (`/settings` opens it), `/settings/team`, `/settings/account`, `/settings/billing`, `/settings/playbook` | static/js/routes.js:12 |
+| Screen | Address |
+|---|---|
+| Today: Overview, Results, Calendar, Daily record | `/today`, `/today/results`, `/today/calendar`, `/today/daily` |
+| Jobs: Open jobs, Job history | `/jobs`, `/jobs/history` |
+| Job page | `/jobs/<id>` |
+| Inbox | `/inbox` |
+| Money: Pay apps, Change orders, Unpaid, Payments, Closeout, Outbox | `/money`, `/money/change-orders`, `/money/collections`, `/money/payments`, `/money/waivers` (`/money/retainage` opens it at Held back, still owed), `/money/outbox` |
+| Pay app, Paperwork, Change order and Waiver pages | `/money/pay-app/<job>/<id>`, `/money/packet/<job>/<id>` (`closeout` for the closeout paperwork), `/money/change-order/<job>/<id>`, `/money/waiver/<job>` |
+| Settings: Company, Team, My account, Billing, Customer settings, Activity log, Help | `/settings/company` (`/settings` opens it), `/settings/team`, `/settings/account`, `/settings/billing`, `/settings/playbook`, `/settings/audit`, `/settings/help` |
+| The customer's page for one pay app; the signing page for one change order | `/p/<link>`, `/s/<link>` (no sign-in; `payer_page.py`) |
 
-On the job page, one button is the big "next step" button and the rest sit in a row of smaller buttons. The big one is picked in this order: `Clear N blockers`, `Approve & send`, `Send waiver`, `Match payment`, `Draft pay app`, `Progress pay app`, `Close for record`, `Ask for retainage` (static/app.js:672-674).
+On the job page the **Next step** card holds one main button and, beside it, the next two as two-line buttons (the label, then why). The rest sit under **More (N)**, grouped Bill, Get paid and Close out. The main button is picked in this order: the blocker button (**Fix N things before sending**, **Add N missing documents** or **Get CO N signed**), **Review & send**, **Choose waiver and send**, then, while a sent pay app is unpaid, **Send follow-up** once it is due and **Draft pay app**; otherwise **Draft pay app**, **Progress pay app**, **Finish job**, **Ask for retainage** (`jobActions`, static/js/jobs.js:250-300). While the customer has the pay app and no follow-up is due there is no main button. A member does not see what only an owner may do (send, waivers, retainage requests, delete a draft, pull back, finish, delete, accept short pay, reopen; `OWNER_ONLY`, static/js/jobs.js:235, `OWNER_ACTIONS`, server.py:2526) unless the company turned on **Members can send pay apps, lien waivers and retainage requests** (Settings, Company).
+
+A company set to **Draws from homeowners** (Settings, Company, How you bill) reads Draw and Draws wherever this file says pay app (`termText`, static/js/terms.js; `domain.term_text`).
 
 ---
 
@@ -29,116 +32,112 @@ flowchart TD
     C --> D{"Bill line by line?"}
     D -->|"Yes, trade sub"| E["Job page: 'Set up schedule of values'"]
     D -->|"No, one contract amount"| F
-    E --> F["Inbox or Job record: add contract, photos, tickets"]
+    E --> F["Job record: 'Take a photo', 'Add a file', or the Inbox: contract, photos, tickets"]
     F --> G{"Work finished?"}
-    G -->|"Not yet"| H["Job page: 'Progress pay app'"]
-    G -->|"Yes"| I["Job page: 'Mark done' then 'Confirm done'"]
-    H --> J["Draft pay app made"]
+    G -->|"Not yet"| H["Job page: 'Progress pay app', then 'Draft progress pay app'"]
+    G -->|"Yes"| I["Job page: 'Mark done', 'Confirm done', confirm"]
+    H --> J["Draft pay app made, with its paperwork list"]
     I --> J
-    CO["Extra work: 'Add change order', payer signs"] -.-> J
-    J --> K{"Blockers on the packet?"}
-    K -->|"Yes"| L["Packet page: 'Attach' or 'Mark present…'"]
+    CO["Extra work: 'New change order', customer signs"] -.-> J
+    J --> K{"Paperwork missing or a change order unsigned?"}
+    K -->|"Yes"| L["Paperwork page: 'Take a photo', 'Choose file', 'Attach' or 'I have this…'"]
     L --> K
-    K -->|"No"| M["'Approve & send' emails the pay app and PDF"]
+    K -->|"No"| M["Pay app page, 'Before you send': 'Approve & send to' the customer's email"]
     M --> N{"Paid?"}
-    N -->|"Not yet"| O["'Send follow-up' when the payer's follow-up days pass"]
+    N -->|"Not yet"| O["'Send follow-up' once the customer's days between follow-ups pass"]
     O --> N
-    N -->|"Part paid"| P["'Match payment' records it"]
+    N -->|"Part paid"| P["'Record a payment'; 'Accept $X short pay…' if the rest won't come"]
     P --> N
-    N -->|"Paid in full"| Q["'Send waiver'"]
+    N -->|"Paid in full"| Q["'Choose waiver and send'"]
     Q --> R{"More work on this job?"}
     R -->|"Yes, next month"| G
-    R -->|"No, job done"| S{"Retainage held?"}
-    S -->|"Yes"| T["'Ask for retainage' then 'Record retainage paid'"]
+    R -->|"No, job done"| S{"Money held back?"}
+    S -->|"Yes"| T["'Ask for retainage', then 'Record retainage paid'"]
     S -->|"No"| U
-    T --> U["'Close for record' moves it to Job history"]
+    T --> U["'Finish job' moves it to Job history"]
 ```
 
-The money loop is the middle: draft, clear the packet, send, follow up, record payment, send waiver, then back to the next month's progress. A job usually goes round it once per month. Each step ends up on Today as a row, so the contractor can run the loop from Today without hunting (see section 14).
+The money loop is the middle: draft, add the paperwork, send, follow up, record the payment, send the waiver, then back to next month's progress. A job usually goes round it once a month. Each step shows up on Today as a row, and in the owners' daily email, so the contractor can run the loop from Today (section 14).
 
 ---
 
 ## 2. First day setup
 
-**Goal:** create the company, confirm the email, and fill in the company details that print on every pay app. Redrawn from the code after Round 2 (Oct 27); the screens are the wireframes `CheckEmail`, `FirstRun`, `NewJob` and `FirstPacket` (`docs/wireframes/`).
+**Goal:** create the company, confirm the email, and fill in the company details that print on every pay app. The screens are the wireframes `Landing`, `CheckEmail`, `FirstRun`, `NewJob` and `Settings`.
 
 ```mermaid
 flowchart TD
     A["Landing page: 'Create your company' card, or 'Sign in' on a device that has signed in before"] --> A2{"Just looking?"}
     A2 -->|"Yes, and the server has the sample company"| DEMO["'Look around a sample company': the demo's Today, no account"]
-    A2 -->|"No"| B["Fill Your name, Company name (can wait), Email, Password"]
+    A2 -->|"No"| B["Fill Your name, Company name (you can add it later), Email, Password"]
     B --> C["Tick 'I agree to the Terms of Service and the Privacy Policy.'"]
     C --> D["Tap 'Create account'"]
     D --> E{"Name, email, 10+ character password, box ticked?"}
     E -->|"No"| E1["Red note under that box; nothing typed is lost"]
     E1 --> B
     E -->|"Email already has an account"| E2["'Sign in instead' under the email"]
-    E -->|"Yes"| F["Today: 'Check your email' panel, free trial banner, 'Get your first pay app out' checklist"]
+    E -->|"Yes"| F["Today: 'Check your email' panel, free trial line, 'Get your first pay app out' checklist"]
     F --> F1{"Did a link go out?"}
-    F1 -->|"Yes"| G["Email: 'Confirm your email for Duracash', tap the link"]
+    F1 -->|"Yes"| G["Email: tap the confirmation link"]
     F1 -->|"No: mail not set up here"| F2["Panel reads 'Your email isn't confirmed yet' with the reason"]
-    G --> H{"Link still good? valid 3 days"}
-    H -->|"Yes"| I["Toast: 'Your email is confirmed. You can send pay apps now.'"]
+    G --> H{"Link still good? 3 days"}
+    H -->|"Yes"| I["Email confirmed: sending is open"]
     H -->|"No"| J["'Send the link again' on the panel or the banner"]
     J --> G
     F --> K["Checklist step 1: 'Company details'"]
-    K --> L["Settings: Company, card 'Company details', cursor in Address"]
+    K --> L["Settings, Company: card 'Company details', cursor in Address"]
     L --> M["Fill Company name, Phone, Address, Contractor licence number, How you bill; tap 'Save company details'"]
     M --> N["Step 1 ticked; next: 'New job' (section 3)"]
     N --> O{"Office help?"}
-    O -->|"Yes"| P["Card 'Team': type their email, pick Member or Owner, tap 'Invite'"]
+    O -->|"Yes"| P["Settings, Team: 'Their email', 'They join as' Member or Owner, 'Invite'"]
     O -->|"No"| Q["Done: the checklist leads to the first job, its paperwork and the first send"]
     P --> R{"Email confirmed and mail set up?"}
-    R -->|"Yes"| S["Invite emailed, good for 7 days"]
-    R -->|"Not emailed"| T["Copy the link and send it yourself"]
+    R -->|"Yes"| S["Invite emailed, good once for 7 days"]
+    R -->|"Not emailed"| T["Copy the link shown and send it yourself"]
     S --> Q
     T --> Q
 ```
 
-Code: landing and sign-up card static/app.js:306-360 (Sign in first when this browser has signed in, static/app.js:23-29); `Look around a sample company` static/app.js:332, 470-490, server.py:1215 (`_p_demo`); checks in place static/app.js:413-425 and the password rule when the box is left static/app.js:399-403; `Sign in instead` static/app.js:450-457, server.py:1194-1213 (`exists`); a blank company name takes the person's name server.py:1203; "Check your email" panel static/app.js:1793-1802 (`Got it`, `Send the link again`); the banner that stays until confirmed static/app.js:1804-1811; confirm link static/app.js:1681-1686, link valid 72 hours auth.py:51; checklist static/app.js:1942-1986, its step 1 `Company details` static/app.js:1957-1958 opens Team & account at `#co-address`; `Save company details` static/app.js:904-906, 1876; `Invite` static/app.js:839-848, server.py:1515-1517. Optional two-step sign-in: `Set up two-step sign-in` on Team & account, then `Turn on`.
+Code: landing and sign-up card `renderLanding`, static/app.js:404 (Sign in first when this browser has signed in, static/app.js:41-47; the terms box static/app.js:450); **Look around a sample company** static/app.js:430 and `lookAround` static/app.js:572, server `_p_demo`; "Check your email" panel `checkEmailHtml`, static/app.js:2353 (**Send the link again**, **Got it**); checklist `onboardingHtml`, static/app.js:2629-2673, its step 1 **Company details** opens Settings, Company at `#co-address`; Company page `companyView`, static/app.js:2496; **Save company details** static/app.js:1187; Team `teamCardHtml`, static/app.js:2384, **Invite** static/app.js:1103. Two-step sign-in is on Settings, My account (`myAccountView`, static/app.js:2551): **Set up two-step sign-in**, scan the QR code, **Turn on**, save the recovery codes.
 
-**Taps from start to done:** about 5. Create account (1, after typing 3 boxes and the tick; the company name can wait), the email link (1), Company details on the checklist (1, lands in the Address box), Save company details (1), Invite (1, optional).
+**Taps from start to done:** about 5. Create account (1, after typing 3 boxes and the tick), the email link (1), Company details on the checklist (1, lands in the Address box), Save company details (1), Invite (1, optional).
 
-**What Round 2 changed here:**
-- After sign-up a "Check your email" panel says where the link went, or why none did (R1-07). Until the email is confirmed, a server that sends mail refuses to send pay apps, waivers and follow-ups, and the send buttons say why instead of parking the email in the Outbox.
-- The checklist's first step is the company address, phone and licence (R2-03), and its button goes straight to the Address box. Before you send also says "Your company address is blank on this PDF." while it is (R2-05).
-- Company name is optional at sign-up (R2-02); a returning browser opens on Sign in; a visitor can look around the sample company first (R2-06).
+**What changed since Round 2:** Settings is four pages (Company, Team, My account, Billing) instead of one long Team & account page (R6-03); the checklist and Before you send name Settings, Company. Sign-up is limited to 5 an hour per network (R6-05). The Company page has **Sending and email** (who may send, the daily email) for owners.
 
 **Where it could still be simpler:**
-- `Invite` is refused with "Confirm your own email address before inviting people." only after it is tapped (server.py:1516-1517); the Team card doesn't say so beforehand.
-- Hiding the checklist is per person, so a teammate who joins later sees it too until they hide it.
+- `Invite` is refused with "Confirm your own email address before inviting people." only after it is tapped; the Team page doesn't say so beforehand.
+- Hiding the checklist is per person, so a teammate who joins later sees it until they hide it (it can be brought back from Help).
 
 ---
 
 ## 3. Add a job by hand
 
-**Goal:** get a job and the customer who pays it into Duracash. This is also the only way a customer (payer) gets created.
+**Goal:** get a job and the customer who pays it into Duracash. Customers can also be added on their own (section 15).
 
 ```mermaid
 flowchart TD
-    A["Jobs page or the Today checklist: tap 'New job'"] --> B["Card 'New job', section Job: Job name, Address, Contract number, Contract amount, Retainage %"]
-    B --> C["Section Customer: Customer, Role Owner or GC, Approver, AP email, Phone"]
-    C --> D["Optional: 'Notes for the job record'"]
+    A["Jobs page or the Today checklist: tap 'New job'"] --> B["Card 'New job': Job name, Address, Customer (with a list of saved customers), Who pays you?, Contract amount"]
+    B --> C{"Customer already saved?"}
+    C -->|"Yes"| C1["Line under the boxes: who signs off and where pay apps go, with 'Change in Customer settings'"]
+    C -->|"No"| D
+    C1 --> D["Optional: 'More details (optional)': Contract number, Retainage %, Phone, Who signs off on your bills, Email for pay apps (can add later), Notes (kept on the job record)"]
     D --> E["Tap 'Save job'"]
-    E --> F{"All starred fields filled and email looks real?"}
-    F -->|"No"| G["Red note under the field, for example 'Enter a real AP email, like ap@builder.com.'"]
+    E --> F{"Boxes filled and an email that looks real, if one was typed?"}
+    F -->|"No"| G["Red note under the box, for example 'Enter the email pay apps go to, like ap@builder.com.'"]
     G --> B
     F -->|"Yes"| H{"Customer name already known?"}
-    H -->|"New customer"| I["New payer made with default paperwork list and follow-up days"]
-    H -->|"Known customer"| J["Old approver and AP email kept; what was typed is ignored"]
-    I --> K["Toast 'Job saved', job page opens"]
+    H -->|"New customer"| I["New customer made with the default paperwork list for who pays you"]
+    H -->|"Known customer"| J["The customer's settings are kept"]
+    I --> K["Job page opens"]
     J --> K
 ```
 
-Code: `New job` static/app.js:2124, form static/app.js:2126-2155, `Save job` static/app.js:2154, field checks static/app.js:1096-1109, server domain.py:1542-1691, known customer domain.py:1607-1626, toast static/app.js:1136-1140.
+Code: `views.jobs`, static/app.js:3121-3178 (**New job**, the five boxes, **More details (optional)**, **Save job**); `jobFields` static/app.js:1718; the saved-customer line `knownPayerText` static/app.js:1745; **Save job** `create-job` static/app.js:1595; server `create_job`, domain/__init__.py:2636 (a refusal is keyed by field and shown under its box, `showFieldErrors` in static/js/forms.js). Notes become a "Job notes" record, never paperwork (R1-04).
 
-**Taps from start to done:** 2 taps (New job, Save job), but 11 fields to fill, 6 of them required.
+**Taps from start to done:** 2 taps (New job, Save job) and 5 boxes, one of them a select.
 
-**Where it could be simpler:**
-- "Notes for the job record" sounds like a notes box, but for a new customer the text becomes that customer's paperwork list. "Gate code 1234, call before 8am" turns into two items that block the first pay app (domain.py:1589-1592, domain.py:1410-1420, domain.py:1457-1466).
-- Approver and AP email are required even for a homeowner job with no AP department, and are thrown away for a known customer with no message (domain.py:1575-1578, domain.py:1607-1626).
-- Customer is free text. "ABC Builders" and "ABC Builders Inc" make two customers, and there is no way to rename or merge one (server.py:2186-2187).
-- Contract amount is a number box: typing "48,500" fails (static/app.js:2136, static/app.js:1094). Retainage takes whole numbers only, so 7.5% becomes 7% (static/app.js:2137, static/app.js:1095).
+**Where it could still be simpler:**
+- The paperwork list for a new customer is set by Who pays you? and only shows once the first pay app is drafted; it is changed in Customer settings, not on the New job form.
 
 ---
 
@@ -150,31 +149,29 @@ Code: `New job` static/app.js:2124, form static/app.js:2126-2155, `Save job` sta
 flowchart TD
     A["Job page, card 'Schedule of values': tap 'Set up schedule of values'"] --> B{"Have it in a spreadsheet or estimate?"}
     B -->|"Yes"| C["Paste rows into the paste box, then tap 'Read pasted rows'"]
-    C --> D["Lines appear: 'Read N lines. Check them below, then save.'"]
+    C --> D["Lines appear to check; a title row above the header is skipped and said so"]
     B -->|"No"| E["Type Item, Description, Qty, Unit, Unit rate; 'Add line' for more"]
     D --> F["Optional: Overhead and profit %"]
     E --> F
     F --> G["Tap 'Save schedule'"]
-    G --> H{"Every line has a description, qty and rate?"}
-    H -->|"No"| I["Toast: 'Some lines need a description, a quantity above zero and a rate above zero.'"]
+    G --> H{"Every line has a description, a quantity and a rate?"}
+    H -->|"No"| I["The lines to fix are named"]
     I --> E
     H -->|"Yes"| J{"Schedule total equals the contract?"}
-    J -->|"Yes"| K["Saved: card shows the line table"]
-    J -->|"No"| L["Error: 'The schedule totals $X, but the contract is $Y.'"]
+    J -->|"Yes"| K["Saved: the card shows the line table ('Edit schedule' until the first pay app)"]
+    J -->|"No"| L["Error: the schedule total and the contract differ"]
     L --> M{"Change the contract to match?"}
-    M -->|"Yes"| N["Tap 'Save and change the contract to $X', shown whenever the totals differ, then confirm"]
+    M -->|"Yes"| N["Tap 'Save and change the contract to $X', then confirm 'Change the contract'"]
     M -->|"No"| E
     N --> K
 ```
 
-Code: `Set up schedule of values` static/app.js:1400, `Read pasted rows` static/app.js:1365, parse server.py:1417-1419 and sov.py:430-526, `Save schedule` static/app.js:1384, check static/app.js:1449, total check domain.py:1806-1825, the change-contract button static/app.js:1342-1347 and static/app.js:1385, its confirm static/app.js:1451.
+Code: `sovCardHtml`, static/app.js:2119-2155 (**Set up schedule of values** :2129, **Edit schedule** :2153); editor `sovEditorHtml`, static/app.js:2079-2117 (**Read pasted rows** :2094, **Add line** :2102, **Save schedule** :2113, **Save and change the contract to $X** :2075 and :2114); the confirm static/app.js:2180; parse `sov.parse_rows`, sov.py:432 (a header found in the first 5 rows, R5-08); save `save_sov`, domain/__init__.py:2877. On a phone each line is a card with the description on top (R6-02).
 
-**Taps from start to done:** 3 with a paste (Set up schedule of values, Read pasted rows, Save schedule). One more (the confirm) if the contract is changed to match.
+**Taps from start to done:** 3 with a paste (Set up schedule of values, Read pasted rows, Save schedule). One more (the confirm) if the contract changes to match.
 
-**Where it could be simpler:**
-- A 7-column editing table is hard on a phone (static/app.js:1350-1388).
-- The schedule locks as soon as any pay app exists, even an unsent draft, and nothing says "void the draft to edit" (sov.py:52, domain.py:1789-1796).
-- A pasted row like "Site cleanup, 3 loads" is read as a $3.00 lump sum (sov.py:450-470).
+**Where it could still be simpler:**
+- The schedule is fixed once the first pay app exists ("Fixed once the first pay app exists. Scope changes go through change orders, which add their own lines when approved."); a mistake found on the second pay app means a change order.
 
 ---
 
@@ -184,112 +181,106 @@ Code: `Set up schedule of values` static/app.js:1400, `Read pasted rows` static/
 
 ```mermaid
 flowchart TD
-    A{"Where are you?"} -->|"On the job page"| B["Job record card: 'choose files' or 'take a photo', or drop files"]
+    A{"Where are you?"} -->|"On the job page"| B["Job record: 'Take a photo' or 'Add a file', drop files, or 'Paste an email, a text thread, or notes' then 'Add to job'"]
     B --> C["Toast: 'N files added to the job record.' Done"]
     A -->|"Anywhere else"| D["Inbox"]
     D --> E{"What do you have?"}
-    E -->|"Files or photos"| F["Pick 'Which job?' (or 'Not sure, file later'), then 'choose files', drop files, or paste a screenshot"]
+    E -->|"Files or photos"| F["'Which job?' (or 'Not sure, file later'), then 'Take a photo' / 'Choose files', a drop, or a pasted screenshot"]
     E -->|"Text"| G["Card 'Paste an email, a text thread, or notes'"]
-    G --> H["Paste: dated notes switch to 'Notes', an email or a text thread to theirs; else 'Something else'"]
+    G --> H["Paste: the box picks An email, Text messages or Notes when it looks like one, and says so"]
     H --> K["Tap 'Add to Inbox'"]
-    F --> L["Item cards under 'To file'"]
+    F --> L["Cards under 'Waiting (N)'"]
     K --> L
-    L --> M{"Job already picked for you?"}
-    M -->|"Yes, one or more"| N["Tap 'Add all N to their suggested jobs'"]
-    M -->|"Yes"| O["Tap 'Add to <job>' (or 'Other job' / 'Change type')"]
-    M -->|"Could be one of a few"| P["Tap the job's name, or pick from 'Pick a job…' and tap 'Add to job'"]
-    M -->|"Junk"| Q["Tap 'Dismiss' (Undo in the toast)"]
-    N --> R["Moves to 'Recently filed or dismissed', with 'Undo'"]
+    L --> M{"Job suggested?"}
+    M -->|"Yes, several cards"| N["Tap 'Add all N to their suggested jobs'"]
+    M -->|"Yes"| O["Tap 'Add to (job)' (or 'Other job' / 'Change type')"]
+    M -->|"Could be one of a few"| P["Tap the job's name, or 'Pick a job…' and 'Add to job'"]
+    M -->|"A payments export"| PAY["'Read as payments (N rows)': Payments opens with the rows, section 10"]
+    M -->|"Junk"| Q["Tap 'Dismiss'"]
+    N --> R["Listed under 'Recently added or dismissed', with 'Undo'"]
     O --> R
     P --> R
     Q --> R
 ```
 
-Code: job page drop zone static/app.js:2276-2279; Inbox drop zone and `choose files` static/app.js:1974; file checks importer.py:122-148 (15 MB, listed types only); paste card static/app.js:1976-1987; notes split importer.py:251-296; job matching importer.py:315-354; card `inboxItemCard` and its helpers static/js/inbox.js (R5-05); paste guess `pasteGuess` (R5-06); "Which job?" `uploadJobOptions` (R5-07); `Undo` static/app.js:1994-1996.
+Code: job record card in `views.job`, static/app.js:3313-3334 (**Take a photo** / **Add a file** `pick-files` static/app.js:1349, paste box `pasteBoxHtml` static/app.js:2734 with **Add to job**); record rows with **Edit** `recordRow` static/app.js:2697 (R5-07); Inbox `views.inbox`, static/app.js:2971-3018 (**Waiting (N)**, **Which job?**, the touch-only **Take a photo** / **Choose files**, **Recently added or dismissed**, **Bring emails and texts in automatically**); cards `inboxItemCard` static/app.js:2763 with `choiceJobs` / `choiceLine` / `pasteGuess` in static/js/inbox.js; uploads three at a time `uploadFiles` static/app.js:1918; server matching `importer.match_job`, importer.py:399, kinds `guess_kind` importer.py:371, notes split `split_notes` importer.py:342, filing `file_item` importer.py:545.
 
-**Taps from start to done:** 2 from the job page (choose files, pick). From the Inbox: 2 to add (choose files or Add to Inbox), then 1 per item to file, or 1 for all suggested items.
+**Taps from start to done:** 2 from the job page (Take a photo or Add a file, pick). From the Inbox: 2 to add, then 1 per card to file, or 1 for all suggested cards.
 
-**Where it could be simpler:**
-- The paste box defaults to "An email". Thirty days of pasted notes become one lump on one day unless the user switches to "Notes" first (static/app.js:1979-1984).
-- Phone photos and PDFs match a job only by file name, so "IMG_2231.jpg" never gets a suggestion (server.py:1730-1732). Matching also wants the exact full address, the full job name, a PA number, or the job code in UPPERCASE (importer.py:326-346).
-- On a phone the list of items to file sits below the drop zone and the paste card, off screen (static/app.js:1970-1993).
-- Once a record is attached to a pay app's paperwork, `Undo` says to remove it from the packet first, and there is no button for that (importer.py:556-558).
+**Where it could still be simpler:**
+- Forwarding email and texts in needs an email service or a Twilio number set up by an owner (deferred: a provisioned address per company, improvement plan section 5).
+- Once a record is attached to a pay app's paperwork, Undo on the Inbox says to remove it from the paperwork first.
 
 ---
 
 ## 6. Change order
 
-**Goal:** record extra work with a price and get it signed, so it can be billed.
+**Goal:** record extra work (or a credit) with a price and get it signed, so it can be billed.
 
 ```mermaid
 flowchart TD
-    A["Job page: tap 'Add change order'"] --> B["Change orders page, card 'New change order', job already picked"]
-    B --> C["Fill Title, Amount, What changed"]
-    C --> D["Tap 'Create change order'"]
-    D --> E["Toast: 'Change order created on (job name). It stays unbilled until signed.' You stay on the Change orders list"]
-    E --> E2["Open it: tap 'CO N: title' in the list, or go back to the job page's 'Change orders'"]
-    E2 --> F{"How will the customer sign?"}
+    A["Job page: tap 'New change order'"] --> B["Card 'New change order' on the job page: Title, Amount ($), negative for a credit, What changed (optional), Schedule change, days (optional)"]
+    B --> D["Tap 'Create change order'"]
+    D --> E["The card becomes 'CO N: title', 'Saved. Now get it signed.'"]
+    E --> F{"How will the customer sign?"}
     F -->|"Online"| G["Tap 'Request signature'"]
-    G --> H{"Customer has an AP email?"}
-    H -->|"Yes"| I["Signing link emailed"]
-    H -->|"No"| J["Link made but not sent; share it yourself"]
-    I --> K["Customer's page: tick the box, type 'Your full name', tap 'Sign change order'"]
+    G --> H{"Customer has an email for pay apps?"}
+    H -->|"Yes"| I["Signing link emailed; the button becomes 'Send the signing link again'"]
+    H -->|"No"| J["Link made, not emailed: 'Signing page: open it' to share it yourself"]
     J --> K
-    F -->|"On paper"| L["Put the signed copy on the job record first"]
-    L --> M["Tap 'Signed on paper…', pick it under 'Signed copy', tap 'Save as signed'"]
-    F -->|"Bill it now, sign later"| N["Job page only, with no open draft: tap 'Put on next pay app'"]
-    N --> O["Pay app send stays blocked until it is signed"]
+    I --> K["Signing page: tick the box, type 'Your full name', tap 'Sign change order'"]
+    F -->|"On paper"| L["Tap 'Signed on paper…'"]
+    L --> M["'Take a photo of the signed copy', or pick it from the job record and 'Save as signed'"]
+    F -->|"Bill it now, sign later"| N["No open draft: tap 'Bill now (send waits for signature)'"]
+    N --> O["The pay app can't be sent until it is signed: 'Get CO N signed'"]
     O --> F
     F -->|"Dropped"| P["Tap 'Withdraw', confirm"]
-    K --> Q["Change order approved and billable"]
+    K --> Q["Change order Approved and billable"]
     M --> Q
 ```
 
-Code: `Add change order` static/app.js:668, form static/app.js:2668-2680, `Create change order` static/app.js:2679 and its toast static/app.js:1026, list link `CO N: title` static/app.js:2685, sign controls on the change order page static/app.js:2404 and the job page static/app.js:2270, `Request signature` static/app.js:561 and domain.py:1185-1206, signing page payer_page.py:131-154, `Signed on paper…` / `Save as signed` static/app.js:562-569, `Put on next pay app` static/app.js:2270 and domain.py:1270-1284 (send blocked: domain.py:125-131), `Withdraw` static/app.js:563 with its confirm static/app.js:988-991.
+Code: **New change order** `new-co` static/app.js:1499 (a job action, static/js/jobs.js:288); card `newCoCardHtml` static/app.js:1874 and `coFormFields` static/app.js:1889; **Create change order** `add-co-here` static/app.js:1501, server `add_change_order` domain/__init__.py:1869 (refuses only zero and a credit larger than the contract total); sign controls `coSignControls` static/app.js:764 (**Request signature**, **Signed on paper…**, **Withdraw**, **Take a photo of the signed copy**, **Save as signed**); server `request_co_signature` domain/__init__.py:1969, `mark_co_signed` :2013, `withdraw_change_order` :2024; **Bill now (send waits for signature)** in `views.job`, server `include_change_order` :2158; signing page `render_co`, payer_page.py:254. The Change orders tab (`views.cos`, static/app.js:3755) lists every change order and also has a New change order form.
 
-**Taps from start to done:** 3 to create (Add change order, fill, Create change order), 1 to open the change order, then 1 for online signing (Request signature) or 3 for paper (Signed on paper…, pick, Save as signed).
+**Taps from start to done:** 2 to create (New change order, Create change order) after typing, then 1 for online signing (Request signature) or 2 on paper (Signed on paper…, Take a photo of the signed copy).
 
-**Where it could be simpler:**
-- `Add change order` leaves the job page for the company-wide Change orders list, and stays there after saving (static/app.js:1015-1027).
-- "Signed on paper…" needs the signed copy already uploaded, or it is a dead end; the picker preselects the first record of any kind (static/app.js:567-571).
-- `Put on next pay app` hides that it will block sending until signed; the reason only shows as a hover tip, which phones don't show.
-- Without the site address set on the server, the contractor sees "Signing links need the site's address (DURACASH_URL) set on the server." (domain.py:1191-1192), a message meant for us, not them.
+**Where it could still be simpler:**
+- A change order has no PDF of its own yet (improvement plan section 5).
 
 ---
 
-## 7. Packet check (the paperwork the customer wants with each pay app)
+## 7. Paperwork (what the customer wants with each pay app)
 
-**Goal:** clear every "missing" item so the pay app can be sent.
+**Goal:** get every missing item in so the pay app can be sent.
 
 ```mermaid
 flowchart TD
-    A["Job page or Today row: tap 'Clear N blockers'"] --> B["Packet page: 'Required items' with a check or a cross"]
+    A["Job page or Today row: 'Fix N things before sending' or 'Add N missing documents'"] --> B["Paperwork page 'Paperwork for PA-x': 'Required items', each ✓, ✗ or –"]
     B --> C{"Item missing?"}
-    C -->|"No, all checked"| D["Pay app turns 'Ready to send'"]
-    C -->|"Yes"| E{"Document already on the job record?"}
-    E -->|"Yes"| F["Pick it in the dropdown, tap 'Attach'"]
-    E -->|"No, but the customer has it"| G["Tap 'Mark present…', say why, tap 'Save reason'"]
-    E -->|"No record at all"| H["'Add the document to the job record first.' Go upload, come back"]
-    H --> F
+    C -->|"No, all in"| D["Pay app is 'Ready to send'"]
+    C -->|"Yes"| E{"Where is the document?"}
+    E -->|"In your hand or on the phone"| F["'Take a photo' or 'Choose file': filed on the job record and attached in one step"]
+    E -->|"Already on the job record"| G["'Choose a record…', then 'Attach'"]
+    E -->|"The customer has it already"| H["'I have this…', 'Where is it? (optional)', 'Save'"]
+    E -->|"This customer never needs it"| I["'Not needed for this customer'"]
     F --> C
     G --> C
-    T0["Job page while blocked: card 'Blocking send:'"] --> I{"Customer sent a pay app back before?"}
-    I -->|"Yes"| J["Open 'Payer sent a pay app back? Teach the playbook why.', type the reason, tap 'Save to playbook'"]
+    H --> C
+    I --> C
+    C -->|"A change order is unsigned too"| J["'Also blocking send': 'Open CO N', section 6"]
+    T0["Job page while blocked: card 'Blocking send:'"] --> K{"Customer sent a pay app back before?"}
+    K -->|"Yes"| L["'Customer sent a pay app back? Note why.': type the reason, 'Save to customer settings'"]
 ```
 
-Code: `Clear N blockers` static/app.js:654 and static/app.js:598-599, packet page static/app.js:2348-2377, `Attach` static/app.js:2371, `Mark present…` / `Save reason` static/app.js:2372-2374, no-record note static/app.js:2371, teach card (job page only, inside the "Blocking send:" card) static/app.js:2218-2227. Attaching or marking present re-checks the pay app (domain.py:894-898, domain.py:411, domain.py:1538). The list comes from the customer's playbook paperwork text (domain.py:1457-1474).
+Code: the blocker button's words `domain.blocker_button`, domain/__init__.py:257; paperwork page `views.packetDetail`, static/app.js:3394-3444 (**Take a photo** / **Choose file** upload with `?attach=`, **Choose a record…** / **Attach** `attach-record` static/app.js:1584, **I have this…** / **Save** `resolve` static/app.js:1287, **Not needed for this customer** `packet-skip` static/app.js:1583, **Remove** on a draft's, the job's and closeout paperwork `packet-detach` static/app.js:1582, **Also blocking send**); server `attach_record_to_packet` domain/__init__.py:2600, `resolve_packet_item` :556, `skip_packet_item` :2493, `detach_packet_item` :2465; the note-why card in `views.job` (`learn` static/app.js:1560, server `learn_rejection` :2184). The list comes from Customer settings, Paperwork needed with each pay app; a pay app, schedule of values or continuation sheet item is in from the start ("Produced by Duracash with the pay app").
 
-**Taps from start to done:** 1 to open, then 2 per missing item (pick, Attach) or 3 (Mark present…, type, Save reason).
+**Taps from start to done:** 1 to open, then 2 per missing item (Take a photo, take it) or 2 to attach a record (pick, Attach).
 
-**Where it could be simpler:**
-- The paperwork list only appears once the first pay app is drafted ("The packet is made later, with the first pay app.", static/app.js:2129). The contractor learns what's missing at send time instead of collecting it during the job.
-- No upload on the packet page itself: with no records it is a dead end on a phone (static/app.js:2371).
-- No way to take back a wrong attachment or a "present" mark, and the dropdown preselects the first record, so one tap can attach the wrong file (server.py:2213-2246).
-- "Present" and "packet" are office words; "I have this" and "Paperwork" would read easier.
+**Where it could still be simpler:**
+- The paperwork list only appears once the first pay app is drafted; the setup checklist asks for the contract and paperwork on the job record before that.
 
 ---
 
-## 8. Draft, approve and send a pay app
+## 8. Draft, check and send a pay app
 
 **Goal:** turn finished work into a pay app and email it with its PDF and paperwork.
 
@@ -298,71 +289,67 @@ flowchart TD
     A["Job page"] --> B{"Is the whole job finished?"}
     B -->|"No, bill progress"| C["Tap 'Progress pay app'"]
     C --> D{"Job has a schedule of values?"}
-    D -->|"No"| E["Type 'Completed to date $' total so far, not this month"]
-    D -->|"Yes"| F["Type 'Done to date' per line and stored materials"]
+    D -->|"No"| E["'This draw $' (or 'Total done so far $' or '% complete'), Period to, What was completed (optional); the live line 'This pay app: $A less retainage $R = $N.'"]
+    D -->|"Yes"| F["Per line: '% done' or 'Qty done (unit)', and stored materials"]
     E --> G["Tap 'Draft progress pay app'"]
     F --> G
-    B -->|"Yes"| H["Tap 'Mark done', then 'Confirm done'"]
-    G --> J{"Already an open draft?"}
+    B -->|"Yes"| H["Tap 'Mark done': 'Anything to note? (optional)', Period to, 'Confirm done', confirm"]
+    G --> J{"An open draft already?"}
     H --> J
-    J -->|"Yes"| K["Dollar progress: saved, but no new pay app, only a 'Saved' toast. Line-by-line progress or Mark done: error, send or void the draft first"]
-    J -->|"No, progress"| L["Draft made, retainage held back"]
-    J -->|"No, Mark done"| I["Final pay app drafted for everything left"]
-    I --> L
+    J -->|"Yes, not out for review"| K["Drafted again at the new total, same number and paperwork"]
+    J -->|"Out for the customer's review"| K2["Refused: record their answer first"]
+    J -->|"No"| L["Draft made, retainage held back"]
+    K --> L
     L --> M{"Paperwork missing?"}
-    M -->|"Yes"| N["Packet check, section 7"]
+    M -->|"Yes"| N["Paperwork, section 7"]
     N --> M
-    M -->|"No"| O["Job page; Today's 'Ready to send' row 'Review & send' also lands here"]
-    O --> V{"Check before sending?"}
-    V -->|"No"| W["Tap the big 'Approve & send': sends at once"]
-    V -->|"Yes"| P["Tap the pay app number in the 'Pay apps' card. Pay app page: card 'Before you send', optional 'Open the PDF'"]
-    P --> Q["Tap 'Approve & send to' the AP email"]
-    W --> R
+    M -->|"No"| O["Job page or Today: 'Review & send'"]
+    O --> P["Pay app page, card 'Before you send': To, Also email (CC), Amount, Period to, Payment due, Subject, Attached; 'Open the PDF'"]
+    P --> P1{"Email for pay apps known and your email confirmed?"}
+    P1 -->|"No email"| P2["'Email for pay apps' box, 'Save email'"]
+    P2 --> P
+    P1 -->|"Yes"| Q["Tap 'Approve & send to' the customer's email"]
     Q --> R{"Email went out?"}
-    R -->|"Yes"| S["Toast 'Emailed ...'; status Sent"]
-    R -->|"No"| T["Status still Sent; the email shows in the Outbox with 'Send again'"]
+    R -->|"Yes"| S["Status Sent; History: 'Pay app sent'"]
+    R -->|"No"| T["Today row 'Didn't go out' with 'Send again'; the Outbox has it too"]
 ```
 
-Code: `Progress pay app` static/app.js:659, progress form static/app.js:2230 and static/js/sov.js:27-46, `Mark done` static/app.js:660, `Confirm done` static/app.js:2232, mark done domain.py:252-273 (open draft refused at domain.py:256-260), dollar progress domain.py:217-249 (open draft skipped silently at domain.py:282-287), line progress refuses an open draft (domain.py:1867-1869), draft domain.py:276-356, `Review & send` static/app.js:601 (it opens the job page; its scroll target `.send-check` exists only on the pay app page, static/app.js:2427), pay app link in the job page's Pay apps card static/app.js:2262, job-page `Approve & send` static/app.js:655 and static/app.js:894, `Open the PDF` static/app.js:2426, `Approve & send to …` static/app.js:2435, send domain.py:424-460, Outbox `Send again` static/js/format.js:93-102. A job already marked done with unbilled work shows `Draft pay app` instead (static/app.js:658).
+Code: **Progress pay app** and **Mark done** in `jobActions`, static/js/jobs.js:276-277; progress card `progressFormHtml`, static/app.js:885-910 (`progressFigures`, static/js/jobs.js:143, checks it as the server does), line-by-line card `sovProgressHtml` static/js/sov.js:33-55; **Draft progress pay app** `progress` static/app.js:1269 and `sov-progress` :1258; Mark done card in `views.job` and its confirm static/app.js:1283; server `record_progress` domain/__init__.py:300, `record_sov_progress` :2948, `mark_done` :380, `draft_invoice` :414; **Review & send** opens the pay app page at `.send-check` (static/js/jobs.js:268, static/js/today.js:21); pay app page `views.payappDetail`, static/app.js:3472-3551 (**Before you send**, **Open the PDF**, **Download for QuickBooks**, **Approve & send to …**); server `approve_and_send` :582; **Send again** `email-retry` static/app.js:1259. Mistakes: **Undo done** (before the final pay app goes out, `undo_mark_done` :2127), **Delete draft** (`void_draft` :2042), **Pull back this pay app…** on a sent one with nothing paid (`void_sent_pay_app` :2068).
 
-**Taps from start to done:** 3 for a progress bill when nothing is missing (Progress pay app, Draft progress pay app, Approve & send), or 4 with the "Before you send" check (the pay app number, then Approve & send to …).
+**Taps from start to done:** 3 for a progress bill with nothing missing (Progress pay app, Draft progress pay app, Review & send) plus Approve & send: 4.
 
-**Where it could be simpler:**
-- "Completed to date $" means the running total, not this month. Typing this month's amount gives "Completed-to-date must be higher than the last recorded amount." and the form doesn't show the last amount (static/app.js:2230, domain.py:230-238).
-- The big `Approve & send` on the job page sends at once, with no review of who it goes to or how much (static/app.js:655). Only the pay app page has the "Before you send" check.
-- Today's `Review & send` says "Check what goes out, then approve" but opens the job page, where the big button is that same instant `Approve & send`; the "Before you send" card it tries to scroll to is on the pay app page (static/app.js:600-601, static/app.js:1079-1082, static/app.js:2427).
-- With a draft already open, a dollar progress entry is saved but no new pay app appears; the only message is the usual "Saved" toast (domain.py:282-287, static/app.js:487).
-- `Confirm done` can't be undone and sets every line to 100% (domain.py:252-273). There is also no way to void a pay app once sent.
+**Where it could still be simpler:**
+- **Send draft for their review** (the customer checks the numbers first) is under More, not charted; it waits on **Customer agreed to the draft** or **Customer wants changes**.
 
 ---
 
 ## 9. Follow up on an unpaid pay app
 
-**Goal:** send a polite chase email when the customer's usual wait has passed.
+**Goal:** send a polite chase email when the customer's usual wait has passed, or note a phone call.
 
 ```mermaid
 flowchart TD
     A{"Where are you?"} -->|"Today"| B["Row 'Follow up': tap 'Send follow-up'"]
-    A -->|"Collections"| C["Row for the job: tap 'Send follow-up', or 'Email' or 'Call'"]
-    A -->|"Job page"| D["Tap 'Follow up' in the smaller buttons"]
-    B --> E{"Customer's follow-up days passed?"}
+    A -->|"Money, Unpaid"| C["Row for the job: 'Send follow-up', or 'Email' / 'Call'"]
+    A -->|"Job page"| D["Main button 'Send follow-up' once due; before then 'Follow up now' under More"]
+    B --> E["Confirm: 'Email a follow-up on PA-x to (who) · (email)?' (and 'It's before the follow-up date' when early)"]
     C --> E
     D --> E
-    E -->|"No"| F["Toast: 'Follow-up on PA-... is not due until (date) (... expects N days between contacts).'"]
-    E -->|"Yes"| G["Email 'Following up: PA-... — job' with the customer's page link"]
-    G --> H{"Customer opens the link?"}
-    H -->|"Yes"| I["Customer taps 'Mark as received'; pay app shows 'received (date)'"]
-    H -->|"No"| J["Next follow-up row appears after the same number of days"]
+    E --> G["One email naming every unpaid pay app, with the customer's page link (the link needs the site address set); firmer once past their usual days to pay"]
+    G --> H{"Customer answers on their page?"}
+    H -->|"'Mark as received'"| I["Pay app row: 'received (date)'"]
+    H -->|"'Approve for payment'"| I2["Today: 'Approved' row, no follow-up until the day after the date they gave"]
+    H -->|"No"| J["Next 'Follow up' row after the customer's days between follow-ups"]
+    A -->|"They called instead"| K["'Spoke to them…': 'What did they say?', 'Check again on (optional)', 'Save'"]
+    K --> J
 ```
 
-Code: Today row static/app.js:612-619, Collections static/app.js:2715-2717, job page `Follow up` static/app.js:666, server rule domain.py:463-505, not-due message domain.py:474-482, `Mark as received` payer_page.py:88-91.
+Code: Today row kind `follow_up` in `domain.today_rows`, domain/__init__.py:1331-1452 (with **Spoke to them…**, static/js/today.js:41); Unpaid `views.collections`, static/app.js:3786; job page **Send follow-up** / **Follow up now** static/js/jobs.js:271; the confirm static/app.js:1481; server `record_follow_up`, domain/__init__.py:672 (not-due refusal :700, from the third follow-up it also emails the customer's **Also email from the third follow-up** address); **Spoke to them…** `contactFormHtml` static/app.js:832 and `note_contact` :744; the customer's page `payer_page.render`, payer_page.py:125 (**Mark as received** :176, **Approve for payment** :191).
 
-**Taps from start to done:** 1.
+**Taps from start to done:** 2 (Send follow-up, then the confirm).
 
-**Where it could be simpler:**
-- The email goes with one tap and no preview of what it says (static/app.js:618). The helper asks before sending; the buttons don't.
-- Collections shows `Send follow-up` even when it is not due yet, and then refuses with a toast (static/app.js:2715).
-- If the email bounced there is no "send again", and the pay app can't be re-sent to a fixed address (static/js/format.js:100, server.py:1680-1681).
+**Where it could still be simpler:**
+- The confirm says who it goes to but not what the email says; the Outbox shows the text once it has gone.
 
 ---
 
@@ -372,65 +359,70 @@ Code: Today row static/app.js:612-619, Collections static/app.js:2715-2717, job 
 
 ```mermaid
 flowchart TD
-    A{"How did the money show up?"} -->|"One check in hand"| B["Job page: tap 'Match payment'"]
-    B --> C["Pick the pay app, type 'Amount in dollars', 'Reference (check no., QBO id)'"]
-    C --> D["Tap 'Match'"]
+    A{"How did the money show up?"} -->|"One check in hand"| B["Job page: 'Record a payment'"]
+    B --> C["'Pay app' (with what is owed), 'Amount received ($)' starts at what is owed, 'Date received', 'Check or reference no. (optional)'"]
+    C --> D["Tap 'Record'"]
     D --> E{"Amount compared with what is owed"}
-    E -->|"More than owed"| F["Error: 'Payment of $X is more than the $Y still owed'"]
+    E -->|"More than owed"| F["Refused under the amount"]
     F --> C
     E -->|"Less"| G["Pay app 'Partly paid'"]
+    G --> G2{"Will the rest come?"}
+    G2 -->|"No"| G3["'Accept $X short pay…': 'Why it was paid short', 'Accept short pay', confirm"]
+    G3 --> H
     E -->|"All of it"| H["Pay app 'Paid', waiver now due"]
-    A -->|"Many, in QuickBooks"| I["Payments page: open 'Import payments from QuickBooks (CSV)'"]
-    I --> J["Paste the CSV, tap 'Read payments'"]
-    J --> K["Table with 'Why' for each row; good matches ticked"]
-    K --> L{"Row says 'Pick one', 'Too much' or 'No match'?"}
-    L -->|"Yes"| B
+    A -->|"Many, in QuickBooks"| I["Money, Payments: 'Import payments from QuickBooks (CSV)'"]
+    I --> J["Paste the CSV and 'Read payments', or 'Choose the file' (.csv or Excel)"]
+    A -->|"A payments file dropped in the Inbox"| J2["Its card: 'Read as payments (N rows)'"]
+    J2 --> K
+    J --> K["Table: Record, Date, Customer, Number, Amount, Pay app, Why; matches ticked"]
+    K --> L{"Row needs you?"}
+    L -->|"'No match' or 'Pick one'"| L1["'Pick a pay app…' in the row; it ticks itself"]
+    L -->|"'Too much'"| L2["'Record $owed to PA-x': the rest moves to its own line"]
+    L1 --> M
+    L2 --> M
     L -->|"No"| M["Tap 'Record the ticked payments'"]
-    M --> N["Toast: 'N payments recorded.'"]
-    A -->|"QuickBooks connected"| O["Payments page: tap 'Read payments from QuickBooks'"]
+    M --> N["Toast: 'N recorded.' and how many still need a pay app picked"]
+    A -->|"QuickBooks connected"| O["Payments: 'Read payments from QuickBooks'"]
     O --> K
 ```
 
-Code: `Match payment` static/app.js:657, form static/app.js:2233, client check static/app.js:997-1004, server domain.py:508-584, over-payment domain.py:541-544; CSV card static/app.js:2729-2740, `Read payments` static/app.js:2740, matching qbo_csv.py:95-136, `Record the ticked payments` static/app.js:2738; connection `Connect QuickBooks` / `Read payments from QuickBooks` static/app.js:2744-2750.
+Code: **Record a payment** card in `views.job` (`match` static/app.js:1484, prefill `prefillPaymentAmount` :1806), server `match_payment`, domain/__init__.py:779 (takes `received_on`); short pay `shortPayCardHtml` static/app.js:796, `accept-short-pay` :1442, server `settle_short_pay` :868; Payments `views.payments`, static/app.js:3829-3869 (**Read payments** `qbo-read` :1148, **Choose the file** :1179, **Record the ticked payments** `qbo-apply` :1155, the split :1167); row cells `qboTick` / `qboPayAppCell` static/app.js:2450-2472 with static/js/payimport.js (`pickPayApp`, `splitTooMuch`, `afterRecord`); server `qbo_csv.parse` qbo_csv.py:149 and `propose` :203; Inbox **Read as payments** `inbox-read-payments` static/app.js:1173; QuickBooks card `qboCardHtml` static/app.js:2478 (**Connect QuickBooks**, **Read payments from QuickBooks**, **Check against QuickBooks**, **Disconnect**). The wireframe is `PaymentsImport`.
 
-**Taps from start to done:** 2 by hand (Match payment, Match) plus typing the amount. 3 for a CSV (open card, Read payments, Record the ticked payments).
+**Taps from start to done:** 2 by hand (Record a payment, Record); 3 for a CSV (Read payments, a pick if needed, Record the ticked payments).
 
-**Where it could be simpler:**
-- No way to accept a short pay. A pay app the customer will never top up stays "Partly paid" forever, no waiver comes due and the job can't close (domain.py:572-574, domain.py:98-99). This is the biggest gap in the money loop.
-- No "date received" on the hand form, so a check typed in late is dated today and skews the days-to-pay numbers (domain.py:559).
-- The amount box starts empty instead of showing what is owed.
-- In the CSV import, rows that don't match have no checkbox and no picker, so they must be done by hand on each job (static/app.js:2733-2735). One check covering two pay apps can't be split (domain.py:541-547).
+**Where it could still be simpler:**
+- QuickBooks is read on request, not every day (deferred until a live Intuit connection is tested, improvement plan section 5).
 
 ---
 
 ## 11. Lien waiver
 
-**Goal:** send the signed lien waiver for each pay app that is paid in full.
+**Goal:** send the signed lien waiver for each pay app that is paid.
 
 ```mermaid
 flowchart TD
-    A["Before: put the signed waiver file on the job record, kind 'Lien waiver'"] --> B{"Where are you?"}
-    B -->|"Today row 'Waiver due'"| C["Tap 'Review waiver'; job page opens"]
-    C --> D["Tap 'Send waiver'"]
-    B -->|"Job page"| D
-    D --> E["Sent right away; type picked for you"]
-    B -->|"Waivers page"| F["Row 'Due': tap 'Choose type and send'"]
-    F --> G["Waiver page: pick the type, tap 'Approve & send'"]
-    G --> H{"A 'Lien waiver' record with a file not sent before?"}
-    E --> H
-    H -->|"Yes"| I["Emailed with the file attached"]
-    H -->|"No"| J["Emailed saying the waiver 'will follow separately'"]
+    A["Before: the signed waiver on the job record, kind 'Lien waiver' (or take a photo of it on the waiver page)"] --> B{"Where are you?"}
+    B -->|"Today row 'Waiver due'"| C["Tap 'Review waiver'"]
+    B -->|"Job page"| C2["Tap 'Choose waiver and send'"]
+    B -->|"Money, Closeout"| C3["Row 'Due': 'Choose type and send'"]
+    C --> D["Waiver page 'Waivers: (job)'"]
+    C2 --> D
+    C3 --> D
+    D --> E{"A signed waiver on the job?"}
+    E -->|"No"| E1["Card 'No signed waiver on the job yet': 'Take a photo' or 'Choose file'"]
+    E1 --> F
+    E -->|"Yes"| F["Pick the type; the line under it says when it fits; tap 'Approve & send'"]
+    F --> H{"A 'Lien waiver' record with a file?"}
+    H -->|"Yes"| I["Emailed with the newest one attached"]
+    H -->|"No"| J["Emailed saying the signed waiver will follow separately"]
 ```
 
-Code: `Review waiver` static/app.js:603, `Send waiver` static/app.js:656, server domain.py:604-648, missing-file wording domain.py:639-642, `Choose type and send` static/app.js:2793, type picker and `Approve & send` static/js/jobs.js:65-73, type names static/js/jobs.js:56-61.
+Code: Today row kind `waiver` (**Review waiver**, `open-waiver`); job page **Choose waiver and send** static/js/jobs.js:269; Closeout `views.waivers`, static/app.js:3871 (**Which type?**, **Not chosen yet**, **Choose type and send**); waiver page `views.waiverDetail`, static/app.js:3553-3590; type picker and hint `waiverSendForm` / `WAIVER_HINTS`, static/js/jobs.js:96-121; server `send_waiver`, domain/__init__.py:930 (the "will follow separately" wording :969).
 
-**Taps from start to done:** 2 from Today (Review waiver, Send waiver), or 1 from the job page.
+**Taps from start to done:** 2 (Review waiver, Approve & send), plus the type if it isn't the one picked for you.
 
-**Where it could be simpler:**
-- `Send waiver` sends at once, picks the type for the user, and doesn't check that a waiver file is on the job. The email then promises the waiver "will follow separately" (domain.py:611, domain.py:639-642, domain.py:2000-2008).
-- Today's `Review waiver` opens the job page, not the waiver page with the type choice (static/app.js:603).
-- Four waiver types, with no plain line saying what conditional or unconditional means.
-- A waiver only comes due after full payment, so there is no conditional waiver before payment or after a partial payment (domain.py:565-571).
+**Where it could still be simpler:**
+- Duracash never writes the waiver: state forms and their wording are deferred until Stephen decides (improvement plan section 5).
 
 ---
 
@@ -440,78 +432,75 @@ Code: `Review waiver` static/app.js:603, `Send waiver` static/app.js:656, server
 
 ```mermaid
 flowchart TD
-    A["Retainage page: each job shows 'Open', 'Holding it up', 'Next'"] --> B{"Job marked done?"}
-    B -->|"No"| C["'Mark the job done first'"]
+    A["Money, Closeout: 'Held back, still owed', each job with 'Holding it up' and 'Next'"] --> B{"Job marked done?"}
+    B -->|"No"| C["'Part to ask for now ($)', 'Ask for retainage' (for example at substantial completion)"]
     B -->|"Yes"| D{"Closeout paperwork complete?"}
-    D -->|"No"| E["Tap 'Open closeout packet', attach or mark items"]
+    D -->|"No"| E["'Open closeout paperwork': add or mark items, section 7"]
     E --> D
-    D -->|"Yes"| F["Tap 'Ask for retainage'"]
-    F --> G{"Asked recently?"}
-    G -->|"Yes"| H["Toast: next request is due on a later date"]
-    G -->|"No"| I["Email 'Retainage release request' with closeout files"]
-    I --> J["When paid, job page: tap 'Record retainage paid'"]
-    J --> K["Type 'Retainage received $' and 'Reference', tap 'Record'"]
+    D -->|"Yes"| F["'Amount ($), blank for all', 'Ask for retainage', confirm"]
+    C --> G
+    F --> G["Email asking for the retainage, with the closeout paperwork"]
+    G --> J["When paid, job page: 'Record retainage paid'"]
+    J --> K["'Retainage received ($)', 'Reference', 'Record'"]
     K --> L{"More than what is held?"}
-    L -->|"Yes"| M["Error: more than the retainage still open"]
+    L -->|"Yes"| M["Refused under the amount"]
     M --> K
-    L -->|"No"| N["Retainage recorded; job can close if nothing else is open"]
+    L -->|"No"| N["Recorded; the job can finish if nothing else is open"]
 ```
 
-Code: Retainage page static/app.js:2800-2820, `Ask for retainage` static/app.js:662 and static/app.js:2815, server domain.py:667-712, `Record retainage paid` static/app.js:667, form static/app.js:2234, server domain.py:715-737.
+Code: Closeout's held-back table in `views.waivers`, static/app.js:3871-3922, `retainageAskHtml` static/app.js:816; job page **Ask for retainage** only once the work is done and the closeout paperwork is in (static/js/jobs.js:283; the Money card says why otherwise, `retainageNote` :210); the confirm static/app.js:1314; server `chase_retainage`, domain/__init__.py:995 (before done: :1014); **Record retainage paid** card in `views.job`, `retainage-paid` static/app.js:1329, server `record_retainage_payment` :1065.
 
-**Taps from start to done:** 4 (Ask for retainage, then later Record retainage paid, type, Record).
+**Taps from start to done:** 4 (Ask for retainage and the confirm, then later Record retainage paid, Record).
 
-**Where it could be simpler:**
-- On the job page `Ask for retainage` shows whenever money is held, even before the job is done, and then fails with a toast (static/app.js:662, domain.py:672-679).
-- Today never shows a row for "retainage ready to ask for" (static/app.js:578-628), so it is easy to forget.
-- Retainage received has no date field and doesn't show on the Payments page or match from the QuickBooks import (static/app.js:2725-2726).
+**Where it could still be simpler:**
+- Today has no row for "retainage ready to ask for"; Closeout shows it.
 
 ---
 
-## 13. Close the job
+## 13. Finish the job
 
 **Goal:** file a fully settled job away in Job history.
 
 ```mermaid
 flowchart TD
     A["Job page"] --> B{"Anything still open?"}
-    B -->|"Yes"| C["'Close for record unlocks when:' lists what is open"]
-    C --> D["Fix each: send draft, sign or withdraw change order, bill, collect, retainage, waiver"]
+    B -->|"Yes"| C["Card 'Before you can finish this job': one line per thing, with its buttons"]
+    C --> D["'Review & send' / 'Delete draft', 'Get CO N signed' / 'Withdraw', 'Draft pay app', 'Record a payment' / 'Accept $X short pay…', 'Record retainage paid' / 'Ask for retainage' or 'Open closeout paperwork', 'Send waiver'"]
     D --> B
-    B -->|"No"| E["Tap 'Close for record'"]
-    E --> F["Job page: 'This job is finished. Its money record is read-only'"]
-    F --> G["Jobs page: listed under 'Job history'"]
+    B -->|"No"| E["Next step 'Ready to finish the job.': tap 'Finish job', confirm"]
+    E --> F["Job page: 'This job is finished. Its money record is read-only; you can still add notes to the job record.'"]
+    F --> G["Jobs: listed under 'Job history'"]
+    F --> H{"A late payment or a mistake?"}
+    H -->|"Yes, owner"| I["'Reopen job…': 'Why reopen it?', 'Reopen job'"]
 ```
 
-Code: unlock list static/app.js:2239 and domain.py:82-103, `Close for record` static/app.js:661, server domain.py:1305-1313, closed note static/app.js:2235, `Job history` static/app.js:2172.
+Code: the card in `views.job` from `close_blocker_items`, domain/__init__.py:180, buttons `closeBlockerActions`, static/js/jobs.js:307-332; **Finish job** static/js/jobs.js:278 and its confirm static/app.js:1537; server `close_job` :2195; **Reopen job…** in `views.job`, server `reopen_job` :2206 (owners only); a job with only drafts deleted before they were sent and no payments can be deleted instead (**Delete job** under Edit job, `can_delete_job` :2848).
 
-**Taps from start to done:** 1.
-
-**Where it could be simpler:**
-- No confirm and no reopen. After closing, every money change is refused (domain.py:1369-1374).
-- A short-paid pay app blocks closing forever ("$X is still outstanding.", domain.py:98-99). See section 10.
-- "Close for record" is not a phrase a remodeler uses; "Finish job" or "Archive job" would read easier.
+**Taps from start to done:** 2 (Finish job, the confirm).
 
 ---
 
-## 14. The weekly Today routine
+## 14. The Today routine
 
-**Goal:** open one page, see everything waiting, and handle it top to bottom.
+**Goal:** open one page, see everything waiting, and handle it top to bottom. The owners get the same rows by email each morning there is something due.
 
 ```mermaid
 flowchart TD
-    A["Open Duracash: Today"] --> C["Card 'Needs you', most urgent first"]
-    C -.- B["Below the card: totals Unbilled completed, Outstanding, Retainage open, Billed this month"]
-    C --> D{"Row type"}
-    D -->|"'Job's done?'"| E["Tap 'Mark done and draft'"]
-    D -->|"'Ready to send'"| F["Tap 'Review & send': the job page opens; then 'Approve & send', or the pay app number for 'Before you send', section 8"]
-    D -->|"Blocked"| G["Tap 'Clear N blockers', section 7"]
-    D -->|"'Waiver due'"| H["Tap 'Review waiver', then 'Send waiver'"]
-    D -->|"'Due soon'"| I["Tap 'Bill progress', section 8"]
-    D -->|"'Follow up'"| J["Tap 'Send follow-up'"]
-    D -->|"'Not billed'"| K["Tap 'Draft pay app'"]
-    D -->|"'Inbox'"| L["Tap 'File to this job'"]
-    E --> M{"More rows?"}
+    A["Open Duracash: Today"] --> C["Card 'Needs you', most urgent first, three at a time ('and N more')"]
+    C -.- B["Below the card: Done, not billed · Outstanding · Held back, still owed · Billed this month"]
+    C --> D{"Row"}
+    D -->|"'Didn't go out'"| D1["Tap 'Send again'"]
+    D -->|"'Job's done?'"| E["Tap 'Mark done and draft' (or 'Just file the message')"]
+    D -->|"'Ready to send'"| F["Tap 'Review & send': Before you send, section 8"]
+    D -->|"'Waiver due'"| H["Tap 'Review waiver', section 11"]
+    D -->|"'Due soon' (the customer's cutoff within 5 days)"| I["Tap 'Bill progress': the job's Next step"]
+    D -->|"'Needs paperwork' or 'Blocked'"| G["Tap 'Add N missing documents' / 'Fix N things before sending' / 'Get CO N signed', section 7"]
+    D -->|"'Follow up'"| J["Tap 'Send follow-up', or 'Spoke to them…'"]
+    D -->|"'Approved'"| J2["No button: waiting for the date the customer gave"]
+    D -->|"'Not billed' or 'Not billed yet'"| K["Tap 'Draft pay app' or 'Bill progress'"]
+    D -->|"'Inbox'"| L["Tap 'Add to this job'"]
+    D1 --> M{"More rows?"}
+    E --> M
     F --> M
     G --> M
     H --> M
@@ -523,55 +512,49 @@ flowchart TD
     M -->|"No"| N["'Nothing is waiting on you.'"]
 ```
 
-Code: Today page static/app.js:2046-2079 (the "Needs you" card at 2064-2071 comes before the totals at 2073-2078), queue and button labels static/app.js:578-628 (`Mark done and draft` :586, `Clear N blockers` :599, `Review & send` :601, `Review waiver` :603, `Draft pay app` :606, `Bill progress` :608, `Send follow-up` :618, `File to this job` :624), empty message static/app.js:2072.
+Code: the rows and their order `domain.today_rows`, domain/__init__.py:1331-1452 (one rule set for Today and the daily email `daily_digest` :1456); drawn by `queueHtml` / `rowButtons`, static/js/today.js:38-60 (what each row's button does: `ACTIONS` :17-28); Today page `views.dashboard`, static/app.js:3055-3119 (metrics and the jobs table under the card); "Mark done and draft" confirm static/app.js:1407. The daily email is turned off in Settings, Company: **Daily email of what's due**.
 
-**Taps from start to done:** 1 to 2 per row. A typical week with one send, one follow-up and two filings is about 5 taps.
+**Taps from start to done:** 1 to 2 per row. A typical week with one send, one follow-up and two filings is about 6 taps with the confirms.
 
-**Where it could be simpler:**
-- Today has no rows for retainage ready to ask for, payments later than the customer's usual wait, or emails that bounced (static/app.js:578-628).
-- "Waiver due" ranks above blocked paperwork and follow-ups; worth checking that order with real contractors.
-- `File to this job` files with a guessed kind that is not shown in the row (static/app.js:621-625).
+**Where it could still be simpler:**
+- No row for retainage ready to ask for (section 12).
 
 ---
 
-## 15. The payer playbook
+## 15. Customer settings
 
-**Goal:** keep each customer's rules (who approves, AP email, chase timing, paperwork list) right, since they drive every pay app and follow-up.
+**Goal:** keep each customer's rules (who signs off, where pay apps go, follow-up timing, the paperwork list) right, since they drive every pay app and follow-up.
 
 ```mermaid
 flowchart TD
-    A["Settings: 'Payer playbook'"] --> B{"Any customers yet?"}
-    B -->|"No"| C["'No payers yet': a customer is made with its first job"]
+    A["Settings: 'Customer settings'"] --> B{"Any customers yet?"}
+    B -->|"No"| C["'No customers yet': 'Add customer', or one is added with its first job"]
     B -->|"Yes"| D["Open a customer card"]
-    D --> E["Edit Approver, AP email, Follow-up days, Pay apps due by, Usual approval days, Packet, Rejects when, Copy"]
-    E --> F["Tap 'Save playbook'"]
-    F --> G{"Days 1-365, due day 1-31, real email?"}
-    G -->|"No"| H["Toast: 'Playbook not saved.' with the reason"]
+    A --> AC["'Add customer': Customer name, Who pays you?, Who signs off on your bills, Email for pay apps (can add later), Phone"]
+    D --> E["Edit Customer name, Who pays you?, Who signs off on your bills, Email for pay apps, Phone, Days between follow-ups, Pay apps due by (day of the month), Days they usually take to pay, Payment terms, days, Paperwork needed with each pay app, They send pay apps back when, Also email (CC), Also email from the third follow-up"]
+    E --> F["Tap 'Save customer'"]
+    F --> G{"Days 1-365, due day 1-31, real emails?"}
+    G -->|"No"| H["Red note under the box"]
     H --> E
-    G -->|"Yes"| I["Saved"]
+    G -->|"Yes"| I["Saved; a blank box clears it"]
     D --> J{"Duracash learned something?"}
-    J -->|"Suggested paperwork item"| K["Tap 'Add to packet' or 'Dismiss'"]
-    J -->|"Measured days to pay differ"| L["Tap 'Use N days'"]
+    J -->|"Suggested paperwork item"| K["'Add to the paperwork?': 'Add to paperwork' or 'Dismiss'"]
+    J -->|"Measured days to pay differ by 2+"| L["'Use N days'"]
+    D --> MG["'Same customer as another one?': 'Merge into', 'Merge', confirm"]
 ```
 
-Code: page static/app.js:2823-2856, empty state same lines, form static/app.js:2841-2850, `Save playbook` static/app.js:2850, save rules static/app.js:1177-1183 and domain.py:933-975, `Add to packet` / `Dismiss` static/app.js:2832-2835, `Use N days` static/app.js:2836-2840.
+Code: page `views.playbook`, static/app.js:3924-3996 (**Add customer** `add-payer` static/app.js:1675, server `add_payer` domain/__init__.py:1687; **Save customer** `save-playbook` :1661, server `update_payer` :1573; **Add to paperwork** / **Dismiss** `sug-add` / `sug-dismiss` :1659-1660; **Use N days** `use-approval-days` :1186; **Merge** `merge-payer` :1680, server `merge_payer` :1708). Every label has an (i) with the trade term (`FIELD_HELP`, static/js/help.js).
 
-**Taps from start to done:** 2 (open the card, Save playbook), plus 1 per suggestion.
-
-**Where it could be simpler:**
-- A customer can only be created by adding a job, and can't be renamed, merged or deleted (server.py:2186-2187, domain.py:933-936).
-- A blank box is skipped on save, so Packet, Rejects when and Copy can't be cleared (static/app.js:1177-1182).
-- Labels are office words: "Copy" means CC emails, "Rejects when", "Packet", "Usual approval days".
-- Errors show only as a toast, not next to the field.
+**Taps from start to done:** 2 (open the card, Save customer), plus 1 per suggestion.
 
 ---
 
 ## Flows not charted, or charted with less confidence
 
-- **Billing and subscribe** (Stripe `Subscribe` / `Manage billing`, static/app.js:1666-1676): the card only shows when Stripe is set up on the server, so it is left out of the first-day chart.
-- **Two-step sign-in** (static/app.js:1678-1691): mentioned in section 2, not charted; it is optional.
-- **QuickBooks connection** (`Connect QuickBooks`, static/app.js:2744-2748): the Intuit sign-in in the middle happens off our site. Charted as one branch in section 10 only.
-- **Email forwarding, text messages and phone sharing into the Inbox** (static/app.js:1997-2008, server.py:1786-2034, server.py:1911-1944): these need server setup (email provider, Twilio) the contractor can't do alone. Left out of section 5.
-- **Pencil copy** (`Send pencil copy`, `Payer agreed to pencil`, `Payer wants changes`, static/app.js:663-665): an optional side path before send; not charted.
-- **Tap counts** are the fewest taps on the happy path with fields already filled, counted from the code, not timed with a user.
-- Line numbers in the source maps for job-page buttons were a few lines off; the numbers here were checked against the current static/app.js:654-671.
+- **Billing** (Settings, Billing: **Subscribe** / **Manage billing** through Stripe, `billingView` static/app.js:2590): shows only when Stripe is set up on the server; members see it read-only.
+- **The customer's page** (`payer_page.render`, payer_page.py:125; wireframe `PayerPage`): Mark as received, Approve for payment with a date, Send a question (an Inbox item for the contractor). Charted as branches in section 9.
+- **QuickBooks connection** (**Connect QuickBooks**, Settings, Company and Money, Payments): the Intuit sign-in in the middle happens off our site. Charted as one branch in section 10.
+- **Email forwarding, text messages and sharing from the phone into the Inbox** (`views.inbox`, **Bring emails and texts in automatically**): need an owner to set up an email service or Twilio. Shared while signed out, files wait 30 minutes for sign-in (**Finish adding N shared items**, `heldShareHtml` static/app.js:2364).
+- **Daily record** (Today, Daily record: **What happened today**, **Save to job record**, `views.daily` static/app.js:3370): one box and one button.
+- **Draft for the customer's review** (**Send draft for their review**, **Customer agreed to the draft**, **Customer wants changes**, static/js/jobs.js:284-286): an optional side path before send.
+- **Tap counts** are the fewest taps on the happy path with fields already filled, counted from the code, not timed with a user. Confirms count as a tap.

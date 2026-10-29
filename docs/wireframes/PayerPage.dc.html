@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Payer page: one pay app</title>
+<title>Customer page: one pay app</title>
 <script src="./support.js"></script>
 </head>
 <body>
@@ -22,39 +22,80 @@ a{color:#1F4FD1}a:hover{color:#16389A}
     <h1 style="margin: 0; font-size: 34px; font-weight: 600">PA-BRK-01: $57,950.00</h1>
     <p style="margin: 0; font-size: 15px; color: #555555">Brookhaven kitchen · Sent Oct 6, 2026</p>
 
-    <section style="background: #FFFFFF; border: 1.5px solid #1B1B1B; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; border: 1.5px solid #1B1B1B">
       <div style="font-size: 16px"><strong>Got it?</strong> Let Hartline Remodeling know this pay app reached you.</div>
       <label for="who" style="font-size: 14px; color: #555555">Your name</label>
       <div style="display: flex; flex-wrap: wrap; gap: 8px">
-        <input id="who" placeholder="Your name" autocomplete="name" style="flex: 1 1 240px; height: 44px; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+        <input id="who" placeholder="Your name" autocomplete="name" style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; flex: 1 1 240px">
         <button type="button" style="height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Mark as received</button>
       </div>
     </section>
 
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px">
+      <strong style="font-size: 16px">Approve for payment</strong>
+      <p style="margin: 0; font-size: 14px; color: #555555">Tell Hartline Remodeling this pay app is approved and when to expect the money.</p>
+      <label for="ap-name" style="font-size: 14px; color: #555555">Your name</label><input id="ap-name" autocomplete="name" style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+      <label for="ap-date" style="font-size: 14px; color: #555555">Payment expected by</label><input id="ap-date" type="date" style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+      <div><button type="button" style="height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: #1F4FD1; color: #FFFFFF; font: inherit; font-weight: 600">Approve for payment</button></div>
+    </section>
+
     <div><a href="#pdf" style="display: inline-block; text-decoration: none; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 16px; color: #1B1B1B">Open the pay app PDF</a></div>
+
+    <h2 style="margin: 8px 0 0; font-size: 20px; font-weight: 600">This job</h2>
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 4px 20px">
+      <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span>Contract</span><span>$61,000.00</span></div>
+      <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span>Change orders</span><span>$0.00</span></div>
+      <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span>Contract to date</span><span>$61,000.00</span></div>
+      <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span>Work done to date</span><span>$61,000.00</span></div>
+      <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span>Retainage held</span><span>$3,050.00</span></div>
+      <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span>Paid or billed before this one</span><span>$0.00</span></div>
+      <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #DADADA; font-size: 15px; font-weight: 600"><span>This pay app</span><span>$57,950.00</span></div>
+      <div style="display: flex; justify-content: space-between; padding: 10px 0; font-size: 15px"><span>Balance to finish</span><span>$3,050.00</span></div>
+    </section>
 
     <h2 style="margin: 8px 0 0; font-size: 20px; font-weight: 600">Lines</h2>
     <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 4px 20px">
       <div style="display: flex; justify-content: space-between; padding: 12px 0; font-size: 15px"><span>Contract less 5% retainage</span><span>$57,950.00</span></div>
     </section>
 
-    <h2 style="margin: 8px 0 0; font-size: 20px; font-weight: 600">Packet</h2>
-    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 4px 20px">
-      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #DADADA; font-size: 15px"><span><span aria-hidden="true">✓</span> Invoice</span><a href="#doc1">PA-BRK-01.pdf</a></div>
-      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; font-size: 15px"><span><span aria-hidden="true">✓</span> Conditional waiver</span><a href="#doc2">[waiver file].pdf</a></div>
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px">
+      <strong style="font-size: 16px">Something not right?</strong>
+      <p style="margin: 0; font-size: 14px; color: #555555">Ask Hartline Remodeling about this pay app.</p>
+      <label for="q-text" style="font-size: 14px; color: #555555">Your question</label><textarea id="q-text" rows="4" style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; height: auto; padding: 10px"></textarea>
+      <label for="q-name" style="font-size: 14px; color: #555555">Your name</label><input id="q-name" autocomplete="name" style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+      <label for="q-email" style="font-size: 14px; color: #555555">Your email, for the answer (optional)</label><input id="q-email" type="email" autocomplete="email" style="height: 44px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit">
+      <div><button type="button" style="height: 44px; padding: 0 18px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; font: inherit; font-weight: 600">Send a question</button></div>
     </section>
 
     <p style="margin: 8px 0 0; font-size: 13px; color: #555555">This page is for the people Hartline Remodeling sent this pay app to. Prepared with Duracash. Questions about the amounts go to the contractor; reply to their email.</p>
 
-    <section style="margin-top: 16px; background: #EFEFEC; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 20px; display: flex; flex-direction: column; gap: 6px">
-      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">After Mark as received</div>
+    <section style="margin-top: 16px; background: #EFEFEC; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 20px; display: flex; flex-direction: column; gap: 8px">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">WHAT ELSE THIS PAGE SHOWS</div>
+      <div style="font-size: 14px">A later pay app adds <strong>Previous applications</strong> ("PA-BRK-01 · sent Oct 6, 2026 · $57,950.00 · Paid"). A pay app sent with paperwork adds <strong>Packet</strong>: each item with ✓ or ✗ and its file to open. This page and the email keep the words an AP desk files by (pay application, packet, retainage); the contractor's app uses the plain ones.</div>
+      <div style="font-size: 14px">A pay app pulled back reads "Hartline Remodeling withdrew this pay app. Nothing is due on it." Once it is paid there is no question form.</div>
+    </section>
+
+    <section style="background: #EFEFEC; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 20px; display: flex; flex-direction: column; gap: 8px">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">AFTER EACH BUTTON</div>
       <div style="background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 10px; padding: 12px 16px; font-size: 15px"><strong>Received</strong> by Accounts payable on Oct 7, 2026. Thank you.</div>
-      <div style="font-size: 14px; color: #555555">In the app, the job's status line reads "Accounts payable confirmed receipt of PA-BRK-01 on Oct 7, 2026", and the Audit records it.</div>
+      <div style="background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 10px; padding: 12px 16px; font-size: 15px"><strong>Approved for payment</strong> by Accounts payable on Oct 8, 2026. Payment expected by Oct 30, 2026.</div>
+      <div style="background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 10px; padding: 12px 16px; font-size: 15px"><strong>Question sent.</strong> Hartline Remodeling has it and will get back to you.</div>
+      <div style="font-size: 14px; color: #555555">A refused form comes back with why, in red, and what was typed.</div>
+    </section>
+
+    <section style="background: #EFEFEC; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 20px; display: flex; flex-direction: column; gap: 8px">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">WHAT THE CONTRACTOR SEES</div>
+      <ul style="margin: 0; padding-left: 20px; font-size: 14px; display: flex; flex-direction: column; gap: 4px">
+        <li>Mark as received: the job's status line reads "Accounts payable confirmed receipt of PA-BRK-01 on Oct 7, 2026"; the pay app's Approval card shows "Received by the customer".</li>
+        <li>Approve for payment: the pay app is Approved; Today shows an Approved row with no button ("Approved by Accounts payable, expect payment Oct 30, 2026 (PA-BRK-01).") and no follow-up is due until the day after.</li>
+        <li>Send a question: an Inbox item from the Customer page, "Question on PA-BRK-01 — Brookhaven kitchen", on the job; the owners get an email.</li>
+        <li>Each lands in the Activity log and the job's History: Customer opened it, Customer approved, Customer asked a question.</li>
+      </ul>
     </section>
   </main>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1200}}'>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":2450}}'>
 class Component extends DCLogic {
   renderVals() {
     return {};
