@@ -541,3 +541,56 @@ class ReviewFindingTests(unittest.TestCase):
         domain.record_progress(state, job["id"], 500_000)
         send_open(state, job)
         self.assertEqual(state["email_log"][-1]["cc"], ["dana@park.example"])
+
+
+class StoredAndQuantityTests(unittest.TestCase):
+    """Stored materials and quantities kept through a schedule edit and an undo of done."""
+
+    def test_resaving_the_schedule_keeps_stored_materials(self):
+        state = new_state()
+        job = sov_job(state)
+        rough = line(job, "1")["id"]
+        domain.record_sov_progress(state, job["id"], {rough: "100"}, stored={rough: "3000"})
+        domain.void_draft(state, job["id"])
+        before = sov.unbilled(job)
+        self.assertEqual(before, 862_500)  # $4,500 work + $3,000 stored + 15% O&P
+        edited = [{**raw, "id": l["id"]} for raw, l in zip(LINES, sov.lines(job))]
+        edited[0]["description"] = "Rough-in wiring, all floors"
+        domain.save_sov(state, job["id"], edited, "15")
+        self.assertEqual(line(job, "1")["done_milli"], 100_000)
+        self.assertEqual(line(job, "1")["stored_cents"], 300_000)
+        self.assertEqual(sov.unbilled(job), before)
+
+    def test_resaving_caps_stored_materials_to_what_the_line_has_left(self):
+        state = new_state()
+        job = sov_job(state)
+        rough = line(job, "1")["id"]
+        domain.record_sov_progress(state, job["id"], {rough: "100"}, stored={rough: "3000"})
+        domain.void_draft(state, job["id"])
+        # Rough-in cut to 150 ea ($6,750): 100 done ($4,500) leaves $2,250 for stored materials.
+        edited = [{**raw, "id": l["id"]} for raw, l in zip(LINES, sov.lines(job))]
+        edited[0]["quantity"] = "150"
+        edited[1]["rate"] = "23250"
+        domain.save_sov(state, job["id"], edited, "15")
+        self.assertEqual(line(job, "1")["stored_cents"], 225_000)
+        self.assertEqual(sov.line_to_date(line(job, "1")), 675_000)
+
+    def test_undo_done_keeps_quantity_billed_on_a_zero_dollar_period(self):
+        state = new_state()
+        job = sov_job(state)
+        rough, panel = line(job, "1")["id"], line(job, "2")["id"]
+        domain.record_sov_progress(state, job["id"], {rough: "100"}, stored={rough: "3000"})
+        send_open(state, job)
+        # 50 more installed from what was stored: rough-in bills $0 this period, the panel bills.
+        domain.record_sov_progress(state, job["id"], {rough: "150", panel: "0.5"}, stored={rough: "750"})
+        inv2 = job["invoices"][-1]
+        self.assertNotIn(rough, [e["line_id"] for e in inv2["sov_lines"]])
+        send_open(state, job)
+        self.assertEqual(sov.billed(job)["qty_by_line"][rough], 150_000)
+        domain.mark_done(state, job["id"])
+        domain.undo_mark_done(state, job["id"])
+        self.assertEqual(line(job, "1")["done_milli"], 150_000)
+        self.assertEqual(sov.line_to_date(line(job, "1")), 750_000)
+        with self.assertRaises(domain.GateError) as err:
+            domain.record_sov_progress(state, job["id"], {rough: "120"}, stored={rough: "2000"})
+        self.assertIn("150 ea is already billed", " ".join(err.exception.blockers))
