@@ -1,7 +1,7 @@
 // Client helpers that need no browser: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { centsFrom, percentFrom, dollarsText, plainNumber, esc, unesc, escDeep, money, words } from "../../static/js/format.js";
+import { centsFrom, percentFrom, dollarsText, plainNumber, esc, unesc, escDeep, money, words, emailStatusHtml, emailOutcome } from "../../static/js/format.js";
 import { sovNum } from "../../static/js/sov.js";
 
 test("centsFrom reads dollars the way people type them", () => {
@@ -61,4 +61,13 @@ test("money and words", () => {
   assert.equal(money(null), "$0.00");
   assert.equal(words("in_progress"), "In progress");
   assert.equal(words("awaiting_<b>"), "Awaiting &lt;b&gt;", "words() output goes into HTML, so it is escaped");
+});
+
+test("an email sent with a copy address refused says so, with no Send again", () => {
+  const e = { id: "eml-1", to: "ap@gc.com", status: "sent", delivered_at: "2026-10-29T10:00:00+00:00", refused: ["pm@gc.con (550)"] };
+  const html = emailStatusHtml(e);
+  assert.match(html, /Not delivered to the copy address pm@gc\.con \(550\)/);
+  assert.doesNotMatch(html, /Send again/);
+  assert.match(emailOutcome([e]), /Emailed ap@gc\.com\. Not delivered to the copy address pm@gc\.con \(550\)\./);
+  assert.equal(emailOutcome([{ to: "ap@gc.com", status: "sent" }]), "Emailed ap@gc.com.");
 });

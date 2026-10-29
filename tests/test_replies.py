@@ -65,6 +65,17 @@ class ReplyCaptureTests(unittest.TestCase):
         self.assertNotIn("last_reply", job)
         self.assertEqual(item["status"], "new")
 
+    def test_undo_keeps_a_newer_status_line(self):
+        state = state_with_sent_payapp()
+        job = next(j for j in state["jobs"] if j["code"] == "BRK")
+        item = reply(state, "payables@ponceproperty.example")
+        importer.capture_reply(state, item)
+        job["external_status"] = "Approved by Kim, expect payment Nov 14"  # the customer approved it the next day
+        importer.undo_item(state, item["id"], "owner")
+        self.assertEqual(job["external_status"], "Approved by Kim, expect payment Nov 14")
+        self.assertNotIn("last_reply", job)
+        self.assertEqual(item["status"], "new")
+
 
 class ReplyToHeaderTests(unittest.TestCase):
     CFG = {"from": "billing@duracash.example"}

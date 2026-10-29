@@ -96,18 +96,55 @@ def _build(pages: list[_Page]) -> bytes:
     return bytes(out)
 
 
+def contract_terms(job: dict[str, Any], at: str | None = None) -> dict[str, Any]:
+    """The contract a pay app is figured against: lines 1 and 2, the change orders still unsigned,
+    retainage released and the overhead-and-profit row. Kept on a pay app when it is sent
+    (invoice["contract_at_send"]), so a change order approved or retainage released later goes
+    on the next pay app and never changes one already sent. `at` (a sent_at) works it out from
+    the dates for a pay app sent before that was kept; without it, as things stand now."""
+    def by_then(when: Any) -> bool:
+        return at is None or not when or str(when) <= at
+
+    approved, pending = 0, []
+    for co in job.get("change_orders", []):
+        status = co.get("status")
+        if status == "approved" and by_then(co.get("approved_at")):
+            approved += co["amount_cents"]
+        elif status in {"pending", "approved"} or (status == "withdrawn" and not by_then(co.get("withdrawn_at"))):
+            pending.append({"id": co["id"], "number": co.get("number", ""), "amount_cents": co["amount_cents"]})
+    payments = job.get("retainage_payments") or []
+    released = (sum(int(p.get("amount_cents") or 0) for p in payments if by_then(p.get("at")))
+                if at is not None and payments else int(job.get("retainage_released_cents") or 0))
+    bp = sov.op_bp(job)
+    return {
+        "original_cents": job["contract_cents"],
+        "approved_co_cents": approved,
+        "pending_cos": pending,
+        "released_cents": released,
+        "op_bp": bp,
+        "op_scheduled_cents": sov.markup(sum(l["scheduled_cents"] for l in sov.lines(job) if not l.get("co_id")), bp) if bp else 0,
+    }
+
+
+def terms_for(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, Any]:
+    """As it was sent; a draft, as things stand now."""
+    return invoice.get("contract_at_send") or contract_terms(job, invoice.get("sent_at"))
+
+
 def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
     """Lines 1-9 of the application, from the pay apps up to and including this one, in the order
-    they were made. A voided pay app keeps its own position, so its figures read as they were."""
+    they were made. A voided pay app keeps its own position, so its figures read as they were.
+    The contract is the one it was sent against (terms_for)."""
     order = job.get("invoices", [])
     position = next((i for i, inv in enumerate(order) if inv is invoice or inv.get("id") == invoice.get("id")), len(order))
     up_to = [inv for inv in order[:position] if inv.get("status") in LIVE] + [invoice]
     earlier = up_to[:-1]
-    original = job["contract_cents"]
-    net_co = sum(co["amount_cents"] for co in job.get("change_orders", []) if co.get("status") == "approved")
+    terms = terms_for(job, invoice)
+    original = terms["original_cents"]
+    net_co = terms["approved_co_cents"]
     # Change orders billed while still unsigned are in the work completed, so they are shown in the
     # contract sum too, as their own line, rather than leaving the balance short.
-    pending_ids = {co["id"] for co in job.get("change_orders", []) if co.get("status") == "pending"}
+    pending_ids = {co["id"] for co in terms["pending_cos"]}
     unsigned = {}
     for inv in up_to:
         for line in inv.get("lines", []):
@@ -129,7 +166,7 @@ def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
         "contract_to_date": contract_to_date,
         "completed": completed,
         "retainage": retained,
-        "released": int(job.get("retainage_released_cents") or 0),
+        "released": terms["released_cents"],
         "earned": earned,
         "previous": previous,
         "due": invoice["amount_cents"],
@@ -287,14 +324,15 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
             for i, k in enumerate(("scheduled", "previous", "this_period", "stored", "to_date", "retainage")):
                 totals[i] += c[k]
             y -= 13
-        bp = sov.op_bp(job)
+        terms = terms_for(job, invoice)
+        bp = terms["op_bp"]
         if bp:
             # Overhead and profit as its own row, as of this pay app, so the totals match line 4.
             live = [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE]
             earlier = live[: live.index(invoice)] if invoice in live else live
             op_prev = sum(inv.get("op_cents", 0) for inv in earlier)
             op_this = invoice.get("op_cents", 0)
-            op_sched = sov.markup(sum(l["scheduled_cents"] for l in sov.lines(job) if not l.get("co_id")), bp)
+            op_sched = terms["op_scheduled_cents"]
             op_to = op_prev + op_this
             op_ret = sov.retainage_on(op_to, pct_ret)
             page.text(MARGIN, y, row_text(["", _fit(f"Overhead and profit {bp / 100:g}%", 24), f"{op_sched / 100:,.2f}", f"{op_prev / 100:,.2f}",
@@ -306,7 +344,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
             y -= 13
         # Change orders billed while unsigned are not schedule lines yet; each gets its own row,
         # so the totals match line 4 (which counts them, as line 2a does).
-        pending = {co["id"]: co for co in job.get("change_orders", []) if co.get("status") == "pending"}
+        pending = {co["id"]: co for co in terms["pending_cos"]}
         live = [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE]
         earlier = live[: live.index(invoice)] if invoice in live else live
         for co_id, co in pending.items():

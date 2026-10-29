@@ -2011,11 +2011,21 @@ class Handler(BaseHTTPRequestHandler):
         marked = 0
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if failures:
-            # The provider doesn't know our companies: find each address's latest sent email.
+            # The provider doesn't know our companies: each event goes to the one company whose
+            # email it is about (its Message-ID, or else the newest delivered email it matches).
+            best: dict[int, tuple[str, str]] = {}
             for company_id in company_ids():
                 with company_lock(company_id):
                     state = load_company(company_id)
-                    hit = [f for f in failures if mail_events.apply(state, f["email"], f["reason"], now)]
+                for i, f in enumerate(failures):
+                    entry = mail_events.find(state, f["email"], f["message_id"], f["subject"])
+                    if entry and (i not in best or mail_events.when_delivered(entry) > best[i][0]):
+                        best[i] = (mail_events.when_delivered(entry), company_id)
+            for company_id in dict.fromkeys(c for _, c in best.values()):
+                with company_lock(company_id):
+                    state = load_company(company_id)
+                    hit = [f for i, f in enumerate(failures) if best.get(i, ("", ""))[1] == company_id
+                           and mail_events.apply(state, f["email"], f["reason"], now, f["message_id"], f["subject"])]
                     if hit:
                         save_company(company_id, state)
                         marked += len(hit)

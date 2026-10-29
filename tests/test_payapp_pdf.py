@@ -177,3 +177,49 @@ class MonthTwoTests(unittest.TestCase):  # R4-13
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LaterChangesTests(unittest.TestCase):
+    """A pay app already sent reads as it went out: a change order approved or retainage released
+    afterwards is on the next pay app, not this one's PDF or customer page."""
+
+    def setUp(self):
+        self.state = state = new_state()
+        self.job = job = new_job(state, contract=10_000_000, retainage=10)
+        domain.record_progress(state, job["id"], 4_000_000)
+        self.first = send_open(state, job)
+        self.before = payapp_pdf.summary(job, self.first)
+
+    def change_things(self):
+        domain.add_change_order(self.state, self.job["id"], "Extra outlets", 1_000_000)
+        domain.approve_change_order(self.state, self.job["id"], self.job["change_orders"][-1]["id"])
+        domain.record_retainage_payment(self.state, self.job["id"], 100_000)
+
+    def test_lines_2_3_and_9_stay_as_sent(self):
+        self.assertEqual((self.before["net_co"], self.before["contract_to_date"], self.before["released"]), (0, 10_000_000, 0))
+        pdf = pdf_text(self.state, self.job, self.first)
+        self.change_things()
+        self.assertEqual(payapp_pdf.summary(self.job, self.first), self.before)
+        self.assertEqual(pdf_text(self.state, self.job, self.first), pdf, "the PDF is the one they received")
+        import payer_page
+        self.assertIn("$100,000.00", payer_page._job_card(self.job, self.first))
+        self.assertNotIn("$110,000.00", payer_page._job_card(self.job, self.first))
+        # The next pay app has them.
+        domain.record_progress(self.state, self.job["id"], 6_000_000)
+        second = send_open(self.state, self.job)
+        after = payapp_pdf.summary(self.job, second)
+        self.assertEqual((after["net_co"], after["contract_to_date"], after["released"]), (1_000_000, 11_000_000, 100_000))
+
+    def test_an_older_file_is_given_the_contract_as_it_was_sent(self):
+        self.first.pop("contract_at_send")
+        self.first["sent_at"] = "2026-09-01T15:00:00+00:00"
+        self.change_things()
+        self.job["change_orders"][-1]["approved_at"] = "2026-10-01T15:00:00+00:00"
+        self.job["retainage_payments"][-1]["at"] = "2026-10-02T15:00:00+00:00"
+        self.assertEqual(payapp_pdf.summary(self.job, self.first), self.before, "figured from the dates")
+        import migrations
+        self.state["schema_version"] = 3
+        migrations.migrate(self.state)
+        self.assertEqual(self.first["contract_at_send"]["approved_co_cents"], 0)
+        self.assertEqual(self.first["contract_at_send"]["released_cents"], 0)
+        self.assertEqual(payapp_pdf.summary(self.job, self.first), self.before)

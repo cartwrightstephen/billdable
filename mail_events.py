@@ -8,10 +8,16 @@ says so, so the contractor fixes the address in Customer settings and sends agai
 Accepted bodies (the formats are from the providers' documentation as remembered, not
 checked against a live account; check them when the provider is chosen):
   - Postmark bounce or spam-complaint webhook: {"RecordType": "Bounce" | "SpamComplaint",
-    "Email": ..., "Description": ..., "Type": ...}
+    "Email": ..., "Description": ..., "Type": ..., "Subject": ...}; out-of-office replies,
+    mail still being retried and the like (NOT_BOUNCES) are ignored
   - SendGrid event webhook: a list of {"event": "bounce" | "dropped" | "spamreport",
-    "email": ..., "reason": ...}; other events are ignored
-  - Plain: {"email": ..., "reason": ...}
+    "email": ..., "reason": ..., "smtp-id": <the Message-ID>}; other events are ignored
+  - Plain: {"email": ..., "reason": ..., "message_id": ..., "subject": ...}
+
+An event marks one email: the one with its Message-ID (kept on the Outbox row when it was
+sent), or else the newest delivered email to that address with that subject, or with no
+subject the newest delivered email to that address in any company (the server picks it).
+An event posted again finds the same email, already bounced, and changes nothing.
 """
 
 from __future__ import annotations
@@ -21,6 +27,10 @@ from typing import Any
 import domain
 
 FAIL_EVENTS = {"bounce", "dropped", "spamreport", "spamcomplaint", "hardbounce", "softbounce"}
+# Postmark sends these on its Bounce webhook too, but none means the address is wrong: an
+# out-of-office reply, mail still being retried, or a notice about mail that was delivered.
+NOT_BOUNCES = {"autoresponder", "transient", "addresschange", "subscribe", "unsubscribe", "challengeverification",
+               "spamnotification", "virusnotification", "openrelaytest"}
 
 
 def normalize(body: Any) -> list[dict[str, str]]:
@@ -30,29 +40,57 @@ def normalize(body: Any) -> list[dict[str, str]]:
     for item in items[:500]:
         if not isinstance(item, dict):
             continue
+        message_id, subject = "", ""
         if "RecordType" in item:  # Postmark
             kind = str(item.get("RecordType", "")).lower()
-            if kind not in {"bounce", "spamcomplaint"}:
+            if kind not in {"bounce", "spamcomplaint"} or str(item.get("Type", "")).lower() in NOT_BOUNCES:
                 continue
-            email = item.get("Email")
+            email, subject = item.get("Email"), item.get("Subject")
             reason = "marked as spam" if kind == "spamcomplaint" else (item.get("Description") or item.get("Type") or "bounced")
         elif "event" in item:  # SendGrid
             if str(item.get("event", "")).lower() not in FAIL_EVENTS:
                 continue
-            email = item.get("email")
+            email, message_id = item.get("email"), item.get("smtp-id")
             reason = "marked as spam" if item.get("event") == "spamreport" else (item.get("reason") or item.get("event"))
         else:
             email, reason = item.get("email"), item.get("reason") or "bounced"
+            message_id, subject = item.get("message_id"), item.get("subject")
         if isinstance(email, str) and "@" in email:
-            out.append({"email": email.strip().lower()[:254], "reason": " ".join(str(reason).split())[:200]})
+            out.append({"email": email.strip().lower()[:254], "reason": " ".join(str(reason).split())[:200],
+                        "message_id": _message_id(message_id), "subject": _subject(subject)})
     return out
 
 
-def apply(state: dict[str, Any], email: str, reason: str, now: str) -> dict[str, Any] | None:
-    """Mark this company's most recent sent email to `email` as bounced. Returns the Outbox row, or None."""
-    entry = next((e for e in reversed(state.get("email_log", []))
-                  if e.get("status") == "sent" and str(e.get("to", "")).lower() == email), None)
-    if not entry:
+def _message_id(value: Any) -> str:
+    return str(value or "").strip().strip("<>").strip()[:300] if isinstance(value, str) else ""
+
+
+def _subject(value: Any) -> str:
+    return " ".join(value.split())[:250].lower() if isinstance(value, str) else ""
+
+
+def find(state: dict[str, Any], email: str, message_id: str = "", subject: str = "") -> dict[str, Any] | None:
+    """The delivered email (sent, or already bounced) this event is about, newest first; or None.
+    An email sent before Message-IDs were kept is found by its address, as before."""
+    delivered = [e for e in reversed(state.get("email_log", []))
+                 if e.get("status") == "sent" or str(e.get("status", "")).startswith("bounced")]
+    if message_id:
+        exact = next((e for e in delivered if _message_id(e.get("message_id")) == message_id), None)
+        if exact:
+            return exact
+    return next((e for e in delivered if not (message_id and e.get("message_id")) and str(e.get("to", "")).lower() == email
+                 and (not subject or _subject(e.get("subject")) == subject)), None)
+
+
+def when_delivered(entry: dict[str, Any]) -> str:
+    return str(entry.get("delivered_at") or entry.get("at") or "")
+
+
+def apply(state: dict[str, Any], email: str, reason: str, now: str, message_id: str = "", subject: str = "") -> dict[str, Any] | None:
+    """Mark the email this event is about (find()) as bounced. Returns the Outbox row, or None
+    when there is none or it is already marked (the provider sent the event again)."""
+    entry = find(state, email, message_id, subject)
+    if not entry or entry.get("status") != "sent":
         return None
     entry["status"] = f"bounced: {reason}"
     entry["bounced_at"] = now

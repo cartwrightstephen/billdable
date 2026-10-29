@@ -24,14 +24,22 @@ TOKEN = "t" * 24
 class NormalizeTests(unittest.TestCase):
     def test_postmark_sendgrid_and_plain(self):
         self.assertEqual(mail_events.normalize({"RecordType": "Bounce", "Email": "AP@Payer.example", "Description": "Mailbox does not exist"}),
-                         [{"email": "ap@payer.example", "reason": "Mailbox does not exist"}])
+                         [{"email": "ap@payer.example", "reason": "Mailbox does not exist", "message_id": "", "subject": ""}])
         self.assertEqual(mail_events.normalize({"RecordType": "SpamComplaint", "Email": "ap@payer.example"})[0]["reason"], "marked as spam")
         self.assertEqual(mail_events.normalize({"RecordType": "Delivery", "Email": "ap@payer.example"}), [])
         events = [{"event": "delivered", "email": "a@x.example"}, {"event": "bounce", "email": "b@x.example", "reason": "550 no such user"},
                   {"event": "dropped", "email": "c@x.example", "reason": "Bounced Address"}]
         self.assertEqual([e["email"] for e in mail_events.normalize(events)], ["b@x.example", "c@x.example"])
-        self.assertEqual(mail_events.normalize({"email": "d@x.example"}), [{"email": "d@x.example", "reason": "bounced"}])
+        self.assertEqual(mail_events.normalize({"email": "d@x.example"}), [{"email": "d@x.example", "reason": "bounced", "message_id": "", "subject": ""}])
         self.assertEqual(mail_events.normalize(["junk", {"email": "not-an-address"}, None]), [])
+
+    def test_postmark_out_of_office_and_delayed_mail_are_not_bounces(self):
+        for kind in ("AutoResponder", "Transient", "AddressChange", "Unsubscribe", "Subscribe", "ChallengeVerification",
+                     "SpamNotification", "VirusNotification", "OpenRelayTest"):
+            self.assertEqual(mail_events.normalize({"RecordType": "Bounce", "Type": kind, "Email": "ap@payer.example",
+                                                    "Description": "Out of the office until Monday"}), [], kind)
+        for kind in ("HardBounce", "BadEmailAddress", "ManuallyDeactivated", "Blocked", "SoftBounce", "DnsError"):
+            self.assertEqual(len(mail_events.normalize({"RecordType": "Bounce", "Type": kind, "Email": "ap@payer.example"})), 1, kind)
 
     def test_apply_marks_the_latest_sent_email_and_the_job(self):
         state = seed_state()
@@ -90,6 +98,89 @@ class MailEventsHttpTests(unittest.TestCase):
         row = next(e for e in state["email_log"] if e["to"] == "dpatel@northlinegc.example")
         self.assertTrue(row["status"].startswith("bounced: The server was unable"))
         self.assertEqual(server.redact(f"/api/mail-events/{TOKEN}"), "/api/mail-events/[token]")
+
+
+def two_companies():
+    """Company A and company B both bill the same GC at ap@gc.example."""
+    states = {}
+    for name in ("a", "b"):
+        state = seed_state()
+        log = [e for e in state["email_log"] if e["job_id"] == "job-oak"][:1]
+        older = dict(log[0], id="eml-old", subject=f"Pay application PA-{name.upper()}-01", at="2026-09-01T15:00:00+00:00",
+                     delivered_at="2026-09-01T15:00:10+00:00", message_id=f"<old.{name}@duracash.test>")
+        newer = dict(log[0], id="eml-new", subject=f"Pay application PA-{name.upper()}-02", at="2026-10-01T15:00:00+00:00",
+                     delivered_at="2026-10-01T15:00:10+00:00", message_id=f"<new.{name}@duracash.test>")
+        for e in (older, newer):
+            e.update(to="ap@gc.example", status="sent")
+        state["email_log"] = [older, newer]
+        next(j for j in state["jobs"] if j["id"] == "job-oak")["external_status"] = f"Submitted by {name}"
+        states[name] = state
+    # B's newest pay app went out after A's.
+    states["b"]["email_log"][1].update(at="2026-10-08T15:00:00+00:00", delivered_at="2026-10-08T15:00:10+00:00")
+    return states
+
+
+class OneEventOneEmailTests(unittest.TestCase):
+    """A bounce marks the one email it is about: not other companies' emails, not older ones."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self._orig = (auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR)
+        auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR = root / "auth.json", root / "companies", root
+        for name, state in two_companies().items():
+            server.save_company(f"co-{name}", state)
+        self.httpd = server.Server(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        auth.AUTH_PATH, server.COMPANIES, storage.DATA_DIR = self._orig
+        self.tmp.cleanup()
+
+    post = MailEventsHttpTests.post
+
+    def statuses(self, name):
+        state = server.load_company(f"co-{name}")
+        job = next(j for j in state["jobs"] if j["id"] == "job-oak")
+        return [e["status"].split(":")[0] for e in state["email_log"]], job["external_status"]
+
+    def test_postmark_subject_picks_the_company_and_the_email(self):
+        event = {"RecordType": "SpamComplaint", "Email": "ap@gc.example", "Subject": "Pay application PA-A-02"}
+        with mock.patch.dict(os.environ, {"MAIL_EVENTS_TOKEN": TOKEN}):
+            self.assertEqual(self.post(f"/api/mail-events/{TOKEN}", event)[1]["marked"], 1)
+            # The provider posts the same event again: nothing more is marked.
+            self.assertEqual(self.post(f"/api/mail-events/{TOKEN}", event)[1]["marked"], 0)
+        self.assertEqual(self.statuses("a")[0], ["sent", "bounced"])
+        self.assertIn("bounced", self.statuses("a")[1])
+        self.assertEqual(self.statuses("b"), (["sent", "sent"], "Submitted by b"), "company B's email was delivered")
+
+    def test_sendgrid_message_id_picks_the_email(self):
+        events = [{"event": "bounce", "email": "ap@gc.example", "reason": "550 no such user", "smtp-id": "<old.a@duracash.test>"}]
+        with mock.patch.dict(os.environ, {"MAIL_EVENTS_TOKEN": TOKEN}):
+            self.assertEqual(self.post(f"/api/mail-events/{TOKEN}", events)[1]["marked"], 1)
+            self.assertEqual(self.post(f"/api/mail-events/{TOKEN}", events)[1]["marked"], 0)
+        self.assertEqual(self.statuses("a")[0], ["bounced", "sent"])
+        self.assertEqual(self.statuses("b")[0], ["sent", "sent"])
+
+    def test_an_email_sent_before_message_ids_were_kept_is_found_by_address(self):
+        state = two_companies()["a"]
+        for e in state["email_log"]:
+            e.pop("message_id")
+        found = mail_events.find(state, "ap@gc.example", "unknown@duracash.test")
+        self.assertEqual(found["id"], "eml-new")
+        state["email_log"][1]["message_id"] = "<new.a@duracash.test>"
+        self.assertEqual(mail_events.find(state, "ap@gc.example", "unknown@duracash.test")["id"], "eml-old",
+                         "an email with its own Message-ID is never taken for another")
+
+    def test_without_a_message_identity_only_the_newest_email_anywhere(self):
+        event = {"email": "ap@gc.example", "reason": "Mailbox full"}
+        with mock.patch.dict(os.environ, {"MAIL_EVENTS_TOKEN": TOKEN}):
+            self.assertEqual(self.post(f"/api/mail-events/{TOKEN}", event)[1]["marked"], 1)
+            self.assertEqual(self.post(f"/api/mail-events/{TOKEN}", event)[1]["marked"], 0, "a repeat doesn't reach older emails")
+        self.assertEqual(self.statuses("b")[0], ["sent", "bounced"])
+        self.assertEqual(self.statuses("a"), (["sent", "sent"], "Submitted by a"))
 
 
 if __name__ == "__main__":

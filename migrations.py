@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 import domain
+import payapp_pdf
 
 
 def _v1_to_v2(state: dict[str, Any]) -> None:
@@ -33,7 +34,18 @@ def _v2_to_v3(state: dict[str, Any]) -> None:
 OLD_REJECTS_WHEN = "Missing required packet items."
 NEW_REJECTS_WHEN = "Missing required paperwork."
 
-STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3]
+
+def _v3_to_v4(state: dict[str, Any]) -> None:
+    """A pay app keeps the contract it was sent against (contract_at_send), so a change order
+    approved or retainage released later doesn't change its PDF. Pay apps sent before that was
+    kept get it worked out from the dates of the change orders and retainage payments."""
+    for job in state.get("jobs", []):
+        for inv in job.get("invoices", []):
+            if inv.get("sent_at") and not inv.get("contract_at_send") and "contract_cents" in job:
+                inv["contract_at_send"] = payapp_pdf.contract_terms(job, inv["sent_at"])
+
+
+STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4]
 SCHEMA_VERSION = len(STEPS) + 1
 
 
