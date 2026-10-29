@@ -184,6 +184,19 @@ class RecoveryTests(unittest.TestCase):
             for p in quiet:
                 p.stop()
 
+    def test_deleting_a_company_removes_its_imported_json_copy_from_later_backups(self):
+        # A company file from the JSON layout, moved aside when the SQLite store took it in.
+        aside = self.root / "companies" / "imported-json-20260101T000000Z"
+        aside.mkdir(parents=True)
+        storage.write_json(aside / "co-1.json", seed_state())
+        storage.write_json(aside / "co-2.json", seed_state())
+        self.delete("co-1")
+        self.assertFalse((aside / "co-1.json").exists())
+        self.assertTrue((aside / "co-2.json").exists(), "another company's copy stays")
+        with tarfile.open(backup.make_backup()) as tar:
+            names = tar.getnames()
+        self.assertFalse([n for n in names if n.endswith("co-1.json")], names)
+
     def test_backup_holds_the_small_files_beside_the_companies(self):
         for name in ("deleted_companies.json", "qbo_connections.json", "monthly_jobs.json", "daily_jobs.json"):
             (self.root / name).write_text("{}" if name != "deleted_companies.json" else "[]")
