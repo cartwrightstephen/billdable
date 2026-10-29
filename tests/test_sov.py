@@ -146,14 +146,23 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(got("Paint, 3 ea, 45"), [("Paint", "3", "ea", "45.00", None)])
         self.assertEqual(got("Demo\t3,500"), [("Demo", "1", "LS", "3500.00", None)])
 
-    # Known misreads, left for a follow-up (Oct 23 note 9 names both as money rows). They are
-    # expected failures, not locked-in readings: when one starts to pass, remove its decorator.
-    @unittest.expectedFailure
-    def test_known_misread_typed_comma_thousands(self):
-        # Today a typed "3,500" with no $ splits at the comma: quantity 3 at $500, so $1,500.
-        lines = sov.parse_rows("Demo, 3,500")["lines"]
-        self.assertEqual([(l["quantity"], l["rate"]) for l in lines], [("1", "3500.00")])
+    def test_typed_thousands_comma_is_one_number(self):  # Oct 23 note 9
+        def got(text):
+            return [(l["description"], l["quantity"], l["unit"], l["rate"], l.get("needs_price")) for l in sov.parse_rows(text)["lines"]]
+        # Typed with ", " between cells, a comma with no space is a thousands separator.
+        self.assertEqual(got("Demo, 3,500"), [("Demo", "1", "LS", "3500.00", None)])
+        self.assertEqual(got("Demo, 3,500.75"), [("Demo", "1", "LS", "3500.75", None)])
+        self.assertEqual(got("Site work, 1,234,567"), [("Site work", "1", "LS", "1234567.00", None)])
+        self.assertEqual(got("Tile, 1,200, 8.50"), [("Tile", "1200", "ea", "8.50", None)])
+        self.assertEqual(got("Footings, 4,500, LF"), [("Footings", "4500", "LF", "", True)])
+        # Commas with spaces after them are still separate cells.
+        self.assertEqual(got("Demo, 3, 500"), [("Demo", "3", "ea", "500.00", None)])
+        # A saved CSV file (no ", " anywhere) keeps its columns: quantity 3 at $500.
+        self.assertEqual(got("Demo,3,500"), [("Demo", "3", "ea", "500.00", None)])
+        self.assertEqual(got("Description,Qty,Rate\nDemo,3,500"), [("Demo", "3", "ea", "500.00", None)])
 
+    # A known misread, left for a follow-up. It is an expected failure, not a locked-in reading:
+    # when it starts to pass, remove the decorator.
     @unittest.expectedFailure
     def test_known_misread_qty_unit_at_rate_in_one_cell(self):
         # Today "1200 SF @ 8.50" in one cell is skipped as having no numbers.

@@ -407,16 +407,20 @@ def _split_rows(text: str) -> list[list[str]]:
                 # Columns separated by runs of spaces (copied from a PDF); commas are thousands separators.
                 rows.append(re.split(r" {2,}", line.strip()))
             else:
-                rows.extend(_join_dollars(row) for row in csv.reader([line]))
+                rows.extend(_join_thousands(row, ", " in line) for row in csv.reader([line]))
     rows = [[c.strip()[:200] for c in row[:MAX_CELLS]] for row in rows]
     return [r for r in rows if any(c for c in r)]
 
 
-def _join_dollars(row: list[str]) -> list[str]:
-    """In a typed comma row, "$12,500.00" splits into "$12" and "500.00"; put it back together."""
+def _join_thousands(row: list[str], spaced: bool) -> list[str]:
+    """In a typed comma row, "$12,500.00" splits into "$12" and "500.00"; put it back together.
+    Without a $ sign, "Demo, 3,500" is joined too when the row puts a space after its other commas
+    (`spaced`): the comma with no space is then a thousands separator. A row with no ", " at all is
+    a saved CSV file, where "Demo,3,500" means quantity 3 at $500, so it stays split."""
     out: list[str] = []
     for cell in row:
-        if out and re.match(r"^\s*\$\d{1,3}(,\d{3})*$", out[-1]) and re.match(r"^\d{3}(\.\d{1,2})?$", cell):
+        groups = r"^\s*\$\d{1,3}(,\d{3})*$" if not spaced else r"^\s*\$?\d{1,3}(,\d{3})*$"
+        if out and re.match(groups, out[-1]) and re.match(r"^\d{3}(\.\d{1,2})?$", cell):
             out[-1] = out[-1] + "," + cell
         else:
             out.append(cell)
