@@ -18,7 +18,7 @@ export const NEW = [
 // The words they replace. Each is a label, button, heading or sentence the page must not show;
 // the trade terms stay only in help sentences (the Help page's "Paperwork (packet)" and the like).
 export const OLD = [
-  /\bPackets\b/, /Open packet/, /Clear \$?\{?\w*\}? ?blockers?/i, /Mark present/i, /Marked present/, /pencil copy\b(?!\))/i,
+  /\bPackets\b/, /Open packet/, /\b(?:the|a|an|its|this|that|your|their|closeout|job|each|every|no|of|in|to) packets?\b(?!\))/i, /Clear \$?\{?\w*\}? ?blockers?/i, /Mark present/i, /Marked present/, /pencil copy\b(?!\))/i,
   /Payer agreed/, /Payer wants changes/, /Playbook|(the|to|payer) playbook/, /Payer sent a pay app back/, /Match payment/, /Payments matched/,
   /[Cc]lose for (the )?record/, /Closed for the record/, /Money file/i, /Approved COs/, /Pending COs/, /Put on next pay app/,
   /Retainage open/, /Void draft/, />Audit</, /"Audit"/, /"Collections"/, />Collections</, /File to job record/, /To file \(/,

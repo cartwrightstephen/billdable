@@ -2369,7 +2369,7 @@ def _packet_for_pay_app(state: dict[str, Any], job: dict[str, Any], invoice_id: 
     """Reuse an existing job packet (older records), else build one from the payer playbook.
     Paperwork Duracash makes is in from the start, and missing items are filled from the job record."""
     if job.get("packet"):
-        _attach_from_record(state, job, job["packet"], number or "the job packet")
+        _attach_from_record(state, job, job["packet"], number or "the job's paperwork")
         return job["packet"]
     items = _new_packet(state, job, invoice_id)
     for item in items:
