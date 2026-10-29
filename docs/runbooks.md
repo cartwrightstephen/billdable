@@ -29,7 +29,11 @@ python3 backup.py list
 
 1. In Render, **Suspend** the service so nothing writes during the restore.
 2. In the Shell tab: `python3 backup.py restore /var/data/backups/<file>.tar.gz`. The current
-   data is moved to `/var/data/pre-restore-<time>/`, never deleted.
+   data is moved to `/var/data/pre-restore-<time>/`, never deleted. That includes the list of
+   deleted companies, the QuickBooks connections and the monthly and daily job records: the
+   backup's copies come back with the companies, so a company deleted after the backup is back
+   and can be changed. A backup made with `BACKUP_UPLOADS=0` leaves the uploads on the disk as
+   they are; to restore them too, use the off-site copy.
 3. **Resume** the service and sign in.
 
 From the off-site copy (disk lost, or the local backups are bad):
@@ -128,9 +132,10 @@ Once the Intuit Developer app exists (setup doc, section 1):
    `qbo.py` were written from Intuit's documentation and tested only against a stand-in.
 5. For real companies: Intuit's production keys (after their app review), `QBO_ENV=production`.
 
-Tokens are in `qbo_connections.json` in the data directory and are not in the backups: after a restore onto a new disk,
-or when a connection expires (Intuit's refresh tokens last about 100 days unused), an
-owner presses Connect QuickBooks again. Disconnect revokes the token at Intuit.
+Tokens are in `qbo_connections.json` in the data directory, and the backups hold it (R6-06): a
+restore keeps the connection. When a connection expires (Intuit's refresh tokens last about 100
+days unused), or one was made after the backup that was restored, an owner presses Connect
+QuickBooks again. Disconnect revokes the token at Intuit.
 
 ## 7. Billing with Stripe
 

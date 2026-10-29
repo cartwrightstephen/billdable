@@ -166,6 +166,46 @@ class HttpTests(unittest.TestCase):
         res, _ = self.request("POST", "/api/auth/login", {"email": auth.DEMO_EMAIL, "password": auth.DEMO_PASSWORD}, headers={"X-Forwarded-Proto": "https"})
         self.assertEqual(res.status, 200)
         self.assertIn("Secure", res.getheader("Set-Cookie"))
+        self.assertIsNone(res.getheader("Strict-Transport-Security"), "only once the site says it is https-only")
+        self.assertIn("microphone=()", res.getheader("Permissions-Policy"))
+        # With COOKIE_SECURE=1 (production) every answer tells the browser to stay on https (R6-05).
+        with mock.patch.dict("os.environ", {"COOKIE_SECURE": "1"}):
+            for path in ("/", "/api/auth/me", "/healthz"):
+                res, _ = self.request("GET", path, headers={"X-Forwarded-Proto": "https"})
+                self.assertEqual(res.getheader("Strict-Transport-Security"), "max-age=31536000; includeSubDomains", path)
+
+    def test_signup_is_rate_limited_per_network(self):  # R6-05
+        server._LIMITS.clear()
+        signup = lambda n, ip: self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": f"net{n}-{ip}@example.com", "password": PASSWORD,
+                                                                       "name": "Pat", "company_name": "Net Co"}, headers={"X-Forwarded-For": ip})
+        statuses = [signup(n, "203.0.113.7")[0].status for n in range(6)]
+        self.assertEqual(statuses, [200] * 5 + [429])
+        res, data = signup(9, "203.0.113.7")
+        self.assertEqual(data["error"], "Too many new accounts from this network. Try again in an hour.")
+        self.assertEqual(signup(0, "198.51.100.4")[0].status, 200, "another network is not held up")
+        # Only the address the proxy added counts: an address the caller makes up in front of it doesn't.
+        self.assertEqual(signup(1, "10.9.9.9, 203.0.113.7")[0].status, 429)
+        server._LIMITS.clear()
+
+    def test_client_address_follows_the_trusted_proxies(self):  # R6-05
+        handler = server.Handler.__new__(server.Handler)
+        handler.client_address = ("10.0.0.2", 5555)
+        handler.headers = {"X-Forwarded-For": "1.1.1.1, 2.2.2.2, 3.3.3.3"}
+        for hops, ip in (("1", "3.3.3.3"), ("2", "2.2.2.2"), ("0", "10.0.0.2"), ("5", "10.0.0.2"), ("x", "3.3.3.3")):
+            with mock.patch.dict("os.environ", {"TRUSTED_PROXY_HOPS": hops}):
+                self.assertEqual(handler._client_ip(), ip, hops)
+        handler.headers = {}
+        self.assertEqual(handler._client_ip(), "10.0.0.2")
+
+    def test_system_email_has_an_hourly_ceiling(self):  # R6-05
+        server._LIMITS.clear()
+        with mock.patch.object(server.mailer, "configured", lambda: True), \
+             mock.patch.object(server.mailer, "build_message", lambda *a, **k: (object(), [])), \
+             mock.patch.object(server.mailer, "send", lambda msgs, cfg: [None] * len(msgs)):
+            results = [server.send_system_email(f"p{n}@example.com", "Hi", "Body") for n in range(301)]
+        self.assertEqual(results[:300], ["sent"] * 300)
+        self.assertIn("hourly email limit", results[300])
+        server._LIMITS.clear()
 
     def test_actor_comes_from_session_and_reset_needs_confirmation(self):
         cookie, user = self.signup("actor@example.com", company="Actor Co")
@@ -178,7 +218,11 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(res.status, 409)
         res, state = self.request("GET", "/api/state", cookie=cookie)
         self.assertEqual(len(state["jobs"]), 1)
-        res, state = self.request("POST", "/api/reset", {"confirm": "Actor Co"}, cookie=cookie)
+        # The name alone is not enough: the password too, as Delete asks (R6-05).
+        res, data = self.request("POST", "/api/reset", {"confirm": "Actor Co", "password": "not my password"}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        self.assertIn("password", data["fields"])
+        res, state = self.request("POST", "/api/reset", {"confirm": "Actor Co", "password": PASSWORD}, cookie=cookie)
         self.assertEqual(res.status, 200)
         self.assertEqual(state["jobs"], [])
         snaps = list((server.COMPANIES / "snapshots").glob(f"{user['company_id']}-before-reset-*.json"))
@@ -198,6 +242,16 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(res.status, 200)
         self.assertEqual(data["company"]["name"], "Export Co")
         self.assertIn("attachment", res.getheader("Content-Disposition"))
+
+    def test_export_is_owner_only(self):  # R6-05
+        cookie, owner = self.signup("export-owner@example.com", company="Export Two")
+        auth.create_user("export-member@example.com", PASSWORD, "Mo Member", owner["company_id"], role="member")
+        res, data = self.request("POST", "/api/auth/login", {"email": "export-member@example.com", "password": PASSWORD})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        res, data = self.request("GET", "/api/export", cookie=member)
+        self.assertEqual(res.status, 403)
+        self.assertEqual(data["error"], "Only an owner can export the company's data.")
+        self.assertEqual(self.request("GET", "/api/export", cookie=cookie)[0].status, 200)
 
     def test_full_loop_over_http(self):
         cookie, _ = self.signup("loop@example.com")

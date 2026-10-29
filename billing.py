@@ -181,17 +181,31 @@ def end_trial(subscription_id: str, now: datetime | None = None) -> None:
     _post(f"/v1/subscriptions/{parse.quote(subscription_id)}", {"trial_end": int(billing_moment(now + timedelta(hours=1)).timestamp())})
 
 
+TRIAL_END_TRIES = 5
+
+
 def trial_end_due(state: dict[str, Any], now: datetime | None = None) -> str | None:
     """The subscription whose Stripe trial should end now, because the first pay app was paid.
-    Marks it so the request is sent once; returns the subscription id, or None."""
+    Marks it so the request is sent once (until trial_end_failed unmarks it, at most
+    TRIAL_END_TRIES times); returns the subscription id, or None."""
     b = record(state)
-    if b.get("status") != "trialing" or not b.get("subscription_id") or b.get("trial_end_requested_at"):
+    tries = int(b.get("trial_end_tries") or 0)
+    if b.get("status") != "trialing" or not b.get("subscription_id") or b.get("trial_end_requested_at") or tries >= TRIAL_END_TRIES:
         return None
     t = trial.status(state, now)
     if t.get("state") != "ended" or t.get("reason") != "paid":
         return None
     b["trial_end_requested_at"] = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    b["trial_end_tries"] = tries + 1
     return b["subscription_id"]
+
+
+def trial_end_failed(state: dict[str, Any]) -> int:
+    """Stripe refused or couldn't be reached: unmark the request so the company's next change
+    sends it again (R6-06). Returns how many tries were made."""
+    b = record(state)
+    b.pop("trial_end_requested_at", None)
+    return int(b.get("trial_end_tries") or 0)
 
 
 # ----- what Stripe tells us -----

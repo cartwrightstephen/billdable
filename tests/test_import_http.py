@@ -9,7 +9,9 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
+import unittest.mock
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -362,6 +364,90 @@ class ImportHttpTests(unittest.TestCase):
         sources = [(i["source"], i["suggested_job_id"]) for i in state["inbox"]]
         self.assertIn(("email", job["id"]), sources)
         self.assertIn(("sms", job["id"]), sources)
+
+    def inbound_paths(self, email):
+        cookie, job = self.company(email)
+        _, settings = self.request("GET", "/api/import/settings", cookie=cookie)
+        return cookie, ("/api/inbound/email/" + settings["email_webhook"].rsplit("/", 1)[-1],
+                        "/api/inbound/sms/" + settings["sms_webhook"].rsplit("/", 1)[-1])
+
+    def test_inbound_email_with_a_password(self):  # R6-07
+        cookie, (email_path, _) = self.inbound_paths("inbound-pw@example.com")
+        payload = {"From": "ap@park.example", "Subject": "Lien waiver", "TextBody": "About 9 Elm Street"}
+        basic = lambda pw: {"Authorization": "Basic " + base64.b64encode(f"duracash:{pw}".encode()).decode()}
+        with unittest.mock.patch.dict(os.environ, {"INBOUND_WEBHOOK_PASSWORD": "long inbound password"}):
+            res, data = self.request("POST", email_path, payload)
+            self.assertEqual(res.status, 401, "no password: refused")
+            self.assertIn("Basic", res.getheader("WWW-Authenticate"))
+            self.assertEqual(self.request("POST", email_path, payload, headers=basic("wrong"))[0].status, 401)
+            res, data = self.request("POST", email_path, payload, headers=basic("long inbound password"))
+            self.assertEqual(res.status, 200, data)
+            _, settings = self.request("GET", "/api/import/settings", cookie=cookie)
+            self.assertEqual(settings["email_check"], "password")
+        res, state = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual([i["subject"] for i in state["inbox"] if i["source"] == "email"], ["Lien waiver"], "only the signed-in post came in")
+
+    def test_inbound_email_signed_and_unsigned(self):  # R6-07
+        cookie, (email_path, _) = self.inbound_paths("inbound-sig@example.com")
+        key = "key-3ax6xnjp29jd6fds4gc373sgvjxteol0"
+        stamp = str(int(time.time()))
+        good = {"timestamp": stamp, "token": "a8ce0edb2dd8301dee6c2405235584e45aa91d1e9f979f3de0",
+                "signature": hmac.new(key.encode(), (stamp + "a8ce0edb2dd8301dee6c2405235584e45aa91d1e9f979f3de0").encode(), hashlib.sha256).hexdigest(),
+                "sender": "ap@park.example", "subject": "Signed form", "body-plain": "About 9 Elm Street"}
+        form = {"Content-Type": "application/x-www-form-urlencoded"}
+        with unittest.mock.patch.dict(os.environ, {"INBOUND_SIGNING_KEY": key}):
+            unsigned = {k: v for k, v in good.items() if k not in {"timestamp", "token", "signature"}}
+            self.assertEqual(self.request("POST", email_path, raw=urlencode(unsigned).encode(), headers=form)[0].status, 401)
+            forged = {**good, "signature": "0" * 64}
+            self.assertEqual(self.request("POST", email_path, raw=urlencode(forged).encode(), headers=form)[0].status, 401)
+            old = {**good, "timestamp": str(int(stamp) - 3600)}
+            old["signature"] = hmac.new(key.encode(), (old["timestamp"] + old["token"]).encode(), hashlib.sha256).hexdigest()
+            self.assertEqual(self.request("POST", email_path, raw=urlencode(old).encode(), headers=form)[0].status, 401, "too old")
+            res, data = self.request("POST", email_path, raw=urlencode(good).encode(), headers=form)
+            self.assertEqual(res.status, 200, data)
+            # Mailgun's JSON webhooks carry the three in a "signature" object.
+            nested = {"signature": {k: good[k] for k in ("timestamp", "token", "signature")}, "From": "ap@park.example",
+                      "Subject": "Signed JSON", "TextBody": "About 9 Elm Street"}
+            self.assertEqual(self.request("POST", email_path, nested)[0].status, 200)
+        res, state = self.request("GET", "/api/state", cookie=cookie)
+        got = [(i["subject"], i["from"], i["suggested_job_id"] is not None) for i in state["inbox"] if i["source"] == "email"]
+        self.assertEqual(got, [("Signed form", "ap@park.example", True), ("Signed JSON", "ap@park.example", True)])
+
+    def test_inbound_addresses_are_rate_limited(self):  # R6-07
+        _, (email_path, sms_path) = self.inbound_paths("inbound-rate@example.com")
+        with unittest.mock.patch.object(server, "INBOUND_PER_HOUR", 2):
+            statuses = [self.request("POST", email_path, {"From": "x@example.com", "TextBody": f"note {n}"})[0].status for n in range(3)]
+            self.assertEqual(statuses, [200, 200, 429])
+            form = {"Content-Type": "application/x-www-form-urlencoded"}
+            statuses = [self.request("POST", sms_path, raw=urlencode({"From": "+1555", "Body": "hi"}).encode(), headers=form)[0].status for _ in range(3)]
+            self.assertEqual(statuses, [200, 200, 429])
+
+    def test_webhook_addresses_owners_only_and_never_from_the_host_header(self):  # R6-07
+        cookie, _ = self.company("inbound-owner@example.com")
+        me = auth.session_user(cookie.split("=", 1)[1])
+        auth.create_user("inbound-member@example.com", PASSWORD, "Mo", me["company_id"], role="member")
+        res, _ = self.request("POST", "/api/auth/login", {"email": "inbound-member@example.com", "password": PASSWORD})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        _, settings = self.request("GET", "/api/import/settings", cookie=member)
+        self.assertEqual((settings["email_webhook"], settings["sms_webhook"]), ("", ""))
+        self.assertTrue(settings["calendar_url"], "the calendar address is for everyone")
+        spoof = {"Host": "evil.example", "X-Forwarded-Host": "evil.example", "X-Forwarded-Proto": "http"}
+        with unittest.mock.patch.dict(os.environ, {"DURACASH_URL": "https://app.duracash.example"}):
+            _, settings = self.request("GET", "/api/import/settings", cookie=cookie, headers=spoof)
+            for key in ("email_webhook", "sms_webhook", "calendar_url"):
+                self.assertTrue(settings[key].startswith("https://app.duracash.example/api/"), settings[key])
+            # The Twilio signature is checked against the same address Twilio was given.
+            sms_path = "/api/inbound/sms/" + settings["sms_webhook"].rsplit("/", 1)[-1]
+            form = {"From": "+15555550123", "Body": "Elm addition: tile in", "NumMedia": "0"}
+            signed = lambda base: base64.b64encode(hmac.new(b"test-secret", (base + sms_path + "".join(k + form[k] for k in sorted(form))).encode(), hashlib.sha1).digest()).decode()
+            hdr = {"Content-Type": "application/x-www-form-urlencoded", **spoof}
+            with unittest.mock.patch.dict(os.environ, {"TWILIO_AUTH_TOKEN": "test-secret"}):
+                res, _ = self.request("POST", sms_path, raw=urlencode(form).encode(), headers={**hdr, "X-Twilio-Signature": signed("http://evil.example")})
+                self.assertEqual(res.status, 403, "a signature for the spoofed host fails")
+                res, _ = self.request("POST", sms_path, raw=urlencode(form).encode(), headers={**hdr, "X-Twilio-Signature": signed("https://app.duracash.example")})
+                self.assertEqual(res.status, 200)
+        _, settings = self.request("GET", "/api/import/settings", cookie=cookie, headers={"Host": "laptop.local:8765"})
+        self.assertTrue(settings["email_webhook"].startswith("http://laptop.local:8765/"), "without DURACASH_URL, the request's own address")
 
     def test_calendar_feed_and_pencil(self):
         cookie, job = self.company("cal@example.com")

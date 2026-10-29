@@ -15,6 +15,7 @@ import email.policy
 import email.utils
 import hashlib
 import html
+import os
 import re
 import secrets
 import threading
@@ -142,7 +143,12 @@ def store_bytes(company_id: str, filename: str, data: bytes, actor: str) -> dict
     folder = UPLOADS / company_id
     folder.mkdir(parents=True, exist_ok=True)
     tmp = folder / f".{file_id}.tmp"
-    tmp.write_bytes(data)
+    # On the disk before the rename, as the JSON files are (storage.write_json): a crash or a
+    # lost disk cache never leaves a filed record pointing at an empty file (R6-06).
+    with open(tmp, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
     tmp.replace(folder / f"{file_id}{ext}")
     meta = {
         "id": file_id,

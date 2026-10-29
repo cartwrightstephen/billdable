@@ -272,7 +272,7 @@ await step("Inbox: a suggested item is added with one tap, and a photo goes with
   await ctx.close();
 });
 
-await step("a member sees no Make a new address; the owner does", async () => {  // R5-09
+await step("a member sees no provider addresses; the owner does, with Make a new address", async () => {  // R5-09, R6-07
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const p = await ctx.newPage();
   p.on("pageerror", (e) => errors.push(e.message));
@@ -293,9 +293,9 @@ await step("a member sees no Make a new address; the owner does", async () => { 
   assert.equal(status, 200, "member joined");
   await p.goto(BASE + "/inbox");
   await automatic.locator("summary").click();
-  await automatic.getByRole("button", { name: "Copy" }).first().waitFor();
+  await automatic.getByText("An owner connects the email service and the texting number.").waitFor();
   assert.equal(await automatic.getByRole("button", { name: "Make a new address" }).count(), 0, "no Make a new address for a member");
-  assert.match(await automatic.innerText(), /an owner can make a new one/);
+  assert.equal(await automatic.locator("#email-webhook, #sms-webhook").count(), 0, "the web addresses providers post to are an owner's");
   await ctx.close();
 });
 

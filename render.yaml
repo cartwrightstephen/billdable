@@ -14,7 +14,8 @@ services:
     disk:
       name: duracash-data
       mountPath: /var/data
-      sizeGB: 1
+      # Room for the uploads and 14 local backups of them (R6-06); /healthz answers 503 under 200 MB free.
+      sizeGB: 10
     envVars:
       - key: DURACASH_DATA_DIR
         value: /var/data

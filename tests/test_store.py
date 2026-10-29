@@ -151,6 +151,91 @@ class RestoreDrillTests(unittest.TestCase):
             self.assertTrue(any("co-gone" in p for p in problems))
 
 
+class RecoveryTests(unittest.TestCase):
+    """R6-06: what a backup holds, and a restore that can't quietly lose changes."""
+
+    def setUp(self):
+        import auth
+        import importer
+        import server
+        self.server = server
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.patches = [mock.patch.object(storage, "DATA_DIR", self.root), mock.patch.object(server, "COMPANIES", self.root / "companies"),
+                        mock.patch.object(auth, "AUTH_PATH", self.root / "auth.json"), mock.patch.object(importer, "UPLOADS", self.root / "uploads")]
+        for p in self.patches:
+            p.start()
+        (self.root / "auth.json").write_text(json.dumps({"users": [], "sessions": {}}))
+        server.save_company("co-1", seed_state())
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        store._STORES.clear()
+        self.tmp.cleanup()
+
+    def delete(self, company_id):
+        quiet = [mock.patch(f"{m}.forget_company") for m in ("helper", "mailer", "importer")]
+        for p in quiet:
+            p.start()
+        try:
+            self.server.delete_company_data(company_id)
+        finally:
+            for p in quiet:
+                p.stop()
+
+    def test_backup_holds_the_small_files_beside_the_companies(self):
+        for name in ("deleted_companies.json", "qbo_connections.json", "monthly_jobs.json", "daily_jobs.json"):
+            (self.root / name).write_text("{}" if name != "deleted_companies.json" else "[]")
+        with tarfile.open(backup.make_backup()) as tar:
+            names = set(tar.getnames())
+        self.assertLessEqual({"deleted_companies.json", "qbo_connections.json", "monthly_jobs.json", "daily_jobs.json"}, names)
+
+    def test_restore_of_a_deleted_company_is_refused_or_visible(self):
+        path = backup.make_backup()
+        self.delete("co-1")
+        # A request still running when the company was deleted is refused, not a quiet 200.
+        with self.assertRaises(domain.GateError) as refused:
+            self.server.save_company("co-1", seed_state())
+        self.assertEqual(str(refused.exception), "This company was deleted and can't be changed. Contact support if that is wrong.")
+        # Restoring the backup from before the deletion brings the company back whole: its list
+        # of deleted companies comes back with it, so changes save again.
+        aside = backup.restore(path)
+        store._STORES.clear()  # as the restart after a restore does
+        self.assertTrue((aside / "deleted_companies.json").exists(), "the newer list is moved aside, not left to contradict")
+        self.assertNotIn("co-1", self.server.deleted_companies())
+        state = self.server.load_company("co-1")
+        state["company"]["name"] = "Back again"
+        self.server.save_company("co-1", state)
+        self.assertEqual(self.server.load_company("co-1")["company"]["name"], "Back again")
+
+    def test_a_backup_without_uploads_keeps_them_off_site_and_on_the_disk(self):
+        (self.root / "uploads" / "co-1").mkdir(parents=True)
+        (self.root / "uploads" / "co-1" / "file-1.jpg").write_bytes(b"photo")
+        with mock.patch.dict("os.environ", {"BACKUP_UPLOADS": "0"}):
+            local = backup.make_backup()
+            with tarfile.open(local) as tar:
+                self.assertNotIn("uploads/co-1/file-1.jpg", tar.getnames())
+                self.assertIn(backup.UPLOADS_LEFT_OUT, tar.getnames())
+            sent = []
+
+            def upload(path):
+                with tarfile.open(path) as tar:
+                    sent.append(tar.getnames())
+                return "duracash/" + path.name + ".age"
+
+            with mock.patch.object(backup.offsite, "upload", upload):
+                backup.offsite_copy(local)
+            self.assertIn("uploads/co-1/file-1.jpg", sent[0], "the off-site copy has the uploads")
+            self.assertEqual(list((backup.folder() / "offsite-staging").glob("*")), [], "and is not kept on the disk")
+            self.assertEqual(len(backup.backups()), 1, "nor counted as a local backup")
+            _, problems = backup.drill(local)
+            self.assertEqual(problems, [])
+            backup.restore(local)
+        self.assertEqual((self.root / "uploads" / "co-1" / "file-1.jpg").read_bytes(), b"photo", "uploads stay where they are")
+        self.assertFalse((self.root / backup.UPLOADS_LEFT_OUT).exists())
+
+
 class BackendChoiceTests(unittest.TestCase):
     def test_sqlite_by_default_json_on_request(self):
         with tempfile.TemporaryDirectory() as tmp:

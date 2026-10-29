@@ -487,7 +487,7 @@ class MailHttpTests(unittest.TestCase):
         self.ready_to_send(cookie, job)
         _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
-        res, _ = self.request("POST", "/api/reset", {"confirm": "Pine & Sons"}, cookie=cookie)
+        res, _ = self.request("POST", "/api/reset", {"confirm": "Pine & Sons", "password": PASSWORD}, cookie=cookie)
         self.assertEqual(res.status, 200)
         job2 = {"name": "After reset", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
                 "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}

@@ -169,7 +169,14 @@ class SigningHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 409, "no bare approval")
         res, raw = self.request("POST", f"/api/jobs/{job['id']}/request-co-signature/{co['id']}", {}, cookie)
         self.assertEqual(res.status, 200, raw)
-        link = re.search(re.escape(SITE) + r"(/s/\S+)", json.loads(raw)["email_log"][-1]["body"]).group(1)
+        state = json.loads(raw)
+        link = re.search(re.escape(SITE) + r"(/s/\S+)", state["email_log"][-1]["body"]).group(1)
+        # The app is told only that the page exists, and opens it through the server (R6-05).
+        sent_co = state["jobs"][-1]["change_orders"][-1]
+        self.assertTrue(sent_co["signing_page"])
+        self.assertNotIn("sign_token", sent_co)
+        res, _ = self.request("GET", f"/api/jobs/{job['id']}/co/{co['id']}/page", cookie=cookie)
+        self.assertEqual((res.status, res.getheader("Location")), (303, link))
         res, raw = self.request("GET", link)
         self.assertEqual(res.status, 200)
         self.assertIn("Two &lt;b&gt;outlets&lt;/b&gt;", raw.decode())

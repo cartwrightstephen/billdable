@@ -84,6 +84,28 @@ class PayerPageTests(unittest.TestCase):
         link = re.search(re.escape(SITE) + r"(/p/\S+)", body).group(1)
         return cookie, state, link
 
+    def test_page_secrets_stay_on_the_server(self):  # R6-05
+        cookie, state, link = self.sent_pay_app("payer-secret@example.com")
+        secret = link.rsplit(".", 1)[1]
+        res, raw = self.request("GET", "/api/state", cookie=cookie)
+        self.assertNotIn("payer_token", raw.decode())
+        # The Outbox keeps the email as it went out, link and all; the jobs carry no secret.
+        self.assertNotIn(secret, json.dumps(json.loads(raw)["jobs"]))
+        job = json.loads(raw)["jobs"][-1]
+        inv = job["invoices"][-1]
+        self.assertTrue(inv["customer_page"])
+        res, raw = self.request("GET", f"/api/jobs/{job['id']}", cookie=cookie)
+        self.assertNotIn(secret, raw.decode())
+        res, raw = self.request("GET", "/api/export", cookie=cookie)
+        self.assertEqual(res.status, 200)
+        self.assertNotIn(secret, raw.decode(), "nor the file that leaves the app, emails included")
+        self.assertIn("/p/[link]", raw.decode())
+        # Signed in, "open it" goes through the server to the page.
+        res, _ = self.request("GET", f"/api/jobs/{job['id']}/payapp/{inv['id']}/page", cookie=cookie)
+        self.assertEqual((res.status, res.getheader("Location")), (303, link))
+        self.assertEqual(self.request("GET", f"/api/jobs/{job['id']}/payapp/{inv['id']}/page")[0].status, 401)
+        self.assertEqual(self.request("GET", f"/api/jobs/{job['id']}/payapp/inv-nope/page", cookie=cookie)[0].status, 404)
+
     def test_link_in_email_opens_an_escaped_page(self):
         cookie, state, link = self.sent_pay_app("payer1@example.com")
         res, raw = self.request("GET", link)

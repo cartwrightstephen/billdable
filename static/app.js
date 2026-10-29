@@ -57,6 +57,7 @@ let pendingSearch = null; // and its ?camera=1 or ?new=1, from a home-screen sho
 let cameraAsk = false;    // opened from the Take a photo shortcut: the Inbox's camera button gets the focus
 let lastToastAt = 0;
 let loginCode = null;     // {email, password} while the sign-in asks for a two-step code
+let loginNote = "";       // why the code is asked for, when it isn't the usual sign-in (a password reset)
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
 let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
 let metricsData = null;   // {period, data} from /api/metrics
@@ -361,6 +362,10 @@ async function boot(checkLink = true) {
     if (data.user && data.user.company_id !== DEMO_COMPANY_ID) rememberSignIn();
     applyLocation();
     await load();
+  } else if (res.status === 503) {
+    // The company's data is missing on the server (R6-06): say so; never show sign-in as if signed out.
+    renderOutage((await readJson(res)).error || "Your company's data isn't available right now.");
+    return;
   } else {
     dataNotice = (await readJson(res)).data_notice === true;
     if (location.pathname !== "/" && routeFromPath(location.pathname)) { pendingPath = location.pathname; pendingSearch = location.search; authMode = "login"; }
@@ -369,6 +374,15 @@ async function boot(checkLink = true) {
   }
   setAiVisible(!!me);
   if (linkMessage) toast(linkMessage);
+}
+
+function renderOutage(message) {
+  setAiVisible(false);
+  document.getElementById("app").innerHTML = `<div class="landing"><header class="land-bar"><div class="brand">Duracash</div></header>
+    <section class="land-hero"><div class="auth-card land-form"><h2>Not available right now</h2>
+      <p class="sub" role="alert">${esc(message)}</p>
+      <button class="btn" id="outage-retry">Try again</button></div></section></div>`;
+  document.getElementById("outage-retry").addEventListener("click", () => location.reload());
 }
 
 function setAiVisible(on) {
@@ -422,6 +436,7 @@ function renderLanding() {
           ${!signup && loginCode ? `<form id="auth-form">
             <label for="login-code">Code from your authenticator app</label>
             <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" placeholder="123456" />
+            ${loginNote ? `<p class="sub" role="status">${esc(loginNote)}</p>` : ""}
             <p class="sub">Lost your phone? Type one of your recovery codes instead.</p>
             <button class="btn" type="submit">Sign in</button>
             ${authError ? `<div class="auth-error" role="alert">${esc(authError)}</div>` : ""}
@@ -464,7 +479,7 @@ function renderLanding() {
     </div>
   `;
   document.getElementById("auth-form").addEventListener("submit", onAuthSubmit);
-  document.getElementById("code-back")?.addEventListener("click", () => { loginCode = null; authError = ""; renderLanding(); });
+  document.getElementById("code-back")?.addEventListener("click", () => { loginCode = null; loginNote = ""; authError = ""; renderLanding(); });
   document.getElementById("login-code")?.focus();
   document.getElementById("auth-switch").addEventListener("click", () => {
     authMode = signup ? "login" : "signup";
@@ -491,6 +506,7 @@ function renderLanding() {
 async function onAuthSubmit(e) {
   e.preventDefault();
   const form = e.target;
+  loginNote = "";
   const v = loginCode && authMode === "login" ? {} : formValues("auth");
   const body = loginCode && authMode === "login"
     ? { ...loginCode, code: form.code.value }
@@ -750,12 +766,12 @@ function coSignControls(j, co, extra = "") {
   // The signed copy is most likely the newest change-order record (R3-06).
   const newestCo = records.filter(r => r.kind === "change_order").pop();
   return `<div class="form-inline">
-      <button class="btn small" data-action="request-co-signature" data-id="${j.id}" data-co="${co.id}">${co.sign_token ? "Send the signing link again" : "Request signature"}</button>
+      <button class="btn small" data-action="request-co-signature" data-id="${j.id}" data-co="${co.id}">${co.signing_page ? "Send the signing link again" : "Request signature"}</button>
       <button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="${!!formOpen[key]}">Signed on paper…</button>
       <button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>
       ${extra}
     </div>
-    ${co.sign_token ? `<p class="sub">Signing page: <a href="/s/${me.company_id}.${co.sign_token}" target="_blank" rel="noopener">open it</a>${co.signature_requested_at ? ` · requested ${fmtDate(co.signature_requested_at)}` : ""}</p>` : ""}
+    ${co.signing_page ? `<p class="sub">Signing page: <a href="/api/jobs/${j.id}/co/${co.id}/page" target="_blank" rel="noopener">open it</a>${co.signature_requested_at ? ` · requested ${fmtDate(co.signature_requested_at)}` : ""}</p>` : ""}
     ${formOpen[key] ? `<div class="form-inline">
         <button class="btn small" data-action="pick-files" data-job="${j.id}" data-co="${co.id}" data-kind="change_order" data-capture="1">Take a photo of the signed copy</button>
         ${records.length ? `<label for="cosign-rec-${co.id}" class="inline-label">or pick it from the job record</label><select id="cosign-rec-${co.id}"><option value="">Choose a record…</option>${records.map(r => `<option value="${r.id}"${newestCo && r.id === newestCo.id ? " selected" : ""}>${r.label}</option>`).join("")}</select><button class="btn small secondary" data-action="approve-co" data-id="${j.id}" data-co="${co.id}">Save as signed</button>` : ""}
@@ -1096,7 +1112,7 @@ const ACTIONS = {
     toast(r.data.message);
   },
   "reset-confirm": async () => {
-    const r = await post("/api/reset", { confirm: document.getElementById("reset-confirm")?.value || "" });
+    const r = await post("/api/reset", { confirm: document.getElementById("reset-confirm")?.value || "", password: document.getElementById("reset-password")?.value || "" });
     if (r && r.ok) { formOpen.reset = false; render(); }
   },
   "2fa-begin": async () => {
@@ -1970,6 +1986,9 @@ function fillImportSettings() {
       : "Email delivery is not set up on this server yet, so nothing here has left Duracash. Once it is, use Send again on any row.");
   set("email-webhook", s.email_webhook);
   set("sms-webhook", s.sms_webhook);
+  set("email-check", s.email_check === "password" ? "The server asks the email service for its password (INBOUND_WEBHOOK_PASSWORD): put it in the address, as https://duracash:PASSWORD@… ."
+    : s.email_check === "signature" ? "The server checks the email service's signature (INBOUND_SIGNING_KEY) on every message."
+    : "");
   set("cal-url", s.calendar_url);
   // The same address as webcal://, which a phone's calendar app opens as a subscription (R6-04).
   const webcal = document.getElementById("cal-webcal");
@@ -2247,6 +2266,14 @@ function renderTokenScreen() {
       : await postJson("/api/auth/reset", { token: s.token, password: f.password.value });
     if (!r.ok) { s.error = r.data.error || "That didn't work."; renderTokenScreen(); return; }
     tokenScreen = null;
+    if (r.data.needs_code) {
+      // Two-step accounts: the link changed the password, and the code still signs in (R6-05).
+      authMode = "login"; authError = "";
+      loginCode = { email: r.data.email, password: f.password.value };
+      loginNote = r.data.message || "Password changed. Sign in with your new password and your authenticator code.";
+      renderLanding();
+      return;
+    }
     await boot(false);
     toast(s.kind === "invite" ? "Welcome to the team." : "Password changed. You're signed in.");
   });
@@ -2461,14 +2488,15 @@ function companyView() {
     <details class="card danger-zone" data-more="danger"${formOpen.reset || moreDetails.danger ? " open" : ""}>
       <summary><strong>${owner ? "Your data, reset and delete" : "Your data"}</strong></summary>
       <h2>Your data</h2>
-      <p class="sub">Download everything in your company as one file, or start over.</p>
+      ${owner ? `<p class="sub">Download everything in your company as one file, or start over.</p>
       <div class="form-inline">
         <a class="btn small secondary" href="/api/export" download>Export data</a>
-        ${owner ? `<button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>` : ""}
-      </div>
+        <button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>
+      </div>` : `<p class="sub">An owner can download everything in the company as one file.</p>`}
       ${formOpen.reset && !isDemo ? `<div class="form-inline">
-        <label for="reset-confirm" class="inline-label">Reset deletes every job, customer and record; a snapshot is kept on the server. Type the company name to confirm:</label>
+        <label for="reset-confirm" class="inline-label">Reset deletes every job, customer and record; a snapshot is kept on the server. Type the company name and your password to confirm:</label>
         <input id="reset-confirm" placeholder="${state.company.name}" class="grow">
+        <input id="reset-password" type="password" placeholder="Your password" autocomplete="current-password" aria-label="Your password">
         <button class="btn small danger" data-action="reset-confirm">Reset everything</button></div>` : ""}
       ${owner && !isDemo ? `
       <h2>Delete the company</h2>
@@ -2518,8 +2546,9 @@ function myAccountView() {
           <input id="2fa-off-code" placeholder="Code from the app" autocomplete="one-time-code" inputmode="numeric">
           <button class="btn small secondary" data-action="2fa-disable">Turn off</button></div></details>`
       : twoStepSetup ? `<ol class="steps">
-          <li>In an authenticator app (Google Authenticator, 1Password, Authy, Microsoft Authenticator), add an account and choose to enter a key. ${/Mobi|Android|iPhone/.test(navigator.userAgent) ? `Or <a href="${esc(unesc(twoStepSetup.uri))}">open it in the app</a>.` : ""}</li>
-          <li>Key: <code id="2fa-key">${twoStepSetup.secret.match(/.{1,4}/g).join(" ")}</code> <button class="btn small secondary" data-action="copy" data-target="2fa-key">Copy</button></li>
+          <li>In an authenticator app (Google Authenticator, 1Password, Authy, Microsoft Authenticator), add an account and scan this code. ${/Mobi|Android|iPhone/.test(navigator.userAgent) ? `On this phone, <a href="${esc(unesc(twoStepSetup.uri))}">open it in the app</a> instead.` : ""}
+            ${twoStepSetup.qr ? `<img class="qr-code" id="2fa-qr" src="${twoStepSetup.qr}" alt="QR code of the two-step key" width="180" height="180">` : ""}</li>
+          <li>Can't scan it? Choose to enter a key and type this one: <code id="2fa-key">${twoStepSetup.secret.match(/.{1,4}/g).join(" ")}</code> <button class="btn small secondary" data-action="copy" data-target="2fa-key">Copy</button></li>
           <li>Type the 6-digit code the app shows: <span class="form-inline"><input id="2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"><button class="btn small" data-action="2fa-enable">Turn on</button></span></li>
         </ol>`
       : `<p class="sub"><span class="pill">Off</span> Add a code from your phone to every sign-in, so a stolen password isn't enough. Recommended for owners.</p>
@@ -2907,6 +2936,7 @@ const views = {
   inbox() {
     const items = (state.inbox || []).filter(i => i.status === "new").slice().reverse();
     const done = (state.inbox || []).filter(i => i.status !== "new").slice(-20).reverse();
+    const owner = me && me.role === "owner";   // the provider web addresses are an owner's (R6-07)
     const withSuggestion = items.filter(i => i.suggested_job_id).length;
     const jobName = (id) => (state.jobs.find(j => j.id === id) || {}).name || "a job";
     return `
@@ -2939,13 +2969,15 @@ const views = {
         <summary><strong>Bring emails and texts in automatically</strong></summary>
         <h3>Email</h3>
         <p id="email-address" class="sub">Loading…</p>
-        <p class="sub">Steps: in an email service that can post incoming mail to a web address (SendGrid Inbound Parse, Mailgun routes or Postmark inbound), set up an inbound address and point it at this private web address. Then forward or BCC job emails to that inbound address. Attachments come in as files.</p>
+        ${owner ? `<p class="sub">Steps: in an email service that can post incoming mail to a web address (SendGrid Inbound Parse, Mailgun routes or Postmark inbound), set up an inbound address and point it at this private web address. Then forward or BCC job emails to that inbound address. Attachments come in as files.</p>
         <div class="copy-row"><code id="email-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="email-webhook">Copy</button>${newAddressButton("email")}</div>
+        <p id="email-check" class="sub"></p>` : ""}
         <h3>Text messages</h3>
         <p id="sms-number" class="sub">Loading…</p>
-        <p class="sub">Steps: in Twilio, buy a number and set its incoming-message webhook to this private web address. Set TWILIO_AUTH_TOKEN on the server so Duracash checks each message really came from Twilio; with it set, photos and PDFs sent by text are saved with the Inbox item. Without it they show as links.</p>
+        ${owner ? `<p class="sub">Steps: in Twilio, buy a number and set its incoming-message webhook to this private web address. Set TWILIO_AUTH_TOKEN on the server so Duracash checks each message really came from Twilio; with it set, photos and PDFs sent by text are saved with the Inbox item. Without it they show as links.</p>
         <div class="copy-row"><code id="sms-webhook">Loading…</code><button class="btn small secondary" data-action="copy" data-target="sms-webhook">Copy</button>${newAddressButton("sms")}</div>
-        <p class="sub">Anyone who knows these addresses can drop items in your Inbox. They are reviewed before filing. ${me && me.role === "owner" ? "Make a new address if one leaks." : "If one leaks, an owner can make a new one."}</p>
+        <p class="sub">Anyone who knows these addresses can drop items in your Inbox. They are reviewed before filing. Make a new address if one leaks.</p>`
+        : `<p class="sub">An owner connects the email service and the texting number. Items sent to them wait here to be reviewed before filing.</p>`}
       </details>
     `;
   },
@@ -3478,7 +3510,7 @@ const views = {
         <div class="money-row"><span class="label">Received by the customer</span><span>${inv.received_at ? `${inv.received_by || "the customer"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
         ${inv.approved_at ? `<div class="money-row"><span class="label">Approved by the customer</span><span>${inv.approved_by_payer || "the customer"}, ${fmtDateTime(inv.approved_at)}</span></div>
         <div class="money-row"><span class="label">Payment expected by</span><span>${fmtDate(inv.expected_payment_on)}</span></div>` : ""}
-        ${inv.payer_token ? `<p class="sub">The customer's page for this pay app (it went in the email): <a href="/p/${me.company_id}.${inv.payer_token}" target="_blank" rel="noopener">open it</a>. They can see the pay app and its paperwork, mark it received, approve it for payment with a date, or send you a question.</p>` : ""}
+        ${inv.customer_page ? `<p class="sub">The customer's page for this pay app (it went in the email): <a href="/api/jobs/${j.id}/payapp/${inv.id}/page" target="_blank" rel="noopener">open it</a>. They can see the pay app and its paperwork, mark it received, approve it for payment with a date, or send you a question.</p>` : ""}
         ${canPullBack(j, inv) && may("void-sent") ? pullBackHtml(j, inv) : ""}
       </div>
     `;

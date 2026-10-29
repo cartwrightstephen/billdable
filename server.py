@@ -50,6 +50,7 @@ import offsite
 import payapp_pdf
 import qbo
 import qbo_csv
+import qr
 import payer_page
 import sov
 import storage
@@ -67,6 +68,8 @@ COOKIE = "duracash_session"
 _COMPANY_LOCKS: dict = {}
 _COMPANY_LOCKS_GUARD = threading.Lock()
 _DELETED_LOCK = threading.Lock()
+DISK_FREE_MIN_MB = 200   # /healthz answers 503 below this (R6-06)
+INBOUND_PER_HOUR = 120   # posts an hour to one inbound email or text address (R6-07)
 
 
 def company_lock(company_id: str) -> threading.Lock:
@@ -133,6 +136,9 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
+    # No page here uses the microphone, location, payment or USB; the camera is reached through a
+    # file input (R6-04), which the browser hands to the phone's camera app.
+    "Permissions-Policy": "camera=(self), microphone=(), geolocation=(), payment=(), usb=()",
     # Scripts and styles only from this site's own files: an injected <script>, onerror= or
     # style="" never applies. Pages the server writes with a <style> block get that block's
     # hash added (_csp). P2-8.
@@ -261,6 +267,19 @@ _LIMITS: dict = {}
 _LIMITS_LOCK = threading.Lock()
 
 
+def trusted_proxy_hops() -> int:
+    """How many proxies in front of the server add to X-Forwarded-For (R6-05). Render has one."""
+    try:
+        return max(0, int(os.environ.get("TRUSTED_PROXY_HOPS", "1")))
+    except ValueError:
+        return 1
+
+
+def _local(ip: str) -> bool:
+    """A caller on this machine: the tests, the test-contractor loader, a person trying it out."""
+    return ip in {"127.0.0.1", "::1", "localhost"}
+
+
 def _within_limit(key: str, count: int, seconds: int) -> bool:
     """True, and counted, when fewer than `count` events happened for `key` in the last `seconds`."""
     now = time.monotonic()
@@ -326,15 +345,22 @@ def company_ids() -> list:
     return company_store().ids() if COMPANIES.exists() else []
 
 
+class CompanyMissing(Exception):
+    """A signed-in company whose data is gone: data was lost (a deploy without the persistent
+    disk, a bad restore). The request answers 503 and nothing is saved over it (R6-06): a blank
+    company served and saved back would hide the loss and overwrite whatever comes back."""
+
+    MESSAGE = "Your company's data isn't available right now. Nothing was changed; we've been alerted."
+
+
 def load_company(company_id: str) -> dict:
     state = company_store().load(company_id)
     if state is not None:
         migrations.migrate(state)  # the next save writes the current shape back
         return state
-    # A signed-in user whose company is gone means data was lost
-    # (for example a deploy without a persistent disk). Say so in the log.
-    print(f"WARNING: company data missing for {company_id} in {COMPANIES}; serving a blank company.", file=sys.stderr)
-    return empty_state("New company")
+    log_json("error", msg="company data missing", company=company_id, folder=str(COMPANIES))
+    alerts.notify(f"company-missing:{company_id}", f"company data missing for {company_id}; requests answer 503 until it is restored")
+    raise CompanyMissing(company_id)
 
 
 def _deleted_path() -> Path:
@@ -353,6 +379,11 @@ def send_system_email(to: str, subject: str, body: str, company_id: str = "", ri
     or the reason it wasn't. It counts against the company's daily limit like any other email."""
     if not mailer.configured():
         return "email delivery is not set up on this server"
+    # However many companies or reset requests there are, the server sends at most 300 of
+    # these an hour, so a flood of sign-ups or reset requests can't burn the mail account (R6-05).
+    if not _within_limit("system-email", 300, 3600):
+        log_json("warn", msg="system email held: hourly limit", rid=rid)
+        return "the server's hourly email limit is reached; try again in an hour"
     cfg = mailer.settings()
     if company_id and mailer.sent_in_last_day(company_id) >= cfg["daily_limit"]:
         return f"the daily limit of {cfg['daily_limit']} emails is reached; try tomorrow"
@@ -400,10 +431,11 @@ def delete_company_data(company_id: str) -> int:
 
 
 def save_company(company_id: str, state: dict) -> None:
-    # A request that was already running when its company was deleted must not write it back.
+    # A request that was already running when its company was deleted must not write it back,
+    # and must not look as if it did (R6-06): it is refused like any other change that can't be made.
     if company_id in deleted_companies():
         log_json("warn", msg="write to a deleted company refused", company=company_id)
-        return
+        raise domain.GateError("This company was deleted and can't be changed. Contact support if that is wrong.")
     company_store().save(company_id, state)
 
 
@@ -424,8 +456,11 @@ def send_monthly_summaries(year: int, month: int) -> list:
     for company_id in company_ids():
         if company_id == auth.DEMO_COMPANY_ID:
             continue
-        with company_lock(company_id):
-            state = load_company(company_id)
+        try:
+            with company_lock(company_id):
+                state = load_company(company_id)
+        except CompanyMissing:
+            continue  # alerted; the other companies still get theirs
         subject, body = metrics.month_summary(state, year, month)
         for u in users:
             if u["company_id"] == company_id and u.get("role") == "owner" and u.get("email_verified"):
@@ -486,8 +521,11 @@ def send_daily_digests(now: datetime | None = None) -> list:
         if company_id == auth.DEMO_COMPANY_ID or done.get(company_id) == day or company_id in deleted_companies():
             continue
         done[company_id] = day
-        with company_lock(company_id):
-            state = load_company(company_id)
+        try:
+            with company_lock(company_id):
+                state = load_company(company_id)
+        except CompanyMissing:
+            continue
         if state.get("company", {}).get("daily_email") is False:
             continue
         digest = domain.daily_digest(state, base, now)
@@ -657,6 +695,9 @@ class Handler(BaseHTTPRequestHandler):
             if k == "Content-Security-Policy" and content_type.startswith("text/html"):
                 v = _csp(v, body)
             self.send_header(k, v)
+        if os.environ.get("COOKIE_SECURE") == "1":
+            # The site is served over https only: browsers must never try http for a year (R6-05).
+            self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         if self._rid:
             self.send_header("X-Request-Id", self._rid)
         if self.path.startswith("/api/"):
@@ -728,9 +769,37 @@ class Handler(BaseHTTPRequestHandler):
         return b"".join(chunks)
 
     def _base_url(self) -> str:
+        """The site's address for addresses shown in Settings and the Twilio signature check:
+        DURACASH_URL when set (R6-07), since Host and X-Forwarded-Host are whatever the caller
+        sends; the request's own address only on a server without it (a laptop, a test)."""
+        url = app_url()
+        if url:
+            return url
         proto = self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() or ("https" if os.environ.get("COOKIE_SECURE") == "1" else "http")
         host = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip() or self.headers.get("Host") or f"127.0.0.1:{PORT}"
         return f"{proto}://{host}"
+
+    def _inbound_refused(self, token: str) -> bool:
+        """Checks on an inbound webhook before its body is read (R6-07): at most 120 posts an
+        hour to one address, and HTTP Basic with INBOUND_WEBHOOK_PASSWORD when that is set (put
+        it in the address given to the email service: https://any:PASSWORD@host/...).
+        Answers and returns True when refused."""
+        if not _within_limit(f"inbound:{token}", INBOUND_PER_HOUR, 3600):
+            self._json(429, {"error": "Too many messages to this address this hour. Try again later."})
+            return True
+        password = os.environ.get("INBOUND_WEBHOOK_PASSWORD", "")
+        if password:
+            given = ""
+            auth_header = self.headers.get("Authorization") or ""
+            if auth_header[:6].lower() == "basic ":
+                try:
+                    given = base64.b64decode(auth_header[6:].strip(), validate=True).decode("utf-8").split(":", 1)[-1]
+                except (ValueError, UnicodeDecodeError):
+                    given = ""
+            if not hmac.compare_digest(given.encode(), password.encode()):
+                self._json(401, {"error": "Sign-in required for this address."}, {"WWW-Authenticate": 'Basic realm="Duracash inbound"'})
+                return True
+        return False
 
     def _change(self, company_id: str, fn) -> tuple:
         """Load, change and save one company under the lock; return (status, snapshot)."""
@@ -769,10 +838,13 @@ class Handler(BaseHTTPRequestHandler):
         return {"Set-Cookie": value}
 
     def _client_ip(self) -> str:
-        """The caller's address. Behind Render's proxy it is the last X-Forwarded-For entry,
-        the one the proxy added; earlier entries come from the client and can be made up."""
+        """The caller's address. Each proxy in front adds the address it saw to the end of
+        X-Forwarded-For, so with TRUSTED_PROXY_HOPS proxies (1, Render's, by default) the caller
+        is that many entries from the end; earlier entries come from the client and can be made
+        up. 0 means no proxy: the socket's address, and the header is ignored."""
+        hops = trusted_proxy_hops()
         forwarded = [p.strip() for p in (self.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]
-        return forwarded[-1] if forwarded else self.client_address[0]
+        return forwarded[-hops] if hops and len(forwarded) >= hops else self.client_address[0]
 
     def _session_user(self) -> dict | None:
         user = auth.session_user(self._token())
@@ -795,6 +867,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(exc.code, {"error": str(exc), "request_id": self._rid})
         except domain.GateError as exc:
             self._json(409, _gate(exc))
+        except CompanyMissing:
+            self._json(503, {"error": CompanyMissing.MESSAGE, "request_id": self._rid})
         except Exception:
             self._crash()
 
@@ -806,6 +880,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(exc.code, {"error": str(exc), "request_id": self._rid})
         except domain.GateError as exc:
             self._json(409, _gate(exc))
+        except CompanyMissing:
+            self._json(503, {"error": CompanyMissing.MESSAGE, "request_id": self._rid})
         except Exception:
             self._crash()
 
@@ -891,7 +967,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": NOT_UNDERSTOOD, "request_id": self._rid})
             return
         if end_trial:
-            threading.Thread(target=self._end_stripe_trial, args=(end_trial,), daemon=True).start()
+            threading.Thread(target=self._end_stripe_trial, args=(ctx.company_id, end_trial), daemon=True).start()
         # Approved emails are delivered after the change is saved and the lock is released;
         # the reply is written after that too, so a slow client can't stall other companies.
         self._json(200, (self._deliver_queued(ctx.company_id, ctx.user) if queued else None) or payload)
@@ -915,7 +991,8 @@ class Handler(BaseHTTPRequestHandler):
     # ----- GET handlers -----
 
     def _g_healthz(self, m) -> None:
-        # For an uptime monitor: no sign-in, no secrets, 503 when data can't be written.
+        # For an uptime monitor: no sign-in, no secrets, 503 when data can't be written or the
+        # disk is nearly full (R6-06: a full disk fails every save and every backup).
         writable = True
         try:
             probe = storage.DATA_DIR / f".health-{secrets.token_hex(4)}"
@@ -924,9 +1001,16 @@ class Handler(BaseHTTPRequestHandler):
             probe.unlink()
         except OSError:
             writable = False
-        self._json(200 if writable else 503, {
-            "ok": writable,
-            "storage": "ok" if writable else "not writable",
+        try:
+            free_mb = shutil.disk_usage(storage.DATA_DIR).free // (1024 * 1024)
+        except OSError:
+            free_mb = None
+        roomy = free_mb is None or free_mb >= DISK_FREE_MIN_MB
+        ok = writable and roomy
+        self._json(200 if ok else 503, {
+            "ok": ok,
+            "storage": "ok" if ok else "not writable" if not writable else f"under {DISK_FREE_MIN_MB} MB free",
+            "disk_free_mb": free_mb,
             "email": "configured" if mailer.configured() else "not set up",
             "last_backup": backup.newest_time(),
             "offsite_backup": offsite.last_upload() if offsite.configured() else "not set up",
@@ -970,6 +1054,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         name = re.sub(r"[^A-Za-z0-9._-]", "-", invoice["number"]) + "-quickbooks.csv"
         self._send(200, body.encode("utf-8"), "text/csv; charset=utf-8", {"Content-Disposition": f'attachment; filename="{name}"'})
+
+    def _g_payapp_page(self, m, user) -> None:
+        self._link_page(user, m.group(1), m.group(2), "invoices", "payer_token", "p")
+
+    def _g_co_page(self, m, user) -> None:
+        self._link_page(user, m.group(1), m.group(2), "change_orders", "sign_token", "s")
+
+    def _link_page(self, user: dict, job_id: str, item_id: str, key: str, secret: str, prefix: str) -> None:
+        """Open a pay app's customer page or a change order's signing page. Their secret
+        addresses are never in what the app loads (R6-05); this sends a signed-in person on."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
+        item = next((i for i in (job or {}).get(key, []) if i["id"] == item_id), None)
+        if not item or not item.get(secret):
+            self._json(404, {"error": "There is no page for that yet. It is made when the email goes out."})
+            return
+        self._send(303, b"", "text/plain", {"Location": f"/{prefix}/{user['company_id']}.{item[secret]}"})
 
     def _g_me(self, m) -> None:
         user = self._session_user()
@@ -1034,12 +1136,17 @@ class Handler(BaseHTTPRequestHandler):
 
     # ----- Billing with Stripe (billing.py) -----
 
-    def _end_stripe_trial(self, subscription_id: str) -> None:
+    def _end_stripe_trial(self, company_id: str, subscription_id: str) -> None:
         try:
             billing.end_trial(subscription_id)
         except billing.BillingError as exc:
-            log_json("warn", msg="ending the Stripe trial failed", reason=str(exc)[:200])
-            alerts.notify("billing:trial-end", f"Couldn't end a Stripe trial ({subscription_id}): {exc}")
+            # Unmark it so the company's next change asks Stripe again, up to TRIAL_END_TRIES (R6-06).
+            tries = []
+            self._change(company_id, lambda st: tries.append(billing.trial_end_failed(st)))
+            final = bool(tries) and tries[0] >= billing.TRIAL_END_TRIES
+            log_json("warn", msg="ending the Stripe trial failed", reason=str(exc)[:200], tries=tries[0] if tries else None)
+            alerts.notify("billing:trial-end", f"Couldn't end a Stripe trial ({subscription_id}): {exc}. "
+                          + ("Gave up after that many tries; end it in Stripe by hand." if final else "It is tried again on the company's next change."))
 
     def _g_billing(self, m, user) -> None:
         with company_lock(user["company_id"]):
@@ -1165,10 +1272,15 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, domain.timeline_page(state, job_id, offset, limit))
 
     def _g_export(self, m, user) -> None:
+        # Everything the company holds, so owners only (R6-05); without the customer-page and
+        # signing-link secrets, which would open those pages to whoever holds the file.
+        if user["role"] != "owner":
+            self._json(403, {"error": "Only an owner can export the company's data."})
+            return
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
-        self._send(200, json.dumps(state, indent=2).encode(), "application/json",
+        self._send(200, json.dumps(domain.without_link_secrets(state), indent=2).encode(), "application/json",
                    {"Content-Disposition": f'attachment; filename="duracash-export-{stamp}.json"'})
 
     def _g_file(self, m, user) -> None:
@@ -1193,12 +1305,17 @@ class Handler(BaseHTTPRequestHandler):
         tokens = importer.company_tokens(user["company_id"])
         base = self._base_url()
         template = os.environ.get("INBOUND_EMAIL_ADDRESS_TEMPLATE", "")
+        # The web addresses the email service and Twilio post to are set up by an owner, and
+        # anyone holding one can fill the Inbox: members get the forwarding address and the
+        # number, not these (R6-07).
+        owner = user["role"] == "owner"
         self._json(200, {
-            "email_webhook": f"{base}/api/inbound/email/{tokens['email']}",
+            "email_webhook": f"{base}/api/inbound/email/{tokens['email']}" if owner else "",
             "email_address": template.replace("{token}", tokens["email"]) if "{token}" in template else "",
-            "sms_webhook": f"{base}/api/inbound/sms/{tokens['sms']}",
+            "sms_webhook": f"{base}/api/inbound/sms/{tokens['sms']}" if owner else "",
             "sms_number": os.environ.get("TWILIO_NUMBER", ""),
             "sms_signature_check": bool(os.environ.get("TWILIO_AUTH_TOKEN")),
+            "email_check": "password" if os.environ.get("INBOUND_WEBHOOK_PASSWORD") else "signature" if os.environ.get("INBOUND_SIGNING_KEY") else "",
             "calendar_url": f"{base}/api/calendar/{tokens['calendar']}.ics",
             "max_file_mb": importer.MAX_FILE_BYTES // (1024 * 1024),
             "mail_configured": mailer.configured(),
@@ -1282,6 +1399,11 @@ class Handler(BaseHTTPRequestHandler):
         if body.get("accept_terms") is not True:
             self._json(400, {"error": "To create an account, accept the Terms of Service and the Privacy Policy."})
             return
+        # Five new accounts an hour from one network (R6-05). Someone on this machine isn't counted.
+        ip = self._client_ip()
+        if not _local(ip) and not _within_limit(f"signup:{ip}", 5, 3600):
+            self._json(429, {"error": "Too many new accounts from this network. Try again in an hour."})
+            return
         try:
             company_id = "co-" + secrets.token_hex(4)
             user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
@@ -1343,6 +1465,12 @@ class Handler(BaseHTTPRequestHandler):
             user = auth.reset_password(body.get("token"), body.get("password"))
         except auth.AuthError as exc:
             self._json(400, {"error": str(exc)})
+            return
+        if user.get("two_step"):
+            # The emailed link proves the inbox, not the phone: two-step accounts still sign in
+            # with the code (R6-05).
+            self._json(200, {"ok": True, "needs_code": True, "email": user["email"],
+                             "message": "Password changed. Sign in with your new password and your authenticator code."})
             return
         self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
 
@@ -1538,7 +1666,9 @@ class Handler(BaseHTTPRequestHandler):
         step = m.group(1)
         try:
             if step == "begin":
-                self._json(200, auth.totp_begin(ctx.user["id"]))
+                setup = auth.totp_begin(ctx.user["id"])
+                # A QR code of the same key, for the phone's authenticator app to scan (R6-05).
+                self._json(200, {**setup, "qr": qr.data_uri(setup["uri"])})
             elif step == "enable":
                 codes = auth.totp_enable(ctx.user["id"], _text(ctx.body, "code", limit=40))
                 self._json(200, {"ok": True, "recovery_codes": codes,
@@ -1712,7 +1842,7 @@ class Handler(BaseHTTPRequestHandler):
             with company_lock(company_id):
                 try:
                     state = load_company(company_id)
-                except (OSError, ValueError):
+                except (OSError, ValueError, CompanyMissing):
                     continue
             members = [u for u in users if u["company_id"] == company_id]
             if not members:
@@ -1979,7 +2109,13 @@ class Handler(BaseHTTPRequestHandler):
         if not company_id:
             self._json(404, {"error": "Not found"})
             return
+        if self._inbound_refused(token):
+            return
         data = self._read_raw(MAX_INBOUND_BYTES)
+        key = os.environ.get("INBOUND_SIGNING_KEY", "")
+        if key and not _signed_by_provider(data, self.headers.get("Content-Type") or "", key):
+            self._json(401, {"error": "Signature check failed."})
+            return
         if demo_locked(company_id):
             self._json(200, {"ok": True, "ignored": "the demo is read-only"})
             return
@@ -2213,6 +2349,9 @@ class Handler(BaseHTTPRequestHandler):
         if not company_id:
             self._json(404, {"error": "Not found"})
             return
+        if not _within_limit(f"inbound:{token}", INBOUND_PER_HOUR, 3600):
+            self._json(429, {"error": "Too many messages to this address this hour. Try again later."})
+            return
         data = self._read_raw(MAX_BODY_BYTES)
         if demo_locked(company_id):
             self._json(200, {"ok": True, "ignored": "the demo is read-only"})
@@ -2268,7 +2407,10 @@ class Handler(BaseHTTPRequestHandler):
         name = state.get("company", {}).get("name", "New company")
         if _text(ctx.body, "confirm").strip() != name:
             raise domain.GateError("Reset not done. Type your company name exactly to confirm.",
-                                   ["Reset deletes every job, payer and record in this company."])
+                                   ["Reset deletes every job, customer and record in this company."])
+        # As Delete asks for it: a session left open on a shared computer can't wipe the company (R6-05).
+        if not auth.check_password(ctx.user["id"], ctx.body.get("password")):
+            raise domain.GateError("Reset not done. Your password is wrong.", fields={"password": "Enter your password to confirm."})
         if company_exists(company_id):
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             storage.write_json(COMPANIES / "snapshots" / f"{company_id}-before-reset-{stamp}.json", state)
@@ -2380,6 +2522,8 @@ ROUTES = [
     Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.pdf", "_g_payapp_pdf", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.csv", "_g_payapp_csv", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)/page", "_g_payapp_page", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/co/([^/]+)/page", "_g_co_page", "user"),
     Route("GET", r"/api/helper/review", "_g_helper_review", "user"),
     Route("GET", r"/api/admin/companies", "_g_admin_companies", "user"),
     # signing in, and links people outside the company use
@@ -2587,6 +2731,43 @@ def _parse_share(data: bytes, raw_ctype: str) -> dict:
     return out
 
 
+def _provider_fields(data: bytes, raw_ctype: str) -> dict:
+    """The plain fields of a form or JSON post (not the attachments), lower-cased names."""
+    ctype = raw_ctype.lower()
+    if "application/json" in ctype:
+        try:
+            raw = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        # Mailgun's JSON webhooks put the three in a "signature" object.
+        nested = raw.get("signature") if isinstance(raw.get("signature"), dict) else {}
+        return {str(k).lower(): v for k, v in {**raw, **nested}.items()}
+    if "application/x-www-form-urlencoded" in ctype:
+        return {k.lower(): v for k, v in parse_qsl(data.decode("utf-8", "replace"), keep_blank_values=True)}
+    if "multipart/form-data" in ctype:
+        import email as _email
+        import email.policy as _policy
+        msg = _email.message_from_bytes(b"Content-Type: " + raw_ctype.encode("latin-1", "replace") + b"\r\n\r\n" + data, policy=_policy.default)
+        return {(part.get_param("name", header="content-disposition") or "").lower(): (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
+                for part in msg.iter_parts() if not part.get_filename()}
+    return {}
+
+
+def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None = None) -> bool:
+    """Mailgun's signature (R6-07): `signature` is the hex HMAC-SHA256 of `timestamp` + `token`
+    under the signing key, and the timestamp is within 15 minutes."""
+    fields = _provider_fields(data, raw_ctype)
+    stamp, nonce, signature = (str(fields.get(k) or "") for k in ("timestamp", "token", "signature"))
+    try:
+        fresh = abs((now or time.time()) - int(stamp)) <= 15 * 60
+    except ValueError:
+        return False
+    expected = hmac.new(key.encode(), (stamp + nonce).encode(), hashlib.sha256).hexdigest()
+    return fresh and bool(nonce) and hmac.compare_digest(expected, signature)
+
+
 def _parse_inbound_email(data: bytes, raw_ctype: str) -> dict:
     """Accept raw MIME, a JSON payload, or a multipart form post from an email provider.
 
@@ -2638,16 +2819,23 @@ def _parse_inbound_email(data: bytes, raw_ctype: str) -> dict:
                 attachments.append({"filename": filename, "data": payload})
             else:
                 fields[name.lower()] = payload.decode("utf-8", "replace")
-        if fields.get("email"):
-            parsed = importer.parse_email(fields["email"].encode("utf-8"))
-            parsed["attachments"] += attachments
-            return parsed
-        text = fields.get("text") or fields.get("body-plain") or fields.get("stripped-text") or ""
-        if not text and fields.get("html"):
-            text = importer.html_to_text(fields["html"])
-        return {"from": fields.get("from") or fields.get("sender") or "", "subject": fields.get("subject", ""),
-                "text": text, "sent_at": "", "attachments": attachments}
+        return _email_from_fields(fields, attachments)
+    if "application/x-www-form-urlencoded" in ctype:
+        # Mailgun posts a message without attachments as a plain form.
+        return _email_from_fields(_provider_fields(data, raw_ctype), [])
     return importer.parse_email(data)
+
+
+def _email_from_fields(fields: dict, attachments: list) -> dict:
+    if fields.get("email"):
+        parsed = importer.parse_email(fields["email"].encode("utf-8"))
+        parsed["attachments"] += attachments
+        return parsed
+    text = fields.get("text") or fields.get("body-plain") or fields.get("stripped-text") or ""
+    if not text and fields.get("html"):
+        text = importer.html_to_text(fields["html"])
+    return {"from": fields.get("from") or fields.get("sender") or "", "subject": fields.get("subject", ""),
+            "text": text, "sent_at": "", "attachments": attachments}
 
 
 def main() -> None:
@@ -2666,7 +2854,7 @@ def main() -> None:
     if demo_enabled():
         print(f"Demo login: {auth.DEMO_EMAIL} / {auth.DEMO_PASSWORD}")
     backup.start_scheduler(
-        {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK},
+        {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK, "deleted": _DELETED_LOCK, "qbo": qbo.LOCK},
         log=lambda msg: log_json("info", msg=msg),
     )
     start_monthly_jobs()

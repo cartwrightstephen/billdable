@@ -1134,9 +1134,39 @@ def record_retainage_payment(
     return job
 
 
+# The secret part of each customer page (/p/) and signing page (/s/) address. They stay on the
+# server (R6-05): what the app is sent, and the export, say only that the page exists, and
+# GET /api/jobs/<id>/<payapp|co>/<id>/page opens it for someone signed in.
+LINK_SECRETS = (("invoices", "payer_token", "customer_page"), ("change_orders", "sign_token", "signing_page"))
+
+
+def hide_link_secrets(job: dict[str, Any]) -> dict[str, Any]:
+    """A copy of a job (changed in place) without the page secrets, with a flag where one was."""
+    for key, secret, flag in LINK_SECRETS:
+        for item in job.get(key, []):
+            if item.pop(secret, None):
+                item[flag] = True
+    return job
+
+
+LINK_IN_TEXT = re.compile(r"/([ps])/[a-z0-9-]+\.[A-Za-z0-9_-]{20,64}")
+
+
+def without_link_secrets(state: dict[str, Any]) -> dict[str, Any]:
+    """The whole company, as the export writes it: the emails' copies of the links are cut too.
+    (The Outbox in the app keeps each email as it went out.)"""
+    out = deepcopy(state)
+    for job in out.get("jobs", []):
+        hide_link_secrets(job)
+    for email in out.get("email_log", []):
+        if isinstance(email.get("body"), str):
+            email["body"] = LINK_IN_TEXT.sub(r"/\1/[link]", email["body"])
+    return out
+
+
 def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     """One job as the app shows it: the stored job plus money, blockers and labels."""
-    out = deepcopy(job)
+    out = hide_link_secrets(deepcopy(job))
     out["money"] = job_money(job)
     out["blocker_items"] = blocker_items(job)
     out["blockers"] = [b["text"] for b in out["blocker_items"]]
@@ -1196,7 +1226,7 @@ SUMMARY_DROPS = ("blockers", "close_blockers", "close_blocker_items", "closeout_
 
 def job_summary(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     """A closed job for lists: money, pay apps, payments and change orders, without the history."""
-    out = {k: deepcopy(v) for k, v in job.items() if k not in SUMMARY_DROPS}
+    out = hide_link_secrets({k: deepcopy(v) for k, v in job.items() if k not in SUMMARY_DROPS})
     out["money"] = job_money(job)
     out["status_label"] = status_label(job)
     out["blockers"], out["close_blockers"], out["close_blocker_items"] = [], [], []

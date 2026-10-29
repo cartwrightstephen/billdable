@@ -250,6 +250,7 @@ tr.clickable:hover { background: var(--copper-soft); }
 .glossary dt { font-weight: 600; margin-top: 10px; }
 .glossary dd { margin: 2px 0 0; color: var(--muted); }
 .steps { display: grid; gap: 6px; padding-left: 20px; }
+.qr-code { display: block; width: 180px; height: 180px; margin: 8px 0; border-radius: 6px; background: #fff; }
 details.card > summary { cursor: pointer; }
 /* In the nav, keep the (i) at the far right so a click on the label always opens the page. */
 .nav button { display: flex; align-items: center; }

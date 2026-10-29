@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import auth
 import backup
+import domain
 import helper
 import importer
 import mailer
@@ -390,9 +392,16 @@ class AccountHttpTests(ServerCase):
     def test_health_check(self):
         res, data = self.request("GET", "/healthz")
         self.assertEqual(res.status, 200)
-        self.assertEqual(set(data), {"ok", "storage", "email", "last_backup", "offsite_backup", "env"})
+        self.assertEqual(set(data), {"ok", "storage", "disk_free_mb", "email", "last_backup", "offsite_backup", "env"})
         self.assertTrue(data["ok"])
+        self.assertIsInstance(data["disk_free_mb"], int)
         self.assertTrue(res.getheader("X-Request-Id"))
+        # A nearly full disk fails every save and backup: the monitor hears it first (R6-06).
+        nearly_full = type("Usage", (), {"free": 150 * 1024 * 1024})()
+        with mock.patch.object(server.shutil, "disk_usage", lambda path: nearly_full):
+            res, data = self.request("GET", "/healthz")
+        self.assertEqual((res.status, data["ok"], data["disk_free_mb"]), (503, False, 150))
+        self.assertEqual(data["storage"], "under 200 MB free")
 
     def test_crash_gives_a_request_id(self):
         cookie, _ = self.signup("crash@pine.example")
@@ -632,16 +641,30 @@ class ReviewFourTests(ServerCase):
         self.request("POST", "/api/helper/ask", {"q": "how do I add a job"}, cookie=cookie)
         mailer.record_sent(company_id, 1)
         self.request("POST", "/api/account/delete", {"password": PASSWORD, "confirm": "L2 Co"}, cookie=cookie)
-        server.save_company(company_id, server.empty_state("ghost"))  # a request that was already running
+        with self.assertRaises(domain.GateError):  # a request that was already running is refused (R6-06)
+            server.save_company(company_id, server.empty_state("ghost"))
         self.assertFalse(server.company_exists(company_id))
         log = json.loads(helper.LOG_PATH.read_text()) if helper.LOG_PATH.exists() else []
         self.assertFalse(any(e.get("company_id") == company_id for e in log))
         self.assertEqual(mailer.sent_in_last_day(company_id), 0)
 
+    def test_missing_company_is_an_outage_not_a_blank(self):  # R6-06
+        cookie, data = self.signup("lost@team.example", "Lost Co")
+        company_id = data["user"]["company_id"]
+        server.company_store().delete(company_id)  # lost, not deleted: a deploy without the disk
+        res, body = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual(res.status, 503)
+        self.assertEqual(body["error"], "Your company's data isn't available right now. Nothing was changed; we've been alerted.")
+        job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example", "contract_cents": 100_000}
+        res, body = self.request("POST", "/api/jobs", job, cookie=cookie)
+        self.assertEqual(res.status, 503)
+        self.assertEqual(self.request("GET", "/api/auth/me", cookie=cookie)[0].status, 503)
+        self.assertFalse(server.company_exists(company_id), "no blank company was saved over it")
+
     def test_reset_keeps_the_trial(self):  # L3
         cookie, _ = self.signup("l3@team.example", "L3 Co")
         _, before = self.request("GET", "/api/state", cookie=cookie)
-        _, after = self.request("POST", "/api/reset", {"confirm": "L3 Co"}, cookie=cookie)
+        _, after = self.request("POST", "/api/reset", {"confirm": "L3 Co", "password": PASSWORD}, cookie=cookie)
         self.assertEqual(after["trial"]["started_at"], before["trial"]["started_at"])
 
     def test_an_earlier_reset_link_still_works(self):  # L4
