@@ -187,3 +187,66 @@ class RealExportTests(unittest.TestCase):  # R5-10: real exports, once someone d
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BlankNumberTests(unittest.TestCase):
+    """A payment with no Num (an ACH, say) imported twice is recorded once."""
+
+    TEXT = 'Date,Transaction Type,Num,Customer,Memo,Amount\n10/09/2026,Payment,,Northline GC,PA-TRN-01 part,"1,000.00"\n'
+
+    def record(self, state):
+        rows = qbo_csv.propose(state, qbo_csv.parse(self.TEXT)["rows"])
+        for r in rows:
+            if r["status"] == "match":
+                domain.match_payment(state, r["job_id"], r["amount_cents"], r["ref"], "owner", invoice_id=r["invoice_id"], received_on=r["date"])
+        return rows
+
+    def test_importing_the_same_file_twice_records_it_once(self):
+        state = seed_state()
+        self.assertEqual(self.record(state)[0]["status"], "match")
+        again = self.record(state)
+        self.assertEqual(again[0]["status"], "already recorded")
+        self.assertIn("Northline GC", again[0]["reason"])
+        trn = next(j for j in state["jobs"] if j["id"] == "job-turner")
+        self.assertEqual([p["amount_cents"] for p in trn["payments"]], [100_000])
+
+    def test_another_day_or_amount_is_a_new_payment(self):
+        state = seed_state()
+        self.record(state)
+        other = qbo_csv.propose(state, qbo_csv.parse(self.TEXT.replace("10/09/2026", "10/10/2026"))["rows"])
+        self.assertEqual(other[0]["status"], "match")
+        other = qbo_csv.propose(state, qbo_csv.parse(self.TEXT.replace('"1,000.00"', '"1,000.01"'))["rows"])
+        self.assertEqual(other[0]["status"], "match")
+
+
+class CustomerNameTests(unittest.TestCase):
+    """A customer is the same one when its whole words are in the other name, not any run of letters."""
+
+    def test_whole_words_only(self):
+        self.assertFalse(qbo_csv._same("grace roofing", "ace roofing"))
+        self.assertFalse(qbo_csv._same("slab co", "ab"))
+        self.assertTrue(qbo_csv._same("northline gc inc", "northline gc"))
+        self.assertTrue(qbo_csv._same("northline gc", "northline gc"))
+
+    def test_another_customer_with_the_same_check_number_is_not_already_recorded(self):
+        state = seed_state()
+        state["payers"].append({"id": "payer-ace", "name": "Ace Roofing"})
+        trn = next(j for j in state["jobs"] if j["id"] == "job-turner")
+        trn["payer_id"] = "payer-ace"
+        domain.match_payment(state, trn["id"], 100, "1001", "owner")
+        owed = 11_970_000 - 100
+        rows = qbo_csv.propose(state, [{"line": 2, "date": None, "ref": "1001", "customer": "Grace Roofing", "amount_cents": 420_000, "memo": ""},
+                                       {"line": 3, "date": None, "ref": "77", "customer": "Grace Roofing", "amount_cents": owed, "memo": ""}])
+        self.assertNotEqual(rows[0]["status"], "already recorded")
+        self.assertEqual(rows[1]["status"], "no match", "Ace's pay app isn't proposed for Grace's payment")
+
+    def test_reconcile_pairs_by_whole_words(self):
+        import qbo
+        state = seed_state()
+        brk = next(j for j in state["jobs"] if j["id"] == "job-brook")
+        inv = brk["invoices"][0]
+        inv["number"] = "PA-X-01"   # no number in common: customer and amount decide
+        state["payers"] = [p if p["id"] != brk["payer_id"] else {**p, "name": "Ace Roofing"} for p in state["payers"]]
+        qb = [{"Id": "1", "DocNumber": "G-9", "TotalAmt": inv["amount_cents"] / 100, "Balance": 0, "CustomerRef": {"name": "Grace Roofing"}}]
+        rows = qbo.reconcile(state, qb)
+        self.assertIn(("PA-X-01", "missing"), {(r["number"], r["kind"]) for r in rows})

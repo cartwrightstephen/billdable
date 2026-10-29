@@ -43,6 +43,7 @@ PAYMENTS = [
 class FakeIntuit(BaseHTTPRequestHandler):
     tokens = {"access": None, "refresh": None, "n": 0}
     queries = []
+    revoked = []
 
     def log_message(self, *a):
         pass
@@ -62,9 +63,11 @@ class FakeIntuit(BaseHTTPRequestHandler):
         return {"access_token": t["access"], "refresh_token": t["refresh"], "expires_in": 3600, "x_refresh_token_expires_in": 8726400}
 
     def do_POST(self):
-        form = parse_qs(self.rfile.read(int(self.headers["Content-Length"])).decode())
+        raw = self.rfile.read(int(self.headers["Content-Length"])).decode()
         if self.path == "/revoke":
+            FakeIntuit.revoked.append(json.loads(raw).get("token"))
             return self._reply(200, {})
+        form = parse_qs(raw)
         basic = "Basic " + base64.b64encode(f"{CLIENT[0]}:{CLIENT[1]}".encode()).decode()
         if self.headers.get("Authorization") != basic:
             return self._reply(401, {"error": "invalid_client"})
@@ -185,9 +188,9 @@ class QboTests(unittest.TestCase):
     def test_connect_read_match_once_refresh_reconcile_disconnect(self):
         cookie, cid = self.company("qbo@example.com")
         state = self.connect(cookie)
-        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}")
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=cookie)
         self.assertEqual((res.status, res.getheader("Location")), (303, "/money/payments"))
-        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}")
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=cookie)
         self.assertEqual(res.status, 400, "a state works once")
         res, st = self.request("GET", "/api/qbo/status", cookie=cookie)
         self.assertTrue(st["connected"])
@@ -239,6 +242,49 @@ class QboTests(unittest.TestCase):
         res, data = self.request("POST", "/api/qbo/payments", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
 
+    def test_the_callback_finishes_only_for_the_owner_who_pressed_connect(self):
+        # An attacker's Connect link, approved by someone else, must not link their QuickBooks to the attacker's company.
+        attacker, attacker_cid = self.company("qbo-attacker@example.com")
+        victim, _ = self.company("qbo-victim@example.com")
+        state = self.connect(attacker)
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=victim)
+        self.assertEqual(res.status, 400, page)
+        self.assertIn("Sign in", page)
+        self.assertIsNone(qbo.connection(attacker_cid))
+        state = self.connect(attacker)
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}")
+        self.assertEqual(res.status, 400, "no session")
+        self.assertIsNone(qbo.connection(attacker_cid))
+        state = self.connect(attacker)
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=attacker)
+        self.assertEqual(res.status, 303, "the owner's own browser finishes it")
+        self.assertIsNotNone(qbo.connection(attacker_cid))
+
+    def test_disconnect_during_a_token_refresh_stays_disconnected(self):
+        cookie, cid = self.company("qbo-refresh@example.com")
+        state = self.connect(cookie)
+        res, _ = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=cookie)
+        self.assertEqual(res.status, 303)
+        conns = json.loads((storage.DATA_DIR / "qbo_connections.json").read_text())
+        conns[cid]["access_expires_at"] = "2000-01-01T00:00:00+00:00"
+        storage.write_json(storage.DATA_DIR / "qbo_connections.json", conns)
+        real, pressed = qbo._token_request, []
+
+        def slow_refresh(form):
+            # The owner presses Disconnect while Intuit is answering the refresh.
+            t = threading.Thread(target=qbo.disconnect, args=(cid,))
+            t.start()
+            pressed.append(t)
+            t.join(0.3)
+            return real(form)
+
+        with mock.patch.object(qbo, "_token_request", side_effect=slow_refresh):
+            qbo._access_token(cid)
+        pressed[0].join(5)
+        self.assertIsNone(qbo.connection(cid), "Disconnect wins")
+        self.assertFalse(qbo.status(cid)["connected"])
+        self.assertEqual(FakeIntuit.revoked[-1], FakeIntuit.tokens["refresh"], "the newest refresh token is the one revoked")
+
     def test_refusals(self):
         cookie, cid = self.company("qbo2@example.com")
         res, page = self.request("GET", "/api/qbo/callback?code=good-code&state=made-up&realmId=1")
@@ -248,13 +294,43 @@ class QboTests(unittest.TestCase):
         res, page = self.request("GET", f"/api/qbo/callback?error=access_denied&state={state}")
         self.assertIn("You cancelled it", page)
         state = self.connect(cookie)
-        res, page = self.request("GET", f"/api/qbo/callback?code=bad-code&state={state}&realmId={REALM}")
+        res, page = self.request("GET", f"/api/qbo/callback?code=bad-code&state={state}&realmId={REALM}", cookie=cookie)
         self.assertEqual(res.status, 400, "Intuit refused the code")
         with mock.patch.dict("os.environ", {"QBO_CLIENT_ID": ""}):
             res, data = self.request("POST", "/api/qbo/connect", {}, cookie=cookie)
             self.assertEqual(res.status, 409)
             res, st = self.request("GET", "/api/qbo/status", cookie=cookie)
             self.assertFalse(st["configured"])
+
+
+class SplitPaymentTests(unittest.TestCase):
+    """One QuickBooks payment applied to two pay apps: recorded in two parts, up to its amount."""
+
+    ROW = {"line": None, "date": "2026-10-09", "ref": "4471", "customer": "Northline GC", "amount_cents": 12_470_000,
+           "memo": "PA-TRN-01", "qbo_id": "123", "qbo_total_cents": 12_470_000}
+
+    def test_rest_of_a_split_payment_can_be_recorded_and_reading_again_shows_what_is_left(self):
+        state = seed_state()
+        first = qbo.propose(state, [dict(self.ROW)])[0]
+        self.assertEqual((first["status"], first["split"]["owed_cents"]), ("too much", 11_970_000))
+        domain.match_payment(state, "job-turner", 11_970_000, "4471", qbo_payment_id="123", qbo_total_cents=12_470_000)
+        again = qbo.propose(state, [dict(self.ROW)])[0]
+        self.assertNotEqual(again["status"], "already recorded", "only part of the payment is in Duracash")
+        self.assertEqual((again["amount_cents"], again["ref"], again["qbo_id"]), (500_000, "4471 (rest)", "123"))
+        domain.match_payment(state, "job-brook", 500_000, "4471 (rest)", qbo_payment_id="123", qbo_total_cents=12_470_000)
+        self.assertEqual(qbo.propose(state, [dict(self.ROW)])[0]["status"], "already recorded")
+        with self.assertRaises(domain.GateError):
+            domain.match_payment(state, "job-brook", 100, "4471 (more)", qbo_payment_id="123", qbo_total_cents=12_470_000)
+
+    def test_without_the_total_one_payment_is_recorded_once(self):
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 100_000, "4471", qbo_payment_id="123")
+        with self.assertRaises(domain.GateError):
+            domain.match_payment(state, "job-brook", 100_000, "4471 (rest)", qbo_payment_id="123")
+
+    def test_rows_carry_the_payment_total(self):
+        rows = qbo.payment_rows(PAYMENTS, INVOICES)
+        self.assertEqual([r["qbo_total_cents"] for r in rows], [r["amount_cents"] for r in rows])
 
 
 REAL = Path(__file__).resolve().parents[1] / "testdata" / "quickbooks"

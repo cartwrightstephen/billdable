@@ -96,6 +96,22 @@ class BillingUnitTests(unittest.TestCase):
         billing.apply(state, event("customer.subscription.deleted", {"id": "sub_1", "status": "active"}, 300, "e3"))
         self.assertEqual(state["company"]["billing"]["status"], "canceled")
 
+    def test_same_second_events_never_go_back_to_incomplete(self):
+        # Stripe stamps created and updated in the same second and may deliver updated first.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_1", "customer": "cus_1", "status": "active"}, 300, "e2"))
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_1", "customer": "cus_1", "status": "incomplete"}, 300, "e1"))
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+        # A cancellation in the same second as an update stays cancelled whichever arrives last.
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_1", "status": "active"}, 400, "e4"))
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_1", "status": "active"}, 400, "e3"))
+        self.assertEqual(state["company"]["billing"]["status"], "canceled")
+        # In order, the same second still moves forward.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_1", "status": "incomplete"}, 500, "f1"))
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_1", "status": "active"}, 500, "f2"))
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+
     def test_standing_holds_only_when_enforced_and_never_for_past_due(self):
         now = datetime.now(timezone.utc)
         env = {"STRIPE_SECRET_KEY": "sk_test", "STRIPE_PRICE_ID": "price_1", "BILLING_ENFORCE": "1"}

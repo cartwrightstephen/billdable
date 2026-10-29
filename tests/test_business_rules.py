@@ -154,6 +154,69 @@ class MonthlyJobsTests(unittest.TestCase):
         self.assertIn("2026-10", did[0])
 
 
+class FailingCompanySite:
+    """A site whose company b can't be read (a schema newer than the code, after a rollback)."""
+
+    def __init__(self):
+        self.sent, self.logged = [], []
+
+    def company_ids(self):
+        return ["a", "b", "c"]
+
+    def read(self, company_id):
+        if company_id == "b":
+            raise ValueError("Company file is schema 99; this code only knows up to 4. Deploy the newer code.")
+        return seed_state()
+
+    def deleted(self):
+        return set()
+
+    def send(self, to, subject, body, company_id):
+        self.sent.append(company_id)
+        return "sent"
+
+    def app_url(self):
+        return "https://duracash.example"
+
+    def log(self, level, **fields):
+        self.logged.append((level, fields.get("msg", "")))
+
+
+class OneFailingCompanyTests(unittest.TestCase):
+    """One company that fails to load doesn't stop the others or make the hourly loop repeat emails."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patches = [mock.patch.object(storage, "DATA_DIR", Path(self.tmp.name)),
+                        mock.patch.object(monthly.mailer, "configured", return_value=True),
+                        mock.patch.object(monthly.auth, "owner_emails", side_effect=lambda cid: [f"owner@{cid}.example"]),
+                        mock.patch.object(monthly.domain, "daily_digest", return_value=("Due today", "body")),
+                        mock.patch.object(monthly.metrics, "month_summary", return_value=("Summary", "body")),
+                        mock.patch.object(monthly.backup, "backups", return_value=[]),
+                        mock.patch.object(monthly.alerts, "notify")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_daily_email_once_per_company_and_the_rest_still_get_theirs(self):
+        site = FailingCompanySite()
+        for hour in (12, 13, 14):
+            monthly.run_once(site, datetime(2026, 11, 4, hour, tzinfo=UTC))
+        self.assertEqual(site.sent, ["a", "c"])
+        self.assertTrue(any(level == "error" and "b" in msg for level, msg in site.logged), site.logged)
+
+    def test_monthly_summary_once_per_company(self):
+        site = FailingCompanySite()
+        with mock.patch.dict("os.environ", {"MONTHLY_SUMMARY_EMAILS": "1"}), mock.patch.object(monthly, "send_daily_digests", return_value=[]):
+            for hour in (9, 10, 11):
+                monthly.run_once(site, datetime(2026, 11, 2, hour, tzinfo=UTC))
+        self.assertEqual(site.sent, ["a", "c"])
+
+
 class PartnerCommandTests(unittest.TestCase):
     def test_on_and_off(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(server, "COMPANIES", Path(tmp) / "companies"):

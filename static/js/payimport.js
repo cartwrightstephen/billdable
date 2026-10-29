@@ -20,7 +20,8 @@ export function pickPayApp(row, index) {
 
 // "Record $owed to PA-X": this row becomes what that pay app still owes, and the rest of the payment
 // moves to a new row under it that needs a pay app picked. The rest keeps the reference with
-// "(rest)" after it, since a reference is recorded once per job.
+// "(rest)" after it, since a reference is recorded once per job, and keeps a QuickBooks payment's
+// id and whole amount (qbo_total_cents), so the server records the two lines as parts of it.
 export function splitTooMuch(rows, n) {
   const row = rows[n];
   if (!row || row.status !== "too much" || !row.split || !(row.split.owed_cents > 0)) return rows;
@@ -39,7 +40,9 @@ export function splitTooMuch(rows, n) {
 export function picksFrom(rows, raw = (v) => v) {
   return rows.map((row, n) => ({ row, n })).filter(({ row }) => canRecord(row) && row.ticked !== false)
     .map(({ row, n }) => ({ key: n, job_id: row.job_id, invoice_id: row.invoice_id, amount_cents: row.amount_cents,
-      reference: raw(row.ref), date: row.date, qbo_id: row.qbo_id ? raw(row.qbo_id) : undefined }));
+      reference: raw(row.ref), date: row.date, qbo_id: row.qbo_id ? raw(row.qbo_id) : undefined,
+      // The whole QuickBooks payment: both lines of a split keep the id, and the server records up to this.
+      qbo_total_cents: row.qbo_id ? row.qbo_total_cents : undefined }));
 }
 
 // After Record: recorded rows go, a row the server refused stays marked "not recorded" with the

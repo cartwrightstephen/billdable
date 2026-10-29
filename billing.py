@@ -43,6 +43,8 @@ MIN_TRIAL_SECONDS = 2 * 24 * 3600  # Checkout refuses a trial_end less than 48 h
 HOLD_STATUSES = {"unpaid", "canceled", "incomplete_expired"}
 WARN_STATUSES = {"past_due", "incomplete"}
 GOOD_STATUSES = {"trialing", "active"}
+# Where a status comes in a subscription's life, for two events stamped in the same second.
+_STAGE = {"incomplete": 0, "canceled": 2, "incomplete_expired": 2}
 EVENTS_KEPT = 50
 
 
@@ -268,10 +270,13 @@ def apply(state: dict[str, Any], event: dict[str, Any]) -> str:
         b.update(customer_id=obj.get("customer") or b.get("customer_id"), subscription_id=obj.get("subscription") or b.get("subscription_id"))
         return "Subscribed through Stripe Checkout."
     if kind.startswith("customer.subscription."):
-        if created < int(b.get("status_at") or 0):
-            return ""  # Stripe doesn't promise order; an older status never overwrites a newer one
         status = "canceled" if kind == "customer.subscription.deleted" else str(obj.get("status") or "")
         before = b.get("status")
+        at = int(b.get("status_at") or 0)
+        if created < at:
+            return ""  # Stripe doesn't promise order; an older status never overwrites a newer one
+        if created == at and _STAGE.get(status, 1) < _STAGE.get(before or "", 1):
+            return ""  # the same second: a subscription only moves on (incomplete first, cancelled last)
         b.update(customer_id=obj.get("customer") or b.get("customer_id"), subscription_id=obj.get("id") or b.get("subscription_id"),
                  status=status, status_at=created, period_end=_period_end(obj))
         return f"Subscription {before or 'none'} → {status}." if status != before else ""

@@ -35,6 +35,13 @@ def _sent(results: list) -> str:
     return f"{sum(1 for r in results if r == 'sent')} of {len(results)} sent"
 
 
+def _failed(site, company_id: str, what: str, exc: Exception) -> None:
+    """One company's job failed (a file this code can't read, say): logged and alerted, and the
+    other companies still get theirs."""
+    site.log("error", msg=f"{company_id}: {what} failed: {exc.__class__.__name__}: {exc}")
+    alerts.notify(f"monthly-jobs:{company_id}", f"the {what} for {company_id} failed ({exc.__class__.__name__}); see the server log")
+
+
 def send_monthly_summaries(site, year: int, month: int) -> list:
     """Email each company's owners (confirmed addresses) their summary of that month. Returns
     one line per company that has an owner to send to: "company: N of M sent"."""
@@ -42,14 +49,17 @@ def send_monthly_summaries(site, year: int, month: int) -> list:
     for company_id in site.company_ids():
         if company_id == auth.DEMO_COMPANY_ID:
             continue
-        state = site.read(company_id)
-        if state is None:
-            continue  # alerted; the other companies still get theirs
-        to = auth.owner_emails(company_id)
-        if not to:
-            continue
-        subject, body = metrics.month_summary(state, year, month)
-        lines.append(f"{company_id}: {_sent([site.send(addr, subject, body, company_id) for addr in to])}")
+        try:
+            state = site.read(company_id)
+            if state is None:
+                continue  # alerted; the other companies still get theirs
+            to = auth.owner_emails(company_id)
+            if not to:
+                continue
+            subject, body = metrics.month_summary(state, year, month)
+            lines.append(f"{company_id}: {_sent([site.send(addr, subject, body, company_id) for addr in to])}")
+        except Exception as exc:
+            _failed(site, company_id, "monthly summary", exc)
     return lines
 
 
@@ -81,13 +91,16 @@ def send_daily_digests(site, now: datetime | None = None) -> list:
         if company_id == auth.DEMO_COMPANY_ID or done.get(company_id) == day or company_id in deleted:
             continue
         done[company_id] = day
-        state = site.read(company_id)
-        if state is None or state.get("company", {}).get("daily_email") is False:
-            continue
-        digest = domain.daily_digest(state, base, now)
-        to = auth.owner_emails(company_id)
-        if digest and to:
-            lines.append(f"{company_id}  daily email: {_sent([site.send(addr, digest[0], digest[1], company_id) for addr in to])}")
+        try:
+            state = site.read(company_id)
+            if state is None or state.get("company", {}).get("daily_email") is False:
+                continue
+            digest = domain.daily_digest(state, base, now)
+            to = auth.owner_emails(company_id)
+            if digest and to:
+                lines.append(f"{company_id}  daily email: {_sent([site.send(addr, digest[0], digest[1], company_id) for addr in to])}")
+        except Exception as exc:
+            _failed(site, company_id, "daily email", exc)
     storage.write_json(path, done)
     return lines
 
@@ -112,6 +125,7 @@ def run_monthly_jobs(site, now: datetime | None = None) -> list:
         if problems:
             alerts.notify("drill", f"the monthly restore drill of {newest.name} failed: {problems[0]}")
         done["drill"] = month
+        storage.write_json(path, done)  # kept now, so a failure below doesn't run the drill again next hour
     if (os.environ.get("MONTHLY_SUMMARY_EMAILS") == "1" and mailer.configured() and now.day <= 3
             and done.get("summaries") != month):
         last = now.date().replace(day=1) - timedelta(days=1)

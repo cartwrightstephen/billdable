@@ -1184,7 +1184,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if arg("error"):
                 raise qbo.QboError("QuickBooks wasn't connected." + (" You cancelled it." if arg("error") == "access_denied" else ""))
-            company_id = qbo.finish(arg("state"), arg("code"), arg("realmId"), self._qbo_redirect_uri())
+            # Only the signed-in owner who pressed Connect can finish it (no linking someone else's books).
+            user = self._session_user()
+            company_id = qbo.finish(arg("state"), arg("code"), arg("realmId"), self._qbo_redirect_uri(), user["id"] if user else "")
         except qbo.QboError as exc:
             page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
                     f'<title>QuickBooks - Duracash</title></head><body><main><h1>QuickBooks</h1><p>{html_escape(str(exc))}</p>'
@@ -1211,7 +1213,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if qbo.configured() and not qbo.redirect_ok(self._qbo_redirect_uri()):
                 log_json("warn", msg="Connect QuickBooks needs DURACASH_URL set to the site's https address", company=ctx.company_id)
-            self._json(200, {"url": qbo.authorize_url(ctx.company_id, ctx.actor, self._qbo_redirect_uri())})
+            self._json(200, {"url": qbo.authorize_url(ctx.company_id, ctx.actor, self._qbo_redirect_uri(), ctx.user["id"])})
         except qbo.QboError as exc:
             self._json(409, {"error": str(exc)})
 
@@ -1603,7 +1605,8 @@ class Handler(BaseHTTPRequestHandler):
                 domain.match_payment(state, str(pick.get("job_id") or ""), pick.get("amount_cents"), ref,
                                      ctx.actor, invoice_id=str(pick.get("invoice_id") or "") or None,
                                      received_on=str(pick.get("date") or "") or None,
-                                     qbo_payment_id=str(pick.get("qbo_id") or "") or None)
+                                     qbo_payment_id=str(pick.get("qbo_id") or "") or None,
+                                     qbo_total_cents=pick.get("qbo_total_cents"))
                 results.append({"key": key, "reference": ref, "ok": True})
             except domain.GateError as exc:
                 results.append({"key": key, "reference": ref, "ok": False, "error": str(exc)})

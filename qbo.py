@@ -54,7 +54,7 @@ STATE_MINUTES = 10
 
 LOCK = threading.Lock()
 _REFRESH_LOCK = threading.Lock()   # one refresh at a time: Intuit retires a refresh token once used
-_PENDING: dict[str, dict[str, Any]] = {}   # OAuth state -> {company_id, user, until}
+_PENDING: dict[str, dict[str, Any]] = {}   # OAuth state -> {company_id, user, user_id, until}
 
 
 class QboError(Exception):
@@ -122,7 +122,7 @@ def redirect_ok(redirect_uri: str) -> bool:
     return redirect_uri.startswith(("https://", "http://localhost", "http://127.0.0.1"))
 
 
-def authorize_url(company_id: str, user_name: str, redirect_uri: str) -> str:
+def authorize_url(company_id: str, user_name: str, redirect_uri: str, user_id: str = "") -> str:
     if not configured():
         raise QboError("The QuickBooks connection isn't set up on this server (QBO_CLIENT_ID and QBO_CLIENT_SECRET).")
     if not redirect_ok(redirect_uri):
@@ -134,7 +134,7 @@ def authorize_url(company_id: str, user_name: str, redirect_uri: str) -> str:
     with LOCK:
         for key in [k for k, v in _PENDING.items() if v["until"] < now]:
             _PENDING.pop(key, None)
-        _PENDING[state] = {"company_id": company_id, "user": user_name, "until": now + STATE_MINUTES * 60}
+        _PENDING[state] = {"company_id": company_id, "user": user_name, "user_id": user_id, "until": now + STATE_MINUTES * 60}
     query = parse.urlencode({"client_id": settings()["client_id"], "response_type": "code", "scope": SCOPE,
                              "redirect_uri": redirect_uri, "state": state})
     return f"{AUTHORIZE_URL}?{query}"
@@ -169,12 +169,16 @@ def _tokens(reply: dict[str, Any], old: dict[str, Any] | None = None) -> dict[st
     return conn
 
 
-def finish(state: str, code: str, realm_id: str, redirect_uri: str) -> str:
-    """The callback: check the state, swap the code for tokens, save them. Returns the company id."""
+def finish(state: str, code: str, realm_id: str, redirect_uri: str, user_id: str = "") -> str:
+    """The callback: check the state, and that the browser finishing it is signed in as the person
+    who pressed Connect (`user_id`), so someone else's Connect link can't link your QuickBooks to
+    their company; then swap the code for tokens and save them. Returns the company id."""
     with LOCK:
         pending = _PENDING.pop(state or "", None)
     if not pending or pending["until"] < time.time():
         raise QboError("That QuickBooks link has expired. Press Connect QuickBooks again.")
+    if not user_id or pending.get("user_id") != user_id:
+        raise QboError("Sign in to Duracash as the owner who pressed Connect QuickBooks, then press it again.")
     if not code or not realm_id or not realm_id.isdigit():
         raise QboError("QuickBooks didn't say which company was connected. Connect again.")
     reply = _token_request({"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri})
@@ -185,8 +189,10 @@ def finish(state: str, code: str, realm_id: str, redirect_uri: str) -> str:
 
 
 def disconnect(company_id: str) -> None:
-    conn = connection(company_id)
-    _store(company_id, None)
+    # After any refresh in flight, so it can't put the connection back; its newer token is the one revoked.
+    with _REFRESH_LOCK:
+        conn = connection(company_id)
+        _store(company_id, None)
     if conn and configured():
         try:  # best effort: the tokens are gone from here either way
             s = settings()
@@ -266,22 +272,40 @@ def payment_rows(payments: list[dict[str, Any]], invoices: list[dict[str, Any]])
             "amount_cents": amount,
             "memo": " ".join([str(p.get("PrivateNote") or ""), *[n for n in linked if n]])[:200],
             "qbo_id": str(p.get("Id") or ""),
+            "qbo_total_cents": amount,   # the whole payment, kept when it is split over pay apps
         })
     return rows
 
 
-def recorded_ids(state: dict[str, Any]) -> set:
-    return {p["qbo_payment_id"] for j in state.get("jobs", []) for p in j.get("payments", []) if p.get("qbo_payment_id")}
+def recorded_parts(state: dict[str, Any]) -> dict[str, list[int]]:
+    """QuickBooks payment id -> the amounts recorded under it (more than one when it was split)."""
+    parts: dict[str, list[int]] = {}
+    for j in state.get("jobs", []):
+        for p in j.get("payments", []):
+            if p.get("qbo_payment_id"):
+                parts.setdefault(p["qbo_payment_id"], []).append(p["amount_cents"])
+    return parts
 
 
 def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The CSV matcher, plus the QuickBooks id check that makes reading again harmless."""
-    done = recorded_ids(state)
+    """The CSV matcher, plus the QuickBooks id check that makes reading again harmless. A payment
+    recorded in part (split over pay apps) comes back as its rest, with "(rest)" after the
+    reference as the split gave it."""
+    parts = recorded_parts(state)
+    left = []   # (row as proposed, cents of it already recorded, whether that is all of it)
+    for row in rows:
+        got = parts.get(row.get("qbo_id") or "", [])
+        whole = bool(got) and sum(got) >= row["amount_cents"]
+        if got and not whole:
+            row = {**row, "amount_cents": row["amount_cents"] - sum(got), "ref": (row["ref"] + " (rest)" * len(got))[:60]}
+        left.append((row, sum(got), whole))
     out = []
-    for row, result in zip(rows, qbo_csv.propose(state, rows)):
-        if row.get("qbo_id") and row["qbo_id"] in done:
+    for (row, recorded, whole), result in zip(left, qbo_csv.propose(state, [r for r, _, _ in left])):
+        if whole:
             result.update(status="already recorded", reason="This QuickBooks payment is already in Duracash.",
                           job_id=None, invoice_id=None, number=None)
+        elif recorded and result["status"] != "already recorded":
+            result["reason"] = f"The rest of this payment: {domain.money(recorded)} of it is already recorded. {result['reason']}"
         out.append(result)
     return out
 
@@ -309,7 +333,7 @@ def reconcile(state: dict[str, Any], invoices: list[dict[str, Any]]) -> list[dic
             hit = by_number.get(inv["number"])
             if not hit:  # no number in common: the same customer and amount, once
                 same = [q for q in unused if _cents(q.get("TotalAmt")) == inv["amount_cents"]
-                        and payer and payer in qbo_csv._norm(str((q.get("CustomerRef") or {}).get("name") or ""))]
+                        and payer and f" {payer} " in f" {qbo_csv._norm(str((q.get('CustomerRef') or {}).get('name') or ''))} "]
                 hit = same[0] if len(same) == 1 else None
             if not hit:
                 out.append({**row, "kind": "missing", "detail": f"{inv['number']} ({domain.money(inv['amount_cents'])}) isn't in QuickBooks."})

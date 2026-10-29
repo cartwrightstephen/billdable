@@ -73,3 +73,12 @@ test("after Record the lists show what is owed now, and a paid pay app drops out
   assert.equal(much.split, null);
   assert.deepEqual(splitTooMuch([row({ status: "too much", split: cand(1, 0) })], 0).length, 1, "nothing to split when nothing is owed");
 });
+
+test("both lines of a split QuickBooks payment carry its id and whole amount, so the server records the rest", () => {
+  const r = row({ status: "too much", job_id: null, invoice_id: null, number: null, amount_cents: 150000, split: cand(1, 100000),
+    qbo_id: "123", qbo_total_cents: 150000 });
+  const rows = splitTooMuch([r], 0);
+  const picked = [rows[0], pickPayApp(rows[1], "0")];
+  assert.deepEqual(picksFrom(picked).map(p => [p.amount_cents, p.qbo_id, p.qbo_total_cents]), [[100000, "123", 150000], [50000, "123", 150000]]);
+  assert.equal(picksFrom([row()])[0].qbo_total_cents, undefined, "a CSV row has no QuickBooks id");
+});
