@@ -392,9 +392,18 @@ QTY_UNIT_RE = re.compile(r"^(\d[\d,]*(?:\.\d+)?)\s+([A-Za-z]{1,6}\.?)$")
 # a quantity, a unit (optional) and a rate.
 AT_RATE_RE = re.compile(
     r"^(?:(?P<desc>[^@]*?[A-Za-z][^@]*?)\s+)?(?P<qty>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>[A-Za-z]{1,6}\.?)?"
-    r"\s*(?:@|\bat\b|\bx\b)\s*\$?(?P<rate>\d[\d,]*(?:\.\d{1,2})?)\s*(?:/\s*[A-Za-z]{1,6}\.?|\bper\s+[A-Za-z]{1,6}\.?)?$",
+    r"\s*(?P<sep>@|\bat\b|\bx\b)\s*(?P<dollar>\$)?(?P<rate>\d[\d,]*(?:\.\d{1,2})?)\s*(?:/\s*[A-Za-z]{1,6}\.?|\bper\s+[A-Za-z]{1,6}\.?)?$",
     re.I,
 )
+def _at_rate(cell: str) -> "re.Match[str] | None":
+    """AT_RATE_RE, except that "x" between two plain numbers is a size ("Ceiling grid 2 x 2", "Tile
+    12 x 24"), not a rate: "x" counts only with a unit word before it or a $ on the rate."""
+    m = AT_RATE_RE.match(cell.strip())
+    if m and m["sep"].lower() == "x" and not m["dollar"] and (m["unit"] or "").lower().rstrip(".") not in UNIT_WORDS:
+        return None
+    return m
+
+
 ITEM_RE = re.compile(r"^[A-Za-z]?\d+(\.\d+)*[A-Za-z]?$")
 # Words that say "how many", not "how much": a lone number followed by one of these is a quantity
 # with no price ("Site cleanup, 3 loads"), never a lump sum of $3. LS and "lot" are left out on purpose.
@@ -430,7 +439,7 @@ def _split_rows(text: str) -> list[list[str]]:
             if re.search(r"\S {2,}\S", line.strip()):
                 # Columns separated by runs of spaces (copied from a PDF); commas are thousands separators.
                 rows.append(re.split(r" {2,}", line.strip()))
-            elif ((r := AT_RATE_RE.match(line.strip()) or _desc_qty_unit(line)) and "," in line
+            elif ((r := _at_rate(line) or _desc_qty_unit(line)) and "," in line
                   and "," not in (r["desc"] or "")):
                 # "Floor tile 1,200 sf at $8.50/sf" or "Concrete 2,400 SF": the comma is a thousands
                 # separator, not a column.
@@ -529,7 +538,7 @@ def parse_rows(text: str) -> dict[str, Any]:
             split_row: list[str] = []
             for c in row:
                 m = QTY_UNIT_RE.match(c)
-                r = None if m else AT_RATE_RE.match(c.strip())
+                r = None if m else _at_rate(c)
                 if r and r["desc"] and not alone:
                     r = None
                 d = None if m or r or not alone else _desc_qty_unit(c)

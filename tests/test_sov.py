@@ -168,6 +168,10 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(got("Tile, 1200 SF @ $8.50"), [("Tile", "1200", "SF", "8.50")])
         self.assertEqual(got("Floor tile 1,200 sf at $8.50/sf"), [("Floor tile", "1200", "sf", "8.50")])
         self.assertEqual(got("Trim 300 LF x 4.25"), [("Trim", "300", "LF", "4.25")])
+        # "x" between two plain numbers is a size, not quantity times rate.
+        self.assertEqual(got("Ceiling grid 2 x 2"), [])
+        self.assertEqual(got("Ceiling grid 2 x 2, 1,800"), [("Ceiling grid 2 x 2", "1", "LS", "1800.00")])
+        self.assertEqual(got("Shelving 4 x $8.50"), [("Shelving", "4", "ea", "8.50")])
         self.assertEqual(got("Labor 40 hrs @ 65 per hr"), [("Labor", "40", "hrs", "65.00")])
         self.assertEqual(got("Grout 12 @ 15"), [("Grout", "12", "ea", "15.00")])
         self.assertEqual(got("Tile\t1200 SF @ 8.50"), [("Tile", "1200", "SF", "8.50")])
