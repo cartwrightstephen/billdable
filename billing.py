@@ -12,7 +12,8 @@
   founder marks a company with "admin.py partner COMPANY_ID on".
 - Manage billing: Stripe's Customer Portal (card, invoices, cancel).
 - Stripe tells Duracash what happened through a signed webhook (STRIPE_WEBHOOK_SECRET); the
-  subscription's status is kept on the company.
+  status of each of the company's subscriptions is kept, and the company stands on its best
+  one (two checkouts in a row make two subscriptions; cancelling one leaves the other).
 - Enforcement is read-only, never deletion, and only with BILLING_ENFORCE=1: an unpaid or
   cancelled subscription, or a trial over BILLING_GRACE_DAYS (14) past its end with no
   subscription, makes the company read-only (server.read_only_reason). "Past due" (Stripe still
@@ -46,6 +47,18 @@ GOOD_STATUSES = {"trialing", "active"}
 # Where a status comes in a subscription's life, for two events stamped in the same second.
 _STAGE = {"incomplete": 0, "canceled": 2, "incomplete_expired": 2}
 EVENTS_KEPT = 50
+
+
+def _rank(status: str) -> int:
+    """Which of a company's subscriptions it stands on: a live one, then one Stripe is still
+    retrying, then anything else, then an unpaid one, and one that has ended last."""
+    if status in GOOD_STATUSES:
+        return 4
+    if status in WARN_STATUSES:
+        return 3
+    if status in {"canceled", "incomplete_expired"}:
+        return 0
+    return 1 if status in HOLD_STATUSES else 2
 
 
 class BillingError(Exception):
@@ -267,19 +280,32 @@ def apply(state: dict[str, Any], event: dict[str, Any]) -> str:
     del seen[:-EVENTS_KEPT]
     kind, obj, created = event.get("type", ""), event["data"]["object"], int(event.get("created") or 0)
     if kind == "checkout.session.completed":
-        b.update(customer_id=obj.get("customer") or b.get("customer_id"), subscription_id=obj.get("subscription") or b.get("subscription_id"))
+        if b.get("status") not in GOOD_STATUSES | WARN_STATUSES:  # a second checkout never hides the live subscription
+            b.update(customer_id=obj.get("customer") or b.get("customer_id"), subscription_id=obj.get("subscription") or b.get("subscription_id"))
         return "Subscribed through Stripe Checkout."
     if kind.startswith("customer.subscription."):
         status = "canceled" if kind == "customer.subscription.deleted" else str(obj.get("status") or "")
         before = b.get("status")
-        at = int(b.get("status_at") or 0)
+        # Each subscription is kept on its own (two checkouts in a row make two), and the
+        # company stands on its best one: cancelling a duplicate leaves the live one in force.
+        subs = b.setdefault("subscriptions", {})
+        if not subs and b.get("subscription_id") and before:  # a record from before this list
+            subs[b["subscription_id"]] = {"status": before, "at": int(b.get("status_at") or 0),
+                                          "customer": b.get("customer_id"), "period_end": b.get("period_end")}
+        sub_id = str(obj.get("id") or b.get("subscription_id") or "")
+        mine = subs.get(sub_id) or {}
+        at = int(mine.get("at") or 0)
         if created < at:
             return ""  # Stripe doesn't promise order; an older status never overwrites a newer one
-        if created == at and _STAGE.get(status, 1) < _STAGE.get(before or "", 1):
+        if created == at and _STAGE.get(status, 1) < _STAGE.get(mine.get("status") or "", 1):
             return ""  # the same second: a subscription only moves on (incomplete first, cancelled last)
-        b.update(customer_id=obj.get("customer") or b.get("customer_id"), subscription_id=obj.get("id") or b.get("subscription_id"),
-                 status=status, status_at=created, period_end=_period_end(obj))
-        return f"Subscription {before or 'none'} → {status}." if status != before else ""
+        subs[sub_id] = {"status": status, "at": created, "customer": obj.get("customer") or mine.get("customer") or b.get("customer_id"),
+                        "period_end": _period_end(obj)}
+        best_id = max(subs, key=lambda k: (_rank(subs[k]["status"]), subs[k]["at"]))
+        best = subs[best_id]
+        b.update(customer_id=best.get("customer") or b.get("customer_id"), subscription_id=best_id or b.get("subscription_id"),
+                 status=best["status"], status_at=best["at"], period_end=best.get("period_end"))
+        return f"Subscription {before or 'none'} → {best['status']}." if best["status"] != before else ""
     if kind == "invoice.payment_failed":
         b["last_failed_at"] = created
         return "Stripe couldn't charge the card for the subscription."

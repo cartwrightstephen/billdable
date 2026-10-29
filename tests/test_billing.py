@@ -112,6 +112,39 @@ class BillingUnitTests(unittest.TestCase):
         billing.apply(state, event("customer.subscription.updated", {"id": "sub_1", "status": "active"}, 500, "f2"))
         self.assertEqual(state["company"]["billing"]["status"], "active")
 
+    def test_cancelling_a_second_subscription_keeps_the_live_one(self):
+        # Two Checkouts before the first webhook landed: two customers, two subscriptions.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_A", "customer": "cus_A", "status": "active"}, 100, "a1"))
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_B", "customer": "cus_B", "status": "active"}, 110, "b1"))
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_B", "customer": "cus_B", "status": "active"}, 200, "b2"))
+        b = state["company"]["billing"]
+        self.assertEqual((b["status"], b["subscription_id"], b["customer_id"]), ("active", "sub_A", "cus_A"))
+        # Cancelling the other one instead also leaves the company subscribed.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_A", "customer": "cus_A", "status": "active"}, 100, "a1"))
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_B", "customer": "cus_B", "status": "active"}, 110, "b1"))
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_A", "customer": "cus_A", "status": "active"}, 200, "a2"))
+        b = state["company"]["billing"]
+        self.assertEqual((b["status"], b["subscription_id"], b["customer_id"]), ("active", "sub_B", "cus_B"))
+        # Both gone: cancelled.
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_B", "customer": "cus_B", "status": "active"}, 300, "b2"))
+        self.assertEqual(state["company"]["billing"]["status"], "canceled")
+        # A late, older event about one subscription doesn't hide a newer one about the other.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_A", "customer": "cus_A", "status": "active"}, 300, "a1"))
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_B", "customer": "cus_B", "status": "unpaid"}, 200, "b1"))
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_A", "customer": "cus_A"}, 400, "a2"))
+        self.assertEqual(state["company"]["billing"]["status"], "unpaid")
+
+    def test_a_record_from_before_the_list_of_subscriptions_is_kept(self):
+        state = {"company": {"billing": {"customer_id": "cus_A", "subscription_id": "sub_A", "status": "active", "status_at": 100}}}
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_B", "customer": "cus_B"}, 200, "b2"))
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+        self.assertEqual(billing.apply(state, event("customer.subscription.updated", {"id": "sub_A", "status": "past_due"}, 50, "a0")), "")
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+
     def test_standing_holds_only_when_enforced_and_never_for_past_due(self):
         now = datetime.now(timezone.utc)
         env = {"STRIPE_SECRET_KEY": "sk_test", "STRIPE_PRICE_ID": "price_1", "BILLING_ENFORCE": "1"}
