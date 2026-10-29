@@ -161,13 +161,28 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(got("Demo,3,500"), [("Demo", "3", "ea", "500.00", None)])
         self.assertEqual(got("Description,Qty,Rate\nDemo,3,500"), [("Demo", "3", "ea", "500.00", None)])
 
-    # A known misread, left for a follow-up. It is an expected failure, not a locked-in reading:
-    # when it starts to pass, remove the decorator.
-    @unittest.expectedFailure
-    def test_known_misread_qty_unit_at_rate_in_one_cell(self):
-        # Today "1200 SF @ 8.50" in one cell is skipped as having no numbers.
-        lines = sov.parse_rows("Tile 1200 SF @ 8.50")["lines"]
-        self.assertEqual([(l["quantity"], l["unit"], l["rate"]) for l in lines], [("1200", "SF", "8.50")])
+    def test_quantity_at_rate_in_one_cell(self):  # Oct 23 note 9
+        def got(text):
+            return [(l["description"], l["quantity"], l["unit"], l["rate"]) for l in sov.parse_rows(text)["lines"]]
+        self.assertEqual(got("Tile 1200 SF @ 8.50"), [("Tile", "1200", "SF", "8.50")])
+        self.assertEqual(got("Tile, 1200 SF @ $8.50"), [("Tile", "1200", "SF", "8.50")])
+        self.assertEqual(got("Floor tile 1,200 sf at $8.50/sf"), [("Floor tile", "1200", "sf", "8.50")])
+        self.assertEqual(got("Trim 300 LF x 4.25"), [("Trim", "300", "LF", "4.25")])
+        self.assertEqual(got("Labor 40 hrs @ 65 per hr"), [("Labor", "40", "hrs", "65.00")])
+        self.assertEqual(got("Grout 12 @ 15"), [("Grout", "12", "ea", "15.00")])
+        self.assertEqual(got("Tile\t1200 SF @ 8.50"), [("Tile", "1200", "SF", "8.50")])
+        self.assertEqual(got("Tile, 1,200 SF @ 8.50"), [("Tile", "1200", "SF", "8.50")])
+        self.assertEqual(got("Tile,1200 SF @ 8.50"), [("Tile", "1200", "SF", "8.50")])
+        # A description, a quantity and a unit word in one cell: a quantity that needs a price.
+        self.assertEqual(got("Concrete 2,400 SF"), [("Concrete", "2400", "SF", "")])
+        self.assertEqual(got("Haul 3 loads"), [("Haul", "3", "loads", "")])
+        self.assertEqual(got("Tile 1200 SF, 8.50"), [("Tile", "1200", "SF", "8.50")])
+        self.assertEqual(got("Level 2 tile, 500"), [("Level 2 tile", "1", "LS", "500.00")])
+        # A number inside the description stays in the description.
+        self.assertEqual(got("Level 2 tile 1200 SF @ 8.50"), [("Level 2 tile", "1200", "SF", "8.50")])
+        # Rows without "@", "at" or "x" read as before.
+        self.assertEqual(got("Paint, 3 ea, 45"), [("Paint", "3", "ea", "45.00")])
+        self.assertEqual(got("Demo, $3,500"), [("Demo", "1", "LS", "3500.00")])
 
     def test_garbage_is_reported_not_crashed(self):
         out = sov.parse_rows("hello\n\n,,,\n$$$, abc\n")

@@ -380,6 +380,13 @@ HEADER_WORDS = {
 }
 NUMBER_RE = re.compile(r"^\(?-?\$?(?:\d[\d,]{0,20})?(?:\.\d{1,6})?\)?%?$")
 QTY_UNIT_RE = re.compile(r"^(\d[\d,]*(?:\.\d+)?)\s+([A-Za-z]{1,6}\.?)$")
+# "Tile 1200 SF @ 8.50", "1,200 sf at $8.50/sf" or "300 LF x 4.25" in one cell: a description (optional),
+# a quantity, a unit (optional) and a rate.
+AT_RATE_RE = re.compile(
+    r"^(?:(?P<desc>[^@]*?[A-Za-z][^@]*?)\s+)?(?P<qty>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>[A-Za-z]{1,6}\.?)?"
+    r"\s*(?:@|\bat\b|\bx\b)\s*\$?(?P<rate>\d[\d,]*(?:\.\d{1,2})?)\s*(?:/\s*[A-Za-z]{1,6}\.?|\bper\s+[A-Za-z]{1,6}\.?)?$",
+    re.I,
+)
 ITEM_RE = re.compile(r"^[A-Za-z]?\d+(\.\d+)*[A-Za-z]?$")
 # Words that say "how many", not "how much": a lone number followed by one of these is a quantity
 # with no price ("Site cleanup, 3 loads"), never a lump sum of $3. LS and "lot" are left out on purpose.
@@ -391,6 +398,15 @@ UNIT_WORDS = frozenset("""
     ton tons lb lbs gal gals bag bags roll rolls sheet sheets box boxes pallet pallets
     crew crews man men visit visits
 """.split())
+# "Concrete 2,400 SF" or "Haul 3 loads" in one cell: a description, a quantity and a unit word.
+DESC_QTY_UNIT_RE = re.compile(r"^(?P<desc>.*?[A-Za-z].*?)\s+(?P<qty>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>[A-Za-z]{1,6}\.?)$")
+
+
+def _desc_qty_unit(cell: str) -> "re.Match[str] | None":
+    m = DESC_QTY_UNIT_RE.match(cell.strip())
+    return m if m and m["unit"].lower().rstrip(".") in UNIT_WORDS else None
+
+
 TOTAL_RE = re.compile(r"^(sub\s*-?\s*total|grand\s+total|total|totals|overhead|o\s*&\s*p|profit|markup|retainage)\b", re.I)
 
 
@@ -406,6 +422,11 @@ def _split_rows(text: str) -> list[list[str]]:
             if re.search(r"\S {2,}\S", line.strip()):
                 # Columns separated by runs of spaces (copied from a PDF); commas are thousands separators.
                 rows.append(re.split(r" {2,}", line.strip()))
+            elif ((r := AT_RATE_RE.match(line.strip()) or _desc_qty_unit(line)) and "," in line
+                  and "," not in (r["desc"] or "")):
+                # "Floor tile 1,200 sf at $8.50/sf" or "Concrete 2,400 SF": the comma is a thousands
+                # separator, not a column.
+                rows.append([line.strip()])
             else:
                 rows.extend(_join_thousands(row, ", " in line) for row in csv.reader([line]))
     rows = [[c.strip()[:200] for c in row[:MAX_CELLS]] for row in rows]
@@ -416,11 +437,12 @@ def _join_thousands(row: list[str], spaced: bool) -> list[str]:
     """In a typed comma row, "$12,500.00" splits into "$12" and "500.00"; put it back together.
     Without a $ sign, "Demo, 3,500" is joined too when the row puts a space after its other commas
     (`spaced`): the comma with no space is then a thousands separator. A row with no ", " at all is
-    a saved CSV file, where "Demo,3,500" means quantity 3 at $500, so it stays split."""
+    a saved CSV file, where "Demo,3,500" means quantity 3 at $500, so it stays split. The joined part may
+    run on into a unit and a rate ("Tile, 1,200 SF @ 8.50")."""
     out: list[str] = []
     for cell in row:
         groups = r"^\s*\$\d{1,3}(,\d{3})*$" if not spaced else r"^\s*\$?\d{1,3}(,\d{3})*$"
-        if out and re.match(groups, out[-1]) and re.match(r"^\d{3}(\.\d{1,2})?$", cell):
+        if out and re.match(groups, out[-1]) and re.match(r"^\d{3}(\.\d{1,2})?(?=$|\s+\D)", cell):
             out[-1] = out[-1] + "," + cell
         else:
             out.append(cell)
@@ -491,11 +513,21 @@ def parse_rows(text: str) -> dict[str, Any]:
             description, unit, item = cell("description"), cell("unit"), cell("item")
             qty, rate, amount = cell("quantity"), cell("rate"), cell("amount")
         else:
-            # "1,200 lf" in one cell is a quantity and a unit.
+            # "1,200 lf" in one cell is a quantity and a unit; "Tile 1200 SF @ 8.50" is a description,
+            # a quantity, a unit and a rate; "Haul 3 loads" a description, a quantity and a unit.
             split_row: list[str] = []
             for c in row:
                 m = QTY_UNIT_RE.match(c)
-                split_row.extend([m.group(1), m.group(2)] if m else [c])
+                r = None if m else AT_RATE_RE.match(c.strip())
+                d = None if m or r else _desc_qty_unit(c)
+                if m:
+                    split_row.extend([m.group(1), m.group(2)])
+                elif r:
+                    split_row.extend(x for x in (r["desc"], r["qty"], r["unit"], r["rate"]) if x)
+                elif d:
+                    split_row.extend([d["desc"], d["qty"], d["unit"]])
+                else:
+                    split_row.append(c)
             row = split_row
             texts = [(i, c) for i, c in enumerate(row) if c and not _is_number(c)]
             at_numbers = [i for i, c in enumerate(row) if _is_number(c)]
