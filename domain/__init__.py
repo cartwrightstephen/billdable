@@ -99,12 +99,15 @@ def is_final(job: dict[str, Any]) -> bool:
 class GateError(Exception):
     """A business refusal (the server's 409). `blockers` lists what stands in the way, for the
     card under the button that was tapped; `fields` maps a request field (its JSON key, such as
-    "ap_email") to what to fix there, so a form shows it under that input."""
+    "ap_email") to what to fix there, so a form shows it under that input. `action` is the way
+    out when it is on another page: {"label", "view", "job_id", "detail"}, a link in that card."""
 
-    def __init__(self, message: str, blockers: list[str] | None = None, fields: dict[str, str] | None = None):
+    def __init__(self, message: str, blockers: list[str] | None = None, fields: dict[str, str] | None = None,
+                 action: dict[str, str] | None = None):
         super().__init__(message)
         self.fields = dict(fields or {})
         self.blockers = blockers or list(self.fields.values()) or [message]
+        self.action = dict(action or {})
 
 
 def _refuse(message: str, fields: dict[str, str]) -> None:

@@ -2,7 +2,7 @@
 // going to a page (nav), redrawing (render, patch), toasts and refusals, and the (i) help.
 import { unesc, escDeep, emailOutcome } from "./format.js";
 import { mayTake } from "./jobs.js";
-import { pathFor, routeFromPath } from "./routes.js";
+import { pathFor, routeFromPath, refusalLink } from "./routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./help.js";
 import { readJson, setNetBanner } from "./net.js";
 import { labelTables } from "./dom.js";
@@ -288,16 +288,21 @@ export async function post(path, body = {}, opts = {}) {
 }
 
 // Why an action was refused, in a card right under the button that was tapped (or the row or
-// bar it sits in), scrolled into view. Without a button on the page it falls back to a toast.
+// bar it sits in), scrolled into view, with a link to the page that fixes it when the server
+// names one. Without a button on the page it falls back to a toast.
 function showRefusal(anchor, data) {
   document.querySelectorAll(".action-error").forEach(c => c.remove());
   const message = String(data.error || "That wasn't done.");
   const lines = (Array.isArray(data.blockers) ? data.blockers : []).map(String).filter(b => b && b !== message);
+  const link = refusalLink(data.action);
   if (anchor && !anchor.isConnected && anchor.dataset && anchor.dataset.action) {
     const sel = `[data-action="${CSS.escape(anchor.dataset.action)}"]${anchor.dataset.id ? `[data-id="${CSS.escape(anchor.dataset.id)}"]` : ""}`;
     anchor = document.querySelector(sel);
   }
-  if (!anchor || !anchor.isConnected) { toast([message, ...lines].join(" ")); return; }
+  if (!anchor || !anchor.isConnected) {
+    toast([message, ...lines].join(" "), link ? { label: link.label, run: () => nav(link.view, link.jobId, link.detailId) } : null);
+    return;
+  }
   const card = document.createElement("div");
   card.className = "form-error action-error";
   card.setAttribute("role", "alert");
@@ -308,6 +313,14 @@ function showRefusal(anchor, data) {
     const ul = document.createElement("ul");
     lines.forEach(l => { const li = document.createElement("li"); li.textContent = l; ul.append(li); });
     card.append(ul);
+  }
+  if (link) {
+    const a = document.createElement("a");
+    a.className = "btn small secondary action-error-link";
+    a.href = link.href;
+    Object.assign(a.dataset, { action: "nav", view: link.view, id: link.jobId }, link.detailId ? { detail: link.detailId } : {});
+    a.textContent = link.label;
+    card.append(a);
   }
   const host = anchor.closest(".action-item, .next-card, .more-actions, .form-inline, .form-row, .list-item") || anchor;
   host.insertAdjacentElement("afterend", card);

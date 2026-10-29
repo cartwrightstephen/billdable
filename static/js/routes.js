@@ -27,6 +27,14 @@ export function pathFor(view, jobId, detailId) {
   return VIEW_PATHS[view] || "/today";
 }
 
+// A refusal's way out (the server's GateError `action`, like Undo's "Open the paperwork for
+// PA-OAK-3"): a link to a detail page, or null for anything else.
+export function refusalLink(action) {
+  if (!action || typeof action !== "object" || !DETAIL_PATHS[action.view] || !action.job_id || !action.label) return null;
+  const detailId = action.detail ? String(action.detail) : null;
+  return { label: String(action.label), view: action.view, jobId: String(action.job_id), detailId, href: pathFor(action.view, action.job_id, detailId) };
+}
+
 export function routeFromPath(path) {
   let parts;
   try { parts = path.split("/").filter(Boolean).map(decodeURIComponent); } catch (_) { return null; }

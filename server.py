@@ -585,11 +585,13 @@ NOT_UNDERSTOOD = "Something in the form was not understood. Check the fields and
 
 
 def _gate(exc: "domain.GateError") -> dict:
-    """The 409 reply for a business refusal: the message, what stands in the way, and the
-    fields to fix, each under its request key."""
+    """The 409 reply for a business refusal: the message, what stands in the way, the
+    fields to fix, each under its request key, and a link to the page that fixes it."""
     out = {"error": str(exc), "blockers": exc.blockers}
     if exc.fields:
         out["fields"] = exc.fields
+    if getattr(exc, "action", None):
+        out["action"] = exc.action
     return out
 
 

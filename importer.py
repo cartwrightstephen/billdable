@@ -699,8 +699,47 @@ def dismiss_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, A
     return item
 
 
+def _paperwork_refusal(job: dict[str, Any], rids: set[str]) -> "domain.GateError | None":
+    """Why Undo can't take these records off (attached by hand to some paperwork), with a link to
+    where that is settled (Oct 23 note #13). A sent pay app comes first: what went with it stays
+    as it was sent, so its page is the way, not Remove. Else the paperwork page, where Remove is."""
+    def holds(packet: list[dict[str, Any]] | None) -> bool:
+        return any(a.get("record_id") in rids and not a.get("auto") for p in packet or [] for a in p.get("attachments", []))
+
+    def link(label: str, view: str, detail: str = "") -> dict[str, str]:
+        return {"label": label, "view": view, "job_id": job["id"], "detail": detail}
+
+    went = [inv for inv in job.get("invoices", []) if inv.get("status") not in domain.DRAFT_STATUSES and holds(inv.get("packet"))]
+    if went:
+        inv = went[-1]
+        number = inv.get("number") or "a pay app"
+        open_it = link(f"Open {number}", "payapp-detail", inv["id"])
+        paid = inv.get("status") in {"partial", "paid"} or any(p.get("invoice_id") == inv["id"] for p in job.get("payments", []))
+        if inv.get("status") == "void":
+            text = (f"This record went to the customer with {number}. {number} was pulled back, but what it sent "
+                    "stays as it was, so the record stays on the job.")
+        elif paid:
+            text = f"This record went to the customer with {number}, and a payment is recorded on it, so the record stays on the job."
+        else:
+            text = (f"This record went to the customer with {number}, so it stays on the job. To change what went out, "
+                    f"open {number} and pull it back, then send a new one.")
+        return domain.GateError(text, action=open_it)
+    drafts = [inv for inv in job.get("invoices", []) if inv.get("status") in domain.DRAFT_STATUSES and holds(inv.get("packet"))]
+    if drafts:
+        number = drafts[-1].get("number") or "the pay app"
+        return domain.GateError(f"The paperwork for {number} uses this record. Tap Remove on it there first.",
+                                action=link(f"Open the paperwork for {number}", "packet-detail", drafts[-1]["id"]))
+    if holds(job.get("packet")):
+        return domain.GateError("The job's paperwork uses this record. Tap Remove on it there first.",
+                                action=link("Open the paperwork", "packet-detail"))
+    if holds(job.get("closeout_packet")):
+        return domain.GateError("The closeout paperwork uses this record. Tap Remove on it there first.",
+                                action=link("Open the closeout paperwork", "packet-detail", "closeout"))
+    return None
+
+
 def undo_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]:
-    """Take a filed item back off the job record, unless a packet already uses it."""
+    """Take a filed item back off the job record, unless paperwork uses it (the refusal links there)."""
     item = _item(state, item_id)
     if item["status"] == "dismissed":
         item["status"] = "new"
@@ -710,8 +749,9 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str) -> dict[str, Any]
     job = domain._open_job(state, item["filed_job_id"])
     rids = set(item.get("record_ids", []))
     packets = [p for inv in job["invoices"] for p in (inv.get("packet") or [])] + (job.get("packet") or []) + (job.get("closeout_packet") or [])
-    if any(a.get("record_id") in rids and not a.get("auto") for p in packets for a in p.get("attachments", [])):
-        raise domain.GateError("A pay app's paperwork uses this record. Tap Remove on it there first.")
+    refusal = _paperwork_refusal(job, rids)
+    if refusal:
+        raise refusal
     for p in packets:  # attached automatically from the job record: it comes off with the record
         if any(a.get("record_id") in rids for a in p.get("attachments", [])):
             p["attachments"] = [a for a in p["attachments"] if a.get("record_id") not in rids]

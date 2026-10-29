@@ -203,13 +203,13 @@ flowchart TD
     Q --> R
 ```
 
-Code: job record card in `views.job`, static/js/views/job.js:587-608 (**Take a photo** / **Add a file** `pick-files` static/js/views/inbox.js:346, paste box `pasteBoxHtml` static/js/views/inbox.js:141 with **Add to job**); record rows with **Edit** `recordRow` static/js/views/job.js:430 (R5-07); Inbox `views.inbox`, static/js/views/inbox.js:294-341 (**Waiting (N)**, **Which job?**, the touch-only **Take a photo** / **Choose files**, **Recently added or dismissed**, **Bring emails and texts in automatically**); cards `inboxItemCard` static/js/views/inbox.js:170 with `choiceJobs` / `choiceLine` / `pasteGuess` in static/js/inbox.js; uploads three at a time `uploadFiles` static/js/views/inbox.js:38; server matching `importer.match_job`, importer.py:442 (a job code in any case as its own word, the full job name or a part of it no other job has, like Oak Street for Oak Street kitchen; a tie suggests nothing), kinds `guess_kind` importer.py:371, notes split `split_notes` importer.py:342, filing `file_item` importer.py:603.
+Code: job record card in `views.job`, static/js/views/job.js:587-608 (**Take a photo** / **Add a file** `pick-files` static/js/views/inbox.js:346, paste box `pasteBoxHtml` static/js/views/inbox.js:141 with **Add to job**); record rows with **Edit** `recordRow` static/js/views/job.js:430 (R5-07); Inbox `views.inbox`, static/js/views/inbox.js:294-341 (**Waiting (N)**, **Which job?**, the touch-only **Take a photo** / **Choose files**, **Recently added or dismissed**, **Bring emails and texts in automatically**); cards `inboxItemCard` static/js/views/inbox.js:170 with `choiceJobs` / `choiceLine` / `pasteGuess` in static/js/inbox.js; uploads three at a time `uploadFiles` static/js/views/inbox.js:38; server matching `importer.match_job`, importer.py:442 (a job code in any case as its own word, the full job name or a part of it no other job has, like Oak Street for Oak Street kitchen; a tie suggests nothing), kinds `guess_kind` importer.py:371, notes split `split_notes` importer.py:342, filing `file_item` importer.py:603; **Undo** `undo_item` importer.py:741, refused while paperwork uses the record by `_paperwork_refusal` importer.py:702, with a link in the refusal card (`showRefusal` static/js/app-core.js:293).
 
 **Taps from start to done:** 2 from the job page (Take a photo or Add a file, pick). From the Inbox: 2 to add, then 1 per card to file, or 1 for all suggested cards.
 
 **Where it could still be simpler:**
 - Forwarding email and texts in needs an email service or a Twilio number set up by an owner (deferred: a provisioned address per company, improvement plan section 5).
-- Once a record is attached to a pay app's paperwork, Undo on the Inbox says to remove it from the paperwork first.
+- Once a record is attached by hand to paperwork, Undo on the Inbox is refused. For a draft it links to that pay app's Paperwork page, where Remove is. For a pay app that went out it links to the pay app: the record stays as sent, and pulling the pay app back (only while nothing is paid) is the way to change what went out.
 
 ---
 

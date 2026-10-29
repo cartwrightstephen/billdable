@@ -1,7 +1,7 @@
 // Page addresses: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { VIEW_PATHS, DETAIL_PATHS, DETAIL_PARENT, pathFor, routeFromPath } from "../../static/js/routes.js";
+import { VIEW_PATHS, DETAIL_PATHS, DETAIL_PARENT, pathFor, routeFromPath, refusalLink } from "../../static/js/routes.js";
 
 test("every view's address leads back to that view", () => {
   for (const [view, path] of Object.entries(VIEW_PATHS)) assert.deepEqual(routeFromPath(path), { view }, path);
@@ -40,4 +40,14 @@ test("Settings has a page each, /settings opens Company, and Paperwork belongs t
   assert.deepEqual(routeFromPath("/money/packets"), { view: "packets" });
   assert.equal(DETAIL_PARENT.packets, "payapps");
   assert.equal(DETAIL_PARENT["packet-detail"], "payapps");
+});
+
+test("a refusal's link opens the page that fixes it, and nothing else", () => {  // Oct 23 note #13
+  assert.deepEqual(refusalLink({ label: "Open the paperwork for PA-OAK-3", view: "packet-detail", job_id: "j1", detail: "inv1" }),
+    { label: "Open the paperwork for PA-OAK-3", view: "packet-detail", jobId: "j1", detailId: "inv1", href: "/money/packet/j1/inv1" });
+  assert.deepEqual(refusalLink({ label: "Open PA-OAK-3", view: "payapp-detail", job_id: "j1", detail: "inv1" }).href, "/money/pay-app/j1/inv1");
+  assert.equal(refusalLink({ label: "Open the paperwork", view: "packet-detail", job_id: "j1", detail: "" }).detailId, null);
+  for (const bad of [undefined, null, "x", {}, { label: "Go", view: "settings", job_id: "j1" }, { label: "Go", view: "packet-detail" }, { view: "packet-detail", job_id: "j1" }]) {
+    assert.equal(refusalLink(bad), null, JSON.stringify(bad));
+  }
 });

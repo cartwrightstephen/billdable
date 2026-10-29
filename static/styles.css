@@ -497,6 +497,7 @@ textarea { font: inherit; }
 /* A refusal shown under the button that was tapped, instead of a toast. */
 .action-error { margin: 8px 0 12px; }
 .action-error ul { margin: 6px 0 0; padding-left: 18px; }
+.action-error-link { display: inline-block; margin-top: 8px; }
 @media (max-width: 800px) {
   .form-row > .field, .form-row > .field.span-2 { flex-basis: 100%; }
   .form-row > .btn { margin-top: 0; }

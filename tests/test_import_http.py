@@ -273,6 +273,11 @@ class ImportHttpTests(unittest.TestCase):
         res, data = self.request("POST", f"/api/inbox/{inbox_id}/undo", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertIn("Remove", data["error"])
+        # The refusal links to that pay app's Paperwork page, where Remove is (Oct 23 note #13).
+        inv_id = state["jobs"][0]["invoices"][-1]["id"]
+        self.assertEqual({k: data["action"][k] for k in ("view", "job_id", "detail")},
+                         {"view": "packet-detail", "job_id": job["id"], "detail": inv_id})
+        self.assertTrue(data["action"]["label"].startswith("Open the paperwork for "))
         res, state = self.request("POST", f"/api/jobs/{job['id']}/detach/{item['id']}", {}, cookie=cookie)
         self.assertEqual(res.status, 200, state)
         self.assertIn(item["blocker"], state["jobs"][0]["blockers"])
