@@ -982,7 +982,9 @@ def send_waiver(
         invoice["waiver_sent_at"] = now
         invoice["waiver_kind"] = kind
         which = f" for {invoice['number']}"
-        detail = f"payment of {money(invoice['amount_cents'])} on {invoice['number']}"
+        # After a short pay, what came in is the billed amount less what was kept off it.
+        received = invoice["amount_cents"] - int(invoice.get("short_pay_cents") or 0)
+        detail = f"payment of {money(received)} on {invoice['number']}"
     else:
         raise GateError("No waiver is due. Payment has not been matched.")
     job["waiver_sent_at"] = now
@@ -2252,7 +2254,9 @@ def undo_mark_done(state: dict[str, Any], job_id: str, actor: str = "owner") -> 
         billed_qty = sov.billed(job)["qty_by_line"]
         for line in sov.lines(job):
             if line["scheduled_cents"] >= 0:  # a credit's line stays taken off
-                line["done_milli"] = billed_qty.get(line["id"], 0)
+                # A change order billed while unsigned is billed whole, before its line existed.
+                billed_whole = line.get("co_id") and _co_billed_unsigned(job, line["co_id"])
+                line["done_milli"] = line["qty_milli"] if billed_whole else billed_qty.get(line["id"], 0)
     job["completed_value_cents"] = _billed_gross(job)
     audit(state, job_id, "undo_done", f"{actor} undid done on {job['name']}"
           + (f"; deleted draft {draft['number']} ({money(draft['amount_cents'])})" if draft else "")
@@ -2914,6 +2918,11 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
         else:
             changes.append(f"contract from {money(job['contract_cents'])} to {money(cents)}")
             job["contract_cents"] = cents
+            if job.get("work_status") == "complete":
+                # Marked done: the work done is the whole contract, so it moves with the new amount.
+                job["completed_value_cents"] = cents + sum(
+                    co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
+                )
 
     redraft = None
     if "retainage_pct" in updates and updates["retainage_pct"] != job.get("retainage_pct", 0):
@@ -2963,13 +2972,16 @@ def can_delete_job(job: dict[str, Any]) -> bool:
 
 # ---------- schedule of values ----------
 
+def _co_billed_unsigned(job: dict[str, Any], co_id: str) -> bool:
+    """A pay app that isn't void billed this change order whole, as its own line, before it was signed."""
+    return any(entry.get("co_id") == co_id for inv in sov.live_invoices(job) for entry in inv.get("lines", []))
+
+
 def _add_co_line(job: dict[str, Any], co: dict[str, Any]) -> None:
     """An approved change order becomes its own schedule line, like a CO line on a G703."""
     if any(line.get("co_id") == co["id"] for line in sov.lines(job)):
         return
-    billed_already = any(
-        entry.get("co_id") == co["id"] for inv in sov.live_invoices(job) for entry in inv.get("lines", [])
-    )
+    billed_already = _co_billed_unsigned(job, co["id"])
     job["sov"]["lines"].append({
         "id": f"sov-co-{co['number']}",
         "item": f"CO{co['number']}",
@@ -3041,10 +3053,15 @@ def save_sov(
             actor,
         )
     earlier = job.get("completed_value_cents", 0)
+    # Change-order lines aren't edited here: they keep their progress and stored materials.
+    co_lines = {l["co_id"]: l for l in sov.lines(job) if l.get("co_id")}
     job["sov"] = candidate
     for co in job["change_orders"]:
         if co["status"] == "approved":
-            _add_co_line(job, co)
+            if co["id"] in co_lines:
+                candidate["lines"].append(co_lines[co["id"]])
+            else:
+                _add_co_line(job, co)
     job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
     audit(
         state,

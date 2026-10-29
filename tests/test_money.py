@@ -750,3 +750,31 @@ class RetainageChangeTests(unittest.TestCase):
         self.assertIn("release $5,000.00 of the $12,000.00 retainage", mail["body"])
         domain.record_retainage_payment(state, job["id"], 500_000, "CHK-5")
         self.assertEqual(domain.job_money(job)["retainage_open_cents"], 700_000)
+
+
+class BugHuntMoneyTests(unittest.TestCase):
+    def test_contract_change_after_done_moves_completed_work_with_it(self):
+        for target in (12_000_000, 8_000_000):
+            with self.subTest(contract=target):
+                state = new_state()
+                job = new_job(state, contract=10_000_000)
+                domain.mark_done(state, job["id"])
+                inv = send_open(state, job)
+                domain.void_sent_pay_app(state, job["id"], inv["id"], "Contract amount was wrong")
+                domain.edit_job(state, job["id"], {"contract_cents": target})
+                self.assertEqual(job["completed_value_cents"], target)
+                self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], target)
+                domain.draft_invoice(state, job["id"], strict=True)
+                self.assertEqual(job["invoices"][-1]["amount_cents"], target)
+
+    def test_waiver_after_short_pay_thanks_for_what_came_in(self):
+        state = new_state()
+        job = new_job(state, contract=10_000_000)
+        domain.record_progress(state, job["id"], 1_000_000)
+        inv = send_open(state, job)
+        domain.match_payment(state, job["id"], 800_000, "CHK 1")
+        domain.settle_short_pay(state, job["id"], inv["id"], "Backcharge")
+        domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
+        body = state["email_log"][-1]["body"]
+        self.assertIn("payment of $8,000.00 on", body)
+        self.assertNotIn("$10,000.00", body)

@@ -618,3 +618,47 @@ class StoredAndQuantityTests(unittest.TestCase):
         with self.assertRaises(domain.GateError) as err:
             domain.record_sov_progress(state, job["id"], {rough: "120"}, stored={rough: "2000"})
         self.assertIn("150 ea is already billed", " ".join(err.exception.blockers))
+
+
+class BugHuntSovCoLineTests(unittest.TestCase):
+    def test_saving_the_schedule_keeps_progress_on_change_order_lines(self):
+        state = new_state()
+        job = sov_job(state)
+        domain.add_change_order(state, job["id"], "Extra outlets", 200_000)
+        co = job["change_orders"][-1]
+        domain.approve_change_order(state, job["id"], co["id"])
+        col = next(l for l in sov.lines(job) if l.get("co_id"))
+        rough = line(job, "1")["id"]
+        domain.record_sov_progress(state, job["id"], {rough: "100", col["id"]: "0.5"}, stored={col["id"]: "300"})
+        self.assertEqual(job["invoices"][-1]["gross_cents"], 647_500)
+        domain.void_draft(state, job["id"])
+        before = domain.job_money(job)["unbilled_completed_cents"]
+        self.assertEqual(before, 647_500)
+        raw = [{"id": l["id"], "item": l["item"], "description": l["description"], "quantity": str(l["qty_milli"] / 1000),
+                "unit": l["unit"], "rate": str(l["rate_cents"] / 100)} for l in sov.lines(job) if not l.get("co_id")]
+        raw[1]["description"] = "Panel and feeders (fixed)"
+        domain.save_sov(state, job["id"], raw, "15")
+        col = next(l for l in sov.lines(job) if l.get("co_id"))
+        self.assertEqual(col["done_milli"], 500)
+        self.assertEqual(col.get("stored_cents"), 30_000)
+        self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], before)
+
+    def test_undo_done_keeps_a_change_order_line_billed_while_unsigned_at_done(self):
+        state = new_state()
+        job = sov_job(state)
+        rough = line(job, "1")["id"]
+        domain.add_change_order(state, job["id"], "Extra outlets", 100_000)
+        co = job["change_orders"][-1]
+        domain.include_change_order(state, job["id"], co["id"])
+        domain.record_sov_progress(state, job["id"], {rough: "100"})
+        domain.approve_change_order(state, job["id"], co["id"])
+        send_open(state, job)
+        domain.mark_done(state, job["id"])
+        domain.undo_mark_done(state, job["id"])
+        col = next(l for l in sov.lines(job) if l.get("co_id"))
+        self.assertEqual(col["done_milli"], col["qty_milli"])
+        # The progress form sends only lines that are not fully done.
+        done = {l["id"]: str(l["done_milli"] / 1000) for l in sov.lines(job) if l["done_milli"] < l["qty_milli"]}
+        done[rough] = "150"
+        domain.record_sov_progress(state, job["id"], done)
+        self.assertEqual(job["invoices"][-1]["status"] in domain.DRAFT_STATUSES, True)
