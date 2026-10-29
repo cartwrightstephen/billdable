@@ -40,7 +40,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | --- | --- |
 | `DURACASH_DATA_DIR` | Where all data lives (see above). |
 | `DURACASH_DEMO` | `readonly` keeps the demo for prospects in production: anyone can sign in and look around, and nothing can be changed (no edits, reset, password or two-step changes). `off` removes it anywhere. The default is a writable demo outside production and none in production. |
-| `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` | Billing (billing.py). With them, owners get Settings › Billing: Subscribe (Stripe Checkout, the free trial carried over) and Manage billing (Stripe's Customer Portal). Point a Stripe webhook at `<DURACASH_URL>/api/stripe/webhook`; see runbook 7. |
+| `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` | Billing (billing.py). With them, Settings › Billing shows everyone the subscription, and owners get Subscribe (Stripe Checkout, the free trial carried over) and Manage billing (Stripe's Customer Portal). Point a Stripe webhook at `<DURACASH_URL>/api/stripe/webhook`; see runbook 7. |
 | `BILLING_DAY`, `STRIPE_PARTNER_PRICE_ID` | Charges land on `BILLING_DAY` of the month (default 5, after the contractor's own 1st-of-the-month pay app is out): a trial ends on it, and a later subscription is anchored to it with the first part-month prorated. Design partners (`admin.py partner COMPANY_ID on`) pay `STRIPE_PARTNER_PRICE_ID`. |
 | `MONTHLY_SUMMARY_EMAILS` | `1`: the server emails each owner last month's summary on the 1st to the 3rd, once. The monthly restore drill runs by itself whenever backups exist, with an alert if it fails. |
 | `DAILY_EMAIL_HOUR_UTC` | The hour (UTC, default `11`) from which each owner with a confirmed email gets the daily "due today" email, once a day, when email is set up. Nothing is sent on a day with nothing due; a company turns it off on Settings › Company. |
@@ -217,7 +217,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 Auth (cookie session):
 
 - `POST /api/auth/login`: `{email, password}`. After 5 wrong passwords for one email in 15 minutes, returns 429.
-- `POST /api/auth/signup`: `{email, password, name, company_name}`
+- `POST /api/auth/signup`: `{email, password, name, company_name, accept_terms: true}`. Without `accept_terms: true` (the Terms of Service and Privacy Policy) it returns 400.
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
 

@@ -119,7 +119,7 @@ export const NAV_HELP = {
   company: "What prints on every pay app, how you bill, sending and email, QuickBooks, your data and deleting the company.",
   team: "The people on your team, their roles and invites.",
   account: "Your name, password and two-step sign-in.",
-  billing: "Your subscription and free trial. Owners only.",
+  billing: "Your subscription and free trial. Everyone sees them; an owner changes them.",
   "helper-admin": "Questions the helper couldn't answer, and the answers it uses. Team only.",
 };
 

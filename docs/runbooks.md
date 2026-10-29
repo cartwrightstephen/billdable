@@ -5,6 +5,13 @@ from the repository folder, or on Render from the service's **Shell** tab (it op
 with the service's settings). Nothing here was run against the live service; the Render steps
 follow `render.yaml` and should be checked the first time through.
 
+The server runs as the `duracash` user, not root (R6-09); the Shell tab may open as root. A
+`backup.py` or `admin.py` command run as root writes files the server can't change until its
+next restart (the start script hands the data folder back then), so start each with
+`setpriv --reuid=duracash --regid=duracash --init-groups`, for example
+`setpriv --reuid=duracash --regid=duracash --init-groups python3 admin.py companies`, or restart
+the service after.
+
 ## 1. Deploy
 
 1. Open a pull request into `dev`. GitHub Actions runs the tests; merge only when it is green.
@@ -18,6 +25,11 @@ follow `render.yaml` and should be checked the first time through.
 
 The first production deploy with the disk: deploy twice and repeat step 4 both times. Only then
 set `DURACASH_DATA_PERSISTENT=1`.
+
+The first deploy that runs as the `duracash` user (R6-09): at step 4 also check that `ok` is
+true and `disk_free_mb` is shown, then make one change (add a note to a job) and reload, so a
+write to the disk is seen to work. If the log says "Permission denied" under the data folder,
+roll back and check the disk's mount path matches `DURACASH_DATA_DIR`.
 
 ## 2. Restore from a backup
 

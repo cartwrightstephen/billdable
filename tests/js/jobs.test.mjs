@@ -1,7 +1,7 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
+import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, waiverSendForm, waiverHint, waiverTypeText, WAIVER_KINDS, WAIVER_HINTS, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
 import { invoicePill } from "../../static/js/format.js";
 
 const job = (over = {}) => ({
@@ -69,6 +69,17 @@ test("waiver kinds read as words, and the send form picks the likely one", () =>
   // Sending is off until the email is confirmed or the customer has an email (R1-05, R1-07).
   assert.doesNotMatch(waiverSendForm(job(), null), /disabled/);
   assert.match(waiverSendForm(job(), null, true), /data-action="waiver"[^>]* disabled>/);
+});
+
+test("a waiver not sent yet reads Not chosen yet, and each type has its one-line hint (R6-10)", () => {
+  assert.equal(waiverTypeText(job(), null), "Not chosen yet");
+  assert.equal(waiverTypeText(job(), { waiver_kind: "conditional_final" }), "Conditional, final payment");
+  assert.equal(waiverTypeText(job({ waiver_kind: "unconditional_progress" }), null), "Unconditional, progress payment");
+  assert.deepEqual(Object.keys(WAIVER_HINTS), Object.keys(WAIVER_KINDS));
+  for (const k of Object.keys(WAIVER_KINDS)) assert.ok(waiverHint(k).length > 10 && !waiverHint(k).includes("\n"), k);
+  assert.equal(waiverHint("other"), "");
+  // The send form shows the hint of the type it starts on, keyed like the picker.
+  assert.match(waiverSendForm(job(), { id: "inv-4" }), /id="waiver-kind-inv-4"[\s\S]*data-waiver-hint="inv-4">You already have the money/);
 });
 
 test("forms start on the job last used, else the only open job (R2-07)", () => {

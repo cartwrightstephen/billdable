@@ -1,7 +1,7 @@
 // Duracash's browser app, loaded as an ES module (no bundler). Shared helpers live in
 // static/js/; the views, which share the page's state, stay here.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, toDate, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, companyLine, emailOutcome, emailStatusHtml, helperFormat } from "./js/format.js";
-import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, mayTake, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, waiverKindLabel, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, payAppList, shortPayable, shortPayLabel, shortPayAttrs, canPullBack } from "./js/jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, isBlocked, blockerButton, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, mayTake, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, coBlockers, jobStatus, statusPill, coSignature, WAIVER_KINDS, WAIVER_HINTS, waiverKindLabel, waiverHint, waiverTypeText, waiverSendForm, defaultJobId, billedWork, progressFigures, followUpDue, payAppList, shortPayable, shortPayLabel, shortPayAttrs, canPullBack } from "./js/jobs.js";
 import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml, sheetColumns, continuationHtml } from "./js/sov.js";
 import { DETAIL_PARENT, VIEW_PATHS, DETAIL_PATHS, pathFor, routeFromPath } from "./js/routes.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./js/help.js";
@@ -358,6 +358,7 @@ async function boot(checkLink = true) {
     mailReady = data.mail_ready === true;
     readOnly = typeof data.read_only === "string" ? esc(data.read_only) : "";
     billingInfo = escDeep(data.billing || null);
+    heldShare = Number(data.held_share) || 0;
     // A visit to the sample company doesn't count as having an account on this device.
     if (data.user && data.user.company_id !== DEMO_COMPANY_ID) rememberSignIn();
     applyLocation();
@@ -589,6 +590,7 @@ async function startSession(user) {
       mailReady = info.mail_ready === true;
       readOnly = typeof info.read_only === "string" ? esc(info.read_only) : "";
       billingInfo = escDeep(info.billing || null);
+      heldShare = Number(info.held_share) || 0;
     }
   } catch (_) { helperAdmin = false; }
   applyLocation();
@@ -960,8 +962,9 @@ function render() {
   const tabView = DETAIL_PARENT[currentView] || currentView;
   const inboxCount = newInboxCount();
   const failedEmails = state.pending_email_failures || 0;
-  // Helper answers is for the Duracash team; Billing is for owners.
-  const tabs = section.views.filter(([v]) => (v !== "helper-admin" || helperAdmin) && (v !== "billing" || (me && me.role === "owner")));
+  // Helper answers is for the Duracash team. Billing shows everyone the trial and the
+  // subscription; only an owner changes it (R6-10).
+  const tabs = section.views.filter(([v]) => v !== "helper-admin" || helperAdmin);
   const shell = `
     <a class="skip-link" href="#main">Skip to content</a>
     <div class="shell ${drawerOpen ? "drawer-open" : ""}">
@@ -999,7 +1002,7 @@ function render() {
     document.querySelector(".tabs")?.addEventListener("scroll", fadeTabs, { passive: true });
   }
   const view = document.getElementById("view");
-  view.innerHTML = verifyBannerHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Today</button>`));
+  view.innerHTML = verifyBannerHtml() + heldShareHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Today</button>`));
   if (keep && !document.activeElement?.id) {
     const again = document.getElementById(keep.id);
     if (again && again !== document.activeElement) {
@@ -1070,6 +1073,17 @@ const ACTIONS = {
   "logout": () => logout(),
   "reset-data": () => resetData(),
   "dismiss-check-email": () => { checkEmail = null; render(); },
+  "claim-share": async () => {
+    const r = await post("/api/share/claim", {}, { quiet: true });
+    heldShare = 0;
+    if (r && r.ok) { toast("Added to the Inbox."); nav("inbox"); }
+    else render();
+  },
+  "discard-share": async () => {
+    await postJson("/api/share/claim", { discard: true });
+    heldShare = 0;
+    render();
+  },
   "resend-verify": async () => {
     const r = await postJson("/api/auth/resend-verify", {});
     toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
@@ -1825,6 +1839,11 @@ function listenForActions() {
     if (e.target.id === "paste-source") { e.target.dataset.touched = "1"; const hint = document.getElementById("paste-hint"); if (hint) hint.textContent = ""; }
     if (e.target.id === "nj-role" || e.target.id === "nj-customer") prefillRetainage();
     if (e.target.id === "match-inv") prefillPaymentAmount(e.target.value);
+    // The line under the waiver type follows the type picked (R6-10).
+    if (e.target.id && e.target.id.startsWith("waiver-kind-")) {
+      const hint = app.querySelector(`[data-waiver-hint="${e.target.id.slice("waiver-kind-".length)}"]`);
+      if (hint) hint.textContent = waiverHint(e.target.value);
+    }
     if (e.target.dataset && e.target.dataset.companySwitch) companySwitch(e.target);
     // The Payments import: a pay app picked for a row ticks it; a tick is remembered across redraws (R5-03).
     if (e.target.dataset && e.target.dataset.qboPick !== undefined && paymentImport) {
@@ -2204,6 +2223,7 @@ document.addEventListener("paste", (e) => {
 let mailReady = false;
 let checkEmail = null;    // { email, verification } (escaped) right after sign-up: the "Check your email" panel
 let billingInfo = null;   // billing.standing from /api/auth/me: configured, status, warning (escaped)
+let heldShare = 0;        // items shared to the app from this browser before signing in, waiting (R6-10)
 let readOnly = "";        // why this company can't be changed (the read-only demo, or a founder's hold), from /api/auth/me
 let teamData = null;      // { users, invites } from /api/team (escaped)
 let lastInvite = null;    // { link, emailed, email_status } after inviting
@@ -2340,6 +2360,16 @@ function checkEmailHtml() {
   </div>`;
 }
 
+// Shared from the phone before signing in (R6-10): held for half an hour, added here with one tap.
+function heldShareHtml() {
+  if (!heldShare || readOnly) return "";
+  return `<div class="card held-share" role="status">
+    <p>You shared ${heldShare === 1 ? "something" : `${heldShare} things`} to Duracash before signing in.</p>
+    <div class="form-inline"><button class="btn small" data-action="claim-share">Finish adding ${heldShare} shared item${heldShare === 1 ? "" : "s"}</button>
+      <button class="btn small secondary" data-action="discard-share">Discard</button></div>
+  </div>`;
+}
+
 function verifyBannerHtml() {
   if (readOnly) return `<div class="verify-banner read-only-banner" role="status">${readOnly}</div>`;
   if (billingInfo && billingInfo.warning) return `<div class="verify-banner" role="status">${billingInfo.warning}${me && me.role === "owner" ? ` <button class="linkish" data-action="nav" data-view="billing">Billing</button>` : ""}</div>`;
@@ -2461,7 +2491,7 @@ function qboCardHtml(onPayments) {
     <p class="sub">Each sent pay app also has <strong>Download for QuickBooks</strong>: a file QuickBooks imports as an invoice, with retainage as its own line.</p></div>`;
 }
 
-// Settings, one page each (R6-03): Company, Team, My account and, for owners, Billing.
+// Settings, one page each (R6-03): Company, Team, My account and Billing (members see it read-only, R6-10).
 // Your data and Delete the company sit folded at the end of Company.
 function companyView() {
   const owner = me.role === "owner";
@@ -2560,7 +2590,12 @@ function myAccountView() {
 function billingView() {
   const owner = me.role === "owner";
   const isDemo = me.company_id === DEMO_COMPANY_ID;
-  if (!owner) return `<h1>Billing</h1>` + emptyState("An owner manages billing", "Ask an owner of this company to change the subscription.");
+  // A member sees where the trial and the subscription stand; an owner changes them (R6-10).
+  if (!owner) return `<h1>Billing</h1>
+    ${trialBannerHtml()}
+    ${!isDemo && billingInfo && billingInfo.configured ? `<p class="sub billing-status">Subscription: ${billingInfo.status ? (BILLING_WORDS[billingInfo.status] || words(billingInfo.status)) : "none yet"}.</p>` : ""}
+    ${billingInfo && billingInfo.warning ? `<p class="blocker">${billingInfo.warning}</p>` : ""}
+    <p class="sub">An owner of this company manages the subscription.</p>`;
   return `
     <h1>Billing</h1>
     ${trialBannerHtml()}
@@ -2586,7 +2621,7 @@ function trialBannerHtml() {
   if (t.state === "active") {
     return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Duracash is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.${live ? "" : " Billing isn't live yet."}</div>`;
   }
-  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : " Subscribe in Settings, Billing.") : " Billing isn't live yet, so nothing changes for now."}</div>`;
+  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : me && me.role === "owner" ? " Subscribe in Settings, Billing." : " An owner can subscribe in Settings, Billing.") : " Billing isn't live yet, so nothing changes for now."}</div>`;
 }
 
 // The setup checklist on Today (R2-03). Each step's button goes to where that step is done:
@@ -3844,6 +3879,9 @@ const views = {
       <section class="card closeout-waivers" aria-labelledby="closeout-waivers-h">
         <h2 id="closeout-waivers-h">Lien waivers</h2>
         <p class="sub">One lien waiver per paid pay app. Duracash never writes the waiver; it sends the signed one on the job record.</p>
+        <details class="waiver-hints"><summary>Which type?</summary>
+          <ul>${Object.entries(WAIVER_KINDS).map(([k, v]) => `<li><strong>${v}.</strong> ${WAIVER_HINTS[k]}</li>`).join("")}</ul>
+        </details>
         ${rows.length ? `<div class="table-wrap">
           <table>
             <tr><th>Job</th><th>Type</th><th>Amount</th><th>Status</th><th>Action</th></tr>
@@ -3851,7 +3889,7 @@ const views = {
               const paid = j.invoices.find(i => i.waiver_due && !i.waiver_sent) || [...j.invoices].reverse().find(i => i.status === "paid");
               return `<tr>
                 <td><a href="${pathFor("waiver-detail", j.id)}" data-action="open-waiver" data-id="${j.id}">${j.name}</a></td>
-                <td>${paid && paid.waiver_kind ? waiverKindLabel(paid.waiver_kind) : j.waiver_kind || "Pick when sending"}</td>
+                <td>${waiverTypeText(j, paid)}</td>
                 <td class="num">${paid ? money(paid.amount_cents) : "—"}</td>
                 <td>${j.waiver_sent ? `<span class="pill green">Sent</span>` : `<span class="pill amber">Due</span>`}</td>
                 <td>${!j.waiver_sent && j.waiver_due ? `<button class="btn small" data-action="open-waiver" data-id="${j.id}">Choose type and send</button>` : "—"}</td>

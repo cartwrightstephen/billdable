@@ -112,6 +112,59 @@ class ImportHttpTests(unittest.TestCase):
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         return cookie, state["jobs"][0]
 
+    def share(self, files, cookie=None, text=""):
+        boundary = "----duracash"
+        body = f"--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nFrom the truck\r\n".encode()
+        if text:
+            body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n{text}\r\n".encode()
+        for name, data in files:
+            body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{name}\"\r\n"
+                     "Content-Type: image/jpeg\r\n\r\n").encode() + data + b"\r\n"
+        body += f"--{boundary}--\r\n".encode()
+        return self.request("POST", "/share", raw=body, cookie=cookie, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+
+    def test_shared_while_signed_out_waits_for_sign_in(self):  # R6-10, D8
+        photos = [(f"ticket-{n}.jpg", b"\xff\xd8fake" + bytes([n])) for n in range(3)]
+        res, _ = self.share(photos)
+        self.assertEqual((res.status, res.getheader("Location")), (303, "/inbox"))
+        held = res.getheader("Set-Cookie").split(";")[0]
+        self.assertTrue(held.startswith("duracash_share=") and "HttpOnly" in res.getheader("Set-Cookie"))
+        cookie, _ = self.company("held-share@example.com")
+        both = f"{cookie}; {held}"
+        _, me = self.request("GET", "/api/auth/me", cookie=both)
+        self.assertEqual(me["held_share"], 3, "the app offers Finish adding 3 shared items")
+        res, before = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual(res.status, 200, before)
+        self.assertFalse([i for i in before.get("inbox", []) if i["subject"] == "From the truck"], "in no company until claimed")
+        res, state = self.request("POST", "/api/share/claim", {}, cookie=both)
+        self.assertEqual(res.status, 200, state)
+        self.assertIn("Max-Age=0", res.getheader("Set-Cookie"))
+        added = [i for i in state["inbox"] if i["subject"] == "From the truck"]
+        self.assertEqual(len(added), 3)
+        self.assertEqual({len(i["file_ids"]) for i in added}, {1})
+        # Once only: the hold is gone.
+        res, out = self.request("POST", "/api/share/claim", {}, cookie=both)
+        self.assertEqual(res.status, 404)
+        self.assertEqual(self.request("GET", "/api/auth/me", cookie=both)[1]["held_share"], 0)
+        # Discard drops it without adding anything; another browser's key is not this one's.
+        res, _ = self.share([], text="Gate code 4411")
+        other = res.getheader("Set-Cookie").split(";")[0]
+        self.assertEqual(self.request("GET", "/api/auth/me", cookie=f"{cookie}; {other}")[1]["held_share"], 1)
+        self.assertEqual(self.request("GET", "/api/auth/me", cookie=f"{cookie}; duracash_share=../../auth")[1]["held_share"], 0)
+        res, _ = self.request("POST", "/api/share/claim", {"discard": True}, cookie=f"{cookie}; {other}")
+        self.assertEqual(res.status, 200)
+        _, after = self.request("GET", "/api/state", cookie=cookie)
+        self.assertFalse([i for i in after.get("inbox", []) if "Gate code" in (i.get("text") or "")])
+
+    def test_held_shares_expire(self):  # R6-10
+        key = importer.hold_share({"title": "", "text": "note", "url": "", "files": []}, now=time.time())
+        self.assertEqual(importer.held_count(key), 1)
+        later = time.time() + importer.HOLD_MINUTES * 60 + 5
+        self.assertEqual(importer.held_count(key, now=later), 0)
+        self.assertIsNone(importer.held_share(key, now=later))
+        self.assertFalse((importer._holds() / key).exists(), "an expired hold is removed when it is read")
+        self.assertIsNone(importer.hold_share({"title": "", "text": "", "url": "", "files": []}), "nothing shared, nothing held")
+
     def test_upload_eml_matches_job_and_refuses_html(self):
         cookie, job = self.company("eml@example.com")
         res, state = self.request("POST", "/api/import/file", raw=EML, cookie=cookie,

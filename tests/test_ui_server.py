@@ -160,7 +160,7 @@ class UiServerTests(unittest.TestCase):
 
     def test_share_from_the_phone_lands_in_the_inbox(self):  # P3: share target
         res = self.share()
-        self.assertEqual((res.status, res.getheader("Location")), (303, "/inbox"), "signed out: sent to sign in, nothing stored")
+        self.assertEqual((res.status, res.getheader("Location")), (303, "/inbox"), "signed out: sent to sign in, held for this browser (R6-10)")
         cookie, _ = self.company("share@example.com")
         res = self.share(cookie)
         self.assertEqual(res.status, 303)

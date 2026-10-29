@@ -10,18 +10,23 @@ matching and extraction are plain rules, and nothing is filed without a person.
 
 from __future__ import annotations
 
+import base64
 import email
 import email.policy
 import email.utils
 import hashlib
 import html
+import json
 import os
 import re
 import secrets
+import shutil
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl
 
 import domain
 import storage
@@ -720,3 +725,202 @@ def forget_company(company_id: str) -> None:
     with TOKENS_LOCK:
         data = {t: v for t, v in load_tokens().items() if v["company_id"] != company_id}
         storage.write_json(tokens_path(), data)
+
+# ---------- what providers and the phone post (moved from server.py, R6-08) ----------
+
+class BadPayload(ValueError):
+    """A post the server can't read at all; the route answers 400 with this message."""
+
+
+def parse_share(data: bytes, raw_ctype: str) -> dict:
+    """The multipart form a phone's share menu posts to /share: title, text, url and files."""
+    out = {"title": "", "text": "", "url": "", "files": []}
+    if "multipart/form-data" not in raw_ctype.lower():
+        return out
+    msg = email.message_from_bytes(b"Content-Type: " + raw_ctype.encode("latin-1", "replace") + b"\r\n\r\n" + data, policy=email.policy.default)
+    for part in msg.iter_parts():
+        name = part.get_param("name", header="content-disposition") or ""
+        filename = part.get_filename()
+        payload = part.get_payload(decode=True) or b""
+        if filename or name == "files":
+            if payload:
+                out["files"].append({"filename": filename or "shared file", "data": payload})
+        elif name in {"title", "text", "url"}:
+            out[name] = payload.decode("utf-8", "replace")[:5000]
+    out["files"] = out["files"][:20]
+    return out
+
+
+def provider_fields(data: bytes, raw_ctype: str) -> dict:
+    """The plain fields of a form or JSON post (not the attachments), lower-cased names."""
+    ctype = raw_ctype.lower()
+    if "application/json" in ctype:
+        try:
+            raw = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        # Mailgun's JSON webhooks put the three in a "signature" object.
+        nested = raw.get("signature") if isinstance(raw.get("signature"), dict) else {}
+        return {str(k).lower(): v for k, v in {**raw, **nested}.items()}
+    if "application/x-www-form-urlencoded" in ctype:
+        return {k.lower(): v for k, v in parse_qsl(data.decode("utf-8", "replace"), keep_blank_values=True)}
+    if "multipart/form-data" in ctype:
+        msg = email.message_from_bytes(b"Content-Type: " + raw_ctype.encode("latin-1", "replace") + b"\r\n\r\n" + data, policy=email.policy.default)
+        return {(part.get_param("name", header="content-disposition") or "").lower(): (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
+                for part in msg.iter_parts() if not part.get_filename()}
+    return {}
+
+
+def parse_inbound_email(data: bytes, raw_ctype: str) -> dict:
+    """Accept raw MIME, a JSON payload, or a multipart form post from an email provider.
+
+    Field names below are the common ones for SendGrid Inbound Parse, Mailgun
+    routes and Postmark inbound, from their documentation as I remember it;
+    they have not been tested against the live services.
+    """
+    ctype = raw_ctype.lower()
+    if "application/json" in ctype:
+        try:
+            raw = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise BadPayload("Request body must be valid JSON.")
+        if not isinstance(raw, dict):
+            raise BadPayload("Request body must be a JSON object.")
+        low = {k.lower(): v for k, v in raw.items()}
+        if isinstance(low.get("email"), str):
+            return parse_email(low["email"].encode("utf-8"))
+        text = low.get("text") or low.get("textbody") or low.get("body-plain") or low.get("stripped-text") or ""
+        if not text and (low.get("html") or low.get("htmlbody")):
+            text = html_to_text(str(low.get("html") or low.get("htmlbody")))
+        attachments = []
+        raw_atts = low.get("attachments")
+        for att in raw_atts if isinstance(raw_atts, list) else []:
+            if not isinstance(att, dict):
+                continue
+            a = {str(k).lower(): v for k, v in att.items()}
+            content = a.get("content") or a.get("content_base64") or ""
+            if not isinstance(content, str):
+                continue
+            try:
+                blob = base64.b64decode(content, validate=False)
+            except (ValueError, TypeError):
+                continue
+            name = a.get("name") or a.get("filename")
+            attachments.append({"filename": name if isinstance(name, str) else "attachment", "data": blob})
+        return {"from": str(low.get("from") or low.get("sender") or "")[:300], "subject": str(low.get("subject") or "")[:300],
+                "text": str(text), "sent_at": "", "attachments": attachments}
+    if "multipart/form-data" in ctype:
+        msg = email.message_from_bytes(b"Content-Type: " + raw_ctype.encode("latin-1", "replace") + b"\r\n\r\n" + data, policy=email.policy.default)
+        fields, attachments = {}, []
+        for part in msg.iter_parts():
+            name = part.get_param("name", header="content-disposition") or ""
+            filename = part.get_filename()
+            payload = part.get_payload(decode=True) or b""
+            if filename:
+                attachments.append({"filename": filename, "data": payload})
+            else:
+                fields[name.lower()] = payload.decode("utf-8", "replace")
+        return _email_from_fields(fields, attachments)
+    if "application/x-www-form-urlencoded" in ctype:
+        # Mailgun posts a message without attachments as a plain form.
+        return _email_from_fields(provider_fields(data, raw_ctype), [])
+    return parse_email(data)
+
+
+def _email_from_fields(fields: dict, attachments: list) -> dict:
+    if fields.get("email"):
+        parsed = parse_email(fields["email"].encode("utf-8"))
+        parsed["attachments"] += attachments
+        return parsed
+    text = fields.get("text") or fields.get("body-plain") or fields.get("stripped-text") or ""
+    if not text and fields.get("html"):
+        text = html_to_text(fields["html"])
+    return {"from": fields.get("from") or fields.get("sender") or "", "subject": fields.get("subject", ""),
+            "text": text, "sent_at": "", "attachments": attachments}
+
+
+# ---------- shared while signed out (R6-10) ----------
+# A phone can share to the app before anyone has signed in on it. What it shared waits here, in
+# a folder named by a random key that only that browser holds (a cookie), for HOLD_MINUTES;
+# after sign-in the app offers "Finish adding N shared items". Until then it is in no company.
+HOLD_MINUTES = 30
+HOLD_MAX_BYTES = 200 * 1024 * 1024  # every held share on the server together
+HOLD_KEY_RE = re.compile(r"[A-Za-z0-9_-]{20,64}")
+HOLD_LOCK = threading.Lock()
+
+
+def _holds() -> Path:
+    return storage.DATA_DIR / "held_shares"
+
+
+def _expire_holds(now: float) -> int:
+    """Remove holds past HOLD_MINUTES; returns the bytes the rest take."""
+    kept = 0
+    for folder in _holds().glob("*") if _holds().exists() else []:
+        try:
+            if now - folder.stat().st_mtime > HOLD_MINUTES * 60:
+                shutil.rmtree(folder, ignore_errors=True)
+            else:
+                kept += sum(f.stat().st_size for f in folder.iterdir())
+        except OSError:
+            continue
+    return kept
+
+
+def hold_share(parsed: dict[str, Any], now: float | None = None) -> str | None:
+    """Keep what a phone shared (parse_share's dict); returns its key, or None when nothing
+    came or the server's room for held shares is used up."""
+    files = [f for f in parsed.get("files", []) if f.get("data")]
+    if not files and not (parsed.get("text") or parsed.get("url")):
+        return None
+    with HOLD_LOCK:
+        used = _expire_holds(now or time.time())
+        if used + sum(len(f["data"]) for f in files) > HOLD_MAX_BYTES:
+            return None
+        key = secrets.token_urlsafe(24)
+        folder = _holds() / key
+        folder.mkdir(parents=True)
+        for n, f in enumerate(files):
+            (folder / f"{n}.bin").write_bytes(f["data"])
+        storage.write_json(folder / "share.json", {"title": parsed.get("title", ""), "text": parsed.get("text", ""), "url": parsed.get("url", ""),
+                                                   "files": [f.get("filename") or "shared file" for f in files]})
+    return key
+
+
+def held_share(key: str | None, now: float | None = None) -> dict[str, Any] | None:
+    """What is held under key, in parse_share's shape (file data read back), or None when the
+    key is unknown or the hold has expired."""
+    if not key or not HOLD_KEY_RE.fullmatch(key):
+        return None
+    folder = _holds() / key
+    try:
+        if (now or time.time()) - folder.stat().st_mtime > HOLD_MINUTES * 60:
+            drop_share(key)
+            return None
+        meta = json.loads((folder / "share.json").read_text())
+        files = [{"filename": name, "data": (folder / f"{n}.bin").read_bytes()} for n, name in enumerate(meta.get("files", []))]
+    except (OSError, ValueError):
+        return None
+    return {"title": meta.get("title", ""), "text": meta.get("text", ""), "url": meta.get("url", ""), "files": files}
+
+
+def held_count(key: str | None, now: float | None = None) -> int:
+    """How many Inbox items the share held under key becomes (one per file, or one for text
+    alone); 0 when there is none. Reads only the list, not the files."""
+    if not key or not HOLD_KEY_RE.fullmatch(key):
+        return 0
+    folder = _holds() / key
+    try:
+        if (now or time.time()) - folder.stat().st_mtime > HOLD_MINUTES * 60:
+            return 0
+        meta = json.loads((folder / "share.json").read_text())
+    except (OSError, ValueError):
+        return 0
+    return len(meta.get("files", [])) or (1 if meta.get("text") or meta.get("url") else 0)
+
+
+def drop_share(key: str) -> None:
+    if key and HOLD_KEY_RE.fullmatch(key):
+        shutil.rmtree(_holds() / key, ignore_errors=True)

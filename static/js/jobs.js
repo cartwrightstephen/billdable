@@ -92,6 +92,22 @@ export const WAIVER_KINDS = {
 
 export function waiverKindLabel(code) { return WAIVER_KINDS[unesc(code)] || code; }
 
+// One line on when each type fits (R6-10), under the type picker and on Closeout.
+export const WAIVER_HINTS = {
+  conditional_progress: "Before the money arrives: it counts only once their payment clears.",
+  unconditional_progress: "You already have the money for this pay app.",
+  conditional_final: "For the last payment, before it arrives: it counts once the payment clears.",
+  unconditional_final: "You have the last payment, and nothing more is owed on the job.",
+};
+
+export function waiverHint(code) { return WAIVER_HINTS[unesc(code)] || ""; }
+
+// The Type column on Closeout: the type of the waiver sent or chosen, else "Not chosen yet".
+export function waiverTypeText(j, paid) {
+  const kind = (paid && paid.waiver_kind) || j.waiver_kind;
+  return kind ? waiverKindLabel(kind) : "Not chosen yet";
+}
+
 // disabled: sending is off (email not confirmed, or no email for the customer); the page says why.
 export function waiverSendForm(j, inv, disabled = false) {
   const key = inv ? inv.id : "job";
@@ -100,7 +116,8 @@ export function waiverSendForm(j, inv, disabled = false) {
   return `<div class="form-inline">
     <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}>${v}</option>`).join("")}</select>
     <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}${disabled ? " disabled" : ""}>Approve & send</button>
-  </div>`;
+  </div>
+  <p class="sub waiver-hint" data-waiver-hint="${key}">${WAIVER_HINTS[pick]}</p>`;
 }
 
 // The job a form starts on (R2-07): the one last used when it is still open, else the only open

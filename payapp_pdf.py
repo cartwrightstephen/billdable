@@ -11,6 +11,7 @@ Helvetica and Courier fonts (no embedding), landscape US Letter.
 
 from __future__ import annotations
 
+import re
 import textwrap
 from typing import Any
 
@@ -357,3 +358,14 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
     for n, page in enumerate(pages, start=1):
         footer(page, n, len(pages))
     return _build(pages)
+
+
+def for_invoice(state: dict[str, Any], job_id: str, invoice_id: str) -> tuple:
+    """(PDF bytes, file name) of one pay app in a company's state, or (None, None) when it is gone."""
+    job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
+    invoice = next((i for i in (job or {}).get("invoices", []) if i["id"] == invoice_id), None)
+    if not invoice:
+        return None, None
+    payer = next((p for p in state.get("payers", []) if p["id"] == job["payer_id"]), {})
+    name = re.sub(r"[^A-Za-z0-9._-]", "-", invoice["number"]) + ".pdf"
+    return render(state.get("company", {}), job, payer, invoice), name

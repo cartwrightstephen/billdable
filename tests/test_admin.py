@@ -14,6 +14,7 @@ import admin
 import auth
 import helper
 import importer
+import migrations
 import server
 import storage
 
@@ -54,6 +55,16 @@ class AdminTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(server.company_exists("co-pine"))
         self.assertIsNone(auth.user_by_email("owner@pine.example"))
+
+    def test_migrate_all_brings_old_files_to_the_current_schema(self):  # R6-08
+        old = server.empty_state("Old Co")
+        old.pop("schema_version", None)  # as code before schema versions wrote it
+        server.company_store().save("co-old", old)
+        code, out = self.run_admin("migrate-all")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"1 of 2 company files brought to schema {migrations.SCHEMA_VERSION}", out)
+        self.assertEqual(server.company_store().load("co-old")["schema_version"], migrations.SCHEMA_VERSION)
+        self.assertIn("0 of 2", self.run_admin("migrate-all")[1], "a second run has nothing to do")
 
 
 if __name__ == "__main__":

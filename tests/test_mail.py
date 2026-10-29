@@ -23,6 +23,7 @@ import domain
 import helper
 import importer
 import mailer
+import monthly
 import server
 import storage
 
@@ -347,8 +348,8 @@ class MailHttpTests(unittest.TestCase):
         self.assertIsNone(domain.daily_digest(server.load_company(quiet), "", when))
         self.sink.messages.clear()
         with mock.patch.dict(os.environ, {"DURACASH_URL": "https://app.duracash.example"}):
-            self.assertEqual(server.send_daily_digests(when.replace(hour=5)), [], "not before the morning hour")
-            lines = server.send_daily_digests(when)
+            self.assertEqual(monthly.send_daily_digests(server.SITE, when.replace(hour=5)), [], "not before the morning hour")
+            lines = monthly.send_daily_digests(server.SITE, when)
         mine = [m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]]
         self.assertEqual(len(mine), 1, lines)
         self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily2@pine.example"]], "nothing on an empty day")
@@ -360,11 +361,11 @@ class MailHttpTests(unittest.TestCase):
             self.assertIn("https://app.duracash.example" + r["path"], body)
         # Once a day: the next hour sends nothing more.
         self.sink.messages.clear()
-        server.send_daily_digests(when.replace(hour=14))
+        monthly.send_daily_digests(server.SITE, when.replace(hour=14))
         self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]])
         # Turned off on Settings, Company: nothing the next day.
         self.request("POST", "/api/company", {"daily_email": False}, cookie=cookie)
-        server.send_daily_digests(when + timedelta(days=1))
+        monthly.send_daily_digests(server.SITE, when + timedelta(days=1))
         self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]])
 
     def test_not_set_up_then_retry(self):

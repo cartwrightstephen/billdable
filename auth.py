@@ -684,6 +684,12 @@ def all_users() -> list[dict[str, Any]]:
         return [{**_public(u), "created_at": u.get("created_at", "")} for u in _load()["users"]]
 
 
+def owner_emails(company_id: str) -> list[str]:
+    """The confirmed email addresses of a company's owners."""
+    return [u["email"] for u in all_users()
+            if u["company_id"] == company_id and u.get("role") == "owner" and u.get("email_verified")]
+
+
 # ---------- two-step sign-in (P2-9) ----------
 
 RECOVERY_CODES = 8

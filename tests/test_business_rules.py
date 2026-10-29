@@ -18,6 +18,7 @@ import admin
 import billing
 import domain
 import metrics
+import monthly
 import server
 import storage
 import store
@@ -127,15 +128,15 @@ class MonthlyJobsTests(unittest.TestCase):
 
     def test_the_drill_runs_once_a_month_and_alerts_on_failure(self):
         now = datetime(2026, 11, 2, 9, tzinfo=UTC)
-        self.assertEqual(server.run_monthly_jobs(now), [], "no backup yet: nothing to check")
+        self.assertEqual(monthly.run_monthly_jobs(server.SITE, now), [], "no backup yet: nothing to check")
         with mock.patch.dict("os.environ", {"BACKUP_UPLOADS": "0"}):
             backup = server.backup.make_backup()
-            did = server.run_monthly_jobs(now)
+            did = monthly.run_monthly_jobs(server.SITE, now)
         self.assertTrue(did and "PASS" in did[0], did)
-        self.assertEqual(server.run_monthly_jobs(now), [], "once a month")
+        self.assertEqual(monthly.run_monthly_jobs(server.SITE, now), [], "once a month")
         with mock.patch.object(server.backup, "drill", return_value=([], ["co-1: the audit chain is broken at aud-2."])), \
                 mock.patch.object(server.alerts, "notify") as notify:
-            did = server.run_monthly_jobs(datetime(2026, 12, 1, 9, tzinfo=UTC))
+            did = monthly.run_monthly_jobs(server.SITE, datetime(2026, 12, 1, 9, tzinfo=UTC))
         self.assertIn("FAIL", did[0])
         notify.assert_called_once()
         self.assertTrue(backup.exists())
@@ -143,13 +144,13 @@ class MonthlyJobsTests(unittest.TestCase):
     def test_summaries_only_when_switched_on_and_early_in_the_month(self):
         with mock.patch.object(server.backup, "backups", return_value=[]), \
                 mock.patch.object(server.mailer, "configured", return_value=True), \
-                mock.patch.object(server, "send_monthly_summaries", return_value=["co-1  own@x: sent"]) as send:
-            self.assertEqual(server.run_monthly_jobs(datetime(2026, 11, 1, 9, tzinfo=UTC)), [], "off unless MONTHLY_SUMMARY_EMAILS=1")
+                mock.patch.object(monthly, "send_monthly_summaries", return_value=["co-1: 1 of 1 sent"]) as send:
+            self.assertEqual(monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 1, 9, tzinfo=UTC)), [], "off unless MONTHLY_SUMMARY_EMAILS=1")
             with mock.patch.dict("os.environ", {"MONTHLY_SUMMARY_EMAILS": "1"}):
-                self.assertEqual(server.run_monthly_jobs(datetime(2026, 11, 9, tzinfo=UTC)), [], "only on the 1st to the 3rd")
-                did = server.run_monthly_jobs(datetime(2026, 11, 2, tzinfo=UTC))
-                self.assertEqual(server.run_monthly_jobs(datetime(2026, 11, 3, tzinfo=UTC)), [], "once")
-        send.assert_called_once_with(2026, 10)
+                self.assertEqual(monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 9, tzinfo=UTC)), [], "only on the 1st to the 3rd")
+                did = monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 2, tzinfo=UTC))
+                self.assertEqual(monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 3, tzinfo=UTC)), [], "once")
+        send.assert_called_once_with(server.SITE, 2026, 10)
         self.assertIn("2026-10", did[0])
 
 

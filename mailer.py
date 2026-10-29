@@ -172,6 +172,17 @@ def build_message(
     return msg, left_off
 
 
+def invite_email(inviter: str, inviter_email: str, company_name: str, role: str, link: str) -> tuple[str, str]:
+    """(subject, body) of a team invite (moved from server.py, R6-08). Names typed by users go in
+    the body only, flattened and shortened; the subject is fixed."""
+    flat = lambda text, n: " ".join(str(text).split())[:n]
+    return ("You're invited to a team on Duracash",
+            f"{flat(inviter, 80)} ({inviter_email}) invited you to join the company "
+            f"\"{flat(company_name, 80)}\" on Duracash as {role}.\n\n"
+            f"Accept here (the link works for 7 days):\n{link}\n\n"
+            "If you don't know this person, ignore this email.")
+
+
 def _mime(name: str) -> tuple[str, str]:
     ext = Path(name).suffix.lower()
     table = {

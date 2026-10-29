@@ -101,7 +101,7 @@ test("History pills are sentences, not action codes", () => {
   assert.equal(actionWords("close_job"), "Job finished");
   assert.equal(actionWords("some_new_code"), "Some new code");
   // Every action code the server writes (domain.audit calls) has a sentence.
-  const py = ["domain.py", "server.py", "importer.py"].map(f => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8")).join("\n");
+  const py = ["domain/__init__.py", "domain/trail.py", "server.py", "importer.py"].map(f => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8")).join("\n");
   const codes = new Set([...py.matchAll(/audit\(\s*(?:state|st|s),\s*[^,]+,\s*"([a-z_]+)"/g)].map(m => m[1]));
   for (const m of py.matchAll(/audit\(\s*\n\s*state,\s*\n?\s*[^,]+,\s*\n?\s*"([a-z_]+)"/g)) codes.add(m[1]);
   assert.ok(codes.size > 30, `found the audit codes (${codes.size})`);

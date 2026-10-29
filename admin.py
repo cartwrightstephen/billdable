@@ -10,6 +10,8 @@
     python3 admin.py writable COMPANY_ID           undo read-only
     python3 admin.py partner COMPANY_ID on|off     a design partner pays STRIPE_PARTNER_PRICE_ID
                                                    (the business plan: up to 3, $99 a month)
+    python3 admin.py migrate-all                   bring every company file to the current schema now
+                                                   (each is also brought up to date the first time it is read)
 
 Every command acts on DURACASH_DATA_DIR, like the server. See docs/runbooks.md.
 """
@@ -21,6 +23,8 @@ import sys
 
 import auth
 import domain
+import migrations
+import monthly
 import server
 
 
@@ -65,7 +69,7 @@ def main(argv: list[str]) -> int:
         else:
             last = dt.date.today().replace(day=1) - dt.timedelta(days=1)
             year, month = last.year, last.month
-        for line in server.send_monthly_summaries(year, month):
+        for line in monthly.send_monthly_summaries(server.SITE, year, month):
             print(line)
     elif cmd == "partner" and len(args) == 2 and args[1] in {"on", "off"}:
         if args[0] not in server.company_ids():
@@ -102,6 +106,23 @@ def main(argv: list[str]) -> int:
                          f"Duracash set the company read-only: {reason}." if reason else "Duracash made the company writable again.", "Duracash")
             server.save_company(args[0], state)
         print(f"{args[0]} is now {'read-only: ' + reason if reason else 'writable'}.")
+    elif cmd == "migrate-all":
+        ids = server.company_ids()
+        updated, refused = 0, []
+        for company_id in ids:
+            raw = server.company_store().load(company_id)
+            if raw is None or int(raw.get("schema_version") or 1) == migrations.SCHEMA_VERSION:
+                continue
+            try:
+                server.load_company(company_id)  # a read saves it in the current shape (R6-08)
+                updated += 1
+            except ValueError as exc:  # a file from newer code
+                refused.append(f"{company_id}: {exc}")
+        print(f"{updated} of {len(ids)} company files brought to schema {migrations.SCHEMA_VERSION}; the others were already on it.")
+        for line in refused:
+            print(line)
+        if refused:
+            return 1
     elif cmd == "end-sessions" and args:
         with auth.LOCK:
             data = auth._load()

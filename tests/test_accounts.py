@@ -28,6 +28,7 @@ import domain
 import helper
 import importer
 import mailer
+import monthly
 import server
 import storage
 import trial
@@ -418,6 +419,19 @@ class AccountHttpTests(ServerCase):
         self.assertEqual(server.redact("/api/inbound/email/abcDEF123_-xyz"), "/api/inbound/email/[token]")
         self.assertEqual(server.redact("/api/calendar/abc123.ics"), "/api/calendar/[token].ics")
         self.assertEqual(server.redact('"GET /api/files/f1?x=secret HTTP/1.1"'), '"GET /api/files/f1 HTTP/1.1"')
+        # The monthly run logs counts and company ids, never an owner's address (R6-09).
+        _, data = self.signup("monthly-log@pine.example", "Log Co")
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))
+        logged = []
+        with mock.patch.object(server, "log_json", lambda level, **fields: logged.append(json.dumps(fields))), \
+                mock.patch.object(monthly.backup, "backups", return_value=[]), \
+                mock.patch.object(monthly.mailer, "configured", return_value=True), \
+                mock.patch.object(server, "send_system_email", return_value="sent"), \
+                mock.patch.dict(os.environ, {"MONTHLY_SUMMARY_EMAILS": "1"}):
+            monthly.run_once(server.SITE, datetime(2099, 11, 2, 12, tzinfo=timezone.utc))
+        self.assertTrue(any("monthly summaries for 2099-10" in line for line in logged), logged)
+        self.assertTrue(any(f"{data['user']['company_id']}: 1 of 1 sent" in line for line in logged), logged)
+        self.assertFalse([line for line in logged if "@" in line], "no email address in the log")
 
     def test_pay_app_pdf_download(self):
         cookie, _ = self.signup("pdf@pine.example")

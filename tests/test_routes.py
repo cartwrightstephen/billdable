@@ -78,6 +78,36 @@ class RouteEdgeTests(unittest.TestCase):
         self.assertIn(res.status, {400, 409})
 
 
+    def test_the_five_team_routes_are_owners_only(self):  # R6-08
+        team = {r.handler: r for r in server.ROUTES if r.method == "POST" and r.pattern.startswith(("/api/team", "/api/account"))}
+        self.assertEqual(set(team), {"_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete"})
+        self.assertTrue(all(r.owner and r.access == "body" for r in team.values()))
+        owner, me = self.signup("team-routes@example.com")
+        res, out = self.request("POST", "/api/team/invite", {"email": "team-member@example.com", "role": "member"}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": out["invite_path"].split("#invite=")[1],
+                                                                       "name": "Mo Member", "password": "member password 1"})
+        self.assertEqual(res.status, 200, joined)
+        member = res.getheader("Set-Cookie").split(";")[0]
+        res, out = self.request("POST", "/api/team/invite", {"email": "late@example.com"}, cookie=owner)
+        invite_id = self.request("GET", "/api/team", cookie=owner)[1]["invites"][0]["id"]
+        for path, body in (("/api/team/invite", {"email": "x@example.com"}), (f"/api/team/invites/{invite_id}/revoke", {}),
+                           (f"/api/team/{me['id']}/role", {"role": "member"}), (f"/api/team/{me['id']}/remove", {}),
+                           ("/api/account/delete", {"password": "member password 1", "confirm": "Pine Builders"})):
+            res, data = self.request("POST", path, body, cookie=member)
+            self.assertEqual((res.status, data.get("error")), (403, "Only an owner can do that."), path)
+        res, data = self.request("POST", f"/api/team/invites/{invite_id}/revoke", {}, cookie=owner)
+        self.assertEqual((res.status, data["invites"]), (200, []))
+        res, data = self.request("POST", f"/api/team/{joined['user']['id']}/role", {"role": "owner"}, cookie=owner)
+        self.assertEqual(res.status, 200)
+        self.assertEqual(next(u for u in data["users"] if u["id"] == joined["user"]["id"])["role"], "owner")
+        res, data = self.request("POST", f"/api/team/{joined['user']['id']}/remove", {}, cookie=owner)
+        self.assertEqual((res.status, data["rotated"]), (200, True))
+        res, _ = self.request("POST", f"/api/team/{me['id']}/nope", {}, cookie=owner)
+        self.assertEqual(res.status, 404, "an unknown team action is not found")
+        _, page = self.request("GET", "/api/audit", cookie=owner)
+        self.assertTrue(any("revoked an invite" in e["detail"] for e in page["entries"] if e["action"] == "team"))
+
     def test_per_view_endpoints(self):
         cookie, _ = self.signup("views@example.com")
         job = {"name": "Ash", "customer": "Ash GC", "contract_cents": 100000, "address": "1 Ash St", "approver": "Al Ash", "ap_email": "ap@ashgc.com"}

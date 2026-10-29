@@ -272,7 +272,7 @@ await step("Inbox: a suggested item is added with one tap, and a photo goes with
   await ctx.close();
 });
 
-await step("a member sees no provider addresses; the owner does, with Make a new address", async () => {  // R5-09, R6-07
+await step("a member sees no provider addresses; the owner does, with Make a new address; the member sees the trial on Billing", async () => {  // R5-09, R6-07, R6-10
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const p = await ctx.newPage();
   p.on("pageerror", (e) => errors.push(e.message));
@@ -296,6 +296,11 @@ await step("a member sees no provider addresses; the owner does, with Make a new
   await automatic.getByText("An owner connects the email service and the texting number.").waitFor();
   assert.equal(await automatic.getByRole("button", { name: "Make a new address" }).count(), 0, "no Make a new address for a member");
   assert.equal(await automatic.locator("#email-webhook, #sms-webhook").count(), 0, "the web addresses providers post to are an owner's");
+  // A member sees the trial in Settings too, on Billing, without the owner's buttons (R6-10).
+  await p.goto(BASE + "/settings/billing");
+  await p.locator("#view .trial-banner", { hasText: "Free trial" }).waitFor();
+  await p.getByText("An owner of this company manages the subscription.").waitFor();
+  assert.equal(await p.locator('#view [data-action="billing-checkout"], #view [data-action="billing-portal"]').count(), 0, "no Subscribe for a member");
   await ctx.close();
 });
 
