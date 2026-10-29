@@ -14,8 +14,19 @@ export function setData(data) { state = data; }
 
 export function setMe(user) { me = user; }
 
-// Signed out (or the session ended): nothing of the company stays in the page.
-export function clearSession() { me = null; state = null; }
+// Signed out (or the session ended): nothing of the company stays in the page. What a module
+// keeps of it outside `state` (a job fetched whole, the Inbox addresses, Results, QuickBooks
+// rows, filters on a job) it forgets here too, through onSessionEnd, so the next company to sign
+// in in this tab never sees it, whether after Log out or a session that ran out.
+const forgetters = [];
+export function onSessionEnd(fn) { forgetters.push(fn); }
+export function clearSession() {
+  me = null;
+  state = null;
+  teamData = null;
+  formOpen = {};
+  forgetters.forEach(fn => fn());
+}
 
 export function setLocation(view, jobId = null, detailId = null) {
   currentView = view;

@@ -10,7 +10,7 @@ import { field, moneyField, formErrorLine, refuseForm, formValues } from "../for
 import { canRecord, needsPick, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "../payimport.js";
 import { termText } from "../terms.js";
 import { companyGapsHtml } from "../setup.js";
-import { state, me, currentView, currentJobId, currentDetailId, formOpen, mailReady } from "../state.js";
+import { state, me, currentView, currentJobId, currentDetailId, formOpen, mailReady, onSessionEnd } from "../state.js";
 import { may, render, DEMO_COMPANY_ID, toast, post, backButton, emptyState, nav, listPage, setState, EMAIL_PATTERN } from "../app-core.js";
 import { coFormFields, coSignControls, shortPayCardHtml, owedText, emailFailed, shortPayButtons, sendsTo, addChangeOrder } from "./job.js";
 
@@ -25,6 +25,10 @@ let payappFilter = "all";
 let outboxJobFilter = "all";
 export function setOutboxJobFilter(value) { outboxJobFilter = value; }
 let coPreselectJob = null;
+
+// Signed out: the QuickBooks connection, the payments being imported and a job picked in a
+// filter are that company's.
+onSessionEnd(() => { paymentImport = null; qboStatus = null; qboReconcile = null; outboxJobFilter = "all"; coPreselectJob = null; });
 
 // The job-record kind for a file taken for a paperwork item: the item's own kind when it is one
 // (waiver, ticket, contract, photo...), else Other.
@@ -66,11 +70,14 @@ const OWNER_SENDS = `<p class="sub owner-only">Only an owner can send this. Tell
 
 export async function loadQboStatus() {
   qboStatus = { loading: true };
+  const asked = me;
   try {
     const res = await fetch("/api/qbo/status");
-    if (!res.ok) { qboStatus = null; return; }
-    qboStatus = escDeep(await readJson(res));
-  } catch (_) { qboStatus = null; setNetBanner(true); return; }
+    const data = res.ok ? await readJson(res) : null;
+    if (me !== asked) return;   // signed out while this was asked: the last company's connection
+    if (!data) { qboStatus = null; return; }
+    qboStatus = escDeep(data);
+  } catch (_) { if (me === asked) qboStatus = null; setNetBanner(true); return; }
   if (["payments", "company"].includes(currentView)) render();
 }
 

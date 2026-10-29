@@ -7,7 +7,7 @@ import { askConfirm } from "../dom.js";
 import { webcalUrl } from "../calendar.js";
 import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "../inbox.js";
 import { termText } from "../terms.js";
-import { state, me, currentView, currentJobId, clearSession } from "../state.js";
+import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
 import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
 
 // Files added in the Inbox go with the job last picked under "Which job?" on this device (R5-07).
@@ -87,9 +87,12 @@ async function postImport(path, body) {
 
 export async function loadImportSettings() {
   if (importSettings) { fillImportSettings(); return; }
+  const asked = me;
   try {
     const res = await fetch("/api/import/settings");
-    if (res.ok) { importSettings = escDeep(await readJson(res)); fillImportSettings(); }
+    const data = res.ok ? await readJson(res) : null;
+    // Signed out (or someone else signed in) while this was asked: it is the last company's.
+    if (data && me === asked) { importSettings = escDeep(data); fillImportSettings(); }
   } catch (_) { /* the cards keep their "loading" text; the banner covers outages */ }
 }
 
@@ -166,6 +169,9 @@ export function guessPasteSource() {
 // Inbox cards whose job and kind selects are open ("Other job" / "Change type"); the rest show
 // one button for the suggested job (R5-05).
 const inboxOpen = new Set();
+
+// Signed out: the private email, text and calendar addresses are that company's.
+onSessionEnd(() => { importSettings = null; inboxOpen.clear(); });
 
 function inboxItemCard(i) {
   const openJobs = state.jobs.filter(j => !j.closed);
@@ -375,14 +381,16 @@ export const actions = {
   },
   // One toast for the lot (R5-05), not a "Saved" per item.
   "inbox-file-all": async () => {
-    const items = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id);
-    let filed = 0;
-    for (const i of items) {
+    // Every card's picks are read before the first save: each save redraws the cards, which
+    // would show the suggested job and kind again.
+    const picks = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id).map(i => {
       const select = document.querySelector(`#inb-job-${i.id}`);
       const jobId = select ? select.value : i.suggested_job_id;   // a row set back to "Pick a job" is skipped
-      if (!jobId) continue;
-      const kind = document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind;
-      const r = await post(`/api/inbox/${i.id}/file`, { job_id: jobId, kind }, { quiet: true });
+      return { id: i.id, jobId, kind: document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind };
+    }).filter(p => p.jobId);
+    let filed = 0;
+    for (const p of picks) {
+      const r = await post(`/api/inbox/${p.id}/file`, { job_id: p.jobId, kind: p.kind }, { quiet: true });
       if (r && r.ok) filed++;
     }
     if (filed) toast(`Added ${filed} item${filed === 1 ? "" : "s"} to ${filed === 1 ? "its job" : "their jobs"}.`);

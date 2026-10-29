@@ -8,8 +8,8 @@ import { readJson, setNetBanner } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues, formErrors, formDraft, draftValue, clearForm } from "../forms.js";
 import { termText, actionWords } from "../terms.js";
-import { state, me, currentJobId, formOpen } from "../state.js";
-import { may, listPage, DEMO_COMPANY_ID, perms, post, toast, render, jobDetailLoading, backButton, emptyState, nav, moreOpen, toggleForm } from "../app-core.js";
+import { state, me, currentJobId, formOpen, onSessionEnd } from "../state.js";
+import { may, listPage, DEMO_COMPANY_ID, perms, post, toast, render, jobDetailLoading, jobDetailFailed, backButton, emptyState, nav, moreOpen, toggleForm } from "../app-core.js";
 import { jobFields } from "./jobs.js";
 import { pasteBoxHtml } from "./inbox.js";
 
@@ -20,6 +20,8 @@ let progressMode = "period";   // the progress form takes this draw $ (default),
 // "Request signature" in place of the form (R3-06): {job, co}.
 let newCoMade = null;
 export let sovDraft = null; // schedule-of-values editor: { jobId, lines: [{id,item,description,quantity,unit,rate}], op_pct, warnings } (raw text, not escaped)
+// Signed out: a schedule being typed and the change order just made are that company's.
+onSessionEnd(() => { sovDraft = null; newCoMade = null; editingRecord = ""; });
 
 // Change orders are approved by a signature: online through a link the payer opens,
 // or a signed copy on the job record (P2-3). There is no bare "approve" any more.
@@ -465,6 +467,7 @@ export const views = {
   job() {
     const j = state.jobs.find(x => x.id === currentJobId);
     if (!j && jobDetailLoading === currentJobId) return backButton("jobs", "Jobs") + `<p class="sub">Loading the job…</p>`;
+    if (!j && jobDetailFailed === currentJobId) return backButton("jobs", "Jobs") + emptyState("Couldn't load this job", "Check your connection, then try again.", `<button class="btn" data-action="nav" data-view="job" data-id="${esc(currentJobId)}">Try again</button>`);
     if (!j) return backButton("jobs", "Jobs") + emptyState("Job not found", "It may have been deleted, or the link belongs to another company.", `<button class="btn" data-action="nav" data-view="jobs">Go to Jobs</button>`);
     const m = j.money;
     const blocked = isBlocked(j);

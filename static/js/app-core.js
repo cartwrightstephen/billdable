@@ -8,7 +8,7 @@ import { readJson, setNetBanner } from "./net.js";
 import { labelTables } from "./dom.js";
 import { refuseForm, formErrors, clearForm, clearAllForms } from "./forms.js";
 import { setBillingStyle, termText } from "./terms.js";
-import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, clearSession, setLocation, closeForms, pendingPath, pendingSearch, setPending, setCameraAsk, setTeamData, setDrawerOpen, setQueueExpanded } from "./state.js";
+import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, clearSession, onSessionEnd, setLocation, closeForms, pendingPath, pendingSearch, setPending, setCameraAsk, setTeamData, setDrawerOpen, setQueueExpanded } from "./state.js";
 
 // The shell's render and boot live in app.js and the landing page in views/auth.js; app.js hands
 // them over at start (setPage). A view can't import app.js: index.html loads it as /app.js?v=...,
@@ -26,7 +26,10 @@ let lastToastAt = 0;
 // from history is fetched whole and kept here until the next change; long lists are paged.
 export let jobDetails = {};          // job id -> the full job from /api/jobs/<id>
 export let jobDetailLoading = null;  // the id being fetched
-export const missingJobs = new Set();
+export const missingJobs = new Set();  // ids the server said aren't there (404): "Job not found"
+// The id whose fetch failed (offline, a server error): not "not found", just not loaded. It is
+// asked for again on the next visit to it (nav) or the next state from the server.
+export let jobDetailFailed = null;
 export function clearJobDetails() { jobDetails = {}; }
 export let listPages = {};           // outbox | audit | history -> {job, entries, total, loading, stale}
 const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api/jobs?status=closed&", timeline: "/api/timeline?" };
@@ -191,7 +194,22 @@ export function setState(data) {
   state.jobs.forEach(withPayer);
   Object.values(jobDetails).forEach(placeJob);
   Object.values(listPages).forEach(p => { p.stale = true; });
+  jobDetailFailed = null;   // the server answered: a job that didn't load is asked for again
 }
+
+// Signed out: the jobs fetched whole, the paged lists and what was typed belong to that company.
+// stateVersion moves on, so a job still loading for it is dropped when it arrives.
+onSessionEnd(() => {
+  stateVersion++;
+  jobDetails = {};
+  jobDetailLoading = null;
+  jobDetailFailed = null;
+  missingJobs.clear();
+  listPages = {};
+  actionEl = null;
+  clearAllForms();
+  for (const k of Object.keys(moreDetails)) delete moreDetails[k];
+});
 
 function placeJob(full) {
   const i = state.jobs.findIndex(j => j.id === full.id);
@@ -200,14 +218,16 @@ function placeJob(full) {
 
 export async function loadJobDetail(id) {
   jobDetailLoading = id;
+  if (jobDetailFailed === id) jobDetailFailed = null;
   const version = stateVersion;
   try {
     const res = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
     // A change saved while this was loading brought newer state: this answer is older, so drop it.
     if (version !== stateVersion) { jobDetailLoading = null; if (currentJobId === id) render(); return; }
     if (res.ok) { const full = withPayer(escDeep((await readJson(res)).job)); jobDetails[id] = full; placeJob(full); }
-    else missingJobs.add(id);
-  } catch (_) { setNetBanner(true); missingJobs.add(id); }
+    else if (res.status === 404) missingJobs.add(id);
+    else jobDetailFailed = id;
+  } catch (_) { setNetBanner(true); jobDetailFailed = id; }
   jobDetailLoading = null;
   if (currentJobId === id) render();
 }
@@ -242,6 +262,7 @@ export async function loadListPage(kind, job, offset, limit) {
 // server's field errors show under its inputs. opts.close: the formOpen key to close once saved.
 // A refusal (409) changes nothing, so the page is not redrawn: its reasons show in a card under
 // the button that was tapped (opts.anchor, else the one being handled), not in a toast.
+// opts.ownRefusal: the caller tells the refusal itself (the helper, in its own panel).
 export async function post(path, body = {}, opts = {}) {
   const anchor = opts.anchor || actionEl;
   const emailsBefore = state ? state.email_log_total || 0 : 0;
@@ -268,7 +289,7 @@ export async function post(path, body = {}, opts = {}) {
   if (res.status === 409) {
     const fields = data.fields && typeof data.fields === "object" ? data.fields : null;
     if (opts.formKey && fields && Object.keys(fields).length) refuseForm(opts.formKey, fields);
-    else showRefusal(anchor, data);
+    else if (!opts.ownRefusal) showRefusal(anchor, data);
     return { ok: false, status: 409, data };
   }
   if (!res.ok) {
@@ -330,6 +351,7 @@ function showRefusal(anchor, data) {
 // opts.fromHistory: Back/Forward already changed the address; opts.replace: don't add a history entry.
 export function nav(view, jobId = null, detailId = null, opts = {}) {
   if (view === "team") setTeamData(null);  // fresh team list each time the page opens
+  jobDetailFailed = null;   // a job that didn't load is asked for again
   const moved = view !== currentView || jobId !== currentJobId || detailId !== currentDetailId;
   setLocation(view, jobId, detailId);
   closeForms();
@@ -353,7 +375,10 @@ export function nav(view, jobId = null, detailId = null, opts = {}) {
 
 export function toggleForm(key) {
   formOpen[key] = !formOpen[key];
-  if (!formOpen[key]) clearForm(key);  // Cancel drops what was typed
+  if (!formOpen[key]) {   // Cancel drops what was typed
+    clearForm(key);
+    if (key === "progress") clearForm("sovprogress");   // the line-by-line form opens from the same button
+  }
   render();
 }
 

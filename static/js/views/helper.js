@@ -3,7 +3,7 @@ import { esc, unesc, helperFormat } from "../format.js";
 import { routeFromPath } from "../routes.js";
 import { readJson } from "../net.js";
 import { askConfirm } from "../dom.js";
-import { state, me, currentView, currentJobId, clearSession } from "../state.js";
+import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
 import { post, renderLanding, nav, toast } from "../app-core.js";
 
 export function setAiVisible(on) {
@@ -30,6 +30,7 @@ export function forgetHelper() {
   aiOpen = false;
   document.getElementById("ai-panel").classList.remove("open");
 }
+onSessionEnd(forgetHelper);
 
 export function updateAiContext() {
   if (aiOpen) renderHelper();
@@ -88,6 +89,15 @@ async function helperAsk(q) {
   renderHelper();
 }
 
+// Why a helper button's change wasn't made: the server's reason and what blocks it, as a list.
+function notDoneText(r) {
+  if (!r) return "Not done. Duracash couldn't be reached. Check your connection and try again.";
+  const d = r.data || {};
+  const reason = String(d.error || "Something went wrong. Try again.");
+  const lines = (Array.isArray(d.blockers) ? d.blockers : []).map(String).filter(b => b && b !== reason);
+  return [`Not done. ${reason}`, ...lines.map(l => `- ${l}`)].join("\n");
+}
+
 async function helperRunAction(a) {
   if (a.type === "nav") nav(a.view);
   else if (a.type === "job") nav("job", a.job_id);
@@ -99,8 +109,10 @@ async function helperRunAction(a) {
     catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
   } else if (a.type === "post") {
     if (a.confirm && !(await askConfirm(unesc(a.confirm), "Go ahead"))) return;
-    await post(a.path);
-    helperLog.push({ who: "helper", text: "Done. The page is updated; the Outbox and Activity log show what happened." });
+    // A refusal is told here, in the helper, not under a button on the page (ownRefusal).
+    const r = await post(a.path, {}, { ownRefusal: true });
+    if (!me) return;   // the session ran out: the sign-in page shows
+    helperLog.push({ who: "helper", text: r && r.ok ? "Done. The page is updated; the Outbox and Activity log show what happened." : notDoneText(r) });
     renderHelper();
   }
 }

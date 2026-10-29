@@ -3,10 +3,9 @@
 import { esc, escDeep } from "../format.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { field, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, clearForm } from "../forms.js";
-import { me, setMe, clearSession, pendingPath, setCheckEmail, setAccount, mailReady, readOnly, billingInfo, heldShare, setTeamData, setDrawerOpen, checkEmail } from "../state.js";
+import { me, setMe, clearSession, pendingPath, setCheckEmail, setAccount, mailReady, readOnly, billingInfo, heldShare, setDrawerOpen, checkEmail } from "../state.js";
 import { render, load, post, applyLocation, DEMO_COMPANY_ID, boot, toast, nav } from "../app-core.js";
-import { forgetSettings } from "./settings.js";
-import { setAiVisible, helperLog, forgetHelper } from "./helper.js";
+import { setAiVisible, helperLog } from "./helper.js";
 
 // Someone who has signed in on this device before lands on Sign in, not on Create account (R2-02).
 const SIGNED_IN_KEY = "duracash-signed-in";
@@ -218,6 +217,7 @@ async function lookAround() {
 }
 
 async function startSession(user) {
+  clearSession();   // nothing kept from whoever was signed in before in this tab
   clearForm("auth");
   loginCode = null;
   setMe(escDeep(user));
@@ -244,12 +244,9 @@ async function startSession(user) {
 async function logout() {
   const wasDemo = me && me.company_id === DEMO_COMPANY_ID;
   await fetch("/api/auth/logout", { method: "POST" });
-  clearSession();
-  forgetSettings();   // two-step setup, recovery codes, the last invite, the companies list
+  clearSession();   // and with it Settings, the helper and every page's kept data (onSessionEnd)
   loginCode = null; setCheckEmail(null);
   setAccount({ helperAdmin: false });
-  setTeamData(null);
-  forgetHelper();
   // They have an account on this device now; leaving the sample company goes back to where they were.
   authMode = wasDemo && !signedInBefore() ? "signup" : "login";
   setAiVisible(false);
