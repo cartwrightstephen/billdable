@@ -1140,7 +1140,7 @@
         "suggest",
         "match"
       ],
-      "answer": "It looks for the job code (like OAK), the job address, the job name, the customer's name, or an email from the customer's email for pay apps. If a few jobs fit, it lists them to pick from. Tip: put the job code in email subjects and texts. Tap Other job to change it before adding, and Undo under Recently added or dismissed takes an added item back off.",
+      "answer": "It looks for the job code (like OAK or oak, as its own word), the job address, the job name or a part of it no other job has (like Oak Street for Oak Street kitchen), the customer's name, or an email from the customer's email for pay apps. If a few jobs fit equally, it lists them to pick from and doesn't guess. Tip: put the job code in email subjects and texts. Tap Other job to change it before adding, and Undo under Recently added or dismissed takes an added item back off.",
       "handler": null,
       "needs_job": false,
       "actions": [],
