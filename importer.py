@@ -408,6 +408,15 @@ GENERIC_NAME_WORDS = {
     "garage", "basement", "deck", "porch", "roof", "repair", "repairs", "interior", "exterior", "tenant", "ti",
     "finish", "buildout", "build", "out", "closed", "inc", "llc", "co", "company", "group", "park", "creek", "hill",
     "lake", "river", "lobby", "hall", "room", "rooms", "work", "site",
+    # Kinds of building or tenant ("Vesta Senior Living", "Glenwood Retail Shell", "Kennesaw Ortho Clinic").
+    "living", "senior", "retail", "shell", "ortho", "dental", "medical", "suite", "lofts", "loft", "amenity",
+    "townhomes", "townhouses", "condo", "condos", "baths", "library", "annex", "hills", "apartment", "hotel",
+    "restaurant", "warehouse", "hospital", "campus", "academy", "bank", "space", "studio", "gym", "pool",
+    # Trades and phases (PHASE_RE below): "Peachtree drywall" is not named by "drywall delivery friday".
+    "framing", "drywall", "rough", "demo", "demolition", "tile", "tiling", "paint", "painting", "inspection",
+    "punch", "trim", "cabinet", "cabinets", "plumbing", "electrical", "hvac", "roofing", "foundation", "footing",
+    "footings", "slab", "insulation", "siding", "flooring", "floors", "concrete", "masonry", "stone", "carpentry",
+    "millwork", "glazing", "windows", "doors", "landscaping", "paving", "pavers", "waterproofing", "stucco",
 }
 
 
@@ -442,11 +451,14 @@ def _shown_part(name: str, part: list[str]) -> str:
 def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "") -> dict[str, Any]:
     """Suggest the job this item belongs to, with the reason. Never files anything.
 
-    A job code counts as a whole word in any case ('kenn', 'Kenn' or 'KENN', not 'Kennesaw');
-    written in capitals it counts a little more, so 'MILL' beats 'the kenn crew'. A job name
-    counts in full, or by a part only that job's name and address have ('Oak Street' for 'Oak
-    Street kitchen'; never 'Street', and not 'Oak Street' when another job has it too). When
-    two jobs fit equally, it does not guess."""
+    A job code in capitals counts (70), and in a file name in any case. In small letters it is
+    a weak sign (55, under the sender's AP email at 60): it must stand alone ('kenn', not
+    'Kennesaw'), and not be a word of any open job's name or address, since 'the mill shop' is
+    not job MILL of 'Mill Creek Clubhouse'. A job name counts in full (80), or by a part only
+    that job's name and address have: two words or more ('Oak Street' for 'Oak Street kitchen',
+    75), or one telling word written with a capital ('Vesta', 55; never 'Street' or 'drywall').
+    So an everyday word in an email from a customer's AP email never pulls the item to another
+    customer's job. When two jobs fit equally, it does not guess."""
     jobs = [j for j in state.get("jobs", []) if not j.get("closed")]
     text = f"{text}\n{spaced(names)}" if names else text
     hay = _norm(text)
@@ -460,9 +472,12 @@ def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "
     upper_tokens = set(re.findall(r"\b[A-Z0-9]{3,8}\b", text or ""))
     upper_tokens |= {t.upper() for t in re.findall(r"\b[A-Za-z0-9]{3,8}\b", spaced(names))}
     upper_tokens -= NOT_CODES
-    any_tokens = {t.upper() for t in re.findall(r"[A-Za-z0-9]+", text or "") if 3 <= len(t) <= 8} - NOT_CODES
     # Each job's name and address words, to tell a part of a name only it has.
     words_of = {j["id"]: f" {_norm(j.get('name', ''))} {_norm(j.get('address', ''))} " for j in jobs}
+    name_words = {w.upper() for ws in words_of.values() for w in ws.split()}
+    any_tokens = {t.upper() for t in re.findall(r"[A-Za-z0-9]+", text or "") if 3 <= len(t) <= 8} - NOT_CODES - name_words
+    # Words written with a capital, and every word of a file name: a single word of a job name counts only there.
+    capitalized = {w.lower() for w in re.findall(r"\b[A-Z][A-Za-z]*", text or "")} | set(_norm(spaced(names)).split())
     sender_addr = (email.utils.parseaddr(sender)[1] or sender).lower().strip()
     payers = {p["id"]: p for p in state.get("payers", [])}
     for job in jobs:
@@ -473,7 +488,7 @@ def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "
             # A bare code is weaker than the job's name or address, which are harder to hit by accident.
             bump(job, 70, f"mentions job code {code}")
         elif code and code.upper() in any_tokens:
-            bump(job, 65, f"mentions job code {code}")
+            bump(job, 55, f"mentions job code {code}")
         addr = _norm(job.get("address", ""))
         street = _street(job.get("address", ""))
         if addr and len(addr) >= 6 and f" {addr} " in hay_padded:
@@ -487,8 +502,10 @@ def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "
             others = [w for jid, w in words_of.items() if jid != job["id"]]
             for part in _name_parts(name.split()):
                 phrase = f" {' '.join(part)} "
+                if len(part) == 1 and part[0] not in capitalized:
+                    continue
                 if phrase in hay_padded and not any(phrase in o for o in others):
-                    bump(job, 75 if len(part) > 1 else 68, f"mentions {_shown_part(job['name'], part)}, part of the job name {job['name']}")
+                    bump(job, 75 if len(part) > 1 else 55, f"mentions {_shown_part(job['name'], part)}, part of the job name {job['name']}")
                     break
         payer = payers.get(job.get("payer_id"), {})
         if sender_addr and sender_addr == str(payer.get("ap_email", "")).lower():

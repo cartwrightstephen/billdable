@@ -58,10 +58,76 @@ class FileNamesTests(unittest.TestCase):  # R5-02
         self.assertIsNone(importer.match_job(jobs_state(), "", names="IMG_2231.jpg")["job_id"])
 
     def test_two_codes_in_lower_case_tie_and_capitals_win(self):
-        m = importer.match_job(jobs_state(), "the kenn crew and the mill shop")
+        state = jobs_state()
+        state["jobs"].append({"id": "j3", "code": "VEST", "name": "Vesta Senior Living Phase 2", "address": ""})
+        m = importer.match_job(state, "the kenn crew and the vest crew")
         self.assertIsNone(m["job_id"])
-        self.assertEqual(sorted(m["candidates"][:m["tied"]]), ["j1", "j2"])
-        self.assertEqual(importer.match_job(jobs_state(), "the kenn crew went to MILL")["job_id"], "j2")
+        self.assertEqual(sorted(m["candidates"][:m["tied"]]), ["j1", "j3"])
+        self.assertEqual(importer.match_job(state, "the kenn crew went to MILL")["job_id"], "j2")
+
+    def test_a_small_letter_code_that_is_a_word_of_a_job_name_is_not_the_code(self):
+        # "mill" is a word of Mill Creek Clubhouse: "the mill shop" is not job MILL (R5-02's reason).
+        self.assertIsNone(importer.match_job(jobs_state(), "Saw cuts at the mill shop")["job_id"])
+        m = importer.match_job(jobs_state(), "the kenn crew and the mill shop")
+        self.assertEqual((m["job_id"], m["reason"]), ("j1", "mentions job code KENN"))
+        # In capitals, or in a file name, it is still the code.
+        self.assertEqual(importer.match_job(jobs_state(), "Saw cuts at the MILL shop")["job_id"], "j2")
+        self.assertEqual(importer.match_job(jobs_state(), "", names="mill_lobby.jpg")["job_id"], "j2")
+
+
+def brightwater_state():
+    """The test contractor's customers and open jobs (testdata/test-contractor/company.md)."""
+    payers = [("tal", "Tallow Creek Builders", "ap@tallowcreekbuilders.example"), ("hv", "Harmon & Vale Construction", "payables@harmonvale.example"),
+              ("iron", "Ironleaf General Contractors", "ap@ironleafgc.example"), ("wren", "Wrenfield Construction Group", "ap@wrenfieldcg.example")]
+    jobs = [("KENN", "Kennesaw Ortho Clinic", "3895 Cherokee St NW, Kennesaw", "wren"),
+            ("MILL", "Mill Creek Clubhouse", "2150 Mill Creek Pkwy, Marietta", "tal"),
+            ("BROO", "Brookhaven Townhomes Bldg C", "1475 Dresden Dr NE, Brookhaven", "hv"),
+            ("VEST", "Vesta Senior Living Phase 2", "3300 Chamblee Dunwoody Rd, Chamblee", "hv"),
+            ("GLEN", "Glenwood Retail Shell", "1020 Glenwood Ave SE, Atlanta", "iron"),
+            ("DECA", "Decatur Library Annex", "215 Sycamore St, Decatur", "wren"),
+            ("PDRY", "Peachtree drywall", "", "iron")]
+    return {"payers": [{"id": i, "name": n, "ap_email": e} for i, n, e in payers],
+            "jobs": [{"id": c, "code": c, "name": n, "address": a, "payer_id": p} for c, n, a, p in jobs]}
+
+
+class WeakSignsTests(unittest.TestCase):  # Oct 23 note #11, review
+    """A code in small letters or one word of a job name is a weak sign: it never beats the
+    customer's AP email the item came from, and never breaks a tie between that customer's jobs."""
+
+    def test_an_everyday_word_from_a_customers_ap_email_stays_with_that_customer(self):
+        cases = [
+            ("Crew needs a safety vest on site Monday", "ap@tallowcreekbuilders.example", "MILL"),  # "vest" is not VEST
+            ("shower pans for the ortho office", "ap@tallowcreekbuilders.example", "MILL"),  # not KENN's "Ortho"
+            ("drywall delivery friday", "ap@tallowcreekbuilders.example", "MILL"),  # not "Peachtree drywall"
+        ]
+        for text, sender, job in cases:
+            m = importer.match_job(brightwater_state(), text, sender)
+            self.assertEqual((m["job_id"], m["reason"]), (job, "sent from Tallow Creek Builders's AP email"), text)
+
+    def test_a_customer_with_two_jobs_stays_a_tie(self):
+        cases = [
+            ("Living room tile samples are here", "payables@harmonvale.example", ["BROO", "VEST"]),
+            ("The retail space next door", "ap@wrenfieldcg.example", ["DECA", "KENN"]),
+            ("Saw cuts at the mill shop", "payables@harmonvale.example", ["BROO", "VEST"]),
+        ]
+        for text, sender, tied in cases:
+            m = importer.match_job(brightwater_state(), text, sender)
+            self.assertIsNone(m["job_id"], text)
+            self.assertEqual(sorted(m["candidates"][:m["tied"]]), tied, text)
+
+    def test_a_small_letter_code_loses_to_the_ap_email(self):
+        m = importer.match_job(brightwater_state(), "vest crew on site", "ap@tallowcreekbuilders.example")
+        self.assertEqual(m["job_id"], "MILL")
+        self.assertEqual(importer.match_job(brightwater_state(), "vest crew on site")["job_id"], "VEST")
+        # In capitals the code still wins over the sender's job.
+        self.assertEqual(importer.match_job(brightwater_state(), "VEST crew on site", "ap@tallowcreekbuilders.example")["job_id"], "VEST")
+
+    def test_one_word_of_a_name_counts_only_written_with_a_capital(self):
+        self.assertEqual(importer.match_job(brightwater_state(), "Vesta lobby photos")["job_id"], "VEST")
+        self.assertIsNone(importer.match_job(brightwater_state(), "vesta lobby photos")["job_id"])
+        self.assertIsNone(importer.match_job(brightwater_state(), "Drywall delivery Friday")["job_id"])
+        # A file name counts in any case.
+        self.assertEqual(importer.match_job(brightwater_state(), "", names="vesta_lobby.jpg")["job_id"], "VEST")
 
 
 class JobNamePartTests(unittest.TestCase):  # Oct 23 note #11
@@ -94,7 +160,6 @@ class JobNamePartTests(unittest.TestCase):  # Oct 23 note #11
         # Decatur is in three jobs' names or addresses: it names none of them.
         self.assertIsNone(importer.match_job(self.state(), "Decatur supply run")["job_id"])
         state = self.state()
-        state["jobs"][0]["code"] = "OSK"  # so "oak" in the text is not a job code
         state["jobs"].append({"id": "oak2", "code": "OSB", "name": "Oak Street bath", "address": "500 Oak Street, Decatur"})
         m = importer.match_job(state, "Tile came for oak street")
         self.assertIsNone(m["job_id"])
