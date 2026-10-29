@@ -98,31 +98,33 @@ def deliver_queued(site, company_id: str, user: dict, only: set | None = None, r
                 msg, left_off = mailer.build_message(entry, company_name, entry.get("reply_to", ""), attach, cfg, inbound=inbound)
                 messages.append((entry["id"], msg, left_off))
             except Exception as exc:  # a bad address or file fails this email only
-                outcome[entry["id"]] = (f"failed: {exc}"[:300], [], "")
+                outcome[entry["id"]] = (f"failed: {exc}"[:300], [], [], "")
         results = mailer.send([m for _, m, _ in messages], cfg)
         for (entry_id, msg, left_off), error in zip(messages, results):
-            # The Message-ID is kept so a bounce that names it marks this email (mail_events.py).
-            outcome[entry_id] = (f"failed: {error}" if error else "sent", left_off, str(msg["Message-ID"] or ""))
+            outcome[entry_id] = (f"failed: {error}" if error else "sent", left_off, getattr(msg, "refused", None) or [], str(msg["Message-ID"] or ""))
     except Exception as exc:
         # One JSON line like every other server error (R6-09), never a bare traceback on stderr.
         site.log("error", msg="email delivery failed", rid=rid, company=company_id, trace=traceback.format_exc())
         for entry, _ in work:
-            outcome.setdefault(entry["id"], (f"failed: unexpected error ({exc.__class__.__name__}); see the server log", [], ""))
-    sent = sum(1 for status, _, _ in outcome.values() if status == "sent")
+            outcome.setdefault(entry["id"], (f"failed: unexpected error ({exc.__class__.__name__}); see the server log", [], [], ""))
+    sent = sum(1 for status, *_ in outcome.values() if status == "sent")
     mailer.record_sent(company_id, sent)
     done_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with site.lock(company_id):
         state = site.load(company_id)
         for e in state.get("email_log", []):
             if e["id"] in outcome and e.get("status") == "sending":
-                status, left_off, message_id = outcome[e["id"]]
+                status, left_off, refused, message_id = outcome[e["id"]]
                 e["status"] = status
                 if status == "sent":
                     e["delivered_at"] = done_at
-                    if message_id:
-                        e["message_id"] = message_id
+                    # Its Message-ID, so a bounce from the mail provider finds this email (mail_events.py).
+                    e["message_id"] = message_id
                     if left_off:
                         e["not_attached"] = left_off
+                    if refused:
+                        # A copy address the mail server refused; the To address got it.
+                        e["refused"] = refused
                 else:
                     e["failed_at"] = done_at
         site.save(company_id, state)

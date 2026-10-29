@@ -129,17 +129,24 @@ export function companyLine(c) {
 export function emailOutcome(entries) {
   return entries.map(e => {
     const to = unesc(e.to), status = unesc(e.status || "");
-    if (status === "sent") return `Emailed ${to}.`;
+    if (status === "sent") return `Emailed ${to}.${refusedCopies(e) ? " " + unesc(refusedCopies(e)) + "." : ""}`;
     if (status.startsWith("failed")) return `Saved, but the email to ${to} ${status.replace(/^failed: /, "failed: ")}. Open the Outbox to send it again.`;
     if (status.startsWith("not sent")) return `Saved. The email to ${to} was ${status}.`;
     return `Saved. Email to ${to}: ${status}.`;
   }).join(" ");
 }
 
+// Copy addresses the mail server refused on an email that reached its To address (escaped, as it arrived).
+function refusedCopies(e) {
+  const r = e.refused || [];
+  return r.length ? `Not delivered to the copy address${r.length === 1 ? "" : "es"} ${r.join(", ")}` : "";
+}
+
 export function emailStatusHtml(e) {
   const st = e.status || "";
   const cls = st === "sent" ? "green" : (st.startsWith("failed") || st.startsWith("bounced")) ? "red" : st.startsWith("not sent") ? "amber" : "";
-  const when = st === "sent" && e.delivered_at ? `<div class="sub">${fmtDateTime(e.delivered_at)}</div>` : "";
+  const when = (st === "sent" && e.delivered_at ? `<div class="sub">${fmtDateTime(e.delivered_at)}</div>` : "")
+    + (refusedCopies(e) ? `<div class="sub">${refusedCopies(e)}</div>` : "");
   // A row still "sending" or "queued" after 30 minutes died mid-send; the server allows a retry then.
   const since = Date.parse(e.sending_at || e.at || "") || Date.now();
   const stuck = (st === "sending" || st === "queued") && Date.now() - since > 30 * 60 * 1000;

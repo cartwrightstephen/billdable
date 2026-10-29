@@ -224,7 +224,14 @@ def send(messages: list[EmailMessage], cfg: dict[str, Any], connect: Callable[..
         for i, msg in enumerate(messages):
             try:
                 refused = server.send_message(msg, to_addrs=getattr(msg, "recipients", None))
-                results[i] = ("refused: " + ", ".join(f"{k} ({v[0]})" for k, v in refused.items())) if refused else None
+                # smtplib returns the refused addresses only when another one was accepted. If
+                # only copy addresses were refused, the email reached its To address: it was sent,
+                # and the refused copies are listed on it (msg.refused).
+                words = [f"{k} ({v[0]})" for k, v in refused.items()]
+                to = (getattr(msg, "recipients", None) or [str(msg["To"])])[0]
+                to_refused = any(str(k).lower() == to.lower() for k in refused)
+                results[i] = ("refused: " + ", ".join(words)) if to_refused else None
+                msg.refused = [] if to_refused else words  # type: ignore[attr-defined]
             except smtplib.SMTPRecipientsRefused as exc:
                 results[i] = "recipient refused: " + ", ".join(exc.recipients.keys())
             except Exception as exc:  # one bad message must not stop the rest

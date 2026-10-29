@@ -134,6 +134,12 @@ class MailerUnitTests(unittest.TestCase):
             self.assertIsNone(results[0])
             self.assertIn("refused", results[1])
             self.assertEqual(len(sink.messages), 1)
+            # Only the copy address refused: the email went to the To address, so it was sent.
+            sink.reject.add("typo@park.con")
+            partly, _ = mailer.build_message({"to": "ap@park.example", "cc": ["typo@park.con"], "subject": "s", "body": "b"}, "Pine", "", [], cfg)
+            self.assertEqual(mailer.send([partly], cfg), [None])
+            self.assertEqual(partly.refused, ["typo@park.con (550)"])
+            self.assertEqual(sink.messages[-1]["to"], ["ap@park.example"])
             # Wrong login: nothing is sent and the reason says so.
             sink.refuse_login = True
             results = mailer.send([good], dict(cfg, user="u", password="p"))
@@ -319,6 +325,7 @@ class MailHttpTests(unittest.TestCase):
         self.assertTrue(entry["delivered_at"])
         self.assertEqual(len(self.sink.messages), 1)
         msg = parsed(self.sink.messages[0])
+        self.assertEqual(entry["message_id"], msg["Message-ID"], "kept, so a bounce can be matched to this email")
         self.assertEqual(self.sink.messages[0]["to"], ["ap@park.example"])
         self.assertEqual(msg["To"], "ap@park.example")
         self.assertEqual(msg["Reply-To"], "mail1@pine.example")
@@ -557,6 +564,20 @@ class MailHttpTests(unittest.TestCase):
         for odd in ("a(b@x.com", "x@y.z]", "a:b@x.com"):
             with self.assertRaises(ValueError):
                 mailer.build_message({"to": odd, "subject": "s", "body": "b"}, "Pine", "", [], {"from": "billing@duracash.test"})
+
+    def test_a_refused_copy_address_does_not_fail_the_email(self):
+        cookie, job = self.company("mail12@pine.example")
+        self.request("POST", f"/api/payers/{job['payer_id']}/update", {"copy": "pm@park.con"}, cookie=cookie)
+        self.sink.reject.add("pm@park.con")
+        self.ready_to_send(cookie, job)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        entry = state["email_log"][-1]
+        self.assertEqual(entry["status"], "sent", "the AP desk got it")
+        self.assertEqual(entry["refused"], ["pm@park.con (550)"])
+        self.assertEqual(self.sink.messages[-1]["to"], ["ap@park.example"])
+        res, _ = self.request("POST", f"/api/outbox/{entry['id']}/retry", {}, cookie=cookie)
+        self.assertEqual(res.status, 409, "Send again would send the pay app to the AP desk twice")
+        self.assertEqual(len(self.sink.messages), 1)
 
     def test_sov_over_http(self):
         cookie, job = self.company("mail6@pine.example")

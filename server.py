@@ -2017,23 +2017,21 @@ class Handler(BaseHTTPRequestHandler):
         marked = 0
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if failures:
-            # The provider doesn't know our companies. Each failure is about one email: find the best
-            # match across every company first (mail_events.find), then mark only that one.
-            best: dict[int, tuple] = {}
+            # The provider doesn't know our companies: each event goes to the one company whose
+            # email it is about (its Message-ID, or else the newest delivered email it matches).
+            best: dict[int, tuple[str, str]] = {}
             for company_id in company_ids():
                 with company_lock(company_id):
                     state = load_company(company_id)
-                for n, f in enumerate(failures):
-                    found = mail_events.find(state, f)
-                    if found and (n not in best or found[0] > best[n][0]):
-                        best[n] = (found[0], company_id, found[1]["id"])
-            chosen: dict[str, list] = {}
-            for n, (_, company_id, entry_id) in best.items():
-                chosen.setdefault(company_id, []).append((failures[n], entry_id))
-            for company_id, items in chosen.items():
+                for i, f in enumerate(failures):
+                    entry = mail_events.find(state, f["email"], f["message_id"], f["subject"], f.get("at", ""))
+                    if entry and (i not in best or mail_events.when_delivered(entry) > best[i][0]):
+                        best[i] = (mail_events.when_delivered(entry), company_id)
+            for company_id in dict.fromkeys(c for _, c in best.values()):
                 with company_lock(company_id):
                     state = load_company(company_id)
-                    hit = [f for f, entry_id in items if mail_events.apply(state, f["email"], f["reason"], now, entry_id=entry_id)]
+                    hit = [f for i, f in enumerate(failures) if best.get(i, ("", ""))[1] == company_id
+                           and mail_events.apply(state, f["email"], f["reason"], now, f["message_id"], f["subject"], f.get("at", ""))]
                     if hit:
                         save_company(company_id, state)
                         marked += len(hit)

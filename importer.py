@@ -787,9 +787,13 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str, can_pull_back: bo
     state["daily_records"] = [d for d in state.get("daily_records", []) if d["id"] not in dr_ids]
     job["daily_records"] = [d for d in job.get("daily_records", []) if d not in dr_ids]
     if item.get("auto_filed"):
-        # A captured reply also changed the status line; put it back.
-        job["external_status"] = item.pop("prev_external_status", None)
-        if (job.get("last_reply") or {}).get("inbox_id") == item_id:
+        # A captured reply also changed the status line; put it back, unless something newer
+        # (the customer approving it, say) has replaced the reply's line since.
+        prev = item.pop("prev_external_status", None)
+        last = job.get("last_reply") or {}
+        if last.get("inbox_id") == item_id:
+            if str(job.get("external_status") or "").endswith(f": {last.get('summary', '')}"):
+                job["external_status"] = prev
             job.pop("last_reply", None)
         item["auto_filed"] = False
     item.update({"status": "new", "record_ids": [], "filed_job_id": None})

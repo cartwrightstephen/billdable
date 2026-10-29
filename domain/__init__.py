@@ -18,6 +18,7 @@ from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+import payapp_pdf
 import sov
 import trial
 from domain.trail import AUDIT_FIELDS, _audit_hash, audit, check_audit, seal_audit  # noqa: F401  (re-exported)
@@ -614,6 +615,8 @@ def approve_and_send(
     invoice["status"] = "sent"
     invoice["sent_at"] = utcnow()
     invoice["approved_by"] = actor   # shown as "sent by" (R4-05)
+    # The contract as it went out: later change orders and releases don't change this pay app.
+    invoice["contract_at_send"] = payapp_pdf.contract_terms(job)
     # The customer's payment terms set a due date from the day it goes out (R4-04).
     terms = _int_or(payer.get("payment_terms_days"), None)
     if terms:
