@@ -1,7 +1,7 @@
 // Schedule of values arithmetic, the same as sov.py: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml } from "../../static/js/sov.js";
+import { sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, sovLineProblem, sovDraftLockHtml } from "../../static/js/sov.js";
 
 test("quantities in thousandths and money in cents, from what people type", () => {
   assert.equal(sovMilli("1,250.5"), 1250500);
@@ -31,4 +31,28 @@ test("a pay app without lines has no continuation sheet", () => {
   const html = continuationHtml({ sov_lines: [{ item: "1", description: "Framing", unit: "LS", scheduled_cents: 100000, to_date_cents: 50000, amount_cents: 50000 }] }, { retainage_pct: 5 });
   assert.match(html, /Retainage 5%/);
   assert.match(html, /Framing/);
+});
+
+test("an editor line with no price says so, as the server refuses it (Oct 23 note 9)", () => {
+  assert.equal(sovLineProblem({ description: "", quantity: "", rate: "" }), "", "a blank line is ignored");
+  assert.equal(sovLineProblem({ description: "Site cleanup", quantity: "3", unit: "loads", rate: "" }), "price");
+  assert.equal(sovLineProblem({ description: "Site cleanup", quantity: "3", unit: "loads", rate: "  " }), "price");
+  assert.equal(sovLineProblem({ description: "Site cleanup", quantity: "3", unit: "loads", rate: "450" }), "");
+  assert.equal(sovLineProblem({ description: "Panel", quantity: "", rate: "12500" }), "", "no quantity is a lump sum");
+  assert.equal(sovLineProblem({ description: "", quantity: "3", rate: "" }), "fix", "no description comes first");
+  assert.equal(sovLineProblem({ description: "X", quantity: "0", rate: "" }), "fix");
+  assert.equal(sovLineProblem({ description: "X", quantity: "2", rate: "0" }), "fix");
+});
+
+test("a schedule fixed only by a draft says so and offers Delete draft (Oct 23 note 8)", () => {
+  const job = (present, lock) => ({ id: "job-1", sov_view: { present, editable: false, draft_lock: lock } });
+  assert.equal(sovDraftLockHtml(job(true, null), true), "", "a sent pay app: no hint");
+  const html = sovDraftLockHtml(job(true, { id: "inv-1", number: "PA-2" }), true);
+  assert.match(html, /The schedule is fixed while PA-2 is a draft\. Delete the draft to change it\./);
+  assert.match(html, /<button class="btn small secondary" data-action="void-draft" data-id="job-1">Delete draft<\/button>/);
+  assert.doesNotMatch(html, /style=|onclick=/);
+  const member = sovDraftLockHtml(job(true, { id: "inv-1", number: "PA-2" }), false);
+  assert.match(member, /Delete the draft to change it/);
+  assert.doesNotMatch(member, /<button/, "only someone who may delete the draft gets the button");
+  assert.equal(sovDraftLockHtml(job(false, { id: "inv-1", number: "PA-1" }), true), "", "no schedule: the card stays hidden");
 });

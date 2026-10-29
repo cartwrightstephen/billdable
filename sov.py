@@ -330,6 +330,8 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
                 raise SovError("needs a description")
             unit = str(raw.get("unit") or "").strip()[:12]
             qty = to_milli(raw.get("quantity", 1) if raw.get("quantity") not in (None, "") else 1, "quantity")
+            if str(raw.get("rate") if raw.get("rate") is not None else "").strip() == "":
+                raise SovError("needs a price (unit rate)")
             rate = to_cents(raw.get("rate"), "rate")
             if qty <= 0:
                 raise SovError("quantity must be more than zero")
@@ -379,6 +381,16 @@ HEADER_WORDS = {
 NUMBER_RE = re.compile(r"^\(?-?\$?(?:\d[\d,]{0,20})?(?:\.\d{1,6})?\)?%?$")
 QTY_UNIT_RE = re.compile(r"^(\d[\d,]*(?:\.\d+)?)\s+([A-Za-z]{1,6}\.?)$")
 ITEM_RE = re.compile(r"^[A-Za-z]?\d+(\.\d+)*[A-Za-z]?$")
+# Words that say "how many", not "how much": a lone number followed by one of these is a quantity
+# with no price ("Site cleanup, 3 loads"), never a lump sum of $3. LS and "lot" are left out on purpose.
+UNIT_WORDS = frozenset("""
+    ea each pc pcs piece pieces unit units set sets
+    load loads trip trips truck trucks
+    hr hrs hour hours day days wk wks week weeks mo mos month months
+    lf ft feet foot sf sqft sy cy cf yd yds m m2 m3 lm
+    ton tons lb lbs gal gals bag bags roll rolls sheet sheets box boxes pallet pallets
+    crew crews man men visit visits
+""".split())
 TOTAL_RE = re.compile(r"^(sub\s*-?\s*total|grand\s+total|total|totals|overhead|o\s*&\s*p|profit|markup|retainage)\b", re.I)
 
 
@@ -411,6 +423,14 @@ def _join_dollars(row: list[str]) -> list[str]:
     return out
 
 
+def _counts_units(row: list[str], at: int) -> bool:
+    """True when the number at row[at] is followed by a unit word ("3 loads", "12 hrs"), so it counts
+    things rather than dollars. A number with a $ sign is always money."""
+    if "$" in row[at] or at + 1 >= len(row):
+        return False
+    return row[at + 1].lower().rstrip(".") in UNIT_WORDS
+
+
 def _is_number(cell: str) -> bool:
     cell = cell.replace(" ", "")
     return 0 < len(cell) <= MAX_CELL and any(c.isdigit() for c in cell) and bool(NUMBER_RE.match(cell))
@@ -435,7 +455,10 @@ def parse_rows(text: str) -> dict[str, Any]:
     With a header row (one of the first 5), columns are taken by name. Without one: the first text
     cell is the description, a short text cell is the unit, and the numbers are
     quantity and rate (two numbers), quantity, rate and amount (three), or a
-    lump-sum amount (one). Total and markup rows are skipped and reported.
+    lump-sum amount (one). One number followed by a unit word ("3 loads") is a
+    quantity with no price: the line comes back with a blank rate and
+    needs_price set, and a warning says to enter the rate. Total and markup rows
+    are skipped and reported.
     """
     rows = _split_rows(text or "")
     lines_out: list[dict[str, str]] = []
@@ -453,6 +476,7 @@ def parse_rows(text: str) -> dict[str, Any]:
         warnings.append(f"Row {i + 1} ({title}) skipped: text above the header.")
     body = rows[at + 1:] if header else rows
     op_hint = ""
+    needs_price: set[int] = set()
     for n, row in enumerate(body, start=at + 2 if header else 1):
         if header:
             cell = lambda f: row[header[f]].strip() if f in header and header[f] < len(row) else ""
@@ -466,15 +490,20 @@ def parse_rows(text: str) -> dict[str, Any]:
                 split_row.extend([m.group(1), m.group(2)] if m else [c])
             row = split_row
             texts = [(i, c) for i, c in enumerate(row) if c and not _is_number(c)]
-            numbers = [c for c in row if _is_number(c)]
+            at_numbers = [i for i, c in enumerate(row) if _is_number(c)]
             item = ""
             if row and ITEM_RE.match(row[0]) and len(texts) >= 1 and texts[0][0] > 0:
                 item = row[0]
-                numbers = [c for c in row[1:] if _is_number(c)]
+                at_numbers = [i for i in at_numbers if i > 0]
+            numbers = [row[i] for i in at_numbers]
             description = texts[0][1] if texts else ""
             unit = next((c for _, c in texts[1:] if len(c) <= 8), "")
             qty = rate = amount = ""
-            if len(numbers) == 1:
+            if len(numbers) == 1 and _counts_units(row, at_numbers[0]):
+                # "Site cleanup, 3 loads": how many, not how much. No price is made up.
+                qty, unit = numbers[0], row[at_numbers[0] + 1]
+                needs_price.add(n)
+            elif len(numbers) == 1:
                 amount = numbers[0]
             elif len(numbers) == 2:
                 qty, rate = numbers
@@ -513,6 +542,24 @@ def parse_rows(text: str) -> dict[str, Any]:
                 unit = unit or "LS"
                 if qty:
                     warnings.append(f"Row {n} ({description}): amount doesn't divide evenly by the quantity, so it was read as a lump sum.")
+            elif qty and n in needs_price:
+                q, r = to_milli(qty, "quantity"), 0
+                if q <= 0:
+                    warnings.append(f"Row {n} ({description}) has a zero or negative number; skipped.")
+                    continue
+                warnings.append(f"Row {n} ({description}): {fmt_qty(q)} {unit} has no price. Enter the unit rate before you save.")
+                lines_out.append({
+                    "item": item[:12],
+                    "description": description[:200],
+                    "unit": unit[:12],
+                    "quantity": fmt_qty(q).replace(",", ""),
+                    "rate": "",
+                    "needs_price": True,
+                })
+                if len(lines_out) >= MAX_LINES:
+                    warnings.append(f"Stopped at {MAX_LINES} lines.")
+                    break
+                continue
             elif qty:
                 warnings.append(f"Row {n} ({description}) has a quantity but no rate or amount; skipped.")
                 continue

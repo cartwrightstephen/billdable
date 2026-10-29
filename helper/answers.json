@@ -647,7 +647,7 @@
         "g703",
         "continuation"
       ],
-      "answer": "A schedule of values breaks the contract into lines: a quantity at a unit rate (or a lump sum), with overhead and profit on top. Before the first pay app, open the job and tap Set up schedule of values. Paste rows straight from Excel, Google Sheets, a CSV or your estimate PDF and tap Read pasted rows, or type them; then tap Save schedule. The total has to equal the contract. Each progress pay app then asks how much of each line is done to date and bills the difference line by line, like an AIA G703 continuation sheet. Signed change orders add their own lines.",
+      "answer": "A schedule of values breaks the contract into lines: a quantity at a unit rate (or a lump sum), with overhead and profit on top. Before the first pay app, open the job and tap Set up schedule of values. Paste rows straight from Excel, Google Sheets, a CSV or your estimate PDF and tap Read pasted rows, or type them; then tap Save schedule. A row with a count but no price, like 3 loads, comes in with the unit rate blank and says it needs a price: enter it before you save. The total has to equal the contract. Once a pay app is drafted the schedule is fixed; if that pay app is still a draft, the schedule card says so and an owner can tap Delete draft there to change it. Each progress pay app then asks how much of each line is done to date and bills the difference line by line, like an AIA G703 continuation sheet. Signed change orders add their own lines.",
       "handler": null,
       "needs_job": false,
       "actions": [

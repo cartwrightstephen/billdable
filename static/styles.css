@@ -265,6 +265,7 @@ details.card > summary { cursor: pointer; }
 .sov-in.sov-unit { width: 4.5em; }
 .sov-in.sov-num { width: 7em; text-align: right; }
 .sov-in.sov-desc { min-width: 14em; }
+.sov-in.sov-need-price:placeholder-shown { border-color: var(--red); }
 #sov-op { width: 5em; }
 .sov-op-label { margin-left: 12px; }
 .sov-paste { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; }

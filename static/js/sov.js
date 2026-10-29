@@ -25,6 +25,30 @@ export function fmtQty(milli) {
 
 export function blankSovLine() { return { id: "", item: "", description: "", quantity: "", unit: "", rate: "" }; }
 
+// What is wrong with an editor line, as clean_lines in sov.py would say it: "" when it is fine or
+// blank, "price" when it has everything but a unit rate (a pasted "3 loads"), "fix" otherwise.
+export function sovLineProblem(l) {
+  const has = (x) => String(x || "").trim() !== "";
+  if (![l.description, l.quantity, l.rate].some(has)) return "";
+  const q = has(l.quantity) ? sovMilli(l.quantity) : 1000;
+  if (!has(l.description) || !(q > 0)) return "fix";
+  if (!has(l.rate)) return "price";
+  return sovCents(l.rate) > 0 ? "" : "fix";
+}
+
+// The schedule card's note when the only thing keeping the schedule fixed is an unsent draft
+// (sov_view.draft_lock from the server; Oct 23 note 8). The rule is the server's; this only says
+// why and offers Delete draft (the void-draft action, with its own confirm) to whoever may use it.
+// j comes escaped from the state, so its fields go in as they are.
+// A job with no schedule gets nothing: its card stays hidden once a pay app is drafted.
+export function sovDraftLockHtml(j, canDelete) {
+  const lock = j.sov_view && j.sov_view.present && j.sov_view.draft_lock;
+  if (!lock) return "";
+  const text = `The schedule is fixed while ${lock.number} is a draft. Delete the draft to change it.`;
+  const button = canDelete ? ` <button class="btn small secondary" data-action="void-draft" data-id="${j.id}">Delete draft</button>` : "";
+  return `<p class="sub sov-lock">${text}${button}</p>`;
+}
+
 // What a progress line's box is called on a phone, where the table is a card per line and the
 // column heading is gone (R6-02): a lump sum is a percent, anything else a quantity in its unit.
 export function doneLabel(l) { return l.lump_sum ? "% done" : `Qty done (${l.unit})`; }
