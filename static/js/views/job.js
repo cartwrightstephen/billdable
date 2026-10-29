@@ -1,8 +1,8 @@
 // The job page: its next step and forms (progress, mark done, record a payment, change orders),
 // the money, pay apps and change orders, the job record, the schedule of values and the history.
 import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
-import { RECORD_KINDS, isBlocked, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, statusPill, coSignature, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs } from "../jobs.js";
-import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovProgressHtml } from "../sov.js";
+import { RECORD_KINDS, isBlocked, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, mayTake, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, statusPill, coSignature, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs } from "../jobs.js";
+import { sovNum, sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
@@ -242,13 +242,15 @@ function sovFilledLines() {
 }
 
 function sovDraftTotals() {
-  let base = 0, bad = 0;
+  let base = 0, bad = 0, noPrice = 0;
   const amounts = sovDraft.lines.map(l => {
     const filled = [l.description, l.quantity, l.rate].some(x => String(x || "").trim());
     if (!filled) return null;
+    const problem = sovLineProblem(l);
+    if (problem === "price") { bad++; noPrice++; return "price"; }
+    if (problem) { bad++; return NaN; }
     const q = String(l.quantity || "").trim() ? sovMilli(l.quantity) : 1000;
     const r = sovCents(l.rate);
-    if (!(q > 0) || !(r > 0) || !String(l.description || "").trim()) { bad++; return NaN; }
     const a = sovExtend(q, r);
     base += a;
     return a;
@@ -256,7 +258,7 @@ function sovDraftTotals() {
   const bpRaw = String(sovDraft.op_pct || "").trim();
   const bp = bpRaw ? Math.round(sovNum(bpRaw) * 100) : 0;
   const op = isNaN(bp) ? 0 : sovMarkup(base, bp);
-  return { amounts, base, bp, op, total: base + op, bad, badBp: isNaN(bp) || bp < 0 || bp > 5000 };
+  return { amounts, base, bp, op, total: base + op, bad, noPrice, badBp: isNaN(bp) || bp < 0 || bp > 5000 };
 }
 
 export function updateSovTotals() {
@@ -266,7 +268,7 @@ export function updateSovTotals() {
   const t = sovDraftTotals();
   t.amounts.forEach((a, i) => {
     const el = document.getElementById(`sov-amt-${i}`);
-    if (el) el.textContent = a === null ? "" : isNaN(a) ? "check" : money(a);
+    if (el) el.textContent = a === null ? "" : a === "price" ? "needs a price" : isNaN(a) ? "check" : money(a);
   });
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set("sov-sum-lines", money(t.base));
@@ -290,7 +292,7 @@ function sovEditorHtml(j) {
       <td class="sov-desc-cell"><input class="sov-in sov-desc" data-sov-row="${i}" data-sov-field="description" value="${esc(l.description)}" placeholder="Rough-in wiring" aria-label="Line ${i + 1}: description"></td>
       <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="quantity" value="${esc(l.quantity)}" placeholder="1" inputmode="decimal" aria-label="Line ${i + 1}: quantity"></td>
       <td><input class="sov-in sov-unit" data-sov-row="${i}" data-sov-field="unit" value="${esc(l.unit)}" placeholder="LS" aria-label="Line ${i + 1}: unit"></td>
-      <td><input class="sov-in sov-num" data-sov-row="${i}" data-sov-field="rate" value="${esc(l.rate)}" placeholder="0.00" inputmode="decimal" aria-label="Line ${i + 1}: unit rate, dollars"></td>
+      <td><input class="sov-in sov-num${l.needsPrice ? " sov-need-price" : ""}" data-sov-row="${i}" data-sov-field="rate" value="${esc(l.rate)}" placeholder="${l.needsPrice ? "Price?" : "0.00"}" inputmode="decimal" aria-label="Line ${i + 1}: unit rate, dollars"></td>
       <td class="num sov-amt" id="sov-amt-${i}"></td>
       <td class="sov-remove-cell"><button class="btn small secondary" data-action="sov-remove" data-row="${i}" aria-label="Remove line ${i + 1}">×</button></td>
     </tr>`).join("");
@@ -329,13 +331,20 @@ function sovCardHtml(j) {
     return `<div class="card" id="sov-card"><h2>Schedule of values</h2>${sovEditorHtml(j)}</div>`;
   }
   if (!v.present) {
-    if (!v.editable) return "";
+    // No schedule and a pay app already exists. While that pay app is only a draft, one quiet line
+    // says how to set a schedule up (Oct 23 note 8); otherwise the card stays hidden.
+    if (!v.editable) {
+      const note = sovDraftLockHtml(j, mayTake("void-draft", perms()));
+      return note ? `<div class="card" id="sov-card"><h2>Schedule of values</h2>${note}</div>` : "";
+    }
     return `<div class="card" id="sov-card">
       <h2>Schedule of values</h2>
       <p class="sub">Bill line by line, the way subs bill: quantity × unit rate plus overhead and profit. ${termText("Each pay app then shows what was done on each line this period. Optional; without it, progress is entered in dollars. Set it before the first pay app.")}</p>
       <button class="btn secondary" data-action="sov-start" data-id="${j.id}">Set up schedule of values</button>
     </div>`;
   }
+  // Fixed only because of an unsent draft: say so and offer Delete draft (Oct 23 note 8).
+  const lockNote = v.editable ? "" : sovDraftLockHtml(j, mayTake("void-draft", perms()));
   const t = v.totals;
   const rows = v.lines.map(l => `
     <tr>
@@ -357,7 +366,9 @@ function sovCardHtml(j) {
       ${v.op_bp ? `<tr><td></td><td class="sov-desc-cell">Overhead and profit ${v.op_bp / 100}%</td><td></td><td></td><td class="num">${money(t.op_scheduled_cents)}</td><td></td><td class="num">${money(t.op_to_date_cents)}</td><td class="num">${money(v.op_billed_cents)}</td><td class="num">${money(t.op_scheduled_cents - t.op_to_date_cents)}</td></tr>` : ""}
       <tr class="sov-total"><td></td><td class="sov-desc-cell">Total</td><td></td><td></td><td class="num">${money(t.scheduled_cents)}</td><td></td><td class="num">${money(t.to_date_cents)}</td><td class="num">${money(v.lines.reduce((a, l) => a + l.billed_cents, 0) + v.op_billed_cents)}</td><td class="num">${money(t.scheduled_cents - t.to_date_cents)}</td></tr>
     </table></div>
-    ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">Edit schedule</button>` : `<p class="sub">Fixed once the first pay app exists. Scope changes go through change orders, which add their own lines when approved.</p>`}
+    ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">Edit schedule</button>`
+      : lockNote ? lockNote
+      : `<p class="sub">Fixed once the first pay app exists. Scope changes go through change orders, which add their own lines when approved.</p>`}
   </div>`;
 }
 
@@ -373,7 +384,7 @@ async function sovReadPaste() {
   const data = await readJson(res);
   if (!res.ok) { toast(data.error || "Couldn't read the rows."); return; }
   const kept = sovFilledLines();
-  sovDraft.lines = kept.concat((data.lines || []).map(l => ({ id: "", item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate })));
+  sovDraft.lines = kept.concat((data.lines || []).map(l => ({ id: "", item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate, needsPrice: !!l.needs_price })));
   if (!sovDraft.lines.length) sovDraft.lines = [blankSovLine()];
   if (data.op_pct && !String(sovDraft.op_pct || "").trim()) sovDraft.op_pct = data.op_pct;
   sovDraft.warnings = [`Read ${(data.lines || []).length} line${(data.lines || []).length === 1 ? "" : "s"}. Check them below, then save.`].concat(data.warnings || []);
@@ -382,6 +393,7 @@ async function sovReadPaste() {
 
 async function sovSave(jobId, updateContract) {
   const t = sovDraftTotals();
+  if (t.noPrice && t.noPrice === t.bad) { toast(t.noPrice === 1 ? "One line needs a price. Enter its unit rate, then save." : `${t.noPrice} lines need a price. Enter their unit rates, then save.`); return; }
   if (t.bad) { toast("Some lines need a description, a quantity above zero and a rate above zero."); return; }
   const j = state.jobs.find(x => x.id === jobId);
   if (updateContract && !(await askConfirm(`Change the contract amount from ${money(j.contract_cents)} to ${money(t.total)} to match the schedule?`, "Change the contract"))) return;

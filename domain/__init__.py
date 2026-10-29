@@ -2972,6 +2972,9 @@ def save_sov(
     job = _open_job(state, job_id)
     live = sov.live_invoices(job)
     if live:
+        draft = _sov_draft_lock(job)
+        if draft:
+            raise GateError(f"The schedule is fixed while {draft['number']} is a draft. Delete the draft to change it.")
         raise GateError(
             f"The schedule of values is fixed once a pay app exists ({live[0]['number']}). "
             "Scope changes go through change orders, which add their own lines."
@@ -3149,11 +3152,25 @@ def _packet_file_ids(state: dict[str, Any], job: dict[str, Any], invoice: dict[s
     return ids
 
 
+def _sov_draft_lock(job: dict[str, Any]) -> dict[str, Any] | None:
+    """The unsent draft pay app that is the only thing keeping the schedule fixed, if there is one.
+    Wording only: the rule (no edits while any pay app exists) is the same either way."""
+    live = sov.live_invoices(job)
+    if job.get("closed") or job.get("work_status") == "complete" or not live:
+        return None
+    if any(inv.get("status") not in DRAFT_STATUSES for inv in live):
+        return None
+    return live[0]
+
+
 def _sov_view(job: dict[str, Any]) -> dict[str, Any]:
-    """What the job page shows for the schedule of values: per-line figures and whether it can be edited."""
+    """What the job page shows for the schedule of values: per-line figures and whether it can be edited.
+    draft_lock names the draft pay app when deleting it would make the schedule editable again."""
     editable = not job.get("closed") and job.get("work_status") != "complete" and not sov.live_invoices(job)
+    draft = _sov_draft_lock(job)
+    draft_lock = {"id": draft["id"], "number": draft["number"]} if draft else None
     if not sov.has_sov(job):
-        return {"present": False, "editable": editable}
+        return {"present": False, "editable": editable, "draft_lock": draft_lock}
     figures = sov.totals(job)
     already = sov.billed(job)
     rows = []
@@ -3170,6 +3187,7 @@ def _sov_view(job: dict[str, Any]) -> dict[str, Any]:
     return {
         "present": True,
         "editable": editable,
+        "draft_lock": draft_lock,
         "op_bp": sov.op_bp(job),
         "op_billed_cents": already["op_cents"],
         "totals": figures,
