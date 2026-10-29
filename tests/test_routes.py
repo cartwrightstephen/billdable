@@ -151,8 +151,9 @@ class RouteEdgeTests(unittest.TestCase):
                 for block in re.findall(rb"<style>(.*?)</style>", body, re.S):
                     self.assertIn(base64.b64encode(hashlib.sha256(block).digest()).decode(), csp, path)
                 self.assertNotIn(b'style="', body, path)
-        app = (Path(server.__file__).parent / "static" / "app.js").read_text()
-        self.assertNotIn('style="', app, "style attributes are blocked by the CSP; use a class")
+        static = Path(server.__file__).parent / "static"
+        for page in [static / "app.js", *sorted((static / "js" / "views").glob("*.js"))]:
+            self.assertNotIn('style="', page.read_text(), f"{page.name}: style attributes are blocked by the CSP; use a class")
 
 
     def test_app_is_a_module_and_its_imports_are_served(self):
@@ -163,10 +164,18 @@ class RouteEdgeTests(unittest.TestCase):
         conn.close()
         self.assertIn('<script type="module" src="/app.js?v=', page)
         static = Path(server.__file__).parent / "static"
-        imports = set(re.findall(r'from "\./(js/[a-z]+\.js)"', (static / "app.js").read_text()))
-        for module in sorted((static / "js").glob("*.js")):
-            imports |= {"js/" + m for m in re.findall(r'from "\./([a-z]+\.js)"', module.read_text())}
-        self.assertGreaterEqual(len(imports), 6)
+        # Every module the page loads, followed from app.js through each import (js/views/ too).
+        imports, todo = set(), [static / "app.js"]
+        while todo:
+            module = todo.pop()
+            for rel in re.findall(r'^import [^;]*? from "(\.{1,2}/[a-z/-]+\.js)";$', module.read_text(), re.M):
+                target = (module.parent / rel).resolve()
+                name = target.relative_to(static.resolve()).as_posix()
+                if name not in imports:
+                    imports.add(name)
+                    todo.append(target)
+        self.assertGreaterEqual(len(imports), 20)
+        self.assertTrue({"js/app-core.js", "js/views/job.js", "js/views/money.js"} <= imports)
         for rel in sorted(imports):
             conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
             conn.request("GET", "/" + rel)

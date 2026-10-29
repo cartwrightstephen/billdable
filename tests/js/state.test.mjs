@@ -18,6 +18,22 @@ test("importers see each change through the setters", () => {
   assert.equal(page.me, null);
 });
 
+test("the account and the shell's flags moved out of app.js change through their setters (R1-03)", () => {
+  page.setAccount({ helperAdmin: true, mailReady: true, readOnly: "", billingInfo: null, heldShare: 2 });
+  page.setAccount({ heldShare: 0 });   // only the fields given change
+  assert.deepEqual([page.helperAdmin, page.mailReady, page.heldShare], [true, true, 0]);
+  page.setPending("/jobs/j1", "?new=1");
+  assert.deepEqual([page.pendingPath, page.pendingSearch], ["/jobs/j1", "?new=1"]);
+  page.setDrawerOpen(true);
+  page.setTeamData({ users: [], invites: [] });
+  assert.equal(page.drawerOpen, true);
+  assert.deepEqual(page.teamData, { users: [], invites: [] });
+  page.setAccount({ helperAdmin: false, mailReady: false, heldShare: 0 });
+  page.setPending(null, null);
+  page.setDrawerOpen(false);
+  page.setTeamData(null);
+});
+
 test("the bindings cannot be reassigned from outside", () => {
   assert.throws(() => { "use strict"; page.state = {}; }, TypeError);
 });

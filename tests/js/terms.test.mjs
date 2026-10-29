@@ -11,7 +11,7 @@ import { INVOICE_WORDS } from "../../static/js/format.js";
 import { NEW, OLD } from "./glossary.mjs";
 
 const root = new URL("../../static/", import.meta.url);
-const files = ["app.js", "index.html", ...readdirSync(new URL("js/", root)).filter(f => f.endsWith(".js")).map(f => `js/${f}`)];
+const files = ["app.js", "index.html", ...["js/", "js/views/"].flatMap(d => readdirSync(new URL(d, root)).filter(f => f.endsWith(".js")).map(f => d + f))];
 // What the page says, without code comments (they may name the old words to explain a change).
 const text = Object.fromEntries(files.map(f => [f, readFileSync(new URL(f, root), "utf8").split("\n").filter(l => !/^\s*\/\//.test(l)).join("\n")]));
 const all = Object.values(text).join("\n");
@@ -80,8 +80,9 @@ test("draws: Closeout's waiver lines and the record kind read draw too (review)"
     setBillingStyle("pay_apps");
   }
   assert.equal(waiverHint("unconditional_progress"), "You already have the money for this pay app.");
-  // The app's own sentences on the job page, Closeout and Today go through termText (app.js).
-  const app = text["app.js"];
+  // The app's own sentences on the job page, Closeout and Today go through termText (app.js and
+  // the views it imports from js/views/).
+  const app = files.filter(f => f === "app.js" || f.startsWith("js/views/")).map(f => text[f]).join("\n");
   for (const s of ["Pull back this pay app…", "By pay app", "Get your first pay app out", "One lien waiver per paid pay app.", "Follow-ups per pay app"]) {
     assert.ok(app.includes(`termText("${s}`), s);
   }

@@ -1,0 +1,207 @@
+// Jobs: the open jobs with New job, and Job history. The job's own fields are shared with Edit job.
+import { unesc, money, centsFrom, percentFrom, fmtDate } from "../format.js";
+import { nextStep, statusPill } from "../jobs.js";
+import { pathFor } from "../routes.js";
+import { moreButton } from "../dom.js";
+import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, draftValue } from "../forms.js";
+import { state, formOpen } from "../state.js";
+import { nav, moreOpen, emptyState, listPage, EMAIL_PATTERN, post, moreDetails, toast } from "../app-core.js";
+
+// The job's own fields, the same on New job and Edit job (R2-01). prefix is the form's id
+// prefix (nj, ej); j holds the saved values (escaped, as in state), if any.
+// Who pays you: the two kinds of customer, as the forms show them.
+export const ROLE_OPTIONS = [["Owner", "The homeowner or property owner"], ["GC", "A general contractor (you are the sub)"]];
+export function roleLabel(role) { return unesc(role || "") === "GC" ? "General contractor" : "Homeowner or owner"; }
+
+export function jobFields(form, prefix, j = {}) {
+  const f = (o) => field({ form, ...o });
+  return {
+    name: f({ name: "name", id: `${prefix}-name`, label: "Job name", helpKey: "job_name", required: true, autocomplete: "off", value: unesc(j.name || "") }),
+    address: f({ name: "address", id: `${prefix}-address`, label: "Address", helpKey: "job_address", required: true, autocomplete: "street-address", value: unesc(j.address || "") }),
+    contract_number: f({ name: "contract_number", id: `${prefix}-contract`, label: "Contract number", helpKey: "contract_number", value: unesc(j.contract_number || "") }),
+    contract_cents: moneyField({ form, name: "contract_cents", id: `${prefix}-amount`, label: "Contract amount ($)", helpKey: "contract_amount", required: true, placeholder: "48,500", cents: j.contract_cents }),
+    retainage_pct: f({ name: "retainage_pct", id: `${prefix}-retainage`, label: "Retainage %", helpKey: "retainage_pct", value: String(j.retainage_pct || 0), inputmode: "decimal", autocomplete: "off" }),
+  };
+}
+
+// New job (R1-05): a customer already saved keeps who signs off and where pay apps go (changed
+// in Customer settings, never by a new job), so the form shows them instead of asking again.
+// Matched like the server does: the same name, ignoring case.
+function knownPayer(name) {
+  const key = String(name || "").trim().toLowerCase();
+  return key ? (state.payers || []).find(p => unesc(p.name).trim().toLowerCase() === key) || null : null;
+}
+
+function knownPayerText(p) {
+  return p ? `Pay apps go to ${p.approver || p.name} · ${p.ap_email || "no email yet"}` : "";
+}
+
+// As the Customer box is typed in: swap the two contact boxes for the saved contact, or back.
+export function syncNewJobCustomer() {
+  const form = document.querySelector('[data-form-key="newjob"]');
+  if (!form) return;
+  const p = knownPayer(form.querySelector('[data-field="customer"]')?.value);
+  const note = form.querySelector("[data-known-payer]");
+  if (note) { note.hidden = !p; note.querySelector("[data-known-payer-text]").innerHTML = knownPayerText(p); }
+  const approver = form.querySelector('[data-payer-slot="approver"]'), email = form.querySelector('[data-payer-slot="ap_email"]');
+  if (approver) approver.hidden = !!p;
+  if (email) email.hidden = !!(p && p.ap_email);
+}
+
+// Leaving the Customer box fills "Who signs off" with the customer when it is still empty: a
+// homeowner signs off on their own bills. A saved customer sets "Who pays you?" to theirs, and
+// a general contractor's retainage to what their last job held (R2-01), unless already typed.
+export function prefillApprover() {
+  const form = document.querySelector('[data-form-key="newjob"]');
+  const customer = form?.querySelector('[data-field="customer"]')?.value.trim();
+  if (!customer) return;
+  const known = knownPayer(customer);
+  const set = (name, value) => {
+    const box = form.querySelector(`[data-field="${name}"]`);
+    if (!box) return;
+    box.value = value;
+    (formDraft.newjob ||= {})[name] = value;
+  };
+  if (!known) {
+    const box = form.querySelector('[data-field="approver"]');
+    if (box && !box.value.trim()) set("approver", customer);
+    return;
+  }
+  if (known.role === "Owner" || known.role === "GC") set("role", known.role);
+  prefillRetainage();
+}
+
+// A general contractor usually holds the same retainage job after job: start from their last one.
+export function prefillRetainage() {
+  const form = document.querySelector('[data-form-key="newjob"]');
+  const known = knownPayer(form?.querySelector('[data-field="customer"]')?.value);
+  const role = form?.querySelector('[data-field="role"]')?.value;
+  if (!known || role !== "GC" || (formDraft.newjob || {}).retainage_touched) return;
+  const last = [...state.jobs].reverse().find(j => (j.payer_id || (j.payer && j.payer.id)) === known.id);
+  const box = form.querySelector('[data-field="retainage_pct"]');
+  if (!last || !box) return;
+  box.value = String(last.retainage_pct || 0);
+  (formDraft.newjob ||= {}).retainage_pct = box.value;
+}
+
+// This module's pages, by the name their address opens (routes.js).
+export const views = {
+  jobs() {
+    const open = state.jobs.filter(j => !j.closed);
+    const closed = state.closed_jobs_total || 0;
+    const f = (o) => field({ form: "newjob", ...o });
+    const known = knownPayer(draftValue("newjob", "customer"));
+    const jf = jobFields("newjob", "nj", { retainage_pct: 0 });
+    return `
+      <div class="top">
+        <h1>Jobs</h1>
+        <button class="btn" data-action="toggle-form" data-form="newjob">${formOpen.newjob ? "Cancel" : "New job"}</button>
+      </div>
+      ${formOpen.newjob ? `
+        <div class="card" data-form-key="newjob">
+          <h2>New job</h2>
+          <p class="sub">Fields marked <span class="req">*</span> are required.</p>
+          ${formErrorLine("newjob")}
+          <div class="form-grid">
+            ${jf.name}
+            ${jf.address}
+            ${f({ name: "customer", id: "nj-customer", label: "Customer", required: true, autocomplete: "off", attrs: 'list="nj-customers"' })}
+            <datalist id="nj-customers">${(state.payers || []).map(p => `<option value="${p.name}"></option>`).join("")}</datalist>
+            ${f({ name: "role", id: "nj-role", label: "Who pays you?", helpKey: "role", help: "Sets the paperwork they usually need and when to follow up. You can change both later.", options: ROLE_OPTIONS })}
+            ${jf.contract_cents}
+            <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
+              <button class="linkish" data-action="nav" data-view="playbook">Change in Customer settings</button></p>
+          </div>
+          <details class="more-details" data-more="newjob"${moreOpen("newjob") ? " open" : ""}>
+            <summary>More details (optional)</summary>
+            <div class="form-grid">
+              ${jf.contract_number}
+              ${jf.retainage_pct}
+              ${f({ name: "phone", id: "nj-phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off" })}
+              <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The customer, unless you say otherwise" })}</div>
+              <div data-payer-slot="ap_email"${known && known.ap_email ? " hidden" : ""}>${f({ name: "ap_email", id: "nj-email", label: "Email for pay apps (can add later)", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
+              ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
+            </div>
+          </details>
+          <button class="btn" data-action="create-job">Save job</button>
+        </div>` : ""}
+      ${open.length ? `<div class="table-wrap">
+        <table>
+          <tr><th>Job</th><th>Code</th><th>Customer</th><th>Status</th><th>Outstanding</th><th>Unbilled</th><th>Held back</th><th>Next</th></tr>
+          ${open.map(j => `
+            <tr>
+              <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a><div class="sub row-sub">${j.status_label}</div></td>
+              <td>${j.code}</td>
+              <td>${j.payer ? j.payer.name : "—"}</td>
+              <td>${statusPill(j)}</td>
+              <td class="num">${money(j.money.outstanding_cents)}</td>
+              <td class="num">${money(j.money.unbilled_completed_cents)}</td>
+              <td class="num">${money(j.money.retainage_open_cents)}</td>
+              <td class="next-action">${nextStep(j)}</td>
+            </tr>`).join("")}
+        </table>
+      </div>` : formOpen.newjob ? "" : emptyState(state.jobs.length || state.closed_jobs_total ? "No open jobs" : "No jobs yet", state.jobs.length || state.closed_jobs_total ? "Every job is closed. Closed jobs are under Job history." : "Create a job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="toggle-form" data-form="newjob">New job</button>`)}
+      ${closed ? `<p class="sub">${closed} closed job${closed === 1 ? " is" : "s are"} under <button class="linkish" data-action="nav" data-view="history">Job history</button>.</p>` : ""}
+    `;
+  },
+  history() {
+    const page = listPage("history");
+    const closed = page ? page.entries : [];
+    const totalCollected = state.totals.closed_collected_cents || 0;
+    return `
+      <h1>Job history</h1>
+      <p class="sub">Finished jobs, kept on record.</p>
+      <div class="summary-row">
+        <div class="metric"><div class="k">Finished jobs</div><div class="v">${state.closed_jobs_total || 0}</div></div>
+        <div class="metric"><div class="k">Received on finished jobs</div><div class="v">${money(totalCollected)}</div></div>
+      </div>
+      ${closed.length ? `<div class="table-wrap">
+        <table>
+          <tr><th>Job</th><th>Customer</th><th>Contract total</th><th data-help="collected">Received</th><th>Finished</th><th>Notes</th></tr>
+          ${closed.map(j => `
+            <tr>
+              <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
+              <td>${j.payer.name}</td>
+              <td class="num">${money(j.money.contract_total_cents)}</td>
+              <td class="num">${money(j.money.collected_cents)}</td>
+              <td>${fmtDate(j.closed_at || j.completed_at)}</td>
+              <td>${j.done_notes || j.status_label}</td>
+            </tr>`).join("")}
+        </table>
+      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No finished jobs yet", "Once a job is paid in full, use Finish job.")}
+    `;
+  },
+};
+
+// What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in app.js.
+export const actions = {
+  "create-job": async () => {
+    const v = formValues("newjob");
+    const errors = {};
+    if (!v.name) errors.name = "Enter the job name.";
+    if (!v.address) errors.address = "Enter the job address.";
+    if (!v.customer) errors.customer = "Enter the customer: who pays for this job.";
+    // A saved customer keeps its contact (shown instead of the two boxes); a new one may leave
+    // both blank: who signs off defaults to the customer, the email is asked for before sending.
+    const known = knownPayer(v.customer);
+    const approver = known ? "" : v.approver;
+    const apEmail = known && known.ap_email ? "" : v.ap_email;
+    if (apEmail && !EMAIL_PATTERN.test(apEmail)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now.";
+    const amount = centsFrom(v.contract_cents);
+    if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
+    const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
+    if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
+    if (refuseForm("newjob", errors)) return;
+    const r = await post("/api/jobs", {
+      name: v.name, address: v.address, customer: v.customer, approver,
+      ap_email: apEmail, phone: v.phone, role: v.role || "Owner",
+      contract_number: v.contract_number, note: v.note,
+      contract_cents: amount.cents, retainage_pct: ret.value,
+    }, { formKey: "newjob", close: "newjob" });
+    if (!r || !r.ok) return;
+    delete moreDetails.newjob;
+    toast("Job saved");
+    const made = state.jobs[state.jobs.length - 1];
+    if (made) nav("job", made.id);
+  },
+};

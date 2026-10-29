@@ -24,3 +24,49 @@ export function setLocation(view, jobId = null, detailId = null) {
 }
 
 export function closeForms() { formOpen = {}; }
+
+// The shell and Today, reset on every page change (nav): the phone menu, and Today's "and N
+// more" (tapped: all the rows; back to three on the next page).
+export let drawerOpen = false;
+export let queueExpanded = false;
+
+export function setDrawerOpen(on) { drawerOpen = on; }
+
+export function setQueueExpanded(on) { queueExpanded = on; }
+
+// A page address opened while signed out, opened after sign-in, and its ?camera=1 or ?new=1
+// from a home-screen shortcut. cameraAsk: opened from the Take a photo shortcut, so the Inbox's
+// camera button gets the focus.
+export let pendingPath = null;
+export let pendingSearch = null;
+export let cameraAsk = false;
+
+export function setPending(path, search) { pendingPath = path; pendingSearch = search; }
+
+export function setCameraAsk(on) { cameraAsk = on; }
+
+// What /api/auth/me says about this session (escaped where shown).
+export let helperAdmin = false;   // sees Settings, Helper answers (the Duracash team)
+export let mailReady = false;     // the server sends mail: nothing goes out until the email is confirmed
+export let readOnly = "";         // why this company can't be changed (the read-only demo, or a founder's hold)
+export let billingInfo = null;    // billing.standing: configured, status, warning
+export let heldShare = 0;         // items shared to the app from this browser before signing in, waiting (R6-10)
+
+// Sets the fields given: { helperAdmin, mailReady, readOnly, billingInfo, heldShare }.
+export function setAccount(info) {
+  if ("helperAdmin" in info) helperAdmin = info.helperAdmin;
+  if ("mailReady" in info) mailReady = info.mailReady;
+  if ("readOnly" in info) readOnly = info.readOnly;
+  if ("billingInfo" in info) billingInfo = info.billingInfo;
+  if ("heldShare" in info) heldShare = info.heldShare;
+}
+
+// { email, verification } (escaped) right after sign-up: the "Check your email" panel.
+export let checkEmail = null;
+
+export function setCheckEmail(value) { checkEmail = value; }
+
+// { users, invites } from /api/team (escaped); asked for again each time Team opens.
+export let teamData = null;
+
+export function setTeamData(data) { teamData = data; }

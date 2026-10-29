@@ -100,9 +100,10 @@ STATIC_FILES = {
     "/icon-maskable-512.png": ("icon-maskable-512.png", "image/png"),
     "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
 }
-# The app's ES modules (P2-8): app.js imports them from /js/; no bundler.
-STATIC_FILES.update({f"/js/{p.name}": (f"js/{p.name}", "text/javascript; charset=utf-8")
-                     for p in sorted((STATIC / "js").glob("*.js"))})
+# The app's ES modules (P2-8): app.js imports them from /js/, and each screen's views from
+# /js/views/ (R1-03); no bundler.
+STATIC_FILES.update({f"/{p.relative_to(STATIC).as_posix()}": (p.relative_to(STATIC).as_posix(), "text/javascript; charset=utf-8")
+                     for p in sorted([*(STATIC / "js").glob("*.js"), *(STATIC / "js" / "views").glob("*.js")])})
 # First path segments that belong to the browser app; each one serves index.html so
 # refresh, Back and links in emails land on the same page (the app reads the address).
 APP_SECTIONS = {"today", "jobs", "inbox", "money", "settings"}

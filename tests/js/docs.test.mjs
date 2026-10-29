@@ -26,7 +26,7 @@ function shown(name) {
 
 // What the app's pages say, as terms.test.mjs reads them.
 const staticDir = new URL("static/", repo);
-const appFiles = ["app.js", "index.html", ...readdirSync(new URL("js/", staticDir)).filter(f => f.endsWith(".js")).map(f => `js/${f}`)];
+const appFiles = ["app.js", "index.html", ...["js/", "js/views/"].flatMap(d => readdirSync(new URL(d, staticDir)).filter(f => f.endsWith(".js")).map(f => d + f))];
 const appText = appFiles.map(f => readFileSync(new URL(f, staticDir), "utf8")).join("\n");
 
 test("no wireframe uses an old word from the glossary", () => {

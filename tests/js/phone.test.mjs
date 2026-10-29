@@ -1,14 +1,18 @@
 // Phone layout helpers (R6-02, R6-03, R6-04): node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { isZeroMoney, KEEP_ZERO } from "../../static/js/dom.js";
 import { worstKind, webcalUrl } from "../../static/js/calendar.js";
 import { inBatches } from "../../static/js/net.js";
 import { doneLabel, sovProgressHtml, continuationHtml } from "../../static/js/sov.js";
 
 const css = readFileSync(new URL("../../static/styles.css", import.meta.url), "utf8");
-const app = readFileSync(new URL("../../static/app.js", import.meta.url), "utf8");
+// The page's own code: app.js and the views it imports from js/views/ (R1-03).
+const staticDir = new URL("../../static/", import.meta.url);
+const viewFiles = readdirSync(new URL("js/views/", staticDir)).filter(f => f.endsWith(".js")).map(f => `js/views/${f}`);
+const app = ["app.js", ...viewFiles].map(f => readFileSync(new URL(f, staticDir), "utf8")).join("\n");
+const inboxView = readFileSync(new URL("js/views/inbox.js", staticDir), "utf8");
 
 test("a $0.00 money cell is hidden on a phone, except the contract total and the next step", () => {
   assert.equal(isZeroMoney("$0.00"), true);
@@ -83,7 +87,9 @@ test("Money has six tabs and Settings is split into Company, Team, My account an
 });
 
 test("the Inbox opens on Waiting, with Take a photo before Choose files", () => {
-  const inbox = app.slice(app.indexOf("  inbox() {"), app.indexOf("  help() {"));
+  const start = inboxView.indexOf("  inbox() {");
+  assert.ok(start > 0, "the Inbox view is in js/views/inbox.js");
+  const inbox = inboxView.slice(start, inboxView.indexOf("\n  },\n", start));
   assert.ok(inbox.indexOf("Waiting (${items.length})") < inbox.indexOf('class="dropzone"'), "Waiting comes first");
   assert.ok(inbox.indexOf(">Take a photo<") < inbox.indexOf(">Choose files<"));
   assert.match(css, /@media \(pointer: coarse\), \(max-width: 600px\) \{\s*\.touch-only/);

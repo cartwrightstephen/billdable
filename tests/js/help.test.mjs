@@ -7,7 +7,7 @@ import { FIELD_HELP, helpFor } from "../../static/js/help.js";
 import { field } from "../../static/js/forms.js";
 
 const root = new URL("../../static/", import.meta.url);
-const sources = ["app.js", ...readdirSync(new URL("js/", root)).filter(f => f.endsWith(".js") && f !== "help.js").map(f => `js/${f}`)]
+const sources = ["app.js", ...["js/", "js/views/"].flatMap(d => readdirSync(new URL(d, root)).filter(f => f.endsWith(".js") && f !== "help.js").map(f => d + f))]
   .map(f => readFileSync(new URL(f, root), "utf8")).join("\n");
 const lower = sources.toLowerCase();
 
