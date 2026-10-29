@@ -185,9 +185,9 @@ class QboTests(unittest.TestCase):
     def test_connect_read_match_once_refresh_reconcile_disconnect(self):
         cookie, cid = self.company("qbo@example.com")
         state = self.connect(cookie)
-        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}")
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=cookie)
         self.assertEqual((res.status, res.getheader("Location")), (303, "/money/payments"))
-        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}")
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=cookie)
         self.assertEqual(res.status, 400, "a state works once")
         res, st = self.request("GET", "/api/qbo/status", cookie=cookie)
         self.assertTrue(st["connected"])
@@ -239,16 +239,37 @@ class QboTests(unittest.TestCase):
         res, data = self.request("POST", "/api/qbo/payments", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
 
+    def test_the_connection_finishes_only_for_the_company_that_started_it(self):
+        attacker, attacker_cid = self.company("qbo-start@example.com")
+        victim, victim_cid = self.company("qbo-victim@example.com")
+        # Someone else opens the attacker's link and approves in Intuit: signed in elsewhere, or not at all.
+        for cookie in (victim, None):
+            state = self.connect(attacker)
+            res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=cookie)
+            self.assertEqual(res.status, 400)
+            self.assertIn("Sign in to Duracash", page)
+        for cookie in (attacker, victim):
+            res, st = self.request("GET", "/api/qbo/status", cookie=cookie)
+            self.assertFalse(st["connected"])
+        self.assertNotIn(attacker_cid, json.loads((storage.DATA_DIR / "qbo_connections.json").read_text())
+                         if (storage.DATA_DIR / "qbo_connections.json").exists() else {})
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=attacker)
+        self.assertEqual(res.status, 400, "a link refused once doesn't work later")
+        state = self.connect(attacker)
+        res, _ = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=attacker)
+        self.assertEqual(res.status, 303)
+        self.request("POST", "/api/qbo/disconnect", {}, cookie=attacker)
+
     def test_refusals(self):
         cookie, cid = self.company("qbo2@example.com")
-        res, page = self.request("GET", "/api/qbo/callback?code=good-code&state=made-up&realmId=1")
+        res, page = self.request("GET", "/api/qbo/callback?code=good-code&state=made-up&realmId=1", cookie=cookie)
         self.assertEqual(res.status, 400)
         self.assertIn("expired", page)
         state = self.connect(cookie)
-        res, page = self.request("GET", f"/api/qbo/callback?error=access_denied&state={state}")
+        res, page = self.request("GET", f"/api/qbo/callback?error=access_denied&state={state}", cookie=cookie)
         self.assertIn("You cancelled it", page)
         state = self.connect(cookie)
-        res, page = self.request("GET", f"/api/qbo/callback?code=bad-code&state={state}&realmId={REALM}")
+        res, page = self.request("GET", f"/api/qbo/callback?code=bad-code&state={state}&realmId={REALM}", cookie=cookie)
         self.assertEqual(res.status, 400, "Intuit refused the code")
         with mock.patch.dict("os.environ", {"QBO_CLIENT_ID": ""}):
             res, data = self.request("POST", "/api/qbo/connect", {}, cookie=cookie)

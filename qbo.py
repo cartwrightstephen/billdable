@@ -169,12 +169,18 @@ def _tokens(reply: dict[str, Any], old: dict[str, Any] | None = None) -> dict[st
     return conn
 
 
-def finish(state: str, code: str, realm_id: str, redirect_uri: str) -> str:
-    """The callback: check the state, swap the code for tokens, save them. Returns the company id."""
+def finish(state: str, code: str, realm_id: str, redirect_uri: str, signed_in_company: str | None = None) -> str:
+    """The callback: check the state, swap the code for tokens, save them. Returns the company id.
+    signed_in_company is the company of whoever is signed in in the browser that came back: it must
+    be the one that pressed Connect, so a link passed to someone else can't put their QuickBooks on
+    another company. A link that fails this check is used up."""
     with LOCK:
         pending = _PENDING.pop(state or "", None)
     if not pending or pending["until"] < time.time():
         raise QboError("That QuickBooks link has expired. Press Connect QuickBooks again.")
+    if not signed_in_company or signed_in_company != pending["company_id"]:
+        raise QboError("Sign in to Duracash in this browser with the account that pressed Connect QuickBooks, "
+                       "then press Connect QuickBooks again.")
     if not code or not realm_id or not realm_id.isdigit():
         raise QboError("QuickBooks didn't say which company was connected. Connect again.")
     reply = _token_request({"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri})

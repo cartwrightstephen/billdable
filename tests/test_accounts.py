@@ -165,6 +165,60 @@ class AccountHttpTests(ServerCase):
         time.sleep(0.5)
         self.assertEqual(len(self.sink.messages), auth.RESET_MAX_PER_HOUR)
 
+    def test_reset_emails_do_not_use_up_the_companys_daily_limit(self):
+        self.mail_on()
+        _, data = self.signup("allowance@pine.example")
+        company_id = data["user"]["company_id"]
+        self.wait_for_mail(1)
+        self.sink.messages.clear()
+        before = mailer.sent_in_last_day(company_id)
+        for _ in range(auth.RESET_MAX_PER_HOUR):
+            self.request("POST", "/api/auth/forgot", {"email": "allowance@pine.example"})
+        self.wait_for_mail(auth.RESET_MAX_PER_HOUR)
+        time.sleep(0.2)
+        self.assertEqual(len(self.sink.messages), auth.RESET_MAX_PER_HOUR)
+        self.assertEqual(mailer.sent_in_last_day(company_id), before, "a stranger can't spend the company's allowance")
+        # And a company at its daily limit can still get a reset link to its owner.
+        mailer.record_sent(company_id, mailer.settings()["daily_limit"])
+        auth._RESETS.clear()
+        self.sink.messages.clear()
+        self.request("POST", "/api/auth/forgot", {"email": "allowance@pine.example"})
+        self.wait_for_mail(1)
+        self.assertEqual(len(self.sink.messages), 1)
+
+    # ----- sign-up -----
+
+    def test_a_new_company_never_takes_an_existing_companys_id(self):
+        _, first = self.signup("first-co@pine.example", company="First Co")
+        taken = first["user"]["company_id"]
+        real, repeats = server.secrets.token_hex, [3]
+
+        def token_hex(n=None):  # the next new company id comes out as the one already taken
+            if n == 4 and repeats[0] and sys._getframe(1).f_globals.get("__name__") == "server":
+                repeats[0] -= 1
+                return taken[len("co-"):]
+            return real(n)
+        with mock.patch.object(server.secrets, "token_hex", token_hex):
+            _, second = self.signup("second-co@pine.example", company="Second Co")
+        self.assertNotEqual(second["user"]["company_id"], taken)
+        self.assertEqual(server.load_company(taken)["company"]["name"], "First Co")
+
+    # ----- replies are written after the company lock is let go -----
+
+    def test_paged_lists_are_written_without_holding_the_company_lock(self):
+        cookie, data = self.signup("slowreader@pine.example")
+        lock = server.company_lock(data["user"]["company_id"])
+        held, real = [], server.Handler._json
+
+        def spy(handler, *args, **kwargs):
+            held.append(lock._is_owned())
+            return real(handler, *args, **kwargs)
+        with mock.patch.object(server.Handler, "_json", spy):
+            for path in ("/api/jobs?limit=200", "/api/outbox?limit=200", "/api/audit?limit=200"):
+                res, _ = self.request("GET", path, cookie=cookie)
+                self.assertEqual(res.status, 200, path)
+        self.assertEqual(held, [False, False, False])
+
     # ----- email verification -----
 
     def test_verification_and_the_send_rule(self):
