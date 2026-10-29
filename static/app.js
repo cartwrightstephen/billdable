@@ -12,7 +12,7 @@ import { termText } from "./js/terms.js";
 import { state, me, currentView, currentJobId, setMe, setAccount, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
 import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, setActionEl, moreDetails, setPage } from "./js/app-core.js";
 import { views as todayViews, metricsData, metricsPeriod, loadMetrics, actions as todayActions, setCalJobFilter } from "./js/views/today.js";
-import { views as jobsViews, actions as jobsActions, syncNewJobCustomer, prefillApprover, prefillRetainage } from "./js/views/jobs.js";
+import { views as jobsViews, actions as jobsActions, syncNewJobCustomer, prefillApprover, prefillRetainage, hideSameCustomer } from "./js/views/jobs.js";
 import { views as jobPageViews, sovDraft, updateSovTotals, actions as jobPageActions, updateProgressPreview, prefillPaymentAmount } from "./js/views/job.js";
 import { views as moneyViews, qboStatus, loadQboStatus, actions as moneyActions, paymentImport, setOutboxJobFilter } from "./js/views/money.js";
 import { views as inboxViews, newInboxCount, loadImportSettings, actions as inboxActions, guessPasteSource, rememberUploadJob } from "./js/views/inbox.js";
@@ -222,6 +222,7 @@ function listenForActions() {
   app.addEventListener("input", (e) => {
     if (e.target.closest && e.target.closest('[data-form-key="progress"]')) updateProgressPreview();
     if (e.target.id === "nj-customer") syncNewJobCustomer();
+    if (e.target.id === "ap-name") hideSameCustomer("addpayer");
     if (e.target.id === "paste-text") guessPasteSource();
     if (e.target.id === "nj-retainage") (formDraft.newjob ||= {}).retainage_touched = true;
   });

@@ -99,12 +99,15 @@ def is_final(job: dict[str, Any]) -> bool:
 class GateError(Exception):
     """A business refusal (the server's 409). `blockers` lists what stands in the way, for the
     card under the button that was tapped; `fields` maps a request field (its JSON key, such as
-    "ap_email") to what to fix there, so a form shows it under that input."""
+    "ap_email") to what to fix there, so a form shows it under that input. `extra` is anything
+    else the page needs to answer it, such as the saved customer a new name nearly matches."""
 
-    def __init__(self, message: str, blockers: list[str] | None = None, fields: dict[str, str] | None = None):
+    def __init__(self, message: str, blockers: list[str] | None = None, fields: dict[str, str] | None = None,
+                 extra: dict[str, Any] | None = None):
         super().__init__(message)
         self.fields = dict(fields or {})
         self.blockers = blockers or list(self.fields.values()) or [message]
+        self.extra = dict(extra or {})
 
 
 def _refuse(message: str, fields: dict[str, str]) -> None:
@@ -1661,6 +1664,46 @@ def _payer_named(state: dict[str, Any], name: str, other_than: str = "") -> dict
     return next((p for p in state["payers"] if p["name"].strip().lower() == key and p["id"] != other_than), None)
 
 
+# Words at the end of a company name that don't make it another customer: "ABC Builders",
+# "ABC Builders Inc" and "ABC Builders, LLC" are one (Oct 23 note 5).
+NAME_SUFFIXES = {"inc", "incorporated", "llc", "co", "corp", "corporation", "company", "ltd", "limited",
+                 "lp", "llp", "pllc", "pc", "and"}
+
+
+def customer_key(name: str) -> str:
+    """A customer's name boiled down to spot a near-duplicate: lower case, no punctuation, single
+    spaces, no "The" in front and no Inc, LLC, Co, Corp, Company or Ltd at the end. "The ABC
+    Builders Co., Inc." and "abc  builders" both give "abc builders". A name that is only such
+    words ("Company") keeps its last one."""
+    text = (name or "").casefold().replace("&", " and ")
+    text = re.sub(r"[.'’]", "", text)  # L.L.C. is LLC; O'Neil is ONeil
+    words = re.sub(r"[\W_]+", " ", text).split()
+    if len(words) > 1 and words[0] == "the":
+        words = words[1:]
+    while len(words) > 1 and words[-1] in NAME_SUFFIXES:
+        words.pop()
+    return " ".join(words)
+
+
+def payer_near(state: dict[str, Any], name: str, other_than: str = "") -> dict[str, Any] | None:
+    """A saved customer whose name nearly matches this one (customer_key) without being the same
+    name, so the person can be asked "Same as ABC Builders?" instead of getting a second
+    customer by accident. Never merges anything by itself."""
+    key, exact = customer_key(name), (name or "").strip().lower()
+    if not key:
+        return None
+    return next((p for p in state["payers"] if p["id"] != other_than and p["name"].strip().lower() != exact
+                 and customer_key(p["name"]) == key), None)
+
+
+def _same_customer_question(field: str, typed: str, near: dict[str, Any]) -> GateError:
+    """The refusal that asks "Same as ABC Builders?": the page offers the saved customer or
+    keeping the new name (sent again with new_customer: true)."""
+    question = f"Same as {near['name']}? Use the saved customer, or keep {typed} as a new one."
+    return GateError(f"Same as {near['name']}?", fields={field: question},
+                     extra={"same_customer": {"id": near["id"], "name": near["name"], "typed": typed}})
+
+
 def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_email: str, phone: str) -> dict[str, Any]:
     """A customer with the usual settings for its role, added to the company."""
     packet_rule = "Signed contract, conditional waiver, completion photos, and pay-app backup."
@@ -1700,6 +1743,9 @@ def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner")
     if ap_email and not EMAIL_RE.match(ap_email):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
     _refuse("Customer not added.", errors)
+    near = None if body.get("new_customer") is True else payer_near(state, name)
+    if near:
+        raise _same_customer_question("name", name, near)
     payer = _new_payer(state, name, role, approver or name, ap_email, phone)
     audit(state, "", "payer_add", f"{actor} added the customer {name}.", actor)
     return payer
@@ -1725,6 +1771,7 @@ def merge_payer(state: dict[str, Any], payer_id: str, into_id: str, actor: str =
     names = ", ".join(j["name"] for j in moved) or "no jobs"
     audit(state, "", "payer_merge", f"{actor} merged {payer['name']} into {into['name']} ({names}); kept {into['name']}'s settings.", actor)
     return into
+
 
 
 def payapp_due(payer: dict[str, Any], today: date | None = None) -> tuple[date, date] | None:
@@ -2653,10 +2700,13 @@ def create_job(
     note: str = "",
     contract_number: str = "",
     actor: str = "owner",
+    new_customer: bool = False,
 ) -> dict[str, Any]:
     """Add a job and its record. The packet is created later, with a pay app, from the payer's
     paperwork list (Customer settings); `note` is kept on the job record and never becomes it.
-    Who signs off and the email are optional: the email is asked for before the first send."""
+    Who signs off and the email are optional: the email is asked for before the first send.
+    A customer name that nearly matches a saved one ("ABC Builders Inc" for "ABC Builders") is
+    asked about first, unless new_customer says to keep it as a new customer."""
     name = (name or "").strip()
     customer_name = (customer_name or "").strip()
     address = (address or "").strip()
@@ -2686,6 +2736,9 @@ def create_job(
     approver = approver or customer_name  # a homeowner signs off on their own bills
 
     payer = _payer_named(state, customer_name)
+    near = None if payer or new_customer else payer_near(state, customer_name)
+    if near:
+        raise _same_customer_question("customer", customer_name, near)
     if not payer:
         payer = _new_payer(state, customer_name, role, approver, ap_email, phone)
     else:

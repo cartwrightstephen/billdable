@@ -590,6 +590,7 @@ def _gate(exc: "domain.GateError") -> dict:
     out = {"error": str(exc), "blockers": exc.blockers}
     if exc.fields:
         out["fields"] = exc.fields
+    out.update(getattr(exc, "extra", None) or {})
     return out
 
 
@@ -2294,6 +2295,8 @@ class Handler(BaseHTTPRequestHandler):
             # "packet_notes" is what pages from before R1-04 send; it is a note on the job record now.
             note=_text(body, "note") or _text(body, "packet_notes"),
             contract_number=_text(body, "contract_number"), actor=ctx.actor,
+            # "Same as ABC Builders?" answered with "keep the new name" (Oct 23 note 5).
+            new_customer=body.get("new_customer") is True,
         )
 
     def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:

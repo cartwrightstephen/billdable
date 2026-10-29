@@ -529,3 +529,6 @@ textarea { font: inherit; }
 .final-note { margin: 6px 0; }
 .notice.pulled-back { margin: 0 0 12px; }
 .reopen-card .form-row, .reopen-card > .btn { margin-top: 8px; }
+/* "Same as ABC Builders?" under a customer name box (Oct 23 note 5) */
+.same-customer { margin: 0; }
+.same-customer[hidden] { display: none; }
