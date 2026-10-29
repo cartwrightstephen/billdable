@@ -9,8 +9,8 @@ import { readJson, setNetBanner, readTokenFromUrl } from "./js/net.js";
 import { formDraft, watchForms } from "./js/forms.js";
 import { pickPayApp } from "./js/payimport.js";
 import { termText } from "./js/terms.js";
-import { state, me, currentView, currentJobId, setMe, setAccount, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
-import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, setActionEl, moreDetails, setPage } from "./js/app-core.js";
+import { state, me, currentView, currentJobId, setMe, clearSession, setAccount, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
+import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, setActionEl, moreDetails, setPage } from "./js/app-core.js";
 import { views as todayViews, metricsData, metricsPeriod, loadMetrics, actions as todayActions, setCalJobFilter } from "./js/views/today.js";
 import { views as jobsViews, actions as jobsActions, syncNewJobCustomer, prefillApprover, prefillRetainage, hideSameCustomer } from "./js/views/jobs.js";
 import { views as jobPageViews, sovDraft, updateSovTotals, actions as jobPageActions, updateProgressPreview, prefillPaymentAmount } from "./js/views/job.js";
@@ -64,7 +64,10 @@ async function boot(checkLink = true) {
   }
   if (res.ok) {
     const data = await readJson(res);
-    setMe(escDeep(data.user));
+    const user = escDeep(data.user);
+    // Someone else is signed in now (a link opened in this tab): nothing of the last one stays.
+    if (me && user && (me.id !== user.id || me.company_id !== user.company_id)) clearSession();
+    setMe(user);
     setAccount({
       helperAdmin: data.helper_admin === true,
       mailReady: data.mail_ready === true,
@@ -101,7 +104,7 @@ function render() {
   if (!state) return;
   hideHelpTip();
   const cj = currentJobId && state.jobs.find(j => j.id === currentJobId);
-  if (currentJobId && (!cj || cj.summary) && !jobDetails[currentJobId] && !missingJobs.has(currentJobId) && jobDetailLoading !== currentJobId) loadJobDetail(currentJobId);
+  if (currentJobId && (!cj || cj.summary) && !jobDetails[currentJobId] && !missingJobs.has(currentJobId) && jobDetailFailed !== currentJobId && jobDetailLoading !== currentJobId) loadJobDetail(currentJobId);
   const app = document.getElementById("app");
   const company = state.company;
   const section = sectionOf(currentView);

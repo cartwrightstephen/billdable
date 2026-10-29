@@ -1,13 +1,13 @@
 // Today: the overview with what needs you and the setup checklist, Results, Calendar and the
 // Daily record.
 import { esc, unesc, escDeep, money, toDate, fmtDate } from "../format.js";
-import { isBlocked, nextStep, statusPill, defaultJobId } from "../jobs.js";
+import { isBlocked, nextStep, statusPill, defaultJobId, followUpDue } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { worstKind } from "../calendar.js";
 import { todayQueue, queueHtml, anyPayAppSent } from "../today.js";
 import { termText } from "../terms.js";
-import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded } from "../state.js";
+import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd } from "../state.js";
 import { post, toast, render, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
 import { qboStatus } from "./money.js";
 import { newAddressButton } from "./inbox.js";
@@ -33,6 +33,9 @@ let dashSortDir = 1;
 let calJobFilter = "all";
 export function setCalJobFilter(value) { calJobFilter = value; }
 
+// Signed out: Results' figures and the calendar's job filter are that company's.
+onSessionEnd(() => { metricsData = null; calJobFilter = "all"; calSelectedDay = null; });
+
 // Hide the setup checklist, or show it again (from Help). It is kept on the person's own
 // account, so a teammate's choice doesn't change it.
 async function setChecklist(show) {
@@ -45,10 +48,13 @@ async function setChecklist(show) {
 
 export async function loadMetrics() {
   const period = metricsPeriod;
+  const asked = me;
   try {
     const res = await fetch(`/api/metrics?period=${period}`);
     if (!res.ok) return;
-    metricsData = { period, data: escDeep(await readJson(res)) };
+    const data = await readJson(res);
+    if (me !== asked) return;   // signed out while this was asked: the last company's figures
+    metricsData = { period, data: escDeep(data) };
   } catch (_) { setNetBanner(true); return; }
   if (currentView === "results") render();
 }
@@ -283,12 +289,13 @@ export const views = {
     const todayKey = localDay(today);
     state.jobs.filter(j => calJobFilter === "all" || j.id === calJobFilter).forEach(j => {
       if (j.completed_at) add(j.completed_at, `${j.code} work complete`, "paid", j.id);
+      // The next follow-up, the same date as Today and the job page give (followUpDue): after the
+      // last one went out, or the date noted after a call, for any pay app still unpaid.
+      const follow = followUpDue(j);
+      if (follow) add(localDay(follow.due), `${j.code} follow-up`, follow.due < today ? "overdue" : "", j.id);
       j.invoices.forEach(inv => {
         if (inv.sent_at) add(inv.sent_at, `${inv.number} sent`, "", j.id);
         if (inv.status === "sent" && inv.sent_at) {
-          const due = toDate(inv.sent_at);
-          due.setDate(due.getDate() + (j.payer.follow_up_days || 7));
-          add(localDay(due), `${j.code} follow-up`, due < today ? "overdue" : "", j.id);
           const appr = toDate(inv.sent_at);
           appr.setDate(appr.getDate() + (j.payer.usual_approval_days || 14));
           add(localDay(appr), `${j.code} expected approval`, "", j.id);
@@ -406,8 +413,9 @@ export const actions = {
     const job = document.querySelector("#daily-job")?.value;
     if (!job) { toast("Pick a job."); document.querySelector("#daily-job")?.focus(); return; }
     if (!notes.trim()) { toast("Write what happened today."); document.querySelector("#daily-notes")?.focus(); return; }
-    const r = await post(`/api/jobs/${job}/daily-record`, { notes });
-    if (r && r.ok) rememberDailyJob(job);
+    // Remembered before saving: the save redraws the page, which picks the job last used.
+    rememberDailyJob(job);
+    await post(`/api/jobs/${job}/daily-record`, { notes });
   },
   "cal-prev": () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } calSelectedDay = null; render(); },
   "cal-next": () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } calSelectedDay = null; render(); },

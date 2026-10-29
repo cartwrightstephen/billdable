@@ -1,7 +1,8 @@
 // Schedule of values arithmetic, the same as sov.py: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, sovLineProblem, sovDraftLockHtml } from "../../static/js/sov.js";
+import { sovMilli, sovCents, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../../static/js/sov.js";
+import { formDraft, clearForm } from "../../static/js/forms.js";
 
 test("quantities in thousandths and money in cents, from what people type", () => {
   assert.equal(sovMilli("1,250.5"), 1250500);
@@ -66,4 +67,25 @@ test("a job with no schedule and only a draft says how to set one up (Oct 23 not
   const member = sovDraftLockHtml(job({ id: "inv-1", number: "PA-1" }), false);
   assert.match(member, /an owner has to delete draft PA-1 first\. Then you can set up a schedule of values\./);
   assert.doesNotMatch(member, /<button/);
+});
+
+// What was typed in the line-by-line progress form survives a redraw (the phone menu, another
+// form opening, a failed save), as the dollars form's boxes do. Nothing typed: the saved values.
+test("the progress form keeps what was typed on each line, and the note", () => {
+  const j = { id: "j1", sov_view: { lines: [
+    { id: "l1", item: "1", description: "Tile", lump_sum: false, qty_milli: 5000000, unit: "SF", done_milli: 1000000, stored_cents: 0, billed_qty_milli: 0 },
+    { id: "l2", item: "2", description: "Demo", lump_sum: true, qty_milli: 1000, unit: "LS", done_milli: 250, stored_cents: 50000, billed_qty_milli: 0 },
+  ] } };
+  const saved = sovProgressHtml(j);
+  assert.match(saved, /data-sovp="l1"[^>]* value="1000"/);
+  assert.match(saved, /data-sovs="l2"[^>]* value="500.00"/);
+  assert.match(saved, /data-form-key="sovprogress"/);
+  formDraft.sovprogress = { done_l1: "2400", stored_l1: "1,200", done_l2: "60", stored_l2: "", notes: 'East "wall" <done>' };
+  const typed = sovProgressHtml(j);
+  assert.match(typed, /data-sovp="l1"[^>]* data-field="done_l1"[^>]* value="2400"/);
+  assert.match(typed, /data-sovs="l1"[^>]* data-field="stored_l1"[^>]* value="1,200"/);
+  assert.match(typed, /data-sovp="l2"[^>]* value="60"/);
+  assert.match(typed, /data-sovs="l2"[^>]* value=""/);
+  assert.match(typed, /id="progress-notes" data-field="notes" value="East &quot;wall&quot; &lt;done&gt;"/);
+  clearForm("sovprogress");
 });

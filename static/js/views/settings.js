@@ -3,10 +3,10 @@
 import { esc, unesc, escDeep, fmtDate, fmtDateTime, words } from "../format.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
-import { field, formErrorLine, refuseForm, formValues, formErrors, clearForm } from "../forms.js";
+import { field, formErrorLine, refuseForm, formValues, formErrors, clearForm, draftValue } from "../forms.js";
 import { actionWords, STYLE_NOTE } from "../terms.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
-import { state, me, currentView, formOpen, setMe, clearSession, setTeamData, teamData, mailReady, billingInfo } from "../state.js";
+import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding } from "../app-core.js";
 import { ROLE_OPTIONS, roleLabel, sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount } from "./jobs.js";
 import { qboCardHtml } from "./money.js";
@@ -112,19 +112,24 @@ export async function companySwitch(box) {
 function companyView() {
   const owner = me.role === "owner";
   const isDemo = me.company_id === DEMO_COMPANY_ID;
+  // What was typed and not yet saved stays through a redraw (a switch saved, QuickBooks status
+  // arriving): the boxes are a form (data-field), so watchForms keeps it.
+  const co = state.company;
+  const typed = (name) => esc(draftValue("company", name, unesc(co[name] || "")));
+  const style = draftValue("company", "billing_style", co.billing_style === "draws" ? "draws" : "pay_apps");
   return `
     <h1>Company</h1>
-    <div class="card" id="company-card">
+    <div class="card" id="company-card" data-form-key="company">
       <h2>Company details</h2>
       <p class="sub">On every pay app and its PDF, in the From block.${owner ? "" : " Owners can change these."}</p>
       <div class="form-grid">
-        <div><label for="co-name">Company name</label><input id="co-name" value="${state.company.name || ""}"${owner ? "" : " disabled"}></div>
-        <div><label for="co-phone">Phone</label><input id="co-phone" value="${state.company.phone || ""}" inputmode="tel" autocomplete="tel"${owner ? "" : " disabled"}></div>
-        <div class="span-2"><label for="co-address">Address</label><input id="co-address" value="${state.company.address || ""}" placeholder="Street, city, state ZIP" autocomplete="street-address"${owner ? "" : " disabled"}></div>
-        <div><label for="co-license">Contractor licence number</label><input id="co-license" value="${state.company.license || ""}"${owner ? "" : " disabled"}></div>
-        <div><label for="co-style">How you bill</label><select id="co-style"${owner ? "" : " disabled"}>
-          <option value="pay_apps"${state.company.billing_style === "draws" ? "" : " selected"}>Pay apps to GCs or owners</option>
-          <option value="draws"${state.company.billing_style === "draws" ? " selected" : ""}>Draws from homeowners</option></select>
+        <div><label for="co-name">Company name</label><input id="co-name" data-field="name" value="${typed("name")}"${owner ? "" : " disabled"}></div>
+        <div><label for="co-phone">Phone</label><input id="co-phone" data-field="phone" value="${typed("phone")}" inputmode="tel" autocomplete="tel"${owner ? "" : " disabled"}></div>
+        <div class="span-2"><label for="co-address">Address</label><input id="co-address" data-field="address" value="${typed("address")}" placeholder="Street, city, state ZIP" autocomplete="street-address"${owner ? "" : " disabled"}></div>
+        <div><label for="co-license">Contractor licence number</label><input id="co-license" data-field="license" value="${typed("license")}"${owner ? "" : " disabled"}></div>
+        <div><label for="co-style">How you bill</label><select id="co-style" data-field="billing_style"${owner ? "" : " disabled"}>
+          <option value="pay_apps"${style === "draws" ? "" : " selected"}>Pay apps to GCs or owners</option>
+          <option value="draws"${style === "draws" ? " selected" : ""}>Draws from homeowners</option></select>
           <span class="sub">${STYLE_NOTE} Either ends when the first one sent through Duracash is paid.</span></div>
       </div>
       ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
@@ -241,7 +246,11 @@ export function trialBannerHtml() {
 }
 
 // Signed out: what one person had open in Settings isn't kept for the next.
-export function forgetSettings() { twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; }
+export function forgetSettings() {
+  twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null;
+  helperReview = null; helperDraft = null; auditJobFilter = "all";
+}
+onSessionEnd(forgetSettings);
 
 let adminCompanies = null;
 export async function loadAdminCompanies() {
@@ -579,7 +588,9 @@ export const actions = {
   "use-approval-days": async (el, id) => { await post(`/api/payers/${id}/update`, { usual_approval_days: Number(el.dataset.days) }); },
   "save-company": async () => {
     const v = (k) => document.getElementById(k)?.value || "";
-    await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license"), billing_style: v("co-style") || "pay_apps" });
+    const r = await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license"), billing_style: v("co-style") || "pay_apps" });
+    // Saved: the boxes show what the server kept (spaces tidied), not the typed copy.
+    if (r && r.ok) { clearForm("company"); render(); }
   },
   "save-my-name": async () => {
     const r = await postJson("/api/auth/name", { name: document.getElementById("my-name")?.value || "" });
