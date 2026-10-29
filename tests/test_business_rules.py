@@ -209,6 +209,26 @@ class OneFailingCompanyTests(unittest.TestCase):
         self.assertEqual(site.sent, ["a", "c"])
         self.assertTrue(any(level == "error" and "b" in msg for level, msg in site.logged), site.logged)
 
+    def test_a_drill_that_raises_does_not_stop_the_daily_email_or_run_every_hour(self):
+        site = FailingCompanySite()
+        newest = Path(self.tmp.name) / "backup-bad.tar.gz"
+        newest.write_bytes(b"not a gzip file")
+        with mock.patch.object(monthly.backup, "backups", return_value=[newest]), \
+                mock.patch.object(monthly.backup, "drill", side_effect=OSError("No space left on device")) as drill:
+            for hour in (12, 13, 14):
+                monthly.run_once(site, datetime(2026, 11, 4, hour, tzinfo=UTC))
+        self.assertEqual(site.sent, ["a", "c"], "the daily email still goes")
+        self.assertEqual(drill.call_count, 1, "a failed drill is not tried again every hour")
+        self.assertTrue(any("restore drill" in msg and "FAIL" in msg for _, msg in site.logged), site.logged)
+        self.assertTrue(any(c.args[0] == "drill" for c in monthly.alerts.notify.call_args_list))
+
+    def test_daily_email_still_goes_when_the_monthly_jobs_fail(self):
+        site = FailingCompanySite()
+        with mock.patch.object(monthly, "run_monthly_jobs", side_effect=KeyError("name")):
+            monthly.run_once(site, datetime(2026, 11, 4, 12, tzinfo=UTC))
+        self.assertEqual(site.sent, ["a", "c"])
+        self.assertTrue(any(level == "error" and "monthly jobs failed" in msg for level, msg in site.logged), site.logged)
+
     def test_monthly_summary_once_per_company(self):
         site = FailingCompanySite()
         with mock.patch.dict("os.environ", {"MONTHLY_SUMMARY_EMAILS": "1"}), mock.patch.object(monthly, "send_daily_digests", return_value=[]):

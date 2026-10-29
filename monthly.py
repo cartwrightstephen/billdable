@@ -120,7 +120,12 @@ def run_monthly_jobs(site, now: datetime | None = None) -> list:
     did = []
     newest = (backup.backups() or [None])[0]
     if done.get("drill") != month and newest is not None:
-        report, problems = backup.drill(newest)
+        try:
+            report, problems = backup.drill(newest)
+        except Exception as exc:
+            # A backup that can't be unpacked (corrupt, or the disk full) is a failed drill, not a
+            # stop to the hourly loop: alerted once this month, and the daily emails still go.
+            problems = [f"the drill could not run: {exc.__class__.__name__}: {exc}"]
         did.append(f"restore drill of {newest.name}: " + ("PASS" if not problems else f"FAIL ({len(problems)} problems)"))
         if problems:
             alerts.notify("drill", f"the monthly restore drill of {newest.name} failed: {problems[0]}")
@@ -140,13 +145,15 @@ def run_monthly_jobs(site, now: datetime | None = None) -> list:
 
 def run_once(site, now: datetime | None = None) -> None:
     """One turn of the hourly loop: the monthly jobs, then the daily emails, each line logged.
-    A failure is logged and alerted; the loop keeps going."""
-    try:
-        for line in run_monthly_jobs(site, now) + send_daily_digests(site, now):
-            site.log("info", msg=line)
-    except Exception as exc:
-        site.log("error", msg=f"monthly jobs failed: {exc.__class__.__name__}: {exc}")
-        alerts.notify("monthly-jobs", f"monthly jobs failed ({exc.__class__.__name__}); see the server log")
+    A failure is logged and alerted; the loop keeps going, and a failure in the monthly jobs
+    doesn't stop the daily emails."""
+    for key, what, job in (("monthly-jobs", "monthly jobs", run_monthly_jobs), ("daily-emails", "daily emails", send_daily_digests)):
+        try:
+            for line in job(site, now):
+                site.log("info", msg=line)
+        except Exception as exc:
+            site.log("error", msg=f"{what} failed: {exc.__class__.__name__}: {exc}")
+            alerts.notify(key, f"{what} failed ({exc.__class__.__name__}); see the server log")
 
 
 def start(site) -> threading.Thread:
