@@ -161,6 +161,34 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(got("Demo,3,500"), [("Demo", "3", "ea", "500.00", None)])
         self.assertEqual(got("Description,Qty,Rate\nDemo,3,500"), [("Demo", "3", "ea", "500.00", None)])
 
+    def test_a_quoted_description_with_a_comma_keeps_a_saved_csv_split(self):
+        # Excel quotes "Doors, solid"; the ", " inside the quotes is not how the cells are separated.
+        def got(text):
+            out = sov.parse_rows(text)
+            return [(l["description"], l["quantity"], l["unit"], l["rate"]) for l in out["lines"]], out["warnings"]
+        self.assertEqual(got('Description,Qty,Rate,Amount\n"Doors, solid",12,450,5400'),
+                         ([("Doors, solid", "12", "ea", "450.00")], []))
+        self.assertEqual(got('"Paint, primer",3,500'), ([("Paint, primer", "3", "ea", "500.00")], []))
+        self.assertEqual(got('Description,Qty,Rate\n"Paint, primer",3,500'), ([("Paint, primer", "3", "ea", "500.00")], []))
+        # Typed with ", " between the cells, a comma with no space is still a thousands separator.
+        self.assertEqual(got('"Doors, solid", 3,500')[0], [("Doors, solid", "1", "LS", "3500.00")])
+
+    def test_a_thousands_comma_after_a_number_ending_a_text_cell_is_one_number(self):
+        def got(text):
+            out = sov.parse_rows(text)
+            return [(l["description"], l["quantity"], l["unit"], l["rate"]) for l in out["lines"]], out["warnings"]
+        self.assertEqual(got("Mobilization 12,500"), ([("Mobilization", "1", "LS", "12500.00")], []))
+        self.assertEqual(got("Demo $3,500"), ([("Demo", "1", "LS", "3500.00")], []))
+        self.assertEqual(got("Site work 1,234,567.50"), ([("Site work", "1", "LS", "1234567.50")], []))
+        self.assertEqual(got("Gen conditions, 6 mo at 2,500/mo"), ([("Gen conditions", "6", "mo", "2500.00")], []))
+        self.assertEqual(got("Doors, 12 ea @ 1,450"), ([("Doors", "12", "ea", "1450.00")], []))
+        self.assertEqual(got("Mobilization 12,500, LS"), ([("Mobilization", "1", "LS", "12500.00")], []))
+        # The description keeps its whole number; next to another cell it stays a name, as "Tile 1200 SF, 8.50" does.
+        self.assertEqual(got("Concrete 2,400 SF, 8.50")[0], [("Concrete 2,400 SF", "1", "LS", "8.50")])
+        # A $ amount at the end of a cell in a saved CSV is one number too; a plain one is left split.
+        self.assertEqual(got("1,Demo $3,500")[0], [("Demo", "1", "LS", "3500.00")])
+        self.assertEqual(got("Description,Qty,Rate\nLevel 2,3,500")[0], [("Level 2", "3", "ea", "500.00")])
+
     def test_quantity_at_rate_in_one_cell(self):  # Oct 23 note 9
         def got(text):
             return [(l["description"], l["quantity"], l["unit"], l["rate"]) for l in sov.parse_rows(text)["lines"]]

@@ -317,6 +317,21 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
         importer.undo_item(state, "inb1", "owner")
         self.assertEqual((state["jobs"][0]["records"], state["inbox"][0]["status"]), ([], "new"))
 
+    def test_attached_automatically_to_a_pay_app_that_went_out_still_stays(self):
+        # What went with a sent pay app stays as it was sent, however it was attached.
+        for status in ("sent", "approved", "partial", "paid", "void"):
+            for can_pull_back in (True, False):
+                state = self.state(status, auto=True)
+                state["jobs"][0]["invoices"][0]["sent_at"] = "2026-10-20T10:00:00Z"
+                with self.assertRaises(importer.domain.GateError) as caught:
+                    importer.undo_item(state, "inb1", "member", can_pull_back=can_pull_back)
+                self.assertIn("went to the customer with PA-OAK-3", str(caught.exception))
+                job = state["jobs"][0]
+                self.assertEqual(job["records"][0]["id"], "rec1")
+                item = job["invoices"][0]["packet"][0]
+                self.assertEqual((item["present"], len(item["attachments"])), (True, 1))
+                self.assertEqual(state["inbox"][0]["status"], "filed")
+
 
 if __name__ == "__main__":
     unittest.main()
