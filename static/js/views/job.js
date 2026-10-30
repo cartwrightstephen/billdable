@@ -1,8 +1,8 @@
-// The job page: its next step and forms (progress, mark done, record a payment), the pay apps
-// and change orders, and the history. Its other cards have their own modules: job-money.js,
+// The job page: where it stands, its next step and forms (progress, mark done, record a payment),
+// the pay apps and change orders, and its activity; a finished job shows as its job file (J9). Its other cards have their own modules: job-money.js,
 // job-record.js, job-sov.js and job-cos.js (change orders).
 import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
-import { isBlocked, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs } from "../jobs.js";
+import { isBlocked, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, waitingText, retainageNote, closeoutMissing as closeoutMissingCount, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
 import { sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { moreButton, askConfirm } from "../dom.js";
@@ -10,7 +10,7 @@ import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, dr
 import { termText, actionWords } from "../terms.js";
 import { state, me, currentJobId, formOpen } from "../state.js";
 import { may, listPage, DEMO_COMPANY_ID, perms, post, toast, render, jobDetailLoading, jobDetailFailed, backButton, emptyState, nav, moreOpen } from "../app-core.js";
-import { jobFields } from "./jobs.js";
+import { jobFields, jobFieldErrors, assigneeField } from "./jobs.js";
 import { coSignControls, newCoCardHtml } from "./job-cos.js";
 import { sovCardHtml } from "./job-sov.js";
 import { recordCardHtml } from "./job-record.js";
@@ -124,16 +124,67 @@ export function emailFailed(invoiceId) {
 
 // What happened on the job, newest first (UI/UX Option B): actions from the audit trail and
 // emails with what became of them, 50 at a time.
+// Called Activity (J7) so it isn't taken for Where this job stands.
 function jobHistoryHtml(j) {
   const page = listPage("timeline", j.id);
   const rows = page ? page.entries : [];
-  return `<div class="card job-history"><h2>History</h2>
+  return `<div class="card job-history"><h2>Activity</h2>
     ${rows.length ? `<ol class="timeline">${rows.map(e => `<li>
         <span class="pill${e.kind === "email" ? " copper" : ""}">${e.kind === "email" ? "Email" : actionWords(e.action)}</span> ${e.text}
         <div class="sub">${fmtDateTime(e.at)}${e.who ? " · " + e.who : ""}${e.kind === "email" ? ` · to ${e.to} · ${emailStatusHtml(e)}` : ""}</div>
       </li>`).join("")}</ol>${moreButton("timeline", page)}`
       : !page ? `<p class="sub">Loading…</p>` : `<p class="sub">Nothing has happened on this job yet.</p>`}
   </div>`;
+}
+
+// Where this job stands (J7): its stage on one line, then the dates that matter this month. Both
+// come from the server (domain.job_stage, job_key_dates).
+export function standingCardHtml(j) {
+  const stage = j.stage;
+  const dates = j.key_dates || [];
+  if (!stage && !dates.length) return "";
+  return `<section class="card job-standing" aria-labelledby="standing-h">
+      <h2 id="standing-h">Where this job stands</h2>
+      ${stage ? `<ol class="stage-line">${stage.steps.map(s => `<li class="stage-step ${s.state}"${s.state === "current" ? ' aria-current="step"' : ""}>${termText(s.label)}${s.key === "in_progress" && s.state === "current" && stage.pct_billed ? `, ${stage.pct_billed}% billed` : ""}</li>`).join("")}</ol>` : ""}
+      ${dates.length ? `<dl class="key-dates">${dates.map(d => `<div><dt>${termText(d.label)}</dt><dd>${fmtDate(d.date)}</dd></div>`).join("")}</dl>` : ""}
+    </section>`;
+}
+
+// A finished job's file (J9): what it came to, then every pay app with its PDF, the payments,
+// change orders and waivers sent; the job record and the activity follow on the page.
+function archiveHtml(j) {
+  const m = j.money;
+  const live = (j.invoices || []).filter(i => !i.replaced && !(i.status === "void" && !i.sent_at));
+  const waivers = (j.invoices || []).filter(i => i.waiver_sent_at);
+  const row = (k, v) => `<div class="money-row"><span class="label">${k}</span><span>${v}</span></div>`;
+  return `<div class="detail-grid job-archive">
+      <div class="card">
+        <h2>Job file</h2>
+        ${row("Contract", money(m.contract_cents))}
+        ${row("Signed change orders", money(m.approved_co_cents))}
+        ${row("Contract total", money(m.contract_total_cents))}
+        ${row("Billed", money(m.billed_cents))}
+        ${row("Received", money(m.collected_cents))}
+        ${row("Retainage released", money(m.retainage_released_cents))}
+        ${row("Started", `${j.started_on ? fmtDate(j.started_on) : "—"} <button class="linkish" data-action="toggle-form" data-form="editstart" aria-expanded="${!!formOpen.editstart}">${formOpen.editstart ? "Cancel" : "Change"}</button>`)}
+        ${formOpen.editstart ? `<div class="form-row" data-form-key="editstart">${formErrorLine("editstart")}${jobFields("editstart", "es", j).started_on}
+          <button class="btn small" data-action="save-start" data-id="${j.id}">Save start date</button></div>` : ""}
+        ${row("Finished", fmtDate(j.closed_at || j.completed_at))}
+        <div class="form-inline"><a class="btn secondary small" href="/api/jobs/${j.id}/archive/job-file.zip" download>Download job file</a></div>
+      </div>
+      <div class="card">
+        <h2>${termText("Pay apps")}</h2>
+        ${live.length ? live.map(i => `<div class="list-item"><strong>${i.number}</strong> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
+          <div class="sub row-sub">${i.sent_at ? "sent " + fmtDate(i.sent_at) : "not sent"}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.sent_at && i.status !== "void" ? ` · <a href="/api/jobs/${j.id}/payapp/${i.id}.pdf" target="_blank" rel="noopener">PDF</a>` : ""}</div></div>`).join("") : `<p class="sub">None.</p>`}
+        <h2 class="h2-gap">Payments received</h2>
+        ${(j.payments || []).length ? j.payments.map(p => `<div class="list-item">${fmtDate(p.matched_at)} · ${money(p.amount_cents)}${p.reference ? ` · ${p.reference}` : ""}</div>`).join("") : `<p class="sub">None.</p>`}
+        <h2 class="h2-gap">Change orders</h2>
+        ${(j.change_orders || []).length ? j.change_orders.map(co => `<div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill">${coStatusWords(co.status)}</span></div>`).join("") : `<p class="sub">None.</p>`}
+        <h2 class="h2-gap">Waivers sent</h2>
+        ${waivers.length ? waivers.map(i => `<div class="list-item">${i.number} · ${waiverKindLabel(i.waiver_kind)} · ${fmtDate(i.waiver_sent_at)}</div>`).join("")
+          : j.waiver_sent_at ? `<div class="list-item">${j.waiver_kind || "Waiver"} · ${fmtDate(j.waiver_sent_at)}</div>` : `<p class="sub">None.</p>`}
+      </div>
+    </div>`;
 }
 
 // The job page's buttons come from jobs.js (R3-04); the sample company also gets the QuickBooks sample.
@@ -183,16 +234,33 @@ export const views = {
     const retNote = retainageNote(j);
     const hasPayApps = j.invoices.some(i => i.status !== "void");
     const ejf = jobFields("editjob", "ej", j);
-    return `
+    const head = `
       ${backButton("jobs", "Jobs")}
       <div class="job-head">
         <div>
           <h1>${j.name}</h1>
-          <p class="sub">${statusPill(j)} ${j.code} · ${j.address} · ${j.payer.name}</p>
+          <p class="sub">${statusPill(j)} ${j.code} · ${j.address} · ${j.payer.name} <span class="client-type">${clientTypeLabel(j.payer)}</span></p>
         </div>
-        ${j.closed ? "" : `<div class="form-inline"><button class="btn secondary small" data-action="daily-for-job" data-id="${j.id}">New daily record</button>
+        ${j.closed ? (me && me.role === "owner" && !formOpen.reopen ? `<button class="btn secondary small" data-action="toggle-form" data-form="reopen" aria-expanded="false">Add more work</button>` : "")
+          : `<div class="form-inline"><button class="btn secondary small" data-action="daily-for-job" data-id="${j.id}">New daily record</button>
           <button class="btn secondary small" data-action="toggle-form" data-form="editjob" aria-expanded="${!!formOpen.editjob}">${formOpen.editjob ? "Cancel" : "Edit job"}</button></div>`}
-      </div>
+      </div>`;
+    // A finished job is its job file (J9): what it came to, its papers and its activity. Add more
+    // work opens the same job again, so its record stays in one place (owners only, with a reason).
+    if (j.closed) return `${head}
+      ${formOpen.reopen && me && me.role === "owner" ? `<div class="card reopen-card" data-form-key="reopen"><h2>Add more work</h2>${formErrorLine("reopen")}<div class="form-row">
+          ${field({ form: "reopen", name: "reason", id: "reopen-reason", label: "What is the new work?", required: true, placeholder: "The owner added a backsplash", wide: true })}
+          <button class="btn small" data-action="reopen" data-id="${j.id}">Add more work</button>
+          <button class="btn small secondary" data-action="toggle-form" data-form="reopen">Cancel</button></div></div>` : ""}
+      ${standingCardHtml(j)}
+      ${archiveHtml(j)}
+      ${recordCardHtml(j)}
+      ${sovCardHtml(j)}
+      ${jobHistoryHtml(j)}
+    `;
+    const nextLine = waiting && (!primary || primary.key === "follow") ? waiting : nextStep(j, new Date(), { listed: blocked });
+    return `
+      ${head}
       ${formOpen.editjob ? `
         <div class="card" data-form-key="editjob">
           <h2>Edit job</h2>
@@ -203,30 +271,31 @@ export const views = {
             ${ejf.contract_number}
             ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : ejf.contract_cents}
             ${ejf.retainage_pct}
+            ${ejf.started_on}
+            ${assigneeField("editjob", "ej", j.assignee_id)}
           </div>
-          <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}Who pays you and where pay apps go: <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
+          <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The client's type and where pay apps go: <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
           <div class="form-inline">
             <button class="btn" data-action="save-job" data-id="${j.id}">Save changes</button>
             ${j.can_delete && may("delete") ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
           </div>
         </div>` : ""}
-      <section class="next-card" aria-label="Next step">
-        <div class="next-text"><span class="eyebrow">Next step</span><strong>${waiting && (!primary || primary.key === "follow") ? waiting : nextStep(j)}</strong>${primary && primary.why ? `<span class="sub">${primary.why}</span>` : ""}</div>
+      ${standingCardHtml(j)}
+      <section class="next-card${blocked ? " is-blocked" : ""}" aria-label="Next step">
+        <div class="next-text"><span class="eyebrow">Next step</span><strong>${nextLine}</strong>
+          ${blocked ? `<ul class="blocker-list">${j.blockers.map(b => `<li>${b}</li>`).join("")}</ul>` : ""}
+          ${primary && primary.why ? `<span class="sub">${primary.why}</span>` : ""}</div>
         ${primary || more.length ? `<div class="next-actions">
           ${primary ? `<button class="btn primary-action" ${primary.attrs}>${primary.label}</button>` : ""}
           ${more.slice(0, 2).map(actionButton).join("")}
         </div>` : ""}
-      </section>
-      ${blocked ? `<div class="card blockers-card" role="note">
-        <strong class="blocker">Blocking send:</strong>
-        <ul class="blocker-list">${j.blockers.map(b => `<li>${b}</li>`).join("")}</ul>
-        <details><summary>${termText("Client sent a pay app back? Note why.")}</summary>
+        ${blocked ? `<details class="sent-back"><summary>${termText("Client sent a pay app back? Note why.")}</summary>
           <div class="form-inline">
-            <input id="learn-reason" placeholder="For example: needs a revised schedule of values" class="grow">
+            <input id="learn-reason" placeholder="For example: needs a revised schedule of values" class="grow" aria-label="Why they sent it back">
             <button class="btn small secondary" data-action="learn" data-id="${j.id}">Save to the client playbook</button>
           </div>
-        </details>
-      </div>` : ""}
+        </details>` : ""}
+      </section>
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j, periodField("sovprogress", j), formErrorLine("sovprogress")) : ""}
       ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? progressFormHtml(j, openDraft) : ""}
       ${formOpen.pencilchanges ? `<div class="card form-card" data-form-key="pencilchanges"><h2>Client wants changes</h2><div class="form-inline"><input id="pencil-note" data-field="note" value="${esc(draftValue("pencilchanges", "note"))}" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
@@ -247,20 +316,15 @@ export const views = {
         ${moneyField({ form: "retpay", name: "amount_cents", id: "retpay-amt", label: "Retainage received ($)" })}
         ${field({ form: "retpay", name: "reference", id: "retpay-ref", label: "Reference", placeholder: "Check no. or QuickBooks id" })}
         <button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div></div>` : ""}
-      ${formOpen.newco && !j.closed ? newCoCardHtml(j) : ""}
-      ${j.closed ? `<div class="card reopen-card" data-form-key="reopen"><p class="sub">This job is finished. Its money record is read-only; you can still add notes to the job record.</p>
-        ${me && me.role === "owner" ? formOpen.reopen ? `${formErrorLine("reopen")}<div class="form-row">
-          ${field({ form: "reopen", name: "reason", id: "reopen-reason", label: "Why reopen it?", required: true, placeholder: "A late payment came in", wide: true })}
-          <button class="btn small" data-action="reopen" data-id="${j.id}">Reopen job</button>
-          <button class="btn small secondary" data-action="toggle-form" data-form="reopen">Cancel</button></div>`
-          : `<button class="btn small secondary" data-action="toggle-form" data-form="reopen" aria-expanded="false">Reopen job…</button>` : ""}</div>` : rest.length ? `
+      ${formOpen.newco ? newCoCardHtml(j) : ""}
+      ${rest.length ? `
         <details class="more-actions-rest" data-more="jobactions"${moreOpen("jobactions") ? " open" : ""}><summary>More (${rest.length})</summary>
           ${ACTION_GROUPS.map(([g, title]) => {
             const list = rest.filter(a => a.group === g);
             return list.length ? `<div class="more-group"><h3>${title}</h3><div class="more-actions" role="group" aria-label="${title}">${list.map(actionButton).join("")}</div></div>` : "";
           }).join("")}
         </details>` : ""}
-      ${!j.closed && j.work_status === "complete" && (j.close_blocker_items || []).length ? `
+      ${j.work_status === "complete" && (j.close_blocker_items || []).length ? `
         <section class="card close-blockers" aria-labelledby="close-blockers-h">
           <h2 id="close-blockers-h">Before you can finish this job</h2>
           <ul class="close-blocker-list">${j.close_blocker_items.map(b => `<li data-blocker="${b.kind}"><span>${termText(b.text)}</span><span class="form-inline">${closeBlockerActions(j, b, perms()).map((a, n) => `<button class="btn small${n ? " secondary" : ""}" ${a.attrs}>${a.label}</button>`).join("")}</span></li>`).join("")}</ul>
@@ -348,10 +412,17 @@ export const actions = {
     const r = await post(`/api/jobs/${id}/pencil-response`, { agreed: false, note });
     if (r && r.ok) clearForm("pencilchanges");
   },
+  // Add more work (J9): the finished job opens again, with a reason in its activity.
   "reopen": async (el, id) => {
     const v = formValues("reopen");
-    if (refuseForm("reopen", v.reason ? {} : { reason: "Enter why you are reopening it, like a late payment came in." })) return;
+    if (refuseForm("reopen", v.reason ? {} : { reason: "Enter the new work, like the owner added a backsplash." })) return;
     await post(`/api/jobs/${id}/reopen`, { reason: v.reason }, { formKey: "reopen", close: "reopen" });
+  },
+  // A finished job's start date, corrected on its job file (J8).
+  "save-start": async (el, id) => {
+    const v = formValues("editstart");
+    if (refuseForm("editstart", v.started_on ? {} : { started_on: "Enter the start date." })) return;
+    await post(`/api/jobs/${id}/edit`, { started_on: v.started_on }, { formKey: "editstart", close: "editstart" });
   },
   "undo-done": async (el, id) => {
     const j = state.jobs.find(x => x.id === id);
@@ -389,10 +460,11 @@ export const actions = {
   },
   "save-job": async (el, id) => {
     const v = formValues("editjob");
-    const body = { name: v.name, address: v.address, contract_number: v.contract_number };
-    const errors = {};
-    if (!body.name) errors.name = "Enter the job name.";
-    if (!body.address) errors.address = "Enter the job address.";
+    // The address goes as its four boxes (J1); the server builds the one line from them.
+    const body = { name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, contract_number: v.contract_number };
+    if (v.started_on) body.started_on = v.started_on;
+    if ("assignee_id" in v) body.assignee_id = v.assignee_id;
+    const errors = jobFieldErrors(v);
     if ("contract_cents" in v) {
       const amount = centsFrom(v.contract_cents);
       if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";

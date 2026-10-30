@@ -1386,6 +1386,11 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out.setdefault("done_notes", "")
     out["sov_view"] = _sov_view(job)
     _paperwork_view(state, job, out)
+    # Where the job stands and the dates that matter (J7), worked out here so the page doesn't.
+    out["started_on"] = job_started_on(state, job)
+    out["stage"] = job_stage(job, out["money"])
+    out["key_dates"] = job_key_dates(state, job, out["payer"])
+    out["address_parts"] = job.get("address_parts") or parse_legacy_address(job.get("address", ""))
     # What is still owed on each pay app (R3-02): a part-paid one shows "$remaining of $amount".
     for inv in out["invoices"]:
         paid = sum(p["amount_cents"] for p in job["payments"] if p.get("invoice_id") == inv["id"])
@@ -1516,6 +1521,8 @@ def job_summary(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     for co in out.get("change_orders", []):
         co.pop("snapshot", None)
     _co_flags(out)
+    out["started_on"] = job_started_on(state, job)
+    out["stage"] = job_stage(job, out["money"])
     out["summary"] = True
     return out
 
@@ -1628,6 +1635,7 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
         timing = timings.get(payer["id"])
         if timing:
             payer["paid_days_avg"], payer["paid_count"] = timing
+        payer_extras(state, payer)   # its client type and paperwork items (S11)
         due = payapp_due(payer, (now or datetime.now(timezone.utc)).date())
         if due:
             payer["payapp_due_next"], payer["payapp_due_prev"] = due[0].isoformat(), due[1].isoformat()
@@ -1966,28 +1974,50 @@ def _record_email(
     })
 
 
+PAYER_DAY_FIELDS = {"follow_up_days": "the days between follow-ups", "usual_approval_days": "the days they usually take to pay",
+                    "payment_terms_days": "the days they have to pay"}
+
+
+def _payer_day(k: str, v: Any) -> tuple[Any, str]:
+    """(the value to save, or None to clear it; an error) for a Client playbook day field."""
+    if k == "payapp_due_day":
+        # The payer's cutoff for this month's pay app (a contract date, not a legal one); blank clears it.
+        if v in (None, ""):
+            return None, ""
+        try:
+            day = parse_int(v, "the day pay apps are due", k)
+        except GateError:
+            day = 0
+        if not 1 <= day <= 31:
+            return None, "Enter a day of the month from 1 to 31 for when pay apps are due, or leave it blank."
+        return day, ""
+    if v == "":
+        return None, ""  # blank goes back to the usual number
+    try:
+        days = parse_int(v, PAYER_DAY_FIELDS[k], k)
+    except GateError:
+        days = None
+    if days is None or not 1 <= days <= 365:
+        return None, f"Enter {PAYER_DAY_FIELDS[k]} as a whole number from 1 to 365."
+    return days, ""
+
+
 def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
     payer = _payer(state, payer_id)
     text_fields = {"approver": "who signs off on your bills", "ap_email": "the email pay apps go to",
                    "packet": "the paperwork needed", "rejects_when": "when they send pay apps back", "copy": "who else to email",
                    "name": "the client's name", "phone": "the phone number", "escalation_email": "who to copy on late follow-ups"}
-    day_fields = {"follow_up_days": "the days between follow-ups", "usual_approval_days": "the days they usually take to pay",
-                  "payment_terms_days": "the days they have to pay"}
     clean: dict[str, Any] = {}
     errors: dict[str, str] = {}
     for k, v in updates.items():
-        if k == "payapp_due_day":
-            # The payer's cutoff for this month's pay app (a contract date, not a legal one); blank clears it.
-            day = None
-            if v not in (None, ""):
-                try:
-                    day = parse_int(v, "the day pay apps are due", k)
-                except GateError:
-                    day = 0
-            if day is not None and not 1 <= day <= 31:
-                errors[k] = "Enter a day of the month from 1 to 31 for when pay apps are due, or leave it blank."
+        if k in PAYER_DAY_FIELDS or k == "payapp_due_day":
+            if v is None and k != "payapp_due_day":
                 continue
-            clean[k] = day
+            value, error = _payer_day(k, v)
+            if error:
+                errors[k] = error
+            else:
+                clean[k] = value
             continue
         if v is None:
             continue
@@ -1998,35 +2028,42 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
             clean[k] = str(v).strip()
         elif k == "role":
             if v not in ("Owner", "GC"):
-                errors[k] = "Pick who pays you: the property owner or a general contractor."
+                errors[k] = "Pick the client type."
                 continue
             clean[k] = v
-        elif k in day_fields:
-            if v == "":
-                clean[k] = None  # blank goes back to the usual number
+        elif k == "client_type":
+            # Client type (J2): the finer word, which also sets the role's defaults.
+            if not client_type_role(v):
+                errors[k] = "Pick the client type."
                 continue
-            try:
-                days = parse_int(v, day_fields[k], k)
-            except GateError:
-                days = None
-            if days is None or not 1 <= days <= 365:
-                errors[k] = f"Enter {day_fields[k]} as a whole number from 1 to 365."
-                continue
-            clean[k] = days
+            clean[k] = v
+            clean["role"] = client_type_role(v)
     if "ap_email" in clean and not EMAIL_RE.match(clean["ap_email"]):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com."
     if clean.get("escalation_email") and not EMAIL_RE.match(clean["escalation_email"]):
         errors["escalation_email"] = "Enter one email to copy from the third follow-up, like owner@builder.com, or leave it blank."
     if "approver" in clean and not clean["approver"]:
         errors["approver"] = "Enter who signs off on your bills."
+    if clean.get("phone"):
+        # G1: a US phone, saved as (404) 555-0123. Blank clears it.
+        phone = normalize_phone(clean["phone"])
+        if phone:
+            clean["phone"] = phone
+        else:
+            errors["phone"] = rule_message("phone")
     if "name" in clean:
         same = _payer_named(state, clean["name"], other_than=payer["id"]) if clean["name"] else None
         if not clean["name"]:
             errors["name"] = "Enter the client's name."
+        elif check_field("name", clean["name"]):
+            errors["name"] = rule_message("name")
         elif same:
             errors["name"] = f"Another client is already called {same['name']}."
         elif clean["name"] == payer["name"]:
             clean.pop("name")
+    if "role" in clean and "client_type" not in clean and payer.get("role") != clean["role"]:
+        # Only Owner or GC sent (an older page): the type follows it.
+        clean["client_type"] = "gc" if clean["role"] == "GC" else "owner"
     if errors:
         raise GateError("Client playbook not saved.", fields=errors)
     changed = []
@@ -2097,7 +2134,8 @@ def _same_customer_question(field: str, typed: str, near: dict[str, Any]) -> Gat
                      extra={"same_customer": {"id": near["id"], "name": near["name"], "typed": typed}})
 
 
-def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_email: str, phone: str) -> dict[str, Any]:
+def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_email: str, phone: str,
+               client_type: str = "") -> dict[str, Any]:
     """A customer with the usual settings for its role, added to the company."""
     packet_rule = "Signed contract, conditional waiver, completion photos, and pay-app backup."
     if role == "GC":
@@ -2107,6 +2145,7 @@ def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_em
         "id": "payer-" + secrets.token_hex(3),
         "name": name,
         "role": role,
+        "client_type": client_type if client_type_role(client_type) == role else ("gc" if role == "GC" else "owner"),
         "approver": approver,
         "ap_email": ap_email,
         "phone": phone,
@@ -2122,24 +2161,47 @@ def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_em
 
 def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
     """A customer added from Customer settings, before any job (R3-07). Only the name is needed;
-    who signs off defaults to the customer, and the email can wait until the first send."""
+    who signs off defaults to the customer, and the email can wait until the first send. The
+    client type (J2) sets the role's defaults; a paperwork list (S11, S13) and the day fields a
+    contract import found (S12) may come too."""
     def text(key: str) -> str:
         v = body.get(key)
         return str(v).strip() if isinstance(v, (str, int, float)) and not isinstance(v, bool) else ""
     name, approver, ap_email, phone = text("name"), text("approver"), text("ap_email"), text("phone")
-    role = text("role") if text("role") in {"Owner", "GC"} else "Owner"
+    client_type = text("client_type")
+    role = client_type_role(client_type) or (text("role") if text("role") in {"Owner", "GC"} else "Owner")
     errors: dict[str, str] = {}
     if not name:
         errors["name"] = "Enter the client's name."
+    elif check_field("name", name):
+        errors["name"] = rule_message("name")
     elif _payer_named(state, name):
         errors["name"] = f"Another client is already called {_payer_named(state, name)['name']}."
+    if client_type and not client_type_role(client_type):
+        errors["client_type"] = "Pick the client type."
     if ap_email and not EMAIL_RE.match(ap_email):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
+    if phone:
+        phone = normalize_phone(phone) or phone
+        errors.update(check_field("phone", phone))
+    days: dict[str, Any] = {}
+    for k in (*PAYER_DAY_FIELDS, "payapp_due_day"):
+        if body.get(k) not in (None, ""):
+            value, error = _payer_day(k, body.get(k))
+            if error:
+                errors[k] = error
+            else:
+                days[k] = value
     _refuse("Client not added.", errors)
     near = None if body.get("new_customer") is True else payer_near(state, name)
     if near:
         raise _same_customer_question("name", name, near)
-    payer = _new_payer(state, name, role, approver or name, ap_email, phone)
+    payer = _new_payer(state, name, role, approver or name, ap_email, phone, client_type)
+    payer.update(days)
+    if body.get("no_paperwork") is True:
+        payer["packet"], payer["no_paperwork"] = "", True
+    elif text("packet"):
+        payer["packet"] = text("packet")
     audit(state, "", "payer_add", f"{actor} added the client {name}.", actor)
     return payer
 
@@ -2907,17 +2969,19 @@ def close_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[
 
 
 def reopen_job(state: dict[str, Any], job_id: str, reason: str, actor: str = "owner") -> dict[str, Any]:
-    """Bring a finished job back, for a late payment or a fix (R4-02). The reason goes in History."""
+    """Bring a finished job back, for a late payment, a fix or more work (R4-02; Add more work in
+    Stephen's Oct 29 review, J9): the same job opens again, so its record stays in one place. The
+    reason goes in its activity log."""
     job = _job(state, job_id)
     if not job.get("closed"):
         raise GateError(f"{job['name']} is not finished.")
     reason = _reason(reason)
     if not reason:
-        _refuse("", {"reason": "Enter why you are reopening it, like a late payment came in."})
+        _refuse("", {"reason": "Enter the new work, like the owner added a backsplash."})
     job["closed"] = False
     job.pop("closed_at", None)
     job["reopened_at"] = utcnow()
-    audit(state, job_id, "reopen_job", f"{actor} reopened {job['name']}: {reason}.", actor)
+    audit(state, job_id, "reopen_job", f"{actor} opened {job['name']} again to add more work: {reason}.", actor)
     return job
 
 
@@ -3493,31 +3557,75 @@ def create_job(
     contract_number: str = "",
     actor: str = "owner",
     new_customer: bool = False,
+    address_parts: dict[str, Any] | None = None,
+    client_type: str = "",
+    started_on: Any = None,
+    assignee_id: str = "",
+    assignee_name: str = "",
+    payer_days: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Add a job and its record. The packet is created later, with a pay app, from the payer's
     paperwork list (Customer settings); `note` is kept on the job record and never becomes it.
     Who signs off and the email are optional: the email is asked for before the first send.
     A customer name that nearly matches a saved one ("ABC Builders Inc" for "ABC Builders") is
-    asked about first, unless new_customer says to keep it as a new customer."""
+    asked about first, unless new_customer says to keep it as a new customer.
+
+    The address comes in four parts (J1: street, city, state, ZIP), each checked, and is kept
+    whole as address too ("Street, City, ST 12345") for the pay app PDF, the client's page and
+    Inbox matching. A caller that sends only the one line (an older page, an import) is still
+    taken. Phone, contract number and names go through the field rules (G1). started_on is the
+    start date (J8, today when blank); assignee_id is the team member the job's tasks go to.
+    payer_days (the pay app due day and payment terms an imported contract found, S12) are saved
+    on a new client only: a saved client's are changed in the Client playbook."""
     name = (name or "").strip()
     customer_name = (customer_name or "").strip()
     address = (address or "").strip()
     approver = (approver or "").strip()
     ap_email = (ap_email or "").strip()
     phone = (phone or "").strip()
-    role = role if role in {"Owner", "GC"} else "Owner"
+    role = client_type_role(client_type) or (role if role in {"Owner", "GC"} else "Owner")
     note = (note or "").strip()
     contract_number = (contract_number or "").strip()
 
     errors: dict[str, str] = {}
     if not name:
         errors["name"] = "Enter the job name."
-    if not address:
+    elif check_field("name", name):
+        errors["name"] = rule_message("name")
+    parts = None
+    if address_parts is not None:
+        parts = {k: str(address_parts.get(k) or "").strip() for k in ("street", "city", "state", "zip")}
+        errors.update(check_address(parts))
+        parts["state"] = normalize_state(parts["state"]) or parts["state"]
+        address = compose_address(parts)
+    elif not address:
         errors["address"] = "Enter the job address."
     if not customer_name:
         errors["customer"] = "Enter the client: who pays for this job."
+    elif check_field("name", customer_name):
+        errors["customer"] = rule_message("name")
+    if client_type and not client_type_role(client_type):
+        errors["client_type"] = "Pick the client type."
+    if phone:
+        phone = normalize_phone(phone) or phone
+        errors.update(check_field("phone", phone))
+    errors.update(check_field("contract_number", contract_number))
+    start = ""
+    if started_on not in (None, ""):
+        try:
+            start = parse_start_date(started_on)
+        except GateError as exc:
+            errors.update(exc.fields)
     if ap_email and not EMAIL_RE.match(ap_email):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
+    days: dict[str, Any] = {}
+    for k in ("payapp_due_day", "payment_terms_days"):
+        if (payer_days or {}).get(k) not in (None, ""):
+            value, error = _payer_day(k, payer_days[k])
+            if error:
+                errors[k] = error
+            else:
+                days[k] = value
     if not isinstance(contract_cents, int) or isinstance(contract_cents, bool) or contract_cents <= 0:
         errors["contract_cents"] = "Enter the contract amount, more than $0."
     elif contract_cents > MAX_AMOUNT_CENTS:
@@ -3532,8 +3640,11 @@ def create_job(
     if near:
         raise _same_customer_question("customer", customer_name, near)
     if not payer:
-        payer = _new_payer(state, customer_name, role, approver, ap_email, phone)
+        payer = _new_payer(state, customer_name, role, approver, ap_email, phone, client_type)
+        payer.update(days)
     else:
+        # A saved client keeps its type: the job follows it (the form doesn't ask, J2).
+        role = payer.get("role") if payer.get("role") in {"Owner", "GC"} else role
         # Keep the payer's existing contact. A new job must not silently redirect
         # where every other job's pay apps go; changes belong in Customer settings.
         # A blank one is filled in, since nothing goes anywhere yet.
@@ -3585,6 +3696,7 @@ def create_job(
         "name": name,
         "address": address,
         "payer_id": payer["id"],
+        "started_on": start or datetime.now(timezone.utc).date().isoformat(),
         "payer_role": role,
         "work_status": "in_progress",
         "completed_at": None,
@@ -3608,6 +3720,10 @@ def create_job(
         "evidence": [],
         "done_notes": "",
     }
+    if parts is not None:
+        job["address_parts"] = parts
+    if assignee_id:
+        job["assignee_id"], job["assignee_name"] = assignee_id, (assignee_name or "").strip()
     state["jobs"].append(job)
     audit(
         state,
@@ -3625,21 +3741,67 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
     only before the first pay app, and only without a schedule of values (change that schedule
     instead). Retainage can change any time and applies from the next pay app (R4-07): pay apps
     already sent keep what they held, and an open draft is drafted again at the new percent. The job code never changes: emails
-    and texts are filed by it. Payer contacts are edited in the Payer Playbook."""
-    job = _open_job(state, job_id)
+    and texts are filed by it. Payer contacts are edited in the Payer Playbook.
+
+    The address comes as its four parts (J1), all required once any is sent; a one-line address
+    from an older page is still taken. The start date (J8) can be corrected even on a finished
+    job, and each change is written to the activity log. assignee_id (with assignee_name, which
+    the server looks up) is the team member the job's tasks go to."""
+    job = _job(state, job_id)
+    if job.get("closed") and any(k != "started_on" for k in updates):
+        raise GateError(f"{job['name']} is closed. Closed jobs are read-only.")
     has_pay_apps = any(i.get("status") != "void" for i in job.get("invoices", []))
     changes: list[str] = []
     problems: dict[str, str] = {}
 
     for key, label in (("name", "Job name"), ("address", "Job address"), ("contract_number", "Contract number")):
-        if key not in updates:
+        if key not in updates or (key == "address" and any(k in updates for k in ("street", "city", "state", "zip"))):
             continue
         value = str(updates[key] or "").strip()
         if key != "contract_number" and not value:
             problems[key] = f"Enter the {label.lower()}."
+        elif key == "name" and check_field("name", value):
+            problems[key] = rule_message("name")
+        elif key == "contract_number" and check_field("contract_number", value):
+            problems[key] = rule_message("contract_number")
         elif value != job.get(key, ""):
             changes.append(f"{label.lower()} from \"{job.get(key, '')}\" to \"{value}\"")
             job[key] = value
+            if key == "address":
+                job.pop("address_parts", None)   # one line again: the parts are read from it
+
+    if any(k in updates for k in ("street", "city", "state", "zip")):
+        parts = {k: str(updates.get(k) or "").strip() for k in ("street", "city", "state", "zip")}
+        bad = check_address(parts)
+        if bad:
+            problems.update(bad)
+        else:
+            parts["state"] = normalize_state(parts["state"]) or parts["state"]
+            value = compose_address(parts)
+            if value != job.get("address", "") or parts != job.get("address_parts"):
+                if value != job.get("address", ""):
+                    changes.append(f"job address from \"{job.get('address', '')}\" to \"{value}\"")
+                job["address"], job["address_parts"] = value, parts
+
+    if "started_on" in updates and str(updates["started_on"] or "").strip():
+        try:
+            start = parse_start_date(updates["started_on"])
+        except GateError as exc:
+            problems.update(exc.fields)
+        else:
+            was = job_started_on(state, job)
+            if start != was:
+                changes.append(f"start date from {was or 'none'} to {start}")
+                job["started_on"] = start
+
+    if "assignee_id" in updates and (updates["assignee_id"] or "") != job.get("assignee_id", ""):
+        who = str(updates.get("assignee_name") or "").strip() or "no one"
+        changes.append(f"assigned to {who}" + (f" (was {job['assignee_name']})" if job.get("assignee_name") else ""))
+        if updates["assignee_id"]:
+            job["assignee_id"], job["assignee_name"] = updates["assignee_id"], who
+        else:
+            job.pop("assignee_id", None)
+            job.pop("assignee_name", None)
 
     if "contract_cents" in updates and updates["contract_cents"] != job["contract_cents"]:
         cents = updates["contract_cents"]
@@ -4137,3 +4299,4 @@ from .tasks import *  # noqa: E402,F401,F403
 from .daily import *  # noqa: E402,F401,F403
 from .comms import *  # noqa: E402,F401,F403
 from .contact import *  # noqa: E402,F401,F403
+from .jobinfo import *  # noqa: E402,F401,F403

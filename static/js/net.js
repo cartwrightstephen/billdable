@@ -49,3 +49,19 @@ export async function inBatches(items, limit, fn, onDone = () => {}) {
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
   return out;
 }
+
+// A file (or text, sent as a .txt) as the raw body, its name in X-Filename, as the job record's
+// uploads and the contract reader take it. {ok, status, data}, like postJson.
+export async function sendFile(path, body, name, type = "") {
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": type || (body && body.type) || "application/octet-stream", "X-Filename": encodeURIComponent(name || "file") },
+      body,
+    });
+    return { ok: res.ok, status: res.status, data: await readJson(res), res };
+  } catch (_) {
+    setNetBanner(true);
+    return { ok: false, status: 0, data: { error: "Can't reach Duracash." } };
+  }
+}

@@ -1,6 +1,7 @@
-// The job page's job record: the drop zone, the paste box, each record with Edit, and Add a note.
+// The job page's job record: the drop zone, the paste box, the records in groups by kind (J5)
+// with a filter, each record with Edit, and Add a note.
 import { esc, unesc, fmtDate } from "../format.js";
-import { RECORD_KINDS } from "../jobs.js";
+import { RECORD_KINDS, groupRecords } from "../jobs.js";
 import { field, formErrorLine, refuseForm, formValues, formErrors, draftValue, clearForm } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, onSessionEnd } from "../state.js";
@@ -10,8 +11,10 @@ import { post, toast, render, nav } from "../app-core.js";
 
 // A record on the job page, with Edit for its label and kind (R5-07). One open at a time.
 let editingRecord = "";
-// Signed out: a record being edited is that company's.
-onSessionEnd(() => { editingRecord = ""; });
+// The group the record list shows (J5): "" for all, else a RECORD_GROUPS key, for one job.
+let recordFilter = { job: "", group: "" };
+// Signed out: a record being edited, and the filter, are that company's.
+onSessionEnd(() => { editingRecord = ""; recordFilter = { job: "", group: "" }; });
 function recordRow(j, r) {
   if (editingRecord === r.id && !j.closed) {
     // What was typed stays through a redraw until saved or cancelled (a form: watchForms keeps it).
@@ -36,6 +39,21 @@ export function recordFiles(r) {
   }).filter(Boolean).join(" · ");
 }
 
+// The records in labelled groups with their counts, each folding on its own, under a filter row:
+// All, then each group that has records.
+export function recordGroupsHtml(j) {
+  const groups = groupRecords(j.records);
+  if (!groups.length) return "";
+  const on = recordFilter.job === j.id && groups.some(g => g.key === recordFilter.group) ? recordFilter.group : "";
+  const total = groups.reduce((n, g) => n + g.records.length, 0);
+  const button = (key, label, n) => `<button class="${on === key ? "btn" : "btn secondary"} small" data-action="record-filter" data-id="${j.id}" data-group="${key}" aria-pressed="${on === key}">${label} (${n})</button>`;
+  return `<div class="filter-bar record-filter" role="group" aria-label="Show">${button("", "All", total)}${groups.map(g => button(g.key, g.label, g.records.length)).join("")}</div>
+    ${groups.filter(g => !on || g.key === on).map(g => `<details class="record-group" data-group="${g.key}" open>
+      <summary><span class="record-group-name">${g.label}</span> <span class="pill">${g.records.length}</span></summary>
+      ${g.records.map(r => recordRow(j, r)).join("")}
+    </details>`).join("")}`;
+}
+
 // The Job record card on the job page.
 export function recordCardHtml(j) {
   return `<div class="card">
@@ -48,7 +66,7 @@ export function recordCardHtml(j) {
           <span class="sub pointer-only">Or drop files here.</span>
         </div>
         <details class="paste-job"><summary>Paste an email, a text thread, or notes</summary>${pasteBoxHtml(j.id)}</details>`}
-        ${(j.records || []).slice().reverse().map(r => recordRow(j, r)).join("")}
+        ${recordGroupsHtml(j)}
         <details class="add-record"${(j.records || []).length && !formErrors.record ? "" : " open"}><summary>Add a note to the record</summary>
           <div data-form-key="record">${formErrorLine("record")}<div class="form-row">
             ${field({ form: "record", name: "label", id: "rec-label", label: "What it is", placeholder: "Rough-in inspection passed" })}
@@ -72,6 +90,7 @@ export const actions = {
     if (refuseForm("record", v.label ? {} : { label: "Enter what this is, like \"Rough-in inspection passed\"." })) return;
     await post(`/api/jobs/${id}/add-record`, { label: v.label, note: v.note, kind: v.kind || "note" }, { formKey: "record" });
   },
+  "record-filter": (el, id) => { recordFilter = { job: id, group: el.dataset.group || "" }; render(); },
   "record-edit": (el) => {
     if (editingRecord) clearForm(`record-${editingRecord}`);   // Cancel, or another record's Edit, drops what was typed
     editingRecord = el.dataset.item || "";

@@ -64,12 +64,13 @@ export function blockerButton(j) { return j.blocker_button || ""; }
 // queue no longer uses any of them.
 
 // In the company's word for a pay app (terms.js): "Draft a draw for..." for draws (R6-01).
-export function nextStep(j, now = new Date()) { return termText(nextStepWords(j, now)); }
+// listed: the job page shows every blocker under the line (J6), so the line doesn't name one.
+export function nextStep(j, now = new Date(), { listed = false } = {}) { return termText(nextStepWords(j, now, listed)); }
 
-function nextStepWords(j, now) {
+function nextStepWords(j, now, listed = false) {
   if (j.closed) return "Finished.";
-  if (needsPaperwork(j)) return "Attach the paperwork, then send: " + j.missing_paperwork.join(", ");
-  if (isBlocked(j)) return "Before it can go: " + j.blockers[0];
+  if (needsPaperwork(j)) return listed ? "Attach the paperwork, then send." : "Attach the paperwork, then send: " + j.missing_paperwork.join(", ");
+  if (isBlocked(j)) return listed ? "Before it can go:" : "Before it can go: " + j.blockers[0];
   const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   if (draft) return "Pay app is ready. Review it, then Approve & send.";
   if (j.waiver_due && !j.waiver_sent) return "Payment received. Approve and send the waiver.";
@@ -445,4 +446,87 @@ export function canPullBack(j, inv) {
   if ((j.payments || []).some(p => p.invoice_id === inv.id)) return false;
   const live = (j.invoices || []).filter(i => i.status !== "void");
   return live[live.length - 1] === inv;
+}
+
+// ---------- jobs-clients (Stephen's Oct 29 review) ----------
+
+// Client type (J2): the five kinds of client, as domain.CLIENT_TYPES has them. GC and another
+// subcontractor start with a general contractor's paperwork and timing; the rest, an owner's.
+export const CLIENT_TYPES = [
+  ["gc", "General contractor"], ["owner", "Owner or developer"], ["homeowner", "Homeowner"],
+  ["sub", "Another subcontractor (you are a lower tier)"], ["public", "Public agency"],
+];
+
+// The client's type in words; one saved before there were types reads from its role.
+export function clientTypeLabel(p) {
+  const kind = unesc((p && p.client_type) || "") || (unesc((p && p.role) || "") === "GC" ? "gc" : "owner");
+  return (CLIENT_TYPES.find(([k]) => k === kind) || CLIENT_TYPES[1])[1];
+}
+
+// The jobs still being worked (J9): a finished job leaves the working lists, pickers and the
+// calendar, and stays under Job history and its client's card. Money, Dashboard and Closeout
+// filter with this too.
+export function openJobs(jobs) { return (jobs || []).filter(j => !j.closed); }
+
+// The job record in groups (J5), each with its kinds (RECORD_KINDS keys). A kind not listed
+// goes under Notes and other.
+export const RECORD_GROUPS = [
+  ["contract", "Contract and change orders", ["contract", "change_order"]],
+  ["daily", "Daily records", ["daily"]],
+  ["photo", "Photos", ["photo"]],
+  ["tickets", "Tickets, time sheets and supplier invoices", ["ticket", "supplier_invoice", "stored"]],
+  ["waiver", "Lien waivers", ["waiver"]],
+  ["insurance", "Insurance and certificates", ["insurance"]],
+  ["closeout", "Inspections and closeout", ["inspection", "punch", "completion", "asbuilt", "warranty"]],
+  ["pay_app", "Pay app backup", ["pay_app"]],
+  ["other", "Notes and other", ["note", "other"]],
+];
+
+// [{key, label, records}] for the groups that have records, newest first in each.
+export function groupRecords(records) {
+  const known = new Set(RECORD_GROUPS.flatMap(([, , kinds]) => kinds));
+  return RECORD_GROUPS.map(([key, label, kinds]) => ({
+    key, label,
+    records: (records || []).filter(r => kinds.includes(unesc(r.kind || "")) || (key === "other" && !known.has(unesc(r.kind || "")))).slice().reverse(),
+  })).filter(g => g.records.length);
+}
+
+// The paperwork a client usually needs (S11), as the Client playbook's checkboxes. The labels
+// are saved as the comma list the server reads (domain.parse_packet_text): none has a comma or
+// "and" in it, and the closeout ones say (closeout) so the server keeps them for closeout.
+export const PAPERWORK_CHOICES = [
+  ["Each pay app", ["Signed contract", "Conditional lien waiver", "Progress or completion photos",
+    "Daily records / time sheets / tickets", "Supplier invoices or material receipts", "Insurance certificate",
+    "Stored materials documents", "Schedule of values"]],
+  ["At closeout", ["Punch list sign-off (closeout)", "Completion certificate (closeout)", "Final lien waivers (closeout)",
+    "As-builts (closeout)", "Warranties (closeout)"]],
+];
+const CHOICES = PAPERWORK_CHOICES.flatMap(([, list]) => list);
+const choiceKey = (label) => String(label).toLowerCase().replace(/\s+/g, " ").trim();
+
+// The saved list as {checked: [labels], other: "text"}: an item that is a checkbox ticks it
+// (case and spacing aside); the rest go in Other, as typed.
+export function packetChoices(items) {
+  const checked = [], other = [];
+  for (const item of items || []) {
+    const text = unesc(item);
+    const hit = CHOICES.find(c => choiceKey(c) === choiceKey(text));
+    if (hit) checked.push(hit); else other.push(text);
+  }
+  return { checked, other: other.join(", ") };
+}
+
+// What a save sends as the paperwork list: the ticked labels, then Other, in one comma list.
+export function packetText(checked, other) {
+  return [...CHOICES.filter(c => checked.includes(c)), ...String(other || "").split(/[,;\n]/).map(t => t.trim()).filter(Boolean)].join(", ");
+}
+
+// The job's start date limits (J8): about 10 years back and 2 years ahead. The server
+// (domain/jobinfo.py START_BACK_DAYS) allows a day more each way, for a device a time zone off.
+export function startDateLimits(now = new Date()) {
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const back = new Date(now), ahead = new Date(now);
+  back.setDate(back.getDate() - 3652);
+  ahead.setDate(ahead.getDate() + 730);
+  return { min: iso(back), max: iso(ahead), today: iso(now) };
 }

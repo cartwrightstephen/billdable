@@ -38,9 +38,11 @@ import auth
 import backup
 import billing
 import calendar_feed
+import contract_import
 import domain
 import helper
 import importer
+import job_archive
 import legal
 import mail_events
 import mailer
@@ -199,7 +201,7 @@ def demo_enabled() -> bool:
 
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
-DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv"}
+DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_contract_read"}
 COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_helper_admin",
                                              "_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal"}
@@ -1111,6 +1113,42 @@ class Handler(BaseHTTPRequestHandler):
     def _g_waiver_forms(self, m, user) -> None:
         """The lien waiver forms each state sets (M22), for the waiver page's state picker."""
         self._json(200, domain.waiver_forms())
+
+    def _g_payer_jobs(self, m, user) -> None:
+        """Every job of one client, finished ones too, for its Client playbook card (S10)."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+            if not any(p["id"] == m.group(1) for p in state.get("payers", [])):
+                self._json(404, {"error": "Client not found."})
+                return
+            jobs = domain.payer_jobs(state, m.group(1))
+        self._json(200, {"jobs": jobs})
+
+    def _g_job_archive(self, m, user) -> None:
+        """The job file (J9): its record files, pay app PDFs and a summary, in one zip. Every
+        signed-in person of the company (owners and members) may download it."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        job = next((j for j in state.get("jobs", []) if j["id"] == m.group(1)), None)
+        if not job:
+            self._json(404, {"error": "Job not found."})
+            return
+        data, name = job_archive.build(state, job, lambda meta: importer.file_path(user["company_id"], meta))
+        self._send(200, data, "application/zip", {"Content-Disposition": f'attachment; filename="{name}"'})
+
+    def _p_contract_read(self, m, user) -> None:
+        """Read a contract (G4, S12): a .docx, a text PDF, a .txt, or pasted text sent as a .txt,
+        as the raw body with its name in X-Filename. Nothing is saved: the answer is what the
+        form fills in for the person to check."""
+        name = unquote(self.headers.get("X-Filename", "") or "contract.txt")[:200]
+        data = self._read_raw(importer.MAX_FILE_BYTES)
+        user = self._session_user()  # still signed in now the file has arrived?
+        if not user:
+            self._json(401, {"error": "Sign in required."})
+            return
+        with company_lock(user["company_id"]):
+            company = load_company(user["company_id"]).get("company", {})
+        self._json(200, contract_import.read(name, data, company_name=company.get("name", "")))
 
     def _g_log_page(self, m, user) -> None:
         offset, limit, q = self._paging()
@@ -2411,6 +2449,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def _m_create_job(self, state: dict, m, ctx: "Ctx") -> None:
         body = ctx.body
+        # The job's tasks go to the person it is assigned to: the one who made it, unless the
+        # form picked another team member (jobs-clients, for tasks-daily's To Do).
+        # A picked person must be on the team; the maker, when not on it (support signed in as the
+        # company), leaves the job unassigned rather than refusing it.
+        picked = _text(body, "assignee_id")
+        try:
+            assignee_id, assignee_name = _assignee(ctx, picked or ctx.user.get("id", ""))
+        except domain.GateError:
+            if picked:
+                raise
+            assignee_id, assignee_name = "", ""
         domain.create_job(
             state, _text(body, "name"), _text(body, "customer"), _number(body, "contract_cents", "the contract amount", 0),
             address=_text(body, "address"), approver=_text(body, "approver"), ap_email=_text(body, "ap_email"),
@@ -2421,6 +2470,11 @@ class Handler(BaseHTTPRequestHandler):
             contract_number=_text(body, "contract_number"), actor=ctx.actor,
             # "Same as ABC Builders?" answered with "keep the new name" (Oct 23 note 5).
             new_customer=body.get("new_customer") is True,
+            # J1: the address in four parts; a page that sends only "address" still works.
+            address_parts=_address_parts(body), client_type=_text(body, "client_type"),
+            started_on=_text(body, "started_on"), assignee_id=assignee_id, assignee_name=assignee_name,
+            # S12: what an imported contract said about the client's pay app day and terms.
+            payer_days={k: body.get(k) for k in ("payapp_due_day", "payment_terms_days") if k in body},
         )
 
     def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:
@@ -2514,6 +2568,9 @@ ROUTES = [
     Route("POST", r"/api/tasks", "_p_task_add", "body"),
 
     # == stream: jobs-clients ==
+    Route("GET", r"/api/payers/([^/]+)/jobs", "_g_payer_jobs", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/archive/job-file\.zip", "_g_job_archive", "user"),
+    Route("POST", r"/api/contract/read", "_p_contract_read", "user"),
 
     # == stream: payapps-cos ==
 
@@ -2704,9 +2761,28 @@ def _received_on(body: dict) -> str | None:
     return text
 
 
+def _address_parts(body: dict) -> dict | None:
+    """The job address's four boxes (J1), or None when the page sent the one-line address."""
+    keys = ("street", "city", "state", "zip")
+    return {k: _text(body, k, limit=200) for k in keys} if any(k in body for k in keys) else None
+
+
+def _assignee(c: Ctx, user_id: str) -> tuple:
+    """(id, name) of the team member a job is assigned to; someone not on the team is refused."""
+    if not user_id:
+        return "", ""
+    person = next((u for u in auth.team(c.company_id)["users"] if u["id"] == user_id), None)
+    if not person:
+        raise domain.GateError("Pick someone on your team.", fields={"assignee_id": "Pick someone on your team."})
+    return person["id"], person.get("name") or person.get("email") or ""
+
+
 def _edit_job(h, st, j, i, c):
     body = c.body
-    updates = {k: _text(body, k) for k in ("name", "address", "contract_number") if k in body}
+    updates = {k: _text(body, k) for k in ("name", "address", "contract_number", "started_on") if k in body}
+    updates.update(_address_parts(body) or {})
+    if "assignee_id" in body:
+        updates["assignee_id"], updates["assignee_name"] = _assignee(c, _text(body, "assignee_id"))
     if "contract_cents" in body:
         updates["contract_cents"] = _number(body, "contract_cents", "the contract amount", 0)
     if "retainage_pct" in body:

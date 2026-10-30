@@ -67,9 +67,9 @@ class CustomerFixTests(unittest.TestCase):
     def test_role_phone_and_blanks_clear(self):
         state = seed_state()
         job, payer = payer_of(state, "OAK")
-        domain.update_payer(state, payer["id"], {"role": "GC", "phone": "0404 555 0100", "copy": "", "rejects_when": "",
+        domain.update_payer(state, payer["id"], {"role": "GC", "phone": "404 555 0100", "copy": "", "rejects_when": "",
                                                  "follow_up_days": "", "packet": ""})
-        self.assertEqual((payer["role"], payer["phone"], payer["copy"], payer["rejects_when"]), ("GC", "0404 555 0100", "", ""))
+        self.assertEqual((payer["role"], payer["phone"], payer["copy"], payer["rejects_when"]), ("GC", "(404) 555-0100", "", ""))
         self.assertNotIn("follow_up_days", payer, "blank goes back to the usual number")
         self.assertTrue(payer["no_paperwork"], "an emptied paperwork list means nothing is needed")
         self.assertEqual(job["payer_role"], "GC")
