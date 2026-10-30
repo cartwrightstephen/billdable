@@ -48,7 +48,7 @@ test("the redrawn wireframes use the plain words the screens use, and the app ha
     Money: ["Paperwork", "Unpaid", "Closeout", "Not chosen yet", "Which type?", "Held back, still owed", "Open closeout paperwork"],
     PaymentsImport: ["Record the ticked payments", "Pick a pay app…", "Download for QuickBooks", "Read payments from QuickBooks"],
     Inbox: ["Waiting (", "Other job", "Change type (", "Add to job", "Read as payments (", "Everything received", "Came in by", "Filed automatically to "],
-    Settings: ["Activity log", "Recommended for owners.", "Sending and email", "They join as", "Delete everything"],
+    Settings: ["Activity log", "Use an authenticator app instead", "Sending and email", "Permission profiles", "Delete everything", "Appearance"],
     PayerPage: ["Approve for payment", "Payment expected by", "Something not right?", "Send a question", "Mark as received"],
     Today: ["To Do", "Needs paperwork", "Spoke to them…", "Done, not billed", "Held back, still owed",
       "Can't send yet", "Open and recent"],

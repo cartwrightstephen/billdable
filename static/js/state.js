@@ -25,6 +25,7 @@ export function clearSession() {
   state = null;
   teamData = null;
   formOpen = {};
+  twoStepPrompt = false;
   forgetters.forEach(fn => fn());
 }
 
@@ -62,6 +63,8 @@ export let mailReady = false;     // the server sends mail: nothing goes out unt
 export let readOnly = "";         // why this company can't be changed (the read-only demo, or a founder's hold)
 export let billingInfo = null;    // billing.standing: configured, status, warning
 export let heldShare = 0;         // items shared to the app from this browser before signing in, waiting (R6-10)
+export let idleMinutes = 60;      // the server signs a session out after this long without use (G2)
+export let codesByEmail = false;  // the server emails 6-digit codes: password change (S2), sign-in (S7)
 
 // Sets the fields given: { helperAdmin, mailReady, readOnly, billingInfo, heldShare }.
 export function setAccount(info) {
@@ -70,7 +73,20 @@ export function setAccount(info) {
   if ("readOnly" in info) readOnly = info.readOnly;
   if ("billingInfo" in info) billingInfo = info.billingInfo;
   if ("heldShare" in info) heldShare = info.heldShare;
+  if ("idleMinutes" in info && Number(info.idleMinutes) > 0) idleMinutes = Number(info.idleMinutes);
+  if ("codesByEmail" in info) codesByEmail = info.codesByEmail === true;
 }
+
+// Why the sign-in page is showing, when the server or the idle timer ended the session (G2):
+// "Signed out after an hour without use." Shown once on Sign in.
+export let signedOutNote = "";
+
+export function setSignedOutNote(text) { signedOutNote = text || ""; }
+
+// Right after signing in on a server without mail (S7): My account opens with the two-step
+// setup first, until it is done or put off with Not now.
+export let twoStepPrompt = false;
+export function setTwoStepPrompt(on) { twoStepPrompt = !!on; }
 
 // { email, verification } (escaped) right after sign-up: the "Check your email" panel.
 export let checkEmail = null;

@@ -78,10 +78,13 @@ class RouteEdgeTests(unittest.TestCase):
         self.assertIn(res.status, {400, 409})
 
 
-    def test_the_five_team_routes_are_owners_only(self):  # R6-08
+    def test_the_team_routes_need_manage_the_team(self):  # R6-08, S6
         team = {r.handler: r for r in server.ROUTES if r.method == "POST" and r.pattern.startswith(("/api/team", "/api/account"))}
-        self.assertEqual(set(team), {"_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete"})
-        self.assertTrue(all(r.owner and r.access == "body" for r in team.values()))
+        self.assertEqual(set(team), {"_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
+                                     "_p_profile_save", "_p_profile_delete", "_p_admin_hand_over"})
+        self.assertTrue(all(r.access == "body" for r in team.values()))
+        # Handing over and deleting are the Company Admin's, checked in their handlers (S8).
+        self.assertTrue(all(r.perm == "team" for h, r in team.items() if h not in {"_p_account_delete", "_p_admin_hand_over"}))
         owner, me = self.signup("team-routes@example.com")
         res, out = self.request("POST", "/api/team/invite", {"email": "team-member@example.com", "role": "member"}, cookie=owner)
         self.assertEqual(res.status, 200, out)
@@ -95,7 +98,8 @@ class RouteEdgeTests(unittest.TestCase):
                            (f"/api/team/{me['id']}/role", {"role": "member"}), (f"/api/team/{me['id']}/remove", {}),
                            ("/api/account/delete", {"password": "member password 1", "confirm": "Pine Builders"})):
             res, data = self.request("POST", path, body, cookie=member)
-            self.assertEqual((res.status, data.get("error")), (403, "Only an owner can do that."), path)
+            self.assertEqual(res.status, 403, path)
+            self.assertIn(data.get("error"), (server.NO_PERMISSION, "Only the Company Admin can delete the company."), path)
         res, data = self.request("POST", f"/api/team/invites/{invite_id}/revoke", {}, cookie=owner)
         self.assertEqual((res.status, data["invites"]), (200, []))
         res, data = self.request("POST", f"/api/team/{joined['user']['id']}/role", {"role": "owner"}, cookie=owner)

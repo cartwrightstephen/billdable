@@ -11,7 +11,7 @@ export const NEW = [
   "Signed change orders", "Unsigned change orders", "Bill now (send waits for signature)", "Held back, still owed",
   "Delete draft", "Activity log", "Unpaid", "Closeout", "Waiting (", "Also email (CC)", "Paperwork needed with each pay app",
   "They send pay apps back when", "Days they usually take to pay", "Days between follow-ups", "Total done so far $",
-  "Anything to note? (optional)", "sent by ", "Notes (kept on the job record)", "Recommended for owners.",
+  "Anything to note? (optional)", "sent by ", "Notes (kept on the job record)", "Use an authenticator app instead",
   "Homeowner: their email. GC: their accounts-payable address.", "Backup for the pay app",
   "Where this job stands", "Add more work", "Add to a job record", "Import contract", "Download job file",
 ];
@@ -25,6 +25,6 @@ export const OLD = [
   /Payer agreed/, /Payer wants changes/, /Playbook|(the|to|payer) playbook/, /Customer settings|customer settings/, /\bthe customer\b/i, /\b(?:Add|Save|Delete) customer\b/, />Customers?</, /Customers? (?:agreed|wants|sent|page)\b/, /Payer sent a pay app back/, /Match payment/, /Payments matched/,
   /Who pays you\?/, /Reopen job/, /[Cc]lose for (the )?record/, /Closed for the record/, /Money file/i, /Approved COs/, /Pending COs/, /Put on next pay app/,
   /Retainage open/, /Void draft/, />Audit</, /"Audit"/, /"Collections"/, />Collections</, /File to job record/, /To file \(/,
-  /Completed to date/, /Completion notes/, /Notes for the job record/, /Owners should turn this on/, /"AP email"/, /AP email \(/,
+  /Completed to date/, /Completion notes/, /Notes for the job record/, /Owners should turn this on/, /Recommended for owners/, /Members can send/, /They join as/, /Make (?:owner|member)\b/, /"AP email"/, /AP email \(/,
   /"Approver"/, />Approver</, /Approve send/, /Draft skipped/, /\bthe payer\b/, /\bPayer\b(?!s)/, /Pay app \/ invoice backup/,
 ];

@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 import domain
 import payapp_pdf
+from domain import profiles
 
 
 def _v1_to_v2(state: dict[str, Any]) -> None:
@@ -122,8 +123,52 @@ def _jobs_clients_address_parts(state: dict[str, Any]) -> None:
             payer["client_type"] = domain.client_type_of(payer)
 
 
+def _settings_auth_company_address_parts(state: dict[str, Any]) -> None:
+    """settings-auth (S3): the company address in four boxes. A one-line address that reads as
+    'Street, City, ST 12345' is split into street, city, state and zip; one that doesn't goes
+    whole into street, so the owner sees it and fills in the rest. The line itself is kept."""
+    company = state.get("company") or {}
+    address = str(company.get("address") or "").strip()
+    if not address or any(company.get(k) for k in domain.ADDRESS_PARTS):
+        return
+    for key, value in domain.parse_legacy_address(address).items():
+        if value:
+            company[key] = value
+
+
+def _settings_auth_permission_profiles(state: dict[str, Any]) -> None:
+    """settings-auth (S6): the company's permission profiles, Owner and Member. Where "Members
+    can send" was on, Member gets the three send permissions; the switch itself is retired.
+    Each person's profile comes from their role (auth.py reads a missing profile_id that way)."""
+    profiles.migrate_company(state)
+
+
 STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _tasks_daily_lists, _payapps_cos_co_history,
-                                                   _paperwork_insurance_records, _jobs_clients_address_parts]
+                                                   _paperwork_insurance_records, _jobs_clients_address_parts,
+                                                   _settings_auth_company_address_parts, _settings_auth_permission_profiles]
+
+
+# ----- steps for auth.json (the accounts file), run once at start-up by auth.upgrade_file -----
+
+def _settings_auth_company_admins(data: dict[str, Any]) -> bool:
+    """settings-auth (S8): each company gets its one Company Admin, the only person who can delete
+    the company: the earliest-created owner, where no one holds it yet. Returns whether anything
+    changed. Safe to run again."""
+    changed = False
+    by_company: dict[str, list[dict[str, Any]]] = {}
+    for user in data.get("users", []):
+        by_company.setdefault(user.get("company_id", ""), []).append(user)
+    for users in by_company.values():
+        if any(u.get("company_admin") for u in users):
+            continue
+        owners = sorted((u for u in users if u.get("role", "owner") == "owner"), key=lambda u: u.get("created_at", ""))
+        if owners:
+            owners[0]["company_admin"] = True
+            changed = True
+    return changed
+
+
+AUTH_STEPS: list[Callable[[dict[str, Any]], bool]] = [_settings_auth_company_admins]
 SCHEMA_VERSION = len(STEPS) + 1
 
 

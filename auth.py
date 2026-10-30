@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import secrets
 import threading
@@ -48,9 +49,13 @@ class RateLimited(Exception):
     pass
 
 ROLES = ("owner", "member")
-TOKEN_HOURS = {"reset": 1, "verify": 72, "invite": 7 * 24}
+TOKEN_HOURS = {"reset": 1, "verify": 72, "invite": 7 * 24, "pwchange": 0.25, "login": 1 / 6}
 RESET_MAX_PER_HOUR = 3
 _RESETS: dict[str, list[float]] = {}
+# Emailed 6-digit codes (S2 password change, S7 sign-in from a new device): at most this many
+# an hour per person and kind, each working once until it expires.
+CODES_MAX_PER_HOUR = 5
+_CODES: dict[str, list[float]] = {}
 
 
 class AuthError(ValueError):
@@ -60,6 +65,11 @@ DEMO_EMAIL = "owner@hartline.example"
 DEMO_PASSWORD = "demo"
 DEMO_COMPANY_ID = "co-hartline"
 SESSION_DAYS = 14
+# Idle sign-out (G2): a session not used for this long ends, on the server. Set with
+# DURACASH_IDLE_MINUTES (default 60). Its last use is written at most once a minute, so a busy
+# page doesn't rewrite auth.json on every request. The 14-day cap above still applies.
+IDLE_MINUTES_DEFAULT = 60
+TOUCH_SECONDS = 60
 # The demo account is shared and signed in without a password, so its sessions are capped:
 # the oldest gives way, and calling the demo sign-in in a loop can't grow the file without end.
 DEMO_MAX_SESSIONS = 500
@@ -181,12 +191,18 @@ def _read() -> dict[str, Any]:
     return _READ_CACHE["data"]
 
 
-def upgrade_file() -> None:
+def upgrade_file(steps: Any = ()) -> None:
     """Called at start-up: write back a file from before session hashing once, so _load()
-    stops re-hashing its session keys on every request."""
+    stops re-hashing its session keys on every request; and run the accounts-file steps
+    (migrations.AUTH_STEPS: each takes the loaded file and says whether it changed it)."""
     with LOCK:
-        if AUTH_PATH.exists() and not json.loads(AUTH_PATH.read_text()).get("sessions_hashed"):
-            _save(_load())
+        if not AUTH_PATH.exists():
+            return
+        stale = not json.loads(AUTH_PATH.read_text()).get("sessions_hashed")
+        data = _load()
+        changed = [step(data) for step in steps]
+        if stale or any(changed):
+            _save(data)
 
 
 def has_users() -> bool:
@@ -210,10 +226,41 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "name": user["name"],
         "company_id": user["company_id"],
         "role": user.get("role", "owner"),
+        # S6: the permission profile (accounts from before profiles read their role), and S8:
+        # whether this is the company's one Company Admin.
+        "profile_id": user.get("profile_id") or user.get("role", "owner"),
+        "company_admin": bool(user.get("company_admin")),
         "email_verified": bool(user.get("email_verified")),
         "two_step": bool(user.get("totp_enabled")),
         "onboarding_dismissed": bool(user.get("onboarding_dismissed")),
+        "appearance": _appearance(user.get("appearance")),
     }
+
+
+# ---------- appearance (G9): each person's theme and accent ----------
+
+THEMES = ("system", "light", "dark")
+ACCENTS = ("copper", "blue", "green", "slate")
+
+
+def _appearance(value: Any) -> dict[str, str]:
+    value = value if isinstance(value, dict) else {}
+    return {"theme": value.get("theme") if value.get("theme") in THEMES else "system",
+            "accent": value.get("accent") if value.get("accent") in ACCENTS else "copper"}
+
+
+def set_appearance(user_id: str, theme: Any, accent: Any) -> dict[str, Any]:
+    """Keep this person's theme (system, light or dark) and accent colour on their account."""
+    if theme not in THEMES:
+        raise AuthError("Pick a theme: same as this device, light or dark.")
+    if accent not in ACCENTS:
+        raise AuthError("Pick an accent colour from the list.")
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        user["appearance"] = {"theme": theme, "accent": accent}
+        _save(data)
+        return _public(user)
 
 
 def create_user(
@@ -258,6 +305,8 @@ def create_user(
         if any(u["email"] == email for u in data["users"]):
             raise ValueError("An account with that email already exists.")
         user = {"id": _new_user_id(data), **user}
+        if role == "owner" and not any(u["company_id"] == company_id for u in data["users"]):
+            user["company_admin"] = True   # the account that creates a company is its Company Admin (S8)
         data["users"].append(user)
         _save(data)
     return _public(user)
@@ -305,13 +354,15 @@ def create_session(user: dict[str, Any]) -> str:
     expires = _utcnow() + timedelta(days=SESSION_DAYS)
     with LOCK:
         data = _load()
-        # Drop expired sessions opportunistically.
-        now = _iso(_utcnow())
-        data["sessions"] = {k: v for k, v in data["sessions"].items() if v["expires_at"] > now}
+        # Drop expired and idle sessions opportunistically.
+        moment = _utcnow()
+        now = _iso(moment)
+        data["sessions"] = {k: v for k, v in data["sessions"].items() if v["expires_at"] > now and not _idle(v, moment)}
         data["sessions"][_digest(token)] = {
             "user_id": user["id"],
             "company_id": user["company_id"],
             "expires_at": _iso(expires),
+            "last_seen_at": now,
         }
         if user["company_id"] == DEMO_COMPANY_ID:
             # Oldest first; sessions made in the same second keep the order they were made in.
@@ -323,23 +374,66 @@ def create_session(user: dict[str, Any]) -> str:
     return token
 
 
-def session_user(token: str | None) -> dict[str, Any] | None:
+def idle_minutes() -> float:
+    """Minutes without use before a session ends (DURACASH_IDLE_MINUTES, default 60)."""
+    try:
+        value = float(os.environ.get("DURACASH_IDLE_MINUTES") or IDLE_MINUTES_DEFAULT)
+    except ValueError:
+        return IDLE_MINUTES_DEFAULT
+    return value if value > 0 else IDLE_MINUTES_DEFAULT
+
+
+def idle_words(minutes: float | None = None) -> str:
+    """What the sign-in page says after an idle sign-out."""
+    minutes = idle_minutes() if minutes is None else minutes
+    span = "an hour" if minutes == 60 else f"{minutes:g} minute{'' if minutes == 1 else 's'}"
+    return f"Signed out after {span} without use."
+
+
+def _idle(entry: dict[str, Any], now: datetime) -> bool:
+    """A session saved before idle sign-out (no last_seen_at) counts as idle: everyone signs in
+    once after the change."""
+    try:
+        seen = datetime.fromisoformat(str(entry.get("last_seen_at") or ""))
+    except ValueError:
+        return True
+    return now - seen > timedelta(minutes=idle_minutes())
+
+
+def session_check(token: str | None) -> tuple[dict[str, Any] | None, str]:
+    """(the user, "") for a live session, else (None, why): "none", "expired" or "idle". An
+    expired or idle session is deleted. Use refreshes last_seen_at, at most once a minute."""
     if not token or not isinstance(token, str) or len(token) > 200:
-        return None
+        return None, "none"
     key = _digest(token)
     with LOCK:
         entry = _read()["sessions"].get(key)
         if not entry:
-            return None
-        if entry["expires_at"] <= _iso(_utcnow()):
+            return None, "none"
+        now = _utcnow()
+        expired = entry["expires_at"] <= _iso(now)
+        if expired or _idle(entry, now):
             data = _load()
             data["sessions"].pop(key, None)
             _save(data)
-            return None
+            return None, "expired" if expired else "idle"
         user = next((u for u in _read()["users"] if u["id"] == entry["user_id"]), None)
         if not user:
-            return None
-        return _public(user)
+            return None, "none"
+        try:
+            stale = (now - datetime.fromisoformat(entry["last_seen_at"])).total_seconds() >= TOUCH_SECONDS
+        except (KeyError, ValueError):
+            stale = True
+        if stale:
+            data = _load()
+            if key in data["sessions"]:
+                data["sessions"][key]["last_seen_at"] = _iso(now)
+                _save(data)
+        return _public(user), ""
+
+
+def session_user(token: str | None) -> dict[str, Any] | None:
+    return session_check(token)[0]
 
 
 def destroy_session(token: str | None) -> None:
@@ -387,6 +481,49 @@ def _find_token(data: dict[str, Any], kind: str, raw: Any) -> tuple[str, dict[st
     if not entry or entry.get("kind") != kind or entry.get("expires_at", "") <= _iso(_utcnow()):
         return None, None
     return key, entry
+
+
+def _code_key(kind: str, user_id: str, code: str) -> str:
+    return _digest(f"{kind}:{user_id}:{code}")
+
+
+def issue_code(user_id: str, kind: str) -> str | None:
+    """A new 6-digit code of this kind ("pwchange" or "login") for this person, or None when too
+    many were asked for in the last hour. Only its hash is kept; older ones stay valid until used
+    or expired."""
+    now = time.monotonic()
+    with LOCK:
+        key = f"{kind}:{user_id}"
+        recent = [t for t in _CODES.get(key, []) if now - t < 3600]
+        if len(recent) >= CODES_MAX_PER_HOUR:
+            _CODES[key] = recent
+            return None
+        _CODES[key] = recent + [now]
+        if len(_CODES) > 10_000:
+            for k in [k for k, v in _CODES.items() if not v or now - v[-1] >= 3600]:
+                _CODES.pop(k, None)
+        data = _load()
+        _user(data, user_id)
+        code = f"{secrets.randbelow(10 ** 6):06d}"
+        _prune_tokens(data)
+        data["tokens"][_code_key(kind, user_id, code)] = {
+            "kind": kind, "id": f"{kind}-" + secrets.token_hex(4), "user_id": user_id,
+            "created_at": _iso(_utcnow()), "expires_at": _iso(_utcnow() + timedelta(hours=TOKEN_HOURS[kind])),
+        }
+        _save(data)
+        return code
+
+
+def _take_code(data: dict[str, Any], kind: str, user_id: str, code: Any) -> bool:
+    """Use up a right code (and every other of its kind for this person). Call under LOCK."""
+    raw = re.sub(r"\s+", "", str(code or ""))
+    if not re.fullmatch(r"\d{6}", raw):
+        return False
+    entry = data["tokens"].get(_code_key(kind, user_id, raw))
+    if not entry or entry.get("kind") != kind or entry.get("expires_at", "") <= _iso(_utcnow()):
+        return False
+    data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v.get("kind") == kind and v.get("user_id") == user_id)}
+    return True
 
 
 def _check_password(password: Any) -> str:
@@ -489,9 +626,14 @@ def set_onboarding_dismissed(user_id: str, dismissed: bool) -> dict[str, Any]:
         return _public(user)
 
 
-def change_password(user_id: str, current: Any, new: Any, keep_session: str | None = None) -> None:
-    """Change a password. Other sessions end; the one making the change can stay."""
+def change_password(user_id: str, current: Any, new: Any, keep_session: str | None = None,
+                    code: Any = None, need_code: bool = False) -> None:
+    """Change a password. Other sessions end; the one making the change can stay. need_code (the
+    server sends mail, S2): the 6-digit code emailed by issue_code(user_id, "pwchange") is needed
+    too, and wrong ones count toward the same throttle as wrong passwords."""
     _check_password(new)
+    if need_code and not str(code or "").strip():
+        raise AuthError("Enter the 6-digit code we emailed you.")
     with LOCK:
         user = next((u for u in _load()["users"] if u["id"] == user_id), None)
         if not user:
@@ -504,14 +646,18 @@ def change_password(user_id: str, current: Any, new: Any, keep_session: str | No
     ok = isinstance(current, str) and _matches(user, current)
     if not ok:
         raise AuthError("Current password is wrong.")
-    with LOCK:
-        _not_failed(user["email"], None, now)
     salt, new_digest = _hash(new)
     keep = _digest(keep_session) if keep_session else None
     with LOCK:
         data = _load()
         user = next(u for u in data["users"] if u["id"] == user_id)
+        if need_code and not _take_code(data, "pwchange", user_id, code):
+            raise AuthError("That code didn't match, or it has expired. Ask for a new one.")
+        _not_failed(user["email"], None, now)
+        if need_code:
+            user["email_verified"] = True   # the code reached this address
         _set_password(user, salt, new_digest)
+        user.pop("devices", None)   # remembered devices (S7) ask for a code again
         data["sessions"] = {k: v for k, v in data["sessions"].items() if v.get("user_id") != user_id or k == keep}
         _save(data)
 
@@ -542,46 +688,89 @@ def verify_email(raw: Any) -> dict[str, Any]:
 
 
 # ---------- team ----------
+# Each person has a permission profile (S6): profile_id, kept with role ("owner" for the Owner
+# profile, "member" for any other) so older readers of role keep working. The profiles
+# themselves, and which of them hold "manage the team", are in the company's state
+# (domain/profiles.py); the server passes the ids it needs. One owner is the Company Admin (S8).
 
-def _require_owner(data: dict[str, Any], company_id: str, actor_id: str) -> dict[str, Any]:
-    """Checked under LOCK at the moment of the change, so a person removed or demoted a moment
-    ago can't finish a request they started while they were still an owner."""
+OWNER_PROFILE = "owner"
+# Someone who manages the team without being an Owner can't make, change or remove an Owner.
+ONLY_OWNERS_MAKE_OWNERS = "Only an owner can give someone the Owner profile, or change or remove an owner."
+
+
+def _profile_of(user: dict[str, Any]) -> str:
+    return str(user.get("profile_id") or user.get("role", "owner"))
+
+
+def _require_owner(data: dict[str, Any], company_id: str, actor_id: str,
+                   managers: Any = (OWNER_PROFILE,)) -> dict[str, Any]:
+    """The person making a team change must hold "manage the team" (managers: the profile ids
+    that do). Checked under LOCK at the moment of the change, so someone whose profile changed a
+    moment ago can't finish a request they started with their old rights."""
     actor = next((u for u in data["users"] if u["id"] == actor_id and u["company_id"] == company_id), None)
-    if not actor or actor.get("role", "owner") != "owner":
-        raise AuthError("Only an owner of this company can do that.")
+    if not actor or _profile_of(actor) not in set(managers):
+        raise AuthError("Your permissions don't cover managing the team.")
     return actor
 
 
-def require_owner(company_id: str, actor_id: str) -> None:
+def require_owner(company_id: str, actor_id: str, managers: Any = (OWNER_PROFILE,)) -> None:
     with LOCK:
-        _require_owner(_load(), company_id, actor_id)
+        _require_owner(_load(), company_id, actor_id, managers)
+
+
+def _admin(data: dict[str, Any], company_id: str) -> dict[str, Any] | None:
+    """The company's Admin: the account marked so, or (a file the start-up step hasn't reached
+    yet) the earliest-created owner."""
+    users = [u for u in data["users"] if u["company_id"] == company_id]
+    marked = next((u for u in users if u.get("company_admin")), None)
+    if marked:
+        return marked
+    owners = sorted((u for u in users if _profile_of(u) == OWNER_PROFILE), key=lambda u: u.get("created_at", ""))
+    return owners[0] if owners else None
+
+
+def is_company_admin(user_id: str, company_id: str) -> bool:
+    with LOCK:
+        admin = _admin(_read(), company_id)
+    return bool(admin and admin["id"] == user_id)
 
 
 def team(company_id: str) -> dict[str, Any]:
     with LOCK:
         data = _load()
         _prune_tokens(data)
+        admin = _admin(data, company_id)
         users = [
-            {**_public(u), "created_at": u.get("created_at", "")}
+            {**_public(u), "company_admin": bool(admin and admin["id"] == u["id"]), "created_at": u.get("created_at", "")}
             for u in data["users"] if u["company_id"] == company_id
         ]
         invites = [
-            {"id": v["id"], "email": v["email"], "role": v["role"], "invited_by": v.get("invited_by", ""),
-             "created_at": v["created_at"], "expires_at": v["expires_at"]}
+            {"id": v["id"], "email": v["email"], "role": v["role"], "profile_id": v.get("profile_id") or v["role"],
+             "invited_by": v.get("invited_by", ""), "created_at": v["created_at"], "expires_at": v["expires_at"]}
             for v in data["tokens"].values() if v["kind"] == "invite" and v.get("company_id") == company_id
         ]
     return {"users": users, "invites": invites}
 
 
-def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor_id: str = "") -> tuple[str, dict[str, Any]]:
+def _check_profile(profile_id: Any, profiles: Any) -> str:
+    if not isinstance(profile_id, str) or profile_id not in set(profiles):
+        raise AuthError("Pick a profile from the list.")
+    return profile_id
+
+
+def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor_id: str = "",
+                  profiles: Any = ROLES, managers: Any = (OWNER_PROFILE,)) -> tuple[str, dict[str, Any]]:
+    """Invite someone with a profile (role: the profile id; profiles: the ids that exist)."""
     if not isinstance(email, str) or not EMAIL_RE.match(email.strip()):
         raise AuthError("Enter the person's email address.")
-    if role not in ROLES:
-        raise AuthError("Role must be owner or member.")
+    profile_id = _check_profile(role, profiles)
+    role = "owner" if profile_id == OWNER_PROFILE else "member"
     email = email.strip().lower()
     with LOCK:
         data = _load()
-        _require_owner(data, company_id, actor_id)
+        actor = _require_owner(data, company_id, actor_id, managers)
+        if profile_id == OWNER_PROFILE and _profile_of(actor) != OWNER_PROFILE:
+            raise AuthError(ONLY_OWNERS_MAKE_OWNERS)
         if any(u["email"] == email for u in data["users"]):
             raise AuthError("That email already has a Duracash account. Each person belongs to one company.")
         pending = [v for v in data["tokens"].values() if v["kind"] == "invite" and v.get("company_id") == company_id]
@@ -590,17 +779,18 @@ def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor
         # Inviting the same address again replaces the older invite.
         data["tokens"] = {k: v for k, v in data["tokens"].items()
                           if not (v["kind"] == "invite" and v.get("company_id") == company_id and v.get("email") == email)}
-        raw = _new_token(data, "invite", company_id=company_id, email=email, role=role, invited_by=invited_by, invited_by_id=actor_id)
+        raw = _new_token(data, "invite", company_id=company_id, email=email, role=role, profile_id=profile_id,
+                         invited_by=invited_by, invited_by_id=actor_id)
         entry = data["tokens"][_digest(raw)]
         _save(data)
-        return raw, {"id": entry["id"], "email": email, "role": role}
+        return raw, {"id": entry["id"], "email": email, "role": role, "profile_id": profile_id}
 
 
 def invite_info(raw: Any) -> dict[str, Any] | None:
     with LOCK:
         _, entry = _find_token(_load(), "invite", raw)
     return {"email": entry["email"], "company_id": entry["company_id"], "role": entry["role"],
-            "invited_by": entry.get("invited_by", "")} if entry else None
+            "profile_id": entry.get("profile_id") or entry["role"], "invited_by": entry.get("invited_by", "")} if entry else None
 
 
 def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None = None) -> dict[str, Any]:
@@ -625,6 +815,7 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
             "name": name.strip()[:120],
             "company_id": entry["company_id"],
             "role": entry["role"],
+            "profile_id": entry.get("profile_id") or entry["role"],
             "salt": salt,
             "password_hash": digest,
             "kdf_iterations": KDF_ITERATIONS,
@@ -642,10 +833,10 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
         return _public(user)
 
 
-def revoke_invite(company_id: str, invite_id: str, actor_id: str = "") -> None:
+def revoke_invite(company_id: str, invite_id: str, actor_id: str = "", managers: Any = (OWNER_PROFILE,)) -> None:
     with LOCK:
         data = _load()
-        _require_owner(data, company_id, actor_id)
+        _require_owner(data, company_id, actor_id, managers)
         before = len(data["tokens"])
         data["tokens"] = {k: v for k, v in data["tokens"].items()
                           if not (v["kind"] == "invite" and v.get("company_id") == company_id and v["id"] == invite_id)}
@@ -655,47 +846,120 @@ def revoke_invite(company_id: str, invite_id: str, actor_id: str = "") -> None:
 
 
 def _owners(data: dict[str, Any], company_id: str) -> list[dict[str, Any]]:
-    return [u for u in data["users"] if u["company_id"] == company_id and u.get("role", "owner") == "owner"]
+    return [u for u in data["users"] if u["company_id"] == company_id and _profile_of(u) == OWNER_PROFILE]
 
 
 def _drop_invites_by(data: dict[str, Any], user_id: str) -> None:
-    """Invites someone sent stop working when they lose owner rights."""
+    """Invites someone sent stop working when they lose the right to manage the team."""
     data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v["kind"] == "invite" and v.get("invited_by_id") == user_id)}
 
 
-def set_role(company_id: str, user_id: str, role: Any, actor_id: str = "") -> dict[str, Any]:
-    if role not in ROLES:
-        raise AuthError("Role must be owner or member.")
+def set_role(company_id: str, user_id: str, role: Any, actor_id: str = "", profiles: Any = ROLES,
+             managers: Any = (OWNER_PROFILE,)) -> dict[str, Any]:
+    """Give someone another profile (role: the profile id). The company keeps at least one
+    Owner, and the Company Admin stays an Owner until they hand the Admin role on."""
+    profile_id = _check_profile(role, profiles)
     with LOCK:
         data = _load()
-        _require_owner(data, company_id, actor_id)
+        actor = _require_owner(data, company_id, actor_id, managers)
         user = next((u for u in data["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
         if not user:
             raise AuthError("That person is not on this team.")
-        if role == "member" and user.get("role", "owner") == "owner" and len(_owners(data, company_id)) == 1:
-            raise AuthError("A company needs at least one owner. Make someone else an owner first.")
-        user["role"] = role
-        if role == "member":
+        was = _profile_of(user)
+        if OWNER_PROFILE in (profile_id, was) and _profile_of(actor) != OWNER_PROFILE:
+            raise AuthError(ONLY_OWNERS_MAKE_OWNERS)
+        if profile_id != OWNER_PROFILE and was == OWNER_PROFILE:
+            if len(_owners(data, company_id)) == 1:
+                raise AuthError("A company needs at least one owner. Make someone else an owner first.")
+            admin = _admin(data, company_id)
+            if admin and admin["id"] == user_id:
+                raise AuthError(f"{user['name']} is the Company Admin. They hand that role to another owner first.")
+        user["profile_id"] = profile_id
+        user["role"] = "owner" if profile_id == OWNER_PROFILE else "member"
+        if profile_id not in set(managers):
             _drop_invites_by(data, user_id)
         _save(data)
         return _public(user)
 
 
-def remove_user(company_id: str, user_id: str, actor_id: str = "") -> dict[str, Any]:
+def profile_in_use(company_id: str, profile_id: str) -> bool:
+    """Whether anyone on the team, or an open invite, has this profile."""
     with LOCK:
         data = _load()
-        _require_owner(data, company_id, actor_id)
+        _prune_tokens(data)
+    return (any(u["company_id"] == company_id and _profile_of(u) == profile_id for u in data["users"])
+            or any(v["kind"] == "invite" and v.get("company_id") == company_id and (v.get("profile_id") or v.get("role")) == profile_id
+                   for v in data["tokens"].values()))
+
+
+def drop_invites_without(company_id: str, managers: Any) -> None:
+    """After a profile loses "manage the team": invites its holders sent stop working."""
+    with LOCK:
+        data = _load()
+        gone = {u["id"] for u in data["users"] if u["company_id"] == company_id and _profile_of(u) not in set(managers)}
+        before = len(data["tokens"])
+        data["tokens"] = {k: v for k, v in data["tokens"].items()
+                          if not (v["kind"] == "invite" and v.get("company_id") == company_id and v.get("invited_by_id") in gone)}
+        if len(data["tokens"]) != before:
+            _save(data)
+
+
+def remove_user(company_id: str, user_id: str, actor_id: str = "", managers: Any = (OWNER_PROFILE,)) -> dict[str, Any]:
+    with LOCK:
+        data = _load()
+        actor = _require_owner(data, company_id, actor_id, managers)
         user = next((u for u in data["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
         if not user:
             raise AuthError("That person is not on this team.")
-        if user.get("role", "owner") == "owner" and len(_owners(data, company_id)) == 1:
+        if _profile_of(user) == OWNER_PROFILE and _profile_of(actor) != OWNER_PROFILE:
+            raise AuthError(ONLY_OWNERS_MAKE_OWNERS)
+        if _profile_of(user) == OWNER_PROFILE and len(_owners(data, company_id)) == 1:
             raise AuthError("A company needs at least one owner. To close the company, delete the account instead.")
+        admin = _admin(data, company_id)
+        if admin and admin["id"] == user_id:
+            raise AuthError(f"{user['name']} is the Company Admin. They hand that role to another owner first.")
         data["users"] = [u for u in data["users"] if u["id"] != user_id]
         data["tokens"] = {k: v for k, v in data["tokens"].items() if v.get("user_id") != user_id}
         _drop_invites_by(data, user_id)
         _end_sessions(data, user_id)
         _save(data)
         return _public(user)
+
+
+def hand_over_admin(company_id: str, actor_id: str, to_id: str, password: Any) -> dict[str, Any]:
+    """The Company Admin (S8) hands the role to another owner, confirming with their password.
+    Returns the new Admin."""
+    with LOCK:
+        data = _load()
+        actor = next((u for u in data["users"] if u["id"] == actor_id and u["company_id"] == company_id), None)
+    admin = _admin(data, company_id)
+    if not actor or not admin or admin["id"] != actor_id:
+        raise AuthError("Only the Company Admin can hand the role on.")
+    # Wrong passwords count toward the same throttle as at sign-in (RateLimited past it).
+    now = time.monotonic()
+    with LOCK:
+        _throttle(actor["email"], None, now)
+        _failed(actor["email"], None, now)
+    if not isinstance(password, str) or not _matches(actor, password):
+        raise AuthError("Password is wrong. Nothing changed.")
+    with LOCK:
+        _not_failed(actor["email"], None, now)
+    with LOCK:
+        data = _load()
+        target = next((u for u in data["users"] if u["id"] == to_id and u["company_id"] == company_id), None)
+        if not target or target["id"] == actor_id:
+            raise AuthError("Pick another person on the team.")
+        if _profile_of(target) != OWNER_PROFILE:
+            raise AuthError(f"Make {target['name']} an owner first: the Company Admin is always an owner.")
+        current = _admin(data, company_id)
+        if not current or current["id"] != actor_id:
+            raise AuthError("Only the Company Admin can hand the role on.")
+        for u in data["users"]:
+            if u["company_id"] == company_id:
+                u.pop("company_admin", None)
+        target["company_admin"] = True
+        _save(data)
+        return _public(target)
 
 
 def check_password(user_id: str, password: Any) -> bool:
@@ -800,8 +1064,57 @@ def totp_check(user_id: str, code: Any, ip: str | None = None) -> bool:
         return False
 
 
+# ---------- two-step by default (S7): emailed sign-in codes and remembered devices ----------
+
+DEVICE_DAYS = 30
+MAX_DEVICES = 10
+
+
+def login_code_check(user_id: str, code: Any, ip: str | None = None) -> bool:
+    """At sign-in from a new device: the 6-digit code emailed by issue_code(user_id, "login").
+    Wrong codes count toward the same throttle as wrong passwords (RateLimited past it)."""
+    now = time.monotonic()
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        _throttle(user["email"], ip, now)
+        if _take_code(data, "login", user_id, code):
+            user["email_verified"] = True   # the code reached this address
+            user.setdefault("verified_at", _iso(_utcnow()))
+            _save(data)
+            _FAILURES.pop(user["email"], None)
+            return True
+        _failed(user["email"], ip, now)
+        return False
+
+
+def remember_device(user_id: str) -> str:
+    """A token for this browser's cookie: signing in from it skips the emailed code for 30 days.
+    Only its hash is kept on the user; a password change forgets every device."""
+    raw = secrets.token_urlsafe(32)
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        now = _iso(_utcnow())
+        devices = {k: v for k, v in (user.get("devices") or {}).items() if v > now}
+        devices[_digest(raw)] = _iso(_utcnow() + timedelta(days=DEVICE_DAYS))
+        user["devices"] = dict(sorted(devices.items(), key=lambda kv: kv[1])[-MAX_DEVICES:])
+        _save(data)
+    return raw
+
+
+def device_known(user_id: str, raw: Any) -> bool:
+    if not isinstance(raw, str) or not raw or len(raw) > 200:
+        return False
+    with LOCK:
+        user = next((u for u in _read()["users"] if u["id"] == user_id), None)
+        expires = ((user or {}).get("devices") or {}).get(_digest(raw), "")
+    return expires > _iso(_utcnow())
+
+
 def totp_disable(user_id: str, password: Any, code: Any) -> None:
-    """Turn two-step sign-in off: needs the password and a current code (or a recovery code)."""
+    """Turn two-step sign-in off: needs the password and a current code (or a recovery code).
+    The server only allows it where email codes take over (S7: two-step stays on)."""
     if not check_password(user_id, password):
         raise AuthError("Password is wrong.")
     if not totp_check(user_id, code):

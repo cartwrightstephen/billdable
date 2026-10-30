@@ -306,20 +306,22 @@ test("a final pay app says Final and preselects a final waiver", () => {
   assert.match(waiverSendForm(job(), { id: "inv-3", final: true }), /<option value="unconditional_final" selected>/);
 });
 
-test("a member doesn't see what only an owner may do, unless members can send (R4-09)", () => {
-  const member = { owner: false, membersCanSend: false };
+test("a person sees only the job actions their profile allows (S6)", () => {
+  const member = { owner: false, list: ["record_payments"] };
   assert.equal(mayTake("send", member), false);
   assert.equal(mayTake("draft", member), true);
-  assert.equal(mayTake("send", { owner: false, membersCanSend: true }), true);
-  assert.equal(mayTake("close", { owner: false, membersCanSend: true }), false);
-  assert.equal(mayTake("close", { owner: true }), true);
+  assert.equal(mayTake("match-payment", member), true);
+  assert.equal(mayTake("send", { owner: false, list: ["send_payapps"] }), true);
+  assert.equal(mayTake("close", { owner: false, list: ["send_payapps"] }), false);
+  assert.equal(mayTake("close", { owner: true }), true, "a page from before profiles: the role");
+  assert.equal(mayTake("close", { owner: false }), false);
   const j = job({ invoices: [{ id: "d1", status: "draft" }] });
   const all = (r) => keys([r.primary, ...r.more].filter(Boolean));
   assert.ok(all(jobActions(j)).includes("send"));
   const asMember = all(jobActions(j, { perms: member }));
   assert.ok(!asMember.includes("send") && !asMember.includes("void"), asMember.join());
   assert.ok(asMember.includes("pencil") && asMember.includes("packet"));
-  assert.ok(all(jobActions(j, { perms: { owner: false, membersCanSend: true } })).includes("send"));
+  assert.ok(all(jobActions(j, { perms: { owner: false, list: ["send_payapps"] } })).includes("send"));
   const draft = { kind: "draft", invoice_id: "d1", number: "PA-1" };
   assert.deepEqual(closeBlockerActions(j, draft, member).map(a => a.label), []);
   assert.deepEqual(closeBlockerActions(j, { kind: "waiver" }, member).map(a => a.label), []);

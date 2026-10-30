@@ -5,6 +5,7 @@ import email.policy
 import http.client
 import json
 import os
+import re
 import socketserver
 import sys
 import tempfile
@@ -399,7 +400,17 @@ class MailHttpTests(unittest.TestCase):
                                                              "name": "Bo B", "company_name": "Pine & Sons"})
         company_id = data["user"]["company_id"]
         auth.create_user("owner-a@pine.example", PASSWORD, "Al A", company_id, role="owner")
-        res, _ = self.request("POST", "/api/auth/login", {"email": "owner-a@pine.example", "password": PASSWORD})
+        res, sent = self.request("POST", "/api/auth/login", {"email": "owner-a@pine.example", "password": PASSWORD})
+        if sent.get("method") == "email":   # two-step by default (S7): the emailed code
+            found = None
+            for _ in range(50):
+                found = next((m for m in (re.search(rb"sign in to Duracash is (\d{6})", x["data"]) for x in self.sink.messages) if m), None)
+                if found:
+                    break
+                time.sleep(0.05)
+            code = found.group(1).decode()
+            self.sink.messages.clear()
+            res, _ = self.request("POST", "/api/auth/login", {"email": "owner-a@pine.example", "password": PASSWORD, "code": code})
         cookie_a = res.getheader("Set-Cookie").split(";")[0]
         with server.company_lock(company_id):
             st = server.load_company(company_id)

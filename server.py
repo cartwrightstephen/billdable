@@ -48,6 +48,7 @@ import mail_events
 import mailer
 import metrics
 import migrations
+from domain import profiles
 import monthly
 import offsite
 import outbox
@@ -69,6 +70,7 @@ COMPANIES = storage.DATA_DIR / "companies"
 PORT = int(os.environ.get("PORT", "8765"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 COOKIE = "duracash_session"
+DEVICE_COOKIE = "duracash_device"  # this browser signed in with an emailed code: 30 days without one (S7)
 SHARE_COOKIE = "duracash_share"  # the key of what this browser shared while signed out (R6-10)
 SHARE_HOLDS_PER_HOUR = 10  # holds an hour from one network
 PAYER_QUESTIONS_PER_HOUR = 5   # questions from one customer-page link an hour
@@ -201,10 +203,11 @@ def demo_enabled() -> bool:
 
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
-DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_contract_read"}
-COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_helper_admin",
+DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_contract_read", "_p_ping"}
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_password_code", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_helper_admin",
                                              "_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
-                                             "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal"}
+                                             "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal",
+                                             "_p_appearance", "_p_profile_save", "_p_profile_delete", "_p_admin_hand_over"}
 
 
 def demo_user() -> dict | None:
@@ -674,7 +677,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/"):
             self.send_header("Cache-Control", "no-store")
         for k, v in (headers or {}).items():
-            self.send_header(k, v)
+            for one in (v if isinstance(v, list) else [v]):   # two Set-Cookie headers (S7)
+                self.send_header(k, one)
         self.end_headers()
         if body:
             self.wfile.write(body)
@@ -796,7 +800,7 @@ class Handler(BaseHTTPRequestHandler):
         except UnknownAction:
             return 404, {"error": "Unknown action"}
         except OwnerOnly:
-            return 403, {"error": "Only an owner can do that."}
+            return 403, {"error": NO_PERMISSION}
         except domain.GateError as exc:
             return 409, _gate(exc)
         except (KeyError, ValueError, TypeError, OverflowError) as exc:
@@ -811,7 +815,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = outbox.deliver_queued(SITE, company_id, user, only=queued, rid=self._rid) or payload
         return 200, payload
 
-    def _token(self) -> str | None:
+    def _token(self, name: str = COOKIE) -> str | None:
         raw = self.headers.get("Cookie", "")
         if not raw:
             return None
@@ -820,8 +824,12 @@ class Handler(BaseHTTPRequestHandler):
             jar.load(raw)
         except Exception:
             return None
-        morsel = jar.get(COOKIE)
+        morsel = jar.get(name)
         return morsel.value if morsel else None
+
+    def _device_cookie(self, raw: str) -> str:
+        secure = "; Secure" if self._secure_cookie() else ""
+        return f"{DEVICE_COOKIE}={raw}; Path=/api/auth/login; HttpOnly; SameSite=Lax; Max-Age={60 * 60 * 24 * auth.DEVICE_DAYS}{secure}"
 
     def _secure_cookie(self) -> bool:
         if os.environ.get("COOKIE_SECURE") == "1":
@@ -846,15 +854,21 @@ class Handler(BaseHTTPRequestHandler):
         return forwarded[-hops] if hops and len(forwarded) >= hops else self.client_address[0]
 
     def _session_user(self) -> dict | None:
-        user = auth.session_user(self._token())
+        user, self._signed_out_why = auth.session_check(self._token())
         if user and not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID:
             return None
         return user
 
+    def _signed_out(self) -> dict:
+        """The 401 for a request with no live session; an idle sign-out (G2) says so."""
+        if getattr(self, "_signed_out_why", "") == "idle":
+            return {"error": auth.idle_words(), "idle": True}
+        return {"error": "Sign in required."}
+
     def _require_user(self) -> dict | None:
         user = self._session_user()
         if not user:
-            self._json(401, {"error": "Sign in required."})
+            self._json(401, self._signed_out())
             return None
         return user
 
@@ -931,10 +945,13 @@ class Handler(BaseHTTPRequestHandler):
         # while their request was arriving must not finish it with their old rights.
         user = self._session_user()
         if not user:
-            self._json(401, {"error": "Sign in required."})
+            self._json(401, self._signed_out())
             return
         if route.owner and user["role"] != "owner":
-            self._json(403, {"error": "Only an owner can do that."})
+            self._json(403, {"error": NO_PERMISSION})
+            return
+        if route.perm and not has_perm(user, route.perm):
+            self._json(403, {"error": NO_PERMISSION})
             return
         # The audit trail names the signed-in user. Any "actor" in the body is ignored.
         ctx = Ctx(user=user, body=body, company_id=user["company_id"], actor=user.get("name") or user.get("email") or "owner")
@@ -998,10 +1015,7 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _g_team(self, m, user) -> None:
-        data = auth.team(user["company_id"])
-        if user["role"] != "owner":
-            data["invites"] = []
-        self._json(200, data)
+        self._json(200, self._team_reply(user))
 
     def _g_admin_companies(self, m, user) -> None:
         if not is_helper_admin(user):
@@ -1056,12 +1070,16 @@ class Handler(BaseHTTPRequestHandler):
     def _g_me(self, m) -> None:
         user = self._session_user()
         if not user:
-            self._json(401, {"error": "Not signed in.", "data_notice": data_notice()})
+            self._json(401, {"error": "Not signed in.", "data_notice": data_notice(),
+                             **({"idle": True, "message": auth.idle_words()} if self._signed_out_why == "idle" else {})})
             return
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
-        self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
+        self._json(200, {"user": self._me_user(user, state), "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
                          "mail_ready": bool(mailer.configured() and app_url()),
+                         "idle_minutes": auth.idle_minutes(),
+                         # Codes by email (S2's password change, S7's sign-in): the server sends mail.
+                         "codes_by_email": mailer.configured(),
                          "read_only": read_only_reason(user["company_id"], state),
                          "billing": billing.standing(state),
                          # Shared to the app from this browser before signing in (R6-10).
@@ -1333,11 +1351,11 @@ class Handler(BaseHTTPRequestHandler):
     def _g_export(self, m, user) -> None:
         # Everything the company holds, so owners only (R6-05); without the customer-page and
         # signing-link secrets, which would open those pages to whoever holds the file.
-        if user["role"] != "owner":
-            self._json(403, {"error": "Only an owner can export the company's data."})
-            return
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
+        if not has_perm(user, "data", state):
+            self._json(403, {"error": "Your permissions don't cover exporting the company's data."})
+            return
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
         self._send(200, json.dumps(domain.without_link_secrets(state), indent=2).encode(), "application/json",
                    {"Content-Disposition": f'attachment; filename="duracash-export-{stamp}.json"'})
@@ -1367,7 +1385,7 @@ class Handler(BaseHTTPRequestHandler):
         # The web addresses the email service and Twilio post to are set up by an owner, and
         # anyone holding one can fill the Inbox: members get the forwarding address and the
         # number, not these (R6-07).
-        owner = user["role"] == "owner"
+        owner = has_perm(user, "company")
         self._json(200, {
             "email_webhook": f"{base}/api/inbound/email/{tokens['email']}" if owner else "",
             "email_address": template.replace("{token}", tokens["email"]) if "{token}" in template else "",
@@ -1438,20 +1456,81 @@ class Handler(BaseHTTPRequestHandler):
         if not user or (not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID):
             self._json(401, {"error": "Email or password is wrong."})
             return
+        cookies = []
         if user.get("two_step"):
             code = _text(body, "code", limit=40)
             if not code:
-                self._json(401, {"error": "Enter the 6-digit code from your authenticator app.", "needs_code": True})
+                self._json(401, {"error": "Enter the 6-digit code from your authenticator app.", "needs_code": True, "method": "app"})
                 return
             try:
                 ok = auth.totp_check(user["id"], code, self._client_ip())
             except auth.RateLimited as exc:
-                self._json(429, {"error": str(exc), "needs_code": True})
+                self._json(429, {"error": str(exc), "needs_code": True, "method": "app"})
                 return
             if not ok:
-                self._json(401, {"error": "That code didn't work. Codes change every 30 seconds; a recovery code works once.", "needs_code": True})
+                self._json(401, {"error": "That code didn't work. Codes change every 30 seconds; a recovery code works once.", "needs_code": True, "method": "app"})
                 return
-        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+        elif self._email_code_due(user):
+            # Two-step by default (S7): from a browser that hasn't signed in with a code in the
+            # last 30 days, a 6-digit code goes to the person's email.
+            code = _text(body, "code", limit=40).strip()
+            if not code:
+                sent = self._send_login_code(user)
+                if sent is not None:
+                    self._json(401, {"error": sent, "needs_code": True, "method": "email", "email": user["email"]})
+                    return
+                # The code couldn't be sent (the mail server is down): never locked out; the
+                # password signs in, and the server log says why no code was asked.
+            else:
+                try:
+                    ok = auth.login_code_check(user["id"], code, self._client_ip())
+                except auth.RateLimited as exc:
+                    self._json(429, {"error": str(exc), "needs_code": True, "method": "email", "email": user["email"]})
+                    return
+                if not ok:
+                    self._json(401, {"error": "That code didn't match, or it has expired. Check the newest email, or go back and sign in again for a new code.",
+                                     "needs_code": True, "method": "email", "email": user["email"]})
+                    return
+                user = auth.user_by_email(user["email"]) or user   # the code confirmed the email
+                if body.get("remember") is not False:
+                    cookies.append(self._device_cookie(auth.remember_device(user["id"])))
+        session = self._set_cookie(auth.create_session(user))["Set-Cookie"]
+        self._json(200, {"user": self._me_user(user)}, {"Set-Cookie": [session, *cookies]})
+
+    def _email_code_due(self, user: dict) -> bool:
+        """Whether this sign-in needs an emailed code (S7): on a server that sends mail, for
+        everyone but the demo, unless this browser is remembered."""
+        if user["company_id"] == auth.DEMO_COMPANY_ID or not mailer.configured():
+            return False
+        return not auth.device_known(user["id"], self._token(DEVICE_COOKIE))
+
+    def _send_login_code(self, user: dict) -> str | None:
+        """Email a sign-in code. Returns what the page shows while it waits for it, or None when
+        no code could be sent (then the password alone signs in)."""
+        code = auth.issue_code(user["id"], "login")
+        if not code:
+            return f"Five codes were sent to {user['email']} in the last hour. Enter the newest one."
+        subject, text = mailer.login_code_email(user["name"], code)
+        status = self._system_email(user["email"], subject, text)
+        if status != "sent":
+            log_json("warn", msg="sign-in code not sent; signed in with the password only", reason=str(status)[:200], rid=self._rid)
+            return None
+        return f"We emailed a 6-digit code to {user['email']}. Enter it to sign in. It works for 10 minutes."
+
+    def _me_user(self, user: dict, state: dict | None = None) -> dict:
+        """The signed-in user as the page reads it: their permissions and profile (S6), whether
+        they are the Company Admin (S8), and two_step_setup_due (S7): on a server without mail,
+        the authenticator app is the second step, and the page asks to set it up."""
+        if state is None:
+            try:
+                state = company_state(user["company_id"])
+            except (CompanyMissing, OSError, ValueError):
+                state = {}   # the profiles read as the defaults; the company's own pages say what's wrong
+        due = user["company_id"] != auth.DEMO_COMPANY_ID and not user.get("two_step") and not mailer.configured()
+        pid = profiles.user_profile_id(user)
+        return {**user, "two_step_setup_due": due, "perms": profiles.perms_of(user, state),
+                "profile_name": profiles.profile_name(state, pid),
+                "company_admin": auth.is_company_admin(user["id"], user["company_id"])}
 
     def _p_signup(self, m) -> None:
         body = self._read_json()
@@ -1476,7 +1555,7 @@ class Handler(BaseHTTPRequestHandler):
                 save_company(company_id, fresh)
             token = auth.create_session(user)
             verification = self._send_verification(user)
-            self._json(200, {"user": user, "verification": verification}, self._set_cookie(token))
+            self._json(200, {"user": self._me_user(user), "verification": verification}, self._set_cookie(token))
         except ValueError as exc:
             # An email that already has an account: the page offers "Sign in instead".
             self._json(400, {"error": str(exc), **({"exists": True} if "already exists" in str(exc) else {})})
@@ -1552,9 +1631,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "This invite is invalid or has expired. Ask for a new one."})
             return
         with company_lock(info["company_id"]):
-            company = load_company(info["company_id"]).get("company", {})
+            st = load_company(info["company_id"])
+        company = st.get("company", {})
         self._json(200, {"email": info["email"], "role": info["role"], "company_name": company.get("name", ""),
-                         "invited_by": info["invited_by"]})
+                         "profile_name": profiles.profile_name(st, info["profile_id"]), "invited_by": info["invited_by"]})
 
     def _p_accept_invite(self, m) -> None:
         body = self._read_json()
@@ -1567,7 +1647,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
             return
         self._mutate(user["company_id"], lambda st: domain.audit(
-            st, "", "team_join", f"{user['name']} ({user['email']}) joined the team as {user['role']}.", user["name"]))
+            st, "", "team_join", f"{user['name']} ({user['email']}) joined the team as {profiles.profile_name(st, user['profile_id'])}.", user["name"]))
         self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
 
     def _p_inbound_email(self, m) -> None:
@@ -1642,9 +1722,31 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(200, {"ok": True, "message": f"A verification link is on its way to {user['email']}."})
 
+    def _p_password_code(self, m, ctx: "Ctx") -> None:
+        """S2: email a 6-digit code that a password change needs on a server that sends mail."""
+        user = ctx.user
+        if user["company_id"] == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The demo account's password can't be changed."})
+            return
+        if not mailer.configured():
+            self._json(409, {"error": "Email isn't set up on this server. Your current password is enough."})
+            return
+        code = auth.issue_code(user["id"], "pwchange")
+        if not code:
+            self._json(429, {"error": "Five codes were sent in the last hour. Use the newest one, or try again later."})
+            return
+        subject, text = mailer.password_change_email(user["name"], code)
+        status = self._system_email(user["email"], subject, text)
+        if status != "sent":
+            self._json(409, {"error": f"The code couldn't be sent: {status}."})
+            return
+        self._json(200, {"ok": True, "message": f"A code is on its way to {user['email']}. It works for 15 minutes."})
+
     def _p_password(self, m, ctx: "Ctx") -> None:
         try:
-            auth.change_password(ctx.user["id"], ctx.body.get("current"), ctx.body.get("new"), keep_session=self._token())
+            # With mail on the server, the emailed code is needed too (S2); without, the current password is enough.
+            auth.change_password(ctx.user["id"], ctx.body.get("current"), ctx.body.get("new"), keep_session=self._token(),
+                                 code=_text(ctx.body, "code", limit=20), need_code=mailer.configured())
         except auth.RateLimited as exc:
             self._json(429, {"error": str(exc)})
             return
@@ -1716,12 +1818,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "recovery_codes": codes,
                                  "message": "Two-step sign-in is on. Keep the recovery codes somewhere safe; each works once."})
             else:
+                # Two-step sign-in stays on (S7): the authenticator app can only give way to
+                # emailed codes, on a server that sends mail.
+                if not mailer.configured():
+                    raise auth.AuthError("Two-step sign-in stays on. On this server it uses the authenticator app.")
                 auth.totp_disable(ctx.user["id"], ctx.body.get("password"), _text(ctx.body, "code", limit=40))
-                self._json(200, {"ok": True, "message": "Two-step sign-in is off."})
+                self._json(200, {"ok": True, "message": "Two-step sign-in now uses codes sent to your email."})
         except auth.RateLimited as exc:
             self._json(429, {"error": str(exc)})
         except auth.AuthError as exc:
             self._json(400, {"error": str(exc)})
+
+    def _p_ping(self, m, ctx: "Ctx") -> None:
+        """Stay signed in (G2): the session was checked, and so its last use moved to now."""
+        self._json(200, {"ok": True, "idle_minutes": auth.idle_minutes()})
 
     def _p_onboarding_dismiss(self, m, ctx: "Ctx") -> None:
         """Hide the setup checklist for the signed-in person, or show it again with {"show": true}.
@@ -1819,20 +1929,50 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             detail, note = run(ctx.user)
+        except auth.RateLimited as exc:
+            self._json(429, {"error": str(exc)})
+            return
         except auth.AuthError as exc:
             self._json(409, {"error": str(exc)})
             return
         self._mutate(ctx.company_id, lambda st: (domain.audit(st, "", "team", detail, ctx.user["name"]), also and also(st)))
-        self._json(200, {**auth.team(ctx.company_id), **(note or {})})
+        self._json(200, {**self._team_reply(ctx.user), **(note or {})})
+
+    def _team_reply(self, user: dict, state: dict | None = None) -> dict:
+        """The Team page: the people, the open invites (for those who manage the team) and the
+        permission profiles with what each may do (S6)."""
+        state = state if state is not None else company_state(user["company_id"])
+        data = auth.team(user["company_id"])
+        if not has_perm(user, "team", state):
+            data["invites"] = []
+        names = {p["id"]: p["name"] for p in profiles.profiles(state)}
+        for row in (*data["users"], *data["invites"]):
+            row["profile_name"] = names.get(row.get("profile_id") or row.get("role"), "Member")
+        data["profiles"] = profiles.profiles(state)
+        data["permissions"] = [{"key": k, "words": w} for k, w in profiles.PERMISSIONS]
+        return data
+
+    def _team_rules(self, company_id: str) -> dict:
+        """What auth.py's team changes check against: the profile ids that exist, and those that
+        hold "manage the team"."""
+        state = company_state(company_id)
+        return {"profiles": profiles.profile_ids(state), "managers": profiles.holders(state, "team")}
 
     def _p_team_invite(self, m, ctx: "Ctx") -> None:
+        wrong = domain.check_field("email", ctx.body.get("email") if isinstance(ctx.body.get("email"), str) else "", "email", required=True)
+        if wrong:  # G1: under the Their email box
+            self._json(409, {"error": wrong["email"], "fields": wrong})
+            return
+
         def invite(user: dict) -> tuple:
             company_id = user["company_id"]
             if mailer.configured() and app_url() and not user.get("email_verified"):
                 raise auth.AuthError("Confirm your own email address before inviting people.")
             if not _within_limit(f"invite:{company_id}", 20, 24 * 3600):
                 raise auth.AuthError("20 invites a day is the limit. Try again tomorrow.")
-            raw, invite = auth.create_invite(company_id, ctx.body.get("email"), ctx.body.get("role") or "member", user["name"], actor_id=user["id"])
+            raw, invite = auth.create_invite(company_id, ctx.body.get("email"), ctx.body.get("profile_id") or ctx.body.get("role") or "member",
+                                             user["name"], actor_id=user["id"], **self._team_rules(company_id))
+            invite["profile_name"] = profiles.profile_name(company_state(company_id), invite["profile_id"])
             url = app_url()
             note = {"invite_path": f"/#invite={raw}", "invite_link": f"{url}/#invite={raw}" if url else None, "emailed": False,
                     "email_status": EMAIL_NOT_SET_UP if not url else "not sent"}
@@ -1841,24 +1981,26 @@ class Handler(BaseHTTPRequestHandler):
             if url:
                 with company_lock(company_id):
                     company_name = load_company(company_id).get("company", {}).get("name", "")
-                subject, text = mailer.invite_email(user["name"], user["email"], company_name, invite["role"], f"{url}/#invite={raw}")
+                subject, text = mailer.invite_email(user["name"], user["email"], company_name, invite["profile_name"], f"{url}/#invite={raw}")
                 status = self._system_email(invite["email"], subject, text, company_id=company_id)
                 note.update({"emailed": status == "sent", "email_status": status})
-            return f"{user['name']} invited {invite['email']} as {invite['role']}.", note
+            return f"{user['name']} invited {invite['email']} as {invite['profile_name']}.", note
 
         self._team_change(ctx, invite)
 
     def _p_team_revoke(self, m, ctx: "Ctx") -> None:
         def revoke(user: dict) -> tuple:
-            auth.revoke_invite(user["company_id"], m.group(1), actor_id=user["id"])
+            auth.revoke_invite(user["company_id"], m.group(1), actor_id=user["id"], managers=self._team_rules(user["company_id"])["managers"])
             return f"{user['name']} revoked an invite.", None
 
         self._team_change(ctx, revoke)
 
     def _p_team_role(self, m, ctx: "Ctx") -> None:
         def role(user: dict) -> tuple:
-            changed = auth.set_role(user["company_id"], m.group(1), ctx.body.get("role"), actor_id=user["id"])
-            return f"{user['name']} made {changed['name']} {changed['role']}.", None
+            rules = self._team_rules(user["company_id"])
+            changed = auth.set_role(user["company_id"], m.group(1), ctx.body.get("profile_id") or ctx.body.get("role"), actor_id=user["id"], **rules)
+            name = profiles.profile_name(company_state(user["company_id"]), changed["profile_id"])
+            return f"{user['name']} gave {changed['name']} the {name} profile.", None
 
         self._team_change(ctx, role)
 
@@ -1868,7 +2010,7 @@ class Handler(BaseHTTPRequestHandler):
         def remove(user: dict) -> tuple:
             if m.group(1) == user["id"]:
                 raise auth.AuthError("You can't remove yourself. Ask another owner.")
-            removed = auth.remove_user(user["company_id"], m.group(1), actor_id=user["id"])
+            removed = auth.remove_user(user["company_id"], m.group(1), actor_id=user["id"], managers=self._team_rules(user["company_id"])["managers"])
             gone.append(removed["id"])
             # They knew the inbound and calendar addresses, so those change too.
             for kind in ("email", "sms", "calendar"):
@@ -1883,12 +2025,62 @@ class Handler(BaseHTTPRequestHandler):
         if ctx.company_id == auth.DEMO_COMPANY_ID:
             self._json(403, {"error": "The demo account's team can't be changed."})
             return
-        try:
-            auth.require_owner(ctx.company_id, ctx.user["id"])
-        except auth.AuthError as exc:
-            self._json(409, {"error": str(exc)})
+        # Deleting the company is the Company Admin's alone (S8), checked here on the server.
+        if not auth.is_company_admin(ctx.user["id"], ctx.company_id):
+            self._json(403, {"error": "Only the Company Admin can delete the company."})
             return
         self._delete_account(ctx.body, ctx.user)
+
+    def _p_profile_save(self, m, ctx: "Ctx") -> None:
+        """Add a permission profile, or change one (S6). Taking "manage the team" off a profile
+        is refused if no one would hold it; invites its holders sent stop working."""
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(403, {"error": "The demo account's team can't be changed."})
+            return
+        profile_id = m.group(1) if m.lastindex else None
+        saved: dict = {}
+
+        def change(st: dict) -> None:
+            saved.update(profiles.save_profile(st, profile_id, ctx.body.get("name"), ctx.body.get("perms"), ctx.actor))
+
+        status, payload = self._mutate(ctx.company_id, change, ctx.user, deliver=False)
+        if status != 200:
+            self._json(status, payload)
+            return
+        auth.drop_invites_without(ctx.company_id, self._team_rules(ctx.company_id)["managers"])
+        self._json(200, {**self._team_reply(ctx.user), "profile": saved})
+
+    def _p_profile_delete(self, m, ctx: "Ctx") -> None:
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(403, {"error": "The demo account's team can't be changed."})
+            return
+        in_use = auth.profile_in_use(ctx.company_id, m.group(1))
+        status, payload = self._mutate(ctx.company_id, lambda st: profiles.delete_profile(st, m.group(1), in_use, ctx.actor), ctx.user, deliver=False)
+        if status != 200:
+            self._json(status, payload)
+            return
+        self._json(200, self._team_reply(ctx.user))
+
+    def _p_admin_hand_over(self, m, ctx: "Ctx") -> None:
+        """The Company Admin hands the role to another owner (S8), with their password."""
+        def hand_over(user: dict) -> tuple:
+            new = auth.hand_over_admin(user["company_id"], user["id"], _text(ctx.body, "user_id"), ctx.body.get("password"))
+            return f"{user['name']} handed the Company Admin role to {new['name']}.", None
+
+        self._team_change(ctx, hand_over)
+
+    def _p_appearance(self, m, ctx: "Ctx") -> None:
+        """Theme and accent (G9), kept on the person's own account. The sample company is one
+        account shared by every visitor, so its look stays in each browser."""
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "In the sample company the look is kept in this browser only."})
+            return
+        try:
+            user = auth.set_appearance(ctx.user["id"], ctx.body.get("theme"), ctx.body.get("accent"))
+        except auth.AuthError as exc:
+            self._json(409, {"error": str(exc), "fields": {"theme" if "theme" in str(exc) else "accent": str(exc)}})
+            return
+        self._json(200, {"user": self._me_user(user)})
 
     def _delete_account(self, body: dict, user: dict) -> None:
         company_id = user["company_id"]
@@ -2482,7 +2674,7 @@ class Handler(BaseHTTPRequestHandler):
         entry = JOB_ACTIONS.get(action)
         if not entry or entry[0] != (item is not None):
             raise UnknownAction()
-        if action in OWNER_ACTIONS and not may_take(ctx.user, action, state):
+        if not may_take(ctx.user, action, state):
             raise OwnerOnly()
         entry[1](self, state, job_id, item, ctx)
 
@@ -2499,12 +2691,16 @@ class Handler(BaseHTTPRequestHandler):
         domain.update_company(state, ctx.body, ctx.actor)
 
     def _p_my_name(self, m, ctx: "Ctx") -> None:
+        # The name rule (G1): at least one letter or number. Refused under the box (409 fields).
+        wrong = domain.check_field("name", ctx.body.get("name") if isinstance(ctx.body.get("name"), str) else "", "name", required=True)
         try:
+            if wrong:
+                raise auth.AuthError(wrong["name"])
             user = auth.update_name(ctx.user["id"], ctx.body.get("name"))
         except auth.AuthError as exc:
-            self._json(400, {"error": str(exc)})
+            self._json(409, {"error": str(exc), "fields": {"name": str(exc)}})
             return
-        self._json(200, {"user": user})
+        self._json(200, {"user": self._me_user(user)})
 
     def _m_payer_update(self, state: dict, m, ctx: "Ctx") -> None:
         domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
@@ -2545,7 +2741,8 @@ class Route:
     pattern: str
     handler: str
     access: str = "public"
-    owner: bool = False
+    owner: bool = False   # only the Owner profile
+    perm: str = ""        # the permission it needs (S6, domain/profiles.py PERMISSIONS)
 
     def __post_init__(self) -> None:
         self.regex = re.compile(self.pattern)
@@ -2579,6 +2776,13 @@ ROUTES = [
     Route("POST", r"/api/jobs/([^/]+)/payapp/([^/]+)/attachments", "_m_payapp_attachments", "mutate"),
 
     # == stream: settings-auth ==
+    Route("POST", r"/api/auth/ping", "_p_ping", "body"),
+    Route("POST", r"/api/auth/password/code", "_p_password_code", "body"),
+    Route("POST", r"/api/me/appearance", "_p_appearance", "body"),
+    Route("POST", r"/api/team/profiles", "_p_profile_save", "body", perm="team"),
+    Route("POST", r"/api/team/profiles/([^/]+)", "_p_profile_save", "body", perm="team"),
+    Route("POST", r"/api/team/profiles/([^/]+)/delete", "_p_profile_delete", "body", perm="team"),
+    Route("POST", r"/api/team/admin", "_p_admin_hand_over", "body"),
 
     # pages and feeds
     Route("GET", r"/healthz", "_g_healthz"),
@@ -2638,34 +2842,34 @@ ROUTES = [
     Route("POST", r"/api/auth/password", "_p_password", "body"),
     Route("POST", r"/api/auth/2fa/(begin|enable|disable)", "_p_two_step", "body"),
     Route("POST", r"/api/import/payments-csv", "_p_payments_csv", "body"),
-    Route("POST", r"/api/import/rotate", "_p_rotate", "body", owner=True),
-    Route("POST", r"/api/qbo/connect", "_p_qbo_connect", "body", owner=True),
-    Route("POST", r"/api/billing/checkout", "_p_billing_checkout", "body", owner=True),
-    Route("POST", r"/api/billing/portal", "_p_billing_portal", "body", owner=True),
-    Route("POST", r"/api/qbo/disconnect", "_p_qbo_disconnect", "body", owner=True),
+    Route("POST", r"/api/import/rotate", "_p_rotate", "body", perm="company"),
+    Route("POST", r"/api/qbo/connect", "_p_qbo_connect", "body", perm="company"),
+    Route("POST", r"/api/billing/checkout", "_p_billing_checkout", "body", perm="billing"),
+    Route("POST", r"/api/billing/portal", "_p_billing_portal", "body", perm="billing"),
+    Route("POST", r"/api/qbo/disconnect", "_p_qbo_disconnect", "body", perm="company"),
     Route("POST", r"/api/qbo/payments", "_p_qbo_payments", "body"),
     Route("POST", r"/api/onboarding/dismiss", "_p_onboarding_dismiss", "body"),
-    Route("POST", r"/api/team/invite", "_p_team_invite", "body", owner=True),
-    Route("POST", r"/api/team/invites/([^/]+)/revoke", "_p_team_revoke", "body", owner=True),
-    Route("POST", r"/api/team/([^/]+)/role", "_p_team_role", "body", owner=True),
-    Route("POST", r"/api/team/([^/]+)/remove", "_p_team_remove", "body", owner=True),
-    Route("POST", r"/api/account/delete", "_p_account_delete", "body", owner=True),
+    Route("POST", r"/api/team/invite", "_p_team_invite", "body", perm="team"),
+    Route("POST", r"/api/team/invites/([^/]+)/revoke", "_p_team_revoke", "body", perm="team"),
+    Route("POST", r"/api/team/([^/]+)/role", "_p_team_role", "body", perm="team"),
+    Route("POST", r"/api/team/([^/]+)/remove", "_p_team_remove", "body", perm="team"),
+    Route("POST", r"/api/account/delete", "_p_account_delete", "body"),   # the Company Admin only (S8)
     Route("POST", r"/api/sov/parse", "_p_sov_parse", "body"),
     Route("POST", r"/api/outbox/([^/]+)/retry", "_p_outbox_retry", "body"),
     Route("POST", r"/api/share/claim", "_p_share_claim", "body"),
     # changes to the company's state
-    Route("POST", r"/api/reset", "_m_reset", "mutate", owner=True),
+    Route("POST", r"/api/reset", "_m_reset", "mutate", perm="data"),
     Route("POST", r"/api/jobs", "_m_create_job", "mutate"),
     Route("POST", r"/api/jobs/([^/]+)/([a-z-]+)(?:/([^/]+))?", "_m_job_action", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate"),
     Route("POST", r"/api/payers", "_m_payer_add", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
-    Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", owner=True),
+    Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", perm="company"),
     Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate"),
     Route("POST", r"/api/import/text", "_m_import_text", "mutate"),
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_m_inbox", "mutate"),
-    Route("POST", r"/api/company", "_m_company_update", "mutate", owner=True),
+    Route("POST", r"/api/company", "_m_company_update", "mutate", perm="company"),
     Route("POST", r"/api/auth/name", "_p_my_name", "body"),
 ]
 
@@ -2790,18 +2994,25 @@ def _edit_job(h, st, j, i, c):
     domain.edit_job(st, j, updates, c.actor)
 
 
-# Job actions only an owner may take (R4-02, R4-09): every final or emailed step. "You approve
-# every send": a member drafts, an owner sends, unless the company lets members send pay apps,
-# waivers and retainage requests (members_can_send, on Settings, Company).
-OWNER_ACTIONS = {"send", "waiver", "retainage", "void-draft", "void-sent", "close", "delete", "accept-short-pay", "reopen"}
-MEMBER_SEND_ACTIONS = {"send", "waiver", "retainage"}
+# Who may do what (S6): each person's permission profile (domain/profiles.py). Every job action
+# is listed in profiles.JOB_ACTION_PERMS with the permission it needs, or None for anyone.
+NO_PERMISSION = "Your permissions don't cover that. Someone who manages the team can change them."
+
+
+def company_state(company_id: str) -> dict:
+    with company_lock(company_id):
+        return load_company(company_id)
+
+
+def has_perm(user: dict, perm: str, state: dict | None = None) -> bool:
+    """Whether this person's profile holds the permission (the server's gate for every route
+    flagged perm= and for the checks inside handlers)."""
+    return profiles.has_perm(user, perm, state if state is not None else company_state(user["company_id"]))
 
 
 def may_take(user: dict, action: str, state: dict) -> bool:
     """Whether this person may take this job action (mirrored by mayTake in static/js/jobs.js)."""
-    if action not in OWNER_ACTIONS or user.get("role", "owner") == "owner":
-        return True
-    return action in MEMBER_SEND_ACTIONS and bool(state.get("company", {}).get("members_can_send"))
+    return profiles.may_take(user, action, state)
 
 
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
@@ -2878,7 +3089,7 @@ def main() -> None:
         for problem in problems:
             log_json("error", msg=f"Refusing to start in production: {problem}")
         sys.exit(1)
-    auth.upgrade_file()
+    auth.upgrade_file(migrations.AUTH_STEPS)
     if demo_enabled():
         ensure_demo()
     server = Server((HOST, PORT), Handler)

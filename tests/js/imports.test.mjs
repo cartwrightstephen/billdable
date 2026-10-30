@@ -10,7 +10,7 @@ const files = readdirSync(dir).filter(f => f.endsWith(".js")).map(f => `views/${
   .concat(readdirSync(new URL("../", dir)).filter(f => f.endsWith(".js")));
 const GLOBAL = new Set(["if", "for", "while", "switch", "catch", "return", "function", "typeof", "await", "new", "import",
   "String", "Number", "Boolean", "Object", "Array", "Math", "Date", "JSON", "Promise", "Set", "Map", "RegExp", "Error", "Symbol",
-  "parseInt", "parseFloat", "isNaN", "encodeURIComponent", "decodeURIComponent", "setTimeout", "clearTimeout", "setInterval",
+  "parseInt", "parseFloat", "isNaN", "encodeURIComponent", "decodeURIComponent", "setTimeout", "clearTimeout", "setInterval", "clearInterval",
   "requestAnimationFrame", "fetch", "btoa", "atob", "alert", "confirm", "structuredClone", "queueMicrotask", "Uint8Array",
   "URL", "URLSearchParams", "FormData", "Blob", "File", "FileReader", "AbortController", "CSS", "Intl", "super", "catch", "async", "PopStateEvent", "Event", "CustomEvent"]);
 
