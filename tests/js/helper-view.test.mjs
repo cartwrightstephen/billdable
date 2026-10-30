@@ -46,3 +46,16 @@ test("a follow-up that went out says Done", async () => {
   const { said } = await tapPost((p) => (p === "/api/jobs/j1/follow-up" ? { status: 200, body: company() } : undefined));
   assert.match(said, /^Done\. The page is updated/);
 });
+
+test("Settings, Helper answers is Page not found for anyone but the Duracash team (D6)", async () => {
+  const reg = await import("../../static/js/views/index.js");
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  core.setState(company());
+  page.setAccount({ helperAdmin: false });
+  const html = reg.views["helper-admin"]();
+  assert.match(html, /Page not found/);
+  assert.doesNotMatch(html, /HELPER_ADMIN_USER_IDS|BILLING_ENFORCE|helper-admin-body/);
+  page.setAccount({ helperAdmin: true });
+  assert.match(reg.views["helper-admin"](), /<h1>Helper answers<\/h1>/);
+  page.setAccount({ helperAdmin: false });
+});

@@ -35,6 +35,10 @@
   --shadow: rgba(0, 0, 0, 0.18);
   --shadow-panel: rgba(0, 0, 0, 0.14);
   --shadow-drawer: rgba(0, 0, 0, 0.2);
+  /* Paper is black on white whatever the screen's palette (D7): the dark blocks keep these. */
+  --print-ink: #000;
+  --print-paper: #fff;
+  --print-line: #999;
 }
 * { box-sizing: border-box; }
 a { color: var(--copper); }
@@ -152,6 +156,13 @@ table.sortable th:hover { color: var(--copper); }
 .progress-preview { font-weight: 600; margin: 8px 0; }
 .filter-bar select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--field); font: inherit; background: var(--field-bg); min-height: 34px; }
 .inline-label { font-size: 13px; color: var(--muted); }
+/* A filter's label and its box, kept together (D5); below 600 px one per row, the box filling it. */
+.filter-field { display: inline-flex; align-items: center; gap: 6px; }
+@media (max-width: 600px) {
+  .filter-bar .filter-field { flex: 1 1 100%; }
+  .filter-field .inline-label { min-width: 6em; }
+  .filter-field select { flex: 1; min-width: 0; }
+}
 select { max-width: 100%; }
 .stage.clickable { cursor: pointer; }
 .stage.clickable:hover, .stage.active { border-color: var(--copper); background: var(--copper-soft); }
@@ -586,14 +597,15 @@ textarea { font: inherit; }
 .print-sheet { display: none; }
 @media print {
   body.printing > *:not(.print-sheet) { display: none !important; }
-  body.printing { background: var(--on-accent); }
-  body.printing .print-sheet { display: block; color: var(--ink); font-size: 12pt; }
+  body.printing { background: var(--print-paper); }
+  body.printing .print-sheet { display: block; color: var(--print-ink); font-size: 12pt; }
+  body.printing .print-sheet * { color: var(--print-ink); border-color: var(--print-line); }
   .print-sheet h1 { font-size: 16pt; margin: 0 0 12px; }
   .print-sheet h2 { font-size: 13pt; margin: 16px 0 6px; }
   .print-sheet dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 12px; }
   .print-sheet dt { font-weight: 600; }
   .print-sheet dd { margin: 0; }
-  .print-sheet .print-body { white-space: pre-wrap; border-top: 1px solid var(--line); padding-top: 10px; }
+  .print-sheet .print-body { white-space: pre-wrap; border-top: 1px solid var(--print-line); padding-top: 10px; }
 }
 
 
@@ -759,6 +771,7 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
     --copper-wash: rgba(224, 148, 104, 0.16); --copper-glow: rgba(224, 148, 104, 0.35); --scrim: rgba(0, 0, 0, 0.5);
     --backdrop: rgba(0, 0, 0, 0.55); --shadow-soft: rgba(0, 0, 0, 0.2); --shadow: rgba(0, 0, 0, 0.5);
     --shadow-panel: rgba(0, 0, 0, 0.45); --shadow-drawer: rgba(0, 0, 0, 0.55);
+    --print-ink: #000; --print-paper: #fff; --print-line: #999;
   }
 }
 :root[data-theme="dark"] {
@@ -771,6 +784,7 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
   --copper-wash: rgba(224, 148, 104, 0.16); --copper-glow: rgba(224, 148, 104, 0.35); --scrim: rgba(0, 0, 0, 0.5);
   --backdrop: rgba(0, 0, 0, 0.55); --shadow-soft: rgba(0, 0, 0, 0.2); --shadow: rgba(0, 0, 0, 0.5);
   --shadow-panel: rgba(0, 0, 0, 0.45); --shadow-drawer: rgba(0, 0, 0, 0.55);
+  --print-ink: #000; --print-paper: #fff; --print-line: #999;
 }
 :root[data-theme="light"] { color-scheme: light; }
 /* Accents in the light palette (each at least 4.5:1 against the card and the paper, with white on it). */

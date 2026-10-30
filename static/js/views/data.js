@@ -28,10 +28,14 @@ onSessionEnd(() => { sentJobFilter = "all"; });
 function sovPickerHtml() {
   const open = state.jobs.filter(j => !j.closed);
   if (!open.length) return `<p class="sub">Add a job first; its schedule of values is pasted on the job page.</p>`;
+  // Only a job whose schedule can still be set (no pay app yet, work not done): picking another
+  // would open a schedule that can't change (D4, sov_view.editable from domain._sov_view).
+  const ready = open.filter(j => j.sov_view && j.sov_view.editable);
+  if (!ready.length) return `<p class="sub">Every open job has a pay app out or its work done, so its schedule of values is set.</p>`;
   return `<p class="sub">Paste the lines from your estimate, a spreadsheet or a PDF onto a job's schedule. Set it before the job's first pay app.</p>
       <div class="form-inline">
         <label for="sov-import-job" class="inline-label">Job</label>
-        <select id="sov-import-job">${open.map(j => `<option value="${j.id}">${j.name} (${j.code})</option>`).join("")}</select>
+        <select id="sov-import-job">${ready.map(j => `<option value="${j.id}">${j.name} (${j.code})</option>`).join("")}</select>
         <button class="btn small" data-action="import-sov">Open its schedule</button>
       </div>`;
 }

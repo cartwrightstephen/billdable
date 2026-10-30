@@ -262,10 +262,11 @@ const SORT_OPTIONS = [["newest", "Newest first"], ["oldest", "Oldest first"], ["
 
 function receivedSelect(name, label, all, options, more = "") {
   const opts = (all ? [["", all]] : []).concat(options);
-  return `<label for="received-${name}" class="inline-label">${label}</label>
+  // Each label and its box wrap together, never apart (D5): on a phone one per row.
+  return `<span class="filter-field"><label for="received-${name}" class="inline-label">${label}</label>
         <select id="received-${name}" data-received-filter="${name}">
           ${opts.map(([v, l]) => `<option value="${v}"${receivedFilter[name] === v ? " selected" : ""}>${l}</option>`).join("")}${more}
-        </select>`;
+        </select></span>`;
 }
 
 function receivedHtml() {

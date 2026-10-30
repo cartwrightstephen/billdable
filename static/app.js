@@ -65,10 +65,16 @@ function pageName(e) {
   return tabLabel(e.view) || sectionOf(e.view).label;
 }
 
+// The tab's title: the page's own name, not its section's (D9). Pages without a tab of their own
+// take their heading, or the tab they are drawn on (Paperwork on Pay apps, Retainage on Closeout).
+const OWN_TITLE = { password: "Change password", "delete-company": "Delete the company" };
 function pageTitle() {
   if (!state) return "Duracash";
+  if (currentView === "helper-admin" && !helperAdmin) return "Page not found · Duracash";
   const j = currentJobId && state.jobs.find(x => x.id === currentJobId);
-  const name = currentView === "job" && j ? unesc(j.name) : DETAIL_PARENT[currentView] && j ? `${tabLabel(DETAIL_PARENT[currentView])}: ${unesc(j.name)}` : (tabLabel(currentView) || sectionOf(currentView).label);
+  const parent = DETAIL_PARENT[currentView];
+  const name = currentView === "job" && j ? unesc(j.name) : parent && j ? `${tabLabel(parent)}: ${unesc(j.name)}`
+    : OWN_TITLE[currentView] || tabLabel(currentView) || (parent && tabLabel(parent)) || sectionOf(currentView).label;
   return `${name} · Duracash`;
 }
 
@@ -202,7 +208,7 @@ function render() {
   if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
   if (["payments", "company"].includes(currentView) && !qboStatus) loadQboStatus();
   if (sovDraft) updateSovTotals();
-  if (currentView === "helper-admin") { loadHelperReview(); loadAdminCompanies(); }
+  if (currentView === "helper-admin" && helperAdmin) { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
 }
 
@@ -228,6 +234,8 @@ const ACTIONS = {
   "nav": (el) => { nav(el.dataset.view, el.dataset.id || null, el.dataset.detail || null); },
   // The Back button when the page before is known (G3): the browser goes back, and popstate draws it.
   "back": () => history.back(),
+  // The Back button opened from a link or a refresh: the page's fixed parent, in this page's place (D1).
+  "up": (el) => { nav(el.dataset.view, el.dataset.id || null, null, { replace: true, fresh: true }); },
   "list-more": (el) => { const k = el.dataset.kind, pg = listPages[k]; if (pg && !pg.loading) loadListPage(k, pg.job, pg.entries.length, 50); },
   "copy": async (el) => {
     const text = document.getElementById(el.dataset.target)?.textContent || "";

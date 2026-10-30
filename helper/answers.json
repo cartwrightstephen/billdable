@@ -246,6 +246,34 @@
       ]
     },
     {
+      "id": "everything-received",
+      "category": "Communications",
+      "questions": [
+        "Where is everything received?",
+        "Everything received",
+        "What came in?",
+        "Show everything that came in"
+      ],
+      "keywords": [
+        "received",
+        "came in",
+        "everything received"
+      ],
+      "answer": "Communications, Inbox has Everything received under what is waiting: every email, text, file and note that came in, with when, who from, how it came in and what became of it (Waiting, Filed to a job, Filed automatically, or Dismissed). Pick Came in by, Status, Job or Sort to narrow it. Undo puts a filed or dismissed one back in Waiting, and Print prints one.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "inbox",
+          "label": "Open Inbox"
+        }
+      ],
+      "follow_ups": [
+        "How do I import emails and texts?"
+      ]
+    },
+    {
       "id": "pending-cos",
       "category": "Your jobs",
       "questions": [
@@ -345,6 +373,36 @@
       "follow_ups": [
         "What is the client type?",
         "How do I bill progress on a job?"
+      ]
+    },
+    {
+      "id": "add-client",
+      "category": "Your jobs",
+      "questions": [
+        "How do I add a client?",
+        "Add a client",
+        "New client",
+        "Where do I add a client?",
+        "Add client"
+      ],
+      "keywords": [
+        "add client",
+        "new client",
+        "client"
+      ],
+      "answer": "Go to Jobs, Client playbook and tap Add client. Fill in Client name and Client type, then Who signs off on your bills, Email for pay apps, Phone, Pay apps due by (day of the month), Payment terms, days and the Paperwork needed with each pay app, and tap Add client. Have the contract? Tap Import a contract first: it fills the boxes it finds. A client can also be added with a job: type a new name in Client on New job.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "playbook",
+          "label": "Open Client playbook"
+        }
+      ],
+      "follow_ups": [
+        "How do I change what a client needs?",
+        "How do I create a job?"
       ]
     },
     {
@@ -479,10 +537,9 @@
         "what payapp",
         "define payapp",
         "pdf",
-        "print",
         "download"
       ],
-      "answer": "A pay app (pay application) is the bill for work done this period. It lists what was completed, line by line if the job has a schedule of values, adds signed change orders, and holds back retainage. Many contracts also need paperwork with it. Open any pay app and tap Open the PDF; the same PDF goes with the email when you send it. If your company bills homeowners in draws (Settings, Company, How you bill), the app says draw instead of pay app.",
+      "answer": "A pay app (pay application) is the bill for work done this period. It lists what was completed, line by line if the job has a schedule of values, adds signed change orders, and holds back retainage. Many contracts also need paperwork with it. Open any pay app and tap Open the PDF; the same PDF goes with the email when you send it.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1029,6 +1086,33 @@
       "follow_ups": []
     },
     {
+      "id": "automations",
+      "category": "Your jobs",
+      "questions": [
+        "What are automations?",
+        "Automations",
+        "Can Duracash do things automatically?"
+      ],
+      "keywords": [
+        "automation",
+        "automations",
+        "automatic"
+      ],
+      "answer": "Automations is under construction. For now the Dashboard's To Do shows each follow-up when it is due, and you send it with one tap.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "dashboard",
+          "label": "Open Dashboard"
+        }
+      ],
+      "follow_ups": [
+        "How do follow-up windows work?"
+      ]
+    },
+    {
       "id": "collections",
       "category": "Unpaid",
       "questions": [
@@ -1063,6 +1147,7 @@
         "Does Duracash send emails?",
         "Outbox",
         "Where do I see what I sent?",
+        "Where did my email go?",
         "What did I send?",
         "Why did my email fail?",
         "Send the email again",
@@ -1088,6 +1173,36 @@
         }
       ],
       "follow_ups": []
+    },
+    {
+      "id": "print",
+      "category": "Communications",
+      "questions": [
+        "How do I print?",
+        "Print an email",
+        "Print a message",
+        "Print something I received",
+        "Print the Outbox"
+      ],
+      "keywords": [
+        "print",
+        "printout",
+        "paper"
+      ],
+      "answer": "Each email in Communications, Outbox has Print: it prints that one email with who it went to, when, its status, the message and what it carried. Each row of Everything received on Communications, Inbox has Print too, for something that came in. For a pay app, open it and tap Open the PDF, then print the PDF.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "outbox",
+          "label": "Open Outbox"
+        }
+      ],
+      "follow_ups": [
+        "Where do I see what I sent?",
+        "Where is everything received?"
+      ]
     },
     {
       "id": "voice-calls",
@@ -1256,7 +1371,7 @@
         "daily",
         "log"
       ],
-      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app, which then says Updated from daily records on that day. When they can't be added (the draft is with the client for their review, the job is marked done, or a line would go past what is scheduled, a lump sum past 100%), the daily record is still saved with them on it, and it says why under Quantities. Or paste many days at once in the Inbox as notes. Records live on the job record and can be attached to a pay app's paperwork as backup.",
+      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app, which then says Updated from daily records on that day. When they can't be added (the draft is with the client for their review, the job is marked done, or a line would go past what is scheduled, a lump sum past 100%), the daily record is still saved with them on it, and it says why under Quantities. Or paste many days of notes at once on Import/Export, Import; they wait in the Inbox to be added to the job. Records live on the job record and can be attached to a pay app's paperwork as backup.",
       "handler": null,
       "needs_job": false,
       "actions": [

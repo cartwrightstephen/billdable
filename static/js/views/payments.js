@@ -79,7 +79,7 @@ export function qboCardHtml(onImport) {
   const q = qboStatus;
   const owner = can("company");   // connect and disconnect need Edit company details and connections
   return !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
-      !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Duracash's Intuit app. Until then, use the CSV import ${onImport ? "below" : "on Import"}.</p>`
+      !q.configured ? `<p class="sub">The QuickBooks connection isn't available yet. Use the CSV import ${onImport ? "below" : "on Import"}.</p>`
       : !q.connected ? (owner
         ? `<p class="sub">Read-only: Duracash reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
         : `<p class="sub">An owner of this company can connect QuickBooks here.</p>`)

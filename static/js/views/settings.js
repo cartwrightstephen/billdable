@@ -8,7 +8,7 @@ import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
 import { jobFilterOptions } from "../jobs.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
-import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt } from "../state.js";
+import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt, helperAdmin } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
 import { THEMES, ACCENTS, applyAppearance, normalizeAppearance, storedAppearance } from "../theme.js";
 import { qboCardHtml } from "./payments.js";
@@ -117,9 +117,7 @@ function profilesCardHtml() {
   const edit = ownerMe() && me.company_id !== DEMO_COMPANY_ID;
   const list = teamData.profiles;
   const perms = teamData.permissions || [];
-  const admin = (teamData.users || []).find(u => u.company_admin);
   return `<h2>Permission profiles</h2>
-    <p class="sub">What each profile can do. Everyone on the team can draft pay apps, add records and paperwork, and follow up. The Owner profile can do everything, and only owners add or change profiles; only the Company Admin${admin ? ` (${admin.name})` : ""} can delete the company.</p>
     <div class="table-wrap"><table class="profiles-table">
       <tr><th>Permission</th>${list.map(p => `<th>${p.name}</th>`).join("")}</tr>
       ${perms.map(k => `<tr><td>${k.words}</td>${list.map(p => `<td class="center">${p.perms.includes(unesc(k.key)) ? `<span class="pill green" aria-label="Yes">Yes</span>` : `<span class="sub" aria-label="No">No</span>`}</td>`).join("")}</tr>`).join("")}
@@ -309,7 +307,6 @@ function appearanceCardHtml() {
         ${field({ form: "appearance", name: "theme", id: "app-theme", label: "Theme", value: a.theme, options: THEMES })}
         ${field({ form: "appearance", name: "accent", id: "app-accent", label: "Accent colour", value: a.accent, options: ACCENTS })}
       </div>
-      <p class="sub">Only for you, on every device you sign in on. Pay app PDFs and your clients' pages stay as they are.</p>
     </div>`;
 }
 
@@ -547,6 +544,9 @@ export const views = {
   "delete-company"() { return deleteCompanyView(); },
   billing() { return billingView(); },
   "helper-admin"() {
+    // The Duracash team's page (HELPER_ADMIN_USER_IDS): anyone else who types its address sees no
+    // such page (D6). The server refuses its data to them too (is_helper_admin, server.py).
+    if (!helperAdmin) return emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`);
     return `<h1>Helper answers</h1>
       <p class="sub">What users asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
       <div id="helper-admin-body">Loading…</div>

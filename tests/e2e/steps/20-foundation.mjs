@@ -49,6 +49,30 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(await page.locator(".back").innerText(), "← Jobs");
   });
 
+  await step("from a link, Back climbs to each page's parent and never loops (D1)", async () => {
+    await page.goto(BASE + "/money/pay-app/job-oak/inv-oak-1");
+    await page.locator(".back", { hasText: "← Oak Street kitchen" }).waitFor();
+    await page.locator(".back").click();
+    await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/jobs/job-oak");
+    assert.equal(await page.locator(".back").innerText(), "← Jobs");
+    await page.locator(".back").click();
+    await page.getByRole("heading", { name: "Open jobs" }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/jobs");
+    // A closed job's own list is Job history.
+    await page.goto(BASE + "/jobs/job-hist-maple");
+    await page.locator(".back", { hasText: "← Job history" }).waitFor();
+  });
+
+  await step("each page's tab title is its own name, not its section's (D9)", async () => {
+    for (const [path, title] of [["/money/packets", "Pay apps · Duracash"], ["/money/retainage", "Closeout · Duracash"],
+      ["/settings/account/password", "Change password · Duracash"], ["/settings/company/delete", "Delete the company · Duracash"]]) {
+      await page.goto(BASE + path);
+      await page.locator("#view h1").first().waitFor();
+      assert.equal(await page.title(), title, path);
+    }
+  });
+
   await step("phone: five sections, with Import/Export and Automations under More", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
     await phone.goto(BASE + "/dashboard");
