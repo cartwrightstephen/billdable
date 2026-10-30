@@ -68,6 +68,28 @@ test("Daily record: crew, weather and the ticked sections stay through a redraw;
   forms.clearForm("daily");
 });
 
+test("Daily record: Recent records show the crew, the sections and links to the files attached", async () => {  // T11, T12
+  const daily = await import("../../static/js/views/daily.js");
+  const sovJob = job({ sov_view: { present: true, lines: [
+    { id: "l1", item: "1", description: "Rough-in wiring", unit: "LF", qty_milli: 400000, done_milli: 220000 },
+    { id: "l2", item: "2", description: "Panel", unit: "LS", qty_milli: 1000, done_milli: 250 },
+  ] }, change_orders: [{ id: "co1", number: 2, title: "Extra outlets", status: "approved" }],
+  records: [{ id: "r9", kind: "photo", label: "deck.jpg", file_ids: ["f1"] }] });
+  core.setState({ ...company([sovJob]), files: [{ id: "f1", name: "deck.jpg" }] });
+  const meta = daily.recordMeta({ crew_names: ["Ana", "Ben"], weather: "Rain", attachments: ["r9"], sections: {
+    quantities: [{ line_id: "l1", qty_milli: 120000 }, { line_id: "l2", qty_milli: 250 }],
+    co_work: [{ co_id: "co1", description: "Two circuits", hours_milli: 3000 }, { co_id: "", description: "Moved a box", hours_milli: 0 }],
+    inspections: [{ type: "discussion", who: "GC super", outcome: "Start Monday" }], punch: ["Patch"] } }, sovJob);
+  assert.match(meta, /<div>Crew: Ana, Ben<\/div>/);
+  assert.match(meta, /Weather: Rain/);
+  assert.match(meta, /Quantities: 120 LF Rough-in wiring, 25% Panel/);
+  assert.match(meta, /Change order work \(CO 2\): Two circuits, 3 h/);
+  assert.match(meta, /Change order work \(new, not priced yet\): Moved a box</);
+  assert.match(meta, /Discussion with GC super: Start Monday/);
+  assert.match(meta, /New punchlist items: Patch/);
+  assert.match(meta, /Files: <a href="\/api\/files\/f1"[^>]*>deck.jpg<\/a>/);
+});
+
 test("Paste box: the pasted text, and what it looks like, stay through a redraw and go once added", async () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState(company());

@@ -126,9 +126,10 @@ function tasksBlockHtml(eventsByDay) {
 async function assignFrom(sel) {
   const value = sel.value;
   const key = sel.dataset.key;
-  if (sel.dataset.todoAssign === "task") await post(`/api/tasks/${encodeURIComponent(key)}`, { assignee_id: value }, { quiet: true });
-  else await post("/api/tasks/assign", { key, assignee_id: value }, { quiet: true });
-  toast(value ? "Assigned." : "Unassigned.");
+  const r = sel.dataset.todoAssign === "task"
+    ? await post(`/api/tasks/${encodeURIComponent(key)}`, { assignee_id: value }, { quiet: true, anchor: sel })
+    : await post("/api/tasks/assign", { key, assignee_id: value }, { quiet: true, anchor: sel });
+  if (r && r.ok) toast(value ? "Assigned." : "Unassigned.");
 }
 
 document.addEventListener("change", (e) => {

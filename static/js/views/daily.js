@@ -6,6 +6,7 @@ import { esc, unesc, fmtDate } from "../format.js";
 import { defaultJobId } from "../jobs.js";
 import { fmtQty } from "../sov.js";
 import { pathFor } from "../routes.js";
+import { recordFiles } from "./job-record.js";
 import { readJson, setNetBanner } from "../net.js";
 import { draftValue, clearForm, field, formValues, formErrors } from "../forms.js";
 import { state, onSessionEnd, currentView } from "../state.js";
@@ -96,16 +97,35 @@ function sectionHtml(key, j) {
   return "";
 }
 
-// A saved record's extra lines in Recent records.
-function recordMeta(r) {
+// A saved record's extra lines in Recent records: crew, weather, materials, deliveries, what
+// each ticked section held, and links to the files attached (rj is the record's job).
+export function recordMeta(r, rj) {
   const out = [];
-  if (r.crew_count !== undefined || (r.crew_names || []).length) out.push(`Crew: ${r.crew_count ?? ""}${(r.crew_names || []).length ? ` (${r.crew_names.join(", ")})` : ""}`);
+  const count = r.crew_count === undefined || r.crew_count === null || r.crew_count === "" ? "" : String(r.crew_count);
+  const names = (r.crew_names || []).join(", ");
+  if (count || names) out.push(`Crew: ${count && names ? `${count} (${names})` : count || names}`);
   if (r.weather || r.weather_note) out.push(`Weather: ${[r.weather, r.weather_note].filter(Boolean).join(", ")}`);
   if (r.materials) out.push(`Materials: ${r.materials}`);
   if (r.deliveries) out.push(`Deliveries: ${r.deliveries}`);
   const s = r.sections || {};
-  for (const [key, label] of SECTIONS) if (s[key] !== undefined) out.push(label + (key === "punch" ? `: ${s.punch.join("; ")}` : ""));
-  if ((r.attachments || []).length) out.push(`${r.attachments.length} file${r.attachments.length === 1 ? "" : "s"} attached`);
+  const lines = Object.fromEntries((((rj && rj.sov_view) || {}).lines || []).map(l => [l.id, l]));
+  const cos = Object.fromEntries(((rj && rj.change_orders) || []).map(c => [c.id, c]));
+  if (s.photos) out.push(`Progress photos${s.photos.note ? `: ${s.photos.note}` : ""}`);
+  if (s.quantities) out.push(`Quantities: ${s.quantities.map(q => {
+    const l = lines[q.line_id];
+    if (!l) return fmtQty(q.qty_milli);
+    return lumpSum(l) ? `${fmtQty(q.qty_milli * 100)}% ${l.description}` : `${fmtQty(q.qty_milli)} ${l.unit} ${l.description}`;
+  }).join(", ")}`);
+  for (const c of s.co_work || []) {
+    const co = cos[c.co_id];
+    out.push(`Change order work (${co ? `CO ${co.number}` : "new, not priced yet"}): ${c.description}${c.hours_milli ? `, ${fmtQty(c.hours_milli)} h` : ""}`);
+  }
+  for (const i of s.inspections || []) out.push(`${i.type === "discussion" ? "Discussion" : "Inspection"}${i.who ? ` with ${i.who}` : ""}${i.outcome ? `: ${i.outcome}` : ""}`);
+  if ((s.punch || []).length) out.push(`New punchlist items: ${s.punch.join("; ")}`);
+  const attached = (r.attachments || []).map(id => ((rj && rj.records) || []).find(x => x.id === id)).filter(Boolean);
+  const links = attached.map(recordFiles).filter(Boolean).join(" · ");
+  if (links) out.push(`Files: ${links}`);
+  else if ((r.attachments || []).length) out.push(`${r.attachments.length} file${r.attachments.length === 1 ? "" : "s"} attached`);
   return out.length ? `<div class="daily-rec-meta">${out.map(x => `<div>${x}</div>`).join("")}</div>` : "";
 }
 
@@ -145,7 +165,7 @@ export const views = {
         <h2>Recent records</h2>
         ${records.length ? records.slice().reverse().map(r => {
           const rj = state.jobs.find(x => x.id === r.job_id);
-          return `<div class="list-item"><strong>${fmtDate(r.at)}</strong> · ${rj ? `<a href="${pathFor("job", rj.id)}" data-action="open-job" data-id="${rj.id}">${rj.name}</a>` : "Deleted job"}<div>${r.notes}</div>${recordMeta(r)}</div>`;
+          return `<div class="list-item"><strong>${fmtDate(r.at)}</strong> · ${rj ? `<a href="${pathFor("job", rj.id)}" data-action="open-job" data-id="${rj.id}">${rj.name}</a>` : "Deleted job"}<div>${r.notes}</div>${recordMeta(r, rj)}</div>`;
         }).join("") : `<p class="sub">None yet.</p>`}
       </div>
     `;
