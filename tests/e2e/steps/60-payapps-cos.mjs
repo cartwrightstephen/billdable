@@ -40,6 +40,47 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.context().close();
   });
 
+  await step("New pay app on Money > Pay apps asks for the job, then opens that job's Progress pay app form", async () => {  // G10
+    const p = await signedInPage({ width: 1280, height: 900 });
+    await p.goto(`${BASE}/money`);
+    await p.getByRole("heading", { name: "Pay apps" }).waitFor();
+    await p.click('[data-action="payapp-new"]');
+    const options = await p.locator("#new-payapp-job option").evaluateAll((os) => os.map((o) => o.value));
+    assert.ok(options.includes("job-grant"), "a job in progress can be billed");
+    assert.ok(!options.includes("job-turner"), "a job with nothing to bill isn't listed");
+    await p.click('[data-action="payapp-new-open"]');
+    await p.locator("#new-payapp-job-err", { hasText: "Pick a job." }).waitFor();
+    await p.selectOption("#new-payapp-job", "job-grant");
+    await p.click('[data-action="payapp-new-open"]');
+    await p.locator('[data-form-key="progress"], [data-form-key="sovprogress"]').first().waitFor();
+    assert.equal(new URL(p.url()).pathname, "/jobs/job-grant");
+    await p.context().close();
+  });
+
+  await step("New pay app with one job marked done drafts it, as the job page's Draft pay app does", async () => {  // G10
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const p = await ctx.newPage();
+    p.on("pageerror", (e) => errors.push(e.message));
+    await p.goto(BASE + "/");
+    const jobId = await p.evaluate(async (email) => {
+      const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+      await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Pam Payapp", company_name: "Payapp Builders" });
+      const st = await (await post("/api/jobs", { name: "Spruce porch", address: "6 Spruce St", customer: "Lee Homeowner", role: "Owner",
+        ap_email: "lee@example.com", contract_cents: 800000 })).json();
+      const id = st.jobs.find((j) => j.name === "Spruce porch").id;
+      await post(`/api/jobs/${id}/done`, {});
+      await post(`/api/jobs/${id}/void-draft`, {});
+      return id;
+    }, `payapp-new-${Date.now()}@example.com`);
+    await p.goto(`${BASE}/money`);
+    await p.click('[data-action="payapp-new"]');
+    await p.locator(`[data-action="open-payapp"][data-job="${jobId}"]`).first().waitFor();
+    assert.equal(new URL(p.url()).pathname, `/jobs/${jobId}`);
+    const invoices = await p.evaluate(async (id) => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === id).invoices.map((i) => i.status), jobId);
+    assert.deepEqual(invoices.filter((s) => s === "draft" || s === "awaiting_approval").length, 1, "one draft");
+    await ctx.close();
+  });
+
   await step("a pay app's page shows its summary, as the PDF prints it", async () => {
     await page.goto(`${BASE}/money/pay-app/job-turner/inv-trn-1`);
     const card = page.locator(".payapp-summary");

@@ -40,6 +40,7 @@ import billing
 import calendar_feed
 import contract_import
 import domain
+import exports
 import helper
 import importer
 import job_archive
@@ -55,6 +56,7 @@ import outbox
 import payapp_pdf
 import qbo
 import qbo_csv
+import qty_import
 import qr
 import payer_page
 import sov
@@ -203,7 +205,7 @@ def demo_enabled() -> bool:
 
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
-DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_contract_read", "_p_ping"}
+DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_contract_read", "_p_ping", "_p_qty_preview"}
 COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_password_code", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_helper_admin",
                                              "_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal",
@@ -1365,6 +1367,19 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, json.dumps(domain.without_link_secrets(state), indent=2).encode(), "application/json",
                    {"Content-Disposition": f'attachment; filename="duracash-export-{stamp}.json"'})
 
+    def _g_export_csv(self, m, user) -> None:
+        """Jobs, pay apps, payments or change orders as a CSV file, finished jobs' too (I1). Open to
+        everyone signed in, like Sent pay apps and each pay app's QuickBooks file: the same figures
+        each person sees on Money and Jobs. Download everything (the whole company file) needs Export
+        and reset data."""
+        kind = m.group(1)
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        body = exports.csv_text(state, kind)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+        self._send(200, body.encode("utf-8"), "text/csv; charset=utf-8",
+                   {"Content-Disposition": f'attachment; filename="duracash-{exports.FILE_NAMES[kind]}-{stamp}.csv"'})
+
     def _g_file(self, m, user) -> None:
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
@@ -1794,6 +1809,26 @@ class Handler(BaseHTTPRequestHandler):
             text = _text(ctx.body, "csv", limit=2_000_000)
         parsed = qbo_csv.parse(text)
         self._json(200, {"rows": qbo_csv.propose(state, parsed["rows"]), "warnings": parsed["warnings"]})
+
+    # Quantities from the contractor's own records (M1): a CSV or Excel sheet read against one
+    # job's schedule of values. Preview changes nothing; apply adds what can be added, as a daily
+    # record's quantities are. Whoever may record progress may import it (sov-progress).
+    def _p_qty_preview(self, m, ctx: "Ctx") -> None:
+        text = _sheet_text(ctx.body)
+        with company_lock(ctx.company_id):
+            state = load_company(ctx.company_id)
+        if not may_take(ctx.user, "sov-progress", state):
+            self._json(403, {"error": NO_PERMISSION})
+            return
+        job = domain._job(state, _text(ctx.body, "job_id", limit=80))
+        self._json(200, qty_import.preview(state, job, qty_import.parse(text), text))
+
+    def _m_qty_apply(self, state: dict, m, ctx: "Ctx") -> None:
+        if not may_take(ctx.user, "sov-progress", state):
+            raise OwnerOnly()
+        # The preview's basis is required: what is added is what the person saw.
+        ctx.reply["quantity_import"] = qty_import.apply(state, _text(ctx.body, "job_id", limit=80), _sheet_text(ctx.body), ctx.actor,
+                                                        source=_text(ctx.body, "name", limit=200), seen=_text(ctx.body, "basis", limit=80))
 
     def _m_payments_apply(self, state: dict, m, ctx: "Ctx") -> None:
         picks = ctx.body.get("payments")
@@ -2773,6 +2808,7 @@ ROUTES = [
     # == stream: comms-data ==
     Route("GET", r"/api/inbox", "_g_inbox_page", "user"),
     Route("GET", r"/api/payapps/sent", "_g_sent_payapps", "user"),
+    Route("GET", r"/api/export/(jobs|payapps|payments|change-orders)\.csv", "_g_export_csv", "user"),
 
     # == stream: tasks-daily ==
     Route("POST", r"/api/tasks/assign", "_p_task_assign", "body"),
@@ -2860,6 +2896,7 @@ ROUTES = [
     Route("POST", r"/api/auth/password", "_p_password", "body"),
     Route("POST", r"/api/auth/2fa/(begin|enable|disable)", "_p_two_step", "body"),
     Route("POST", r"/api/import/payments-csv", "_p_payments_csv", "body"),
+    Route("POST", r"/api/import/quantities/preview", "_p_qty_preview", "body"),
     Route("POST", r"/api/import/rotate", "_p_rotate", "body", perm="company"),
     Route("POST", r"/api/qbo/connect", "_p_qbo_connect", "body", perm="company"),
     Route("POST", r"/api/billing/checkout", "_p_billing_checkout", "body", perm="billing"),
@@ -2885,11 +2922,30 @@ ROUTES = [
     Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", perm="company"),
     Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate", perm="record_payments"),
+    Route("POST", r"/api/import/quantities/apply", "_m_qty_apply", "mutate"),
     Route("POST", r"/api/import/text", "_m_import_text", "mutate"),
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_m_inbox", "mutate"),
     Route("POST", r"/api/company", "_m_company_update", "mutate", perm="company"),
     Route("POST", r"/api/auth/name", "_p_my_name", "body"),
 ]
+
+
+def _sheet_text(body: dict) -> str:
+    """A sheet sent as CSV text ("csv") or an Excel file ("xlsx", base64), as CSV text."""
+    xlsx = _text(body, "xlsx", limit=MAX_BODY_BYTES)
+    if xlsx:
+        try:
+            raw = base64.b64decode(xlsx, validate=True)
+        except ValueError:
+            raise BadRequest("Send the Excel file again.")
+        text = qbo_csv.xlsx_to_csv(raw)
+        if not text:
+            raise domain.GateError("That Excel file couldn't be read. Save it as CSV and try again.")
+        return text
+    text = _text(body, "csv", limit=qty_import.MAX_TEXT)
+    if not text.strip():
+        raise domain.GateError("Choose a CSV or Excel file with the quantities.")
+    return text
 
 
 def _add_co(st: dict, job_id: str, c: Ctx) -> None:

@@ -346,7 +346,8 @@ export function mayTake(action, perms) {
 }
 
 // The job-page button keys that need a permission.
-const KEY_ACTION = { send: "send", waiver: "waiver", retainage: "retainage", void: "void-draft", close: "close", match: "match-payment", retpay: "retainage-paid" };
+const KEY_ACTION = { send: "send", waiver: "waiver", retainage: "retainage", void: "void-draft", close: "close", match: "match-payment", retpay: "retainage-paid",
+  draft: "draft", progress: "progress" };
 
 const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "contact", "pencil", "pencil-ok", "pencil-no", "packet",
   "draft", "progress", "done", "retainage", "retpay", "co", "close", "undo", "void", "qbo"];
@@ -476,6 +477,18 @@ export function clientTypeLabel(p) {
 // calendar, and stays under Job history and its client's card. Money (Pay apps, Change orders,
 // Unpaid, Payments, Closeout), the Dashboard and the Calendar filter with this too.
 export function openJobs(jobs) { return (jobs || []).filter(j => !j.closed); }
+
+// The open jobs a new pay app can be started on from Money, Pay apps (G10), each with the job
+// page's own step for it as jobActions offers it to this person: "progress" (the Progress pay app
+// form, while the work goes on) or "draft" (Draft pay app, for a job marked done with work not
+// billed). One way of drafting, whichever page it starts from.
+export function payAppStarts(jobs, perms = null) {
+  return openJobs(jobs).flatMap(j => {
+    const { primary, more } = jobActions(j, { perms });
+    const step = [primary, ...more].find(a => a && (a.key === "draft" || a.key === "progress"));
+    return step ? [{ job: j, step: step.key }] : [];
+  });
+}
 
 // The day of the daily record a draft's quantities came from (M1), as the schedule card shows
 // per line (from_daily_on): the latest among the lines this draft bills for work this period.

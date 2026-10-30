@@ -609,6 +609,34 @@
       ]
     },
     {
+      "id": "new-payapp",
+      "category": "Pay apps",
+      "questions": [
+        "Where do I start a new pay app?",
+        "Can I make a pay app from Money?",
+        "New pay app on Money",
+        "Create a pay application from the pay apps list"
+      ],
+      "keywords": [
+        "new payapp",
+        "start payapp",
+        "create payapp"
+      ],
+      "answer": "Two places, one way of drafting. On a job, tap Progress pay app while the work goes on, or Draft pay app once the job is marked done. Or on Money, Pay apps tap New pay app: with more than one job that has something to bill, pick it under Which job? and tap Continue. It opens that job's Progress pay app form, or drafts it the way Draft pay app does for a job marked done. A job with nothing to bill, or with a draft already open, isn't listed: open its draft with Review & send.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "payapps",
+          "label": "Open Pay apps"
+        }
+      ],
+      "follow_ups": [
+        "How do I bill progress on a job?"
+      ]
+    },
+    {
       "id": "mark-done",
       "category": "Pay apps",
       "questions": [
@@ -1421,6 +1449,35 @@
       "follow_ups": []
     },
     {
+      "id": "import-quantities",
+      "category": "Importing",
+      "questions": [
+        "How do I import quantities from my own records?",
+        "Import quantities from a spreadsheet",
+        "Bring in quantities from my estimating or accounting software",
+        "Upload my foreman's quantity log"
+      ],
+      "keywords": [
+        "quantities",
+        "quantity",
+        "takeoff",
+        "qty"
+      ],
+      "answer": "On Import/Export, Import, under Quantities done, pick the Job (only jobs with a schedule of values are listed), then tap Choose the file for a CSV or Excel file, or paste the rows and tap Read quantities. Each row needs the item number or description of a schedule line and the quantity done this period; a lump sum line takes the % done this period. The table shows each row: the line, Done to date, Add, New total and Scheduled, and why a row can't be added (no line matches, it would go past the scheduled quantity, the line is twice in the file). Nothing changes until you tap Add to the schedule of values: then the rows that can go on add to each line's quantity done and update the draft pay app, the same as a daily record's quantities. What couldn't be added is listed, and the import is kept on the job record.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "import",
+          "label": "Open Import"
+        }
+      ],
+      "follow_ups": [
+        "What is a daily record?"
+      ]
+    },
+    {
       "id": "calendar",
       "category": "Calendar",
       "questions": [
@@ -1500,14 +1557,20 @@
         "How do I export my data?",
         "Download my data",
         "Backup my data",
-        "Can I get my data out?"
+        "Can I get my data out?",
+        "Export my jobs to Excel",
+        "Download pay apps as CSV",
+        "Export payments and change orders as CSV"
       ],
       "keywords": [
         "export",
         "download",
-        "backup"
+        "backup",
+        "csv",
+        "spreadsheet",
+        "excel"
       ],
-      "answer": "Everything you can export is on Import/Export, Export. Anyone whose profile includes Export and reset data (owners do) taps Download everything for your company's jobs, clients, pay apps and records as one file; anyone can download each sent pay app's PDF and QuickBooks file, and copy the calendar feed. Photos and documents you uploaded are not in it, so keep your own copies of those.",
+      "answer": "Everything you can export is on Import/Export, Export. Lists for a spreadsheet (CSV) has Jobs, Pay apps, Payments and Change orders, finished jobs included, for anyone on the team. Anyone whose profile includes Export and reset data (owners do) taps Download everything for your company's jobs, clients, pay apps and records as one file; anyone can download each sent pay app's PDF and QuickBooks file, and copy the calendar feed. Photos and documents you uploaded are not in it, so keep your own copies of those.",
       "handler": null,
       "needs_job": false,
       "actions": [

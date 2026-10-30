@@ -298,22 +298,35 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
     return job
 
 
+def quantities_blocked(job: dict[str, Any]) -> str:
+    """Why quantities can't be added to this job's schedule of values right now, in plain words
+    (a daily record's and an imported file's alike); blank when they can."""
+    from domain import DRAFT_STATUSES
+    import sov
+    if job.get("closed"):
+        return "The job is finished, so the schedule of values doesn't change."
+    if not sov.has_sov(job):
+        return "This job has no schedule of values to add quantities to."
+    if job.get("work_status") == "complete":
+        return "The job is marked done, so every line is already counted as done."
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if draft and draft.get("pencil_status") == "sent":
+        return (f"{draft['number']} is with the client for their review. Record their answer or delete the draft, "
+                "then enter these quantities on the job page.")
+    return ""
+
+
 def _apply_quantities(state: dict[str, Any], job: dict[str, Any], rows: list[dict[str, Any]], actor: str, day: str) -> str:
     """Add the quantities put in place today to the schedule lines and refresh the draft pay app
     (M1). A daily record is never lost because they can't be added (B5 of the Oct 30 review): it
     is saved anyway with them on it, and this returns why they weren't added, in plain words, for
     the record, its note and the page. Blank when they were added."""
-    from domain import DRAFT_STATUSES, GateError, over_schedule_text, record_sov_progress
+    from domain import GateError, over_schedule_text, record_sov_progress
     import sov
     keep = " They are kept on this daily record."
-    if job.get("closed"):
-        return "The job is finished, so the schedule of values doesn't change." + keep
-    if job.get("work_status") == "complete":
-        return "The job is marked done, so every line is already counted as done." + keep
-    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
-    if draft and draft.get("pencil_status") == "sent":
-        return (f"{draft['number']} is with the client for their review. Record their answer or delete the draft, "
-                "then enter these quantities on the job page." + keep)
+    blocked = quantities_blocked(job)
+    if blocked:
+        return blocked + keep
     by_id = {line["id"]: line for line in sov.lines(job)}
     done, errors = {}, []
     for row in rows:

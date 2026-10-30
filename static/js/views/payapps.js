@@ -1,12 +1,14 @@
 // Money, Pay apps: the list and each pay app's page (Before you send, lines, payments, approval).
+// A pay app is drafted on its job's page; New pay app here asks for the job and opens that job's
+// step for it, the progress form or Draft pay app (Stephen's Oct 29 review, G10).
 import { unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
-import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn } from "../jobs.js";
+import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn, payAppStarts, defaultJobId } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
-import { state, currentView, currentJobId, currentDetailId, formOpen } from "../state.js";
-import { may, render, post, backButton, emptyState, nav, EMAIL_PATTERN } from "../app-core.js";
+import { state, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
+import { may, perms, render, post, backButton, emptyState, nav, EMAIL_PATTERN } from "../app-core.js";
 import { continuationHtml } from "../sov.js";
 import { companyGapsHtml } from "../setup.js";
 import { QBO_READY, qboCsvLink, OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
@@ -14,6 +16,9 @@ import { shortPayCardHtml, owedText, emailFailed, sendsTo } from "./job.js";
 import { beforeYouSendHtml } from "./paperwork.js";
 
 let payappFilter = "all";
+let payPreselectJob = null;
+// Signed out: a job picked for a new pay app is that company's.
+onSessionEnd(() => { payPreselectJob = null; });
 
 // The email subject the pay app goes out with (domain.pay_app_subject, R4-05).
 function subjectPreview(j, inv) {
@@ -159,8 +164,21 @@ export const views = {
     const shown = { draft: ["draft", "awaiting_approval"], sent: ["sent", "approved", "partial"] };
     if (payappFilter !== "all") apps = apps.filter(a => (shown[payappFilter] || [payappFilter]).includes(a.status));
     const f = (key, label) => `<button class="${payappFilter === key ? "btn" : "btn secondary"} small" data-action="payapp-filter" data-filter="${key}" aria-pressed="${payappFilter === key}">${label}</button>`;
+    const starts = payAppStarts(state.jobs, perms());
+    const picking = formOpen.papick && starts.length > 1;
     return `
-      <h1>${termText("Pay apps")}</h1>
+      <div class="job-head"><h1>${termText("Pay apps")}</h1>
+        ${starts.length ? `<button class="btn small" data-action="payapp-new" aria-expanded="${!!picking}">${termText("New pay app")}</button>` : ""}
+      </div>
+      ${picking ? `<div class="card" data-form-key="papick">
+        ${formErrorLine("papick")}
+        <div class="form-row">
+          ${field({ form: "papick", name: "job", id: "new-payapp-job", label: "Which job?", value: unesc(defaultJobId(starts.map(s => s.job), payPreselectJob || "")),
+            options: [["", "Pick a job…"], ...starts.map(s => [unesc(s.job.id), unesc(s.job.name)])] })}
+          <button class="btn small" data-action="payapp-new-open">Continue</button>
+          <button class="btn small secondary" data-action="toggle-form" data-form="papick">Cancel</button>
+        </div>
+      </div>` : ""}
       <div class="filter-bar" role="group" aria-label="Show">${f("all", "All")}${f("draft", "Ready to send")}${f("sent", "Unpaid")}${f("paid", "Paid")}</div>
       ${apps.length ? `<div class="table-wrap">
         <table>
@@ -182,8 +200,36 @@ export const views = {
   packets() { return views.payapps(); },
 };
 
+// Start a pay app on a job the way its own page does (G10): the Progress pay app form while the
+// work goes on, or Draft pay app for a job marked done. step comes from payAppStarts.
+export async function startPayApp(jobId, step) {
+  nav("job", jobId);
+  if (step === "draft") return post(`/api/jobs/${jobId}/draft`);
+  formOpen.progress = true;
+  render();
+  requestAnimationFrame(() => document.querySelector('[data-form-key="progress"] input, [data-form-key="sovprogress"] input:not([disabled])')?.focus());
+  return null;
+}
+
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
+  // New pay app on the list (G10): with one job to bill its step opens; else pick the job first.
+  "payapp-new": () => {
+    const starts = payAppStarts(state.jobs, perms());
+    if (starts.length === 1) return startPayApp(starts[0].job.id, starts[0].step);
+    formOpen.papick = !formOpen.papick;
+    render();
+    requestAnimationFrame(() => document.getElementById("new-payapp-job")?.focus());
+    return null;
+  },
+  "payapp-new-open": () => {
+    const jobId = formValues("papick").job;
+    const start = payAppStarts(state.jobs, perms()).find(s => unesc(s.job.id) === jobId);
+    if (refuseForm("papick", start ? {} : { job: "Pick a job." })) return null;
+    payPreselectJob = start.job.id;
+    formOpen.papick = false;
+    return startPayApp(start.job.id, start.step);
+  },
   "send": (el, id) => post(`/api/jobs/${id}/send`),
   // "Before you send" with no email yet (R1-05): saved to the client's settings, then send unlocks.
   "save-send-email": async (el, id) => {

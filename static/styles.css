@@ -607,6 +607,11 @@ textarea { font: inherit; }
   .print-sheet dd { margin: 0; }
   .print-sheet .print-body { white-space: pre-wrap; border-top: 1px solid var(--print-line); padding-top: 10px; }
 }
+/* Import's Quantities done (M1): a row that can't be added reads in red; Export's CSV lists (I1) wrap on a phone. */
+.qty-preview tr.qty-problem td { color: var(--red); }
+.qty-preview td { overflow-wrap: anywhere; }
+.qty-result { margin-bottom: 12px; }
+.export-lists { flex-wrap: wrap; }
 
 
 
