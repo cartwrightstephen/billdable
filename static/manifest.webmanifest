@@ -2,7 +2,7 @@
   "name": "Duracash",
   "short_name": "Duracash",
   "description": "Get finished work billed and collected.",
-  "start_url": "/today",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f6f3ee",
@@ -59,7 +59,7 @@
       "name": "Take a photo",
       "short_name": "Photo",
       "description": "Open the Inbox with the camera button ready.",
-      "url": "/inbox?camera=1",
+      "url": "/communications?camera=1",
       "icons": [
         {
           "src": "/icon-192.png",
@@ -72,7 +72,7 @@
       "name": "Daily record",
       "short_name": "Daily",
       "description": "Write today's note for a job.",
-      "url": "/today/daily",
+      "url": "/jobs/daily",
       "icons": [
         {
           "src": "/icon-192.png",

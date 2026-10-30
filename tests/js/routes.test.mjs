@@ -1,12 +1,12 @@
 // Page addresses: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { VIEW_PATHS, DETAIL_PATHS, DETAIL_PARENT, pathFor, routeFromPath, refusalLink, refusalLinkData, refusalToastAction } from "../../static/js/routes.js";
+import { VIEW_PATHS, PATH_ALIASES, DETAIL_PATHS, DETAIL_PARENT, pathFor, routeFromPath, refusalLink, refusalLinkData, refusalToastAction } from "../../static/js/routes.js";
 
 test("every view's address leads back to that view", () => {
   for (const [view, path] of Object.entries(VIEW_PATHS)) assert.deepEqual(routeFromPath(path), { view }, path);
   assert.deepEqual(routeFromPath("/"), { view: "dashboard" });
-  assert.deepEqual(routeFromPath("/today/"), { view: "dashboard" }, "a trailing slash is the same page");
+  assert.deepEqual(routeFromPath("/dashboard/"), { view: "dashboard" }, "a trailing slash is the same page");
 });
 
 test("job and detail pages carry their ids", () => {
@@ -23,8 +23,8 @@ test("pathFor round-trips escaped ids", () => {
   // Ids in the page's state are escaped once (escDeep); the address uses the raw text.
   assert.equal(pathFor("job", "a&amp;b"), "/jobs/a%26b");
   assert.deepEqual(routeFromPath(pathFor("job", "a&amp;b")), { view: "job", jobId: "a&b" });
-  assert.equal(pathFor("job", null), "/today", "a job page without a job is Today");
-  assert.equal(pathFor("nowhere"), "/today");
+  assert.equal(pathFor("job", null), "/dashboard", "a job page without a job is the Dashboard");
+  assert.equal(pathFor("nowhere"), "/dashboard");
 });
 
 test("unknown or broken addresses are refused", () => {
@@ -71,4 +71,30 @@ test("the refusal card's button and the toast's both open the page", () => {  //
   // No link from the server: no button on the card, a plain toast.
   assert.equal(refusalLinkData(null), null);
   assert.equal(refusalToastAction(null, go), null);
+});
+
+test("the Oct 29 addresses, and every old one still opens its page", () => {
+  for (const [view, path] of [["dashboard", "/dashboard"], ["results", "/dashboard/results"], ["calendar", "/dashboard/calendar"],
+    ["daily", "/jobs/daily"], ["playbook", "/jobs/clients"], ["inbox", "/communications"], ["outbox", "/communications/outbox"],
+    ["import", "/data/import"], ["export", "/data/export"], ["automations", "/automations"]]) {
+    assert.equal(pathFor(view), path);
+    assert.deepEqual(routeFromPath(path), { view }, path);
+  }
+  for (const [old, view] of [["/today", "dashboard"], ["/today/results", "results"], ["/today/calendar", "calendar"], ["/today/daily", "daily"],
+    ["/settings/playbook", "playbook"], ["/inbox", "inbox"], ["/money/outbox", "outbox"], ["/settings/help", "account"], ["/settings", "company"]]) {
+    assert.deepEqual(routeFromPath(old), { view }, old);
+  }
+  for (const [path, view] of Object.entries(PATH_ALIASES)) {
+    assert.ok(VIEW_PATHS[view], `${path} opens a page that has an address`);
+    assert.equal(Object.values(VIEW_PATHS).includes(path), false, `${path} is only an alias`);
+  }
+  assert.equal(VIEW_PATHS.help, undefined, "Help is gone");
+  assert.equal(VIEW_PATHS.outbox.startsWith("/money"), false, "the Outbox left Money");
+});
+
+test("/jobs/daily and /jobs/clients are pages, not job ids", () => {
+  assert.deepEqual(routeFromPath("/jobs/daily"), { view: "daily" });
+  assert.deepEqual(routeFromPath("/jobs/clients"), { view: "playbook" });
+  assert.deepEqual(routeFromPath("/jobs/history"), { view: "history" });
+  assert.deepEqual(routeFromPath("/jobs/job-daily"), { view: "job", jobId: "job-daily" });
 });

@@ -80,12 +80,22 @@ class UiServerTests(unittest.TestCase):
     # ----- page addresses, caching, 404 -----
 
     def test_app_pages_serve_the_app(self):
-        for path in ["/", "/today", "/today/calendar", "/jobs", "/jobs/job-abc123", "/money/pay-app/job-abc/inv-1",
-                     "/settings/helper-answers", "/inbox"]:
+        for path in ["/", "/dashboard", "/dashboard/calendar", "/jobs", "/jobs/daily", "/jobs/clients", "/jobs/job-abc123",
+                     "/communications", "/communications/outbox", "/data/import", "/data/export", "/automations",
+                     "/money/pay-app/job-abc/inv-1", "/settings/helper-answers",
+                     # the old addresses, which the page opens at their new ones
+                     "/today", "/today/calendar", "/today/daily", "/inbox", "/money/outbox", "/settings/playbook", "/settings/help"]:
             res, body = self.get(path)
             self.assertEqual(res.status, 200, path)
             self.assertIn(b'<div id="app">', body, path)
             self.assertEqual(res.getheader("Cache-Control"), "no-cache", path)
+
+    def test_every_page_address_has_its_section(self):
+        # Each first part of a page address in static/js/routes.js (old ones included) serves the app.
+        import re
+        routes = (Path(__file__).resolve().parents[1] / "static" / "js" / "routes.js").read_text(encoding="utf-8")
+        firsts = {m.group(1) for m in re.finditer(r'"/([a-z]+)[^"]*"', routes)}
+        self.assertEqual(firsts - server.APP_SECTIONS, set())
 
     def test_unknown_pages_get_an_html_404_and_api_a_json_one(self):
         for path in ["/nope", "/today/../../server.py", "/jobs/a/b/c/d/e", "/static/app.js"]:
@@ -160,7 +170,7 @@ class UiServerTests(unittest.TestCase):
 
     def test_share_from_the_phone_lands_in_the_inbox(self):  # P3: share target
         res = self.share()
-        self.assertEqual((res.status, res.getheader("Location")), (303, "/inbox"), "signed out: sent to sign in, held for this browser (R6-10)")
+        self.assertEqual((res.status, res.getheader("Location")), (303, "/communications"), "signed out: sent to sign in, held for this browser (R6-10)")
         cookie, _ = self.company("share@example.com")
         res = self.share(cookie)
         self.assertEqual(res.status, 303)

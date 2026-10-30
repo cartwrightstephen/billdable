@@ -21,9 +21,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("Today lists what needs you and opens a job by its address", async () => {
-    await page.goto(BASE + "/today");
-    await page.getByRole("heading", { name: "Today" }).waitFor();
+  await step("the Dashboard lists what needs you and opens a job by its address", async () => {
+    await page.goto(BASE + "/dashboard");
+    await page.getByRole("heading", { name: "Overview" }).waitFor();
     await page.getByRole("heading", { name: /Needs you/ }).waitFor();
     await page.locator(".action-item", { hasText: "Oak Street kitchen" }).getByRole("button", { name: "Open" }).click();
     await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
@@ -31,15 +31,15 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.match(await page.title(), /Oak Street kitchen/);
   });
 
-  await step("the job page has one main action, and Back returns to Today", async () => {
+  await step("the job page has one main action, and Back returns to the Dashboard", async () => {
     const primary = page.locator(".next-card .primary-action");
     assert.equal(await primary.count(), 1);
     // Tabs and job-page buttons carry no tooltips; each button says why on its second line (R3-04).
     assert.equal(await page.locator(".tabs .tab[title], .next-card .btn[title], .more-actions-rest .btn[title]").count(), 0);
     assert.match(await primary.innerText(), /Fix 3 things before sending/);  // paperwork and a CO: R6-01 wording
     await page.goBack();
-    await page.getByRole("heading", { name: "Today" }).waitFor();
-    assert.equal(new URL(page.url()).pathname, "/today");
+    await page.getByRole("heading", { name: "Overview" }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/dashboard");
   });
 
   await step("New job: a wrong field is marked in place and nothing typed is lost", async () => {
@@ -101,7 +101,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     p.on("pageerror", (e) => errors.push(e.message));
     await p.goto(BASE + "/");
     await p.locator("#land-demo", { hasText: "Look around a sample company" }).click();
-    await p.getByRole("heading", { name: "Today" }).waitFor();
+    await p.getByRole("heading", { name: "Overview" }).waitFor();
     assert.equal((await p.evaluate(async () => (await (await fetch("/api/auth/me")).json()).user.company_id)), "co-hartline");
     await ctx.close();
   });
@@ -119,7 +119,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       return st.jobs[0].id;
     }, `first-${Date.now()}@example.com`);
     // One new job: Today says it isn't billed yet, and its button opens the job.
-    await p.goto(BASE + "/today");
+    await p.goto(BASE + "/dashboard");
     const row = p.locator(".action-item", { hasText: "First porch" });
     await row.locator(".pill", { hasText: "Not billed yet" }).waitFor();
     await row.getByRole("button", { name: "Bill progress" }).click();
@@ -133,7 +133,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.fill("#progress-pct", "50");
     assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $6,000.00.");
     // The only open job is picked on the Daily record.
-    await p.goto(BASE + "/today/daily");
+    await p.goto(BASE + "/jobs/daily");
     await p.locator("#daily-job").waitFor();
     assert.equal(await p.inputValue("#daily-job"), jobId);
     // No company address, phone or licence yet: Before you send says so; once the address is filled
@@ -218,7 +218,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       await post("/api/import/text", { text: "Railing posts set on the Maple porch today.", source: "paste" });
       return Object.fromEntries(st.jobs.map((j) => [j.name, j.id]));
     }, `inbox-${Date.now()}@example.com`);
-    await p.goto(BASE + "/inbox");
+    await p.goto(BASE + "/communications");
     // One button for the suggested job; the job and kind selects wait behind "Other job".
     const card = p.locator(".inbox-item", { hasText: "Railing posts set" });
     await card.getByRole("button", { name: "Add to Maple porch" }).waitFor();
@@ -250,7 +250,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       const out = await (await post("/api/team/invite", { email: "m-" + email, role: "member" })).json();
       return out.invite_path.split("#invite=")[1];
     }, `owner-${Date.now()}@example.com`);
-    await p.goto(BASE + "/inbox");
+    await p.goto(BASE + "/communications");
     const automatic = p.locator("details.card", { hasText: "Bring emails and texts in automatically" });
     await automatic.locator("summary").click();
     await automatic.getByRole("button", { name: "Make a new address" }).first().waitFor();
@@ -258,7 +258,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const status = await p.evaluate(async (t) => (await fetch("/api/auth/accept-invite", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ accept_terms: true, token: t, name: "Mia Member", password: "member password 1" }) })).status, token);
     assert.equal(status, 200, "member joined");
-    await p.goto(BASE + "/inbox");
+    await p.goto(BASE + "/communications");
     await automatic.locator("summary").click();
     await automatic.getByText("An owner connects the email service and the texting number.").waitFor();
     assert.equal(await automatic.getByRole("button", { name: "Make a new address" }).count(), 0, "no Make a new address for a member");
@@ -331,14 +331,14 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.goto(BASE + "/jobs/job-inman");
       } else if (label === "Review & send") {
         // Every send passes "Before you send" (R1-06): Today's button opens the pay app there.
-        await page.goto(BASE + "/today");
+        await page.goto(BASE + "/dashboard");
         await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & send" }).click();
         await page.locator(".send-check").waitFor({ state: "visible" });
         assert.match(new URL(page.url()).pathname, /^\/money\/pay-app\//);
         await page.click('.send-check [data-action="send"]');
         await page.locator('.send-check [data-action="send"]').waitFor({ state: "detached" });
         // The demo never emails, so Today lists the pay app's email as one that didn't go out (R1-11).
-        await page.goto(BASE + "/today");
+        await page.goto(BASE + "/dashboard");
         await page.locator(".action-item", { hasText: "Inman Park bath" }).filter({ hasText: "Didn't go out" })
           .getByRole("button", { name: "Send again" }).waitFor();
         await page.goto(BASE + "/jobs/job-inman");
@@ -409,7 +409,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   });
 
   await step("Today's queue: one main button per row, and a follow-up names who it goes to first", async () => {
-    await page.goto(BASE + "/today");
+    await page.goto(BASE + "/dashboard");
     const rows = page.locator(".action-queue .action-item");
     await rows.first().waitFor();
     const n = await rows.count();
@@ -475,10 +475,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("phone: no page scrolls sideways at 375 px", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
     const wide = [];
-    for (const path of ["/today", "/today/results", "/today/calendar", "/today/daily", "/jobs", "/jobs/job-oak", "/inbox", "/money", "/money/packets",
+    for (const path of ["/dashboard", "/dashboard/results", "/dashboard/calendar", "/jobs", "/jobs/daily", "/jobs/history", "/jobs/clients", "/jobs/job-oak",
+                        "/communications", "/communications/outbox", "/data/import", "/data/export", "/money", "/money/packets",
                         "/money/change-orders", "/money/collections", "/money/payments", "/money/waivers", "/money/retainage",
-                        "/money/outbox", "/settings", "/settings/company", "/settings/team", "/settings/account", "/settings/billing",
-                        "/settings/playbook", "/settings/audit", "/settings/help"]) {
+                        "/automations", "/settings", "/settings/company", "/settings/team", "/settings/account", "/settings/billing",
+                        "/settings/audit"]) {
       await phone.goto(BASE + path);
       await phone.locator("#view h1").first().waitFor();
       const width = await phone.evaluate(() => document.documentElement.scrollWidth);
@@ -487,10 +488,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.deepEqual(wide, [], "pages wider than the screen");
   });
 
-  await step("Money has six tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03
+  await step("Money has five tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03, Oct 29 review
     await page.goto(BASE + "/money");
-    await page.locator(".tabs .tab", { hasText: "Outbox" }).waitFor();  // allInnerTexts doesn't wait for the page to draw
-    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout", "Outbox"]);
+    await page.locator(".tabs .tab", { hasText: "Closeout" }).waitFor();  // allInnerTexts doesn't wait for the page to draw
+    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout"]);
     await page.locator("table th", { hasText: "Paperwork" }).waitFor();
     await page.goto(BASE + "/money/packets");  // the old Paperwork tab's address opens Pay apps
     await page.getByRole("heading", { name: "Pay apps" }).waitFor();
@@ -529,7 +530,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator('#sov-card [data-action="sov-start"]').click();
     await p.locator("#sov-card .sov-edit").waitFor();
     await noSideways("the schedule editor");
-    await p.goto(BASE + "/inbox");
+    await p.goto(BASE + "/communications");
     // Waiting first, then the camera; the drop-and-paste sentence is for a mouse.
     assert.equal(await p.locator("#view .card").first().locator("h2").innerText(), "Waiting (0)");
     const first = p.locator('.dropzone [data-action="pick-files"]:visible').first();
@@ -542,7 +543,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
 
   await step("phone: the menu drawer opens and moves between sections", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
-    await phone.goto(BASE + "/today");
+    await phone.goto(BASE + "/dashboard");
     await phone.click("#menu-btn");
     await phone.locator(".shell.drawer-open").waitFor();
     await phone.locator('.nav button[data-section="money"]').click();

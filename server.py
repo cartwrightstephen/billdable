@@ -108,7 +108,8 @@ STATIC_FILES.update({f"/{p.relative_to(STATIC).as_posix()}": (p.relative_to(STAT
                      for p in sorted([*(STATIC / "js").glob("*.js"), *(STATIC / "js" / "views").glob("*.js")])})
 # First path segments that belong to the browser app; each one serves index.html so
 # refresh, Back and links in emails land on the same page (the app reads the address).
-APP_SECTIONS = {"today", "jobs", "inbox", "money", "settings"}
+# The first part of every page address the app opens (static/js/routes.js), old ones included.
+APP_SECTIONS = {"dashboard", "jobs", "communications", "data", "money", "automations", "settings", "today", "inbox"}
 APP_PATH_RE = re.compile(r"^/(?:[a-z]+)(?:/[A-Za-z0-9_-]{1,64}){0,3}/?$")
 _ASSETS: dict = {}
 
@@ -2164,7 +2165,7 @@ class Handler(BaseHTTPRequestHandler):
         # "same-origin"); a form on another website is "cross-site" and could fill this person's
         # Inbox, or the shared-items prompt, with its own files.
         if (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
-            self._send(303, b"", "text/plain", {"Location": "/inbox"})
+            self._send(303, b"", "text/plain", {"Location": "/communications"})
             return
         user = self._session_user()
         data = self._read_raw(MAX_INBOUND_BYTES)
@@ -2173,7 +2174,7 @@ class Handler(BaseHTTPRequestHandler):
             key = None
             if _within_limit(f"share-hold:{self._client_ip()}", SHARE_HOLDS_PER_HOUR, 3600):
                 key = importer.hold_share(parsed)
-            headers = {"Location": "/inbox"}
+            headers = {"Location": "/communications"}
             if key:
                 headers.update(self._share_cookie(key))
             self._send(303, b"", "text/plain", headers)
@@ -2181,7 +2182,7 @@ class Handler(BaseHTTPRequestHandler):
         if not read_only_reason(user["company_id"]):
             self._add_shared(user["company_id"], parsed)
         # Read-only: the Inbox page shows why; nothing is stored.
-        self._send(303, b"", "text/plain", {"Location": "/inbox"})
+        self._send(303, b"", "text/plain", {"Location": "/communications"})
 
     def _share_cookie(self, key: str | None) -> dict:
         secure = "; Secure" if self._secure_cookie() else ""

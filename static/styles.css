@@ -567,6 +567,17 @@ textarea { font: inherit; }
    the :root colour tokens at the top of this file. */
 
 /* == stream: foundation == */
+/* The menu's More (seven sections): on a computer every section is a button and More is hidden;
+   on a phone Import/Export and Automations sit under More. */
+.nav-more { display: none; }
+.nav-more summary { padding: 10px 12px; border-radius: 8px; cursor: pointer; color: var(--ink); list-style-position: inside; }
+.nav-more[open] summary { color: var(--muted); }
+.nav-more button { padding-left: 24px; }
+@media (max-width: 800px) {
+  .nav > .nav-more-item { display: none; }
+  .nav-more { display: block; }
+}
+.under-construction { border-style: dashed; }
 
 
 

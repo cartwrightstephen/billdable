@@ -1433,7 +1433,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         job = jobs.get(e.get("job_id"))
         if job:
             add(0.5, "email_failed", job, "Didn't go out", "red", f"{e.get('subject', '')} to {e.get('to', '')}: {e.get('status', '')}",
-                "Send again", "/today", email_id=e.get("id", ""), invoice_id=e.get("payapp_invoice_id") or "")
+                "Send again", "/dashboard", email_id=e.get("id", ""), invoice_id=e.get("payapp_invoice_id") or "")
     inbox = [i for i in state.get("inbox", []) if i.get("status") == "new"]
     for item in inbox:
         job = jobs.get(item.get("says_done_job_id"))
@@ -1441,7 +1441,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             source = SOURCE_LABELS.get(item.get("source", ""), item.get("source", ""))
             first = (item.get("text") or item.get("subject") or "").split("\n")[0][:120]
             add(0, "says_done", job, "Job's done?", "copper", f"{source}{' from ' + item['from'] if item.get('from') else ''}: {first}",
-                "Mark done and draft", "/today", item_id=item.get("id", ""))
+                "Mark done and draft", "/dashboard", item_id=item.get("id", ""))
     for job in jobs.values():
         payer = payers.get(job.get("payer_id"), {})
         invoices = job.get("invoices", [])
@@ -1513,7 +1513,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         if job and not item.get("says_done_job_id"):
             # item_kind: the kind the Inbox guessed, which the row shows and lets you change before filing.
             add(6, "inbox", job, "Inbox", "", (item.get("subject") or item.get("text") or "An item").split("\n")[0][:100], "Add to this job",
-                "/inbox", item_id=item.get("id", ""), note=item.get("match_reason") or "", item_kind=item.get("kind") or "note")
+                "/communications", item_id=item.get("id", ""), note=item.get("match_reason") or "", item_kind=item.get("kind") or "note")
     return sorted(out, key=lambda r: r["rank"])
 
 

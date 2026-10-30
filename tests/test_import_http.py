@@ -147,7 +147,7 @@ class ImportHttpTests(unittest.TestCase):
     def test_shared_while_signed_out_waits_for_sign_in(self):  # R6-10, D8
         photos = [(f"ticket-{n}.jpg", b"\xff\xd8fake" + bytes([n])) for n in range(3)]
         res, _ = self.share(photos)
-        self.assertEqual((res.status, res.getheader("Location")), (303, "/inbox"))
+        self.assertEqual((res.status, res.getheader("Location")), (303, "/communications"))
         held = res.getheader("Set-Cookie").split(";")[0]
         self.assertTrue(held.startswith("duracash_share=") and "HttpOnly" in res.getheader("Set-Cookie"))
         cookie, _ = self.company("held-share@example.com")

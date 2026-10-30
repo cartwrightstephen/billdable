@@ -1,5 +1,5 @@
-// Settings: Company, Team, My account, Billing, Activity log, Help and Helper answers (the
-// Duracash team's page). Customer settings is in clients.js.
+// Settings: Company, Team, My account, Billing, Activity log and Helper answers (the Duracash
+// team's page). The Client playbook is in clients.js.
 import { esc, unesc, escDeep, fmtDate, fmtDateTime, words } from "../format.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
@@ -205,6 +205,8 @@ function myAccountView() {
       : `<p class="sub"><span class="pill">Off</span> Add a code from your phone to every sign-in, so a stolen password isn't enough. Recommended for owners.</p>
         <button class="btn small" data-action="2fa-begin">Set up two-step sign-in</button>`}
     </div>`}
+    ${me.onboarding_dismissed && !isDemo ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
+    <p class="sub">Your account id: <code>${me.id}</code></p>
   `;
 }
 
@@ -274,7 +276,7 @@ function adminCompaniesHtml() {
 
 let helperReview = null;
 let helperDraft = null;   // the answer being written or edited
-const HELPER_VIEWS = ["inbox", "dashboard", "daily", "jobs", "calendar", "payapps", "packets", "cos", "collections", "payments", "waivers", "retainage", "history", "playbook", "outbox", "audit", "help"];
+const HELPER_VIEWS = ["dashboard", "results", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "payments", "waivers", "retainage", "automations", "account", "audit"];
 
 export async function loadHelperReview() {
   const body = document.getElementById("helper-admin-body");
@@ -389,42 +391,6 @@ export const views = {
       <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
       <div id="helper-admin-body">Loading…</div>
       <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial and, once Stripe is set up, its subscription. Nothing is enforced unless BILLING_ENFORCE=1.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
-  },
-  help() {
-    const glossary = [
-      ["Pay app (pay application)", "The bill for work done this period. It lists what was completed, at the contract rates, plus signed change orders, less retainage."],
-      ["Draft for their review (pencil copy)", "A draft of the pay app sent to the customer to agree quantities before the real one. It avoids \"push it to next month\"."],
-      ["Paperwork (packet)", "Everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate."],
-      ["Schedule of values", "The contract broken into line items with a value each. Each pay app bills a percentage of each line."],
-      ["Change order (CO)", "Extra or changed work. Bill it only after the customer signs it."],
-      ["Held back (retainage)", "A percentage (often 5 to 10) the customer holds back from every pay app until the job is closed out."],
-      ["Punch list", "Small fixes found at final inspection: a dead outlet, a loose railing. Finishing it is what releases retainage."],
-      ["Closeout paperwork (closeout packet)", "The documents needed to finish the job and get the money held back: punch-list signoff, final waivers, warranties."],
-      ["Lien waiver", "A document giving up lien rights for money already paid. Conditional: only if the payment clears. Unconditional: payment received. Forms are set by state law in some states."],
-      ["Pay-when-paid / pay-if-paid", "Contract terms that tie a sub's payment to the GC being paid. Pay-if-paid shifts the risk to the sub; some states limit it."],
-      ["Customer settings", "Who each customer is, where pay apps go, the paperwork they need, how long they take to pay, and why they send pay apps back."],
-    ];
-    return `
-      <h1>Help</h1>
-      <p class="sub">Hover any label with an (i) to see what it means. Tap it on a phone.</p>
-      ${me && me.onboarding_dismissed && me.company_id !== DEMO_COMPANY_ID ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
-      <div class="card">
-        <h2>First job, start to finish</h2>
-        <ol class="steps">
-          <li>Jobs → New job: job name, address, customer, who pays you and the contract amount. The rest can wait under More details.</li>
-          <li>Drop the contract, photos and tickets on the job record, or bring emails and texts in through the Inbox.</li>
-          <li>Progress pay app: enter this draw, the total done so far or a percent. Duracash shows what the pay app comes to, drafts it, holds back retainage and lists the paperwork.</li>
-          <li>Optional: Send draft for their review, so the customer agrees the numbers first.</li>
-          <li>Add each missing document: take a photo, choose a file or pick one from the job record. Review & send unlocks when the paperwork is in.</li>
-          <li>Record a payment when it arrives, with the date received, then send the waiver for that pay app.</li>
-          <li>Mark done, finish the punch list (closeout paperwork), ask for retainage, record it when paid, then Finish job.</li>
-        </ol>
-      </div>
-      <div class="card"><h2>Words you will see</h2>
-        <dl class="glossary">${glossary.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join("")}</dl>
-      </div>
-      <p class="sub">Your account id: <code>${me ? me.id : ""}</code> (the Duracash team uses it to set up access).</p>
-    `;
   },
   audit() {
     const page = listPage("audit", auditJobFilter);

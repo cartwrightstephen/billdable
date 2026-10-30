@@ -28,7 +28,7 @@ export function setCalJobFilter(value) { calJobFilter = value; }
 // Signed out: Results' figures and the calendar's job filter are that company's.
 onSessionEnd(() => { metricsData = null; calJobFilter = "all"; calSelectedDay = null; });
 
-// Hide the setup checklist, or show it again (from Help). It is kept on the person's own
+// Hide the setup checklist, or show it again (from My account). It is kept on the person's own
 // account, so a teammate's choice doesn't change it.
 async function setChecklist(show) {
   const r = await postJson("/api/onboarding/dismiss", show ? { show: true } : {});
@@ -94,7 +94,7 @@ function onboardingHtml() {
   return `<div class="card onboarding">
     <button class="help-dismiss" data-action="onb-dismiss" title="Hide this" aria-label="Hide the setup checklist">×</button>
     <h2>${termText("Get your first pay app out")}</h2>
-    <p class="sub">${done} of ${required.length} steps done. Steps marked optional don't count. You can bring this back from Help.</p>
+    <p class="sub">${done} of ${required.length} steps done. Steps marked optional don't count. You can bring this back from Settings, My account.</p>
     <ol class="onb-steps">${steps.map(st => `<li class="${st.done ? "done" : st === next ? "next" : ""}">${st.done ? "✓ " : ""}${st.optional ? "Optional: " : ""}${st.text}${st === next || st.optional || st.always ? button(st) : ""}</li>`).join("")}</ol>
   </div>`;
 }
@@ -143,7 +143,7 @@ export const views = {
     const sortHead = (key, label) => `<th data-action="sort" data-sort="${key}" aria-sort="${dashSort === key ? (dashSortDir > 0 ? "ascending" : "descending") : "none"}">${label} ${dashSort === key ? (dashSortDir > 0 ? "↑" : "↓") : ""}</th>`;
     const stage = (key, label) => `<button class="stage ${dashFilter === key ? "active" : ""}" data-action="filter" data-filter="${key}" aria-pressed="${dashFilter === key}">${label}</button>`;
     return `
-      <h1>Today</h1>
+      <h1>Overview</h1>
       ${trialBannerHtml()}
       ${onboardingHtml()}
       ${!state.jobs.length && !state.closed_jobs_total && (me.onboarding_dismissed || isDemo) ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="onb-newjob">New job</button>`) : ""}
@@ -330,7 +330,7 @@ export const views = {
       </div>
       <details class="card subscribe">
         <summary><strong>Put these dates on your phone (Google Calendar, Apple, Outlook)</strong></summary>
-        <p><a class="btn" id="cal-webcal" href="/today/calendar" hidden>Add to my phone's calendar</a></p>
+        <p><a class="btn" id="cal-webcal" href="/dashboard/calendar" hidden>Add to my phone's calendar</a></p>
         <p class="sub">On an iPhone or a Mac that button adds them in one tap. Or copy this private address. In Google Calendar on a computer: Other calendars, +, From URL, paste, Add calendar. It then shows on your phone. Calendar apps refresh subscribed calendars on their own schedule, often every few hours, so new dates are not instant.</p>
         <div class="copy-row"><code id="cal-url">Loading…</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button>${newAddressButton("calendar")}</div>
         <p class="sub">Anyone with this address can see the dates and job names. ${me && me.role === "owner" ? "Make a new address if it was shared by mistake." : "If it was shared by mistake, an owner can make a new one."}</p>

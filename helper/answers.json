@@ -306,11 +306,6 @@
       "actions": [
         {
           "type": "nav",
-          "view": "help",
-          "label": "Open Help"
-        },
-        {
-          "type": "nav",
           "view": "jobs",
           "label": "Go to Jobs"
         }
@@ -1626,16 +1621,10 @@
         "mean",
         "icon"
       ],
-      "answer": "Hover any label, column or tile: a small (i) appears next to it. Hover or tap the (i) to see what that field means. On a phone, each card has a \"What do these mean?\" list instead. Settings, Help has the full glossary.",
+      "answer": "Hover any label, column or tile: a small (i) appears next to it. Hover or tap the (i) to see what that field means. On a phone, each card has a \"What do these mean?\" list instead.",
       "handler": null,
       "needs_job": false,
-      "actions": [
-        {
-          "type": "nav",
-          "view": "help",
-          "label": "Open Help"
-        }
-      ],
+      "actions": [],
       "follow_ups": []
     },
     {

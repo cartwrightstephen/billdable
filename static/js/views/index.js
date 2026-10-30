@@ -12,21 +12,23 @@ import * as jobRecord from "./job-record.js";
 import * as clients from "./clients.js";
 import * as inbox from "./inbox.js";
 import * as communications from "./communications.js";
+import * as data from "./data.js";
 import * as payapps from "./payapps.js";
 import * as paperwork from "./paperwork.js";
 import * as changeorders from "./changeorders.js";
 import * as collections from "./collections.js";
 import * as payments from "./payments.js";
 import * as closeout from "./closeout.js";
+import * as automations from "./automations.js";
 import * as settings from "./settings.js";
 import * as auth from "./auth.js";
 
 // name -> module, in the order the menu lists them. A module may export views, actions or both.
 export const MODULES = {
   dashboard, daily, jobs, job, jobCos, jobSov, jobRecord, clients,
-  inbox, communications,
+  inbox, communications, data,
   payapps, paperwork, changeorders, collections, payments, closeout,
-  settings, auth,
+  automations, settings, auth,
 };
 
 export const views = Object.assign({}, ...Object.values(MODULES).map(m => m.views || {}));

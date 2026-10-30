@@ -24,14 +24,24 @@ import { loadHelperReview, loadAdminCompanies, companySwitch, setAuditJobFilter 
 import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml } from "./js/views/auth.js";
 import { setAiVisible, updateAiContext } from "./js/views/helper.js";
 
-// ---------- navigation: five destinations with tabs; every page has its own address ----------
+// ---------- navigation: seven destinations with tabs; every page has its own address ----------
+// On a phone the menu shows five; the two marked more go under More (styles.css).
 const SECTIONS = [
-  { key: "today", label: "Today", views: [["dashboard", "Overview"], ["results", "Results"], ["calendar", "Calendar"], ["daily", "Daily record"]] },
-  { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["history", "Job history"]] },
-  { key: "inbox", label: "Inbox", views: [["inbox", "Inbox"]] },
-  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["payments", "Payments"], ["waivers", "Closeout"], ["outbox", "Outbox"]] },
-  { key: "settings", label: "Settings", views: [["company", "Company"], ["team", "Team"], ["account", "My account"], ["billing", "Billing"], ["playbook", "Customer settings"], ["audit", "Activity log"], ["help", "Help"], ["helper-admin", "Helper answers"]] },
+  { key: "today", label: "Dashboard", views: [["dashboard", "Overview"], ["results", "Results"], ["calendar", "Calendar"]] },
+  { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["daily", "Daily record"], ["history", "Job history"], ["playbook", "Client playbook"]] },
+  { key: "communications", label: "Communications", views: [["inbox", "Inbox"], ["outbox", "Outbox"]] },
+  { key: "data", label: "Import/Export", more: true, views: [["import", "Import"], ["export", "Export"]] },
+  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["payments", "Payments"], ["waivers", "Closeout"]] },
+  { key: "automations", label: "Automations", more: true, views: [["automations", "Automations"]] },
+  { key: "settings", label: "Settings", views: [["company", "Company"], ["team", "Team"], ["account", "My account"], ["billing", "Billing"], ["audit", "Activity log"], ["helper-admin", "Helper answers"]] },
 ];
+
+// One menu button, with its count: new Inbox items on Communications, emails that didn't go out on Dashboard.
+function sectionButton(s, section, counts) {
+  const on = s.key === section.key;
+  const badge = (n, label) => n ? ` <span class="count" aria-label="${label}">${n}</span>` : "";
+  return `<button class="${on ? "active" : ""}${s.more ? " nav-more-item" : ""}" data-action="section" data-section="${s.key}" ${on ? 'aria-current="page"' : ""}>${s.label}${s.key === "communications" ? badge(counts.inbox, `${counts.inbox} new`) : ""}${s.key === "today" ? badge(counts.failed, `${counts.failed} email${counts.failed === 1 ? "" : "s"} didn't go out`) : ""}</button>`;
+}
 
 function sectionOf(view) {
   const v = DETAIL_PARENT[view] || view;
@@ -127,7 +137,10 @@ function render() {
         <div class="brand">Duracash</div>
         <div class="company"><strong>${company.name}</strong>${companyLine(company) ? `<br>${companyLine(company)}` : ""}</div>
         <nav class="nav" aria-label="Main">
-          ${SECTIONS.map(s => `<button class="${s.key === section.key ? "active" : ""}" data-action="section" data-section="${s.key}" ${s.key === section.key ? 'aria-current="page"' : ""}>${s.label}${s.key === "inbox" && inboxCount ? ` <span class="count" aria-label="${inboxCount} new">${inboxCount}</span>` : ""}${s.key === "today" && failedEmails ? ` <span class="count" aria-label="${failedEmails} email${failedEmails === 1 ? "" : "s"} didn't go out">${failedEmails}</span>` : ""}</button>`).join("")}
+          ${SECTIONS.map(s => sectionButton(s, section, { inbox: inboxCount, failed: failedEmails })).join("")}
+          <details class="nav-more"${section.more ? " open" : ""}><summary>More</summary>
+            ${SECTIONS.filter(s => s.more).map(s => sectionButton(s, section, {})).join("")}
+          </details>
         </nav>
         <div class="user-meta">
           ${me ? me.name : ""}<br>${me ? me.email : ""}
@@ -152,7 +165,7 @@ function render() {
     document.querySelector(".tabs")?.addEventListener("scroll", fadeTabs, { passive: true });
   }
   const view = document.getElementById("view");
-  view.innerHTML = verifyBannerHtml() + heldShareHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Today</button>`));
+  view.innerHTML = verifyBannerHtml() + heldShareHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`));
   if (keep && !document.activeElement?.id) {
     const again = document.getElementById(keep.id);
     if (again && again !== document.activeElement) {
