@@ -2389,7 +2389,15 @@ class Handler(BaseHTTPRequestHandler):
         body = ctx.body
         # The job's tasks go to the person it is assigned to: the one who made it, unless the
         # form picked another team member (jobs-clients, for tasks-daily's To Do).
-        assignee_id, assignee_name = _assignee(ctx, _text(body, "assignee_id") or ctx.user["id"])
+        # A picked person must be on the team; the maker, when not on it (support signed in as the
+        # company), leaves the job unassigned rather than refusing it.
+        picked = _text(body, "assignee_id")
+        try:
+            assignee_id, assignee_name = _assignee(ctx, picked or ctx.user.get("id", ""))
+        except domain.GateError:
+            if picked:
+                raise
+            assignee_id, assignee_name = "", ""
         domain.create_job(
             state, _text(body, "name"), _text(body, "customer"), _number(body, "contract_cents", "the contract amount", 0),
             address=_text(body, "address"), approver=_text(body, "approver"), ap_email=_text(body, "ap_email"),

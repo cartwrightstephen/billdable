@@ -4,7 +4,7 @@ import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, fmtDat
 import { nextStep, statusPill, CLIENT_TYPES, clientTypeLabel, openJobs, RECORD_KINDS, startDateLimits } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { moreButton } from "../dom.js";
-import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, draftValue, clearForm } from "../forms.js";
+import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, formErrors, draftValue, clearForm } from "../forms.js";
 import { checkFields, US_STATES } from "../validate.js";
 import { readJson, sendFile } from "../net.js";
 import { pasteGuess } from "../inbox.js";
@@ -240,6 +240,9 @@ function fillFromContract(form, fields) {
   }
   // The names of the boxes it filled, as the form calls them.
   const boxes = Object.keys(fields).map(k => (form !== "newjob" && k === "customer" ? "name" : k)).filter(k => k in d);
+  // A box it filled drops the note an earlier value left under it.
+  const errs = formErrors[form];
+  if (errs) for (const box of boxes) delete errs[box];
   return boxes;
 }
 
