@@ -7,7 +7,7 @@ import { installFakeDom, stubEl } from "./fakedom.mjs";
 const dom = installFakeDom();
 const core = await import("../../static/js/app-core.js");
 const page = await import("../../static/js/state.js");
-const jobPage = await import("../../static/js/views/job.js");
+const reg = await import("../../static/js/views/index.js");
 
 const company = () => ({ company: { name: "Pine" }, jobs: [{ id: "j1", name: "Oak", code: "OAK", payer_id: "", closed: false, invoices: [], payments: [], change_orders: [] }],
   payers: [], inbox: [], email_log: [], email_log_total: 0 });
@@ -22,13 +22,13 @@ test("a double tap on Record sends one payment; a tap after the answer sends ano
   dom.requests.length = 0;
   dom.answers = [async (p) => (p === "/api/jobs/j1/match-payment" ? (await gate, { status: 200, body: company() }) : undefined)];
   const record = stubEl({ dataset: { action: "match", id: "j1" } });
-  const first = core.runAction(jobPage.actions.match, record, {});
-  const second = core.runAction(jobPage.actions.match, record, {});
+  const first = core.runAction(reg.actions.match, record, {});
+  const second = core.runAction(reg.actions.match, record, {});
   release();
   await first; await second;
   const sent = () => dom.requests.filter(r => r.path === "/api/jobs/j1/match-payment").length;
   assert.equal(sent(), 1);
-  await core.runAction(jobPage.actions.match, record, {});
+  await core.runAction(reg.actions.match, record, {});
   assert.equal(sent(), 2);
   delete dom.all['[data-form-key="match"] [data-field]'];
 });

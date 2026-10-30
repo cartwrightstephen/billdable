@@ -8,7 +8,7 @@ import { installFakeDom } from "./fakedom.mjs";
 const dom = installFakeDom();
 const core = await import("../../static/js/app-core.js");
 const page = await import("../../static/js/state.js");
-const jobPage = await import("../../static/js/views/job.js");
+const reg = await import("../../static/js/views/index.js");
 
 const company = () => ({ company: { name: "Pine" }, jobs: [], payers: [], inbox: [], email_log: [], email_log_total: 0 });
 
@@ -19,8 +19,8 @@ test("a failed fetch doesn't mark the job missing; it is tried again on the next
   dom.answers = [() => "offline"];
   await core.loadJobDetail("j-old");
   assert.equal(core.missingJobs.has("j-old"), false);
-  assert.doesNotMatch(jobPage.views.job(), /Job not found/);
-  assert.match(jobPage.views.job(), /Couldn't load this job/);
+  assert.doesNotMatch(reg.views.job(), /Job not found/);
+  assert.match(reg.views.job(), /Couldn't load this job/);
   dom.answers = [() => ({ status: 503, body: { error: "Busy." } })];
   await core.loadJobDetail("j-old");
   assert.equal(core.missingJobs.has("j-old"), false);
@@ -37,5 +37,5 @@ test("a job the server says isn't there is not found", async () => {
   dom.answers = [() => ({ status: 404, body: { error: "Job not found." } })];
   await core.loadJobDetail("j-gone");
   assert.equal(core.missingJobs.has("j-gone"), true);
-  assert.match(jobPage.views.job(), /Job not found/);
+  assert.match(reg.views.job(), /Job not found/);
 });

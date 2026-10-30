@@ -7,14 +7,15 @@ const dom = installFakeDom();
 const core = await import("../../static/js/app-core.js");
 const page = await import("../../static/js/state.js");
 const today = await import("../../static/js/views/today.js");
+const reg = await import("../../static/js/views/index.js");
 
 const payer = { id: "p1", name: "Oak Builders", follow_up_days: 7, usual_approval_days: 14 };
 const job = (id, code, invoices, over = {}) => ({ id, name: `${code} job`, code, payer_id: "p1", closed: false, invoices, payments: [], money: { unbilled_completed_cents: 0 }, ...over });
 const company = (jobs) => ({ company: { name: "Pine" }, jobs, payers: [payer], inbox: [], daily_records: [], email_log: [], email_log_total: 0 });
 
 function dayCard(day) {
-  today.actions["cal-day"]({ dataset: { day } });
-  const html = today.views.calendar();
+  reg.actions["cal-day"]({ dataset: { day } });
+  const html = reg.views.calendar();
   const card = html.split('id="day-detail"')[1] || "";
   return card.split('<div class="cal-header">')[0];
 }
@@ -44,8 +45,8 @@ test("after a save, the Daily record's job stays on the job just used", async ()
   dom.bySelector["#daily-job"] = { value: "jC" };
   dom.answers = [(p) => (p === "/api/jobs/jC/daily-record" ? { status: 200, body: state } : undefined)];
   let drawn = "";
-  core.setPage({ render: () => { drawn = today.views.daily(); } });
-  await today.actions["daily-save"]();
+  core.setPage({ render: () => { drawn = reg.views.daily(); } });
+  await reg.actions["daily-save"]();
   assert.match(drawn, /<option value="jC" selected>/);
   assert.doesNotMatch(drawn, /<option value="jB" selected>/);
   core.setPage({ render() {} });

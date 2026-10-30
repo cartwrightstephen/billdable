@@ -1,27 +1,18 @@
-// Today: the overview with what needs you and the setup checklist, Results, Calendar and the
-// Daily record.
-import { esc, unesc, escDeep, money, toDate, fmtDate } from "../format.js";
-import { isBlocked, nextStep, statusPill, defaultJobId } from "../jobs.js";
+// Today: the overview with what needs you and the setup checklist, Results and Calendar. The
+// Daily record is in daily.js.
+import { unesc, escDeep, money, toDate, fmtDate } from "../format.js";
+import { isBlocked, nextStep, statusPill } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { worstKind, followUpEvent } from "../calendar.js";
 import { todayQueue, queueHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
-import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd } from "../state.js";
-import { post, toast, render, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
-import { qboStatus } from "./money.js";
+import { toast, render, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
+import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
 import { trialBannerHtml } from "./settings.js";
 
-// The Daily record starts on the job last used on this device (R2-07).
-const DAILY_JOB_KEY = "duracash-daily-job";
-function lastDailyJob() {
-  try { return localStorage.getItem(DAILY_JOB_KEY) || ""; } catch (_) { return ""; }
-}
-function rememberDailyJob(id) {
-  try { localStorage.setItem(DAILY_JOB_KEY, unesc(id)); } catch (_) { /* private window: the only open job still comes first */ }
-}
 export let metricsData = null;   // {period, data} from /api/metrics
 export let metricsPeriod = "90";
 let calYear = new Date().getFullYear();
@@ -239,30 +230,6 @@ export const views = {
       </table></div>` : ""}
     `;
   },
-  daily() {
-    const openJobs = state.jobs.filter(j => !j.closed);
-    const pick = defaultJobId(openJobs, esc(lastDailyJob()));
-    const records = state.daily_records || [];
-    return `
-      <h1>Daily record</h1>
-      <p class="sub">What happened on site today, saved on the job record. ${termText("Add it to a pay app's paperwork later.")}</p>
-      <div class="card" data-form-key="daily">
-        <h2>New record</h2>
-        ${openJobs.length ? `<div class="form-grid">
-          <div><label>Job</label><select id="daily-job"><option value="">Pick a job…</option>${openJobs.map(j => `<option value="${j.id}"${j.id === pick ? " selected" : ""}>${j.name}</option>`).join("")}</select></div>
-          <div class="span-2"><label>What happened today</label><textarea id="daily-notes" data-field="notes" rows="3" placeholder="Framing done on the east wall, 4 crew, inspector booked for Thursday">${esc(draftValue("daily", "notes"))}</textarea></div>
-        </div>
-        <button class="btn" data-action="daily-save">Save to job record</button>` : `<p class="sub">Create a job first; daily records are saved on a job.</p>`}
-      </div>
-      <div class="card">
-        <h2>Recent records</h2>
-        ${records.length ? records.slice().reverse().map(r => {
-          const j = state.jobs.find(x => x.id === r.job_id);
-          return `<div class="list-item"><strong>${fmtDate(r.at)}</strong> · ${j ? `<a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a>` : "Deleted job"}<div>${r.notes}</div></div>`;
-        }).join("") : `<p class="sub">No daily records yet.</p>`}
-      </div>
-    `;
-  },
   calendar() {
     const first = new Date(calYear, calMonth, 1);
     const startDow = first.getDay();
@@ -397,16 +364,6 @@ export const actions = {
   },
   "onb-dismiss": () => setChecklist(false),
   "onb-show": async () => { if (await setChecklist(true)) nav("dashboard"); },
-  "daily-save": async () => {
-    const notes = document.querySelector("#daily-notes")?.value || "";
-    const job = document.querySelector("#daily-job")?.value;
-    if (!job) { toast("Pick a job."); document.querySelector("#daily-job")?.focus(); return; }
-    if (!notes.trim()) { toast("Write what happened today."); document.querySelector("#daily-notes")?.focus(); return; }
-    // Remembered before saving: the save redraws the page, which picks the job last used.
-    rememberDailyJob(job);
-    const r = await post(`/api/jobs/${job}/daily-record`, { notes });
-    if (r && r.ok) { clearForm("daily"); render(); }   // saved: the box is empty for the next one
-  },
   "cal-prev": () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } calSelectedDay = null; render(); },
   "cal-next": () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } calSelectedDay = null; render(); },
   "cal-today": () => { const n = new Date(); calYear = n.getFullYear(); calMonth = n.getMonth(); calSelectedDay = null; render(); },

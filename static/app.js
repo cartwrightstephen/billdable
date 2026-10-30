@@ -1,7 +1,8 @@
 // Duracash's browser app, loaded as an ES module (no bundler). It starts the page (boot), draws
 // the shell (top bar, menu, tabs) and dispatches to the page's view, and routes every click on a
 // [data-action] to ACTIONS. The views and their actions live in static/js/views/, one module per
-// screen; what they share is in static/js/app-core.js and static/js/state.js.
+// screen, merged in static/js/views/index.js; what they share is in static/js/app-core.js and
+// static/js/state.js.
 import { esc, unesc, escDeep, companyLine } from "./js/format.js";
 import { waiverHint } from "./js/jobs.js";
 import { DETAIL_PARENT, routeFromPath } from "./js/routes.js";
@@ -11,13 +12,16 @@ import { pickPayApp } from "./js/payimport.js";
 import { termText } from "./js/terms.js";
 import { state, me, currentView, currentJobId, setMe, clearSession, setAccount, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
 import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage } from "./js/app-core.js";
-import { views as todayViews, metricsData, metricsPeriod, loadMetrics, actions as todayActions, setCalJobFilter } from "./js/views/today.js";
-import { views as jobsViews, actions as jobsActions, syncNewJobCustomer, prefillApprover, prefillRetainage, hideSameCustomer } from "./js/views/jobs.js";
-import { views as jobPageViews, sovDraft, updateSovTotals, actions as jobPageActions, updateProgressPreview, prefillPaymentAmount } from "./js/views/job.js";
-import { views as moneyViews, qboStatus, loadQboStatus, actions as moneyActions, paymentImport, setOutboxJobFilter } from "./js/views/money.js";
-import { views as inboxViews, newInboxCount, loadImportSettings, actions as inboxActions, guessPasteSource, rememberUploadJob } from "./js/views/inbox.js";
-import { views as settingsViews, loadHelperReview, loadAdminCompanies, actions as settingsActions, companySwitch, setAuditJobFilter } from "./js/views/settings.js";
-import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml, actions as authActions } from "./js/views/auth.js";
+import { views, actions as pageActions } from "./js/views/index.js";
+import { metricsData, metricsPeriod, loadMetrics, setCalJobFilter } from "./js/views/today.js";
+import { syncNewJobCustomer, prefillApprover, prefillRetainage, hideSameCustomer } from "./js/views/jobs.js";
+import { updateProgressPreview, prefillPaymentAmount } from "./js/views/job.js";
+import { sovDraft, updateSovTotals } from "./js/views/job-sov.js";
+import { qboStatus, loadQboStatus, paymentImport } from "./js/views/payments.js";
+import { setOutboxJobFilter } from "./js/views/communications.js";
+import { newInboxCount, loadImportSettings, guessPasteSource, rememberUploadJob } from "./js/views/inbox.js";
+import { loadHelperReview, loadAdminCompanies, companySwitch, setAuditJobFilter } from "./js/views/settings.js";
+import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml } from "./js/views/auth.js";
 import { setAiVisible, updateAiContext } from "./js/views/helper.js";
 
 // ---------- navigation: five destinations with tabs; every page has its own address ----------
@@ -92,9 +96,6 @@ async function boot(checkLink = true) {
   setAiVisible(!!me);
   if (linkMessage) toast(linkMessage);
 }
-
-// Each page's view, by the name its address opens (routes.js), from its module in js/views/.
-const views = { ...todayViews, ...jobsViews, ...jobPageViews, ...moneyViews, ...inboxViews, ...settingsViews };
 
 // The shell (top bar, menu, tabs) as last drawn. render() redraws only #view while the shell
 // would come out the same, so a save or a filter doesn't rebuild the menu or move the focus.
@@ -201,8 +202,8 @@ const ACTIONS = {
     catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
   },
   "toggle-form": (el) => toggleForm(el.dataset.form),
-  // each page's own, from its module in js/views/
-  ...todayActions, ...jobsActions, ...jobPageActions, ...moneyActions, ...inboxActions, ...settingsActions, ...authActions,
+  // each page's own, from its module in js/views/ (merged in views/index.js)
+  ...pageActions,
 };
 
 let listening = false;

@@ -64,7 +64,7 @@ test("the card's job count agrees with Delete customer when older finished jobs 
   assert.equal(payerJobCount({ id: "payer-1", name: "Old Co" }, jobs), 1, "an older page without job_count counts what it has");
   assert.match(deletePayerHtml(p, { owner: true, jobs }), /can't be deleted/);
   // Customer settings counts the card summary and the Merge question with the same helper.
-  const src = readFileSync(new URL("../../static/js/views/settings.js", import.meta.url), "utf8");
+  const src = readFileSync(new URL("../../static/js/views/clients.js", import.meta.url), "utf8");
   assert.match(src, /const jobsOf = \(p\) => payerJobCount\(p, state\.jobs\);/);
   assert.match(src, /payerJobCount\(from, state\.jobs\)/);
   assert.doesNotMatch(src, /state\.jobs\.filter\(j => j\.payer_id === p\.id\)/);
