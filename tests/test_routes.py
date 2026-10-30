@@ -85,6 +85,8 @@ class RouteEdgeTests(unittest.TestCase):
         self.assertTrue(all(r.access == "body" for r in team.values()))
         # Handing over and deleting are the Company Admin's, checked in their handlers (S8).
         self.assertTrue(all(r.perm == "team" for h, r in team.items() if h not in {"_p_account_delete", "_p_admin_hand_over"}))
+        # Only owners add, change or delete profiles (A4, Oct 30 review).
+        self.assertTrue(all(r.owner for h, r in team.items() if h in {"_p_profile_save", "_p_profile_delete"}))
         owner, me = self.signup("team-routes@example.com")
         res, out = self.request("POST", "/api/team/invite", {"email": "team-member@example.com", "role": "member"}, cookie=owner)
         self.assertEqual(res.status, 200, out)

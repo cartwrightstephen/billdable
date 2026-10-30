@@ -105,7 +105,7 @@ export function paymentsImportHtml() {
             <td>${row.date ? fmtDate(row.date) : "—"}</td><td>${row.customer}</td><td>${row.ref}</td><td class="num">${money(row.amount_cents)}</td>
             <td>${qboPayAppCell(row, n)}</td><td class="sub">${row.reason}</td></tr>`).join("")}
         </table></div>
-        <div class="form-inline"><button class="btn" data-action="qbo-apply">Record the ticked payments</button><button class="btn secondary" data-action="qbo-cancel">Cancel</button></div>`
+        <div class="form-inline">${can("record_payments") ? `<button class="btn" data-action="qbo-apply">Record the ticked payments</button>` : `<span class="sub">Your profile doesn't include Record payments, so someone who has it records these.</span>`}<button class="btn secondary" data-action="qbo-cancel">Cancel</button></div>`
       : `<div data-form-key="qbocsv"><textarea id="qbo-csv" data-field="csv" rows="5" placeholder="Paste the CSV here" class="full-input" aria-label="QuickBooks payments CSV">${esc(draftValue("qbocsv", "csv"))}</textarea></div>
         <div class="form-inline"><button class="btn small" data-action="qbo-read">Read payments</button><button class="btn small secondary" data-action="qbo-choose-file">Choose the file</button></div>`}
     </div>`;

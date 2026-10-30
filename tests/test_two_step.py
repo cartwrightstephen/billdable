@@ -308,12 +308,13 @@ class EmailCodeTests(ServerCase):
         self.assertEqual(res.status, 401)
         auth._CODES.clear()
 
-    def test_mail_that_fails_never_locks_anyone_out(self):
+    def test_a_code_that_cant_be_sent_gives_no_session(self):  # A1 (Oct 30 review)
         self.mail_on()
         auth.create_user("down@pine.example", PASSWORD, "Pat", "co-down")
         with mock.patch.object(server, "send_system_email", return_value="SMTPServerDisconnected: down"):
             res, data = self.raw_login({"email": "down@pine.example", "password": PASSWORD})
-        self.assertEqual(res.status, 200, data)
+        self.assertEqual(res.status, 503, data)
+        self.assertIsNone(res.getheader("Set-Cookie"), "the password alone doesn't sign in where mail is set up")
         auth._CODES.clear()
 
     def test_the_demo_keeps_passwordless_entry(self):

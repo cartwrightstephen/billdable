@@ -2,7 +2,8 @@
 
 A profile is a name and a set of permissions. Two are built in: Owner, which holds every
 permission and can't be changed, and Member, whose permissions an owner can change (it starts
-with what members could always do). Anyone holding "team" can add named profiles of their own.
+with what members could always do). Only the Owner profile adds, changes or deletes profiles
+(A4, server.py's routes are owner=True), so someone holding "team" can't give themselves more.
 The company keeps them in state["company"]["profiles"]; each user's profile_id is on their
 account (auth.py), and the server checks has_perm() before every gated route and job action
 (server.py), so hiding a button on the page is never the only gate.

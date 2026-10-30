@@ -405,15 +405,18 @@ def deleted_companies() -> set:
         return set()
 
 
-def send_system_email(to: str, subject: str, body: str, company_id: str = "", rid: str = "") -> str:
+def send_system_email(to: str, subject: str, body: str, company_id: str = "", rid: str = "",
+                      shared_limit: bool = True) -> str:
     """An email from Duracash itself (reset, verification, invite, monthly summary). Returns "sent"
     or the reason it wasn't. With a company_id it counts against that company's daily limit like
-    any other email; a reset link, which anyone can ask for, is sent without one."""
+    any other email; a reset link, which anyone can ask for, is sent without one.
+    shared_limit=False: a sign-in or password-change code, held to its own limit per person
+    (auth.issue_code) instead, so a flood of reset requests can't stop people signing in (A1)."""
     if not mailer.configured():
         return "email delivery is not set up on this server"
     # However many companies or reset requests there are, the server sends at most 300 of
     # these an hour, so a flood of sign-ups or reset requests can't burn the mail account (R6-05).
-    if not _within_limit("system-email", 300, 3600):
+    if shared_limit and not _within_limit("system-email", 300, 3600):
         log_json("warn", msg="system email held: hourly limit", rid=rid)
         return "the server's hourly email limit is reached; try again in an hour"
     cfg = mailer.settings()
@@ -1449,7 +1452,9 @@ class Handler(BaseHTTPRequestHandler):
     def _p_login(self, m) -> None:
         body = self._read_json()
         try:
-            user = auth.verify_login(_text(body, "email"), _text(body, "password"), ip=self._client_ip())
+            # A right password doesn't clear the count of wrong tries until every step has
+            # passed (A2): a known password can't be used to keep guessing emailed codes.
+            user = auth.verify_login(_text(body, "email"), _text(body, "password"), ip=self._client_ip(), clear_failures=False)
         except auth.RateLimited as exc:
             self._json(429, {"error": str(exc)})
             return
@@ -1476,11 +1481,14 @@ class Handler(BaseHTTPRequestHandler):
             code = _text(body, "code", limit=40).strip()
             if not code:
                 sent = self._send_login_code(user)
-                if sent is not None:
-                    self._json(401, {"error": sent, "needs_code": True, "method": "email", "email": user["email"]})
+                if sent is None:
+                    # The code couldn't be sent (A1): no session from the password alone. Only
+                    # where mail is set up; without it, _email_code_due is False and the
+                    # password signs in, with the authenticator set-up asked for after.
+                    self._json(503, {"error": "We couldn't send your sign-in code. Try again shortly."})
                     return
-                # The code couldn't be sent (the mail server is down): never locked out; the
-                # password signs in, and the server log says why no code was asked.
+                self._json(401, {"error": sent, "needs_code": True, "method": "email", "email": user["email"]})
+                return
             else:
                 try:
                     ok = auth.login_code_check(user["id"], code, self._client_ip())
@@ -1494,6 +1502,7 @@ class Handler(BaseHTTPRequestHandler):
                 user = auth.user_by_email(user["email"]) or user   # the code confirmed the email
                 if body.get("remember") is not False:
                     cookies.append(self._device_cookie(auth.remember_device(user["id"])))
+        auth.login_succeeded(user["email"])
         session = self._set_cookie(auth.create_session(user))["Set-Cookie"]
         self._json(200, {"user": self._me_user(user)}, {"Set-Cookie": [session, *cookies]})
 
@@ -1506,14 +1515,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_login_code(self, user: dict) -> str | None:
         """Email a sign-in code. Returns what the page shows while it waits for it, or None when
-        no code could be sent (then the password alone signs in)."""
+        no code could be sent (then there is no sign-in, A1)."""
         code = auth.issue_code(user["id"], "login")
         if not code:
             return f"Five codes were sent to {user['email']} in the last hour. Enter the newest one."
         subject, text = mailer.login_code_email(user["name"], code)
-        status = self._system_email(user["email"], subject, text)
+        status = self._system_email(user["email"], subject, text, shared_limit=False)
         if status != "sent":
-            log_json("warn", msg="sign-in code not sent; signed in with the password only", reason=str(status)[:200], rid=self._rid)
+            log_json("warn", msg="sign-in code not sent; sign-in refused", reason=str(status)[:200], rid=self._rid)
             return None
         return f"We emailed a 6-digit code to {user['email']}. Enter it to sign in. It works for 10 minutes."
 
@@ -1736,7 +1745,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(429, {"error": "Five codes were sent in the last hour. Use the newest one, or try again later."})
             return
         subject, text = mailer.password_change_email(user["name"], code)
-        status = self._system_email(user["email"], subject, text)
+        status = self._system_email(user["email"], subject, text, shared_limit=False)
         if status != "sent":
             self._json(409, {"error": f"The code couldn't be sent: {status}."})
             return
@@ -1897,8 +1906,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ----- accounts and team -----
 
-    def _system_email(self, to: str, subject: str, body: str, company_id: str = "") -> str:
-        return send_system_email(to, subject, body, company_id, self._rid)
+    def _system_email(self, to: str, subject: str, body: str, company_id: str = "", shared_limit: bool = True) -> str:
+        return send_system_email(to, subject, body, company_id, self._rid, shared_limit=shared_limit)
 
     def _send_verification(self, user: dict) -> str:
         url = app_url()
@@ -2630,7 +2639,8 @@ class Handler(BaseHTTPRequestHandler):
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             storage.write_json(COMPANIES / "snapshots" / f"{company_id}-before-reset-{stamp}.json", state)
         # A reset doesn't restart the trial or drop the Stripe subscription (billing.record).
-        kept = {k: v for k, v in state.get("company", {}).items() if k in {"trial", "billing"}}
+        # Nor drop the permission profiles: the team's accounts still point at them (A5).
+        kept = {k: v for k, v in state.get("company", {}).items() if k in {"trial", "billing", "profiles"}}
         t = trial.status(state)
         if t.get("state") == "ended" and t.get("reason") == "paid":
             # Worked out from the pay apps the reset deletes: write down how it ended.
@@ -2779,9 +2789,11 @@ ROUTES = [
     Route("POST", r"/api/auth/ping", "_p_ping", "body"),
     Route("POST", r"/api/auth/password/code", "_p_password_code", "body"),
     Route("POST", r"/api/me/appearance", "_p_appearance", "body"),
-    Route("POST", r"/api/team/profiles", "_p_profile_save", "body", perm="team"),
-    Route("POST", r"/api/team/profiles/([^/]+)", "_p_profile_save", "body", perm="team"),
-    Route("POST", r"/api/team/profiles/([^/]+)/delete", "_p_profile_delete", "body", perm="team"),
+    # Only the Owner profile adds, changes or deletes profiles (A4): someone who manages the
+    # team can't give their own profile everything.
+    Route("POST", r"/api/team/profiles", "_p_profile_save", "body", perm="team", owner=True),
+    Route("POST", r"/api/team/profiles/([^/]+)", "_p_profile_save", "body", perm="team", owner=True),
+    Route("POST", r"/api/team/profiles/([^/]+)/delete", "_p_profile_delete", "body", perm="team", owner=True),
     Route("POST", r"/api/team/admin", "_p_admin_hand_over", "body"),
 
     # pages and feeds
@@ -2866,7 +2878,7 @@ ROUTES = [
     Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", perm="company"),
-    Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate"),
+    Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate", perm="record_payments"),
     Route("POST", r"/api/import/text", "_m_import_text", "mutate"),
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_m_inbox", "mutate"),
     Route("POST", r"/api/company", "_m_company_update", "mutate", perm="company"),
