@@ -155,9 +155,11 @@ function uploadJobOptions() {
   return `<option value="">Not sure, file later</option>` + openJobs.map(j => `<option value="${j.id}"${pick === j.id ? " selected" : ""}>${j.name} (${j.code})</option>`).join("");
 }
 
-// The job for files added on Import: suggested on the Inbox card, never filed by itself.
+// The job for files added under "Which job?" (on Import): suggested on the Inbox card, never
+// filed by itself. Read from the box itself whenever it is on the page, so it doesn't depend on
+// which view name was set when the page last drew.
 function inboxUploadJob() {
-  return currentView === "import" ? document.getElementById("upload-job")?.value || "" : "";
+  return document.getElementById("upload-job")?.value || "";
 }
 
 // The file box on Import: Which job?, Take a photo and Choose files, and one line of what it takes.
