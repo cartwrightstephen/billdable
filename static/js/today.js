@@ -10,7 +10,6 @@
 
 import { termText } from "./terms.js";
 import { RECORD_KINDS } from "./jobs.js";
-import { fmtDate } from "./format.js";
 import { pathFor } from "./routes.js";
 import { BALL_WORDS } from "./tasks.js";
 
@@ -74,6 +73,14 @@ export function assignSelect(i, people) {
     + `</select>`;
 }
 
+// When an item is due, as a date box beside its assignee: changing it saves (a row the jobs make
+// through /api/tasks/assign as its due_override; a task by its id). Cleared, a row goes back to
+// its own date and a task has none.
+export function dueInput(i) {
+  const label = `Due date: ${i.source === "row" ? i.row.label : i.title}${i.job ? `, ${i.job}` : ""}`;
+  return `<input type="date" class="todo-due-date" data-todo-due="${i.source}" data-key="${i.key}" value="${i.due || ""}" aria-label="${label}">`;
+}
+
 // The To Do card's table (T3): Activity, Job, Ball in court, Assignee, Due and the buttons, three
 // rows until "and N more" is tapped (expanded; reset when the page changes). total is how many
 // items there are before the period and Mine filters: with none at all, "Nothing is waiting on
@@ -96,7 +103,7 @@ export function todoHtml(items, { expanded = false, anySent = false, total = ite
             <td>${i.job_id ? `<a href="${pathFor("job", i.job_id)}" data-action="open-job" data-id="${i.job_id}">${i.job}</a>` : ""}</td>
             <td><span class="pill ball-${i.ball}">${BALL_WORDS[i.ball] || "Us"}</span></td>
             <td>${assignSelect(i, people)}</td>
-            <td class="todo-due">${i.due ? fmtDate(i.due) : "No date"}${late ? ` <span class="pill red">Overdue</span>` : ""}</td>
+            <td class="todo-due">${dueInput(i)}${late ? ` <span class="pill red">Overdue</span>` : ""}</td>
             <td><div class="action-buttons">${itemButtons(i)}</div></td>
           </tr>`;
           }).join("")}

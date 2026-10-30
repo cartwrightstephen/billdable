@@ -132,10 +132,22 @@ async function assignFrom(sel) {
   if (r && r.ok) toast(value ? "Assigned." : "Unassigned.");
 }
 
+// Saves a due date set by hand in a To Do row (T3): a row the jobs make by its key (blank puts its
+// own date back), a task by its id.
+async function dueFrom(input) {
+  const due = input.value;
+  const key = input.dataset.key;
+  const r = input.dataset.todoDue === "task"
+    ? await post(`/api/tasks/${encodeURIComponent(key)}`, { due }, { quiet: true, anchor: input })
+    : await post("/api/tasks/assign", { key, due }, { quiet: true, anchor: input });
+  if (r && r.ok) toast(due ? `Due ${fmtDate(due)}.` : "Due date cleared.");
+}
+
 document.addEventListener("change", (e) => {
   const el = e.target;
   if (!el || !el.dataset) return;
   if (el.dataset.todoAssign) { assignFrom(el); return; }
+  if (el.dataset.todoDue) { dueFrom(el); return; }
   const which = el.dataset.periodFrom || el.dataset.periodTo;
   if (!which) return;
   const range = which === "todo" ? todoRange : tasksRange;

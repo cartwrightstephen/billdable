@@ -41,7 +41,7 @@ test("the To Do table has Activity, Job, Ball in court, Assignee and Due columns
   assert.match(html, /<span class="pill ball-client">Client<\/span>/);
   assert.match(html, /<option value="u2" selected>Mo<\/option>/);
   assert.match(html, /<tr class="action-item overdue">/);
-  assert.match(html, /Oct 20, 2026 <span class="pill red">Overdue<\/span>/);
+  assert.match(html, /<input type="date" class="todo-due-date" data-todo-due="row" data-key="[^"]*" value="2026-10-20" aria-label="Due date: [^"]*"> <span class="pill red">Overdue<\/span>/);
 });
 
 test("a task added by hand is ticked off with Done and opens its job", () => {  // G5
@@ -51,7 +51,7 @@ test("a task added by hand is ticked off with Done and opens its job", () => {  
   assert.match(html, /<strong>Order tile<\/strong>/);
   assert.match(html, /data-action="task-done" data-id="task-1">Done</);
   assert.match(html, /data-action="open-job" data-id="j1">Open</);
-  assert.match(html, /<td class="todo-due">No date<\/td>/);
+  assert.match(html, /<td class="todo-due"><input type="date" class="todo-due-date" data-todo-due="task" data-key="task-1" value="" aria-label="Due date: Order tile, Porch rebuild"><\/td>/);
   const select = assignSelect(items[0], [{ id: "u1", name: "Pat" }]);
   assert.match(select, /data-todo-assign="task" data-key="task-1" aria-label="Assignee: Order tile, Porch rebuild"><option value="">Unassigned<\/option><option value="u1">Pat<\/option>/);
 });

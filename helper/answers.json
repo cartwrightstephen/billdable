@@ -1598,7 +1598,7 @@
         "ball in court",
         "to do"
       ],
-      "answer": "On Dashboard, Overview, the To Do list shows each item's Ball in court (Us when someone here has to act, Client when you are waiting on the client), its Assignee and its Due date. Pick a name in an item's Assignee box to assign it; anyone on the team can. Tap Add task for something of your own: what needs doing, and optionally the job, who, when and whose court. Tap Done when it is finished. Each person's morning email lists what is assigned to them, and an owner's also lists what nobody has. When someone leaves the team, their open items go to the owner who removed them.",
+      "answer": "On Dashboard, Overview, the To Do list shows each item's Ball in court (Us when someone here has to act, Client when you are waiting on the client), its Assignee and its Due date. Pick a name in an item's Assignee box to assign it; anyone on the team can. Change the date in its Due box to set when it is due; clear it to go back to the item's own date. Tap Add task for something of your own: what needs doing, and optionally the job, who, when and whose court. Tap Done when it is finished. Each person's morning email lists what is assigned to them, and an owner's also lists what nobody has. When someone leaves the team, their open items go to the owner who removed them.",
       "handler": null,
       "needs_job": false,
       "actions": [
