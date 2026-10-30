@@ -1205,7 +1205,8 @@ def _legacy_waiver_pending(job: dict[str, Any]) -> bool:
 def waiver_stages(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, Any]:
     """Both waiver stages of a pay app (M17), for its page and Closeout: the conditional one that
     goes with it and the unconditional one after payment, each {kind, status}. Status is Needed,
-    Attached, Sent, Not needed or (unconditional, before payment) After payment."""
+    Attached, Sent, Not needed or (unconditional, before payment) After payment; a conditional
+    item filled by an unconditional waiver adds ", but unconditional" (M14)."""
     cond_item = next((item for item in invoice.get("packet") or [] if str(item.get("waiver_kind", "")).startswith("conditional")), None)
     sent_out = invoice.get("status") not in DRAFT_STATUSES
     if cond_item is None:
@@ -1213,7 +1214,11 @@ def waiver_stages(state: dict[str, Any], job: dict[str, Any], invoice: dict[str,
     elif not cond_item.get("required") and not cond_item.get("present"):
         cond = {"kind": cond_item["waiver_kind"], "status": "Not needed"}
     elif cond_item.get("present"):
-        cond = {"kind": invoice.get("conditional_waiver_kind") or cond_item["waiver_kind"], "status": "Sent" if sent_out else "Attached"}
+        records = {r["id"]: r for r in job.get("records", [])}
+        wrong = any(record_waiver_kind(records.get(a.get("record_id")) or {}).startswith("unconditional")
+                    for a in cond_item.get("attachments", []))
+        cond = {"kind": invoice.get("conditional_waiver_kind") or cond_item["waiver_kind"],
+                "status": ("Sent" if sent_out else "Attached") + (", but unconditional" if wrong else "")}
     else:
         cond = {"kind": cond_item["waiver_kind"], "status": "Needed"}
     if invoice.get("waiver_sent"):

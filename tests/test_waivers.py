@@ -46,6 +46,9 @@ class UnconditionalWithPayAppTests(unittest.TestCase):  # M14
         self.assertEqual(self.inv["status"], "awaiting_approval")
         self.assertFalse(self.state["email_log"])
 
+    def test_its_stage_says_the_attached_waiver_is_unconditional(self):
+        self.assertEqual(domain.waiver_stages(self.state, self.job, self.inv)["conditional"]["status"], "Attached, but unconditional")
+
     def test_an_owner_override_is_kept_and_audited(self):
         domain.approve_and_send(self.state, self.job["id"], "Owner", unconditional_override="Client already paid by wire")
         self.assertEqual(self.inv["status"], "sent")

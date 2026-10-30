@@ -209,6 +209,13 @@ class AttachmentTests(unittest.TestCase):  # M4
         with self.assertRaises(domain.GateError) as raised:
             self.change("include_file", self.photo["file_ids"][0])
         self.assertIn("has gone to the client", str(raised.exception))
+        # The client's page lists the same files: the left-out one is not there, the receipt is.
+        import payer_page
+        page = payer_page.render(self.state, self.job, self.inv, "/p/x")
+        self.assertNotIn("Kitchen photos 1.pdf", page)
+        self.assertIn("Kitchen photos 2.pdf", page)
+        self.assertIn("Also sent", page)
+        self.assertIn("Lumber receipt 1.pdf", page)
 
     def test_leaving_out_the_last_file_of_an_item_makes_it_missing(self):
         photos = next(p for p in self.inv["packet"] if p["kind"] != "waiver" and "photo" in p["label"].lower())
