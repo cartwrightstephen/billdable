@@ -66,6 +66,35 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.ok(!(await page.evaluate(() => document.body.classList.contains("printing"))));
   });
 
+  await step("Print from dark mode is black on white (D7)", async () => {
+    const dark = await signedInPage({ width: 1280, height: 900 });
+    await dark.emulateMedia({ colorScheme: "dark" });
+    await dark.goto(BASE + "/communications/outbox");
+    await dark.locator("#view tr").nth(1).waitFor();
+    await dark.evaluate(() => { window.print = () => {}; });
+    await dark.locator("#view tr").nth(1).getByRole("button", { name: "Print" }).click();
+    await dark.emulateMedia({ media: "print", colorScheme: "dark" });
+    const [ink, sub, paper] = await dark.evaluate(() => [getComputedStyle(document.querySelector(".print-sheet")).color,
+      getComputedStyle(document.querySelector(".print-sheet .print-body") || document.querySelector(".print-sheet")).color,
+      getComputedStyle(document.body).backgroundColor]);
+    assert.deepEqual([ink, sub, paper], ["rgb(0, 0, 0)", "rgb(0, 0, 0)", "rgb(255, 255, 255)"]);
+    await dark.context().close();
+  });
+
+  await step("Everything received on a phone: each filter's label stays with its box (D5)", async () => {
+    const phone = await signedInPage({ width: 375, height: 812 });
+    await phone.goto(BASE + "/communications");
+    await phone.locator("#received-sort").waitFor();
+    for (const name of ["source", "status", "job", "sort"]) {
+      const label = await phone.locator(`label[for="received-${name}"]`).boundingBox();
+      const box = await phone.locator(`#received-${name}`).boundingBox();
+      const mid = label.y + label.height / 2;
+      assert.ok(mid > box.y && mid < box.y + box.height, `${name}: the label sits on its box's row`);
+      assert.ok(label.x < box.x && box.x + box.width <= 375, `${name}: label, then box, inside the screen`);
+    }
+    await phone.context().close();
+  });
+
   await step("Export: an owner downloads everything; a member sees the pay apps and the calendar but no Everything button", async () => {  // I1
     const { ctx, p } = await newCompany("export");
     await p.goto(BASE + "/data/export");

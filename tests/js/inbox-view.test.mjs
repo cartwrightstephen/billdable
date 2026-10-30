@@ -109,7 +109,7 @@ test("Print puts one message on a sheet and marks the page printing", async () =
 
 test("Import has the file box, the paste box, the payments import and the schedule picker; Export hides Everything from a member", () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
-  core.setState({ ...company(), jobs: [{ id: "j1", name: "Oak", code: "OAK", closed: false, invoices: [], payments: [] }] });
+  core.setState({ ...company(), jobs: [{ id: "j1", name: "Oak", code: "OAK", closed: false, invoices: [], payments: [], sov_view: { present: false, editable: true } }] });
   dom.answers = [];
   const imp = data.views.import();
   for (const part of ['class="dropzone"', 'id="paste-text"', 'id="qbo-csv"', 'id="sov-import-job"', 'data-action="import-sov"'])
@@ -128,4 +128,17 @@ test("the setup step Import payments opens Import at the payments box", async ()
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../../static/js/views/today.js", import.meta.url), "utf8");
   assert.match(src, /label: "Import payments", attrs: `data-action="onb-go" data-view="import" data-focus="#qbo-csv"`/);
+});
+
+test("Import's Schedule of values lists only jobs whose schedule can still be set (D4)", () => {
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  const j = (id, editable) => ({ id, name: id, code: id.toUpperCase(), closed: false, invoices: [], payments: [], sov_view: { present: false, editable } });
+  core.setState({ ...company(), jobs: [j("oak", true), j("elm", false)] });
+  const imp = data.views.import().split('id="sov-import"')[1];
+  assert.match(imp, /<option value="oak">/);
+  assert.doesNotMatch(imp, /<option value="elm">/);
+  core.setState({ ...company(), jobs: [j("elm", false)] });
+  const none = data.views.import();
+  assert.doesNotMatch(none, /id="sov-import-job"/);
+  assert.match(none, /Every open job has a pay app out or its work done/);
 });
