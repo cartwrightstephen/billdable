@@ -225,7 +225,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
                     actions.append(_follow_up_btn(r))
                 else:
                     actions.append({"type": "path", "path": r["path"], "label": label})
-        return "Here is what needs you, most urgent first:\n" + "\n".join(lines), actions[:6]
+        return "Here is your To Do, most urgent first:\n" + "\n".join(lines), actions[:6]
     if name == "money":
         t = snap["totals"]
         billed_month = sum(i["amount_cents"] for j in snap["jobs"] for i in j["invoices"]
@@ -318,7 +318,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
     if name == "inbox":
         new = [i for i in snap.get("inbox", []) if i["status"] == "new"]
         if not new:
-            return "The Inbox is empty. Drop files on any page, paste an email or notes in the Inbox, or forward email and texts once set up.", [{"type": "nav", "view": "inbox", "label": "Open Inbox"}]
+            return "The Inbox is empty. Drop files on any page, paste an email or notes on Import, or forward email and texts once set up.", [{"type": "nav", "view": "inbox", "label": "Open Inbox"}]
         suggested = len([i for i in new if i.get("suggested_job_id")])
         return f"{len(new)} item(s) are waiting; {suggested} already have a suggested job.", [{"type": "nav", "view": "inbox", "label": "Open Inbox"}]
     if name == "pending_cos":

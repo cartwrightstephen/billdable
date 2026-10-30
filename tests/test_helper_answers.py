@@ -139,5 +139,46 @@ class HelperAnswersWordingTests(unittest.TestCase):
                 wrong.append((q, top["id"]))
         self.assertEqual(wrong, [])
 
+
+# Questions the Oct 30 review asked that went to the wrong answer or none (D3): each opens its own.
+ROUTES_D3 = {
+    "how do I add a client": "add-client", "add client": "add-client", "new client": "add-client", "add a new client": "add-client",
+    "how do I print": "print", "print a message": "print", "print an email": "print", "print the outbox": "print",
+    "print something I received": "print", "print the pay app": "what-payapp",
+    "everything received": "everything-received", "where is everything received": "everything-received",
+    "what came in": "everything-received",
+    "automations": "automations", "what are automations": "automations",
+    "where did my email go": "email-sent", "where is the daily record": "daily-record", "how do I add a new job": "create-job",
+}
+
+
+class HelperRoutingTests(unittest.TestCase):
+    def setUp(self):
+        import sys
+        sys.path.insert(0, str(ROOT))
+        import helper
+        self.helper = helper
+        self.answers = json.loads(ANSWERS.read_text(encoding="utf-8"))["answers"]
+
+    def test_review_questions_open_their_answer(self):
+        wrong = {}
+        for q, want in ROUTES_D3.items():
+            score, top = self.helper.rank(q, self.answers)[0]
+            got = top["id"] if score >= self.helper.ANSWER_AT else None
+            if got != want:
+                wrong[q] = (got, want, round(score, 2))
+        self.assertEqual(wrong, {})
+
+    def test_answers_name_where_things_are_now(self):
+        by_id = {e["id"]: e for e in self.answers}
+        # Settings, Company has no How you bill since S4; pasted notes go in on Import.
+        self.assertNotIn("How you bill", by_id["what-payapp"]["answer"])
+        self.assertNotIn("in the Inbox as notes", by_id["daily-record"]["answer"])
+        self.assertIn("Import", by_id["daily-record"]["answer"])
+        src = (ROOT / "helper.py").read_text(encoding="utf-8")
+        self.assertNotIn("paste an email or notes in the Inbox", src)
+        self.assertNotIn("what needs you", src)
+
+
 if __name__ == "__main__":
     unittest.main()
