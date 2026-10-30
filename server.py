@@ -2440,6 +2440,22 @@ class Route:
 
 TOKEN_LINK = r"([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})"
 ROUTES = [
+    # One block per work stream for its new routes (the first match wins, so these come before
+    # the catch-alls below, like /api/jobs/<id>/<action>). Each stream adds lines to its own block.
+    # == stream: foundation ==
+
+    # == stream: comms-data ==
+
+    # == stream: tasks-daily ==
+
+    # == stream: jobs-clients ==
+
+    # == stream: payapps-cos ==
+
+    # == stream: paperwork-waivers-retainage ==
+
+    # == stream: settings-auth ==
+
     # pages and feeds
     Route("GET", r"/healthz", "_g_healthz"),
     Route("GET", r"/(terms|privacy)", "_g_legal"),

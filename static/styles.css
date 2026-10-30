@@ -537,3 +537,34 @@ textarea { font: inherit; }
 .same-customer { margin: 0; }
 .same-customer[hidden] { display: none; }
 .delete-payer { margin-top: 12px; }
+
+/* One block per work stream from here on: each stream adds its rules to its own block, using
+   the :root colour tokens at the top of this file. */
+
+/* == stream: foundation == */
+
+
+
+/* == stream: comms-data == */
+
+
+
+/* == stream: tasks-daily == */
+
+
+
+/* == stream: jobs-clients == */
+
+
+
+/* == stream: payapps-cos == */
+
+
+
+/* == stream: paperwork-waivers-retainage == */
+
+
+
+/* == stream: settings-auth == */
+
+

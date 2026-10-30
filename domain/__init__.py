@@ -3293,3 +3293,9 @@ def _waiver_file_ids(state: dict[str, Any], job: dict[str, Any]) -> list[str]:
             if fresh:
                 return fresh
     return []
+
+
+# Parts of the domain kept in their own modules (each lists what it exports in __all__).
+from .validate import *  # noqa: E402,F401,F403
+from .tasks import *  # noqa: E402,F401,F403
+from .daily import *  # noqa: E402,F401,F403
