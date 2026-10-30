@@ -71,3 +71,16 @@ test("an email sent with a copy address refused says so, with no Send again", ()
   assert.match(emailOutcome([e]), /Emailed ap@gc\.com\. Not delivered to the copy address pm@gc\.con \(550\)\./);
   assert.equal(emailOutcome([{ to: "ap@gc.com", status: "sent" }]), "Emailed ap@gc.com.");
 });
+
+// outbox.retry_email refuses a stuck email that no longer applies (domain.email_moot), so the
+// row says why instead of offering a Send again that would always be refused.
+test("a stuck email that no longer needs to go out says why, with no Send again", () => {
+  const at = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const stuck = { id: "eml-2", to: "ap@gc.com", status: "sending", sending_at: at, moot: "PA-03 is paid." };
+  const html = emailStatusHtml(stuck);
+  assert.match(html, /No need to send it now: PA-03 is paid\./);
+  assert.doesNotMatch(html, /Send again/);
+  assert.match(emailStatusHtml({ ...stuck, moot: undefined }), /Send again/, "a stuck one that still matters can go again");
+  const inFlight = { ...stuck, sending_at: new Date().toISOString() };
+  assert.doesNotMatch(emailStatusHtml(inFlight), /No need to send it now|Send again/, "one still going out shows only its status");
+});

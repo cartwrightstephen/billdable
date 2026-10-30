@@ -302,6 +302,12 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         for j in rows:
             missing = j.get("closeout_missing") or []
             state_txt = "job still in progress" if j.get("work_status") != "complete" else (f"waiting on {', '.join(missing)}" if missing else "ready to ask for release")
+            last = j.get("last_retainage_chase_at")
+            if state_txt == "ready to ask for release" and last:
+                # The wait domain.chase_retainage enforces: the customer's days between contacts.
+                due = domain._aware(last) + timedelta(days=domain._int_or((j.get("payer") or {}).get("follow_up_days"), 7))
+                if datetime.now(timezone.utc) < due:
+                    state_txt = f"asked {last[:10]}, ask again from {due.date().isoformat()}"
             lines.append(f"- {j['name']}: {domain.money(j['money']['retainage_open_cents'])}, {state_txt}")
         return "Retainage held:\n" + "\n".join(lines), [{"type": "nav", "view": "retainage", "label": "Open Closeout"}]
     if name == "waivers_due":

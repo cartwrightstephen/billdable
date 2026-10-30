@@ -169,5 +169,19 @@ class HelperTests(unittest.TestCase):
         cents = lambda text: round(float(text.split("Billed this month: $")[1].split()[0].replace(",", "")) * 100)
         self.assertEqual(cents(counted) - cents(pulled), inv["amount_cents"])
 
+    def test_retainage_list_waits_like_chase_retainage(self):
+        # domain.chase_retainage refuses until the customer's days between contacts have passed.
+        now = domain.datetime.now(domain.timezone.utc)
+        job = {"id": "j1", "name": "Elm", "work_status": "complete", "closeout_missing": [],
+               "money": {"retainage_open_cents": 500000}, "payer": {"name": "ABC", "follow_up_days": 7},
+               "last_retainage_chase_at": (now - domain.timedelta(days=1)).isoformat()}
+        snap = {"company": {"name": "Pine"}, "jobs": [job]}
+        text = helper.handle("retainage_list", snap, None)[0]
+        self.assertNotIn("ready to ask for release", text)
+        due = (now + domain.timedelta(days=6)).date().isoformat()
+        self.assertIn(f"asked {(now - domain.timedelta(days=1)).date().isoformat()}, ask again from {due}", text)
+        job["last_retainage_chase_at"] = (now - domain.timedelta(days=8)).isoformat()
+        self.assertIn("ready to ask for release", helper.handle("retainage_list", snap, None)[0])
+
 if __name__ == "__main__":
     unittest.main()
