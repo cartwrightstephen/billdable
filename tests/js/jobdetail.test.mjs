@@ -83,8 +83,10 @@ test("a finished job is its job file: Download job file, Add more work, no worki
   assert.match(html, /href="\/api\/jobs\/j-1\/payapp\/i1\.pdf"/);
   assert.doesNotMatch(html, /Reopen/);
   assert.doesNotMatch(html, /Edit job|next-card|Take a photo/);
-  page.setMe({ name: "Sam", company_id: "co-p", role: "member" });
-  assert.doesNotMatch(reg.views.job(), /Add more work/, "owners only, as the server");
+  page.setMe({ name: "Sam", company_id: "co-p", role: "member", perms: ["record_payments"] });
+  assert.doesNotMatch(reg.views.job(), /Add more work/, "only with Finish and reopen jobs, as the server");
+  page.setMe({ name: "Lee", company_id: "co-p", role: "member", perms: ["close_jobs"] });
+  assert.match(reg.views.job(), /Add more work/, "a member whose profile may finish and reopen jobs");
 });
 
 test("Edit job: the address in four boxes, an older one-line address all in Street (J1, J8)", () => {
@@ -137,7 +139,9 @@ test("Client playbook: the paperwork as checkboxes and Other, the client type, a
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   const p = { id: "p-1", name: "Ellison", role: "GC", client_type: "sub", approver: "Mara", ap_email: "ap@e.example",
     packet: "Signed contract, Certified payroll", packet_items: ["Signed contract", "Certified payroll"], job_count: 0 };
-  core.setState({ ...company(), jobs: [], payers: [p] });
+  const paperwork_catalog = [{ key: "contract", label: "Signed contract", closeout: false }, { key: "insurance", label: "Insurance certificate", closeout: false },
+    { key: "punch", label: "Punch list sign-off", closeout: true }];
+  core.setState({ ...company(), jobs: [], payers: [p], paperwork_catalog });
   page.setLocation("playbook");
   page.formOpen.addpayer = true;
   try {
@@ -147,6 +151,7 @@ test("Client playbook: the paperwork as checkboxes and Other, the client type, a
     assert.doesNotMatch(html, /data-packet-choice="Insurance certificate" checked/);
     assert.match(html, /id="payer-p-1-pw-other"[^>]*value="Certified payroll"/);
     assert.match(html, /Nothing needed/);
+    assert.match(html, /<h4>At closeout<\/h4><label[^>]*><input type="checkbox"[^>]*data-packet-choice="Punch list sign-off"/, "the catalog's closeout items, from the server");
     assert.doesNotMatch(html, /name="packet"/, "no free-text paperwork box");
     assert.match(html, /<h2>Add client<\/h2>\s*<div class="contract-import" data-contract-import="addpayer">/);
   } finally { page.formOpen.addpayer = false; }

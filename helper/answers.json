@@ -1256,7 +1256,7 @@
         "daily",
         "log"
       ],
-      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app. Or paste many days at once in the Inbox as notes. Records live on the job record and can be attached to a pay app's paperwork as backup.",
+      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app, which then says Updated from daily records on that day. Or paste many days at once in the Inbox as notes. Records live on the job record and can be attached to a pay app's paperwork as backup.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1280,7 +1280,7 @@
         "calendar",
         "dates"
       ],
-      "answer": "Dashboard, Calendar starts with Tasks: your To Do items and the calendar's dates for This week, Next week, This month or a Custom range, each opening its day, with Add task. Below it the month shows work complete, pay apps sent, follow-ups due, expected approvals, payments, waivers, finished jobs and pay app due dates. Pick a job in the Job filter to see only that job. Tap a day for its events. These are your billing dates, not legal deadlines.",
+      "answer": "Dashboard, Calendar starts with Tasks: your To Do items and the calendar's dates for This week, Next week, This month or a Custom range, each opening its day, with Add task. Below it the month shows work complete, pay apps sent, follow-ups due, expected approvals, payments, waivers and pay app due dates for the open jobs. Pick a job in the Job filter to see only that job. A finished job leaves the calendar; its dates stay in its job file. Tap a day for its events. These are your billing dates, not legal deadlines.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1598,7 +1598,7 @@
         "ball in court",
         "to do"
       ],
-      "answer": "On Dashboard, Overview, the To Do list shows each item's Ball in court (Us when someone here has to act, Client when you are waiting on the client), its Assignee and its Due date. Pick a name in an item's Assignee box to assign it; anyone on the team can. Tap Add task for something of your own: what needs doing, and optionally the job, who, when and whose court. Tap Done when it is finished. Each person's morning email lists what is assigned to them, and an owner's also lists what nobody has. When someone leaves the team, their open items go to the owner who removed them.",
+      "answer": "On Dashboard, Overview, the To Do list shows each item's Ball in court (Us when someone here has to act, Client when you are waiting on the client), its Assignee and its Due date. Pick a name in an item's Assignee box to assign it; anyone on the team can. Change the date in its Due box to set when it is due; clear it to go back to the item's own date. Tap Add task for something of your own: what needs doing, and optionally the job, who, when and whose court. Tap Done when it is finished. Each person's morning email lists what is assigned to them, and an owner's also lists what nobody has. When someone leaves the team, their open items go to the owner who removed them.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1641,7 +1641,7 @@
         "audit",
         "history action"
       ],
-      "answer": "Settings, Activity log lists every action: what happened, when, who (the signed-in person) and what kind of action. Pick a job in the Job filter to see only that job.",
+      "answer": "Settings, Activity log lists every action: what happened, when, who (the signed-in person) and what kind of action. Pick a job in the Job filter to see only that job; finished jobs are listed after the open ones.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1686,7 +1686,7 @@
         "record",
         "history"
       ],
-      "answer": "An owner finishes a job. Finish job appears for an owner when the work is done and nothing is left: no open draft, no unsigned change order, nothing unbilled or unpaid, retainage paid and waivers sent. Until then the job page shows Before you can finish this job, one line per thing with a button for each. Tap Finish job and confirm: the job moves to Jobs, Job history and leaves the working lists. Its page becomes its job file: what it came to, every pay app with its PDF, payments, change orders, waivers sent, the job record and its activity, with Download job file for all of it in one zip. An owner can tap Add more work to open the same job again, for more work or a late payment.",
+      "answer": "Finishing a job takes the Finish and reopen jobs permission, which owners have. Finish job appears when the work is done and nothing is left: no open draft, no unsigned change order, nothing unbilled or unpaid, retainage paid and waivers sent. Until then the job page shows Before you can finish this job, one line per thing with a button for each. Tap Finish job and confirm: the job moves to Jobs, Job history and leaves the working lists. Its page becomes its job file: what it came to, every pay app with its PDF, payments, change orders, waivers sent, the job record and its activity, with Download job file for all of it in one zip. Anyone with that permission can tap Add more work to open the same job again, for more work or a late payment.",
       "handler": "closeable",
       "needs_job": false,
       "actions": [],

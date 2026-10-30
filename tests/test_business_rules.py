@@ -281,21 +281,21 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
     def test_gc_default_list_leaves_out_the_pay_app_and_schedule(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = self.gc_job(state)
-        self.assertEqual(state["payers"][0]["packet"], "Lien waiver, insurance certificate, daily tickets.")
+        self.assertEqual(state["payers"][0]["packet"], "Conditional waiver, Insurance certificate, Daily tickets and time sheets")
         domain.record_progress(state, job["id"], 400_000)
         labels = [p["label"] for p in domain.missing_packet(job)]
-        self.assertEqual(labels, ["Lien waiver", "Insurance certificate", "Daily tickets"])
+        self.assertEqual(labels, ["Conditional waiver", "Insurance certificate", "Daily tickets and time sheets"])
         self.assertFalse([b for b in domain.blocker_lines(job) if "pay app" in b.lower() or "schedule" in b.lower()])
 
     def test_owner_backup_is_needed_only_without_a_schedule(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         plain = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St")
         domain.record_progress(state, plain["id"], 400_000)
-        self.assertIn("Pay-app backup", [p["label"] for p in domain.missing_packet(plain)])
+        self.assertIn("Pay app backup", [p["label"] for p in domain.missing_packet(plain)])
         scheduled = domain.create_job(state, "Deck", "Dana Homeowner", 1_000_000, address="3 Elm St")
         domain.save_sov(state, scheduled["id"], self.SOV_LINES, "0")
         domain.record_sov_progress(state, scheduled["id"], {scheduled["sov"]["lines"][0]["id"]: "40"})
-        self.assertNotIn("Pay-app backup", [p["label"] for p in domain.missing_packet(scheduled)])
+        self.assertNotIn("Pay app backup", [p["label"] for p in domain.missing_packet(scheduled)])
 
     def test_new_record_kinds_fill_their_paperwork(self):
         # An insurance certificate, a supplier invoice (for a ticket item) and a stored-materials
@@ -321,7 +321,7 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
         self.assertTrue(any("attached automatically from the job record" in a["detail"] for a in state["audit"]))
         # A record added after drafting fills its item too.
         domain.add_job_record(state, job["id"], "Kitchen photos", "photo")
-        photos = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Completion photos")
+        photos = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Progress photos")
         self.assertTrue(photos["present"])
         # Detach takes it off, and the same record is not attached again.
         domain.detach_packet_item(state, job["id"], photos["id"])

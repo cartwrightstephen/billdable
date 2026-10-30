@@ -6,6 +6,7 @@ import { moreButton, askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
 import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
+import { jobFilterOptions } from "../jobs.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
 import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
@@ -400,7 +401,7 @@ export function trialBannerHtml() {
   if (t.state === "active") {
     return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Duracash is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.</div>`;
   }
-  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : me && me.role === "owner" ? " Subscribe in Settings, Billing." : " An owner can subscribe in Settings, Billing.") : ""}</div>`;
+  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : can("billing") ? " Subscribe in Settings, Billing." : " An owner can subscribe in Settings, Billing.") : ""}</div>`;
 }
 
 // Signed out: what one person had open in Settings isn't kept for the next.
@@ -560,7 +561,7 @@ export const views = {
         <label for="audit-filter" class="inline-label">Job</label>
         <select id="audit-filter" data-filter-for="audit">
           <option value="all">All jobs</option>
-          ${state.jobs.map(j => `<option value="${j.id}" ${auditJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
+          ${jobFilterOptions(state.jobs, auditJobFilter)}
         </select>
       </div>
       ${events.length ? `<div class="table-wrap">

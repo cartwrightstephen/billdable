@@ -57,6 +57,36 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue(domain._is_closeout("As-built drawings"))
         self.assertFalse(domain._is_closeout("Conditional waiver"))
 
+    def test_the_client_playbook_boxes_are_the_catalog(self):  # S11 with M6, one list for both ends
+        state = new_state()
+        new_job(state)
+        snap = domain.light_snapshot(state)
+        self.assertEqual(snap["paperwork_catalog"], domain.PAPERWORK_CATALOG)
+        labels = {e["label"] for e in domain.PAPERWORK_CATALOG}
+        # A new client's paperwork is all catalog labels, so the page shows it as ticked boxes.
+        for role in ("Owner", "GC"):
+            payer = domain._new_payer(new_state(), "X", role, "", "", "")
+            items = domain.parse_packet_text(payer["packet"])
+            self.assertTrue(items and set(items) <= labels, (role, items))
+        self.assertEqual(snap["payers"][0]["packet_items"], list(domain.DEFAULT_PAPERWORK["Owner"]))
+        # A catalog label with "and" in it stays one item; a typed list still splits on "and".
+        self.assertEqual(domain.parse_packet_text("daily tickets and time sheets, Supplier invoices and receipts and gate pass"),
+                         ["Daily tickets and time sheets", "Supplier invoices and receipts", "Gate pass"])
+
+    def test_a_saved_list_with_old_labels_moves_to_the_catalog_labels(self):  # migration
+        state = seed_state()
+        state["payers"][0]["packet"] = "Signed contract, conditional waiver, completion photos, and pay-app backup."
+        state["payers"][1]["packet"] = ("Conditional lien waiver, Progress or completion photos, Daily records / time sheets / tickets, "
+                                        "Certified payroll, Final lien waivers (closeout)")
+        state["payers"][2]["packet"] = "Invoice and gate pass."
+        state["schema_version"] = migrations.STEPS.index(migrations._followups_paperwork_catalog_labels) + 1
+        self.assertTrue(migrations.migrate(state))
+        self.assertEqual(state["payers"][0]["packet"], "Signed contract, Conditional waiver, Progress photos, Pay app backup")
+        self.assertEqual(domain.parse_packet_text(state["payers"][1]["packet"]),
+                         ["Conditional waiver", "Progress photos", "Daily tickets and time sheets", "Certified payroll", "Final lien waivers"])
+        self.assertEqual(state["payers"][2]["packet"], "Invoice and gate pass.", "nothing to change, left as typed")
+        self.assertTrue(domain._is_closeout("Final lien waivers"), "still kept for closeout")
+
     def test_every_job_gets_closeout_paperwork_at_mark_done(self):  # M6: not only jobs with retainage
         state = new_state()
         job = new_job(state)

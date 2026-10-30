@@ -605,7 +605,7 @@ textarea { font: inherit; }
 .todo-filters { margin: 8px 0 12px; }
 .todo-filters [role="group"] { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .period-range { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.period-range input, .todo-assign { padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: var(--field-bg); min-height: 34px; }
+.period-range input, .todo-assign, .todo-due-date { padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: var(--field-bg); min-height: 34px; }
 table.todo-table { width: 100%; }
 table.todo-table tr.action-item { display: table-row; }
 table.todo-table td { vertical-align: top; }
@@ -630,7 +630,7 @@ span.due-item { cursor: default; }
 @media (max-width: 800px) {
   table.todo-table .todo-activity { min-width: 0; }
   table.todo-table tr.action-item { display: block; }
-  .todo-assign { width: 100%; }
+  .todo-assign, .todo-due-date { width: 100%; }
 }
 
 

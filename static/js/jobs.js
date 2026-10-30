@@ -471,9 +471,29 @@ export function clientTypeLabel(p) {
 }
 
 // The jobs still being worked (J9): a finished job leaves the working lists, pickers and the
-// calendar, and stays under Job history and its client's card. Money, Dashboard and Closeout
-// filter with this too.
+// calendar, and stays under Job history and its client's card. Money (Pay apps, Change orders,
+// Unpaid, Payments, Closeout), the Dashboard and the Calendar filter with this too.
 export function openJobs(jobs) { return (jobs || []).filter(j => !j.closed); }
+
+// The day of the daily record a draft's quantities came from (M1), as the schedule card shows
+// per line (from_daily_on): the latest among the lines this draft bills for work this period.
+// "" for a sent pay app, or when the quantities were typed on the job page.
+export function draftFromDailyOn(j, inv) {
+  if (!j || !inv || !["draft", "awaiting_approval"].includes(inv.status)) return "";
+  const lines = (j.sov_view && j.sov_view.lines) || [];
+  const days = (inv.sov_lines || []).filter(e => (e.qty_milli_this || 0) > 0)
+    .map(e => (lines.find(l => l.id === e.line_id) || {}).from_daily_on).filter(Boolean);
+  return days.sort().pop() || "";
+}
+
+// A job filter on a page of records (Activity log, Outbox, Everything received, Sent pay apps):
+// the open jobs, then the recently finished ones under "Finished jobs", so an old job's entries
+// can still be found. Names and ids come escaped from the server, as on every other picker.
+export function jobFilterOptions(jobs, selected = "") {
+  const opt = (j) => `<option value="${j.id}"${selected === j.id ? " selected" : ""}>${j.name}</option>`;
+  const done = (jobs || []).filter(j => j.closed);
+  return openJobs(jobs).map(opt).join("") + (done.length ? `<optgroup label="Finished jobs">${done.map(opt).join("")}</optgroup>` : "");
+}
 
 // The job record in groups (J5), each with its kinds (RECORD_KINDS keys). A kind not listed
 // goes under Notes and other.
@@ -498,34 +518,33 @@ export function groupRecords(records) {
   })).filter(g => g.records.length);
 }
 
-// The paperwork a client usually needs (S11), as the Client playbook's checkboxes. The labels
-// are saved as the comma list the server reads (domain.parse_packet_text): none has a comma or
-// "and" in it, and the closeout ones say (closeout) so the server keeps them for closeout.
-export const PAPERWORK_CHOICES = [
-  ["Each pay app", ["Signed contract", "Conditional lien waiver", "Progress or completion photos",
-    "Daily records / time sheets / tickets", "Supplier invoices or material receipts", "Insurance certificate",
-    "Stored materials documents", "Schedule of values"]],
-  ["At closeout", ["Punch list sign-off (closeout)", "Completion certificate (closeout)", "Final lien waivers (closeout)",
-    "As-builts (closeout)", "Warranties (closeout)"]],
-];
-const CHOICES = PAPERWORK_CHOICES.flatMap(([, list]) => list);
+// The paperwork a client usually needs (S11), as the Client playbook's checkboxes: the server's
+// standard catalog (domain.PAPERWORK_ITEMS, sent as state.paperwork_catalog), in two groups.
+// The labels are saved as the comma list the server reads (domain.parse_packet_text, which keeps
+// a catalog label with "and" in it whole); the server knows the closeout ones by their words.
+export function paperworkChoices(catalog) {
+  const labels = (closeout) => (catalog || []).filter(e => !!e.closeout === closeout).map(e => unesc(e.label));
+  return [["Each pay app", labels(false)], ["At closeout", labels(true)]];
+}
+const choiceList = (catalog) => paperworkChoices(catalog).flatMap(([, list]) => list);
 const choiceKey = (label) => String(label).toLowerCase().replace(/\s+/g, " ").trim();
 
 // The saved list as {checked: [labels], other: "text"}: an item that is a checkbox ticks it
 // (case and spacing aside); the rest go in Other, as typed.
-export function packetChoices(items) {
+export function packetChoices(items, catalog) {
+  const choices = choiceList(catalog);
   const checked = [], other = [];
   for (const item of items || []) {
     const text = unesc(item);
-    const hit = CHOICES.find(c => choiceKey(c) === choiceKey(text));
+    const hit = choices.find(c => choiceKey(c) === choiceKey(text));
     if (hit) checked.push(hit); else other.push(text);
   }
   return { checked, other: other.join(", ") };
 }
 
 // What a save sends as the paperwork list: the ticked labels, then Other, in one comma list.
-export function packetText(checked, other) {
-  return [...CHOICES.filter(c => checked.includes(c)), ...String(other || "").split(/[,;\n]/).map(t => t.trim()).filter(Boolean)].join(", ");
+export function packetText(checked, other, catalog) {
+  return [...choiceList(catalog).filter(c => checked.includes(c)), ...String(other || "").split(/[,;\n]/).map(t => t.trim()).filter(Boolean)].join(", ");
 }
 
 // The job's start date limits (J8): about 10 years back and 2 years ahead. The server

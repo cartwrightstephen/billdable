@@ -121,7 +121,7 @@ def _previous(job: dict[str, Any], invoice: dict[str, Any]) -> str:
 
 def _approval(company: str, invoice: dict[str, Any], base: str, errors: dict[str, str]) -> str:
     if invoice.get("approved_at"):
-        return (f'<div class="card received"><strong>Approved for payment</strong> by {_e(invoice.get("approved_by_payer") or "the customer")} '
+        return (f'<div class="card received"><strong>Approved for payment</strong> by {_e(invoice.get("approved_by_payer") or "the client")} '
                 f'on {_e(_date(invoice["approved_at"]))}. Payment expected by {_e(_date(invoice.get("expected_payment_on")))}.</div>')
     if invoice.get("status") != "sent":
         return ""
@@ -181,7 +181,7 @@ def render(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], 
     if extra:
         packet.append(f'<div class="row"><span>Also sent</span><span>{" · ".join(extra)}</span></div>')
     if invoice.get("received_at"):
-        received = (f'<div class="card received"><strong>Received</strong> by {_e(invoice.get("received_by") or "the payer")} '
+        received = (f'<div class="card received"><strong>Received</strong> by {_e(invoice.get("received_by") or "the client")} '
                     f'on {_e(_date(invoice["received_at"]))}. Thank you.</div>')
     else:
         received = (f'<div class="card"><strong>Got it?</strong> Let {_e(company)} know this pay app reached you.'
@@ -216,10 +216,10 @@ def mark_received(state: dict[str, Any], job: dict[str, Any], invoice: dict[str,
     invoice["received_at"] = now
     invoice["received_by"] = name
     payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
-    who = name or payer.get("name") or "The payer"
+    who = name or payer.get("name") or "The client"
     if invoice.get("status") == "sent" and not job.get("closed"):
         job["external_status"] = f"{who} confirmed receipt of {invoice['number']} on {_date(now)}"
-    domain.audit(state, job["id"], "payer_received", f"{who} marked {invoice['number']} as received on the payer page.", "payer")
+    domain.audit(state, job["id"], "payer_received", f"{who} marked {invoice['number']} as received on the client page.", "payer")
     return True
 
 
@@ -250,7 +250,7 @@ def approve(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any],
     invoice["expected_payment_on"] = day.isoformat()
     job["external_status"] = f"Approved by {name}, expect payment {_date(day.isoformat())}"
     domain.audit(state, job["id"], "payer_approved",
-                 f"{name} approved {invoice['number']} for payment on the customer page; payment expected by {day.isoformat()}.", "payer")
+                 f"{name} approved {invoice['number']} for payment on the client page; payment expected by {day.isoformat()}.", "payer")
 
 
 def ask(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], name: str, email: str, text: str) -> dict[str, Any]:
@@ -267,12 +267,12 @@ def ask(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], nam
     if email and not domain.EMAIL_RE.match(email):
         problems["email"] = "Enter an email like kim@example.com, or leave it blank."
     domain._refuse("Not sent.", problems)
-    who = name or "The customer"
+    who = name or "The client"
     item = importer.add_item(state, "payer_page", text=text, sender=f"{who} <{email}>" if email else who,
                              subject=f"Question on {invoice['number']} — {job['name']}", job_id=job["id"],
-                             extra={"invoice_id": invoice["id"], "match_reason": f"Asked on the customer page for {invoice['number']}."})
+                             extra={"invoice_id": invoice["id"], "match_reason": f"Asked on the client page for {invoice['number']}."})
     invoice["questions"] = int(invoice.get("questions") or 0) + 1
-    domain.audit(state, job["id"], "payer_question", f"{who} asked a question about {invoice['number']} on the customer page.", "payer")
+    domain.audit(state, job["id"], "payer_question", f"{who} asked a question about {invoice['number']} on the client page.", "payer")
     return item
 
 

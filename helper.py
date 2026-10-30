@@ -266,7 +266,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         actions = [{"type": "copy", "text": note, "label": "Copy note"}]
         if _followup_due(snap, job):
             actions.append({"type": "post", "path": f"/api/jobs/{job['id']}/follow-up", "label": "Send the follow-up",
-                            "confirm": f"Send a follow-up on {inv['number']} to {p.get('ap_email') or 'the customer'}? It is emailed when email is set up, and listed in the Outbox either way."})
+                            "confirm": f"Send a follow-up on {inv['number']} to {p.get('ap_email') or 'the client'}? It is emailed when email is set up, and listed in the Outbox either way."})
         return f"Here is a follow-up for {job['name']}:\n\n{note}", actions + [_job_btn(job)]
     if name == "blockers":
         if not job:

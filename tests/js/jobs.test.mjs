@@ -336,7 +336,7 @@ test("a change order's pill reads Signed or Unsigned, never Approved or Pending 
 });
 
 // ---------- jobs-clients (Stephen's Oct 29 review) ----------
-import { clientTypeLabel, CLIENT_TYPES, openJobs, groupRecords, RECORD_GROUPS, RECORD_KINDS, packetChoices, packetText, PAPERWORK_CHOICES, startDateLimits } from "../../static/js/jobs.js";
+import { clientTypeLabel, CLIENT_TYPES, openJobs, groupRecords, RECORD_GROUPS, RECORD_KINDS, packetChoices, packetText, paperworkChoices, startDateLimits } from "../../static/js/jobs.js";
 
 test("the job page lists the blockers under the Next step line, so the line doesn't repeat the first (J6)", () => {
   const drafted = job({ blockers: ["Signed contract", "Daily tickets"], invoices: [inv("awaiting_approval")], blocked: true });
@@ -369,14 +369,19 @@ test("the job record groups by kind with counts, newest first; every kind has a 
   assert.deepEqual(groupRecords([]), []);
 });
 
-test("the paperwork checkboxes save as the comma list the server reads, and read back (S11)", () => {
-  const all = PAPERWORK_CHOICES.flatMap(([, list]) => list);
-  for (const label of all) assert.doesNotMatch(label, /,| and /, `${label}: the server splits on commas and "and"`);
-  for (const label of PAPERWORK_CHOICES[1][1]) assert.match(label, /closeout|punch/i, `${label}: kept for closeout`);
-  const text = packetText(["Insurance certificate", "Signed contract"], "Certified payroll; Gate pass");
-  assert.equal(text, "Signed contract, Insurance certificate, Certified payroll, Gate pass");
-  assert.deepEqual(packetChoices(["signed  contract", "Certified payroll", "Gate pass"]), { checked: ["Signed contract"], other: "Certified payroll, Gate pass" });
-  assert.equal(packetText([], ""), "");
+test("the paperwork checkboxes are the server's catalog, save as the comma list it reads, and read back (S11)", () => {
+  // As light_snapshot sends domain.PAPERWORK_CATALOG (escaped, like the rest of the state).
+  const catalog = [
+    { key: "contract", label: "Signed contract", closeout: false }, { key: "insurance", label: "Insurance certificate", closeout: false },
+    { key: "ticket", label: "Daily tickets and time sheets", closeout: false }, { key: "punch", label: "Punch list sign-off", closeout: true },
+  ];
+  assert.deepEqual(paperworkChoices(catalog), [["Each pay app", ["Signed contract", "Insurance certificate", "Daily tickets and time sheets"]], ["At closeout", ["Punch list sign-off"]]]);
+  assert.deepEqual(paperworkChoices(undefined), [["Each pay app", []], ["At closeout", []]]);
+  const text = packetText(["Insurance certificate", "Signed contract", "Daily tickets and time sheets"], "Certified payroll; Gate pass", catalog);
+  assert.equal(text, "Signed contract, Insurance certificate, Daily tickets and time sheets, Certified payroll, Gate pass");
+  assert.deepEqual(packetChoices(["signed  contract", "Daily tickets and time sheets", "Certified payroll", "Gate pass"], catalog),
+    { checked: ["Signed contract", "Daily tickets and time sheets"], other: "Certified payroll, Gate pass" });
+  assert.equal(packetText([], "", catalog), "");
 });
 
 test("the start date box takes about 10 years back and 2 ahead (J8)", () => {

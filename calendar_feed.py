@@ -81,8 +81,8 @@ def events(state: dict[str, Any]) -> list[dict[str, Any]]:
         if due and not j.get("closed") and (j.get("work_status") != "complete" or domain.job_money(j)["unbilled_completed_cents"] > 0):
             when = due[0]
             for _ in range(3):
-                add(when, f"{domain.term_text('Pay app due to', style)} {payer.get('name', 'the payer')} ({j['name']})", f"{j['id']}-due-{when:%Y%m}",
-                    domain.term_text("The payer's cutoff for this month's pay app, from the payer playbook.", style))
+                add(when, f"{domain.term_text('Pay app due to', style)} {payer.get('name', 'the client')} ({j['name']})", f"{j['id']}-due-{when:%Y%m}",
+                    domain.term_text("The client's cutoff for this month's pay app, from the Client playbook.", style))
                 when = domain.payapp_due(payer, when + timedelta(days=1))[0]
     return out
 

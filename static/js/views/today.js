@@ -1,7 +1,7 @@
 // Dashboard: the overview with the To Do list and the setup checklist, Results, and Calendar
 // with its Tasks block. The Daily record is in daily.js.
 import { unesc, esc, escDeep, money, toDate, fmtDate } from "../format.js";
-import { isBlocked, nextStep, statusPill } from "../jobs.js";
+import { isBlocked, nextStep, statusPill, openJobs } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { TODO_PERIODS, TASK_PERIODS, BALL_WORDS, localDay, periodRange, todoItems, itemsInPeriod, assignees } from "../tasks.js";
@@ -10,7 +10,7 @@ import { worstKind, followUpEvent } from "../calendar.js";
 import { todoHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
 import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd, teamData, setTeamData } from "../state.js";
-import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post } from "../app-core.js";
+import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post, can } from "../app-core.js";
 import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
 
@@ -132,10 +132,22 @@ async function assignFrom(sel) {
   if (r && r.ok) toast(value ? "Assigned." : "Unassigned.");
 }
 
+// Saves a due date set by hand in a To Do row (T3): a row the jobs make by its key (blank puts its
+// own date back), a task by its id.
+async function dueFrom(input) {
+  const due = input.value;
+  const key = input.dataset.key;
+  const r = input.dataset.todoDue === "task"
+    ? await post(`/api/tasks/${encodeURIComponent(key)}`, { due }, { quiet: true, anchor: input })
+    : await post("/api/tasks/assign", { key, due }, { quiet: true, anchor: input });
+  if (r && r.ok) toast(due ? `Due ${fmtDate(due)}.` : "Due date cleared.");
+}
+
 document.addEventListener("change", (e) => {
   const el = e.target;
   if (!el || !el.dataset) return;
   if (el.dataset.todoAssign) { assignFrom(el); return; }
+  if (el.dataset.todoDue) { dueFrom(el); return; }
   const which = el.dataset.periodFrom || el.dataset.periodTo;
   if (!which) return;
   const range = which === "todo" ? todoRange : tasksRange;
@@ -353,7 +365,8 @@ export const views = {
     };
     const today = new Date();
     const todayKey = localDay(today);
-    state.jobs.filter(j => calJobFilter === "all" || j.id === calJobFilter).forEach(j => {
+    // The jobs being worked (J9): a finished job's dates are in its job file.
+    openJobs(state.jobs).filter(j => calJobFilter === "all" || j.id === calJobFilter).forEach(j => {
       if (j.completed_at) add(j.completed_at, `${j.code} work complete`, "paid", j.id);
       // One follow-up per job, on the day Today raises it (followUpEvent).
       const follow = followUpEvent(j, today);
@@ -395,7 +408,7 @@ export const views = {
         <label for="cal-filter" class="inline-label">Job</label>
         <select id="cal-filter" data-filter-for="calendar">
           <option value="all">All jobs</option>
-          ${state.jobs.map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
+          ${openJobs(state.jobs).map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
         </select>
       </div>
       ${tasksBlockHtml(eventsByDay)}
@@ -437,7 +450,7 @@ export const views = {
         <p><a class="btn" id="cal-webcal" href="/dashboard/calendar" hidden>Add to my phone's calendar</a></p>
         <p class="sub">On an iPhone or a Mac that button adds them in one tap. Or copy this private address. In Google Calendar on a computer: Other calendars, +, From URL, paste, Add calendar. It then shows on your phone. Calendar apps refresh subscribed calendars on their own schedule, often every few hours, so new dates are not instant.</p>
         <div class="copy-row"><code id="cal-url">Loading…</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button>${newAddressButton("calendar")}</div>
-        <p class="sub">Anyone with this address can see the dates and job names. ${me && me.role === "owner" ? "Make a new address if it was shared by mistake." : "If it was shared by mistake, an owner can make a new one."}</p>
+        <p class="sub">Anyone with this address can see the dates and job names. ${can("company") ? "Make a new address if it was shared by mistake." : "If it was shared by mistake, an owner can make a new one."}</p>
       </details>
     `;
   },

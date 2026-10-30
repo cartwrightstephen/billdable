@@ -43,6 +43,13 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.getByText("Assigned.").waitFor();
     await p.locator('[data-action="todo-who"][data-who="mine"]').click();
     await p.locator(".action-item", { hasText: "Not billed yet" }).waitFor();
+    // A due date set by hand beside the assignee: saved, and the row reads Overdue once it is past
+    // (an overdue item shows in every period).
+    const due = await p.evaluate(() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; });
+    await row.locator(".todo-due-date").fill(due);
+    await row.locator(".todo-due-date").dispatchEvent("change");
+    await p.locator(".action-item.overdue", { hasText: "Not billed yet" }).waitFor();
+    assert.equal(await p.locator(".action-item", { hasText: "Not billed yet" }).locator(".todo-due-date").inputValue(), due);
     // The Calendar's Tasks block lists it too.
     await p.goto(BASE + "/dashboard/calendar");
     await p.getByRole("heading", { name: "Tasks" }).waitFor();

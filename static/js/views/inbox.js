@@ -2,7 +2,7 @@
 // text, and the forwarding addresses for email, texts and the calendar. The Inbox page shows
 // what is waiting and everything received (C1); the file and paste boxes are on Import (data.js).
 import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
-import { RECORD_KINDS, SOURCE_LABELS, defaultJobId } from "../jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, defaultJobId, jobFilterOptions } from "../jobs.js";
 import { readJson, setNetBanner, inBatches } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { webcalUrl } from "../calendar.js";
@@ -10,7 +10,7 @@ import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "../inbox.js";
 import { termText } from "../terms.js";
 import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
-import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage } from "../app-core.js";
+import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can } from "../app-core.js";
 import { moreButton } from "../dom.js";
 import { printSheet } from "./communications.js";
 
@@ -141,9 +141,10 @@ export function calendarFeedHtml() {
         <div class="copy-row"><code id="cal-url">${url || "Loading…"}</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button>${newAddressButton("calendar")}</div>`;
 }
 
-// Only an owner can replace a private web address (the server refuses members too).
+// Replacing a private web address needs Edit company details and connections (the server's
+// /api/import/rotate refuses anyone else).
 export function newAddressButton(kind) {
-  return me && me.role === "owner" ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
+  return can("company") ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
 }
 
 // Import's "Which job?" for files added there: the last one picked, or the only open job.
@@ -256,11 +257,11 @@ const SOURCE_OPTIONS = () => Object.entries(SOURCE_LABELS);
 const STATUS_OPTIONS = [["new", "Waiting"], ["filed", "Filed"], ["auto", "Filed automatically"], ["dismissed", "Dismissed"]];
 const SORT_OPTIONS = [["newest", "Newest first"], ["oldest", "Oldest first"], ["from", "Sender (A-Z)"], ["job", "Job (A-Z)"]];
 
-function receivedSelect(name, label, all, options) {
+function receivedSelect(name, label, all, options, more = "") {
   const opts = (all ? [["", all]] : []).concat(options);
   return `<label for="received-${name}" class="inline-label">${label}</label>
         <select id="received-${name}" data-received-filter="${name}">
-          ${opts.map(([v, l]) => `<option value="${v}"${receivedFilter[name] === v ? " selected" : ""}>${l}</option>`).join("")}
+          ${opts.map(([v, l]) => `<option value="${v}"${receivedFilter[name] === v ? " selected" : ""}>${l}</option>`).join("")}${more}
         </select>`;
 }
 
@@ -273,7 +274,7 @@ function receivedHtml() {
       <div class="filter-bar">
         ${receivedSelect("source", "Came in by", "All", SOURCE_OPTIONS())}
         ${receivedSelect("status", "Status", "All", STATUS_OPTIONS)}
-        ${receivedSelect("job", "Job", "All jobs", state.jobs.map(j => [j.id, j.name]))}
+        ${receivedSelect("job", "Job", "All jobs", [], jobFilterOptions(state.jobs, receivedFilter.job))}
         ${receivedSelect("sort", "Sort", "", SORT_OPTIONS)}
       </div>
       ${rows.length ? `<div class="table-wrap"><table>
@@ -414,11 +415,10 @@ document.getElementById("file-input").addEventListener("change", (e) => {
 export const views = {
   inbox() {
     const items = (state.inbox || []).filter(i => i.status === "new").slice().reverse();
-    const owner = me && me.role === "owner";   // the provider web addresses are an owner's (R6-07)
+    const owner = can("company");   // the server sends the provider web addresses only with this (R6-07)
     const withSuggestion = items.filter(i => i.suggested_job_id).length;
     return `
       <h1>Inbox</h1>
-      <p class="sub">Duracash suggests the job; nothing is filed without you.</p>
       <div class="card inbox-waiting">
         <div class="top"><h2>Waiting (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
         ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting.")}

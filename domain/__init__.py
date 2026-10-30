@@ -578,7 +578,7 @@ def record_pencil_response(state: dict[str, Any], job_id: str, agreed: bool, not
     if not agreed and draft["pencil_note"]:
         suggest_packet_item(state, job["payer_id"], draft["pencil_note"], "pencil-copy changes", job["name"])
     what = "agreed to" if agreed else "asked for corrections on"
-    audit(state, job_id, "pencil_response", f"{actor} recorded that the payer {what} the pencil copy of {draft['number']}. {draft['pencil_note']}".strip(), actor)
+    audit(state, job_id, "pencil_response", f"{actor} recorded that the client {what} the draft of {draft['number']} sent for their review. {draft['pencil_note']}".strip(), actor)
     return job
 
 
@@ -1657,6 +1657,8 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     out["tasks"] = visible_tasks(state, now)
     out["task_assignments"] = deepcopy(state.get("task_assignments") or {})
     out["closed_jobs_total"] = closed_count
+    # The Client playbook's paperwork boxes (S11): the standard catalog, one list for both ends.
+    out["paperwork_catalog"] = deepcopy(PAPERWORK_CATALOG)
     out["audit_chain"] = check_audit(state)
     out["trial"] = trial.status(state)
     out["totals"] = {**_totals(full), "closed_collected_cents": closed_collected}
@@ -1818,7 +1820,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
                 names = f"{_pay_app_list(unpaid)} are unpaid; the oldest" if len(unpaid) > 1 else oldest["number"]
                 since = f", last follow-up {_day_words(oldest['last_follow_up_at'])}" if oldest.get("last_follow_up_at") else ""
                 add(4, "follow_up", job, "Follow up", "copper",
-                    f"{names} was sent {_day_words(oldest.get('sent_at'))}{since}. Emails {payer.get('ap_email') or 'the customer'}.",
+                    f"{names} was sent {_day_words(oldest.get('sent_at'))}{since}. Emails {payer.get('ap_email') or 'the client'}.",
                     "Send follow-up", invoice_id=oldest["id"], due=follow.date().isoformat())
             # Approved on the customer's page (R4-08): no follow-up until the day after the date they gave.
             elif promised:
@@ -2137,10 +2139,8 @@ def _same_customer_question(field: str, typed: str, near: dict[str, Any]) -> Gat
 def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_email: str, phone: str,
                client_type: str = "") -> dict[str, Any]:
     """A customer with the usual settings for its role, added to the company."""
-    packet_rule = "Signed contract, conditional waiver, completion photos, and pay-app backup."
-    if role == "GC":
-        # The pay app and its schedule of values are made here, so they are not on the list.
-        packet_rule = "Lien waiver, insurance certificate, daily tickets."
+    # Catalog labels (PAPERWORK_ITEMS), so the Client playbook shows them as ticked boxes.
+    packet_rule = ", ".join(DEFAULT_PAPERWORK["GC" if role == "GC" else "Owner"])
     payer = {
         "id": "payer-" + secrets.token_hex(3),
         "name": name,
@@ -3102,13 +3102,17 @@ def _find_packet_item(job: dict[str, Any], item_id: str) -> tuple[dict[str, Any]
 
 
 def parse_packet_text(text: str) -> list[str]:
-    """Turn a playbook line like 'Invoice, photos and conditional waiver.' into item labels."""
+    """Turn a playbook line like 'Invoice, photos and conditional waiver.' into item labels. A
+    catalog label with "and" in it ("Daily tickets and time sheets") stays one label."""
     if not isinstance(text, str):
         return []
+    for entry in PAPERWORK_ITEMS:
+        if " and " in entry["label"]:
+            text = re.sub(re.escape(entry["label"]), entry["label"].replace(" and ", " \x00 "), text, flags=re.I)
     parts = re.split(r",|;|\n|\.\s+|\.$|\band\b", text)
     labels = []
     for part in parts:
-        label = part.strip(" .:-")
+        label = part.strip(" .:-").replace("\x00", "and")
         if label and label.lower() not in {l.lower() for l in labels}:
             labels.append(label[0].upper() + label[1:])
     return labels
@@ -3189,8 +3193,8 @@ def _new_packet(state: dict[str, Any], job: dict[str, Any], invoice_id: str) -> 
     else:
         items = [
             _packet_item(invoice_id, "contract", "Signed contract", "Signed contract is missing."),
-            _packet_item(invoice_id, "photo", "Completion photos", "Completion photos are missing."),
-            _packet_item(invoice_id, "backup", "Pay application backup", "Pay application backup is missing."),
+            _packet_item(invoice_id, "photo", "Progress photos", "Progress photos are missing."),
+            _packet_item(invoice_id, "backup", "Pay app backup", "Pay app backup is missing."),
         ]
         if job.get("payer_role") == "GC":
             items.append(_packet_item(invoice_id, "sov", "Schedule of values", "Schedule of values is missing."))
@@ -3267,9 +3271,14 @@ MADE_HERE_REASON = "Produced by Duracash"
 # The standard paperwork (M6), for each pay app and for closeout: key (the item's kind), label,
 # the job-record kinds that fill it, the words that name it in a client's list, per_pay_app (a
 # record goes with one pay app only) and closeout (it belongs to the closeout paperwork). The
-# client playbook's checkboxes (S11) are to pick from the same list: PAPERWORK_CATALOG is the
-# JSON-ready copy for that page, not sent anywhere yet.
+# client playbook's checkboxes (S11) are this list, in this order: PAPERWORK_CATALOG is the
+# JSON-ready copy light_snapshot sends as paperwork_catalog, and a new client's paperwork
+# (_new_payer) uses these labels so it shows as ticked boxes.
 PAPERWORK_ITEMS = (
+    {"key": "contract", "label": "Signed contract", "accepts_kinds": ("contract",), "words": re.compile(r"contract", re.I),
+     "per_pay_app": False, "closeout": False},
+    {"key": "waiver", "label": "Conditional waiver", "accepts_kinds": ("waiver",), "words": re.compile(r"waiver", re.I),
+     "per_pay_app": True, "closeout": False},
     {"key": "photo", "label": "Progress photos", "accepts_kinds": ("photo",), "words": re.compile(r"photo", re.I),
      "per_pay_app": True, "closeout": False},
     {"key": "ticket", "label": "Daily tickets and time sheets", "accepts_kinds": ("ticket", "supplier_invoice"),
@@ -3280,9 +3289,7 @@ PAPERWORK_ITEMS = (
      "words": re.compile(r"insurance|\bcoi\b", re.I), "per_pay_app": False, "closeout": False},
     {"key": "stored", "label": "Stored materials documents", "accepts_kinds": ("stored",),
      "words": re.compile(r"stored material", re.I), "per_pay_app": True, "closeout": False},
-    {"key": "contract", "label": "Signed contract", "accepts_kinds": ("contract",), "words": re.compile(r"contract", re.I),
-     "per_pay_app": False, "closeout": False},
-    {"key": "waiver", "label": "Conditional waiver", "accepts_kinds": ("waiver",), "words": re.compile(r"waiver", re.I),
+    {"key": "backup", "label": "Pay app backup", "accepts_kinds": ("pay_app",), "words": re.compile(r"backup", re.I),
      "per_pay_app": True, "closeout": False},
     {"key": "punch", "label": "Punch list sign-off", "accepts_kinds": ("punch",), "words": re.compile(r"punch", re.I),
      "per_pay_app": False, "closeout": True},
@@ -3295,6 +3302,12 @@ PAPERWORK_ITEMS = (
     {"key": "warranty", "label": "Warranties", "accepts_kinds": ("warranty",), "words": re.compile(r"warrant", re.I),
      "per_pay_app": False, "closeout": True},
 )
+# A new client's paperwork, by role (_new_payer). The pay app and its schedule of values are
+# made here, so a GC's list leaves them off.
+DEFAULT_PAPERWORK = {
+    "Owner": ("Signed contract", "Conditional waiver", "Progress photos", "Pay app backup"),
+    "GC": ("Conditional waiver", "Insurance certificate", "Daily tickets and time sheets"),
+}
 PAPERWORK_CATALOG = [{k: e[k] for k in ("key", "label", "per_pay_app", "closeout")} | {"accepts_kinds": list(e["accepts_kinds"])}
                      for e in PAPERWORK_ITEMS]
 

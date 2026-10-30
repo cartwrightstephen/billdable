@@ -122,7 +122,8 @@ export function payerJobCount(p, jobs = []) {
   return Number.isInteger(p.job_count) ? p.job_count : jobs.filter(j => j.payer_id === p.id).length;
 }
 
-// Delete client, on Client playbook (Oct 23 note 47): owners only, and only for a client
+// Delete client, on Client playbook (Oct 23 note 47): for those who can edit client settings
+// (the company permission, as the server route), and only for a client
 // no job uses, finished jobs included. The server refuses the rest with the reason. canMerge:
 // another client exists, so the Merge box is there to point at. p is escaped, as in state.
 export function deletePayerHtml(p, { owner = false, jobs = [], canMerge = false } = {}) {

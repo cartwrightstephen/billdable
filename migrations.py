@@ -143,9 +143,42 @@ def _settings_auth_permission_profiles(state: dict[str, Any]) -> None:
     profiles.migrate_company(state)
 
 
+# A client's paperwork saved before the Client playbook's boxes came from the catalog: the old
+# defaults for a new client and the old box labels, each with the catalog label it now is.
+OLD_PAPERWORK_LABELS = {
+    "conditional lien waiver": "Conditional waiver",
+    "lien waiver": "Conditional waiver",
+    "completion photos": "Progress photos",
+    "progress or completion photos": "Progress photos",
+    "pay-app backup": "Pay app backup",
+    "daily tickets": "Daily tickets and time sheets",
+    "daily records / time sheets / tickets": "Daily tickets and time sheets",
+    "supplier invoices or material receipts": "Supplier invoices and receipts",
+    "punch list sign-off (closeout)": "Punch list sign-off",
+    "completion certificate (closeout)": "Completion certificate",
+    "final lien waivers (closeout)": "Final lien waivers",
+    "as-builts (closeout)": "As-builts",
+    "warranties (closeout)": "Warranties",
+}
+
+
+def _followups_paperwork_catalog_labels(state: dict[str, Any]) -> None:
+    """Follow-ups after Stephen's Oct 29 review (S11 with M6): the Client playbook's paperwork
+    boxes are the standard catalog (domain.PAPERWORK_ITEMS). A client's saved list that uses an
+    old default or an old box label is saved again with the catalog label, so it shows as a
+    ticked box instead of under Other. Anything else in the list stays as typed, in its place;
+    the items on pay apps already drafted are not touched."""
+    for payer in state.get("payers", []):
+        labels = domain.parse_packet_text(payer.get("packet") or "")
+        new = list(dict.fromkeys(OLD_PAPERWORK_LABELS.get(l.lower(), l) for l in labels))
+        if new != labels:
+            payer["packet"] = ", ".join(new)
+
+
 STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _tasks_daily_lists, _payapps_cos_co_history,
                                                    _paperwork_insurance_records, _jobs_clients_address_parts,
-                                                   _settings_auth_company_address_parts, _settings_auth_permission_profiles]
+                                                   _settings_auth_company_address_parts, _settings_auth_permission_profiles,
+                                                   _followups_paperwork_catalog_labels]
 
 
 # ----- steps for auth.json (the accounts file), run once at start-up by auth.upgrade_file -----
