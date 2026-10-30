@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import secrets
 import threading
@@ -60,6 +61,11 @@ DEMO_EMAIL = "owner@hartline.example"
 DEMO_PASSWORD = "demo"
 DEMO_COMPANY_ID = "co-hartline"
 SESSION_DAYS = 14
+# Idle sign-out (G2): a session not used for this long ends, on the server. Set with
+# DURACASH_IDLE_MINUTES (default 60). Its last use is written at most once a minute, so a busy
+# page doesn't rewrite auth.json on every request. The 14-day cap above still applies.
+IDLE_MINUTES_DEFAULT = 60
+TOUCH_SECONDS = 60
 # The demo account is shared and signed in without a password, so its sessions are capped:
 # the oldest gives way, and calling the demo sign-in in a loop can't grow the file without end.
 DEMO_MAX_SESSIONS = 500
@@ -305,13 +311,15 @@ def create_session(user: dict[str, Any]) -> str:
     expires = _utcnow() + timedelta(days=SESSION_DAYS)
     with LOCK:
         data = _load()
-        # Drop expired sessions opportunistically.
-        now = _iso(_utcnow())
-        data["sessions"] = {k: v for k, v in data["sessions"].items() if v["expires_at"] > now}
+        # Drop expired and idle sessions opportunistically.
+        moment = _utcnow()
+        now = _iso(moment)
+        data["sessions"] = {k: v for k, v in data["sessions"].items() if v["expires_at"] > now and not _idle(v, moment)}
         data["sessions"][_digest(token)] = {
             "user_id": user["id"],
             "company_id": user["company_id"],
             "expires_at": _iso(expires),
+            "last_seen_at": now,
         }
         if user["company_id"] == DEMO_COMPANY_ID:
             # Oldest first; sessions made in the same second keep the order they were made in.
@@ -323,23 +331,66 @@ def create_session(user: dict[str, Any]) -> str:
     return token
 
 
-def session_user(token: str | None) -> dict[str, Any] | None:
+def idle_minutes() -> float:
+    """Minutes without use before a session ends (DURACASH_IDLE_MINUTES, default 60)."""
+    try:
+        value = float(os.environ.get("DURACASH_IDLE_MINUTES") or IDLE_MINUTES_DEFAULT)
+    except ValueError:
+        return IDLE_MINUTES_DEFAULT
+    return value if value > 0 else IDLE_MINUTES_DEFAULT
+
+
+def idle_words(minutes: float | None = None) -> str:
+    """What the sign-in page says after an idle sign-out."""
+    minutes = idle_minutes() if minutes is None else minutes
+    span = "an hour" if minutes == 60 else f"{minutes:g} minute{'' if minutes == 1 else 's'}"
+    return f"Signed out after {span} without use."
+
+
+def _idle(entry: dict[str, Any], now: datetime) -> bool:
+    """A session saved before idle sign-out (no last_seen_at) counts as idle: everyone signs in
+    once after the change."""
+    try:
+        seen = datetime.fromisoformat(str(entry.get("last_seen_at") or ""))
+    except ValueError:
+        return True
+    return now - seen > timedelta(minutes=idle_minutes())
+
+
+def session_check(token: str | None) -> tuple[dict[str, Any] | None, str]:
+    """(the user, "") for a live session, else (None, why): "none", "expired" or "idle". An
+    expired or idle session is deleted. Use refreshes last_seen_at, at most once a minute."""
     if not token or not isinstance(token, str) or len(token) > 200:
-        return None
+        return None, "none"
     key = _digest(token)
     with LOCK:
         entry = _read()["sessions"].get(key)
         if not entry:
-            return None
-        if entry["expires_at"] <= _iso(_utcnow()):
+            return None, "none"
+        now = _utcnow()
+        expired = entry["expires_at"] <= _iso(now)
+        if expired or _idle(entry, now):
             data = _load()
             data["sessions"].pop(key, None)
             _save(data)
-            return None
+            return None, "expired" if expired else "idle"
         user = next((u for u in _read()["users"] if u["id"] == entry["user_id"]), None)
         if not user:
-            return None
-        return _public(user)
+            return None, "none"
+        try:
+            stale = (now - datetime.fromisoformat(entry["last_seen_at"])).total_seconds() >= TOUCH_SECONDS
+        except (KeyError, ValueError):
+            stale = True
+        if stale:
+            data = _load()
+            if key in data["sessions"]:
+                data["sessions"][key]["last_seen_at"] = _iso(now)
+                _save(data)
+        return _public(user), ""
+
+
+def session_user(token: str | None) -> dict[str, Any] | None:
+    return session_check(token)[0]
 
 
 def destroy_session(token: str | None) -> None:

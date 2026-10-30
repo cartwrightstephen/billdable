@@ -604,3 +604,8 @@ textarea { font: inherit; }
 /* == stream: settings-auth == */
 
 
+/* G2: the idle warning, fixed at the bottom of the screen above everything. */
+.idle-warning { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1500; display: flex; align-items: center; gap: 12px;
+  background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; box-shadow: 0 6px 24px var(--shadow); max-width: calc(100vw - 32px); }
+.idle-warning p { margin: 0; }
+.signed-out-note { margin: 0 0 12px; }

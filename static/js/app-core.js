@@ -9,7 +9,9 @@ import { readJson, setNetBanner } from "./net.js";
 import { labelTables } from "./dom.js";
 import { refuseForm, formErrors, clearForm, clearAllForms } from "./forms.js";
 import { setBillingStyle, termText } from "./terms.js";
-import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, clearSession, onSessionEnd, setLocation, closeForms, pendingPath, pendingSearch, setPending, setCameraAsk, setTeamData, setDrawerOpen, setQueueExpanded } from "./state.js";
+import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, clearSession, onSessionEnd, setLocation, closeForms, pendingPath, pendingSearch, setPending, setCameraAsk, setTeamData, setDrawerOpen, setQueueExpanded, idleMinutes, setSignedOutNote } from "./state.js";
+import { startIdleWatch, stopIdleWatch, idleWatching } from "./idle.js";
+import { applyAppearance } from "./theme.js";
 
 // The shell's render and boot live in app.js and the landing page in views/auth.js; app.js hands
 // them over at start (setPage). A view can't import app.js: index.html loads it as /app.js?v=...,
@@ -184,8 +186,7 @@ export async function load() {
     return;
   }
   if (res.status === 401) {
-    clearSession();
-    renderLanding();
+    signedOut(await readJson(res));
     return;
   }
   if (!res.ok) {
@@ -194,8 +195,19 @@ export async function load() {
   }
   setNetBanner(false);
   setState(await readJson(res));
+  // Signed in: the idle count starts (G2), and the person's own theme applies (G9).
+  if (me && !idleWatching()) startIdleWatch(idleMinutes);
+  if (me) applyAppearance(me.appearance);
   render();
 }
+
+// The server answered 401: the session ended (signed out elsewhere, or idle, G2). Sign in shows why.
+function signedOut(data) {
+  if (data && data.idle) setSignedOutNote(String(data.error || data.message || ""));
+  clearSession();
+  renderLanding();
+}
+onSessionEnd(stopIdleWatch);
 
 function withPayer(j) {
   if (!j.payer) j.payer = (state.payers || []).find(p => p.id === j.payer_id) || { name: "—" };
@@ -300,8 +312,7 @@ export async function post(path, body = {}, opts = {}) {
   setNetBanner(false);
   const data = await readJson(res);
   if (res.status === 401) {
-    clearSession();
-    renderLanding();
+    signedOut(data);
     return;
   }
   if (res.status === 409) {

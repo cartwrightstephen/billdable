@@ -77,6 +77,25 @@ class UiServerTests(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
         return cookie, state["jobs"][-1]
 
+    # ----- idle sign-out (G2) -----
+
+    def test_idle_session_answers_401_with_the_reason_and_ping_keeps_it(self):
+        cookie, _ = self.company("idle@pine.example")
+        res, data = self.post("/api/auth/ping", {}, cookie)
+        self.assertEqual((res.status, data["idle_minutes"]), (200, 60))
+        res, body = self.get("/api/auth/me", {"Cookie": cookie})
+        self.assertEqual(json.loads(body)["idle_minutes"], 60)
+        token = cookie.split("=", 1)[1]
+        data = json.loads(auth.AUTH_PATH.read_text())
+        data["sessions"][auth._digest(token)]["last_seen_at"] = auth._iso(auth._utcnow() - auth.timedelta(minutes=61))
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        res, body = self.get("/api/state", {"Cookie": cookie})
+        self.assertEqual(res.status, 401)
+        self.assertEqual(json.loads(body), {"error": "Signed out after an hour without use.", "idle": True})
+        res, body = self.get("/api/auth/me", {"Cookie": cookie})
+        self.assertEqual(res.status, 401)
+        self.assertNotIn("idle", json.loads(body), "the session is gone now, not idle again")
+
     # ----- page addresses, caching, 404 -----
 
     def test_app_pages_serve_the_app(self):

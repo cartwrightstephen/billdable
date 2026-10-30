@@ -62,7 +62,8 @@ class AuthTests(unittest.TestCase):
         user = auth.create_user(self.email, self.password, "Test Owner", self.company)
         data = json.loads(auth.AUTH_PATH.read_text())
         data.pop("sessions_hashed", None)
-        data["sessions"] = {"old-raw-token": {"user_id": user["id"], "company_id": self.company, "expires_at": "2999-01-01T00:00:00+00:00"}}
+        data["sessions"] = {"old-raw-token": {"user_id": user["id"], "company_id": self.company, "expires_at": "2999-01-01T00:00:00+00:00",
+                                            "last_seen_at": auth._iso(auth._utcnow())}}
         auth.AUTH_PATH.write_text(json.dumps(data))
         self.assertEqual(auth.session_user("old-raw-token")["id"], user["id"])
         auth.destroy_session("old-raw-token")
@@ -73,13 +74,70 @@ class AuthTests(unittest.TestCase):
         user = auth.create_user(self.email, self.password, "Test Owner", self.company)
         data = json.loads(auth.AUTH_PATH.read_text())
         data.pop("sessions_hashed", None)
-        data["sessions"] = {"raw-token-2": {"user_id": user["id"], "company_id": self.company, "expires_at": "2999-01-01T00:00:00+00:00"}}
+        data["sessions"] = {"raw-token-2": {"user_id": user["id"], "company_id": self.company, "expires_at": "2999-01-01T00:00:00+00:00",
+                                            "last_seen_at": auth._iso(auth._utcnow())}}
         auth.AUTH_PATH.write_text(json.dumps(data))
         auth.upgrade_file()
         stored = json.loads(auth.AUTH_PATH.read_text())
         self.assertTrue(stored["sessions_hashed"])
         self.assertNotIn("raw-token-2", stored["sessions"])
         self.assertEqual(auth.session_user("raw-token-2")["id"], user["id"])
+
+    # ----- idle sign-out (G2) -----
+
+    def _age_session(self, token, minutes):
+        data = json.loads(auth.AUTH_PATH.read_text())
+        entry = data["sessions"][auth._digest(token)]
+        entry["last_seen_at"] = auth._iso(auth._utcnow() - auth.timedelta(minutes=minutes))
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        return entry["last_seen_at"]
+
+    def test_idle_session_is_refused_and_deleted(self):
+        user = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        token = auth.create_session(user)
+        self._age_session(token, 61)
+        self.assertEqual(auth.session_check(token), (None, "idle"))
+        self.assertNotIn(auth._digest(token), json.loads(auth.AUTH_PATH.read_text())["sessions"])
+        self.assertEqual(auth.session_check(token), (None, "none"), "gone, not idle twice")
+
+    def test_idle_minutes_come_from_the_environment(self):
+        user = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        token = auth.create_session(user)
+        self._age_session(token, 20)
+        self.assertIsNotNone(auth.session_user(token), "60 minutes by default")
+        with mock.patch.dict("os.environ", {"DURACASH_IDLE_MINUTES": "15"}):
+            self.assertEqual(auth.idle_minutes(), 15)
+            self.assertEqual(auth.idle_words(), "Signed out after 15 minutes without use.")
+            self._age_session(token, 20)   # the check above counted as use
+            self.assertEqual(auth.session_check(token)[1], "idle")
+        with mock.patch.dict("os.environ", {"DURACASH_IDLE_MINUTES": "nonsense"}):
+            self.assertEqual(auth.idle_minutes(), 60)
+        self.assertEqual(auth.idle_words(60), "Signed out after an hour without use.")
+
+    def test_use_refreshes_last_seen_at_most_once_a_minute(self):
+        user = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        token = auth.create_session(user)
+        first = json.loads(auth.AUTH_PATH.read_text())["sessions"][auth._digest(token)]["last_seen_at"]
+        with mock.patch.object(auth, "_save", wraps=auth._save) as save:
+            for _ in range(5):
+                self.assertIsNotNone(auth.session_user(token))
+            self.assertEqual(save.call_count, 0, "used within the minute: nothing written")
+        old = self._age_session(token, 30)
+        self.assertIsNotNone(auth.session_user(token))
+        seen = json.loads(auth.AUTH_PATH.read_text())["sessions"][auth._digest(token)]["last_seen_at"]
+        self.assertGreater(seen, old)
+        self.assertGreaterEqual(seen, first)
+
+    def test_sessions_from_before_idle_sign_out_count_as_expired(self):
+        user = auth.create_user(self.email, self.password, "Test Owner", self.company)
+        token = auth.create_session(user)
+        data = json.loads(auth.AUTH_PATH.read_text())
+        data["sessions"][auth._digest(token)].pop("last_seen_at")
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        self.assertEqual(auth.session_check(token), (None, "idle"))
+        # A new sign-in clears the old ones out of the file.
+        auth.create_session(user)
+        self.assertEqual(len(json.loads(auth.AUTH_PATH.read_text())["sessions"]), 1)
 
     def test_password_min_length(self):
         with self.assertRaises(ValueError):

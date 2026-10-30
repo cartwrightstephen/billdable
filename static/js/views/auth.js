@@ -3,7 +3,8 @@
 import { esc, escDeep } from "../format.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { field, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, clearForm } from "../forms.js";
-import { me, setMe, clearSession, pendingPath, setCheckEmail, setAccount, mailReady, readOnly, billingInfo, heldShare, setDrawerOpen, checkEmail } from "../state.js";
+import { me, setMe, clearSession, pendingPath, setCheckEmail, setAccount, mailReady, readOnly, billingInfo, heldShare, setDrawerOpen, checkEmail, signedOutNote, setSignedOutNote, setPending } from "../state.js";
+import { setIdleSignOut } from "../idle.js";
 import { render, load, post, applyLocation, DEMO_COMPANY_ID, boot, toast, nav } from "../app-core.js";
 import { setAiVisible, helperLog } from "./helper.js";
 
@@ -74,6 +75,7 @@ export function renderLanding() {
         <div class="auth-card land-form" id="signup">
           <h2>${signup ? "Create your company" : "Sign in"}</h2>
           <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, paperwork and clients."}</p>
+          ${!signup && signedOutNote ? `<p class="notice signed-out-note" role="status">${esc(signedOutNote)}</p>` : ""}
           ${!signup && loginCode ? `<form id="auth-form">
             <label for="login-code">Code from your authenticator app</label>
             <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" placeholder="123456" />
@@ -218,6 +220,7 @@ async function lookAround() {
 
 async function startSession(user) {
   clearSession();   // nothing kept from whoever was signed in before in this tab
+  setSignedOutNote("");
   clearForm("auth");
   loginCode = null;
   setMe(escDeep(user));
@@ -233,6 +236,7 @@ async function startSession(user) {
         readOnly: typeof info.read_only === "string" ? esc(info.read_only) : "",
         billingInfo: escDeep(info.billing || null),
         heldShare: Number(info.held_share) || 0,
+        idleMinutes: Number(info.idle_minutes) || 60,
       });
     }
   } catch (_) { setAccount({ helperAdmin: false }); }
@@ -241,19 +245,25 @@ async function startSession(user) {
   setAiVisible(true);
 }
 
-async function logout() {
+// note: why, when the page signed out by itself (G2's idle sign-out); shown on Sign in.
+async function logout(note = "") {
   const wasDemo = me && me.company_id === DEMO_COMPANY_ID;
-  await fetch("/api/auth/logout", { method: "POST" });
+  try { await fetch("/api/auth/logout", { method: "POST" }); } catch (_) { /* offline: the session ends on the server by itself */ }
+  setSignedOutNote(note);
   clearSession();   // and with it Settings, the helper and every page's kept data (onSessionEnd)
   loginCode = null; setCheckEmail(null);
   setAccount({ helperAdmin: false });
   // They have an account on this device now; leaving the sample company goes back to where they were.
-  authMode = wasDemo && !signedInBefore() ? "signup" : "login";
+  authMode = wasDemo && !signedInBefore() && !note ? "signup" : "login";
   setAiVisible(false);
   setDrawerOpen(false);
+  // Signed out for being idle: signing in again opens the page that was open.
+  if (note && location.pathname !== "/") setPending(location.pathname, location.search);
   history.replaceState(null, "", "/");
   renderLanding();
 }
+
+setIdleSignOut((note) => logout(note));
 
 // ---------- accounts: reset, verify and invite links ----------
 // Links in emails carry a one-time token after "#", which browsers never send to a server.

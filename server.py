@@ -199,7 +199,7 @@ def demo_enabled() -> bool:
 
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
-DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv"}
+DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_ping"}
 COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_helper_admin",
                                              "_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal"}
@@ -844,15 +844,21 @@ class Handler(BaseHTTPRequestHandler):
         return forwarded[-hops] if hops and len(forwarded) >= hops else self.client_address[0]
 
     def _session_user(self) -> dict | None:
-        user = auth.session_user(self._token())
+        user, self._signed_out_why = auth.session_check(self._token())
         if user and not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID:
             return None
         return user
 
+    def _signed_out(self) -> dict:
+        """The 401 for a request with no live session; an idle sign-out (G2) says so."""
+        if getattr(self, "_signed_out_why", "") == "idle":
+            return {"error": auth.idle_words(), "idle": True}
+        return {"error": "Sign in required."}
+
     def _require_user(self) -> dict | None:
         user = self._session_user()
         if not user:
-            self._json(401, {"error": "Sign in required."})
+            self._json(401, self._signed_out())
             return None
         return user
 
@@ -929,7 +935,7 @@ class Handler(BaseHTTPRequestHandler):
         # while their request was arriving must not finish it with their old rights.
         user = self._session_user()
         if not user:
-            self._json(401, {"error": "Sign in required."})
+            self._json(401, self._signed_out())
             return
         if route.owner and user["role"] != "owner":
             self._json(403, {"error": "Only an owner can do that."})
@@ -1054,12 +1060,14 @@ class Handler(BaseHTTPRequestHandler):
     def _g_me(self, m) -> None:
         user = self._session_user()
         if not user:
-            self._json(401, {"error": "Not signed in.", "data_notice": data_notice()})
+            self._json(401, {"error": "Not signed in.", "data_notice": data_notice(),
+                             **({"idle": True, "message": auth.idle_words()} if self._signed_out_why == "idle" else {})})
             return
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
                          "mail_ready": bool(mailer.configured() and app_url()),
+                         "idle_minutes": auth.idle_minutes(),
                          "read_only": read_only_reason(user["company_id"], state),
                          "billing": billing.standing(state),
                          # Shared to the app from this browser before signing in (R6-10).
@@ -1654,6 +1662,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(429, {"error": str(exc)})
         except auth.AuthError as exc:
             self._json(400, {"error": str(exc)})
+
+    def _p_ping(self, m, ctx: "Ctx") -> None:
+        """Stay signed in (G2): the session was checked, and so its last use moved to now."""
+        self._json(200, {"ok": True, "idle_minutes": auth.idle_minutes()})
 
     def _p_onboarding_dismiss(self, m, ctx: "Ctx") -> None:
         """Hide the setup checklist for the signed-in person, or show it again with {"show": true}.
@@ -2446,6 +2458,7 @@ ROUTES = [
     # == stream: paperwork-waivers-retainage ==
 
     # == stream: settings-auth ==
+    Route("POST", r"/api/auth/ping", "_p_ping", "body"),
 
     # pages and feeds
     Route("GET", r"/healthz", "_g_healthz"),

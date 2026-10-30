@@ -87,3 +87,50 @@ test("an answer for the last company that lands after sign-out is dropped", asyn
   assert.equal(today.metricsData, null);
   assert.equal(money.qboStatus, null);
 });
+
+// ----- idle sign-out (G2) -----
+const idle = await import("../../static/js/idle.js");
+
+test("the idle count warns two minutes before the end, and halfway through a short time", () => {
+  const min = 60 * 1000;
+  assert.equal(idle.idleStage(57 * min, 0, 60), "active");
+  assert.equal(idle.idleStage(58 * min, 0, 60), "warn");
+  assert.equal(idle.idleStage(60 * min, 0, 60), "out");
+  assert.equal(idle.idleStage(29 * 1000, 0, 1), "active");
+  assert.equal(idle.idleStage(30 * 1000, 0, 1), "warn");
+  assert.equal(idle.idleWords(60), "Signed out after an hour without use.");
+  assert.equal(idle.idleWords(15), "Signed out after 15 minutes without use.");
+});
+
+test("an hour without a click or key signs out with the reason, and Sign in says it", async () => {
+  page.setMe({ name: "Ann", company_id: "co-a", role: "owner" });
+  core.setState(company("Company A"));
+  dom.answers = [(p) => (p === "/api/auth/logout" ? { status: 200, body: {} } : undefined)];
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    idle.startIdleWatch(60);
+    assert.ok(idle.idleWatching());
+    now += 58 * 60 * 1000;
+    idle.idleCheck();
+    assert.ok(idle.idleWatching(), "warned, still signed in");
+    now += 2 * 60 * 1000;
+    idle.idleCheck();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(idle.idleWatching(), false);
+    assert.equal(page.state, null, "signed out: nothing of the company stays");
+    assert.equal(page.signedOutNote, "Signed out after an hour without use.");
+    assert.ok(dom.requests.some(r => r.path === "/api/auth/logout"));
+  } finally { Date.now = realNow; idle.stopIdleWatch(); page.setSignedOutNote(""); }
+});
+
+test("a 401 from an idle session shows the reason on Sign in", async () => {
+  page.setMe({ name: "Ann", company_id: "co-a", role: "owner" });
+  core.setState(company("Company A"));
+  dom.answers = [(p) => (p === "/api/state" ? { status: 401, body: { error: "Signed out after an hour without use.", idle: true } } : undefined)];
+  await core.load();
+  assert.equal(page.me, null);
+  assert.equal(page.signedOutNote, "Signed out after an hour without use.");
+  page.setSignedOutNote("");
+});

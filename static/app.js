@@ -10,7 +10,7 @@ import { readJson, setNetBanner, readTokenFromUrl } from "./js/net.js";
 import { formDraft, watchForms } from "./js/forms.js";
 import { pickPayApp } from "./js/payimport.js";
 import { termText } from "./js/terms.js";
-import { state, me, currentView, currentJobId, setMe, clearSession, setAccount, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
+import { state, me, currentView, currentJobId, setMe, clearSession, setAccount, setSignedOutNote, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
 import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage } from "./js/app-core.js";
 import { views, actions as pageActions } from "./js/views/index.js";
 import { metricsData, metricsPeriod, loadMetrics, setCalJobFilter } from "./js/views/today.js";
@@ -102,6 +102,7 @@ async function boot(checkLink = true) {
       readOnly: typeof data.read_only === "string" ? esc(data.read_only) : "",
       billingInfo: escDeep(data.billing || null),
       heldShare: Number(data.held_share) || 0,
+      idleMinutes: Number(data.idle_minutes) || 60,
     });
     // A visit to the sample company doesn't count as having an account on this device.
     if (data.user && data.user.company_id !== DEMO_COMPANY_ID) rememberSignIn();
@@ -112,7 +113,9 @@ async function boot(checkLink = true) {
     renderOutage((await readJson(res)).error || "Your company's data isn't available right now.");
     return;
   } else {
-    setDataNotice((await readJson(res)).data_notice === true);
+    const out = await readJson(res);
+    setDataNotice(out.data_notice === true);
+    if (out.idle) setSignedOutNote(String(out.message || ""));
     if (location.pathname !== "/" && routeFromPath(location.pathname)) { setPending(location.pathname, location.search); setAuthMode("login"); }
     renderLanding();
     checkDemo();
