@@ -91,6 +91,8 @@ export function doneLabel(l) { return l.lump_sum ? "% done" : `Qty done (${l.uni
 export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
   const v = j.sov_view;
   const typed = (name, saved) => esc(draftValue("sovprogress", name, saved));
+  // M1: an open draft that is only here is replaced, keeping its number (domain record_sov_progress).
+  const replaces = (j.invoices || []).find(i => ["draft", "awaiting_approval"].includes(i.status) && i.pencil_status !== "sent");
   const rows = v.lines.map(l => `
     <tr>
       <td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
@@ -106,6 +108,7 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
       ${rows}
     </table></div>
     ${periodHtml ? `<div class="form-row">${periodHtml}</div>` : ""}
+    ${replaces ? `<p class="sub">This replaces ${replaces.number} (${money(replaces.amount_cents)}). Its number and paperwork stay.</p>` : ""}
     <div class="form-inline"><input id="progress-notes" data-field="notes" value="${typed("notes", "")}" placeholder="What was completed (printed on the pay app)" aria-label="What was completed, printed on the pay app" class="grow"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>
   </div>`;
 }

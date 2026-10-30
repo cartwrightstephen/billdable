@@ -156,3 +156,13 @@ test("Job page: 'Customer wants changes' and a record's Edit box keep what was t
   for (const id of ["pencil-note", "rec-edit-label-r1", "rec-edit-kind-r1"]) delete dom.byId[id];
   page.formOpen.pencilchanges = false;
 });
+
+test("Schedule progress: an open draft is named as the one it replaces, until it is with the client", async () => {  // M1
+  const { sovProgressHtml } = await import("../../static/js/sov.js");
+  const lines = [{ id: "l1", item: "1", description: "Rough-in", unit: "LF", qty_milli: 400000, done_milli: 100000, stored_cents: 0 }];
+  const draft = { id: "i1", number: "PA-OAK-3", status: "draft", amount_cents: 450000 };
+  const sovJob = (invoices) => job({ invoices, sov_view: { present: true, lines } });
+  assert.match(sovProgressHtml(sovJob([draft])), /This replaces PA-OAK-3 \(\$4,500\.00\)\. Its number and paperwork stay\./);
+  assert.doesNotMatch(sovProgressHtml(sovJob([{ ...draft, pencil_status: "sent" }])), /This replaces/);
+  assert.doesNotMatch(sovProgressHtml(sovJob([{ ...draft, status: "sent" }])), /This replaces/);
+});
