@@ -200,7 +200,7 @@ def demo_enabled() -> bool:
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
 DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_ping"}
-COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_helper_admin",
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_password_code", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_helper_admin",
                                              "_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal"}
 
@@ -1068,6 +1068,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
                          "mail_ready": bool(mailer.configured() and app_url()),
                          "idle_minutes": auth.idle_minutes(),
+                         # Codes by email (S2's password change, S7's sign-in): the server sends mail.
+                         "codes_by_email": mailer.configured(),
                          "read_only": read_only_reason(user["company_id"], state),
                          "billing": billing.standing(state),
                          # Shared to the app from this browser before signing in (R6-10).
@@ -1582,9 +1584,31 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(200, {"ok": True, "message": f"A verification link is on its way to {user['email']}."})
 
+    def _p_password_code(self, m, ctx: "Ctx") -> None:
+        """S2: email a 6-digit code that a password change needs on a server that sends mail."""
+        user = ctx.user
+        if user["company_id"] == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The demo account's password can't be changed."})
+            return
+        if not mailer.configured():
+            self._json(409, {"error": "Email isn't set up on this server. Your current password is enough."})
+            return
+        code = auth.issue_code(user["id"], "pwchange")
+        if not code:
+            self._json(429, {"error": "Five codes were sent in the last hour. Use the newest one, or try again later."})
+            return
+        subject, text = mailer.password_change_email(user["name"], code)
+        status = self._system_email(user["email"], subject, text)
+        if status != "sent":
+            self._json(409, {"error": f"The code couldn't be sent: {status}."})
+            return
+        self._json(200, {"ok": True, "message": f"A code is on its way to {user['email']}. It works for 15 minutes."})
+
     def _p_password(self, m, ctx: "Ctx") -> None:
         try:
-            auth.change_password(ctx.user["id"], ctx.body.get("current"), ctx.body.get("new"), keep_session=self._token())
+            # With mail on the server, the emailed code is needed too (S2); without, the current password is enough.
+            auth.change_password(ctx.user["id"], ctx.body.get("current"), ctx.body.get("new"), keep_session=self._token(),
+                                 code=_text(ctx.body, "code", limit=20), need_code=mailer.configured())
         except auth.RateLimited as exc:
             self._json(429, {"error": str(exc)})
             return
@@ -2468,6 +2492,7 @@ ROUTES = [
 
     # == stream: settings-auth ==
     Route("POST", r"/api/auth/ping", "_p_ping", "body"),
+    Route("POST", r"/api/auth/password/code", "_p_password_code", "body"),
 
     # pages and feeds
     Route("GET", r"/healthz", "_g_healthz"),

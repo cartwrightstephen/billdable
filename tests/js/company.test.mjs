@@ -89,3 +89,28 @@ test("My account has one Save at the bottom, and it saves the name", async () =>
   assert.equal(page.me.name, "Pat Pine");
   delete dom.all['[data-form-key="account"] [data-field]'];
 });
+
+test("Change password is its own page; with mail on the server it asks for the emailed code", async () => {
+  const routes = await import("../../static/js/routes.js");
+  assert.deepEqual(routes.routeFromPath("/settings/account/password"), { view: "password" });
+  page.setMe({ id: "u1", name: "Pat", email: "pat@pine.example", company_id: "co-p", role: "owner", email_verified: true });
+  core.setState(company());
+  assert.match(reg.views.account(), /data-view="password">Change password</);
+  assert.doesNotMatch(reg.views.account(), /pw-current/, "no password boxes on My account");
+  page.setAccount({ codesByEmail: false });
+  assert.doesNotMatch(reg.views.password(), /Email me a code|pw-code/);
+  page.setAccount({ codesByEmail: true });
+  const html = reg.views.password();
+  assert.match(html, /Email me a code/);
+  assert.match(html, /id="pw-code"/);
+  dom.answers = [(p) => (p === "/api/auth/password/code" ? { status: 200, body: { ok: true } } : undefined)];
+  await reg.actions["pw-code"]();
+  assert.match(reg.views.password(), /Code sent to pat@pine.example/);
+  Object.assign(dom.byId, { "pw-code": { value: "12345" }, "pw-current": { value: "" }, "pw-new": { value: "short" } });
+  const before = dom.requests.length;
+  await reg.actions["change-password"]();
+  assert.equal(dom.requests.length, before, "checked on the page first");
+  assert.deepEqual(Object.keys(forms.formErrors.password).filter(k => k !== "_form").sort(), ["code", "current", "new"]);
+  for (const id of ["pw-code", "pw-current", "pw-new"]) delete dom.byId[id];
+  page.setAccount({ codesByEmail: false });
+});

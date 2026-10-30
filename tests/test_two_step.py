@@ -1,8 +1,11 @@
 """Two-step sign-in (P2-9): TOTP codes and recovery codes."""
 
 import base64
+import email
+import email.policy
 import http.client
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -12,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import auth
 import qr
@@ -183,6 +187,69 @@ class TwoStepHttpTests(unittest.TestCase):
         login = {"email": "thr@example.com", "password": PASSWORD}
         statuses = [self.request("/api/auth/login", {**login, "code": "111111"})[0].status for _ in range(auth.LOGIN_FREE_FAILURES + 1)]
         self.assertEqual(statuses[-1], 429)
+
+
+from test_accounts import ServerCase  # noqa: E402  (a server, a local mail server and helpers)
+
+
+class EmailCodeTests(ServerCase):
+    """Codes by email: S2's password change and S7's sign-in from a new device."""
+
+    def emailed_code(self, before=0):
+        self.wait_for_mail(before + 1)
+        msg = self.sink.messages[-1]
+        text = email.message_from_bytes(msg["data"], policy=email.policy.default).get_body(("plain",)).get_content()
+        return re.search(r"\b(\d{6})\b", text).group(1), msg
+
+    # ----- S2: change password -----
+
+    def test_password_change_needs_the_emailed_code_when_mail_is_on(self):
+        self.mail_on()
+        cookie, data = self.signup("pw@pine.example")
+        self.wait_for_mail(1)
+        self.sink.messages.clear()
+        change = {"current": PASSWORD, "new": "a brand new password"}
+        res, data = self.request("POST", "/api/auth/password", change, cookie=cookie)
+        self.assertEqual(res.status, 400)
+        self.assertIn("6-digit code", data["error"])
+        res, data = self.request("POST", "/api/auth/password/code", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        code, msg = self.emailed_code()
+        self.assertEqual(msg["to"], ["pw@pine.example"])
+        wrong = "000000" if code != "000000" else "111111"
+        res, data = self.request("POST", "/api/auth/password", {**change, "code": wrong}, cookie=cookie)
+        self.assertEqual(res.status, 400)
+        res, data = self.request("POST", "/api/auth/password", {**change, "code": code}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        res, data = self.request("POST", "/api/auth/password", {"current": "a brand new password", "new": "and another one!", "code": code}, cookie=cookie)
+        self.assertEqual(res.status, 400, "a code works once")
+        self.assertIsNotNone(auth.verify_login("pw@pine.example", "a brand new password"))
+
+    def test_password_change_without_mail_takes_the_current_password(self):
+        cookie, _ = self.signup("pwnomail@pine.example")
+        res, data = self.request("POST", "/api/auth/password/code", {}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        res, data = self.request("POST", "/api/auth/password", {"current": PASSWORD, "new": "a brand new password"}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        res, me = self.request("GET", "/api/auth/me", cookie=cookie)
+        self.assertIs(me["codes_by_email"], False)
+
+    def test_codes_expire_and_are_limited(self):
+        auth.create_user("lim@pine.example", PASSWORD, "Pat", "co-lim")
+        uid = auth.user_by_email("lim@pine.example")["id"]
+        codes = [auth.issue_code(uid, "pwchange") for _ in range(auth.CODES_MAX_PER_HOUR)]
+        self.assertTrue(all(codes))
+        self.assertIsNone(auth.issue_code(uid, "pwchange"), "five an hour")
+        self.assertIsNotNone(auth.issue_code(uid, "login"), "each kind counts on its own")
+        data = json.loads(auth.AUTH_PATH.read_text())
+        for entry in data["tokens"].values():
+            if entry.get("user_id") == uid:
+                entry["expires_at"] = "2000-01-01T00:00:00+00:00"
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        with self.assertRaises(auth.AuthError):
+            auth.change_password(uid, PASSWORD, "a brand new password", code=codes[-1], need_code=True)
+        self.assertNotIn(codes[-1], auth.AUTH_PATH.read_text(), "only a hash of the code is kept")
+        auth._CODES.clear()
 
 
 if __name__ == "__main__":

@@ -183,6 +183,23 @@ def invite_email(inviter: str, inviter_email: str, company_name: str, role: str,
             "If you don't know this person, ignore this email.")
 
 
+def password_change_email(name: str, code: str) -> tuple[str, str]:
+    """(subject, body) of the code that confirms a password change (S2)."""
+    return ("Your Duracash code to change your password",
+            f"Hi {' '.join(str(name).split())[:80]},\n\nYour code to change your Duracash password is {code}. "
+            "It works once, for 15 minutes.\n\n"
+            "If you didn't ask to change your password, someone may be signed in as you: sign in and change it, "
+            "or ignore this email and nothing changes.")
+
+
+def login_code_email(name: str, code: str) -> tuple[str, str]:
+    """(subject, body) of the code that signs someone in from a new device (S7)."""
+    return ("Your Duracash sign-in code",
+            f"Hi {' '.join(str(name).split())[:80]},\n\nYour code to sign in to Duracash is {code}. "
+            "It works once, for 10 minutes.\n\n"
+            "If you didn't just try to sign in, someone has your password: change it from Settings, My account.")
+
+
 def _mime(name: str) -> tuple[str, str]:
     ext = Path(name).suffix.lower()
     table = {

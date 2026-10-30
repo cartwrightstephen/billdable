@@ -103,6 +103,7 @@ async function boot(checkLink = true) {
       billingInfo: escDeep(data.billing || null),
       heldShare: Number(data.held_share) || 0,
       idleMinutes: Number(data.idle_minutes) || 60,
+      codesByEmail: data.codes_by_email === true,
     });
     // A visit to the sample company doesn't count as having an account on this device.
     if (data.user && data.user.company_id !== DEMO_COMPANY_ID) rememberSignIn();

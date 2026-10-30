@@ -49,9 +49,13 @@ class RateLimited(Exception):
     pass
 
 ROLES = ("owner", "member")
-TOKEN_HOURS = {"reset": 1, "verify": 72, "invite": 7 * 24}
+TOKEN_HOURS = {"reset": 1, "verify": 72, "invite": 7 * 24, "pwchange": 0.25, "login": 1 / 6}
 RESET_MAX_PER_HOUR = 3
 _RESETS: dict[str, list[float]] = {}
+# Emailed 6-digit codes (S2 password change, S7 sign-in from a new device): at most this many
+# an hour per person and kind, each working once until it expires.
+CODES_MAX_PER_HOUR = 5
+_CODES: dict[str, list[float]] = {}
 
 
 class AuthError(ValueError):
@@ -440,6 +444,49 @@ def _find_token(data: dict[str, Any], kind: str, raw: Any) -> tuple[str, dict[st
     return key, entry
 
 
+def _code_key(kind: str, user_id: str, code: str) -> str:
+    return _digest(f"{kind}:{user_id}:{code}")
+
+
+def issue_code(user_id: str, kind: str) -> str | None:
+    """A new 6-digit code of this kind ("pwchange" or "login") for this person, or None when too
+    many were asked for in the last hour. Only its hash is kept; older ones stay valid until used
+    or expired."""
+    now = time.monotonic()
+    with LOCK:
+        key = f"{kind}:{user_id}"
+        recent = [t for t in _CODES.get(key, []) if now - t < 3600]
+        if len(recent) >= CODES_MAX_PER_HOUR:
+            _CODES[key] = recent
+            return None
+        _CODES[key] = recent + [now]
+        if len(_CODES) > 10_000:
+            for k in [k for k, v in _CODES.items() if not v or now - v[-1] >= 3600]:
+                _CODES.pop(k, None)
+        data = _load()
+        _user(data, user_id)
+        code = f"{secrets.randbelow(10 ** 6):06d}"
+        _prune_tokens(data)
+        data["tokens"][_code_key(kind, user_id, code)] = {
+            "kind": kind, "id": f"{kind}-" + secrets.token_hex(4), "user_id": user_id,
+            "created_at": _iso(_utcnow()), "expires_at": _iso(_utcnow() + timedelta(hours=TOKEN_HOURS[kind])),
+        }
+        _save(data)
+        return code
+
+
+def _take_code(data: dict[str, Any], kind: str, user_id: str, code: Any) -> bool:
+    """Use up a right code (and every other of its kind for this person). Call under LOCK."""
+    raw = re.sub(r"\s+", "", str(code or ""))
+    if not re.fullmatch(r"\d{6}", raw):
+        return False
+    entry = data["tokens"].get(_code_key(kind, user_id, raw))
+    if not entry or entry.get("kind") != kind or entry.get("expires_at", "") <= _iso(_utcnow()):
+        return False
+    data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v.get("kind") == kind and v.get("user_id") == user_id)}
+    return True
+
+
 def _check_password(password: Any) -> str:
     if not isinstance(password, str) or len(password) < MIN_PASSWORD:
         raise AuthError(f"Password must be at least {MIN_PASSWORD} characters.")
@@ -540,9 +587,14 @@ def set_onboarding_dismissed(user_id: str, dismissed: bool) -> dict[str, Any]:
         return _public(user)
 
 
-def change_password(user_id: str, current: Any, new: Any, keep_session: str | None = None) -> None:
-    """Change a password. Other sessions end; the one making the change can stay."""
+def change_password(user_id: str, current: Any, new: Any, keep_session: str | None = None,
+                    code: Any = None, need_code: bool = False) -> None:
+    """Change a password. Other sessions end; the one making the change can stay. need_code (the
+    server sends mail, S2): the 6-digit code emailed by issue_code(user_id, "pwchange") is needed
+    too, and wrong ones count toward the same throttle as wrong passwords."""
     _check_password(new)
+    if need_code and not str(code or "").strip():
+        raise AuthError("Enter the 6-digit code we emailed you.")
     with LOCK:
         user = next((u for u in _load()["users"] if u["id"] == user_id), None)
         if not user:
@@ -555,14 +607,18 @@ def change_password(user_id: str, current: Any, new: Any, keep_session: str | No
     ok = isinstance(current, str) and _matches(user, current)
     if not ok:
         raise AuthError("Current password is wrong.")
-    with LOCK:
-        _not_failed(user["email"], None, now)
     salt, new_digest = _hash(new)
     keep = _digest(keep_session) if keep_session else None
     with LOCK:
         data = _load()
         user = next(u for u in data["users"] if u["id"] == user_id)
+        if need_code and not _take_code(data, "pwchange", user_id, code):
+            raise AuthError("That code didn't match, or it has expired. Ask for a new one.")
+        _not_failed(user["email"], None, now)
+        if need_code:
+            user["email_verified"] = True   # the code reached this address
         _set_password(user, salt, new_digest)
+        user.pop("devices", None)   # remembered devices (S7) ask for a code again
         data["sessions"] = {k: v for k, v in data["sessions"].items() if v.get("user_id") != user_id or k == keep}
         _save(data)
 

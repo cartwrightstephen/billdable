@@ -7,8 +7,8 @@ import { field, formErrorLine, refuseForm, formValues, clearForm } from "../form
 import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
-import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo } from "../state.js";
-import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding } from "../app-core.js";
+import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail } from "../state.js";
+import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav } from "../app-core.js";
 import { qboCardHtml } from "./payments.js";
 import { forgetImportSettings } from "./inbox.js";
 
@@ -203,11 +203,7 @@ function myAccountView() {
       ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-grid">${field({ form: "account", name: "name", id: "my-name", label: "Name", value: unesc(me.name), autocomplete: "name", rule: "name", required: true })}</div>`}
       <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
       <div class="money-row"><span class="label">Role</span><span>${words(me.role)}</span></div>
-      ${isDemo ? "" : `<div data-form-key="password">${formErrorLine("password")}<div class="form-row">
-        ${field({ form: "password", name: "current", id: "pw-current", label: "Current password", type: "password", autocomplete: "current-password" })}
-        ${field({ form: "password", name: "new", id: "pw-new", label: "New password (10+ characters)", type: "password", autocomplete: "new-password" })}
-        <button class="btn small" data-action="change-password">Change password</button>
-      </div></div>`}
+      ${isDemo ? "" : `<div class="money-row"><span class="label">Password</span><span><button class="btn small secondary" data-action="nav" data-view="password">Change password</button></span></div>`}
     </div>
     ${isDemo ? "" : `<div class="card" id="two-step">
       <h2>Two-step sign-in</h2>
@@ -231,6 +227,27 @@ function myAccountView() {
     <p class="sub">Your account id: <code>${me.id}</code></p>
     ${isDemo ? "" : `<div class="save-bar"><button class="btn" data-action="save-account">Save</button></div>`}
   `;
+}
+
+// Change password (S2), its own page under My account. On a server that sends mail, a 6-digit
+// code emailed to the person is needed too; without mail, the current password is enough.
+let codeSentTo = "";   // the address the last code went to, while this page is open
+function passwordView() {
+  if (me.company_id === DEMO_COMPANY_ID) return `${backButton("account", "My account")}<h1>Change password</h1>${emptyState("The demo account's password can't be changed")}`;
+  return `${backButton("account", "My account")}
+    <h1>Change password</h1>
+    <div class="card" data-form-key="password">${formErrorLine("password")}
+      ${codesByEmail ? `<div class="form-inline">
+        <button class="btn small${codeSentTo ? " secondary" : ""}" data-action="pw-code">${codeSentTo ? "Send a new code" : "Email me a code"}</button>
+        ${codeSentTo ? `<span class="sub" role="status">Code sent to ${codeSentTo}. It works for 15 minutes.</span>` : `<span class="sub">To ${me.email}</span>`}
+      </div>` : ""}
+      <div class="form-grid">
+        ${codesByEmail ? field({ form: "password", name: "code", id: "pw-code", label: "Code from the email", autocomplete: "one-time-code", inputmode: "numeric", placeholder: "123456" }) : ""}
+        ${field({ form: "password", name: "current", id: "pw-current", label: "Current password", type: "password", autocomplete: "current-password" })}
+        ${field({ form: "password", name: "new", id: "pw-new", label: "New password (10+ characters)", type: "password", autocomplete: "new-password" })}
+      </div>
+      <button class="btn" data-action="change-password">Change password</button>
+    </div>`;
 }
 
 function billingView() {
@@ -271,7 +288,7 @@ export function trialBannerHtml() {
 
 // Signed out: what one person had open in Settings isn't kept for the next.
 export function forgetSettings() {
-  twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {};
+  twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {}; codeSentTo = "";
   helperReview = null; helperDraft = null; auditJobFilter = "all";
 }
 onSessionEnd(forgetSettings);
@@ -407,6 +424,7 @@ export const views = {
   company() { return companyView(); },
   team() { return teamView(); },
   account() { return myAccountView(); },
+  password() { return passwordView(); },
   billing() { return billingView(); },
   "helper-admin"() {
     return `<h1>Helper answers</h1>
@@ -440,17 +458,27 @@ export const views = {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in app.js.
 export const actions = {
   "reset-data": () => resetData(),
+  "pw-code": async () => {
+    const r = await postJson("/api/auth/password/code", {});
+    if (!r.ok) { refuseForm("password", { _form: r.data.error || "No code was sent." }); return; }
+    codeSentTo = me.email;
+    render();
+    document.getElementById("pw-code")?.focus();
+  },
   "change-password": async () => {
     const current = document.getElementById("pw-current").value, next = document.getElementById("pw-new").value;
+    const code = codesByEmail ? (document.getElementById("pw-code")?.value || "").trim() : "";
     const errors = {};
+    if (codesByEmail && !/^\d{6}$/.test(code.replace(/\s+/g, ""))) errors.code = "Enter the 6-digit code from the email.";
     if (!current) errors.current = "Enter your current password.";
     if (next.length < 10) errors.new = "Use at least 10 characters for the new password.";
     if (refuseForm("password", errors)) return;
-    const r = await postJson("/api/auth/password", { current, new: next });
+    const r = await postJson("/api/auth/password", { current, new: next, ...(codesByEmail ? { code } : {}) });
     if (!r.ok) { refuseForm("password", r.data.fields || { _form: r.data.error || "That didn't work." }); return; }
     clearForm("password");
+    codeSentTo = "";
+    nav("account");
     toast(r.data.message);
-    render();
   },
   "team-invite": async () => {
     const v = formValues("invite");

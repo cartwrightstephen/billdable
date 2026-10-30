@@ -237,6 +237,7 @@ async function startSession(user) {
         billingInfo: escDeep(info.billing || null),
         heldShare: Number(info.held_share) || 0,
         idleMinutes: Number(info.idle_minutes) || 60,
+        codesByEmail: info.codes_by_email === true,
       });
     }
   } catch (_) { setAccount({ helperAdmin: false }); }
