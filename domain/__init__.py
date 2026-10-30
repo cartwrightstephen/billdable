@@ -1178,8 +1178,29 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     for inv in out["invoices"]:
         paid = sum(p["amount_cents"] for p in job["payments"] if p.get("invoice_id") == inv["id"])
         inv["remaining_cents"] = max(0, inv["amount_cents"] - paid) if inv["status"] in OPEN_FOR_PAYMENT else 0
+    _payapp_figures(job, out)
     _co_flags(out)
     return out
+
+
+def payapp_figures(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
+    """The pay app's summary lines 1-9, as its PDF prints them (payapp_pdf.summary), plus the
+    payments received on the pay apps before it (Stephen's Oct 29 review, M2), for information."""
+    figures = payapp_pdf.summary(job, invoice)
+    earlier = set()
+    for inv in job.get("invoices", []):
+        if inv is invoice or inv.get("id") == invoice.get("id"):
+            break
+        earlier.add(inv.get("id"))
+    figures["received_before"] = sum(p["amount_cents"] for p in job.get("payments", []) if p.get("invoice_id") in earlier)
+    return figures
+
+
+def _payapp_figures(job: dict[str, Any], out: dict[str, Any]) -> None:
+    """Each pay app that isn't void gets its figures; a deleted draft's would only add weight."""
+    for stored, inv in zip(job.get("invoices", []), out.get("invoices", [])):
+        if stored.get("status") in sov.LIVE_STATUSES:
+            inv["figures"] = payapp_figures(job, stored)
 
 
 def _co_flags(out: dict[str, Any]) -> None:

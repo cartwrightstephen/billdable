@@ -280,3 +280,48 @@ class LaterChangesTests(unittest.TestCase):
         self.assertEqual(self.first["contract_at_send"]["approved_co_cents"], 0)
         self.assertEqual(self.first["contract_at_send"]["released_cents"], 0)
         self.assertEqual(payapp_pdf.summary(self.job, self.first), self.before)
+
+
+class SheetQuantityTests(unittest.TestCase):  # Stephen's Oct 29 review, M2
+    """The quantity completed to date on every sheet, and the app's pay app summary equal to the PDF's."""
+
+    setUp = MonthTwoTests.setUp
+
+    def test_job_view_figures_equal_the_pdf_summary(self):
+        view = domain.job_view(self.state, self.job)
+        for stored, inv in zip(self.job["invoices"], view["invoices"]):
+            if stored["status"] == "void":
+                self.assertNotIn("figures", inv, "a pulled-back pay app carries no figures")
+                continue
+            want = payapp_pdf.summary(self.job, stored)
+            self.assertEqual({k: inv["figures"][k] for k in want}, want, stored["number"])
+        domain.match_payment(self.state, self.job["id"], 50_000, "CHK-1", invoice_id=self.first["id"])
+        view = domain.job_view(self.state, self.job)
+        self.assertEqual(view["invoices"][0]["figures"]["received_before"], 0)
+        self.assertEqual(view["invoices"][2]["figures"]["received_before"], 50_000, "payments on earlier pay apps, for information")
+
+    def sheet_rows(self, inv):
+        pdf = pdf_text(self.state, self.job, inv)
+        return [r.decode("latin-1").replace("\\(", "(").replace("\\)", ")") for r in re.findall(rb"/F3 8 Tf [\d.]+ [\d.]+ Td \((.*?)\) Tj", pdf)]
+
+    def test_the_pdf_sheet_has_qty_to_date_and_nothing_runs_off_the_page(self):
+        rows = self.sheet_rows(self.third)
+        self.assertIn("Qty to date", rows[0])
+        self.assertLess(rows[0].index("Stored"), rows[0].index("Qty to date"), "in the order of sov.sheet_columns")
+        self.assertLess(rows[0].index("Qty to date"), rows[0].index("To date", rows[0].index("Qty to date") + 3))
+        rough = next(r for r in rows if r.startswith("1 "))
+        self.assertIn("180 ea", rough)
+        panel = next(r for r in rows if r.startswith("2 "))
+        self.assertNotIn(" LS", panel, "a lump sum has no quantity")
+        usable = (payapp_pdf.PAGE_W - 2 * payapp_pdf.MARGIN) / (0.6 * 8)
+        self.assertTrue(all(len(r) <= usable for r in rows), max(len(r) for r in rows))
+
+    def test_the_client_page_and_the_email_text_have_it_too(self):
+        import payer_page
+        page = payer_page.render(self.state, self.job, self.third, "/p/x.y")
+        self.assertIn("<h2>Continuation sheet</h2>", page)
+        self.assertIn("<th>Qty to date</th>", page)
+        self.assertIn("<td>180 ea</td>", page)
+        for words in ("Contract sum", "Approved change orders", "Completed and stored to date", "Prior payments received", "Current amount due"):
+            self.assertIn(words, page)
+        self.assertIn("Qty to date", sov.continuation_sheet(self.job, self.third))

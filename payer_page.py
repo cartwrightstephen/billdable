@@ -17,7 +17,7 @@ from typing import Any
 
 import domain
 import importer
-import payapp_pdf
+import sov
 
 PAGE_STYLE = """
 .card.alert{border-color:#8d2d2d}.sign-form{flex-direction:column;align-items:stretch}
@@ -35,6 +35,9 @@ form{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}a{color:#8c3f1d}.foot{c
 .received{background:#e5f2ea;border-color:#b7d8c4}
 .stack{flex-direction:column;align-items:stretch}textarea{font:inherit;padding:10px 12px;border:1px solid #8a8075;border-radius:8px;min-height:96px}
 .total{font-weight:600}
+.sheet{overflow-x:auto;padding:8px}.sheet table{border-collapse:collapse;font-size:13px;white-space:nowrap}
+.sheet th,.sheet td{padding:5px 8px;border-bottom:1px solid #e4ddd2;text-align:right}.sheet th:nth-child(-n+2),.sheet td:nth-child(-n+2){text-align:left}
+.sheet td:nth-child(2){white-space:normal;min-width:160px}
 """
 
 MAX_QUESTIONS = 20   # per pay app: past that, the customer replies to the contractor's email
@@ -70,13 +73,37 @@ def file_ids(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]
 
 
 def _job_card(job: dict[str, Any], invoice: dict[str, Any]) -> str:
-    """"This job": the application's own figures (lines 1-9 of the PDF), up to this pay app."""
-    f = payapp_pdf.summary(job, invoice)
-    rows = [("Contract", f["original"]), ("Change orders", f["net_co"] + f["unsigned_co"]), ("Contract to date", f["contract_to_date"]),
-            ("Work done to date", f["completed"]), ("Retainage held", f["retainage"]),
-            ("Paid or billed before this one", f["previous"]), ("This pay app", f["due"]), ("Balance to finish", f["balance"])]
-    return "".join(f'<div class="row{" total" if label == "This pay app" else ""}"><span>{_e(label)}</span><span>{_e(domain.money(cents))}</span></div>'
+    """"This job": the application's own figures (lines 1-9 of the PDF), up to this pay app, and
+    the payments received before it (Stephen's Oct 29 review, M2)."""
+    f = domain.payapp_figures(job, invoice)
+    rows = [("Contract sum", f["original"]), ("Approved change orders", f["net_co"])]
+    if f["unsigned_co"]:
+        rows.append(("Unsigned change orders billed here", f["unsigned_co"]))
+    rows += [("Contract sum to date", f["contract_to_date"]), ("Completed and stored to date", f["completed"]),
+             ("Retainage held", f["retainage"]), ("Previous pay apps", f["previous"]),
+             ("Prior payments received", f["received_before"]), ("Current amount due", f["due"]),
+             ("Balance to finish", f["balance"])]
+    return "".join(f'<div class="row{" total" if label == "Current amount due" else ""}"><span>{_e(label)}</span><span>{_e(domain.money(cents))}</span></div>'
                    for label, cents in rows)
+
+
+def _sheet(job: dict[str, Any], invoice: dict[str, Any]) -> str:
+    """The continuation sheet, with the same columns as the PDF's (sov.sheet_columns), including
+    the quantity completed to date (M2). Empty for a pay app without schedule lines."""
+    entries = invoice.get("sov_sheet") or invoice.get("sov_lines") or []
+    if not entries:
+        return ""
+    pct = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)
+    heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "Qty to date", "To date", "%", "Balance"] + (["Retainage"] if pct else [])
+    money = lambda c: _e(domain.money(c))
+    rows = []
+    for e in entries:
+        c = sov.sheet_columns(e, pct)
+        cells = [_e(e.get("item", "")), _e(e.get("description", "")), money(c["scheduled"]), money(c["previous"]), money(c["this_period"]),
+                 money(c["stored"]), _e(sov.qty_to_date(e)), money(c["to_date"]), f"{c['pct']}%", money(c["balance"])] + ([money(c["retainage"])] if pct else [])
+        rows.append("<tr>" + "".join(f"<td>{x}</td>" for x in cells) + "</tr>")
+    return ('<h2>Continuation sheet</h2><div class="card sheet"><table><tr>' + "".join(f"<th>{_e(h)}</th>" for h in heads) + "</tr>"
+            + "".join(rows) + "</table></div>")
 
 
 def _previous(job: dict[str, Any], invoice: dict[str, Any]) -> str:
@@ -167,6 +194,7 @@ def render(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], 
             + f'<h2>This job</h2><div class="card">{_job_card(job, invoice)}</div>'
             + (f'<h2>Previous applications</h2><div class="card">{previous}</div>' if previous else "")
             + f'<h2>Lines</h2><div class="card">{lines or "<p>No lines.</p>"}</div>'
+            + _sheet(job, invoice)
             + (f'<h2>Paperwork</h2><div class="card">{"".join(packet)}</div>' if packet else "")
             + _question(company, invoice, base, errors if form == "question" else {}, asked)
             + f'<p class="foot">This page is for the people {_e(company)} sent this pay app to. Prepared with Duracash. '

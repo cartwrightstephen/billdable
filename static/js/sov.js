@@ -120,6 +120,13 @@ export function sheetColumns(e, retPct) {
            balance: e.scheduled_cents - e.to_date_cents, retainage: Math.floor((e.to_date_cents * retPct + 50) / 100) };
 }
 
+// The quantity completed to date with its unit (sov.qty_to_date, Stephen's Oct 29 review, M2):
+// blank for a lump sum and for entries from before quantities were kept.
+export function qtyToDate(e) {
+  if (String(e.unit || "").toUpperCase() === "LS" || e.qty_milli_to_date == null) return "";
+  return `${fmtQty(e.qty_milli_to_date)} ${e.unit || ""}`.trim();
+}
+
 export function continuationHtml(inv, job) {
   const rows = (inv.sov_sheet && inv.sov_sheet.length ? inv.sov_sheet : inv.sov_lines) || [];
   if (!rows.length) return "";
@@ -127,9 +134,9 @@ export function continuationHtml(inv, job) {
   return `<div class="card">
     <h2>Continuation sheet</h2>
     <div class="table-wrap sov-wrap"><table class="sov-table">
-      <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Previous</th><th>This period</th><th>Stored</th><th>Total to date</th><th>%</th><th>Balance to finish</th>${retPct ? `<th>Retainage ${retPct}%</th>` : ""}</tr>
-      ${rows.map(e => { const c = sheetColumns(e, retPct); return `<tr><td>${e.item}</td><td class="sov-desc-cell">${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(c.previous)}</td><td class="num">${money(c.thisPeriod)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(c.stored)}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${c.pct}%</td><td class="num">${money(c.balance)}</td>${retPct ? `<td class="num">${money(c.retainage)}</td>` : ""}</tr>`; }).join("")}
-      ${inv.op_cents ? `<tr><td></td><td class="sov-desc-cell">Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td><td></td>${retPct ? "<td></td>" : ""}</tr>` : ""}
+      <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Previous</th><th>This period</th><th>Stored</th><th>Qty to date</th><th>Total to date</th><th>%</th><th>Balance to finish</th>${retPct ? `<th>Retainage ${retPct}%</th>` : ""}</tr>
+      ${rows.map(e => { const c = sheetColumns(e, retPct); return `<tr><td>${e.item}</td><td class="sov-desc-cell">${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(c.previous)}</td><td class="num">${money(c.thisPeriod)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(c.stored)}</td><td class="num">${qtyToDate(e)}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${c.pct}%</td><td class="num">${money(c.balance)}</td>${retPct ? `<td class="num">${money(c.retainage)}</td>` : ""}</tr>`; }).join("")}
+      ${inv.op_cents ? `<tr><td></td><td class="sov-desc-cell">Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td><td></td><td></td>${retPct ? "<td></td>" : ""}</tr>` : ""}
     </table></div>
     ${retPct ? `<p class="sub">The retainage column is ${retPct}% of each line's total to date, for reference.</p>` : ""}
   </div>`;
