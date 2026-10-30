@@ -59,6 +59,18 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.locator(".back").click();
     await page.getByRole("heading", { name: "Open jobs" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/jobs");
+    // A closed job's own list is Job history.
+    await page.goto(BASE + "/jobs/job-hist-maple");
+    await page.locator(".back", { hasText: "← Job history" }).waitFor();
+  });
+
+  await step("each page's tab title is its own name, not its section's (D9)", async () => {
+    for (const [path, title] of [["/money/packets", "Pay apps · Duracash"], ["/money/retainage", "Closeout · Duracash"],
+      ["/settings/account/password", "Change password · Duracash"], ["/settings/company/delete", "Delete the company · Duracash"]]) {
+      await page.goto(BASE + path);
+      await page.locator("#view h1").first().waitFor();
+      assert.equal(await page.title(), title, path);
+    }
   });
 
   await step("phone: five sections, with Import/Export and Automations under More", async () => {

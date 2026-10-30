@@ -235,7 +235,7 @@ export const views = {
     const hasPayApps = j.invoices.some(i => i.status !== "void");
     const ejf = jobFields("editjob", "ej", j);
     const head = `
-      ${backButton("jobs", "Jobs")}
+      ${j.closed ? backButton("history", "Job history") : backButton("jobs", "Jobs")}
       <div class="job-head">
         <div>
           <h1>${j.name}</h1>

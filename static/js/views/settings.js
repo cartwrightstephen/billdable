@@ -8,7 +8,7 @@ import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
 import { jobFilterOptions } from "../jobs.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
-import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt } from "../state.js";
+import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt, helperAdmin } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
 import { THEMES, ACCENTS, applyAppearance, normalizeAppearance, storedAppearance } from "../theme.js";
 import { qboCardHtml } from "./payments.js";
@@ -544,6 +544,9 @@ export const views = {
   "delete-company"() { return deleteCompanyView(); },
   billing() { return billingView(); },
   "helper-admin"() {
+    // The Duracash team's page (HELPER_ADMIN_USER_IDS): anyone else who types its address sees no
+    // such page (D6). The server refuses its data to them too (is_helper_admin, server.py).
+    if (!helperAdmin) return emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`);
     return `<h1>Helper answers</h1>
       <p class="sub">What users asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
       <div id="helper-admin-body">Loading…</div>
