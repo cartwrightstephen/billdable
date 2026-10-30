@@ -243,6 +243,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator('.dropzone .pointer-only [data-action="pick-files"]').click();  // desktop: the "choose files" link (R6-04)
     await (await chooser).setFiles({ name: "IMG_0412.jpg", mimeType: "image/jpeg", buffer: Buffer.from("not really a jpeg") });
     await p.getByText("1 file in the Inbox.").waitFor();
+    // The server has it suggested to the job picked (says what it got instead when not).
+    const got = await p.evaluate(async () => (await (await fetch("/api/state")).json()).inbox.find((i) => i.subject === "IMG_0412.jpg"));
+    assert.equal(got && got.suggested_job_id, ids["Cedar bath"], `photo suggested to ${got && got.suggested_job_id}: ${got && got.match_reason}`);
     await p.goto(BASE + "/communications");
     const photo = p.locator(".inbox-item", { hasText: "IMG_0412.jpg" });
     await photo.getByRole("button", { name: "Add to Cedar bath" }).waitFor();
