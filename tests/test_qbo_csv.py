@@ -290,9 +290,6 @@ class UnsafeFilesTests(unittest.TestCase):
             self.assertEqual(qbo_csv.looks_like_payments(text), 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 def _row(ref, amount, day, customer="Northline GC", memo="", **more):
     return {"line": 2, "date": day, "ref": ref, "customer": customer, "amount_cents": amount, "memo": memo, **more}
 
@@ -362,6 +359,18 @@ class NoNumberAlreadyRecordedTests(unittest.TestCase):
         self.assertEqual(qbo_csv.propose(state, [row])[0]["status"], "already recorded")
 
 
+    def test_rows_recorded_one_by_one_are_not_taken_as_a_split(self):
+        # $1,000 from Northline and $500 from Ponce were recorded by hand. A $1,500 Northline row
+        # read first must not take both as a split and leave the two real rows to be recorded again.
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 100_000, "", "owner", received_on="2026-10-09")
+        domain.match_payment(state, "job-brook", 50_000, "", "owner", received_on="2026-10-09")
+        rows = [_row("", 150_000, "2026-10-09"), _row("", 100_000, "2026-10-09"), _row("", 50_000, "2026-10-09", customer="Ponce Property Co.")]
+        for order in (rows, rows[::-1]):
+            got = {r["amount_cents"]: r["status"] for r in qbo_csv.propose(state, order)}
+            self.assertEqual(got, {150_000: "no match", 100_000: "already recorded", 50_000: "already recorded"})
+
+
 class ReusedReferenceTests(unittest.TestCase):
     """'ACH' typed for every electronic payment, or one check paying two jobs, doesn't hide the next payment."""
 
@@ -390,3 +399,7 @@ class ReusedReferenceTests(unittest.TestCase):
         rows = qbo_csv.propose(state, [_row("1001", 600_000, "2026-10-09"), _row("1001", 400_000, "2026-10-09")])
         self.assertEqual([r["status"] == "already recorded" for r in rows], [True, False])
         self.assertNotEqual(qbo_csv.propose(state, [_row("1001", 400_000, "2026-10-09")])[0]["status"], "already recorded")
+
+
+if __name__ == "__main__":
+    unittest.main()
