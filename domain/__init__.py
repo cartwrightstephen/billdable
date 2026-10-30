@@ -4157,6 +4157,9 @@ def sov_line_name(line: dict[str, Any]) -> str:
 def over_schedule_text(line: dict[str, Any], qty: int) -> str:
     """The refusal for a quantity to date past the line's scheduled quantity (one wording for the
     job page and the daily record)."""
+    if str(line.get("unit", "")).upper() == "LS" and line.get("qty_milli") == 1000:
+        # A lump sum is entered and shown as % done (B5 of the Oct 30 review), so it is refused in %.
+        return f"{sov_line_name(line)}: {sov.fmt_qty(qty * 100)}% done is more than 100%. Extra scope is a change order."
     return (f"{sov_line_name(line)}: {sov.fmt_qty(qty)} is more than the scheduled {sov.fmt_qty(line['qty_milli'])} {line['unit']}. "
             "Extra scope is a change order.")
 

@@ -777,20 +777,19 @@ class LivingDraftTests(unittest.TestCase):  # M1: the period's pay app is one dr
         domain.add_daily_record(self.state, self.job["id"], "Started", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "10"}]}})
         self.assertEqual(self.draft()["gross_cents"], 51_750)  # 10 x $45 + 15%
 
-    def test_a_daily_quantity_over_the_schedule_is_refused_and_nothing_is_saved(self):
+    def test_a_daily_quantity_over_the_schedule_is_kept_on_the_record_not_added(self):
+        # The daily record is never lost (B5 of the Oct 30 review): saved, its quantities not added, and why.
         domain.record_sov_progress(self.state, self.job["id"], {self.rough: "390"})
         records = len(self.job["records"])
-        with self.assertRaises(domain.GateError) as ctx:
-            domain.add_daily_record(self.state, self.job["id"], "Too much", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "11"}]}})
-        self.assertIn("1. Rough-in wiring: 401 is more than the scheduled 400 ea. Extra scope is a change order.", ctx.exception.blockers)
-        self.assertIn(f"qty_{self.rough}", ctx.exception.fields)
+        domain.add_daily_record(self.state, self.job["id"], "Too much", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "11"}]}})
+        saved = self.state["daily_records"][-1]
+        self.assertIn("1. Rough-in wiring: 401 is more than the scheduled 400 ea. Extra scope is a change order.", saved["quantities_not_applied"])
         self.assertEqual(line(self.job, "1")["done_milli"], 390_000)
-        self.assertEqual(len(self.job["records"]), records)
-        self.assertEqual(self.state.get("daily_records", []), [])
+        self.assertEqual(len(self.job["records"]), records + 1)
 
     def test_daily_quantities_wait_for_a_draft_with_the_client(self):
         domain.record_sov_progress(self.state, self.job["id"], {self.rough: "100"})
         domain.send_pencil(self.state, self.job["id"])
-        with self.assertRaises(domain.GateError):
-            domain.add_daily_record(self.state, self.job["id"], "More", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "5"}]}})
+        domain.add_daily_record(self.state, self.job["id"], "More", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "5"}]}})
+        self.assertIn("with the client for their review", self.state["daily_records"][-1]["quantities_not_applied"])
         self.assertEqual(line(self.job, "1")["done_milli"], 100_000)

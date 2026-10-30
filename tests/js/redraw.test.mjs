@@ -87,7 +87,9 @@ test("Daily record: Recent records show the crew, the sections and links to the 
   assert.match(meta, /Change order work \(new, not priced yet\): Moved a box</);
   assert.match(meta, /Discussion with GC super: Start Monday/);
   assert.match(meta, /New punchlist items: Patch/);
-  assert.match(meta, /Files: <a href="\/api\/files\/f1"[^>]*>deck.jpg<\/a>/);
+  assert.match(meta, /Files: <a href="\/api\/files\/f1"[^>]*>deck.jpg<\/a>/);  const kept = daily.recordMeta({ sections: { quantities: [{ line_id: "l2", qty_milli: 1000 }] },
+    quantities_not_applied: "2. Panel: 125% done is more than 100%. Extra scope is a change order. They are kept on this daily record." }, sovJob);
+  assert.match(kept, /Quantities: 100% Panel[\s\S]*Not added to the schedule of values: 2\. Panel: 125% done is more than 100%/, "B5: saved, and why not added");
 });
 
 test("Paste box: the pasted text, and what it looks like, stay through a redraw and go once added", async () => {
