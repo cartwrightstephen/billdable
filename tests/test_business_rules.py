@@ -293,6 +293,19 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
         domain.record_sov_progress(state, scheduled["id"], {scheduled["sov"]["lines"][0]["id"]: "40"})
         self.assertNotIn("Pay-app backup", [p["label"] for p in domain.missing_packet(scheduled)])
 
+    def test_new_record_kinds_fill_their_paperwork(self):
+        # An insurance certificate, a supplier invoice (for a ticket item) and a stored-materials
+        # document on the job record fill the items that name them (J5, M6).
+        state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St")
+        domain.update_payer(state, job["payer_id"], {"packet": "Insurance certificate, delivery tickets, stored materials invoice"})
+        domain.add_job_record(state, job["id"], "ACME COI 2026", "insurance")
+        domain.add_job_record(state, job["id"], "ABC Supply invoice 4471", "supplier_invoice")
+        domain.record_progress(state, job["id"], 400_000)
+        packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
+        self.assertEqual(packet["Insurance certificate"]["attachments"][0]["name"], "ACME COI 2026")
+        self.assertEqual(packet["Delivery tickets"]["attachments"][0]["name"], "ABC Supply invoice 4471")
+
     def test_records_on_the_job_fill_the_paperwork(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", contract_number="C-7")

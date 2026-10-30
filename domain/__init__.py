@@ -2553,12 +2553,19 @@ RECORD_FOR_ITEM = (
     ("co", ("change_order",), re.compile(r"change order", re.I)),
     ("waiver", ("waiver",), re.compile(r"waiver", re.I)),
     ("photo", ("photo",), re.compile(r"photo", re.I)),
-    ("ticket", ("ticket",), re.compile(r"ticket", re.I)),
+    ("supplier_invoice", ("supplier_invoice",), re.compile(r"invoice|receipt", re.I)),
+    ("ticket", ("ticket", "supplier_invoice"), re.compile(r"ticket|time ?sheet", re.I)),
+    ("stored", ("stored",), re.compile(r"stored material", re.I)),
+    ("inspection", ("inspection",), re.compile(r"inspection", re.I)),
+    ("punch", ("punch",), re.compile(r"punch", re.I)),
+    ("completion", ("completion",), re.compile(r"completion cert|certificate of (?:substantial )?completion", re.I)),
+    ("asbuilt", ("asbuilt",), re.compile(r"as[- ]?built", re.I)),
+    ("warranty", ("warranty",), re.compile(r"warrant", re.I)),
     ("contract", ("contract",), re.compile(r"contract", re.I)),
 )
 # Records that belong to one pay app (this period's waiver, photos, backup) are not reused on the
 # next one; a signed contract or an insurance certificate is.
-PER_PAY_APP = {"backup", "co", "waiver", "photo", "ticket"}
+PER_PAY_APP = {"backup", "co", "waiver", "photo", "ticket", "supplier_invoice", "stored", "inspection"}
 AUTO_NOTE = "Attached from the job record"
 
 
@@ -2692,7 +2699,10 @@ def _packet_item(job_id: str, kind: str, label: str, blocker: str, required: boo
 
 
 # importer.KINDS: what a record on the job can be.
-RECORD_KINDS = ("note", "daily", "photo", "contract", "change_order", "waiver", "pay_app", "ticket", "other")
+# The job record's kinds; static/js/jobs.js RECORD_KINDS and importer.KINDS have the same keys
+# with their words. supplier_invoice is never a bare "invoice", so it isn't read as a pay app.
+RECORD_KINDS = ("note", "daily", "photo", "contract", "change_order", "waiver", "pay_app", "ticket",
+                "supplier_invoice", "insurance", "inspection", "stored", "punch", "completion", "asbuilt", "warranty", "other")
 
 
 def edit_record(state: dict[str, Any], job_id: str, record_id: str, label: str, kind: str, actor: str = "owner") -> dict[str, Any]:

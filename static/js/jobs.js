@@ -3,9 +3,13 @@
 import { unesc, fmtDate, fmtDateTime, toDate, centsFrom, percentFrom, money, words } from "./format.js";
 import { termText } from "./terms.js";
 
+// The job record's kinds, as domain.RECORD_KINDS and importer.KINDS have them.
 export const RECORD_KINDS = {
   note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
-  waiver: "Lien waiver", pay_app: "Backup for the pay app", ticket: "Delivery or time ticket", other: "Other",
+  waiver: "Lien waiver", pay_app: "Backup for the pay app", ticket: "Daily ticket or time sheet",
+  supplier_invoice: "Supplier invoice or receipt", insurance: "Insurance certificate", inspection: "Inspection",
+  stored: "Stored materials document", punch: "Punch list sign-off", completion: "Completion certificate",
+  asbuilt: "As-builts", warranty: "Warranty", other: "Other",
 };
 
 // domain.SOURCE_LABELS has the same words, for Today's rows.

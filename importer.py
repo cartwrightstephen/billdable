@@ -70,7 +70,15 @@ KINDS = {
     "change_order": "Change order",
     "waiver": "Lien waiver",
     "pay_app": "Backup for the pay app",
-    "ticket": "Delivery or time ticket",
+    "ticket": "Daily ticket or time sheet",
+    "supplier_invoice": "Supplier invoice or receipt",
+    "insurance": "Insurance certificate",
+    "inspection": "Inspection",
+    "stored": "Stored materials document",
+    "punch": "Punch list sign-off",
+    "completion": "Completion certificate",
+    "asbuilt": "As-builts",
+    "warranty": "Warranty",
     "photo": "Photo",
     "contract": "Contract",
     "daily": "Daily record",
@@ -82,8 +90,15 @@ _KIND_RULES = [
     ("change_order", r"\bchange order\b|\bc\.?o\.?\s*#?\s*\d+|\bextra work\b|\bfield (?:order|directive)\b"),
     ("waiver", r"\bwaiver\b|\blien release\b"),
     ("pay_app", r"\bpay app\b|\bpay application\b|\bapplication for payment\b|\bg70[23]\b|\brequisition\b|\bpencil\b"),
-    # An invoice is a supplier's bill (a ticket for the backup) unless it names one of our pay apps (R5-07).
-    ("invoice", r"\binvoice\b"),
+    ("insurance", r"\bcertificate of (?:liability )?insurance\b|\binsurance certificate\b|\bcoi\b"),
+    ("punch", r"\bpunch ?list\b"),
+    ("completion", r"\bcertificate of (?:substantial )?completion\b|\bcompletion certificate\b"),
+    ("asbuilt", r"\bas[- ]?builts?\b"),
+    ("warranty", r"\bwarrant(?:y|ies)\b"),
+    ("stored", r"\bstored materials?\b"),
+    ("inspection", r"\binspection (?:report|passed|failed|result)s?\b"),
+    # An invoice is a supplier's bill unless it names one of our pay apps (R5-07).
+    ("invoice", r"\binvoice\b|\breceipt\b"),
     ("ticket", r"\bdelivery ticket\b|\bticket\b|\bpacking slip\b|\btime sheet\b|\btimesheet\b"),
     ("contract", r"\bcontract\b|\bagreement\b|\bsubcontract\b|\bpurchase order\b"),
     ("daily", r"\bdaily (?:log|report|record)\b|\bcrew\b|\bon site today\b"),
@@ -375,7 +390,7 @@ def guess_kind(name: str, text: str, exts: str | list[str] | tuple = ()) -> str:
     for kind, pattern in _KIND_RULES:
         if re.search(pattern, hay):
             if kind == "invoice":
-                return "pay_app" if PAYAPP_NUMBER_RE.search(f"{name}\n{text[:4000]}") else "ticket"
+                return "pay_app" if PAYAPP_NUMBER_RE.search(f"{name}\n{text[:4000]}") else "supplier_invoice"
             return kind
     exts = [exts] if isinstance(exts, str) else list(exts)
     files = [e for e in exts if e and e != ".eml"]
