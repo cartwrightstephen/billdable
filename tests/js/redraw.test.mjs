@@ -168,3 +168,11 @@ test("Schedule progress: an open draft is named as the one it replaces, until it
   assert.doesNotMatch(sovProgressHtml(sovJob([{ ...draft, pencil_status: "sent" }])), /This replaces/);
   assert.doesNotMatch(sovProgressHtml(sovJob([{ ...draft, status: "sent" }])), /This replaces/);
 });
+
+test("Schedule progress: each box has a stable id, so a redraw (the activity list loading) puts the cursor back", async () => {
+  const { sovProgressHtml } = await import("../../static/js/sov.js");
+  const lines = [{ id: "l1", item: "1", description: "Rough-in", unit: "LF", qty_milli: 400000, done_milli: 100000, stored_cents: 0 }];
+  const html = sovProgressHtml(job({ sov_view: { present: true, lines } }));
+  assert.match(html, /<input id="sovp-done-l1" class="sov-in sov-num" data-sovp="l1"/);
+  assert.match(html, /<input id="sovp-stored-l1" class="sov-in sov-num" data-sovs="l1"/);
+});

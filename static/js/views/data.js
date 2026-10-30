@@ -12,7 +12,7 @@ import { field, formValues, refuseForm, draftValue, clearForm } from "../forms.j
 import { postJson } from "../net.js";
 import { termText } from "../terms.js";
 import { state, me, onSessionEnd } from "../state.js";
-import { toast, nav, emptyState, listPage, render, can, may, setState } from "../app-core.js";
+import { toast, nav, emptyState, listPage, render, can, setState } from "../app-core.js";
 import { dropzoneHtml, pasteBoxHtml, calendarFeedHtml } from "./inbox.js";
 import { paymentsImportHtml, qboCardHtml, qboStatus, loadQboStatus } from "./payments.js";
 import { qboCsvLink, QBO_READY } from "./money.js";
@@ -46,7 +46,6 @@ export function qtyJobs(jobs) {
 export function qtyImportHtml() {
   const jobs = qtyJobs(state.jobs);
   if (!jobs.length) return emptyState("No job has a schedule of values", "", `<button class="btn" data-action="nav" data-view="jobs">Go to Jobs</button>`);
-  if (!may("sov-progress")) return `<p class="sub">Your profile doesn't include recording progress, so someone who has it imports these.</p>`;
   const done = qtyResult ? `<div class="qty-result">
       <p><strong>${qtyResult.added.length} line${qtyResult.added.length === 1 ? "" : "s"} added${qtyResult.number ? ` to ${qtyResult.number}` : ""}.</strong></p>
       ${qtyResult.added.map(a => `<div class="list-item">${a.line}: +${a.add} (now ${a.new_total})</div>`).join("")}
@@ -61,8 +60,8 @@ export function qtyImportHtml() {
       ${p.blocked ? `<p class="form-error" role="alert">${p.blocked}</p>` : ""}
       ${p.rows.length ? `<div class="table-wrap"><table class="qty-preview">
         <tr><th>Row</th><th>Line</th><th>Done to date</th><th>Add</th><th>New total</th><th>Scheduled</th><th>Can't add because</th></tr>
-        ${p.rows.map(r => `<tr${r.problem ? ` class="qty-problem"` : ""}><td>${r.n}</td><td>${r.line || [r.item, r.description].filter(Boolean).join(" ")}</td>
-          <td>${r.done || "—"}</td><td>${r.add || r.qty}</td><td>${r.new_total || "—"}</td><td>${r.scheduled || "—"}</td><td>${r.problem || "—"}</td></tr>`).join("")}
+        ${p.rows.map(r => `<tr${r.problem ? ` class="qty-problem"` : ""}><td class="num">${r.n}</td><td class="qty-text">${r.line || [r.item, r.description].filter(Boolean).join(" ")}</td>
+          <td class="num">${r.done || "—"}</td><td class="num">${r.add || r.qty}</td><td class="num">${r.new_total || "—"}</td><td class="num">${r.scheduled || "—"}</td><td class="qty-text">${r.problem || "—"}</td></tr>`).join("")}
       </table></div>` : emptyState("No rows with a quantity")}
       <div class="form-inline">${p.can_add ? `<button class="btn" data-action="qty-apply">Add ${p.can_add} to the schedule of values</button>` : ""}<button class="btn secondary" data-action="qty-cancel">Cancel</button></div>`;
   }
