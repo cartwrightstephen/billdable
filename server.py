@@ -2403,6 +2403,8 @@ class Handler(BaseHTTPRequestHandler):
             # J1: the address in four parts; a page that sends only "address" still works.
             address_parts=_address_parts(body), client_type=_text(body, "client_type"),
             started_on=_text(body, "started_on"), assignee_id=assignee_id, assignee_name=assignee_name,
+            # S12: what an imported contract said about the client's pay app day and terms.
+            payer_days={k: body.get(k) for k in ("payapp_due_day", "payment_terms_days") if k in body},
         )
 
     def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:
@@ -2485,7 +2487,7 @@ ROUTES = [
 
     # == stream: jobs-clients ==
     Route("GET", r"/api/payers/([^/]+)/jobs", "_g_payer_jobs", "user"),
-    Route("GET", r"/api/jobs/([^/]+)/archive\.zip", "_g_job_archive", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/archive/job-file\.zip", "_g_job_archive", "user"),
     Route("POST", r"/api/contract/read", "_p_contract_read", "user"),
 
     # == stream: payapps-cos ==

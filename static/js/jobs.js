@@ -468,7 +468,8 @@ export function packetText(checked, other) {
   return [...CHOICES.filter(c => checked.includes(c)), ...String(other || "").split(/[,;\n]/).map(t => t.trim()).filter(Boolean)].join(", ");
 }
 
-// The job's start date limits (J8): about 10 years back and 2 years ahead, as the server takes.
+// The job's start date limits (J8): about 10 years back and 2 years ahead. The server
+// (domain/jobinfo.py START_BACK_DAYS) allows a day more each way, for a device a time zone off.
 export function startDateLimits(now = new Date()) {
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const back = new Date(now), ahead = new Date(now);

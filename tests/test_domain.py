@@ -368,6 +368,19 @@ class JobFieldsTests(unittest.TestCase):
         self.assertEqual(job["address"], "2 Elm St, Decatur, GA 30030-1234")
         self.assertIn('job address from "2 Elm St" to "2 Elm St, Decatur, GA 30030-1234"', state["audit"][-1]["detail"])
 
+    def test_a_new_clients_pay_app_day_and_terms_come_with_the_job_a_saved_ones_stay(self):  # S12
+        state = blank_company()
+        with self.assertRaises(domain.GateError) as raised:
+            domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS,
+                              payer_days={"payapp_due_day": 40, "payment_terms_days": "soon"})
+        self.assertEqual(set(raised.exception.fields), {"payapp_due_day", "payment_terms_days"})
+        domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS,
+                          payer_days={"payapp_due_day": 25, "payment_terms_days": "30"})
+        payer = state["payers"][0]
+        self.assertEqual((payer["payapp_due_day"], payer["payment_terms_days"]), (25, 30))
+        domain.create_job(state, "Bath", "Ironleaf GC", 100_000, address_parts=PARTS, payer_days={"payapp_due_day": 10})
+        self.assertEqual(payer["payapp_due_day"], 25, "a saved client's day is changed in the Client playbook")
+
     def test_phone_contract_number_and_names_follow_the_field_rules(self):
         state = blank_company()
         with self.assertRaises(domain.GateError) as raised:

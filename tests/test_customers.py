@@ -258,7 +258,7 @@ class CustomerHttpTests(unittest.TestCase):
         res, _ = self.request("GET", f"/api/payers/{payer['id']}/jobs", cookie=other)
         self.assertEqual(res.status, 404, "another company's client")
 
-        res, data = self.raw("GET", f"/api/jobs/{job['id']}/archive.zip", cookie=owner)
+        res, data = self.raw("GET", f"/api/jobs/{job['id']}/archive/job-file.zip", cookie=owner)
         self.assertEqual((res.status, res.getheader("Content-Type")), (200, "application/zip"))
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             names = z.namelist()
@@ -269,9 +269,9 @@ class CustomerHttpTests(unittest.TestCase):
             summary = z.read("summary.txt").decode()
         self.assertIn("Porch (PORC)", summary)
         self.assertIn("Contract total: $1,000.00", summary)
-        res, _ = self.raw("GET", f"/api/jobs/{job['id']}/archive.zip")
+        res, _ = self.raw("GET", f"/api/jobs/{job['id']}/archive/job-file.zip")
         self.assertEqual(res.status, 401, "signed in only")
-        res, _ = self.raw("GET", f"/api/jobs/{job['id']}/archive.zip", cookie=other)
+        res, _ = self.raw("GET", f"/api/jobs/{job['id']}/archive/job-file.zip", cookie=other)
         self.assertEqual(res.status, 404, "another company can't open it")
 
     def test_contract_read_fills_without_saving(self):  # G4, S12

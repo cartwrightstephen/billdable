@@ -333,3 +333,52 @@ test("a change order's pill reads Signed or Unsigned, never Approved or Pending 
   assert.equal(coStatusWords("withdrawn"), "Withdrawn");
   assert.equal(coStatusWords("some_new"), "Some new");
 });
+
+// ---------- jobs-clients (Stephen's Oct 29 review) ----------
+import { clientTypeLabel, CLIENT_TYPES, openJobs, groupRecords, RECORD_GROUPS, RECORD_KINDS, packetChoices, packetText, PAPERWORK_CHOICES, startDateLimits } from "../../static/js/jobs.js";
+
+test("the job page lists the blockers under the Next step line, so the line doesn't repeat the first (J6)", () => {
+  const drafted = job({ blockers: ["Signed contract", "Daily tickets"], invoices: [inv("awaiting_approval")], blocked: true });
+  assert.equal(nextStep(drafted), "Before it can go: Signed contract");
+  assert.equal(nextStep(drafted, new Date(), { listed: true }), "Before it can go:");
+  const paperwork = job({ blockers: ["Photos"], missing_paperwork: ["Photos"], needs_paperwork: true, blocked: true, invoices: [inv("awaiting_approval")] });
+  assert.doesNotMatch(nextStep(paperwork, new Date(), { listed: true }), /Photos/);
+});
+
+test("client type: five kinds, and a client saved before types reads from its role (J2)", () => {
+  assert.equal(CLIENT_TYPES.length, 5);
+  assert.equal(clientTypeLabel({ client_type: "sub" }), "Another subcontractor (you are a lower tier)");
+  assert.equal(clientTypeLabel({ role: "GC" }), "General contractor");
+  assert.equal(clientTypeLabel({ role: "Owner" }), "Owner or developer");
+  assert.equal(clientTypeLabel({ client_type: "public", role: "Owner" }), "Public agency");
+});
+
+test("a finished job leaves the working lists (J9)", () => {
+  assert.deepEqual(openJobs([{ id: "a" }, { id: "b", closed: true }]).map(j => j.id), ["a"]);
+  assert.deepEqual(openJobs(undefined), []);
+});
+
+test("the job record groups by kind with counts, newest first; every kind has a group (J5)", () => {
+  const recs = [{ id: 1, kind: "photo" }, { id: 2, kind: "ticket" }, { id: 3, kind: "photo" }, { id: 4, kind: "mystery" }, { id: 5, kind: "supplier_invoice" }];
+  const groups = groupRecords(recs);
+  assert.deepEqual(groups.map(g => [g.key, g.records.length]), [["photo", 2], ["tickets", 2], ["other", 1]]);
+  assert.deepEqual(groups[0].records.map(r => r.id), [3, 1]);
+  const grouped = new Set(RECORD_GROUPS.flatMap(([, , kinds]) => kinds));
+  assert.deepEqual(Object.keys(RECORD_KINDS).filter(k => !grouped.has(k)), []);
+  assert.deepEqual(groupRecords([]), []);
+});
+
+test("the paperwork checkboxes save as the comma list the server reads, and read back (S11)", () => {
+  const all = PAPERWORK_CHOICES.flatMap(([, list]) => list);
+  for (const label of all) assert.doesNotMatch(label, /,| and /, `${label}: the server splits on commas and "and"`);
+  for (const label of PAPERWORK_CHOICES[1][1]) assert.match(label, /closeout|punch/i, `${label}: kept for closeout`);
+  const text = packetText(["Insurance certificate", "Signed contract"], "Certified payroll; Gate pass");
+  assert.equal(text, "Signed contract, Insurance certificate, Certified payroll, Gate pass");
+  assert.deepEqual(packetChoices(["signed  contract", "Certified payroll", "Gate pass"]), { checked: ["Signed contract"], other: "Certified payroll, Gate pass" });
+  assert.equal(packetText([], ""), "");
+});
+
+test("the start date box takes about 10 years back and 2 ahead (J8)", () => {
+  const l = startDateLimits(new Date(2026, 9, 30));
+  assert.deepEqual(l, { min: "2016-10-30", max: "2028-10-29", today: "2026-10-30" });
+});

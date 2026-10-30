@@ -328,9 +328,11 @@
         "new job",
         "create",
         "add job",
-        "contract amount"
+        "contract amount",
+        "import contract",
+        "address"
       ],
-      "answer": "Go to Jobs and tap New job. Fill in Job name, Address, Client, Who pays you? and Contract amount ($), then tap Save job. More details (optional) holds Contract number, Retainage % (if the contract holds money back), Phone, Who signs off on your bills, Email for pay apps and Notes (kept on the job record); all of them can wait. A client you have saved before keeps its details; change them in Jobs, Client playbook.",
+      "answer": "Go to Jobs and tap New job. Fill in Job name, the address (Street address, then City, State and ZIP), Client and Contract amount ($), then tap Save job. A new client also gets its Client type. Have the contract as a Word file, a PDF or text? Tap Import contract first: it fills the boxes it finds, each marked From the contract, and the contract goes on the job record when you save. More details (optional) holds Contract number, Retainage % (if the contract holds money back), Start date (today unless you change it), Phone, Who signs off on your bills, Email for pay apps and Notes (kept on the job record); all of them can wait. A client you have saved before keeps its details; change them in Jobs, Client playbook.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -341,7 +343,7 @@
         }
       ],
       "follow_ups": [
-        "What does Who pays you? mean?",
+        "What is the client type?",
         "How do I bill progress on a job?"
       ]
     },
@@ -361,7 +363,7 @@
         "rename",
         "change contract"
       ],
-      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, address, contract number and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; after that, use a change order. The job code stays the same. Tap Save changes. Who signs off, the email for pay apps and the paperwork list are in Jobs, Client playbook. In the Edit job form an owner also sees Delete job. It shows while the job has no payments and no pay app other than a deleted draft, so tap Delete draft first if one is open. If a pay app was sent or a payment came in, finish the job instead.",
+      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, the address (Street address, City, State and ZIP; a job saved with a one-line address shows it all in Street until you split it), contract number, Start date and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; after that, use a change order. The job code stays the same. Tap Save changes. Who signs off, the email for pay apps and the paperwork list are in Jobs, Client playbook. In the Edit job form an owner also sees Delete job. It shows while the job has no payments and no pay app other than a deleted draft, so tap Delete draft first if one is open. If a pay app was sent or a payment came in, finish the job instead.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -382,17 +384,22 @@
       "id": "role-field",
       "category": "Getting started",
       "questions": [
+        "What is the client type?",
         "What does Who pays you? mean?",
         "What does the role field mean?",
         "Owner or GC?",
         "What is the role on a new job?"
       ],
       "keywords": [
+        "client type",
         "role",
         "owner",
-        "gc"
+        "gc",
+        "homeowner",
+        "public agency",
+        "subcontractor"
       ],
-      "answer": "Who pays you? says what kind of client this is. The homeowner or property owner: you bill them directly. A general contractor (you are the sub): you bill a GC. It sets the paperwork a new client starts with: a GC usually needs a lien waiver, an insurance certificate and daily tickets with every pay app. Change it in Jobs, Client playbook.",
+      "answer": "Client type says what kind of client this is: General contractor, Owner or developer, Homeowner, Another subcontractor (you are a lower tier) or Public agency. It sets the paperwork a new client starts with and when to follow up: a general contractor, or a subcontractor you work under, usually needs a lien waiver, an insurance certificate and daily tickets with every pay app; an owner, homeowner or public agency starts with an owner's list. It belongs to the client, so New job asks it only for a new client. Change it in Jobs, Client playbook.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -730,7 +737,7 @@
         "requirement",
         "rules"
       ],
-      "answer": "Jobs, Client playbook keeps each client's rules. Open a client to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Paperwork needed with each pay app (separated by commas), They send pay apps back when, Also email (CC) and more, then tap Save client. New pay apps use the paperwork list. When a client sends a pay app back, add the reason to They send pay apps back when and tap Save client. While something is blocking send on a job, you can also note it there under Client sent a pay app back? Note why.",
+      "answer": "Jobs, Client playbook keeps each client's rules. Open a client to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Client type, Paperwork needed with each pay app (tick each item, add the rest under Other, or tick Nothing needed), They send pay apps back when, Also email (CC) and more, then tap Save client. New pay apps use the paperwork list. When a client sends a pay app back, add the reason to They send pay apps back when and tap Save client. While something is blocking send on a job, you can also note it there under Client sent a pay app back? Note why. Each client also lists its open and finished jobs, with a link to each job's contract and Add contract. Add client takes the same details, and Import a contract fills them from the contract.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1116,7 +1123,7 @@
         "file",
         "photo"
       ],
-      "answer": "Three ways:\n- Drop files anywhere, or tap Take a photo or Add a file on a job (photos, PDFs, Word, Excel, CSV, saved emails). On a job page they go straight onto that job; elsewhere they wait in the Inbox.\n- Paste an email, a text thread or your notes in the Inbox and tap Add to Inbox (or on a job, Add to job).\n- Forward email and texts automatically once an owner connects an email service and a Twilio number (Inbox, Bring emails and texts in automatically).\nThe Inbox suggests the job from the job code, address, job name or sender; tap Add to (the job) to file it.",
+      "answer": "Three ways:\n- Drop files anywhere, or tap Take a photo or Add a file on a job (photos, PDFs, Word, Excel, CSV, saved emails). On a job page they go straight onto that job; on Jobs, Add to a job record (or Add to record on a job's row) adds them to the job you pick; elsewhere they wait in the Inbox.\n- Paste an email, a text thread or your notes in the Inbox and tap Add to Inbox (or on a job, Add to job).\n- Forward email and texts automatically once an owner connects an email service and a Twilio number (Inbox, Bring emails and texts in automatically).\nThe Inbox suggests the job from the job code, address, job name or sender; tap Add to (the job) to file it.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1646,7 +1653,7 @@
         "record",
         "history"
       ],
-      "answer": "An owner finishes a job. Finish job appears for an owner when the work is done and nothing is left: no open draft, no unsigned change order, nothing unbilled or unpaid, retainage paid and waivers sent. Until then the job page shows Before you can finish this job, one line per thing with a button for each. Tap Finish job and confirm: the job moves to Jobs, Job history and becomes read-only. An owner can tap Reopen job… there if a late payment comes in.",
+      "answer": "An owner finishes a job. Finish job appears for an owner when the work is done and nothing is left: no open draft, no unsigned change order, nothing unbilled or unpaid, retainage paid and waivers sent. Until then the job page shows Before you can finish this job, one line per thing with a button for each. Tap Finish job and confirm: the job moves to Jobs, Job history and leaves the working lists. Its page becomes its job file: what it came to, every pay app with its PDF, payments, change orders, waivers sent, the job record and its activity, with Download job file for all of it in one zip. An owner can tap Add more work to open the same job again, for more work or a late payment.",
       "handler": "closeable",
       "needs_job": false,
       "actions": [],

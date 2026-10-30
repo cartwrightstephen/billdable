@@ -1,5 +1,5 @@
 """The job file (Stephen's Oct 29 review, J9): one zip of everything kept on a job, for a finished
-job's archive (Download job file on its page, GET /api/jobs/<id>/archive.zip).
+job's archive (Download job file on its page, GET /api/jobs/<id>/archive/job-file.zip).
 
 In it: summary.txt (the contract, change orders, billed, received, retainage and dates; each pay
 app, payment, change order and waiver sent; what is on the job record), activity.txt (the job's

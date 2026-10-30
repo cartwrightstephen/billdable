@@ -2874,6 +2874,7 @@ def create_job(
     started_on: Any = None,
     assignee_id: str = "",
     assignee_name: str = "",
+    payer_days: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Add a job and its record. The packet is created later, with a pay app, from the payer's
     paperwork list (Customer settings); `note` is kept on the job record and never becomes it.
@@ -2885,7 +2886,9 @@ def create_job(
     whole as address too ("Street, City, ST 12345") for the pay app PDF, the client's page and
     Inbox matching. A caller that sends only the one line (an older page, an import) is still
     taken. Phone, contract number and names go through the field rules (G1). started_on is the
-    start date (J8, today when blank); assignee_id is the team member the job's tasks go to."""
+    start date (J8, today when blank); assignee_id is the team member the job's tasks go to.
+    payer_days (the pay app due day and payment terms an imported contract found, S12) are saved
+    on a new client only: a saved client's are changed in the Client playbook."""
     name = (name or "").strip()
     customer_name = (customer_name or "").strip()
     address = (address or "").strip()
@@ -2927,6 +2930,14 @@ def create_job(
             errors.update(exc.fields)
     if ap_email and not EMAIL_RE.match(ap_email):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
+    days: dict[str, Any] = {}
+    for k in ("payapp_due_day", "payment_terms_days"):
+        if (payer_days or {}).get(k) not in (None, ""):
+            value, error = _payer_day(k, payer_days[k])
+            if error:
+                errors[k] = error
+            else:
+                days[k] = value
     if not isinstance(contract_cents, int) or isinstance(contract_cents, bool) or contract_cents <= 0:
         errors["contract_cents"] = "Enter the contract amount, more than $0."
     elif contract_cents > MAX_AMOUNT_CENTS:
@@ -2942,6 +2953,7 @@ def create_job(
         raise _same_customer_question("customer", customer_name, near)
     if not payer:
         payer = _new_payer(state, customer_name, role, approver, ap_email, phone, client_type)
+        payer.update(days)
     else:
         # A saved client keeps its type: the job follows it (the form doesn't ask, J2).
         role = payer.get("role") if payer.get("role") in {"Owner", "GC"} else role

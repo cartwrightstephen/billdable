@@ -21,7 +21,7 @@ Screen names used below (pages and tabs: `SECTIONS`, static/app.js:29-37; addres
 
 The menu has seven sections on a computer; on a phone it shows five and puts Import/Export and Automations under **More** (Stephen's Oct 29 review). The old addresses still open their page at its new one (`PATH_ALIASES`, static/js/routes.js): `/today...` the Dashboard's, `/inbox` and `/money/outbox` Communications, `/settings/playbook` the Client playbook, `/settings/help` My account (Help was emptied; **Show the setup checklist** and the account id are on My account). The in-app **←** button goes back to the page you came from and names it; opened from a link it goes to the page's own list (G3, static/js/trail.js).
 
-On the job page the **Next step** card holds one main button and, beside it, the next two as two-line buttons (the label, then why). The rest sit under **More (N)**, grouped Bill, Get paid and Close out. The main button is picked in this order: the blocker button (**Fix N things before sending**, **Add N missing documents** or **Get CO N signed**), **Review & send**, **Choose waiver and send**, then, while a sent pay app is unpaid, **Send follow-up** once it is due and **Draft pay app**; otherwise **Draft pay app**, **Progress pay app**, **Finish job**, **Ask for retainage** (`jobActions`, static/js/jobs.js:290-340). While the client has the pay app and no follow-up is due there is no main button. A member does not see what only an owner may do (send, waivers, retainage requests, delete a draft, pull back, finish, delete, accept short pay, reopen; `OWNER_ONLY`, static/js/jobs.js:276, `OWNER_ACTIONS`, server.py:2618) unless the company turned on **Members can send pay apps, lien waivers and retainage requests** (Settings, Company).
+On the job page the **Next step** card holds one main button and, beside it, the next two as two-line buttons (the label, then why). The rest sit under **More (N)**, grouped Bill, Get paid and Close out. The main button is picked in this order: the blocker button (**Fix N things before sending**, **Add N missing documents** or **Get CO N signed**), **Review & send**, **Choose waiver and send**, then, while a sent pay app is unpaid, **Send follow-up** once it is due and **Draft pay app**; otherwise **Draft pay app**, **Progress pay app**, **Finish job**, **Ask for retainage** (`jobActions`, static/js/jobs.js:290-340). While the client has the pay app and no follow-up is due there is no main button. When something blocks the send, the card's line reads **Before it can go:** and lists every blocker under it, with **Client sent a pay app back? Note why.** folded at the bottom (J6; `nextStep(j, now, { listed })`, static/js/jobs.js:68). Above it, **Where this job stands** shows the stage (Started, Work in progress with the percent billed, Pay app out, Approved, Paid, Work done, Retainage released, Finished) and the key dates: start date, this and next month's pay app due day, last pay app sent, payment due, next follow-up, marked done, retainage asked and the next ask, finished (J7; `standingCardHtml` static/js/views/job.js:142, from the server's `job_stage` and `job_key_dates`, domain/jobinfo.py:87 and :127). The job's log at the bottom is **Activity** (`jobHistoryHtml` static/js/views/job.js:128). A member does not see what only an owner may do (send, waivers, retainage requests, delete a draft, pull back, finish, delete, accept short pay, Add more work; `OWNER_ONLY`, static/js/jobs.js:276, `OWNER_ACTIONS`, server.py:2686) unless the company turned on **Members can send pay apps, lien waivers and retainage requests** (Settings, Company).
 
 A company set to bill homeowners in draws (a setting from before Oct 29; How you bill is no longer on the Company page) reads Draw and Draws wherever this file says pay app (`termText`, static/js/terms.js; `domain.term_text`).
 
@@ -122,31 +122,40 @@ Code: landing and sign-up card `renderLanding`, static/js/views/auth.js:44 (Sign
 
 ```mermaid
 flowchart TD
-    A["Jobs page or the Dashboard checklist: tap 'New job'"] --> B["Card 'New job': Job name, Address, Client (with a list of saved clients), Who pays you?, Contract amount"]
+    A["Jobs page or the Dashboard checklist: tap 'New job'"] --> IC{"Have the contract as a file or text?"}
+    IC -->|"Yes"| IM["'Import contract' (Word, PDF or text) or 'Paste the contract's text', 'Read it': the boxes it finds fill in, each marked 'From the contract'"]
+    IC -->|"No"| B
+    IM -->|"A scanned PDF"| IS["'Couldn't read text from this file; fill the fields in by hand.'"]
+    IM --> B
+    IS --> B
+    B["Card 'New job': Job name, Street address, City, State, ZIP, Client (with a list of saved clients), Client type (a new client only), Contract amount"]
     B --> C{"Client already saved?"}
-    C -->|"Yes"| C1["Line under the boxes: who signs off and where pay apps go, with 'Change in the Client playbook'"]
+    C -->|"Yes"| C1["Line under the boxes: the client's type, who signs off and where pay apps go, with 'Change in the Client playbook'"]
     C -->|"No"| D
-    C1 --> D["Optional: 'More details (optional)': Contract number, Retainage %, Phone, Who signs off on your bills, Email for pay apps (can add later), Notes (kept on the job record)"]
+    C1 --> D["Optional: 'More details (optional)': Contract number, Retainage %, Start date (today), Assigned to (with a team), Phone, and for a new client Pay apps due by, Payment terms, Who signs off on your bills, Email for pay apps (can add later); Notes (kept on the job record)"]
     D --> E["Tap 'Save job'"]
-    E --> F{"Boxes filled and an email that looks real, if one was typed?"}
-    F -->|"No"| G["Red note under the box, for example 'Enter the email pay apps go to, like ap@builder.com.'"]
+    E --> F{"Each box as the field rules say? (a box is also checked when you leave it)"}
+    F -->|"No"| G["Red note under the box, for example 'Enter a 5-digit ZIP code, like 30303, or ZIP+4, like 30303-1234.'"]
     G --> B
     F -->|"Yes"| H{"Client name already known?"}
-    H -->|"New client"| I["New client made with the default paperwork list for who pays you"]
+    H -->|"New client"| I["New client made with its type's default paperwork list"]
     H -->|"Known client (same name, ignoring case)"| J["The client's settings are kept"]
     H -->|"Nearly the same as a saved one: 'ABC Builders Inc', 'abc builders, LLC'"| N["Under Client: 'Same as ABC Builders? Use the saved client, or keep ABC Builders Inc as a new one.' Nothing is saved yet"]
     N -->|"'Use ABC Builders'"| J
     N -->|"'Keep “ABC Builders Inc” as a new client'"| I
-    I --> K["Job page opens"]
+    I --> K["Job page opens; an imported contract is on its job record as Contract, with its schedule of values if one was ticked"]
     J --> K
 ```
 
-Code: `views.jobs`, static/js/views/jobs.js:136-194 (**New job**, the five boxes, **More details (optional)**, **Save job**); `jobFields` static/js/views/jobs.js:16; the saved-client line `knownPayerText` static/js/views/jobs.js:35; **Save job** `create-job` static/js/views/jobs.js:225; server `create_job`, domain/__init__.py:2793 (a refusal is keyed by field and shown under its box, `showFieldErrors` in static/js/forms.js). Notes become a "Job notes" record, never paperwork (R1-04). A near match (Oct 23 note 5) is found by `payer_near` domain/__init__.py:1758, which compares names with `customer_key` (:1743: case, spaces, punctuation, "The" in front and Inc, LLC, Co, Corp, Company, Ltd at the end don't count); the refusal carries `same_customer` and `showSameCustomer` static/js/views/jobs.js:53 shows the two buttons, **Use ABC Builders** `nj-same-use` :258 and **Keep “ABC Builders Inc” as a new client** `nj-same-keep` :268 (sent again with `new_customer: true`). Nothing is merged without a tap.
+Code: `views.jobs`, static/js/views/jobs.js:326-395 (**New job**, the boxes, **More details (optional)**, **Save job**); `jobFields` static/js/views/jobs.js:24 (the address as four boxes, J1, and Start date, J8) and its checks `jobFieldErrors` :53, with the field rules of static/js/validate.js (G1, checked on leaving a box by static/js/forms.js); the saved-client line `knownPayerText` :85; **Import contract** `contractImportHtml` :206, `readContract` :246 (POST /api/contract/read, server `contract_import.read`, contract_import.py:35, which reads Word files, text PDFs and pasted text and saves nothing), `fileContract` :265 (the file goes on the record as kind contract after the save); **Save job** `create-job` :428; server `create_job`, domain/__init__.py:2857 (each box checked again by the same rules in domain/validate.py; a refusal is keyed by field and shown under its box, `showFieldErrors` in static/js/forms.js; the address is kept whole too, "Street, City, ST 12345", for the pay app PDF, the client's page and Inbox matching). Client type has five kinds: General contractor and Another subcontractor use a general contractor's defaults, Owner or developer, Homeowner and Public agency an owner's (`CLIENT_TYPES` static/js/jobs.js:402, `client_type_role` domain/jobinfo.py:31). Notes become a "Job notes" record, never paperwork (R1-04). A near match (Oct 23 note 5) is found by `payer_near` domain/__init__.py:1795, which compares names with `customer_key` (:1780: case, spaces, punctuation, "The" in front and Inc, LLC, Co, Corp, Company, Ltd at the end don't count); the refusal carries `same_customer` and `showSameCustomer` static/js/views/jobs.js:103 shows the two buttons, **Use ABC Builders** `nj-same-use` :477 and **Keep “ABC Builders Inc” as a new client** `nj-same-keep` :487 (sent again with `new_customer: true`). Nothing is merged without a tap.
 
-**Taps from start to done:** 2 taps (New job, Save job) and 5 boxes, one of them a select.
+Jobs saved before the address had four boxes keep their one line: Edit job shows it all in Street address until someone splits it (migration step `_jobs_clients_address_parts`, migrations.py:48, which also splits a line that reads as "Street, City, ST 12345").
+
+**Taps from start to done:** 2 taps (New job, Save job) and 8 boxes, two of them selects; with a contract file, 3 (Import contract, pick it, Save job) and a check of each box.
 
 **Where it could still be simpler:**
-- The paperwork list for a new client is set by Who pays you? and only shows once the first pay app is drafted; it is changed in the Client playbook, not on the New job form.
+- The paperwork list for a new client is set by its Client type and only shows once the first pay app is drafted; it is changed in the Client playbook, not on the New job form.
+- Reading a contract is plain rules, not a reader of any layout: a scanned PDF, or a contract that words the sum or the parties unusually, leaves those boxes for you to fill.
 
 ---
 
@@ -191,6 +200,8 @@ Code: `sovCardHtml`, static/js/views/job-sov.js:118-163 (**Set up schedule of va
 ```mermaid
 flowchart TD
     A{"Where are you?"} -->|"On the job page"| B["Job record: 'Take a photo' or 'Add a file', drop files, or 'Paste an email, a text thread, or notes' then 'Add to job'"]
+    A -->|"On Jobs"| JR["'Add to a job record' (or 'Add to record' on a job's row, with that job picked): Job, then 'Take a photo', 'Add a file', a paste, or 'Add a note to the record' with its Kind"]
+    JR --> C
     B --> C["Toast: 'N files added to the job record.' Done"]
     A -->|"Anywhere else"| D["Inbox"]
     D --> E{"What do you have?"}
@@ -212,9 +223,9 @@ flowchart TD
     Q --> R
 ```
 
-Code: job record card `recordCardHtml`, static/js/views/job-record.js:40-62 (**Take a photo** / **Add a file** `pick-files` static/js/views/inbox.js:356, paste box `pasteBoxHtml` static/js/views/inbox.js:148 with **Add to job**); record rows with **Edit** `recordRow` static/js/views/job-record.js:15 (R5-07); Inbox `views.inbox`, static/js/views/inbox.js:307-351 (**Waiting (N)**, **Which job?**, the touch-only **Take a photo** / **Choose files**, **Recently added or dismissed**, **Bring emails and texts in automatically**); cards `inboxItemCard` static/js/views/inbox.js:183 with `choiceJobs` / `choiceLine` / `pasteGuess` in static/js/inbox.js; uploads three at a time `uploadFiles` static/js/views/inbox.js:41; server matching `importer.match_job`, importer.py:466 (a job code in capitals, or in small letters as its own word when no job's name or address has that word; the full job name or a part of it no other job has, like Oak Street for Oak Street kitchen, or one telling word written with a capital, like Vesta; a code in small letters or one name word counts less than the client's AP email; a tie suggests nothing), kinds `guess_kind` importer.py:386, notes split `split_notes` importer.py:357, filing `file_item` importer.py:635; **Undo** `undo_item` importer.py:782, refused while paperwork uses the record by `_paperwork_refusal` importer.py:735, with a link in the refusal card (`showRefusal` static/js/app-core.js:332).
+Code: job record card `recordCardHtml`, static/js/views/job-record.js:40-62 (**Take a photo** / **Add a file** `pick-files` static/js/views/inbox.js:356, paste box `pasteBoxHtml` static/js/views/inbox.js:148 with **Add to job**); record rows with **Edit** `recordRow` static/js/views/job-record.js:18 (R5-07), in groups with their counts and a filter row (All, Contract and change orders, Daily records, Photos, Tickets, time sheets and supplier invoices, Lien waivers, Insurance and certificates, Inspections and closeout, Pay app backup, Notes and other; J5, `recordGroupsHtml` static/js/views/job-record.js:44, `RECORD_GROUPS` static/js/jobs.js:420); **Add to a job record** on Jobs `addRecordCardHtml` static/js/views/jobs.js:286 (J4: open jobs only, `jr-open` :511, `jr-paste` :520, `jr-add-note` :528); Inbox `views.inbox`, static/js/views/inbox.js:307-351 (**Waiting (N)**, **Which job?**, the touch-only **Take a photo** / **Choose files**, **Recently added or dismissed**, **Bring emails and texts in automatically**); cards `inboxItemCard` static/js/views/inbox.js:183 with `choiceJobs` / `choiceLine` / `pasteGuess` in static/js/inbox.js; uploads three at a time `uploadFiles` static/js/views/inbox.js:41; server matching `importer.match_job`, importer.py:466 (a job code in capitals, or in small letters as its own word when no job's name or address has that word; the full job name or a part of it no other job has, like Oak Street for Oak Street kitchen, or one telling word written with a capital, like Vesta; a code in small letters or one name word counts less than the client's AP email; a tie suggests nothing), kinds `guess_kind` importer.py:386, notes split `split_notes` importer.py:357, filing `file_item` importer.py:635; **Undo** `undo_item` importer.py:782, refused while paperwork uses the record by `_paperwork_refusal` importer.py:735, with a link in the refusal card (`showRefusal` static/js/app-core.js:332).
 
-**Taps from start to done:** 2 from the job page (Take a photo or Add a file, pick). From the Inbox: 2 to add, then 1 per card to file, or 1 for all suggested cards.
+**Taps from start to done:** 2 from the job page (Take a photo or Add a file, pick); 3 from Jobs (Add to record on the row, Add a file, pick). From the Inbox: 2 to add, then 1 per card to file, or 1 for all suggested cards.
 
 **Where it could still be simpler:**
 - Forwarding email and texts in needs an email service or a Twilio number set up by an owner (deferred: a provisioned address per company, improvement plan section 5).
@@ -278,11 +289,11 @@ flowchart TD
     H --> C
     I --> C
     C -->|"A change order is unsigned too"| J["'Also blocking send': 'Open CO N', section 6"]
-    T0["Job page while blocked: card 'Blocking send:'"] --> K{"Client sent a pay app back before?"}
+    T0["Job page while blocked: the Next step card, 'Before it can go:' and every blocker"] --> K{"Client sent a pay app back before?"}
     K -->|"Yes"| L["'Client sent a pay app back? Note why.': type the reason, 'Save to the client playbook'"]
 ```
 
-Code: the blocker button's words `domain.blocker_button`, domain/__init__.py:272; paperwork page `views.packetDetail`, static/js/views/paperwork.js:25-75 (**Take a photo** / **Choose file** upload with `?attach=`, **Choose a record…** / **Attach** `attach-record` static/js/views/paperwork.js:95, **I have this…** / **Save** `resolve` static/js/views/paperwork.js:81, **Not needed for this client** `packet-skip` static/js/views/paperwork.js:94, **Remove** on a draft's, the job's and closeout paperwork `packet-detach` static/js/views/paperwork.js:93, **Also blocking send**); server `attach_record_to_packet` domain/__init__.py:2757, `resolve_packet_item` :578, `skip_packet_item` :2647, `detach_packet_item` :2619; the note-why card in `views.job` (`learn` static/js/views/job.js:382, server `learn_rejection`, domain/__init__.py:2331). The list comes from the Client playbook, Paperwork needed with each pay app; a pay app, schedule of values or continuation sheet item is in from the start ("Produced by Duracash with the pay app").
+Code: the blocker button's words `domain.blocker_button`, domain/__init__.py:272; paperwork page `views.packetDetail`, static/js/views/paperwork.js:25-75 (**Take a photo** / **Choose file** upload with `?attach=`, **Choose a record…** / **Attach** `attach-record` static/js/views/paperwork.js:95, **I have this…** / **Save** `resolve` static/js/views/paperwork.js:81, **Not needed for this client** `packet-skip` static/js/views/paperwork.js:94, **Remove** on a draft's, the job's and closeout paperwork `packet-detach` static/js/views/paperwork.js:93, **Also blocking send**); server `attach_record_to_packet` domain/__init__.py:2757, `resolve_packet_item` :578, `skip_packet_item` :2647, `detach_packet_item` :2619; the note-why line folded at the bottom of the Next step card in `views.job` (static/js/views/job.js:292, `learn` :453, server `learn_rejection`, domain/__init__.py:2331). The list comes from the Client playbook, Paperwork needed with each pay app; a pay app, schedule of values or continuation sheet item is in from the start ("Produced by Duracash with the pay app").
 
 **Taps from start to done:** 1 to open, then 2 per missing item (Take a photo, take it) or 2 to attach a record (pick, Attach).
 
@@ -322,7 +333,7 @@ flowchart TD
     P2 --> P
     P1 -->|"Yes"| Q["Tap 'Approve & send to' the client's email"]
     Q --> R{"Email went out?"}
-    R -->|"Yes"| S["Status Sent; History: 'Pay app sent'"]
+    R -->|"Yes"| S["Status Sent; Activity: 'Pay app sent'"]
     R -->|"No"| T["Dashboard row 'Didn't go out' with 'Send again'; the Outbox has it too"]
 ```
 
@@ -471,7 +482,7 @@ Code: Closeout's held-back table in `views.waivers`, static/js/views/closeout.js
 
 ## 13. Finish the job
 
-**Goal:** file a fully settled job away in Job history.
+**Goal:** file a fully settled job away in Job history, with its job file.
 
 ```mermaid
 flowchart TD
@@ -480,15 +491,19 @@ flowchart TD
     C --> D["'Review & send' / 'Delete draft', 'Get CO N signed' / 'Withdraw', 'Draft pay app', 'Record a payment' / 'Accept $X short pay…', 'Record retainage paid' / 'Ask for retainage' or 'Open closeout paperwork', 'Send waiver'"]
     D --> B
     B -->|"No"| E["Next step 'Ready to finish the job.': tap 'Finish job', confirm"]
-    E --> F["Job page: 'This job is finished. Its money record is read-only; you can still add notes to the job record.'"]
-    F --> G["Jobs: listed under 'Job history'"]
-    F --> H{"A late payment or a mistake?"}
-    H -->|"Yes, owner"| I["'Reopen job…': 'Why reopen it?', 'Reopen job'"]
+    E --> F["The job page is its job file: 'Where this job stands', 'Job file' (contract, signed change orders, billed, received, retainage released, Started with 'Change', Finished), each pay app with its PDF, payments, change orders, waivers sent, the job record and Activity"]
+    F --> G["Jobs: off Open jobs, the job pickers and the record card; listed under 'Job history' and on its client's card"]
+    F --> DL["'Download job file': one zip of the record's files, the sent pay apps' PDFs, a summary and the activity"]
+    F --> H{"More work, a late payment or a mistake?"}
+    H -->|"Yes, owner"| I["'Add more work': 'What is the new work?', 'Add more work': the same job opens again"]
 ```
 
-Code: the card in `views.job` from `close_blocker_items`, domain/__init__.py:187, buttons `closeBlockerActions`, static/js/jobs.js:347-349; **Finish job** static/js/jobs.js:319 and its confirm static/js/views/job.js:376; server `close_job`, domain/__init__.py:2342; **Reopen job…** in `views.job`, server `reopen_job`, domain/__init__.py:2353 (owners only); a job with only drafts deleted before they were sent and no payments can be deleted instead (**Delete job** under Edit job, `can_delete_job` :3016).
+Code: the card in `views.job` from `close_blocker_items`, domain/__init__.py:187, buttons `closeBlockerActions`, static/js/jobs.js:347-349; **Finish job** static/js/jobs.js:319 and its confirm `close` static/js/views/job.js:448; server `close_job`, domain/__init__.py:2404; the job file `archiveHtml` static/js/views/job.js:155 (J9) with **Change** for the start date (`save-start` :422; the server takes only the start date on a finished job, `edit_job` domain/__init__.py:3051); **Download job file** GET /api/jobs/<id>/archive/job-file.zip, `job_archive.build` job_archive.py:84 (anyone signed in to the company); **Add more work** in `views.job` (:244-254, `reopen` :416), server `reopen_job`, domain/__init__.py:2415 (owners only); the open jobs `openJobs` static/js/jobs.js:416; a job with only drafts deleted before they were sent and no payments can be deleted instead (**Delete job** under Edit job, `can_delete_job`).
 
 **Taps from start to done:** 2 (Finish job, the confirm).
+
+**Where it could still be simpler:**
+- Money's lists, the calendar and the Activity log's job filter still list a recently finished job; they take `openJobs` when the streams that own them merge.
 
 ---
 
@@ -542,13 +557,14 @@ flowchart TD
     A["Jobs: 'Client playbook'"] --> B{"Any clients yet?"}
     B -->|"No"| C["'No clients yet': 'Add client', or one is added with its first job"]
     B -->|"Yes"| D["Open a client card"]
-    A --> AC["'Add client': Client name, Who pays you?, Who signs off on your bills, Email for pay apps (can add later), Phone"]
+    A --> AC["'Add client' ('Import a contract' fills it): Client name, Client type, Who signs off on your bills, Email for pay apps (can add later), Phone, Pay apps due by (day of the month), Payment terms, days, the paperwork checkboxes"]
     AC --> AN{"Nearly the same name as a saved client?"}
     AN -->|"No"| AD["Client added"]
     AN -->|"Yes"| AQ["'Same as ABC Builders?': 'Use ABC Builders' opens that client's card; 'Keep “ABC Builders Inc” as a new client' adds it"]
-    D --> E["Edit Client name, Who pays you?, Who signs off on your bills, Email for pay apps, Phone, Days between follow-ups, Pay apps due by (day of the month), Days they usually take to pay, Payment terms, days, Paperwork needed with each pay app, They send pay apps back when, Also email (CC), Also email from the third follow-up"]
+    D --> JB["Open jobs and Finished jobs: each job with its code, contract number, contract total, a 'Contract' link to its newest contract file and 'Add contract'"]
+    D --> E["Edit Client name, Client type, Who signs off on your bills, Email for pay apps, Phone, Days between follow-ups, Pay apps due by (day of the month), Days they usually take to pay, Payment terms, days, Paperwork needed with each pay app (a box per usual item, each pay app and at closeout, Other, Nothing needed), They send pay apps back when, Also email (CC), Also email from the third follow-up"]
     E --> F["Tap 'Save client'"]
-    F --> G{"Days 1-365, due day 1-31, real emails?"}
+    F --> G{"Days 1-365, due day 1-31, real emails and phone, something ticked or Nothing needed?"}
     G -->|"No"| H["Red note under the box"]
     H --> E
     G -->|"Yes"| I["Saved; a blank box clears it"]
@@ -561,7 +577,7 @@ flowchart TD
     DL -->|"It has jobs"| DN["'A client with jobs can't be deleted, finished jobs included. To remove ABC Builders, merge it into another client.' (With no other client: 'Its jobs need it.')"]
 ```
 
-Code: page `views.playbook`, static/js/views/clients.js:13-89 (**Add client** `add-payer` static/js/views/clients.js:111, server `add_payer` domain/__init__.py:1800; **Save client** `save-playbook` static/js/views/clients.js:97, server `update_payer`, domain/__init__.py:1646; **Add to paperwork** / **Dismiss** `sug-add` / `sug-dismiss` static/js/views/clients.js:96-110; **Use N days** `use-approval-days` static/js/views/clients.js:94; **Merge** `merge-payer` static/js/views/clients.js:137 (shown when there is another client), server `merge_payer`, domain/__init__.py:1824; **Use ABC Builders** / **Keep “ABC Builders Inc” as a new client** `ap-same-use` / `ap-same-keep` static/js/views/clients.js:127-131, server `payer_near` domain/__init__.py:1758; **Delete client** `delete-payer` static/js/views/clients.js:132, shown by `deletePayerHtml` static/js/views/jobs.js:78 to owners when `job_count` is 0, server `delete_payer` domain/__init__.py:1846, an owner-only route, server.py:2494, refused with the reason while any job, open or finished, uses the client; it says "counting finished jobs" only when one is finished, and points at Merge only when another client exists. The card's "N jobs", the Merge question and Delete client all count with `payerJobCount` static/js/views/jobs.js:71, which uses `job_count` so older finished jobs count too). Every label has an (i) with the trade term (`FIELD_HELP`, static/js/help.js).
+Code: page `views.playbook`, static/js/views/clients.js:101-185 (**Add client** `add-payer` static/js/views/clients.js:214, server `add_payer` domain/__init__.py:1839; **Save client** `save-playbook` static/js/views/clients.js:192, server `update_payer`, domain/__init__.py:1682; the jobs `clientJobsHtml` :39, asked for when the card opens from GET /api/payers/<id>/jobs, `payer_jobs` domain/jobinfo.py:169, finished jobs included (S10); the paperwork boxes `paperworkHtml` :54 with `PAPERWORK_CHOICES` static/js/jobs.js:444, saved as the comma list the server reads, `parse_packet_text` domain/__init__.py:2526, read back from `packet_items` (S11); **Import a contract** as on New job (S12); **Add to paperwork** / **Dismiss** `sug-add` / `sug-dismiss` static/js/views/clients.js:96-110; **Use N days** `use-approval-days` static/js/views/clients.js:94; **Merge** `merge-payer` static/js/views/clients.js:137 (shown when there is another client), server `merge_payer`, domain/__init__.py:1824; **Use ABC Builders** / **Keep “ABC Builders Inc” as a new client** `ap-same-use` / `ap-same-keep` static/js/views/clients.js:127-131, server `payer_near` domain/__init__.py:1758; **Delete client** `delete-payer` static/js/views/clients.js:132, shown by `deletePayerHtml` static/js/views/jobs.js:78 to owners when `job_count` is 0, server `delete_payer` domain/__init__.py:1846, an owner-only route, server.py:2494, refused with the reason while any job, open or finished, uses the client; it says "counting finished jobs" only when one is finished, and points at Merge only when another client exists. The card's "N jobs", the Merge question and Delete client all count with `payerJobCount` static/js/views/jobs.js:71, which uses `job_count` so older finished jobs count too). Every label has an (i) with the trade term (`FIELD_HELP`, static/js/help.js).
 
 **Taps from start to done:** 2 (open the card, Save client), plus 1 per suggestion.
 

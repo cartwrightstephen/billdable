@@ -170,7 +170,7 @@ function archiveHtml(j) {
         ${formOpen.editstart ? `<div class="form-row" data-form-key="editstart">${formErrorLine("editstart")}${jobFields("editstart", "es", j).started_on}
           <button class="btn small" data-action="save-start" data-id="${j.id}">Save start date</button></div>` : ""}
         ${row("Finished", fmtDate(j.closed_at || j.completed_at))}
-        <div class="form-inline"><a class="btn secondary small" href="/api/jobs/${j.id}/archive.zip" download>Download job file</a></div>
+        <div class="form-inline"><a class="btn secondary small" href="/api/jobs/${j.id}/archive/job-file.zip" download>Download job file</a></div>
       </div>
       <div class="card">
         <h2>${termText("Pay apps")}</h2>

@@ -55,6 +55,8 @@ OLD = {
     r"\bleft rail\b": "Settings, Company",
     r"(?-i:\bChange Orders\b)": "Change orders",
     r"(?-i:\bDaily Record\b)": "Daily record",
+    r"\bwho pays you\?": "Client type (J2, Oct 29 review)",
+    r"\breopen job\b": "Add more work (J9, Oct 29 review)",
     r"\bai assisted\b": "(never used)",
 }
 

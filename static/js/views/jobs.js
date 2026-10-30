@@ -40,8 +40,8 @@ export function jobFields(form, prefix, j = {}) {
     contract_number: f({ name: "contract_number", id: `${prefix}-contract`, label: "Contract number", helpKey: "contract_number", rule: "contract_number", value: unesc(j.contract_number || ""), ...mark("contract_number") }),
     contract_cents: moneyField({ form, name: "contract_cents", id: `${prefix}-amount`, label: "Contract amount ($)", helpKey: "contract_amount", required: true, placeholder: "48,500", cents: j.contract_cents, ...mark("contract_cents") }),
     retainage_pct: f({ name: "retainage_pct", id: `${prefix}-retainage`, label: "Retainage %", helpKey: "retainage_pct", value: String(j.retainage_pct || 0), inputmode: "decimal", autocomplete: "off", ...mark("retainage_pct") }),
-    // J8: the day the job started; New job starts at today.
-    started_on: f({ name: "started_on", id: `${prefix}-start`, label: "Start date", type: "date", value: unesc(j.started_on || limits.today),
+    // J8: the day the job started; New job starts at today, an older job with none stays blank.
+    started_on: f({ name: "started_on", id: `${prefix}-start`, label: "Start date", type: "date", value: unesc(j.started_on || (j.id ? "" : limits.today)),
       ...mark("started_on"), attrs: `min="${limits.min}" max="${limits.max}"${contractMark(form, "started_on").attrs ? " data-from-contract" : ""}` }),
   };
 }
@@ -143,6 +143,10 @@ export function syncNewJobCustomer() {
   const type = form.querySelector('[data-payer-slot="client_type"]');
   const approver = form.querySelector('[data-payer-slot="approver"]'), email = form.querySelector('[data-payer-slot="ap_email"]');
   if (type) type.hidden = !!p;
+  for (const slot of ["payapp_due_day", "payment_terms_days"]) {
+    const box = form.querySelector(`[data-payer-slot="${slot}"]`);
+    if (box) box.hidden = !!p;
+  }
   if (approver) approver.hidden = !!p;
   if (email) email.hidden = !!(p && p.ap_email);
 }
@@ -185,7 +189,7 @@ export function prefillRetainage() {
 let contractRead = null;
 onSessionEnd(() => { contractRead = null; });
 
-const MORE_FIELDS = ["contract_number", "retainage_pct", "started_on", "phone", "ap_email"];
+const MORE_FIELDS = ["contract_number", "retainage_pct", "started_on", "phone", "ap_email", "payapp_due_day", "payment_terms_days"];
 
 // A form closed (saved or cancelled) forgets what its contract filled.
 export function forgetClosedContract() {
@@ -225,7 +229,8 @@ function fillFromContract(form, fields) {
   const d = (formDraft[form] ||= {});
   const put = (box, value) => { if (value !== undefined && value !== null && value !== "") d[box] = String(value); };
   if (form === "newjob") {
-    for (const k of ["name", "street", "city", "state", "zip", "customer", "client_type", "contract_number", "started_on", "phone", "ap_email"]) put(k, fields[k]);
+    for (const k of ["name", "street", "city", "state", "zip", "customer", "client_type", "contract_number", "started_on", "phone", "ap_email",
+      "payapp_due_day", "payment_terms_days"]) put(k, fields[k]);
     if (Number.isInteger(fields.contract_cents)) put("contract_cents", dollarsText(fields.contract_cents));
     if (Number.isInteger(fields.retainage_pct)) { put("retainage_pct", fields.retainage_pct); d.retainage_touched = true; }
     if (MORE_FIELDS.some(k => k in fields)) moreDetails.newjob = true;
@@ -243,30 +248,35 @@ async function readContract(form, body, name, keep) {
   if (status) status.textContent = "Reading…";
   const r = await sendFile("/api/contract/read", body, name, name.endsWith(".txt") ? "text/plain; charset=utf-8" : "");
   if (r.status === 401) { load(); return; }
+  // What the status line calls it: the file's name, or "the pasted text".
+  const shown = keep.text ? "the pasted text" : name;
   if (!r.ok || !r.data.ok) {
-    contractRead = { form, name, error: (r.data && r.data.error) || "Couldn't read that file.", found: [] };
+    contractRead = { form, name: shown, error: (r.data && r.data.error) || "Couldn't read that file.", found: [] };
   } else {
     formOpen[form] = true;
     const found = fillFromContract(form, r.data.fields || {});
-    contractRead = { form, name, ...keep, found, notes: r.data.notes || [], sov: r.data.sov || null };
+    contractRead = { form, name: shown, ...keep, found, notes: r.data.notes || [], sov: r.data.sov || null };
   }
   render();
 }
 
 // The contract's file or text on the new job's record, and its schedule of values if asked for.
-async function fileContract(jobId) {
-  const r = contractRead && contractRead.form === "newjob" ? contractRead : null;
+// r is the read the job was saved with, taken before the save closed the form.
+async function fileContract(jobId, r) {
   if (!r || r.error) return;
   if (r.file) {
-    await sendFile(`/api/import/file?job=${encodeURIComponent(jobId)}&file=1&kind=contract`, r.file, r.file.name);
+    const sent = await sendFile(`/api/import/file?job=${encodeURIComponent(jobId)}&file=1&kind=contract`, r.file, r.file.name);
+    if (!sent.ok) toast(`The job is saved, but the contract file wasn't added to its record: ${(sent.data && sent.data.error) || "try Add a file on the job page"}.`);
   } else if (r.text) {
     await post(`/api/jobs/${jobId}/add-record`, { label: "Contract (pasted)", kind: "contract", note: r.text.slice(0, 5000) }, { quiet: true });
   }
-  if (r.sov && r.useSov !== false) {
+  if (r.sov && r.useSov === false) {
+    // The person unticked it: nothing to set up.
+  } else if (r.sov) {
     const res = await post(`/api/jobs/${jobId}/sov`, { lines: r.sov.lines, op_pct: 0, update_contract: false }, { quiet: true });
     if (res && res.ok) toast("Job saved with the schedule of values from the contract");
   }
-  contractRead = null;
+  if (contractRead === r) contractRead = null;
   clearJobDetails();
   await load();
 }
@@ -275,7 +285,9 @@ async function fileContract(jobId) {
 
 function addRecordCardHtml() {
   const jobs = openJobs(state.jobs);
-  const picked = draftValue("jobrecord", "job", "");
+  // A job picked before it was finished (or deleted) is no longer offered.
+  const wanted = draftValue("jobrecord", "job", "");
+  const picked = jobs.some(j => unesc(j.id) === wanted) ? wanted : "";
   const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => [k, termText(v)]);
   return `<div class="card add-to-record" data-form-key="jobrecord">
       <h2>Add to a job record</h2>
@@ -323,7 +335,7 @@ export const views = {
     const mark = (name) => contractMark("newjob", name);
     return `
       <div class="top">
-        <h1>Jobs</h1>
+        <h1>Open jobs</h1>
         <div class="form-inline">
           ${open.length ? `<button class="btn secondary" data-action="toggle-form" data-form="addrecord">${formOpen.addrecord ? "Cancel" : "Add to a job record"}</button>` : ""}
           <button class="btn" data-action="toggle-form" data-form="newjob">${formOpen.newjob ? "Cancel" : "New job"}</button>
@@ -356,6 +368,8 @@ export const views = {
               ${assigneeField("newjob", "nj")}
               ${f({ name: "phone", id: "nj-phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off", rule: "phone", ...mark("phone") })}
               <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The client, unless you say otherwise" })}</div>
+              <div data-payer-slot="payapp_due_day"${known ? " hidden" : ""}>${f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") })}</div>
+              <div data-payer-slot="payment_terms_days"${known ? " hidden" : ""}>${f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") })}</div>
               <div data-payer-slot="ap_email"${known && known.ap_email ? " hidden" : ""}>${f({ name: "ap_email", id: "nj-email", label: "Email for pay apps (can add later)", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com", ...mark("ap_email") })}</div>
               ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
             </div>
@@ -416,7 +430,6 @@ export const actions = {
   "create-job": async () => {
     const v = formValues("newjob");
     const errors = jobFieldErrors(v);
-    if (!v.customer) errors.customer = "Enter the client: who pays for this job.";
     // A saved client keeps its type and contact (shown instead of the boxes); a new one may leave
     // both contact boxes blank: who signs off defaults to the client, the email is asked for before sending.
     const known = knownPayer(v.customer);
@@ -429,13 +442,26 @@ export const actions = {
     if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
     const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
     if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
+    // A new client's pay app day and terms (from the boxes, which an imported contract fills).
+    const days = {};
+    if (!known) {
+      if (v.payapp_due_day && !(/^\d+$/.test(v.payapp_due_day) && +v.payapp_due_day >= 1 && +v.payapp_due_day <= 31)) errors.payapp_due_day = "Enter a day of the month from 1 to 31 for when pay apps are due, or leave it blank.";
+      else if (v.payapp_due_day) days.payapp_due_day = Number(v.payapp_due_day);
+      if (v.payment_terms_days && !(/^\d+$/.test(v.payment_terms_days) && +v.payment_terms_days >= 1 && +v.payment_terms_days <= 365)) errors.payment_terms_days = "Enter the days they have to pay as a whole number from 1 to 365.";
+      else if (v.payment_terms_days) days.payment_terms_days = Number(v.payment_terms_days);
+    }
     if (refuseForm("newjob", errors)) return;
+    // The contract read this job is saved with: the save closes the form, which forgets it.
+    const read = contractRead && contractRead.form === "newjob" ? contractRead : null;
+    const useSov = document.getElementById("nj-use-sov");
+    if (read && useSov) read.useSov = useSov.checked;
+    const before = new Set(state.jobs.map(j => j.id));
     const r = await post("/api/jobs", {
       name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer: v.customer, approver,
       ap_email: apEmail, phone: v.phone, client_type: known ? "" : (v.client_type || "gc"),
       contract_number: v.contract_number, note: v.note, started_on: v.started_on || "",
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
-      contract_cents: amount.cents, retainage_pct: ret.value,
+      contract_cents: amount.cents, retainage_pct: ret.value, ...days,
       new_customer: !known && keptNames.newjob === v.customer,
     }, { formKey: "newjob", close: "newjob" });
     if (r && !r.ok) showSameCustomer("newjob", "nj", r.data);
@@ -443,11 +469,9 @@ export const actions = {
     delete keptNames.newjob;
     delete moreDetails.newjob;
     toast("Job saved");
-    const made = state.jobs[state.jobs.length - 1];
+    const made = state.jobs.find(j => !before.has(j.id));
     if (made) {
-      const useSov = document.getElementById("nj-use-sov");
-      if (contractRead && useSov) contractRead.useSov = useSov.checked;
-      await fileContract(made.id);
+      await fileContract(made.id, read);
       nav("job", made.id);
     }
   },
