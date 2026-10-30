@@ -151,8 +151,10 @@ export function emailStatusHtml(e) {
   const since = Date.parse(e.sending_at || e.at || "") || Date.now();
   const stuck = (st === "sending" || st === "queued") && Date.now() - since > 30 * 60 * 1000;
   // One that no longer needs to go out (the pay app is paid, the change order signed) says why
-  // instead: the server refuses Send again on it (domain.email_moot).
-  const moot = e.moot && !stuck ? `<div class="sub">No need to send it now: ${e.moot}</div>` : "";
+  // instead: the server refuses Send again on it (domain.email_moot), stuck ones too. One still
+  // going out shows only its status.
+  const inFlight = (st === "sending" || st === "queued") && !stuck;
+  const moot = e.moot && !inFlight ? `<div class="sub">No need to send it now: ${e.moot}</div>` : "";
   const retry = !moot && (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
   return `<span class="pill ${cls}">${words(st)}</span>${when}${moot}${retry}`;
 }

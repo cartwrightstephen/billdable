@@ -27,5 +27,7 @@ test("an average the server takes is still offered", () => {
   core.setState(company({ paid_count: 3, paid_days_avg: 30.4 }));
   assert.match(settings.views.playbook(), /data-days="30">Use 30 days<\/button>/);
   core.setState(company({ paid_count: 3, paid_days_avg: 0.6 }));
-  assert.match(settings.views.playbook(), /data-days="1">Use 1 day/);
+  const one = settings.views.playbook();
+  assert.match(one, /data-days="1">Use 1 day<\/button>/);
+  assert.match(one, /Pays in about 1 day after a pay app is sent/);
 });
