@@ -6,7 +6,7 @@ the app shows them today. This reads helper/answers.json as shipped and fails on
   chips, or the first question (the helper's "Did you mean" lists it). The OLD list mirrors
   tests/js/glossary.mjs, written for prose. A trade term may stay in parentheses, as the Help
   page has it ("Paperwork (packet)"), and in the other questions and keywords, so a contractor
-  who types "packet" or "playbook" is still understood;
+  who types "packet", "customer" or "Today" is still understood;
 - a nav button to a page that has no address (VIEW_PATHS in static/js/routes.js);
 - a follow-up chip that is not a question of any answer.
 """
@@ -23,8 +23,10 @@ ROUTES = ROOT / "static" / "js" / "routes.js"
 # Old word -> what the app says now. Case-insensitive unless the pattern sets (?-i).
 OLD = {
     r"\bpackets?\b": "Paperwork / Open paperwork",
-    r"\bpayers?\b": "customer",
-    r"\bplaybooks?\b": "Customer settings",
+    r"\bpayers?\b": "client",
+    r"\bcustomers?('s)?\b": "client (Oct 29 review: Clients pay the Users)",
+    r"\bcustomer settings\b": "Client playbook",
+    r"(?<!client )(?<!client's )\bplaybooks?\b": "Client playbook",
     r"\bpencil (copy|draft)\b": "Send draft for their review",
     r"\bmatch(ed|ing)? (a |the )?payments?\b|\bpayments matched\b": "Record a payment / Payments received",
     r"\bmark(ed)? present\b": "I have this… / Marked as in hand",
@@ -44,11 +46,12 @@ OLD = {
     r"\bapprove send\b|\bdraft skipped\b": "Pay app sent / Draft replaced",
     r"pay app / invoice backup": "Backup for the pay app",
     r"\bcollections\b": "Unpaid (a Money tab)",
-    r"\bdashboard\b": "Today",
+    r"(?-i:\bToday\b)(?=,| shows| and Settings| page| tab)|\bopen today\b|\bgo to today\b": "Dashboard (the page; today the day stays)",
+    r"(?-i:\bHelp\b)(?= page| tab|,)|\bsettings, help\b": "(Help was emptied, Oct 29 review)",
     r"\baudit\b": "Activity log",
     r"\bblockers?\b": "Fix N things before sending / Before you can finish this job",
     r"\bchase retainage\b": "Ask for retainage",
-    r"\bteach (the )?playbook\b": "Customer sent a pay app back? Note why.",
+    r"\bteach (the )?playbook\b": "Client sent a pay app back? Note why.",
     r"\bleft rail\b": "Settings, Company",
     r"(?-i:\bChange Orders\b)": "Change orders",
     r"(?-i:\bDaily Record\b)": "Daily record",

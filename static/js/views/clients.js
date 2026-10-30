@@ -1,4 +1,4 @@
-// Customer settings: who each customer is, where pay apps go, the paperwork they need and how
+// Client playbook: who each client is, where pay apps go, the paperwork they need and how
 // long they take to pay.
 import { unesc, fmtDate } from "../format.js";
 import { askConfirm } from "../dom.js";
@@ -15,25 +15,25 @@ export const views = {
     const jobsOf = (p) => payerJobCount(p, state.jobs);
     const addForm = formOpen.addpayer ? `
       <div class="card" data-form-key="addpayer">
-        <h2>Add customer</h2>
+        <h2>Add client</h2>
         ${formErrorLine("addpayer")}
         <div class="form-grid">
-          ${field({ form: "addpayer", name: "name", id: "ap-name", label: "Customer name", helpKey: "customer_name", required: true, autocomplete: "off" })}
+          ${field({ form: "addpayer", name: "name", id: "ap-name", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off" })}
           ${sameCustomerBox("addpayer")}
           ${field({ form: "addpayer", name: "role", id: "ap-role", label: "Who pays you?", helpKey: "role", options: ROLE_OPTIONS })}
-          ${field({ form: "addpayer", name: "approver", id: "ap-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The customer, unless you say otherwise" })}
+          ${field({ form: "addpayer", name: "approver", id: "ap-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The client, unless you say otherwise" })}
           ${field({ form: "addpayer", name: "ap_email", id: "ap-email", label: "Email for pay apps (can add later)", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com" })}
           ${field({ form: "addpayer", name: "phone", id: "ap-phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off" })}
         </div>
-        <div class="form-inline"><button class="btn" data-action="add-payer">Add customer</button></div>
+        <div class="form-inline"><button class="btn" data-action="add-payer">Add client</button></div>
       </div>` : "";
     return `
       <div class="job-head">
         <div>
-          <h1>Customer settings</h1>
-          <p class="sub">Who each customer is, where pay apps go, the paperwork they need, and how long they take to pay. These set follow-up timing and the calendar.</p>
+          <h1>Client playbook</h1>
+          <p class="sub">Who each client is, where pay apps go, the paperwork they need, and how long they take to pay. These set follow-up timing and the calendar.</p>
         </div>
-        <button class="btn secondary small" data-action="toggle-form" data-form="addpayer" aria-expanded="${!!formOpen.addpayer}">${formOpen.addpayer ? "Cancel" : "Add customer"}</button>
+        <button class="btn secondary small" data-action="toggle-form" data-form="addpayer" aria-expanded="${!!formOpen.addpayer}">${formOpen.addpayer ? "Cancel" : "Add client"}</button>
       </div>
       ${addForm}
       ${state.payers.length ? state.payers.map(p => {
@@ -58,7 +58,7 @@ export const views = {
           <div data-form-key="${key}">
             ${formErrorLine(key)}
             <div class="form-grid">
-              ${f({ name: "name", label: "Customer name", helpKey: "customer_name", required: true, autocomplete: "off", value: unesc(p.name) })}
+              ${f({ name: "name", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off", value: unesc(p.name) })}
               ${f({ name: "role", label: "Who pays you?", helpKey: "role", options: ROLE_OPTIONS, value: unesc(p.role || "Owner") })}
               ${f({ name: "approver", label: "Who signs off on your bills", helpKey: "approver", value: unesc(clean(p.approver)) })}
               ${f({ name: "ap_email", label: "Email for pay apps", helpKey: "ap_email", type: "email", autocomplete: "off", value: unesc(clean(p.ap_email)) })}
@@ -72,20 +72,20 @@ export const views = {
               ${f({ name: "copy", label: "Also email (CC)", helpKey: "copy", wide: true, autocomplete: "off", value: unesc(clean(p.copy)), placeholder: "other@example.com, pm@example.com" })}
               ${f({ name: "escalation_email", label: "Also email from the third follow-up", helpKey: "escalation_email", type: "email", autocomplete: "off", value: unesc(clean(p.escalation_email)), placeholder: "owner@example.com" })}
             </div>
-            <div class="form-inline"><button type="button" class="btn small" data-action="save-playbook" data-id="${p.id}">Save customer</button></div>
+            <div class="form-inline"><button type="button" class="btn small" data-action="save-playbook" data-id="${p.id}">Save client</button></div>
           </div>
           ${others.length ? `<details class="merge-payer">
-            <summary>Same customer as another one?</summary>
+            <summary>Same client as another one?</summary>
             <div class="form-inline">
               <label for="merge-${p.id}" class="inline-label">Merge into</label>
               <select id="merge-${p.id}" data-merge-into>${others.map(o => `<option value="${o.id}">${o.name}</option>`).join("")}</select>
               <button type="button" class="btn small secondary" data-action="merge-payer" data-id="${p.id}" data-name="${p.name}">Merge</button>
             </div>
-            <p class="sub">Every job of ${p.name} moves to the customer you pick, which keeps its own settings. ${p.name} is then removed.</p>
+            <p class="sub">Every job of ${p.name} moves to the client you pick, which keeps its own settings. ${p.name} is then removed.</p>
           </details>` : ""}
           ${deletePayerHtml(p, { owner: !me || me.role === "owner", jobs: state.jobs, canMerge: others.length > 0 })}
         </details>`;
-      }).join("") : emptyState("No customers yet", "Add one here, or one is added with the first job for that customer.", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add customer</button>`)}
+      }).join("") : emptyState("No clients yet", "Add one here, or one is added with the first job for that client.", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add client</button>`)}
     `;
   },
 };
@@ -102,7 +102,7 @@ export const actions = {
     // means nothing is needed), except who signs off and the email, which a send needs (R3-07).
     for (const k of ["approver", "ap_email"]) if (!updates[k]) delete updates[k];
     const errors = {};
-    if (!updates.name) errors.name = "Enter the customer's name.";
+    if (!updates.name) errors.name = "Enter the client's name.";
     for (const [k, label] of [["follow_up_days", "the days between follow-ups"], ["usual_approval_days", "the days they usually take to pay"], ["payment_terms_days", "the payment terms in days"]]) {
       if (updates[k] && !/^\d+$/.test(updates[k])) errors[k] = `Enter ${label} as a whole number from 1 to 365.`;
     }
@@ -111,12 +111,12 @@ export const actions = {
   },
   "add-payer": async () => {
     const v = formValues("addpayer");
-    if (refuseForm("addpayer", v.name ? {} : { name: "Enter the customer's name." })) return;
+    if (refuseForm("addpayer", v.name ? {} : { name: "Enter the client's name." })) return;
     const r = await post("/api/payers", { ...v, new_customer: keptNames.addpayer === v.name }, { formKey: "addpayer", close: "addpayer" });
     if (r && !r.ok) showSameCustomer("addpayer", "ap", r.data);
     if (r && r.ok) delete keptNames.addpayer;
   },
-  // "Same as ABC Builders?" while adding a customer: open the saved one instead...
+  // "Same as ABC Builders?" while adding a client: open the saved one instead...
   "ap-same-use": (el) => {
     formOpen.addpayer = false;
     clearForm("addpayer");
@@ -124,15 +124,15 @@ export const actions = {
     const card = document.querySelector(`[data-payer-card="${CSS.escape(el.dataset.id || "")}"]`);
     if (card) { card.open = true; card.scrollIntoView({ block: "start", behavior: "smooth" }); }
   },
-  // ...or add the typed name as a new customer, on purpose.
+  // ...or add the typed name as a new client, on purpose.
   "ap-same-keep": (el) => {
     keptNames.addpayer = el.dataset.name || "";
     hideSameCustomer("addpayer");
     return actions["add-payer"]();
   },
   "delete-payer": async (el, id) => {
-    const name = unesc(el.dataset.name || "this customer");
-    if (!(await askConfirm(`Delete ${name}? No job uses this customer. It is removed from Customer settings, and the activity log keeps a note of it.`, "Delete customer", true))) return;
+    const name = unesc(el.dataset.name || "this client");
+    if (!(await askConfirm(`Delete ${name}? No job uses this client. It is removed from the Client playbook, and the activity log keeps a note of it.`, "Delete client", true))) return;
     await post(`/api/payers/${id}/delete`, {});
   },
   "merge-payer": async (el, id) => {
@@ -141,7 +141,7 @@ export const actions = {
     const from = state.payers.find(p => p.id === id);
     if (!into) return;
     const n = from ? payerJobCount(from, state.jobs) : state.jobs.filter(j => j.payer_id === id).length;
-    const name = unesc(el.dataset.name || "this customer");
+    const name = unesc(el.dataset.name || "this client");
     const jobs = n === 0 ? "It has no jobs." : `${n === 1 ? "Its job moves" : `Its ${n} jobs move`} to ${unesc(into.name)}.`;
     if (!(await askConfirm(`Merge ${name} into ${unesc(into.name)}? ${jobs} ${unesc(into.name)} keeps its own settings, and ${name} is removed.`, "Merge", true))) return;
     await post(`/api/payers/${id}/merge`, { into: into.id });

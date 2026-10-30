@@ -68,13 +68,13 @@ function onboardingHtml() {
   const steps = [
     { text: termText("Add your company address, phone and licence number (they print on every pay app)."), done: !!String(state.company.address || "").trim(),
       label: "Company details", attrs: `data-action="onb-go" data-view="company" data-focus="#co-address"`, always: true },
-    { text: termText("Create your first job: contract amount, customer and where pay apps go."), done: jobs.length > 0,
+    { text: termText("Create your first job: contract amount, client and where pay apps go."), done: jobs.length > 0,
       label: "New job", attrs: `data-action="onb-newjob"`, always: true },
     { text: "Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
     { text: "Set up a schedule of values to bill line by line (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present),
       label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.editable) || j.sov_view.present, "#sov-card"), needsJob: true },
-    { text: termText("Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the customer needs."), done: invoices.length > 0,
+    { text: termText("Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the client needs."), done: invoices.length > 0,
       label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
     { text: "Add the missing paperwork, then Approve & send.", done: invoices.some(i => i.sent_at),
       label: draft ? "Review & send" : "Open the job",
@@ -172,7 +172,7 @@ export const views = {
         <table class="sortable">
           <tr>
             ${sortHead("name", "Job")}
-            <th>Customer</th>
+            <th>Client</th>
             <th>Status</th>
             ${sortHead("contract", "Contract total")}
             ${sortHead("billed", "Billed")}
@@ -213,7 +213,7 @@ export const views = {
         <div class="metric"><div class="k">${termText("Work done to pay app sent")}</div><div class="v">${days(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
         <div class="metric"><div class="k">${termText("Pay app sent to paid")}</div><div class="v">${days(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${days(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
         <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
-        <div class="metric"><div class="k">Sent back by the customer</div><div class="v">${m.sent_back}</div><div class="sub row-sub">reasons saved to customer settings and draft changes</div></div>
+        <div class="metric"><div class="k">Sent back by the client</div><div class="v">${m.sent_back}</div><div class="sub row-sub">reasons saved to the client playbook and draft changes</div></div>
       </div>
       <div class="metrics">
         <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} ${termText("pay apps")}</div></div>
@@ -225,7 +225,7 @@ export const views = {
         ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">Every finished job has a pay app out.</p>`}
       </div>
       ${m.by_payer.length ? `<div class="table-wrap"><table>
-        <tr><th>Customer</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
+        <tr><th>Client</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
         ${m.by_payer.map(r => `<tr><td>${r.payer}</td><td class="num">${r.average_days}</td><td class="num">${r.paid}</td></tr>`).join("")}
       </table></div>` : ""}
     `;

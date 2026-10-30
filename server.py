@@ -491,9 +491,9 @@ def email_owners_question(company_id: str, asked: dict) -> list:
         return []
     subject = f"Question on {asked['number']} — {asked['job_name']}"
     link = app_url()
-    body = (f"{asked.get('from') or 'The customer'} asked on the customer page for {asked['number']}:\n\n{asked.get('text', '')}\n\n"
+    body = (f"{asked.get('from') or 'The client'} asked on the client page for {asked['number']}:\n\n{asked.get('text', '')}\n\n"
             + (f"Open the job: {link}/jobs/{asked['job_id']}\n" if link else "")
-            + "It is in your Inbox too. Reply to the customer by email or phone.")
+            + "It is in your Inbox too. Reply to the client by email or phone.")
     lines = [f"{to}: {send_system_email(to, subject, body, company_id)}" for to in auth.owner_emails(company_id)]
     for line in lines:
         log_json("info", msg="payer question emailed", company=company_id, result=line.split(": ", 1)[-1][:120])
@@ -2340,7 +2340,7 @@ class Handler(BaseHTTPRequestHandler):
         name = state.get("company", {}).get("name", "New company")
         if _text(ctx.body, "confirm").strip() != name:
             raise domain.GateError("Reset not done. Type your company name exactly to confirm.",
-                                   ["Reset deletes every job, customer and record in this company."])
+                                   ["Reset deletes every job, client and record in this company."])
         # As Delete asks for it: a session left open on a shared computer can't wipe the company (R6-05).
         if not auth.check_password(ctx.user["id"], ctx.body.get("password")):
             raise domain.GateError("Reset not done. Your password is wrong.", fields={"password": "Enter your password to confirm."})
@@ -2671,7 +2671,7 @@ JOB_ACTIONS = {
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor)),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor)),
-    "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the customer sent the pay app back."), c.actor)),
+    "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),
     "import-qbo": (False, _import_qbo),
     "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),
     "reopen": (False, lambda h, st, j, i, c: domain.reopen_job(st, j, _text(c.body, "reason"), c.actor)),

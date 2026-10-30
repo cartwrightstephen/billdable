@@ -249,7 +249,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         # The same follow-up rule as Today, including a call noted with a date to check again.
         due = [r for r in domain.today_rows(state) if r["kind"] == "follow_up"] if state is not None else []
         if not due:
-            return ("No follow-ups are due. Each customer's wait comes from Days between follow-ups in Customer settings.",
+            return ("No follow-ups are due. Each client's wait comes from Days between follow-ups in the Client playbook.",
                     [{"type": "nav", "view": "collections", "label": "Open Unpaid"}])
         lines = [f"- {r['job']}: {r['text']}" for r in due]
         actions = [_follow_up_btn(r) for r in due[:4]]

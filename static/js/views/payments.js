@@ -97,10 +97,10 @@ export const views = {
     state.jobs.forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     const imp = paymentImport;
     const importCard = `<details class="card"${imp || !pays.length ? " open" : ""}><summary><strong>Import payments from QuickBooks (CSV)</strong></summary>
-      <p class="sub">In QuickBooks, export a report to CSV and paste it here. Any QuickBooks report with payments in it works; invoices and refunds are skipped. Duracash proposes a pay app for each payment and records nothing until you tick and apply. A check already recorded from the same customer is skipped, so importing the same file twice is safe.</p>
+      <p class="sub">In QuickBooks, export a report to CSV and paste it here. Any QuickBooks report with payments in it works; invoices and refunds are skipped. Duracash proposes a pay app for each payment and records nothing until you tick and apply. A check already recorded from the same client is skipped, so importing the same file twice is safe.</p>
       ${imp ? `${imp.warnings.length ? `<div class="sov-warn">${imp.warnings.map(w => `<div>${w}</div>`).join("")}</div>` : ""}
         <div class="table-wrap"><table>
-          <tr><th>Record</th><th>Date</th><th>Customer</th><th>Number</th><th>Amount</th><th>Pay app</th><th>Why</th></tr>
+          <tr><th>Record</th><th>Date</th><th>Client</th><th>Number</th><th>Amount</th><th>Pay app</th><th>Why</th></tr>
           ${imp.rows.map((row, n) => `<tr><td>${qboTick(row, n)}</td>
             <td>${row.date ? fmtDate(row.date) : "—"}</td><td>${row.customer}</td><td>${row.ref}</td><td class="num">${money(row.amount_cents)}</td>
             <td>${qboPayAppCell(row, n)}</td><td class="sub">${row.reason}</td></tr>`).join("")}

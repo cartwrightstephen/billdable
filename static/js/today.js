@@ -44,7 +44,7 @@ export function inboxKindSelect(r) {
 }
 
 // One row's buttons: the main one, a phone call for a follow-up (R4-06), and Open unless the
-// main button already opens the job. A pay app the customer approved (R4-08) has no main button.
+// main button already opens the job. A pay app the client approved (R4-08) has no main button.
 export function rowButtons(r) {
   const attrs = ACTIONS[r.kind];
   const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` + (r.kind === "inbox" ? inboxKindSelect(r) : "") : "";

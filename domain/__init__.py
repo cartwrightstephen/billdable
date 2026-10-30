@@ -341,7 +341,7 @@ def record_progress(
         raise GateError("This job bills from its schedule of values. Enter quantities completed on each line instead.")
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft and open_draft.get("pencil_status") == "sent":
-        raise GateError(f"{open_draft['number']} is with the customer as a draft. Void it or record their answer first.")
+        raise GateError(f"{open_draft['number']} is with the client as a draft. Void it or record their answer first.")
     contract_total = job["contract_cents"] + sum(
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
@@ -1390,7 +1390,7 @@ def term_text(text: str, style: str, keep: tuple[str, ...] = ()) -> str:
     return text
 
 
-SOURCE_LABELS = {"upload": "Upload", "paste": "Pasted", "email": "Email", "sms": "Text message", "notes": "Notes", "payer_page": "Customer page"}
+SOURCE_LABELS = {"upload": "Upload", "paste": "Pasted", "email": "Email", "sms": "Text message", "notes": "Notes", "payer_page": "Client page"}
 
 
 def _pay_app_list(invoices: list[dict[str, Any]]) -> str:
@@ -1469,7 +1469,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             add(1, "ready", job, "Ready to send", "green", f"{draft['number']} for {money(draft['amount_cents'])} to {payer.get('approver') or payer.get('name', '')}. "
                 "Check what goes out, then approve.", "Review & send", f"/money/pay-app/{job['id']}/{draft['id']}", invoice_id=draft["id"])
         elif job.get("waiver_due") and not job.get("waiver_sent"):
-            add(2, "waiver", job, "Waiver due", "amber", "Paid in full: the customer is waiting for the lien waiver.", "Review waiver",
+            add(2, "waiver", job, "Waiver due", "amber", "Paid in full: the client is waiting for the lien waiver.", "Review waiver",
                 f"/money/waiver/{job['id']}")
         elif job.get("work_status") == "complete" and m["unbilled_completed_cents"] > 0:
             add(5, "not_billed", job, "Not billed", "copper",
@@ -1646,7 +1646,7 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     payer = _payer(state, payer_id)
     text_fields = {"approver": "who signs off on your bills", "ap_email": "the email pay apps go to",
                    "packet": "the paperwork needed", "rejects_when": "when they send pay apps back", "copy": "who else to email",
-                   "name": "the customer's name", "phone": "the phone number", "escalation_email": "who to copy on late follow-ups"}
+                   "name": "the client's name", "phone": "the phone number", "escalation_email": "who to copy on late follow-ups"}
     day_fields = {"follow_up_days": "the days between follow-ups", "usual_approval_days": "the days they usually take to pay",
                   "payment_terms_days": "the days they have to pay"}
     clean: dict[str, Any] = {}
@@ -1698,13 +1698,13 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     if "name" in clean:
         same = _payer_named(state, clean["name"], other_than=payer["id"]) if clean["name"] else None
         if not clean["name"]:
-            errors["name"] = "Enter the customer's name."
+            errors["name"] = "Enter the client's name."
         elif same:
-            errors["name"] = f"Another customer is already called {same['name']}."
+            errors["name"] = f"Another client is already called {same['name']}."
         elif clean["name"] == payer["name"]:
             clean.pop("name")
     if errors:
-        raise GateError("Customer settings not saved.", fields=errors)
+        raise GateError("Client playbook not saved.", fields=errors)
     changed = []
     was = payer["name"]
     for k, v in clean.items():
@@ -1768,7 +1768,7 @@ def payer_near(state: dict[str, Any], name: str, other_than: str = "") -> dict[s
 def _same_customer_question(field: str, typed: str, near: dict[str, Any]) -> GateError:
     """The refusal that asks "Same as ABC Builders?": the page offers the saved customer or
     keeping the new name (sent again with new_customer: true)."""
-    question = f"Same as {near['name']}? Use the saved customer, or keep {typed} as a new one."
+    question = f"Same as {near['name']}? Use the saved client, or keep {typed} as a new one."
     return GateError(f"Same as {near['name']}?", fields={field: question},
                      extra={"same_customer": {"id": near["id"], "name": near["name"], "typed": typed}})
 
@@ -1806,17 +1806,17 @@ def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner")
     role = text("role") if text("role") in {"Owner", "GC"} else "Owner"
     errors: dict[str, str] = {}
     if not name:
-        errors["name"] = "Enter the customer's name."
+        errors["name"] = "Enter the client's name."
     elif _payer_named(state, name):
-        errors["name"] = f"Another customer is already called {_payer_named(state, name)['name']}."
+        errors["name"] = f"Another client is already called {_payer_named(state, name)['name']}."
     if ap_email and not EMAIL_RE.match(ap_email):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
-    _refuse("Customer not added.", errors)
+    _refuse("Client not added.", errors)
     near = None if body.get("new_customer") is True else payer_near(state, name)
     if near:
         raise _same_customer_question("name", name, near)
     payer = _new_payer(state, name, role, approver or name, ap_email, phone)
-    audit(state, "", "payer_add", f"{actor} added the customer {name}.", actor)
+    audit(state, "", "payer_add", f"{actor} added the client {name}.", actor)
     return payer
 
 
@@ -1826,7 +1826,7 @@ def merge_payer(state: dict[str, Any], payer_id: str, into_id: str, actor: str =
     payer = _payer(state, payer_id)
     into = _payer(state, into_id) if into_id else None
     if not into or into["id"] == payer["id"]:
-        raise GateError("Pick the customer to merge into.", fields={"into": "Pick the customer to merge into."})
+        raise GateError("Pick the client to merge into.", fields={"into": "Pick the client to merge into."})
     moved = [j for j in state["jobs"] if j.get("payer_id") == payer["id"]]
     for job in moved:
         job["payer_id"] = into["id"]
@@ -1851,11 +1851,11 @@ def delete_payer(state: dict[str, Any], payer_id: str, actor: str = "owner") -> 
         jobs = "1 job uses" if len(used) == 1 else f"{len(used)} jobs use"
         finished = ", counting finished jobs" if any(j.get("closed") for j in used) else ""
         # Point at Merge only when there is another customer to merge into (the box is hidden otherwise).
-        advice = ("To remove it, merge it into another customer." if len(state["payers"]) > 1
+        advice = ("To remove it, merge it into another client." if len(state["payers"]) > 1
                   else "Its jobs need it.")
-        raise GateError(f"{payer['name']} can't be deleted: {jobs} this customer{finished}. {advice}")
+        raise GateError(f"{payer['name']} can't be deleted: {jobs} this client{finished}. {advice}")
     state["payers"].remove(payer)
-    audit(state, "", "payer_delete", f"{actor} deleted the customer {payer['name']}.", actor)
+    audit(state, "", "payer_delete", f"{actor} deleted the client {payer['name']}.", actor)
 
 
 def payapp_due(payer: dict[str, Any], today: date | None = None) -> tuple[date, date] | None:
@@ -2334,7 +2334,7 @@ def learn_rejection(state: dict[str, Any], job_id: str, reason: str, actor: str 
     if reason and reason not in current:
         payer["rejects_when"] = (current + "; " + reason).strip("; ")
     suggest_packet_item(state, payer["id"], reason, "a rejection", job["name"])
-    audit(state, job_id, "learn_rejection", f"{actor} saved to customer settings: {payer['name']} sends pay apps back when {reason}.", actor)
+    audit(state, job_id, "learn_rejection", f"{actor} saved to the client playbook: {payer['name']} sends pay apps back when {reason}.", actor)
     return job
 
 
@@ -2443,7 +2443,7 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def _payer(state: dict[str, Any], payer_id: str) -> dict[str, Any]:
     payer = next((p for p in state["payers"] if p["id"] == payer_id), None)
     if not payer:
-        raise GateError("Customer not found.")
+        raise GateError("Client not found.")
     return payer
 
 
@@ -2627,7 +2627,7 @@ def detach_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: 
         raise GateError(f"Duracash makes {item['label']} with the pay app; there is nothing to remove.")
     if _invoice and _invoice.get("status") not in DRAFT_STATUSES:
         # What went with a pay app stays as it was sent; the customer may already have it.
-        raise GateError(f"{_invoice['number']} has gone to the customer, so its paperwork stays as it was sent.")
+        raise GateError(f"{_invoice['number']} has gone to the client, so its paperwork stays as it was sent.")
     taken = item.get("attachments", [])
     if not taken and not item.get("present"):
         raise GateError(f"Nothing is attached to {item['label']}.")
@@ -2652,7 +2652,7 @@ def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: s
         raise GateError("Paperwork item not found.")
     reason = (reason or "").strip()[:500] if isinstance(reason, str) else ""
     item["required"] = False
-    item["skipped_reason"] = reason or "Not needed for this customer"
+    item["skipped_reason"] = reason or "Not needed for this client"
     item["skipped_at"] = utcnow()
     payer = _payer(state, job["payer_id"])
     labels = parse_packet_text(payer.get("packet", ""))
@@ -2826,7 +2826,7 @@ def create_job(
     if not address:
         errors["address"] = "Enter the job address."
     if not customer_name:
-        errors["customer"] = "Enter the customer: who pays for this job."
+        errors["customer"] = "Enter the client: who pays for this job."
     if ap_email and not EMAIL_RE.match(ap_email):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
     if not isinstance(contract_cents, int) or isinstance(contract_cents, bool) or contract_cents <= 0:
@@ -2864,7 +2864,7 @@ def create_job(
                 state,
                 "",
                 "payer_kept",
-                f"{actor} entered a different {' and '.join(differs)} for {payer['name']}; kept the saved ones. Change them in Customer settings.",
+                f"{actor} entered a different {' and '.join(differs)} for {payer['name']}; kept the saved ones. Change them in the Client playbook.",
                 actor,
             )
 
@@ -2978,7 +2978,7 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
         if not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 20:
             problems["retainage_pct"] = "Enter a retainage from 0 to 20 percent."
         elif open_draft and open_draft.get("pencil_sent_at"):
-            problems["retainage_pct"] = (f"{open_draft['number']} went to the customer as a draft at {job.get('retainage_pct', 0)}%. "
+            problems["retainage_pct"] = (f"{open_draft['number']} went to the client as a draft at {job.get('retainage_pct', 0)}%. "
                                          "Delete that draft or send it first, then change the retainage.")
         else:
             changes.append(f"retainage from {job.get('retainage_pct', 0)}% to {pct}%" + (" from the next pay app" if has_pay_apps else ""))

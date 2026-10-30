@@ -175,7 +175,7 @@ class ProgressCorrectionTests(unittest.TestCase):  # R1-09
         domain.send_pencil(state, job["id"])
         with self.assertRaises(domain.GateError) as raised:
             domain.record_progress(state, job["id"], 350_000)
-        self.assertIn("is with the customer as a draft", str(raised.exception))
+        self.assertIn("is with the client as a draft", str(raised.exception))
         self.assertEqual(job["invoices"][-1]["gross_cents"], 400_000)
 
     def test_void_then_lower_progress_redrafts(self):

@@ -200,7 +200,7 @@ class FirstRunTests(unittest.TestCase):
         job = data["jobs"][-1]
         res, data = self.request("POST", f"/api/payers/{job['payer_id']}/update", {"name": "ironleaf gc"}, cookie)
         self.assertEqual(res.status, 409, data)
-        self.assertEqual(data["fields"]["name"], "Another customer is already called Ironleaf GC.")
+        self.assertEqual(data["fields"]["name"], "Another client is already called Ironleaf GC.")
         res, data = self.request("POST", f"/api/payers/{job['payer_id']}/merge", {"into": target["id"]}, cookie)
         self.assertEqual(res.status, 200, data)
         self.assertEqual(self.job(data, job["id"])["payer_id"], target["id"])

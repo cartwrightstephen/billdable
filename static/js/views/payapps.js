@@ -27,7 +27,7 @@ function pullBackHtml(j, i) {
   const key = `voidsent-${i.id}`;
   if (!formOpen[key]) return `<button class="btn small secondary danger-text" data-action="toggle-form" data-form="${key}" aria-expanded="false">${termText("Pull back this pay app…")}</button>`;
   return `<div class="pull-back" data-form-key="${key}"><h3>Pull back ${i.number}</h3>
-    <p class="sub">${termText("For a pay app that went out with a mistake.")} ${j.payer.name || "The customer"} is emailed that it is withdrawn; you can then bill again.</p>
+    <p class="sub">${termText("For a pay app that went out with a mistake.")} ${j.payer.name || "The client"} is emailed that it is withdrawn; you can then bill again.</p>
     ${formErrorLine(key)}<div class="form-row">
       ${field({ form: key, name: "reason", id: `voidsent-reason-${i.id}`, label: "Why pull it back", required: true, placeholder: "Wrong quantity on line 3", wide: true })}
       <button class="btn small danger" data-action="void-sent" data-id="${j.id}" data-inv="${i.id}">Pull back ${i.number}</button>
@@ -59,14 +59,14 @@ export const views = {
     // The PDF's From block prints the company's address, phone and licence number (R2-05, Oct 23
     // note 1): a blank one is said here before it goes out, as a warning only.
     const locked = emailUnconfirmed();
-    // The customer's payment terms set the due date from the day it goes out (R4-04).
+    // The client's payment terms set the due date from the day it goes out (R4-04).
     const terms = Number(unesc(String(j.payer.payment_terms_days || ""))) || 0;
     const dueIso = terms ? new Date(Date.now() + terms * 86400000).toISOString().slice(0, 10) : "";
     return `
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
       <p class="sub">${invoicePill(inv)} <a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(inv.amount_cents)}</p>
-      ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The customer was told nothing is due on it.</p>` : ""}
+      ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a> <span class="sub">${termText("The same PDF goes with the email when the pay app is sent.")}</span></p>
       ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
       ${draft ? `<div class="card send-check">
@@ -84,11 +84,11 @@ export const views = {
         ${inv.final ? `<p class="sub final-note">${termText("The final pay app: the PDF is marked FINAL APPLICATION.")}</p>` : ""}
         ${beforeYouSendHtml(j, inv)}
         ${companyGapsHtml(state.company)}
-        ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>` : ""}
+        ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>` : ""}
         ${missing ? `<p class="blocker">${missing} paperwork item${missing === 1 ? " is" : "s are"} missing. Add ${missing === 1 ? "it" : "them"}, then send.</p>` : ""}
         ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
         ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
-        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" ${missing || (j.blockers || []).length || noEmail || locked ? "disabled" : ""}>Approve & send to ${j.payer.ap_email || "the customer"}</button>` : OWNER_SENDS}
+        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" ${missing || (j.blockers || []).length || noEmail || locked ? "disabled" : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
       </div>` : ""}
       <div class="card">
         <h2>Lines</h2>
@@ -117,10 +117,10 @@ export const views = {
         <div class="money-row"><span class="label">Sent</span><span>${fmtDateTime(inv.sent_at)}</span></div>
         ${inv.period_to ? `<div class="money-row"><span class="label">Period to</span><span>${fmtDate(inv.period_to)}</span></div>` : ""}
         ${inv.due_on ? `<div class="money-row"><span class="label">Payment due</span><span>${fmtDate(inv.due_on)}</span></div>` : ""}
-        <div class="money-row"><span class="label">Received by the customer</span><span>${inv.received_at ? `${inv.received_by || "the customer"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
-        ${inv.approved_at ? `<div class="money-row"><span class="label">Approved by the customer</span><span>${inv.approved_by_payer || "the customer"}, ${fmtDateTime(inv.approved_at)}</span></div>
+        <div class="money-row"><span class="label">Received by the client</span><span>${inv.received_at ? `${inv.received_by || "the client"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
+        ${inv.approved_at ? `<div class="money-row"><span class="label">Approved by the client</span><span>${inv.approved_by_payer || "the client"}, ${fmtDateTime(inv.approved_at)}</span></div>
         <div class="money-row"><span class="label">Payment expected by</span><span>${fmtDate(inv.expected_payment_on)}</span></div>` : ""}
-        ${inv.customer_page ? `<p class="sub">The customer's page for this pay app (it went in the email): <a href="/api/jobs/${j.id}/payapp/${inv.id}/page" target="_blank" rel="noopener">open it</a>. They can see the pay app and its paperwork, mark it received, approve it for payment with a date, or send you a question.</p>` : ""}
+        ${inv.customer_page ? `<p class="sub">The client's page for this pay app (it went in the email): <a href="/api/jobs/${j.id}/payapp/${inv.id}/page" target="_blank" rel="noopener">open it</a>. They can see the pay app and its paperwork, mark it received, approve it for payment with a date, or send you a question.</p>` : ""}
         ${canPullBack(j, inv) && may("void-sent") ? pullBackHtml(j, inv) : ""}
       </div>
     `;
@@ -159,7 +159,7 @@ export const views = {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
   "send": (el, id) => post(`/api/jobs/${id}/send`),
-  // "Before you send" with no email yet (R1-05): saved to the customer's settings, then send unlocks.
+  // "Before you send" with no email yet (R1-05): saved to the client's settings, then send unlocks.
   "save-send-email": async (el, id) => {
     const v = formValues("sendemail");
     if (refuseForm("sendemail", EMAIL_PATTERN.test(v.ap_email) ? {} : { ap_email: "Enter the email pay apps go to, like ap@builder.com." })) return;
@@ -183,7 +183,7 @@ export const actions = {
     if (i && !(await askConfirm(`Accept ${money(i.amount_cents - i.remaining_cents)} on ${unesc(i.number)} as settled? The ${money(i.remaining_cents)} left is no longer owed, and its lien waiver comes due.`, "Accept short pay"))) return;
     await post(`/api/jobs/${id}/accept-short-pay/${inv}`, { reason: v.reason }, { formKey: key, close: key });
   },
-  // Pull back a sent pay app (R4-03): a reason, then a confirm, then the customer is told.
+  // Pull back a sent pay app (R4-03): a reason, then a confirm, then the client is told.
   "void-sent": async (el, id) => {
     const inv = el.dataset.inv, key = `voidsent-${inv}`;
     const j = state.jobs.find(x => x.id === id);

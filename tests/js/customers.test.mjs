@@ -24,7 +24,7 @@ test("a near-match refusal shows Use and Keep, with the names escaped", () => {
     assert.equal(box.hidden, false);
     assert.deepEqual(seen, ['[data-same-customer="newjob"]']);
     assert.match(box.innerHTML, /data-action="nj-same-use" data-name="ABC &lt;Builders&gt;" data-id="payer-1">Use ABC &lt;Builders&gt;<\/button>/);
-    assert.match(box.innerHTML, /data-action="nj-same-keep" data-name="ABC Builders Inc">Keep “ABC Builders Inc” as a new customer<\/button>/);
+    assert.match(box.innerHTML, /data-action="nj-same-keep" data-name="ABC Builders Inc">Keep “ABC Builders Inc” as a new client<\/button>/);
     hideSameCustomer("newjob");
     assert.equal(box.hidden, true);
     assert.equal(box.innerHTML, "");
@@ -42,17 +42,17 @@ test("any other refusal leaves the question hidden", () => {
 test("Delete customer: owners only, and only with no job, finished ones included", () => {
   const p = { id: "payer-1", name: "Spare Co", job_count: 0 };
   assert.equal(deletePayerHtml(p, { owner: false }), "", "a member never sees it");
-  assert.match(deletePayerHtml(p, { owner: true }), /data-action="delete-payer" data-id="payer-1" data-name="Spare Co">Delete customer<\/button>/);
+  assert.match(deletePayerHtml(p, { owner: true }), /data-action="delete-payer" data-id="payer-1" data-name="Spare Co">Delete client<\/button>/);
   const used = deletePayerHtml({ ...p, job_count: 2 }, { owner: true, jobs: [], canMerge: true });
   assert.doesNotMatch(used, /data-action="delete-payer"/);
-  assert.match(used, /can't be deleted, finished jobs included\. To remove Spare Co, merge it into another customer\./);
+  assert.match(used, /can't be deleted, finished jobs included\. To remove Spare Co, merge it into another client\./);
   // The only customer: no Merge box on the card, so the line doesn't point at one.
   const only = deletePayerHtml({ ...p, job_count: 2 }, { owner: true, jobs: [] });
   assert.match(only, /can't be deleted, finished jobs included\. Its jobs need it\./);
   assert.doesNotMatch(only, /merge/i);
   // Without the server's count (an older page), the jobs on the page decide.
   assert.doesNotMatch(deletePayerHtml({ id: "payer-1", name: "Spare Co" }, { owner: true, jobs: [{ payer_id: "payer-1" }] }), /data-action/);
-  assert.match(deletePayerHtml({ id: "payer-1", name: "Spare Co" }, { owner: true, jobs: [] }), /Delete customer/);
+  assert.match(deletePayerHtml({ id: "payer-1", name: "Spare Co" }, { owner: true, jobs: [] }), /Delete client/);
 });
 
 test("the card's job count agrees with Delete customer when older finished jobs aren't on the page", () => {

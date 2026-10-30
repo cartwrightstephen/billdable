@@ -29,7 +29,7 @@ export const views = {
     const inv = isCloseout ? null : (j.invoices.find(i => i.id === currentDetailId) || [...j.invoices].reverse().find(i => i.packet) || j.invoices[j.invoices.length - 1]);
     const packet = isCloseout ? (j.closeout_packet || []) : ((inv && inv.packet) || j.packet || []);
     const jobRecords = j.records || [];
-    if (!inv && !packet.length) return backButton("job", j.name, j.id) + emptyState("No paperwork yet", "Draft a pay app. Its paperwork list comes with it, from this customer's settings. Until then, add notes and files to the job record.", `<button class="btn" data-action="open-job" data-id="${j.id}">Back to ${j.name}</button>`);
+    if (!inv && !packet.length) return backButton("job", j.name, j.id) + emptyState("No paperwork yet", "Draft a pay app. Its paperwork list comes with it, from this client's playbook. Until then, add notes and files to the job record.", `<button class="btn" data-action="open-job" data-id="${j.id}">Back to ${j.name}</button>`);
     const missing = packet.filter(p => p.required && !p.present).length;
     // Unsigned change orders on the bill block the same send; say so here with a way to them (R3-05).
     const cosBlocking = !isCloseout && isBlocked(j) ? coBlockers(j) : [];
@@ -47,7 +47,7 @@ export const views = {
           <div class="list-item packet-item ${p.present || skipped ? "present" : "absent"}">
             <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
               ${!p.present && !skipped ? `<span class="field-error">${p.blocker}</span>` : ""}
-              ${skipped ? `<div class="sub">Not needed for this customer${p.skipped_reason !== "Not needed for this customer" ? ": " + p.skipped_reason : ""}</div>` : ""}
+              ${skipped ? `<div class="sub">Not needed for this client${!["Not needed for this customer", "Not needed for this client"].includes(p.skipped_reason) ? ": " + p.skipped_reason : ""}</div>` : ""}
               ${p.present && p.present_reason === "Produced by Duracash" ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
               ${p.present && p.present_reason && p.present_reason !== "Produced by Duracash" ? `<div class="sub">Marked as in hand: ${p.present_reason}</div>` : ""}
               ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}
@@ -61,7 +61,7 @@ export const views = {
             <div class="form-inline">
               ${jobRecords.length ? `<select id="attach-rec-${p.id}" aria-label="Job record to attach"><option value="">Choose a record…</option>${jobRecords.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select><button class="btn small secondary" data-action="attach-record" data-id="${j.id}" data-item="${p.id}">Attach</button>` : ""}
               <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">I have this…</button>
-              ${isCloseout ? "" : `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">Not needed for this customer</button>`}
+              ${isCloseout ? "" : `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">Not needed for this client</button>`}
             </div>
             ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Where is it? (optional)" aria-label="Where is it? (optional)" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save</button></div>` : ""}` : ""}
           </div>`;

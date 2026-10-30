@@ -85,7 +85,7 @@ class TodayRowsTests(unittest.TestCase):
         self.job["waiver_due"] = True
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("waiver", 2, "Waiver due", "amber", "Review waiver"))
-        self.assertEqual(r["text"], "Paid in full: the customer is waiting for the lien waiver.")
+        self.assertEqual(r["text"], "Paid in full: the client is waiting for the lien waiver.")
 
     def test_finished_work_not_billed(self):
         self.draft()["status"] = "void"

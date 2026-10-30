@@ -20,7 +20,7 @@ export const VIEW_PATHS = {
 
 // Older addresses that still open a page, so links in emails and bookmarks keep working:
 // /settings was one page before it split (R6-03); Today became Dashboard, the Inbox and the
-// Outbox moved to Communications, the Daily record and Customer settings (now Client playbook)
+// Outbox moved to Communications, the Daily record and Customer settings (now the Client playbook)
 // to Jobs, and Help was emptied (its controls are on My account) in Stephen's Oct 29 review.
 export const PATH_ALIASES = {
   "/settings": "company",

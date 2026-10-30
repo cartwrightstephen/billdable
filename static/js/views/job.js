@@ -17,13 +17,13 @@ import { recordCardHtml } from "./job-record.js";
 import { moneyCardHtml } from "./job-money.js";
 
 // Notes typed with progress or Mark done go on that pay app and its PDF (R4-12).
-const NOTES_HELP = "Printed under the lines on this pay app and its PDF, so the customer sees it.";
+const NOTES_HELP = "Printed under the lines on this pay app and its PDF, so the client sees it.";
 let progressMode = "period";   // the progress form takes this draw $ (default), the total done so far $, or % complete (R3-01)
 
-// Who a customer email goes to, for a confirmation: "Sam Jones · ap@jones.example" (plain text).
+// Who a client email goes to, for a confirmation: "Sam Jones · ap@jones.example" (plain text).
 export function sendsTo(j) {
   const p = j.payer || {};
-  return unesc(`${p.approver || p.name || "the customer"}${p.ap_email ? " · " + p.ap_email : ""}`);
+  return unesc(`${p.approver || p.name || "the client"}${p.ap_email ? " · " + p.ap_email : ""}`);
 }
 
 // What is owed on a pay app: "$13,725.00", or "$2,000.00 of $5,000.00" once part is paid (R3-02).
@@ -51,7 +51,7 @@ export function shortPayButtons(j) {
   return list.map(i => `<button class="btn small secondary" ${shortPayAttrs(j, i)}>${list.length > 1 ? i.number + ": " : ""}${shortPayLabel(i)}</button>`).join(" ");
 }
 
-// "Spoke to them…" (R4-06): what the customer said, and when to check again.
+// "Spoke to them…" (R4-06): what the client said, and when to check again.
 function contactFormHtml(j) {
   return `<div class="card form-card" data-form-key="contact"><h2>Spoke to ${j.payer.approver || j.payer.name}</h2>${formErrorLine("contact")}<div class="form-row">
     ${field({ form: "contact", name: "text", id: "contact-text", label: "What did they say?", required: true, placeholder: "Check goes out Friday", wide: true })}
@@ -204,7 +204,7 @@ export const views = {
             ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : ejf.contract_cents}
             ${ejf.retainage_pct}
           </div>
-          <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Who pays you and where pay apps go are in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>.</p>
+          <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Who pays you and where pay apps go are in <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
           <div class="form-inline">
             <button class="btn" data-action="save-job" data-id="${j.id}">Save changes</button>
             ${j.can_delete && may("delete") ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
@@ -220,17 +220,17 @@ export const views = {
       ${blocked ? `<div class="card blockers-card" role="note">
         <strong class="blocker">Blocking send:</strong>
         <ul class="blocker-list">${j.blockers.map(b => `<li>${b}</li>`).join("")}</ul>
-        <details><summary>${termText("Customer sent a pay app back? Note why.")}</summary>
+        <details><summary>${termText("Client sent a pay app back? Note why.")}</summary>
           <div class="form-inline">
             <input id="learn-reason" placeholder="For example: needs a revised schedule of values" class="grow">
-            <button class="btn small secondary" data-action="learn" data-id="${j.id}">Save to customer settings</button>
+            <button class="btn small secondary" data-action="learn" data-id="${j.id}">Save to the client playbook</button>
           </div>
-          <p class="sub">The reason is kept in this customer's settings and shown before the next send.</p>
+          <p class="sub">The reason is kept in this client's playbook and shown before the next send.</p>
         </details>
       </div>` : ""}
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j, periodField("sovprogress", j), formErrorLine("sovprogress")) : ""}
       ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? progressFormHtml(j, openDraft) : ""}
-      ${formOpen.pencilchanges ? `<div class="card form-card" data-form-key="pencilchanges"><h2>Customer wants changes</h2><div class="form-inline"><input id="pencil-note" data-field="note" value="${esc(draftValue("pencilchanges", "note"))}" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
+      ${formOpen.pencilchanges ? `<div class="card form-card" data-form-key="pencilchanges"><h2>Client wants changes</h2><div class="form-inline"><input id="pencil-note" data-field="note" value="${esc(draftValue("pencilchanges", "note"))}" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
       ${formOpen.done ? `<div class="card form-card" data-form-key="done"><h2>Mark done</h2>${formErrorLine("done")}<div class="form-row">
         ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true, help: NOTES_HELP })}
         ${periodField("done", j)}
@@ -273,7 +273,7 @@ export const views = {
           ${j.invoices.length ? j.invoices.filter(i => !i.replaced).map(i => {  // a draft replaced by a progress correction stays in the history only
             const pkt = i.packet || j.packet || [];
             const missing = pkt.filter(p => p.required && !p.present).length;
-            const pencil = i.pencil_status ? ` · draft ${i.pencil_status === "sent" ? "with customer" : words(i.pencil_status)}${i.pencil_note ? ": " + i.pencil_note : ""}` : "";
+            const pencil = i.pencil_status ? ` · draft ${i.pencil_status === "sent" ? "with client" : words(i.pencil_status)}${i.pencil_note ? ": " + i.pencil_note : ""}` : "";
             return `<div class="list-item row-link">
               <div><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}"><strong>${i.number}</strong></a> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
               <div class="sub row-sub">${i.status === "void" ? (i.voided_reason ? "Pulled back: " + i.voided_reason : "Deleted") : missing ? `${missing} paperwork item${missing === 1 ? "" : "s"} missing` : "Paperwork complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by && i.sent_at ? " · sent by " + i.approved_by : ""}${i.due_on && ["sent", "approved", "partial"].includes(i.status) ? " · due " + fmtDate(i.due_on) : ""}${i.short_pay_cents ? " · short pay " + money(i.short_pay_cents) : ""}${pencil}</div></div>
@@ -344,7 +344,7 @@ export const actions = {
   "pencil-agreed": (el, id) => post(`/api/jobs/${id}/pencil-response`, { agreed: true }),
   "pencil-changes": async (el, id) => {
     const note = (document.getElementById("pencil-note")?.value || "").trim();
-    if (!note) { toast("Say what the customer wants changed."); document.getElementById("pencil-note")?.focus(); return; }
+    if (!note) { toast("Say what the client wants changed."); document.getElementById("pencil-note")?.focus(); return; }
     formOpen.pencilchanges = false;
     const r = await post(`/api/jobs/${id}/pencil-response`, { agreed: false, note });
     if (r && r.ok) clearForm("pencilchanges");

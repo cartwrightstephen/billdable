@@ -292,7 +292,7 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
     def test_a_sent_pay_app_says_pull_it_back_and_links_to_it(self):
         for status in ("sent", "approved"):
             exc = self.refusal(self.state(status))
-            self.assertIn("went to the customer with PA-OAK-3", str(exc))
+            self.assertIn("went to the client with PA-OAK-3", str(exc))
             self.assertIn("pull it back", str(exc))
             self.assertNotIn("Remove", str(exc))
             self.assertEqual(exc.action, {"label": "Open PA-OAK-3", "view": "payapp-detail", "job_id": "j1", "detail": "inv1"})
@@ -302,7 +302,7 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
             with self.assertRaises(importer.domain.GateError) as caught:
                 importer.undo_item(self.state(status), "inb1", "member", can_pull_back=False)
             exc = caught.exception
-            self.assertEqual(str(exc), "This record went to the customer with PA-OAK-3, so it stays on the job. "
+            self.assertEqual(str(exc), "This record went to the client with PA-OAK-3, so it stays on the job. "
                                        "Ask an owner to pull PA-OAK-3 back if it needs to change.")
             self.assertEqual(exc.action, {"label": "Open PA-OAK-3", "view": "payapp-detail", "job_id": "j1", "detail": "inv1"})
         # The draft's paperwork has Remove for everyone: same words either way.
@@ -346,7 +346,7 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
                 state["jobs"][0]["invoices"][0]["sent_at"] = "2026-10-20T10:00:00Z"
                 with self.assertRaises(importer.domain.GateError) as caught:
                     importer.undo_item(state, "inb1", "member", can_pull_back=can_pull_back)
-                self.assertIn("went to the customer with PA-OAK-3", str(caught.exception))
+                self.assertIn("went to the client with PA-OAK-3", str(caught.exception))
                 job = state["jobs"][0]
                 self.assertEqual(job["records"][0]["id"], "rec1")
                 item = job["invoices"][0]["packet"][0]

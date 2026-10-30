@@ -13,7 +13,7 @@ export const RECORD_KINDS = {
 };
 
 // domain.SOURCE_LABELS has the same words, for Today's rows.
-export const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email", sms: "Text message", notes: "Notes", payer_page: "Customer page" };
+export const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email", sms: "Text message", notes: "Notes", payer_page: "Client page" };
 
 // One short word for where a job stands; the full sentence (status_label) goes on the line below it.
 export function jobStatus(j) {
@@ -73,7 +73,7 @@ function nextStepWords(j, now) {
   const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   if (draft) return "Pay app is ready. Review it, then Approve & send.";
   if (j.waiver_due && !j.waiver_sent) return "Payment received. Approve and send the waiver.";
-  if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the customer. Follow up or record a payment.";
+  if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the client. Follow up or record a payment.";
   if (j.work_status !== "complete") return "Record progress, or mark the job done." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
   const asked = retainageAskWaits(j, now);
   if (j.money.retainage_open_cents > 0 && asked) return `Asked for the money held back ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}, or record it when it is paid.`;
@@ -98,7 +98,7 @@ export const WAIVER_KINDS = {
 
 export function waiverKindLabel(code) { return WAIVER_KINDS[unesc(code)] || code; }
 
-// A change order's pill (the glossary): Signed or Unsigned; "Approved" is kept for the customer's approval of a pay app.
+// A change order's pill (the glossary): Signed or Unsigned; "Approved" is kept for the client's approval of a pay app.
 export const CO_WORDS = { pending: "Unsigned", approved: "Signed", withdrawn: "Withdrawn" };
 
 export function coStatusWords(status) { return CO_WORDS[unesc(status || "")] || words(status); }
@@ -119,7 +119,7 @@ export function waiverTypeText(j, paid) {
   return kind ? waiverKindLabel(kind) : "Not chosen yet";
 }
 
-// disabled: sending is off (email not confirmed, or no email for the customer); the page says why.
+// disabled: sending is off (email not confirmed, or no email for the client); the page says why.
 export function waiverSendForm(j, inv, disabled = false) {
   const key = inv ? inv.id : "job";
   const final = (inv && inv.final) || (j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0);
@@ -183,7 +183,7 @@ export function progressFigures(j, mode, text) {
 const utcMidnight = (iso) => { const d = new Date(unesc(iso) + "T00:00:00Z"); return isNaN(d) ? null : d; };
 const sameDayLocal = (d) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 
-// When the next follow-up may go (domain.follow_up_due): the customer's days between follow-ups
+// When the next follow-up may go (domain.follow_up_due): the client's days between follow-ups
 // after the last one on the oldest unpaid pay app, or after it was sent; or the date noted after a
 // call ("Spoke to them", R4-06) until a follow-up goes out. invoices: every unpaid pay app, which
 // one follow-up names. due is the moment it falls due (the server's clock); day is the date to
@@ -200,7 +200,7 @@ export function followUpDue(j) {
   const days = Number(unesc(String((j.payer || {}).follow_up_days || ""))) || 7;
   let due = new Date(last.getTime() + days * 86400000);
   let day = due;
-  // Approved on the customer's page with a date to expect payment (R4-08): not before the day after.
+  // Approved on the client's page with a date to expect payment (R4-08): not before the day after.
   const promised = expectedPayment(sent);
   if (promised && promised.getTime() + 86400000 > due.getTime()) {
     due = new Date(promised.getTime() + 86400000);
@@ -209,7 +209,7 @@ export function followUpDue(j) {
   return { invoice: sent, invoices: unpaid, due, day, promised };
 }
 
-// The date the customer said payment would come when they approved the pay app (R4-08), or null.
+// The date the client said payment would come when they approved the pay app (R4-08), or null.
 export function expectedPayment(inv) {
   if (!inv || inv.status !== "approved" || !inv.expected_payment_on) return null;
   return utcMidnight(inv.expected_payment_on);
@@ -228,7 +228,7 @@ export function closeoutMissing(j) {
   return (j.closeout_missing || []).length;
 }
 
-// When the next retainage request may go (domain.chase_retainage): the customer's days between
+// When the next retainage request may go (domain.chase_retainage): the client's days between
 // contacts after the last request, whole or part. last and due are moments (the server's clock).
 // Null when none has gone out.
 export function retainageAskDue(j) {
@@ -262,12 +262,12 @@ export function waitingText(j, now = new Date()) {
   const p = j.payer || {};
   const when = f.due <= now ? `a follow-up has been due since ${fmtDate(f.day)}` : `follow-up due ${fmtDate(f.day)}`;
   const inv = f.invoice;
-  if (f.promised && f.due > now) return `Approved by ${inv.approved_by_payer || p.approver || p.name || "the customer"} ${fmtDate(inv.approved_at)}; expect payment ${fmtDate(inv.expected_payment_on)}.`;
-  if (f.noted && f.due > now) return `Waiting on ${p.approver || p.name || "the customer"}. Spoke to them ${fmtDate(j.contact_noted_at)}; check again ${fmtDate(f.day)}.`;
-  return `Waiting on ${p.approver || p.name || "the customer"}. Sent ${fmtDate(f.invoice.sent_at)}; ${when}.`;
+  if (f.promised && f.due > now) return `Approved by ${inv.approved_by_payer || p.approver || p.name || "the client"} ${fmtDate(inv.approved_at)}; expect payment ${fmtDate(inv.expected_payment_on)}.`;
+  if (f.noted && f.due > now) return `Waiting on ${p.approver || p.name || "the client"}. Spoke to them ${fmtDate(j.contact_noted_at)}; check again ${fmtDate(f.day)}.`;
+  return `Waiting on ${p.approver || p.name || "the client"}. Sent ${fmtDate(f.invoice.sent_at)}; ${when}.`;
 }
 
-// The job page's buttons (R3-04): one main button (or none while the customer has the pay app and
+// The job page's buttons (R3-04): one main button (or none while the client has the pay app and
 // no follow-up is due), then the rest in the order they matter. Each has a group for the "More"
 // list: bill, paid (get paid) or close (close out). demo adds the QuickBooks sample import.
 // Job actions only an owner may take (server.OWNER_ACTIONS, R4-09): "You approve every send".
@@ -301,7 +301,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   const add = (key, label, attrs, why, group) => { if (mayTake(KEY_ACTION[key], perms)) all.push({ key, label: termText(label), attrs, why: termText(why), group }); };
   if (isBlocked(j)) {
     const cos = coBlockers(j);
-    if (onlyCoBlockers(j)) add("clear", blockerButton(j), `data-action="open-co" data-job="${j.id}" data-co="${cos[0].co_id}"`, "Send waits until the customer signs it.", "bill");
+    if (onlyCoBlockers(j)) add("clear", blockerButton(j), `data-action="open-co" data-job="${j.id}" data-co="${cos[0].co_id}"`, "Send waits until the client signs it.", "bill");
     else add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "Open the paperwork and add what is missing.", "bill");
   }
   // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
@@ -309,7 +309,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver on the job record.", "paid");
   if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "Money came in. Paid in full opens the waiver step.", "paid");
   if (follow) add("follow", followDue ? "Send follow-up" : "Follow up now", `data-action="follow-up" data-id="${j.id}"${followDue ? "" : ` data-early="1"`}`,
-    followDue ? "Email the customer a reminder." : `Before the follow-up date, ${fmtDate(follow.day)}.`, "paid");
+    followDue ? "Email the client a reminder." : `Before the follow-up date, ${fmtDate(follow.day)}.`, "paid");
   // A phone call counts as a follow-up (R4-06): what they said, and when to check again.
   if (follow) add("contact", "Spoke to them…", `data-action="toggle-form" data-form="contact"`, "Note what they said and when to check again.", "paid");
   if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "A pay app for the work done and not billed.", "bill");
@@ -319,18 +319,18 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   // Mark done by mistake (R4-02): while the final pay app has not gone out.
   if (j.can_undo_done) add("undo", "Undo done", `data-action="undo-done" data-id="${j.id}"`, "Back to in progress. The final draft is deleted.", "close");
   // Asking for retainage only once the work is done and the closeout paperwork is in, and not again
-  // before the customer's days between contacts (chase_retainage); the Money card says why.
-  if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0 && !retainageAskWaits(j, now)) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "Email the customer for the retainage held back.", "paid");
-  if (draft && !pencilOut) add("pencil", "Send draft for their review", `data-action="pencil" data-id="${j.id}"`, "The customer checks the numbers before the real one goes.", "bill");
-  if (pencilOut) add("pencil-ok", "Customer agreed to the draft", `data-action="pencil-agreed" data-id="${j.id}"`, "Record that the customer agreed to the draft.", "bill");
-  if (pencilOut) add("pencil-no", "Customer wants changes", `data-action="toggle-form" data-form="pencilchanges"`, "Record what the customer wants changed.", "bill");
-  if (m.retainage_open_cents > 0) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "Record retainage the customer released.", "paid");
+  // before the client's days between contacts (chase_retainage); the Money card says why.
+  if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0 && !retainageAskWaits(j, now)) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "Email the client for the retainage held back.", "paid");
+  if (draft && !pencilOut) add("pencil", "Send draft for their review", `data-action="pencil" data-id="${j.id}"`, "The client checks the numbers before the real one goes.", "bill");
+  if (pencilOut) add("pencil-ok", "Client agreed to the draft", `data-action="pencil-agreed" data-id="${j.id}"`, "Record that the client agreed to the draft.", "bill");
+  if (pencilOut) add("pencil-no", "Client wants changes", `data-action="toggle-form" data-form="pencilchanges"`, "Record what the client wants changed.", "bill");
+  if (m.retainage_open_cents > 0) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "Record retainage the client released.", "paid");
   add("co", "New change order", `data-action="new-co"`, "Extra or changed work, or a credit.", "bill");
   if (draft) add("packet", "Open paperwork", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "Add the documents that go with the pay app.", "bill");
   if (draft) add("void", "Delete draft", `data-action="void-draft" data-id="${j.id}"`, "Throw away the open draft. You can draft it again.", "bill");
   if (demo) add("qbo", "Import QuickBooks sample", `data-action="import-qbo" data-id="${j.id}"`, "Sample company only: a stand-in for a QuickBooks payment read.", "paid");
   const order = ["clear", "send", "waiver"];
-  // While the customer has the pay app, nothing is the main step until a follow-up is due, unless
+  // While the client has the pay app, nothing is the main step until a follow-up is due, unless
   // finished work is still to bill.
   if (waitingPay) order.push(...(followDue ? ["follow"] : []), "draft");
   else order.push("draft", "progress", "close", "retainage");
@@ -372,7 +372,7 @@ function closeBlockerButtons(j, b, now) {
   }
 }
 
-// Part-paid pay apps the customer may not pay in full (R4-01): accepting the short pay settles them.
+// Part-paid pay apps the client may not pay in full (R4-01): accepting the short pay settles them.
 export function shortPayable(j) {
   return (j.invoices || []).filter(i => i.status === "partial" && i.remaining_cents > 0);
 }

@@ -16,7 +16,7 @@ import { sendsTo } from "./job.js";
 function retainageAskHtml(j) {
   const key = `retask-${j.id}`, done = j.work_status === "complete";
   if (!may("retainage")) return `<span class="sub">An owner asks for it.</span>`;
-  // chase_retainage waits the customer's days between contacts after the last request.
+  // chase_retainage waits the client's days between contacts after the last request.
   const asked = retainageAskWaits(j);
   if (asked) return `<span class="sub">Asked ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}.</span>`;
   return `<div class="retainage-ask" data-form-key="${key}">${formErrorLine(key)}<div class="form-inline">
@@ -40,8 +40,8 @@ export const views = {
       <h1>Waivers: ${j.name}</h1>
       <p class="sub">Duracash never writes a waiver: state law sets the forms. Drop your signed waiver on the job record; sending attaches the newest one.</p>
       <div class="card">
-        <h2>What the customer needs</h2>
-        <p>${j.waiver_standard || j.payer.packet || "See Customer settings."}</p>
+        <h2>What the client needs</h2>
+        <p>${j.waiver_standard || j.payer.packet || "See the Client playbook."}</p>
       </div>
       ${owed && !j.summary && !hasWaiver ? `<div class="card no-waiver">
         <h2>No signed waiver on the job yet</h2>
@@ -54,7 +54,7 @@ export const views = {
       <div class="card send-check">
         <h2>${termText("By pay app")}</h2>
         ${owed && j.payer.ap_email ? `<div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email}</span></div>` : ""}
-        ${owed && !j.payer.ap_email ? `<p class="blocker">Add the email pay apps go to in <button class="linkish" data-action="nav" data-view="playbook">Customer settings</button>, then send.</p>` : ""}
+        ${owed && !j.payer.ap_email ? `<p class="blocker">Add the email pay apps go to in <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>, then send.</p>` : ""}
         ${owed && locked ? confirmFirstHtml("the waiver") : ""}
         ${due.concat(sent).length ? due.concat(sent).map(i => `<div class="list-item"><strong>${i.number}</strong> · ${money(i.amount_cents)} · ${i.waiver_sent ? `sent ${fmtDate(i.waiver_sent_at)}${i.waiver_kind ? " · " + waiverKindLabel(i.waiver_kind) : ""}` : `<span class="pill amber">Due</span>`}
           ${!i.waiver_sent ? (may("waiver") ? waiverSendForm(j, i, locked || !j.payer.ap_email) : OWNER_SENDS) : ""}</div>`).join("")

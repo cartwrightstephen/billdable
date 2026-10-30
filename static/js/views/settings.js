@@ -145,13 +145,13 @@ function companyView() {
         <button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>
       </div>` : `<p class="sub">An owner can download everything in the company as one file.</p>`}
       ${formOpen.reset && !isDemo ? `<div class="form-inline">
-        <label for="reset-confirm" class="inline-label">Reset deletes every job, customer and record; a snapshot is kept on the server. Type the company name and your password to confirm:</label>
+        <label for="reset-confirm" class="inline-label">Reset deletes every job, client and record; a snapshot is kept on the server. Type the company name and your password to confirm:</label>
         <input id="reset-confirm" placeholder="${state.company.name}" class="grow">
         <input id="reset-password" type="password" placeholder="Your password" autocomplete="current-password" aria-label="Your password">
         <button class="btn small danger" data-action="reset-confirm">Reset everything</button></div>` : ""}
       ${owner && !isDemo ? `
       <h2>Delete the company</h2>
-      <p class="sub">Deletes every job, file, customer and record, and every user on this team. Export your data first if you want a copy. Server backups that already hold it expire on their own (the newest 14 are kept by default).</p>
+      <p class="sub">Deletes every job, file, client and record, and every user on this team. Export your data first if you want a copy. Server backups that already hold it expire on their own (the newest 14 are kept by default).</p>
       <div class="form-inline">
         <input id="del-password" type="password" placeholder="Your password" autocomplete="current-password">
         <input id="del-confirm" placeholder="Type the company name: ${state.company.name}" class="grow">
@@ -388,7 +388,7 @@ export const views = {
   billing() { return billingView(); },
   "helper-admin"() {
     return `<h1>Helper answers</h1>
-      <p class="sub">What customers asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
+      <p class="sub">What clients asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
       <div id="helper-admin-body">Loading…</div>
       <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial and, once Stripe is set up, its subscription. Nothing is enforced unless BILLING_ENFORCE=1.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
   },

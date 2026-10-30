@@ -35,7 +35,7 @@ export const views = {
       <div class="card">
         <h2>Summary</h2>
         ${co.description ? `<p>${co.description}</p>` : ""}
-        <div class="money-row"><span class="label">Waiting on</span><span>${co.waiting_on || (co.status === "pending" ? "Customer signature" : "Nothing")}</span></div>
+        <div class="money-row"><span class="label">Waiting on</span><span>${co.waiting_on || (co.status === "pending" ? "Client signature" : "Nothing")}</span></div>
         <div class="money-row"><span class="label">${termText("On a pay app")}</span><span>${co.included_in_billing ? "Yes" : "No"}</span></div>
         ${coSignature(co)}
         ${coSignControls(j, co)}
@@ -49,7 +49,7 @@ export const views = {
     const openJobs = state.jobs.filter(j => !j.closed);
     return `
       <h1>Change orders</h1>
-      <p class="sub">Extra or changed work. Not billable until the customer signs.</p>
+      <p class="sub">Extra or changed work. Not billable until the client signs.</p>
       ${openJobs.length ? `<div class="card" data-form-key="newco">
         <h2>New change order</h2>
         ${formErrorLine("newco")}
@@ -79,7 +79,7 @@ export const views = {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
   "withdraw-co": async (el, id) => {
-    if (!(await askConfirm("Withdraw this change order? Use this when the customer will not sign it.", "Withdraw", true))) return;
+    if (!(await askConfirm("Withdraw this change order? Use this when the client will not sign it.", "Withdraw", true))) return;
     await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
   },
   "add-co": async (el, id) => {

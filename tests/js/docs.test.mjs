@@ -42,9 +42,9 @@ test("no wireframe uses an old word from the glossary", () => {
 test("the redrawn wireframes use the plain words the screens use, and the app has each of them", () => {
   const want = {
     Job: ["Held back, still owed", "Signed change orders", "Unsigned change orders", "Received", "Done, not billed",
-      "Customer sent a pay app back? Note why.", "Save to customer settings", "Before you can finish this job", "Record a payment",
+      "Client sent a pay app back? Note why.", "Save to the client playbook", "Before you can finish this job", "Record a payment",
       "Bill now (send waits for signature)", "Total done so far $", "Signed on paper…", "Take a photo", "More ("],
-    PhoneJob: ["Customer sent a pay app back? Note why.", "Before you can finish this job", "Take a photo", "Add a file", "Signed on paper…"],
+    PhoneJob: ["Client sent a pay app back? Note why.", "Before you can finish this job", "Take a photo", "Add a file", "Signed on paper…"],
     Money: ["Paperwork", "Unpaid", "Closeout", "Not chosen yet", "Which type?", "Held back, still owed", "Open closeout paperwork"],
     PaymentsImport: ["Record the ticked payments", "Pick a pay app…", "Download for QuickBooks", "Read payments from QuickBooks"],
     Inbox: ["Waiting (", "Which job?", "Other job", "Change type (", "Add to job", "Read as payments (", "Recently added or dismissed"],
@@ -53,10 +53,10 @@ test("the redrawn wireframes use the plain words the screens use, and the app ha
     Today: ["Needs you", "Needs paperwork", "Spoke to them…", "Done, not billed", "Held back, still owed",
       "Can't send yet", "Open and recent"],
     PhoneToday: ["Needs you", "Done, not billed", "Held back, still owed"],
-    Packet: ["Paperwork for ", "Required items", "Take a photo", "Choose file", "I have this…", "Not needed for this customer", "Also blocking send"],
+    Packet: ["Paperwork for ", "Required items", "Take a photo", "Choose file", "I have this…", "Not needed for this client", "Also blocking send"],
     PhonePacket: ["Paperwork for ", "Take a photo", "I have this…", "Also blocking send"],
     SendCheck: ["Before you send", "Also email (CC)", "Period to", "Your company address is blank on this PDF.", "Save email", "Open paperwork"],
-    Playbook: ["Customer settings", "Add customer", "Add to the paperwork?", "Add to paperwork", "Save customer", "Same customer as another one?",
+    Playbook: ["Client playbook", "Add client", "Add to the paperwork?", "Add to paperwork", "Save client", "Same client as another one?",
       "Days they usually take to pay", "Also email from the third follow-up"],
   };
   const missing = [];
@@ -73,7 +73,7 @@ test("the redrawn wireframes use the plain words the screens use, and the app ha
 
 test("the Job board uses every glossary term its screen shows", () => {
   const job = shown("Job");
-  const onJobPage = ["Customer sent a pay app back? Note why.", "Save to customer settings", "Record a payment", "Signed change orders",
+  const onJobPage = ["Client sent a pay app back? Note why.", "Save to the client playbook", "Record a payment", "Signed change orders",
     "Unsigned change orders", "Held back, still owed", "Total done so far $", "Anything to note? (optional)", "Bill now (send waits for signature)", "sent by "];
   assert.deepEqual(onJobPage.filter(t => !NEW.includes(t)), [], "each is a glossary term");
   assert.deepEqual(onJobPage.filter(t => !job.includes(t)), []);

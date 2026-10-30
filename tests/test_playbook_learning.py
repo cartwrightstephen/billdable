@@ -59,7 +59,7 @@ class CustomerFixTests(unittest.TestCase):
         with self.assertRaises(domain.GateError) as raised:
             domain.update_payer(state, ellison["id"], {"name": f"  {north['name'].upper()} "})
         # The refusal names the customer as it is saved, not as it was typed.
-        self.assertEqual(raised.exception.fields["name"], f"Another customer is already called {north['name']}.")
+        self.assertEqual(raised.exception.fields["name"], f"Another client is already called {north['name']}.")
         domain.update_payer(state, ellison["id"], {"name": "Ellison Family Trust"})
         self.assertEqual(ellison["name"], "Ellison Family Trust")
         self.assertIn("(was Ellison Residential)", state["audit"][-1]["detail"])

@@ -125,7 +125,7 @@ class FixtureTests(unittest.TestCase):
         item, _ = self.upload_one("09_email_matches-no-job.eml")
         self.assertIsNone(item["suggested_job_id"])
         self.assertEqual(item["kind"], "note")
-        self.assertEqual(item["match_reason"], "No job name, code, address or customer found.")
+        self.assertEqual(item["match_reason"], "No job name, code, address or client found.")
         self.assertEqual(sorted(item["amounts"]), [1875, 2410])
 
     def test_3_06_portal_notice_in_html_only(self):

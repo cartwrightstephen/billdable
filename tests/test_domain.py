@@ -222,7 +222,7 @@ class PaperworkTests(unittest.TestCase):  # R3-05
         sent["status"], sent["sent_at"] = "sent", domain.utcnow()
         with self.assertRaises(domain.GateError) as raised:
             domain.detach_packet_item(state, "job-oak", item["id"])
-        self.assertIn(f"{sent['number']} has gone to the customer", str(raised.exception))
+        self.assertIn(f"{sent['number']} has gone to the client", str(raised.exception))
         self.assertTrue(item["present"])
 
     def test_blocker_items_link_unsigned_change_orders(self):

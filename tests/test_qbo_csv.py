@@ -43,7 +43,7 @@ class ProposeAndApplyTests(unittest.TestCase):
         rows = qbo_csv.propose(state, qbo_csv.parse(EXPORT)["rows"])
         self.assertEqual([(r["status"], r["number"]) for r in rows], [("match", "PA-TRN-01"), ("match", "PA-BRK-01"), ("no match", None)])
         self.assertIn("names PA-TRN-01", rows[0]["reason"])
-        self.assertIn("Same customer", rows[1]["reason"])
+        self.assertIn("Same client", rows[1]["reason"])
 
     def test_already_recorded_and_too_much(self):
         state = seed_state()

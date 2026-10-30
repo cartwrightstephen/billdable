@@ -48,7 +48,7 @@ export function renderLanding() {
   const signup = authMode === "signup";
   app.innerHTML = `
     <div class="landing">
-      ${dataNotice ? `<p class="notice land-notice" role="status">Demo: data may be erased. Don't enter real job or customer data yet.</p>` : ""}
+      ${dataNotice ? `<p class="notice land-notice" role="status">Demo: data may be erased. Don't enter real job or client data yet.</p>` : ""}
       <header class="land-bar">
         <div class="brand">Duracash</div>
         <div class="land-bar-actions">
@@ -73,7 +73,7 @@ export function renderLanding() {
         </div>
         <div class="auth-card land-form" id="signup">
           <h2>${signup ? "Create your company" : "Sign in"}</h2>
-          <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, paperwork and customers."}</p>
+          <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, paperwork and clients."}</p>
           ${!signup && loginCode ? `<form id="auth-form">
             <label for="login-code">Code from your authenticator app</label>
             <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" placeholder="123456" />
