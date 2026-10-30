@@ -2092,11 +2092,16 @@ class Handler(BaseHTTPRequestHandler):
         if demo_locked(company_id):
             self._send(303, b"", "text/plain", {"Location": link})
             return
-        if form == "question" and not (_within_limit(f"payer-question:{company_id}:{token}", PAYER_QUESTIONS_PER_HOUR, 3600)
-                                       and _within_limit(f"payer-questions:{company_id}", PAYER_QUESTIONS_PER_DAY, 24 * 3600)):
+        busy = ""
+        if form == "question":
             # Each question emails the owners and counts toward the company's daily email limit,
             # so a link passed around can't use it up and stop the pay apps going out.
-            errors = {"form": "Too many questions have been sent from this page. Please call or email the contractor instead."}
+            if not _within_limit(f"payer-question:{company_id}:{token}", PAYER_QUESTIONS_PER_HOUR, 3600):
+                busy = "Too many questions have been sent from this page in the last hour. Please call or email the contractor instead."
+            elif not _within_limit(f"payer-questions:{company_id}", PAYER_QUESTIONS_PER_DAY, 24 * 3600):
+                busy = "Questions can't be sent from here right now. Please call or email the contractor instead."
+        if busy:
+            errors = {"form": busy}
             page = payer_page.render(state, job, invoice, link, errors=errors, form=form)
             self._send_compressible(429, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
             return

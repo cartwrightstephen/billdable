@@ -218,6 +218,17 @@ test("after a retainage request, Ask for retainage waits for the customer's days
   assert.equal(retainageNote(part, later), "Released at closeout.");
 });
 
+// domain.chase_retainage refuses a done job with closeout paperwork missing before it looks at the wait.
+test("a done job asked for part of its retainage early still says the closeout paperwork is what holds it", () => {
+  const money = { unbilled_completed_cents: 0, retainage_open_cents: 500000, outstanding_cents: 0 };
+  const now = new Date("2026-10-29T15:00:00Z");
+  const asked = jobOf({ money, work_status: "complete", closeout_missing: ["Punch-list signoff"], invoices: [inv("paid")],
+    payer: { name: "ABC", follow_up_days: 7 }, last_retainage_chase_at: "2026-10-28T15:00:00+00:00" });
+  assert.equal(nextStep(asked, now), "Ask for the money held back once the closeout paperwork is in.");
+  assert.doesNotMatch(nextStep(asked, now), /Ask again from/);
+  assert.equal(retainageNote(asked, now), "Closeout paperwork: 1 item missing.");
+});
+
 test("only an unsigned change order in the way: Get CO N signed opens it", () => {  // R3-05
   const text = "Change Order 2 is included in the billing amount but has not been signed.";
   const j = job({ blockers: [text], missing_paperwork: [], invoices: [{ id: "d1", status: "draft" }],

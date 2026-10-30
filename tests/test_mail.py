@@ -436,6 +436,13 @@ class MailHttpTests(unittest.TestCase):
         _, page = self.request("GET", "/api/outbox", cookie=cookie)
         self.assertTrue(all(e.get("moot") for e in page["entries"] if e["kind"] in {"follow_up", "pay_app"}), page)
 
+    def test_a_stuck_email_that_no_longer_applies_says_why(self):
+        # outbox.retry_email refuses a stuck "sending" row once it is moot, so the row carries why.
+        job = {"id": "j1", "invoices": [{"id": "i1", "number": "PA-03", "status": "paid", "sent_at": "2026-10-01T00:00:00+00:00"}]}
+        rows = [{"job_id": "j1", "kind": "pay_app", "payapp_invoice_id": "i1", "status": status} for status in ("sending", "queued", "sent")]
+        marked = domain.mark_moot({"jobs": [job]}, rows)
+        self.assertEqual([r.get("moot", "") for r in marked], ["PA-03 is paid.", "PA-03 is paid.", ""])
+
     def test_not_set_up_then_retry(self):
         for key in MAIL_ENV:
             os.environ.pop(key, None)

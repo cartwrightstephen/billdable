@@ -243,10 +243,12 @@ def _made_up(payment: dict[str, Any]) -> bool:
     return ref.startswith("manual-") or bool(qid and ref.split(" (rest)")[0] == f"QBO {qid}")
 
 
-def _already(row: dict[str, Any], recorded: list, used: set[int], near: bool) -> tuple[dict[str, Any], str] | None:
+def _already(row: dict[str, Any], recorded: list, used: set[int], stage: str) -> tuple[dict[str, Any], str] | None:
     """(job, day) of the recorded payment (or the parts of a split one) this row already is, or
-    None; what it finds is marked used. `day` is "" when it is surely this row. With `near`, a
-    payment of the same amount dated a few days apart, which may be this one, and `day` is its date."""
+    None; what it finds is marked used. `day` is "" when it is surely this row. Stage "one" looks
+    for a single payment, "split" also for the parts of a split one, and "near" for a payment of
+    the same amount dated a few days apart, which may be this one, and `day` is its date."""
+    near = stage == "near"
     cust, qid = _norm(row["customer"]), row.get("qbo_id") or ""
     amount, day = row["amount_cents"], row["date"]
 
@@ -278,6 +280,8 @@ def _already(row: dict[str, Any], recorded: list, used: set[int], near: bool) ->
         one = next(((j, p) for j, p in same if p["amount_cents"] == amount), None)
         if one:
             return take([one])
+        if stage == "one":
+            return None
         rest = [(j, p) for j, p, _ in recorded if free(p) and p["reference"].startswith(f"{number} (rest)")
                 and (not word or not day or _day(p) == day)]
         parts = same + rest
@@ -294,6 +298,8 @@ def _already(row: dict[str, Any], recorded: list, used: set[int], near: bool) ->
     one = next(((j, p) for j, p in today if p["amount_cents"] == amount), None)
     if one:
         return take([one])
+    if stage == "one":
+        return None
     # Split over two pay apps: the rest may be on another customer's job, recorded the same day.
     rest = [(j, p) for j, p, _ in loose if _day(p) == day]
     pair = next(([a, b] for a in today for b in rest if b[1] is not a[1] and a[1]["amount_cents"] + b[1]["amount_cents"] == amount), None)
@@ -318,12 +324,13 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
 
     # Which recorded payment each row already is: each one stands for one row only, the same day
     # first and then a few days apart, so one payment keyed in by hand doesn't hide a second.
+    # Every row takes its own payment before any row takes two as a split, whatever the row order.
     used: set[int] = set()
     seen_as: list[tuple[dict[str, Any], str] | None] = [None] * len(rows)
-    for near in (False, True):
+    for stage in ("one", "split", "near"):
         for n, row in enumerate(rows):
             if seen_as[n] is None:
-                seen_as[n] = _already(row, recorded, used, near)
+                seen_as[n] = _already(row, recorded, used, stage)
 
     out = []
     for n, row in enumerate(rows):

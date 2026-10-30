@@ -438,6 +438,9 @@ def _split_rows(text: str) -> list[list[str]]:
         # Copied from Excel or Google Sheets.
         rows = list(csv.reader(lines_in, delimiter="\t"))
     else:
+        # A saved CSV file: some other line (a header, say) splits its cells with a comma and no space.
+        # Then "Building 2,750" is two cells too, "Building 2" and 750, not a lump sum of 2,750.
+        saved_csv = any(_saved_csv_row(line) for line in lines_in)
         for line in lines_in:
             if re.search(r"\S {2,}\S", line.strip()):
                 # Columns separated by runs of spaces (copied from a PDF); commas are thousands separators.
@@ -447,7 +450,7 @@ def _split_rows(text: str) -> list[list[str]]:
                 # "Floor tile 1,200 sf at $8.50/sf" or "Concrete 2,400 SF": the comma is a thousands
                 # separator, not a column.
                 rows.append([line.strip()])
-            elif d := DESC_AMOUNT_RE.match(line.strip()):
+            elif not saved_csv and (d := DESC_AMOUNT_RE.match(line.strip())):
                 # "Mobilization 12,500": the comma is a thousands separator, not a column.
                 rows.append([d["desc"], d["amount"]])
             else:
@@ -456,6 +459,18 @@ def _split_rows(text: str) -> list[list[str]]:
                 rows.extend(_join_thousands(row, any(c[:1].isspace() for c in row[1:])) for row in csv.reader([line]))
     rows = [[c.strip()[:200] for c in row[:MAX_CELLS]] for row in rows]
     return [r for r in rows if any(c for c in r)]
+
+
+def _saved_csv_row(line: str) -> bool:
+    """A line with cells split by a comma and no space ("Description,Amount"), and none of the shapes
+    where that comma is a thousands separator ("Mobilization 12,500", "Concrete 2,400 SF")."""
+    line = line.strip()
+    if "," not in line or re.search(r"\S {2,}\S", line) or DESC_AMOUNT_RE.match(line):
+        return False
+    if (r := _at_rate(line) or _desc_qty_unit(line)) and "," not in (r["desc"] or ""):
+        return False
+    cells = next(csv.reader([line]), [])
+    return len(cells) > 1 and not any(c[:1].isspace() for c in cells[1:])
 
 
 def _join_thousands(row: list[str], spaced: bool) -> list[str]:

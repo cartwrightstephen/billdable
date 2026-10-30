@@ -66,7 +66,8 @@ class WhichEmailTests(unittest.TestCase):
         self.assertEqual((f["message_id"], f["at"]), ("abc.1@duracash.test", "2025-10-09T08:53:20+00:00"))
         [f] = mail_events.normalize({"RecordType": "Bounce", "Email": "ap@gc.example", "BouncedAt": "2026-10-13T08:00:00.1234567Z",
                                      "MessageID": "883953f4-6105-42a2-a16a-77a8eac79483"})
-        self.assertEqual((f["message_id"], f["at"]), ("883953f4-6105-42a2-a16a-77a8eac79483", "2026-10-13T08:00:00+00:00"))
+        # Postmark's MessageID is its own ID, not the Message-ID header we sent: it names no email here.
+        self.assertEqual((f["message_id"], f["at"]), ("", "2026-10-13T08:00:00+00:00"))
         [f] = mail_events.normalize({"email": "ap@gc.example", "at": "2026-10-13T04:00:00-04:00", "message_id": "x@y"})
         self.assertEqual(f["at"], "2026-10-13T08:00:00+00:00")
         self.assertEqual(mail_events.normalize({"email": "ap@gc.example", "timestamp": "not a time"}),
@@ -90,6 +91,18 @@ class WhichEmailTests(unittest.TestCase):
         self.assertEqual(mail_events.find(state, *args)["id"], "eml-1")
         self.assertIsNone(mail_events.apply(state, f["email"], f["reason"], "now", *args[1:]))
         self.assertEqual(state["email_log"][1]["status"], "sent")
+
+    def test_a_bounce_during_a_long_batch_marks_the_email_it_is_about(self):
+        # The batch started going out at 12:00:00 and finished at 12:00:30; the email bounced at 12:00:05.
+        older = sent("eml-1", "ap@gc.example", "2026-10-01T12:00:30+00:00", "<one@duracash.test>")
+        newer = dict(sent("eml-2", "ap@gc.example", "2026-10-08T12:00:30+00:00", "<two@duracash.test>"),
+                     sending_at="2026-10-08T12:00:00+00:00")
+        state = {"email_log": [older, newer], "jobs": [], "audit": []}
+        for at in ("2026-10-08T12:00:05+00:00", "2026-10-08T11:59:58+00:00"):  # and with the provider's clock a little behind
+            self.assertEqual(mail_events.find(state, "ap@gc.example", "", "", at)["id"], "eml-2", at)
+            self.assertEqual(mail_events.find(state, "ap@gc.example", "", "pay application eml-2", at)["id"], "eml-2", at)
+        self.assertEqual(mail_events.find(state, "ap@gc.example", "", "", "2026-10-05T12:00:00+00:00")["id"], "eml-1",
+                         "a bounce from before the newer email went out")
 
 
 class MailEventsHttpTests(unittest.TestCase):
@@ -193,6 +206,16 @@ class OneEventOneEmailTests(unittest.TestCase):
         self.assertEqual(self.statuses("a")[0], ["sent", "bounced"])
         self.assertIn("bounced", self.statuses("a")[1])
         self.assertEqual(self.statuses("b"), (["sent", "sent"], "Submitted by b"), "company B's email was delivered")
+
+    def test_a_real_postmark_bounce_finds_the_email(self):
+        # Postmark always sends its own MessageID; the emails here carry the Message-ID header we sent.
+        event = {"RecordType": "Bounce", "Type": "HardBounce", "Email": "ap@gc.example", "Description": "Unknown user",
+                 "MessageID": "883953f4-6105-42a2-a16a-77a8eac79483", "Subject": "Pay application PA-A-02",
+                 "BouncedAt": "2026-10-01T15:00:12.1234567Z"}
+        with mock.patch.dict(os.environ, {"MAIL_EVENTS_TOKEN": TOKEN}):
+            self.assertEqual(self.post(f"/api/mail-events/{TOKEN}", event)[1]["marked"], 1)
+        self.assertEqual(self.statuses("a")[0], ["sent", "bounced"])
+        self.assertEqual(self.statuses("b")[0], ["sent", "sent"])
 
     def test_sendgrid_message_id_picks_the_email(self):
         events = [{"event": "bounce", "email": "ap@gc.example", "reason": "550 no such user", "smtp-id": "<old.a@duracash.test>"}]

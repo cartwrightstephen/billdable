@@ -46,12 +46,12 @@ export const views = {
             <div><strong>Add to the paperwork?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
             <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to paperwork</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
           </div>`).join("")}
-          ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${Math.round(Number(unesc(String(p.paid_days_avg))))} days after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
+          ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${(n => n === 1 ? "1 day" : `${n} days`)(Math.round(Number(unesc(String(p.paid_days_avg)))))} after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
             const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
             if (!(p.paid_count >= 2 && Math.abs(avg - set) >= 2)) return "That matches your setting.";
             // Offered only for a number the server takes: 1 to 365 days (domain.update_payer).
             return avg >= 1 && avg <= 365
-              ? `Your setting says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} days</button>`
+              ? `Your setting says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} day${avg === 1 ? "" : "s"}</button>`
               : `Your setting says ${set}.`;
           })()}</p>` : ""}
           <div data-form-key="${key}">

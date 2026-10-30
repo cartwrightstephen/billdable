@@ -75,7 +75,8 @@ function nextStepWords(j, now) {
   if (j.waiver_due && !j.waiver_sent) return "Payment received. Approve and send the waiver.";
   if (j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status))) return "Waiting on the client. Follow up or record a payment.";
   if (j.work_status !== "complete") return "Record progress, or mark the job done." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
-  const asked = retainageAskWaits(j, now);
+  // The closeout paperwork comes first: domain.chase_retainage refuses before it looks at the wait.
+  const asked = !closeoutMissing(j) && retainageAskWaits(j, now);
   if (j.money.retainage_open_cents > 0 && asked) return `Asked for the money held back ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}, or record it when it is paid.`;
   if (j.money.retainage_open_cents > 0) return "Ask for the money held back once the closeout paperwork is in.";
   if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before you finish: " + j.close_blockers[0] : "Ready to finish the job.";

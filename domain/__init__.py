@@ -1262,13 +1262,14 @@ def email_failures(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def mark_moot(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The same email rows, each one that didn't go out and no longer needs to carrying "moot" (the
-    reason), so the page shows why instead of a Send again that would be refused."""
+    """The same email rows, each one that didn't go out (or is still "sending" or "queued", which
+    may be stuck) and no longer needs to carrying "moot" (the reason), so the page shows why
+    instead of a Send again that would be refused (outbox.retry_email)."""
     jobs = {j["id"]: j for j in state.get("jobs", [])}
     for r in rows:
         status = str(r.get("status") or "")
         job = jobs.get(r.get("job_id"))
-        if job and (status.startswith("failed") or status.startswith("not sent")):
+        if job and (status.startswith("failed") or status.startswith("not sent") or status in {"sending", "queued"}):
             # Job history rows keep the email's kind in email_kind and its subject in text.
             reason = email_moot(job, {**r, "kind": r.get("email_kind") or r.get("kind"), "subject": r.get("subject") or r.get("text")})
             if reason:

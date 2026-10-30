@@ -712,6 +712,7 @@ def capture_reply(state: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]
         when = datetime.now(timezone.utc)
         summary = _reply_summary(item.get("text", ""))
         item["prev_external_status"] = job.get("external_status")
+        item["prev_last_reply"] = job.get("last_reply")
         item["auto_filed"] = True
         job["external_status"] = f"{payer.get('name') or sender} replied {when.strftime('%b')} {when.day}: {summary}"
         job["last_reply"] = {"from": sender, "at": utcnow(), "subject": item.get("subject", ""), "summary": summary, "inbox_id": item["id"]}
@@ -807,11 +808,23 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str, can_pull_back: bo
         # A captured reply also changed the status line; put it back, unless something newer
         # (the customer approving it, say) has replaced the reply's line since.
         prev = item.pop("prev_external_status", None)
+        prev_last = item.pop("prev_last_reply", None)
         last = job.get("last_reply") or {}
         if last.get("inbox_id") == item_id:
             if str(job.get("external_status") or "").endswith(f": {last.get('summary', '')}"):
                 job["external_status"] = prev
-            job.pop("last_reply", None)
+            if prev_last:  # the reply before this one is the latest again
+                job["last_reply"] = prev_last
+            else:
+                job.pop("last_reply", None)
+        else:
+            # A newer reply replaced this one's line: undoing that one later puts back what this one replaced.
+            newer = next((i for i in state.get("inbox", []) if i.get("auto_filed")
+                          and (i.get("prev_last_reply") or {}).get("inbox_id") == item_id), None)
+            if newer:
+                if str(newer.get("prev_external_status") or "").endswith(f": {newer['prev_last_reply'].get('summary', '')}"):
+                    newer["prev_external_status"] = prev
+                newer["prev_last_reply"] = prev_last
         item["auto_filed"] = False
     item.update({"status": "new", "record_ids": [], "filed_job_id": None})
     domain.audit(state, job["id"], "import_undone", f"{actor} took an imported item back off the job record.", actor)

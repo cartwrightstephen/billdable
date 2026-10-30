@@ -76,6 +76,23 @@ class ReplyCaptureTests(unittest.TestCase):
         self.assertNotIn("last_reply", job)
         self.assertEqual(item["status"], "new")
 
+    def test_undoing_two_replies_puts_the_first_status_line_back(self):
+        # Newest first, then oldest first: either way the line ends as it was before both replies.
+        for newest_first in (True, False):
+            state = state_with_sent_payapp()
+            job = next(j for j in state["jobs"] if j["code"] == "BRK")
+            before = job.get("external_status")
+            first = reply(state, "payables@ponceproperty.example", text="We need the lien waiver first.")
+            importer.capture_reply(state, first)
+            second = reply(state, "payables@ponceproperty.example", text="Approved, paying Friday.")
+            importer.capture_reply(state, second)
+            for item in ((second, first) if newest_first else (first, second)):
+                importer.undo_item(state, item["id"], "owner")
+                if item is second and newest_first:
+                    self.assertIn("We need the lien waiver first.", job["external_status"])
+            self.assertEqual(job.get("external_status"), before, f"newest first: {newest_first}")
+            self.assertNotIn("last_reply", job)
+
 
 class ReplyToHeaderTests(unittest.TestCase):
     CFG = {"from": "billing@duracash.example"}
