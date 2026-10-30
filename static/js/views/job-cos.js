@@ -51,7 +51,7 @@ export function coSignControls(j, co, extra = "", opts = {}) {
     ${co.signing_page ? `<p class="sub">Signing page: <a href="/api/jobs/${j.id}/co/${co.id}/page" target="_blank" rel="noopener">open it</a>${co.signature_requested_at ? ` · requested ${fmtDate(co.signature_requested_at)}` : ""}</p>` : ""}
     ${formOpen[key] ? `<div class="co-paper" data-form-key="${key}">${formErrorLine(key)}
         <div class="form-grid">
-          ${field({ form: key, name: "signer_name", id: `cosign-name-${co.id}`, label: "Signed by (name)", required: true, autocomplete: "off", placeholder: unesc(j.payer && j.payer.approver || "") })}
+          ${field({ form: key, name: "signer_name", id: `cosign-name-${co.id}`, label: "Signed by (name)", required: true, autocomplete: "off" })}
           ${field({ form: key, name: "signed_on", id: `cosign-date-${co.id}`, label: "Date signed", type: "date", required: true, attrs: `max="${new Date().toISOString().slice(0, 10)}"` })}
         </div>
         <div class="form-inline">
@@ -85,7 +85,7 @@ export function newCoCardHtml(j) {
 export function coFormFields(j) {
   const items = [];
   for (let n = 0; n < coItemRows; n++) {
-    items.push(`<div class="co-item-row">
+    items.push(`<div class="form-grid co-item-row">
       ${field({ form: "newco", name: `item_label_${n}`, id: `co-item-label-${n}`, label: `Cost line ${n + 1}`, placeholder: n ? "Material" : "Labor" })}
       ${moneyField({ form: "newco", name: `item_amount_${n}`, id: `co-item-amt-${n}`, label: "Amount ($)", inputmode: "text" })}
     </div>`);
