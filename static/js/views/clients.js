@@ -3,7 +3,7 @@
 import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
 import { askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues, formErrors, clearForm } from "../forms.js";
-import { CLIENT_TYPES, clientTypeLabel, PAPERWORK_CHOICES, packetChoices, packetText } from "../jobs.js";
+import { CLIENT_TYPES, clientTypeLabel, paperworkChoices, packetChoices, packetText } from "../jobs.js";
 import { readJson } from "../net.js";
 import { pathFor } from "../routes.js";
 import { state, me, formOpen, onSessionEnd } from "../state.js";
@@ -52,13 +52,14 @@ function clientJobsHtml(p, open) {
 // Nothing needed. What is ticked and not saved yet stays through a redraw.
 const ticks = new Map();   // form key -> { checked: [labels], none: bool }
 function paperworkHtml(key, p = null) {
-  const saved = p ? packetChoices(p.packet_items || []) : { checked: [], other: "" };
+  const catalog = state.paperwork_catalog;
+  const saved = p ? packetChoices(p.packet_items || [], catalog) : { checked: [], other: "" };
   const t = ticks.get(key) || { checked: saved.checked, none: !!(p && p.no_paperwork) };
   return `<fieldset class="span-2 paperwork-choices" data-paperwork="${key}">
       <legend data-help="packet">Paperwork needed with each pay app</legend>
-      ${PAPERWORK_CHOICES.map(([title, list]) => `<div class="paperwork-group"><h4>${title}</h4>${list.map((label, n) => {
+      ${paperworkChoices(catalog).map(([title, list]) => `<div class="paperwork-group"><h4>${title}</h4>${list.map((label, n) => {
         const id = `${key}-pw-${title === "At closeout" ? "c" : "p"}${n}`;
-        return `<label class="check-line" for="${id}"><input type="checkbox" id="${id}" data-packet-choice="${esc(label)}"${t.checked.includes(label) ? " checked" : ""}${t.none ? " disabled" : ""}> ${esc(label.replace(" (closeout)", ""))}</label>`;
+        return `<label class="check-line" for="${id}"><input type="checkbox" id="${id}" data-packet-choice="${esc(label)}"${t.checked.includes(label) ? " checked" : ""}${t.none ? " disabled" : ""}> ${esc(label)}</label>`;
       }).join("")}</div>`).join("")}
       ${field({ form: key, name: "packet_other", id: `${key}-pw-other`, label: "Other", value: saved.other, placeholder: "Certified payroll", wide: true })}
       <label class="check-line" for="${key}-pw-none"><input type="checkbox" id="${key}-pw-none" data-no-paperwork${t.none ? " checked" : ""}> Nothing needed</label>
@@ -71,7 +72,7 @@ function paperworkValue(key, other) {
   if (!box) return null;
   const none = !!box.querySelector("[data-no-paperwork]")?.checked;
   const checked = [...box.querySelectorAll("[data-packet-choice]")].filter(i => i.checked).map(i => unesc(i.dataset.packetChoice));
-  return { none, text: none ? "" : packetText(checked, other) };
+  return { none, text: none ? "" : packetText(checked, other, state.paperwork_catalog) };
 }
 
 // The open cards, kept open through a redraw.

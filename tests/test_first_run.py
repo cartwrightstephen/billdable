@@ -220,11 +220,11 @@ class FirstRunTests(unittest.TestCase):
         self.assertEqual(len(job["missing_paperwork"]), len(job["blockers"]), "only paperwork blocks it")
 
         # "Not needed for this customer": it stops blocking and the next pay app does not ask.
-        photos = packet["Completion photos"]
+        photos = packet["Progress photos"]
         res, data = self.request("POST", f"/api/jobs/{job_id}/packet-skip/{photos['id']}", {}, cookie)
         self.assertEqual(res.status, 200, data)
         job = self.job(data, job_id)
-        self.assertNotIn("Completion photos", job["missing_paperwork"])
+        self.assertNotIn("Progress photos", job["missing_paperwork"])
         payer = next(p for p in data["payers"] if p["id"] == job["payer_id"])
         self.assertNotIn("photos", payer["packet"].lower())
         for label in job["missing_paperwork"]:
@@ -236,7 +236,7 @@ class FirstRunTests(unittest.TestCase):
         self.assertEqual(res.status, 200, data)
         second = self.job(data, job_id)["invoices"][-1]
         self.assertEqual(second["number"][-2:], "02")
-        self.assertNotIn("Completion photos", [p["label"] for p in second["packet"]])
+        self.assertNotIn("Progress photos", [p["label"] for p in second["packet"]])
 
     def test_every_item_not_needed_stays_that_way(self):  # R1-08, review: an emptied list must not bring the default back
         cookie, _ = self.signup("first-run-no-paperwork@example.com")
