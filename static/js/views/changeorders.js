@@ -40,11 +40,27 @@ export function coHistoryHtml(co) {
   </div>`;
 }
 
+// The day a change order was signed (domain.co_signed_on): online, on paper, else when it was approved.
+function coSignedOn(co) {
+  if (co.signature) return String(co.signature.at || "").slice(0, 10);
+  const ev = co.signed_evidence || {};
+  if (Object.keys(ev).length) return String(ev.signed_on || ev.at || co.approved_at || "").slice(0, 10);
+  return co.status === "approved" ? String(co.approved_at || "").slice(0, 10) : "";
+}
+
 // The contract sum with this change order (M8): what was signed before it, this one, and the
-// revised sum. An unsigned one reads "if signed".
+// revised sum. An unsigned one reads "if signed" and counts every change order signed so far,
+// whatever its number (the contract total the server works out); a signed one counts those
+// signed before it, by the day they were signed (B10 of the Oct 30 review).
 export function coContractHtml(j, co) {
   const original = j.money ? j.money.contract_cents : 0;
-  const before = j.change_orders.filter(c => c.status === "approved" && c.id !== co.id && c.number < co.number).reduce((s, c) => s + c.amount_cents, 0);
+  const signed = j.change_orders.filter(c => c.status === "approved" && c.id !== co.id);
+  const mine = coSignedOn(co);
+  const earlier = c => { const d = coSignedOn(c); return d < mine || (d === mine && c.number < co.number); };
+  const allSigned = j.money && j.money.contract_total_cents != null
+    ? j.money.contract_total_cents - original - (co.status === "approved" ? co.amount_cents : 0)
+    : signed.reduce((s, c) => s + c.amount_cents, 0);
+  const before = co.status === "approved" ? signed.filter(earlier).reduce((s, c) => s + c.amount_cents, 0) : allSigned;
   const counts = co.status !== "withdrawn";
   const revised = original + before + (counts ? co.amount_cents : 0);
   const when = co.status === "pending" ? " if signed" : "";

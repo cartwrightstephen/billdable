@@ -95,3 +95,17 @@ test("a job without change orders: its page points to the job's form instead of 
   assert.match(html, /data-action="co-open-form" data-id="ja">New change order</);
   assert.doesNotMatch(html, /data-form-key="newco"/);
 });
+
+test("the contract sum counts every signed change order for an unsigned one, and signed ones by signing day (B10)", async () => {
+  const { coContractHtml } = await import("../../static/js/views/changeorders.js");
+  const later = { id: "co-2", number: 2, amount_cents: 20_000, status: "approved", approved_at: "2026-10-02T10:00:00+00:00" };
+  const early = { id: "co-3", number: 3, amount_cents: 5_000, status: "approved", approved_at: "2026-09-01T10:00:00+00:00" };
+  const pending = { id: "co-1", number: 1, amount_cents: 1_000, status: "pending" };
+  const j = job("ja", "A job", { change_orders: [pending, later, early], money: { contract_cents: 1_000_000, contract_total_cents: 1_025_000 } });
+  let html = coContractHtml(j, pending);
+  assert.match(html, /Signed change orders before this one<\/span><span>\$250\.00/);
+  assert.match(html, /Revised contract sum if signed<\/span><span>\$10,260\.00/);
+  html = coContractHtml(j, later);
+  assert.match(html, /Signed change orders before this one<\/span><span>\$50\.00/, "CO 3 was signed first");
+  assert.match(html, /Revised contract sum<\/span><span>\$10,250\.00/);
+});
