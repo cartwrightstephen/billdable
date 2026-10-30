@@ -250,8 +250,9 @@ async function startSession(user) {
   await load();
   setAiVisible(true);
   // Two-step sign-in (S7): on a server that can't email codes, the authenticator app is the
-  // second step, and setting it up is the first thing asked after signing in.
-  if (me && me.two_step_setup_due) { setTwoStepPrompt(true); nav("account"); }
+  // second step, and setting it up is the first thing asked after signing in. Not straight after
+  // creating the company: the setup checklist comes first, and the next sign-in asks.
+  if (me && me.two_step_setup_due && authMode !== "signup") { setTwoStepPrompt(true); nav("account"); }
 }
 
 // note: why, when the page signed out by itself (G2's idle sign-out); shown on Sign in.

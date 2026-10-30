@@ -277,7 +277,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     // A member sees the trial in Settings too, on Billing, without the owner's buttons (R6-10).
     await p.goto(BASE + "/settings/billing");
     await p.locator("#view .trial-banner", { hasText: "Free trial" }).waitFor();
-    await p.getByText("An owner of this company manages the subscription.").waitFor();
+    await p.getByText("Someone whose profile includes billing manages the subscription.").waitFor();
     assert.equal(await p.locator('#view [data-action="billing-checkout"], #view [data-action="billing-portal"]').count(), 0, "no Subscribe for a member");
     await ctx.close();
   });
