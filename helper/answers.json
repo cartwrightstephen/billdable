@@ -535,7 +535,7 @@
         "final",
         "complete"
       ],
-      "answer": "Open the job and tap Mark done (under More if you don't see it). Fill in Anything to note? (optional) and Period to, tap Confirm done, then confirm. Duracash drafts the final pay app for everything not billed yet. If a draft is already open, send it or tap Delete draft first; the message names it. Every job also gets its closeout paperwork: the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties. Marked done by mistake? Undo done works until the final pay app goes out.",
+      "answer": "Open the job and tap Mark done (under More if you don't see it). Fill in Anything to note? (optional) and Period to, tap Confirm done, then confirm. Duracash drafts the final pay app for everything not billed yet. A draft that is still only here becomes the final pay app, keeping its number and paperwork; one with the client for their review needs their answer (or Delete draft) first, and the message names it. Every job also gets its closeout paperwork: the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties. Marked done by mistake? Undo done works until the final pay app goes out.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -828,7 +828,7 @@
         "unsigned",
         "before signed"
       ],
-      "answer": "Yes. On the job's Change orders card, tap Bill now (send waits for signature) on the unsigned change order while no draft is open. Its dollars go on the next pay app, but that pay app can't be sent until the change order is signed: the job shows Get CO N signed. An unsigned change order never goes out by accident.",
+      "answer": "Yes. On the job's Change orders card, tap Bill now (send waits for signature) on the unsigned change order. Its dollars go on the open draft (drafted again with it, same number) or on the next pay app, but that pay app can't be sent until the change order is signed: the job shows Get CO N signed. An unsigned change order never goes out by accident.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -937,7 +937,7 @@
       "keywords": [
         "send waiver"
       ],
-      "answer": "When a pay app is paid in full, the job shows Choose waiver and send (the Dashboard shows Waiver due). Put the signed waiver of that type on the job record first (kind: Lien waiver), or tap Take a photo on the waiver page; Approve & send stays off until it is there. Pick the type; the line under it says when it fits, and Check the signed form shows lists what the form must carry. Then tap Approve & send and confirm. The email attaches that signed waiver, never one that already went out with a pay app. One waiver per paid pay app and per retainage release, and only after the payment is recorded. Duracash doesn't write waiver forms; states set them.",
+      "answer": "When a pay app is paid in full, the job shows Choose waiver and send (the Dashboard shows Waiver due). Put the signed waiver of that type on the job record first (kind: Lien waiver), or tap Take a photo on the waiver page; Approve & send stays off until it is there. Pick the type; the line under it says when it fits, and Check the signed form shows lists what the form must carry. Then tap Approve & send and confirm. The email attaches that signed waiver, never one that already went out with a pay app. One waiver per paid pay app and per retainage release, and only after the payment is recorded. Take the photo from that pay app's row so the waiver is tied to it; when a signed waiver isn't tied and more than one is due, the page asks which pay app it is for before it can go. Handed the waiver over yourself, or the client doesn't need one? Open Not needed, or handed over outside Duracash…, say why and tap Mark not needed: it is kept on the pay app and in the activity log, and the job can be finished. A client marked Not needed for this client on the conditional waiver owes no waiver after payment either. Duracash doesn't write waiver forms; states set them.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1256,7 +1256,7 @@
         "daily",
         "log"
       ],
-      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app, which then says Updated from daily records on that day. Or paste many days at once in the Inbox as notes. Records live on the job record and can be attached to a pay app's paperwork as backup.",
+      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app, which then says Updated from daily records on that day. When they can't be added (the draft is with the client for their review, the job is marked done, or a line would go past what is scheduled, a lump sum past 100%), the daily record is still saved with them on it, and it says why under Quantities. Or paste many days at once in the Inbox as notes. Records live on the job record and can be attached to a pay app's paperwork as backup.",
       "handler": null,
       "needs_job": false,
       "actions": [
