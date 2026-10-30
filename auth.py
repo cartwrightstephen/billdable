@@ -935,8 +935,15 @@ def hand_over_admin(company_id: str, actor_id: str, to_id: str, password: Any) -
     admin = _admin(data, company_id)
     if not actor or not admin or admin["id"] != actor_id:
         raise AuthError("Only the Company Admin can hand the role on.")
+    # Wrong passwords count toward the same throttle as at sign-in (RateLimited past it).
+    now = time.monotonic()
+    with LOCK:
+        _throttle(actor["email"], None, now)
+        _failed(actor["email"], None, now)
     if not isinstance(password, str) or not _matches(actor, password):
         raise AuthError("Password is wrong. Nothing changed.")
+    with LOCK:
+        _not_failed(actor["email"], None, now)
     with LOCK:
         data = _load()
         target = next((u for u in data["users"] if u["id"] == to_id and u["company_id"] == company_id), None)

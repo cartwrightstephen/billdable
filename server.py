@@ -1839,6 +1839,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             detail, note = run(ctx.user)
+        except auth.RateLimited as exc:
+            self._json(429, {"error": str(exc)})
+            return
         except auth.AuthError as exc:
             self._json(409, {"error": str(exc)})
             return
