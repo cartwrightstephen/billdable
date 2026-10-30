@@ -147,6 +147,24 @@ test("Edit job checks only the boxes that changed (review C4)", async () => {
   assert.deepEqual(jobFieldErrors({ ...v, contract_number: "SC_2026_014" }, saved), {});
 });
 
+test("an imported schedule that doesn't add up to the amount says by how much and offers its total (review C6)", async () => {
+  const { sovTotalChoice } = await import("../../static/js/views/jobs.js");
+  const { formDraft } = await import("../../static/js/forms.js");
+  const r = { sov: { total_cents: 4_500_000, lines: [{}, {}] } };
+  formDraft.newjob = { contract_cents: "50,000" };
+  const html = sovTotalChoice(r);
+  assert.match(html, /The schedule adds up to \$45,000\.00; the contract amount is \$50,000\.00, \$5,000\.00 less\./);
+  assert.match(html, /id="nj-sov-total"/);
+  assert.match(html, /Use the schedule total as the contract amount/);
+  assert.doesNotMatch(html, /style=/);
+  assert.match(sovTotalChoice({ ...r, useSovTotal: true }), /id="nj-sov-total" checked/);
+  formDraft.newjob = { contract_cents: "45,000" };
+  assert.equal(sovTotalChoice(r), "", "adds up: nothing to say");
+  formDraft.newjob = { contract_cents: "50,000" };
+  assert.equal(sovTotalChoice({ ...r, useSov: false }), "", "schedule unticked");
+  delete formDraft.newjob;
+});
+
 test("Client playbook: the paperwork as checkboxes and Other, the client type, and Add client's import (S11, J2, S12, S13)", () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   const p = { id: "p-1", name: "Ellison", role: "GC", client_type: "sub", approver: "Mara", ap_email: "ap@e.example",
