@@ -70,6 +70,82 @@ class LightSnapshotTests(unittest.TestCase):
 
 
 
+def inbox_item(n, **over):
+    item = {"id": f"inb-{n}", "source": "email", "status": "dismissed", "received_at": f"2026-10-{1 + n % 28:02d}T09:00:00+00:00",
+            "sent_at": "", "from": "", "subject": f"Item {n}", "text": "", "file_ids": [], "kind": "note",
+            "suggested_job_id": None, "match_reason": "No job name, code, address or client found.", "candidates": []}
+    item.update(over)
+    return item
+
+
+class InboxPageTests(unittest.TestCase):  # C1
+    def setUp(self):
+        self.state = seed_state()
+        self.oak = self.state["jobs"][0]
+        self.state["files"].append({"id": "f-1", "name": "co2.pdf", "ext": "pdf"})
+        self.state["inbox"] = [
+            inbox_item(0, source="sms", **{"from": "+15555550123"}),
+            inbox_item(1, status="filed", filed_job_id=self.oak["id"], filed_kind="waiver", suggested_job_id=self.oak["id"],
+                       match_reason="mentions job code OAK", file_ids=["f-1", "f-gone"], **{"from": "billing@millwork.example"}),
+            inbox_item(2, status="filed", auto_filed=True, filed_job_id=self.oak["id"], filed_kind="note", **{"from": "ap@park.example"}),
+            inbox_item(3, status="new", suggested_job_id=self.oak["id"], match_reason="mentions job code OAK", source="upload"),
+            inbox_item(4, status="new", source="paste", text="10/12 Framing done\nmore"),
+        ]
+
+    def test_newest_first_with_how_each_was_matched(self):
+        page = domain.inbox_page(self.state, 0, 50)
+        self.assertEqual([r["id"] for r in page["entries"]], ["inb-4", "inb-3", "inb-2", "inb-1", "inb-0"])
+        rows = {r["id"]: r for r in page["entries"]}
+        self.assertEqual(rows["inb-1"]["why"], "Suggested because it mentions job code OAK.")
+        self.assertEqual((rows["inb-1"]["status"], rows["inb-1"]["job_name"], rows["inb-1"]["kind"]), ("filed", self.oak["name"], "waiver"))
+        self.assertEqual(rows["inb-1"]["files"], [{"id": "f-1", "name": "co2.pdf"}])
+        self.assertEqual(rows["inb-1"]["files_gone"], 1, "a file taken off since is counted, not linked")
+        self.assertEqual(rows["inb-2"]["status"], "auto")
+        self.assertIn("reply to a pay app", rows["inb-2"]["why"])
+        self.assertEqual(rows["inb-0"]["why"], "No job name, code, address or client found.")
+        self.assertEqual(rows["inb-4"]["title"], "Item 4")
+        self.assertEqual(rows["inb-3"]["job_id"], self.oak["id"], "a waiting item belongs to its suggested job")
+
+    def test_filters_sort_and_paging(self):
+        ids = lambda **kw: [r["id"] for r in domain.inbox_page(self.state, 0, 50, **kw)["entries"]]
+        self.assertEqual(ids(source="sms"), ["inb-0"])
+        self.assertEqual(ids(status="filed"), ["inb-1"], "filed by a person only")
+        self.assertEqual(ids(status="auto"), ["inb-2"])
+        self.assertEqual(ids(status="new"), ["inb-4", "inb-3"])
+        self.assertEqual(ids(job_id=self.oak["id"]), ["inb-3", "inb-2", "inb-1"])
+        self.assertEqual(ids(sort="oldest"), ["inb-0", "inb-1", "inb-2", "inb-3", "inb-4"])
+        self.assertEqual(ids(sort="from"), ["inb-0", "inb-2", "inb-1", "inb-4", "inb-3"], "A-Z by sender, none last")
+        self.assertEqual(ids(sort="job")[:3], ["inb-3", "inb-2", "inb-1"], "with a job first")
+        page = domain.inbox_page(self.state, 1, 2)
+        self.assertEqual(([r["id"] for r in page["entries"]], page["total"]), (["inb-3", "inb-2"], 5))
+
+    def test_the_page_load_carries_what_waits_and_the_last_twenty_done(self):
+        self.state["inbox"] = [inbox_item(n) for n in range(30)] + [inbox_item(30, status="new")] + [inbox_item(n) for n in range(31, 40)]
+        snap = domain.light_snapshot(self.state)
+        self.assertEqual(snap["inbox_total"], 40)
+        self.assertEqual(len(snap["inbox"]), 21)
+        self.assertEqual([i["id"] for i in snap["inbox"]][:2], ["inb-19", "inb-20"], "the last twenty done, in the order they came")
+        self.assertIn("inb-30", [i["id"] for i in snap["inbox"]])
+        self.assertEqual(snap["inbox"][-1]["id"], "inb-39")
+        self.state["inbox"] = [inbox_item(n, status="new") for n in range(60)]
+        self.assertEqual(len(domain.light_snapshot(self.state)["inbox"]), 60, "every waiting item")
+
+
+class SentPayAppsTests(unittest.TestCase):  # I1
+    def test_every_sent_pay_app_newest_first_by_job(self):
+        state = big_company(2)
+        page = domain.sent_payapps_page(state, 0, 200)
+        went = [(j["id"], i["id"]) for j in state["jobs"] for i in j["invoices"] if i["status"] in domain.WENT_OUT and i.get("sent_at")]
+        self.assertEqual(page["total"], len(went))
+        self.assertTrue(any(r["closed"] for r in page["entries"]), "closed jobs' too")
+        stamps = [r["sent_at"] for r in page["entries"]]
+        self.assertEqual(stamps, sorted(stamps, reverse=True))
+        one = page["entries"][0]["job_id"]
+        self.assertTrue(all(r["job_id"] == one for r in domain.sent_payapps_page(state, 0, 50, one)["entries"]))
+        drafts = {i["id"] for j in state["jobs"] for i in j["invoices"] if i["status"] in ("draft", "void")}
+        self.assertFalse(drafts & {r["invoice_id"] for r in page["entries"]})
+
+
 class TimelineTests(unittest.TestCase):
     def test_one_jobs_actions_and_emails_newest_first_without_bodies(self):
         state = seed_state()

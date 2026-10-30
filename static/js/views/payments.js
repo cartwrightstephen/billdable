@@ -1,5 +1,5 @@
-// Money, Payments: payments received, the QuickBooks import (CSV or the connection) and the
-// QuickBooks card (also on Settings, Company).
+// Money, Payments: payments received. The QuickBooks import (CSV or the connection) and the
+// QuickBooks card are drawn here for Import (data.js); the card is also on Settings, Company.
 import { esc, unesc, escDeep, money, fmtDate, words } from "../format.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
@@ -28,7 +28,7 @@ export async function loadQboStatus() {
     if (!data) { qboStatus = null; return; }
     qboStatus = escDeep(data);
   } catch (_) { if (me === asked) qboStatus = null; setNetBanner(true); return; }
-  if (["payments", "company"].includes(currentView)) render();
+  if (["import", "company"].includes(currentView)) render();
 }
 
 // A payments export chosen on Payments: a CSV is read here, an Excel file on the server (R5-04).
@@ -73,12 +73,12 @@ function qboPayAppCell(row, n) {
   return row.number ? `${row.number} · ${row.job}` : pill;
 }
 
-// The QuickBooks card, on Payments and on Settings > Company (R4-11).
-export function qboCardHtml(onPayments) {
+// The QuickBooks card, on Import and on Settings > Company (R4-11).
+export function qboCardHtml(onImport) {
   const q = qboStatus;
   const owner = me && me.role === "owner";
   return !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
-      !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Duracash's Intuit app. Until then, use the CSV import ${onPayments ? "below" : "on Payments"}.</p>`
+      !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Duracash's Intuit app. Until then, use the CSV import ${onImport ? "below" : "on Import"}.</p>`
       : !q.connected ? (owner
         ? `<p class="sub">Read-only: Duracash reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
         : `<p class="sub">An owner of this company can connect QuickBooks here.</p>`)
@@ -90,13 +90,12 @@ export function qboCardHtml(onPayments) {
     </div>`;
 }
 
-// This module's pages, by the name their address opens (routes.js).
-export const views = {
-  payments() {
-    const pays = [];
-    state.jobs.forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
-    const imp = paymentImport;
-    const importCard = `<details class="card"${imp || !pays.length ? " open" : ""}><summary><strong>Import payments from QuickBooks (CSV)</strong></summary>
+// Import's payments card (I1): paste or choose a QuickBooks payments export, then tick and record.
+// id="qbo-import" is where onboarding's Import payments and a payments file in the Inbox land.
+export function paymentsImportHtml() {
+  const imp = paymentImport;
+  return `<div class="card" id="qbo-import">
+      <h2>Payments from QuickBooks</h2>
       <p class="sub">Paste a QuickBooks report with payments in it (CSV), or choose the file. Nothing is recorded until you tick and apply.</p>
       ${imp ? `${imp.warnings.length ? `<div class="sov-warn">${imp.warnings.map(w => `<div>${w}</div>`).join("")}</div>` : ""}
         <div class="table-wrap"><table>
@@ -106,14 +105,19 @@ export const views = {
             <td>${qboPayAppCell(row, n)}</td><td class="sub">${row.reason}</td></tr>`).join("")}
         </table></div>
         <div class="form-inline"><button class="btn" data-action="qbo-apply">Record the ticked payments</button><button class="btn secondary" data-action="qbo-cancel">Cancel</button></div>`
-      : `<div data-form-key="qbocsv"><textarea id="qbo-csv" data-field="csv" rows="5" placeholder="Paste the CSV here" class="full-input">${esc(draftValue("qbocsv", "csv"))}</textarea></div>
+      : `<div data-form-key="qbocsv"><textarea id="qbo-csv" data-field="csv" rows="5" placeholder="Paste the CSV here" class="full-input" aria-label="QuickBooks payments CSV">${esc(draftValue("qbocsv", "csv"))}</textarea></div>
         <div class="form-inline"><button class="btn small" data-action="qbo-read">Read payments</button><button class="btn small secondary" data-action="qbo-choose-file">Choose the file</button></div>`}
-    </details>`;
-    const qboCard = qboCardHtml(true);
+    </div>`;
+}
+
+// This module's pages, by the name their address opens (routes.js).
+export const views = {
+  payments() {
+    const pays = [];
+    state.jobs.forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     return `
       <h1>Payments</h1>
-      ${qboCard}
-      ${importCard}
+      <p class="sub">Import payments from QuickBooks, a CSV file or the connection, on <a href="/data/import" data-action="nav" data-view="import">Import</a>.</p>
       ${pays.length ? `<div class="table-wrap">
         <table>
           <tr><th>Job</th><th>Pay app</th><th>Amount</th><th>Reference</th><th>Received</th></tr>
@@ -161,12 +165,13 @@ export const actions = {
     render();
   },
   "qbo-cancel": () => { paymentImport = null; render(); },
-  // A payments export dropped in the Inbox, read on Payments (R5-04).
+  // A payments export dropped in the Inbox, read on Import (R5-04).
   "inbox-read-payments": async (el) => {
     const r = await postJson("/api/import/payments-csv", { file_id: el.dataset.file });
     if (!r.ok) { toast(r.data.error || "Couldn't read it."); return; }
     paymentImport = escDeep(r.data);
-    nav("payments");
+    nav("import");
+    document.getElementById("qbo-import")?.scrollIntoView({ block: "start" });
   },
   "qbo-choose-file": () => {
     const input = document.createElement("input");

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Money: payments</title>
+<title>Import/Export: import</title>
 <script src="./support.js"></script>
 </head>
 <body>
@@ -22,22 +22,35 @@ a{color:#1F4FD1}a:hover{color:#16389A}
     <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 4px">
       <a href="Today.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Dashboard</a>
       <a href="Jobs.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Jobs</a>
-      <a href="Inbox.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px; display: flex; justify-content: space-between">Communications <span style="background: #1B1B1B; color: #FFFFFF; border-radius: 10px; padding: 0 8px; font-size: 13px">4</span></a><a href="#data" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Import/Export</a>
-      <a href="Money.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 12px">Money</a><a href="#automations" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Automations</a>
+      <a href="Inbox.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px; display: flex; justify-content: space-between">Communications <span style="background: #1B1B1B; color: #FFFFFF; border-radius: 10px; padding: 0 8px; font-size: 13px">4</span></a><a href="PaymentsImport.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; background: #FFFFFF; border: 1px solid #8C8C8C; border-radius: 8px; padding: 11px 12px">Import/Export</a>
+      <a href="Money.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Money</a><a href="#automations" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Automations</a>
       <a href="Settings.dc.html" style="text-decoration: none; color: #1B1B1B; border-radius: 8px; padding: 11px 12px">Settings</a>
     </nav>
     <div style="margin-top: 40px; padding-top: 12px; border-top: 1px solid #BDBDBD; font-size: 13px; color: #555555">Alex Hartline<br>owner@hartline.example<br><a href="Landing.dc.html">Log out</a></div>
   </aside>
   <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 20px 32px 48px; display: flex; flex-direction: column; gap: 18px; max-width: 1200px">
-    <nav aria-label="Money" style="display: flex; gap: 4px; border-bottom: 1px solid #BDBDBD; overflow-x: auto; white-space: nowrap"><a href="Money.dc.html" style="text-decoration: none; color: #555555; padding: 10px 12px">Pay apps</a>
-      <a href="#cos" style="text-decoration: none; color: #555555; padding: 10px 12px">Change orders</a>
-      <a href="#unpaid" style="text-decoration: none; color: #555555; padding: 10px 12px">Unpaid</a>
-      <a href="PaymentsImport.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; padding: 10px 12px; border-bottom: 3px solid #1B1B1B">Payments</a>
-      <a href="#closeout" style="text-decoration: none; color: #555555; padding: 10px 12px">Closeout</a>
-      
-      <span style="margin-left: auto; align-self: center; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">/money/payments</span>
+    <nav aria-label="Import/Export" style="display: flex; gap: 4px; border-bottom: 1px solid #BDBDBD; overflow-x: auto; white-space: nowrap"><a href="PaymentsImport.dc.html" aria-current="page" style="text-decoration: none; color: #1B1B1B; font-weight: 600; padding: 10px 12px; border-bottom: 3px solid #1B1B1B">Import</a>
+      <a href="#export" style="text-decoration: none; color: #555555; padding: 10px 12px">Export</a>
+      <span style="margin-left: auto; align-self: center; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">/data/import</span>
     </nav>
-    <h1 style="margin: 0; font-size: 32px; font-weight: 600">Payments</h1>
+    <h1 style="margin: 0; font-size: 32px; font-weight: 600">Import</h1>
+
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 600">Files and photos</h2>
+      <div style="border: 2px dashed #8C8C8C; border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px">
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap"><label for="upload-job" style="font-size: 15px">Which job?</label><select id="upload-job" style="height: 40px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; background: #FFFFFF"><option>Not sure, file later</option><option>Oak Street kitchen (OAK)</option></select></div>
+        <strong>Choose files</strong>
+        <span style="font-size: 14px; color: #555555">Photos, PDFs, Office files, CSV or saved emails, up to 15 MB. Drop them anywhere or press Ctrl+V / ⌘V.</span>
+      </div>
+    </section>
+
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 600">Paste an email, a text thread, or notes</h2>
+      <div><select aria-label="What are you pasting?" style="height: 40px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; background: #FFFFFF"><option>Something else</option><option>An email</option><option>Text messages</option><option>Notes: one daily record per date</option></select></div>
+      <textarea aria-label="Pasted text" rows="3" style="border: 1px solid #8C8C8C; border-radius: 8px; padding: 10px; font: inherit"></textarea>
+      <div><button type="button" style="display: inline-block; text-decoration: none; height: 36px; box-sizing: border-box; line-height: 34px; padding: 0 12px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B; font: inherit; font-size: 14px; white-space: nowrap">Add to Inbox</button></div>
+    </section>
+
 
     <section aria-labelledby="qbo" style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
       <h2 id="qbo" style="margin: 0; font-size: 18px; font-weight: 600">QuickBooks connection</h2>
@@ -51,8 +64,8 @@ a{color:#1F4FD1}a:hover{color:#16389A}
       <p style="margin: 0; font-size: 14px; color: #555555">Example differences. Before the Intuit keys are set on the server the card reads "Not set up on this server yet: it needs the keys of Duracash's Intuit app. Until then, use the CSV import below." A member sees "An owner of this company can connect QuickBooks here."</p>
     </section>
 
-    <details open style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
-      <summary style="cursor: pointer; font-weight: 600">Import payments from QuickBooks (CSV)</summary>
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 600">Payments from QuickBooks</h2>
       <p style="margin: 0; font-size: 14px; color: #555555">In QuickBooks, export a report to CSV and paste it here. Any QuickBooks report with payments in it works; invoices and refunds are skipped. Duracash proposes a pay app for each payment and records nothing until you tick and apply. A check already recorded from the same client is skipped, so importing the same file twice is safe.</p>
       <div style="border: 1px solid #8C8C8C; border-radius: 8px; padding: 8px 12px; font-size: 14px">Line 6: skipped, an Invoice is not money received.</div>
       <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; overflow-x: auto"><table style="width: 100%; border-collapse: collapse; font-size: 14px"><thead><tr style="text-align: left; color: #555555; font-size: 13px"><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Record</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Date</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Client</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Number</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Amount</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Pay app</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Why</th></tr></thead><tbody>
@@ -63,7 +76,7 @@ a{color:#1F4FD1}a:hover{color:#16389A}
 </tbody></table></div>
       <div style="display: flex; gap: 8px"><button type="button" style="display: inline-block; text-decoration: none; box-sizing: border-box; background: #1F4FD1; color: #FFFFFF; border: 0; border-radius: 8px; padding: 11px 18px; font: inherit; font-weight: 600; font-size: 15px; white-space: nowrap">Record the ticked payments</button><button type="button" style="display: inline-block; text-decoration: none; height: 40px; box-sizing: border-box; line-height: 38px; padding: 0 14px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B; font: inherit; font-size: 14px; white-space: nowrap">Cancel</button></div>
       <p style="margin: 0; font-size: 14px; color: #555555">Before a file is read the card is a paste box with <strong>Read payments</strong> and <strong>Choose the file</strong> (.csv or Excel). A payments export dropped in the Inbox opens this table from its card, Read as payments.</p>
-    </details>
+    </section>
 
     <section style="background: #EFEFEC; border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px 20px; display: flex; flex-direction: column; gap: 8px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555555">AFTER RECORD $119,700.00 TO PA-TRN-01</div><p style="margin: 0; font-size: 14px; color: #555555">The payment splits in two: what PA-TRN-01 still owes, ticked, and the rest on its own line to pick a pay app for.</p>
       <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; overflow-x: auto"><table style="width: 100%; border-collapse: collapse; font-size: 14px"><thead><tr style="text-align: left; color: #555555; font-size: 13px"><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Record</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Date</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Client</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Number</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Amount</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Pay app</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Why</th></tr></thead><tbody>
@@ -72,11 +85,12 @@ a{color:#1F4FD1}a:hover{color:#16389A}
 </tbody></table></div>
       <p style="margin: 0; font-size: 14px; color: #555555">After Record the toast says how many were recorded and how many need a pay app picked; recorded rows leave the table, a refused row stays marked Not recorded with the reason, and each list shows what is owed now. The table closes when nothing is left to do.</p></section>
 
-    <div style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; overflow-x: auto"><table style="width: 100%; border-collapse: collapse; font-size: 14px"><thead><tr style="text-align: left; color: #555555; font-size: 13px"><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Job</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Pay app</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500; text-align: right">Amount</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Reference</th><th style="padding: 10px 12px; border-bottom: 1px solid #BDBDBD; font-weight: 500">Received</th></tr></thead><tbody>
-<tr><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top"><a href="Job.dc.html">Decatur addition</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top"><a href="SendCheck.dc.html">PA-DEC-01</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top; text-align: right">$162,400.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top">QBO-17610</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top">Aug 15, 2026</td></tr>
-<tr><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top"><a href="Job.dc.html">Ponce bath</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top"><a href="SendCheck.dc.html">PA-PON-01</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top; text-align: right">$28,600.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top">QBO-19002</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top">Sep 26, 2026</td></tr>
-<tr><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top"><a href="Job.dc.html">Oak Street kitchen</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top"><a href="SendCheck.dc.html">PA-OAK-01</a></td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top; text-align: right">$40,000.00</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top">QBO-18441</td><td style="padding: 12px; border-bottom: 1px solid #DADADA; vertical-align: top">Aug 28, 2026</td></tr>
-</tbody></table></div>
+    <section style="background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 600">Schedule of values</h2>
+      <p style="margin: 0; font-size: 14px; color: #555555">Paste the lines from your estimate, a spreadsheet or a PDF onto a job's schedule. Set it before the job's first pay app.</p>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap"><label style="font-size: 15px">Job</label><select style="height: 40px; box-sizing: border-box; border: 1px solid #8C8C8C; border-radius: 8px; padding: 0 10px; font: inherit; background: #FFFFFF"><option>Oak Street kitchen (OAK)</option></select><button type="button" style="display: inline-block; text-decoration: none; height: 36px; box-sizing: border-box; line-height: 34px; padding: 0 12px; border: 1px solid #8C8C8C; border-radius: 8px; background: #FFFFFF; color: #1B1B1B; font: inherit; font-size: 14px; white-space: nowrap">Open its schedule</button></div>
+    </section>
+    <p style="margin: 0; font-size: 14px; color: #555555">Emails and texts forwarded to Duracash arrive in the <a href="Inbox.dc.html">Inbox</a>. Payments already recorded are listed on Money, Payments.</p>
   </main>
 </div>
 </x-dc>

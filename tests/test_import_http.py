@@ -247,6 +247,32 @@ class ImportHttpTests(unittest.TestCase):
         item = state["inbox"][-1]
         self.assertEqual((item["from"], item["match_reason"]), ("Kim Park <ap@park.example>", "sent from Park GC's AP email"))
 
+    def test_everything_received_is_paged_filtered_and_the_companys_own(self):  # C1
+        cookie, job = self.company("received@example.com")
+        for n in range(3):
+            res, state = self.request("POST", "/api/import/text", {"text": f"Elm addition note {n}", "source": "paste"}, cookie=cookie)
+            self.assertEqual(res.status, 200, state)
+        res, state = self.request("POST", "/api/import/text", {"text": "Gate code 4411", "source": "sms"}, cookie=cookie)
+        first = state["inbox"][0]["id"]
+        self.request("POST", f"/api/inbox/{first}/file", {"job_id": job["id"], "kind": "note"}, cookie=cookie)
+        res, page = self.request("GET", "/api/inbox?limit=2", cookie=cookie)
+        self.assertEqual((res.status, page["total"], len(page["entries"])), (200, 4, 2))
+        self.assertEqual(page["entries"][0]["source"], "sms", "newest first")
+        _, filed = self.request("GET", f"/api/inbox?status=filed&job={job['id']}", cookie=cookie)
+        self.assertEqual([(r["id"], r["job_name"]) for r in filed["entries"]], [(first, "Elm addition")])
+        _, oldest = self.request("GET", "/api/inbox?sort=oldest&source=paste", cookie=cookie)
+        self.assertEqual(oldest["entries"][0]["id"], first)
+        for bad in ("sort=size", "status=read", "source=fax", "offset=x"):
+            res, out = self.request("GET", f"/api/inbox?{bad}", cookie=cookie)
+            self.assertEqual(res.status, 400, bad)
+        other, _ = self.company("received-other@example.com")
+        _, theirs = self.request("GET", "/api/inbox", cookie=other)
+        self.assertEqual(theirs["total"], 0, "another company sees only its own")
+        self.assertEqual(self.request("GET", "/api/inbox")[0].status, 401)
+        self.assertEqual(self.request("GET", "/api/payapps/sent")[0].status, 401)
+        res, sent = self.request("GET", "/api/payapps/sent", cookie=cookie)
+        self.assertEqual((res.status, sent["total"]), (200, 0))
+
     def test_upload_from_the_inbox_with_a_job_picked(self):  # R5-07
         cookie, job = self.company("pick-job@example.com")
         res, state = self.request("POST", f"/api/import/file?job={job['id']}", raw=b"\x89PNG fake", cookie=cookie,

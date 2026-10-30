@@ -857,7 +857,7 @@
         "paid",
         "deposit"
       ],
-      "answer": "Open the job and tap Record a payment. Pick the Pay app, check Amount received ($) (it starts at what is owed), Date received and Check or reference no. (optional), then tap Record. Less than owed leaves the pay app Partly paid; paid in full opens the waiver step for that pay app. The amount can't be more than what is owed, and a reference can only be used once per job. Many payments at once? Read a QuickBooks export on Money, Payments.",
+      "answer": "Open the job and tap Record a payment. Pick the Pay app, check Amount received ($) (it starts at what is owed), Date received and Check or reference no. (optional), then tap Record. Less than owed leaves the pay app Partly paid; paid in full opens the waiver step for that pay app. The amount can't be more than what is owed, and a reference can only be used once per job. Many payments at once? Read a QuickBooks export on Import/Export, Import.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1065,7 +1065,7 @@
         "send again",
         "delivered"
       ],
-      "answer": "Communications, Outbox lists every email you approved and what happened to it: sent (with the time), failed (with the reason, such as an address the client's mail server refused), or not sent. A failed or unsent email has a Send again button, and the Dashboard shows a Didn't go out row. Pay apps go out with the PDF and paperwork attached, from \"your company via Duracash\", and the client's reply goes to whoever sent it. The demo account never sends real email.",
+      "answer": "Communications, Outbox lists every email you approved and what happened to it: sent (with the time), failed (with the reason, such as an address the client's mail server refused), or not sent. A failed or unsent email has a Send again button, and the Dashboard shows a Didn't go out row. Pay apps go out with the PDF and paperwork attached, from \"your company via Duracash\", and the client's reply goes to whoever sent it. Each email lists what it carried (open any file from there) and has Print. The demo account never sends real email.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1116,7 +1116,7 @@
         "file",
         "photo"
       ],
-      "answer": "Three ways:\n- Drop files anywhere, or tap Take a photo or Add a file on a job (photos, PDFs, Word, Excel, CSV, saved emails). On a job page they go straight onto that job; elsewhere they wait in the Inbox.\n- Paste an email, a text thread or your notes in the Inbox and tap Add to Inbox (or on a job, Add to job).\n- Forward email and texts automatically once an owner connects an email service and a Twilio number (Inbox, Bring emails and texts in automatically).\nThe Inbox suggests the job from the job code, address, job name or sender; tap Add to (the job) to file it.",
+      "answer": "Three ways:\n- Drop files anywhere, or tap Take a photo or Add a file on a job (photos, PDFs, Word, Excel, CSV, saved emails). On a job page they go straight onto that job; elsewhere they wait in the Inbox. Import/Export, Import has Which job?, Take a photo and Choose files.\n- Paste an email, a text thread or your notes on Import/Export, Import and tap Add to Inbox (or on a job, Add to job).\n- Forward email and texts automatically once an owner connects an email service and a Twilio number (Inbox, Bring emails and texts in automatically).\nThe Inbox suggests the job from the job code, address, job name or sender; tap Add to (the job) to file it.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1147,14 +1147,14 @@
         "bulk",
         "30 days"
       ],
-      "answer": "Copy the notes, paste them in the Inbox with \"Notes: one daily record per date\" picked, and tap Add to Inbox. Start each day with a date (10/12, Oct 12, or 2026-10-12). Duracash splits them into one daily record per date and keeps the original date when you add them to a job.",
+      "answer": "Copy the notes, paste them on Import/Export, Import with \"Notes: one daily record per date\" picked, and tap Add to Inbox. Start each day with a date (10/12, Oct 12, or 2026-10-12). Duracash splits them into one daily record per date and keeps the original date when you add them to a job.",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
-          "view": "inbox",
-          "label": "Open Inbox"
+          "view": "import",
+          "label": "Open Import"
         }
       ],
       "follow_ups": []
@@ -1172,7 +1172,7 @@
         "suggest",
         "match"
       ],
-      "answer": "It looks for the job code (like VEST), the job address, the job name or a part of it no other job has (like Oak Street for Oak Street kitchen), the client's name, or an email from the client's email for pay apps. A code in small letters (vest) or one word of a job name (Vesta) counts less than who sent it, so everyday words don't pull an item to another client's job. If a few jobs fit equally, it lists them to pick from and doesn't guess. Tip: put the job code in capitals in email subjects and texts. Tap Other job to change it before adding, and Undo under Recently added or dismissed takes an added item back off. If a pay app's paperwork uses it, Undo says so and links there: tap Remove on a draft's paperwork first; one that went to the client stays as sent.",
+      "answer": "It looks for the job code (like VEST), the job address, the job name or a part of it no other job has (like Oak Street for Oak Street kitchen), the client's name, or an email from the client's email for pay apps. A code in small letters (vest) or one word of a job name (Vesta) counts less than who sent it, so everyday words don't pull an item to another client's job. If a few jobs fit equally, it lists them to pick from and doesn't guess. Tip: put the job code in capitals in email subjects and texts. Tap Other job to change it before adding, and Undo under Everything received (Communications, Inbox) takes an added item back off; each row there says how it came in and why it was matched. If a pay app's paperwork uses it, Undo says so and links there: tap Remove on a draft's paperwork first; one that went to the client stays as sent.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1220,7 +1220,7 @@
         "size",
         "too large"
       ],
-      "answer": "PDF, JPG, PNG, GIF, WEBP, HEIC, Word (.doc, .docx), Excel (.xls, .xlsx), CSV, TXT and saved emails (.eml), up to 15 MB each. Drop the file on any page (on a job page it goes straight onto that job), or use choose files in the Inbox (Take a photo or Choose files on a phone). Web pages and SVG files are refused for safety.",
+      "answer": "PDF, JPG, PNG, GIF, WEBP, HEIC, Word (.doc, .docx), Excel (.xls, .xlsx), CSV, TXT and saved emails (.eml), up to 15 MB each. Drop the file on any page (on a job page it goes straight onto that job), or use Choose files on Import/Export, Import (Take a photo or Choose files on a phone). Web pages and SVG files are refused for safety.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1343,14 +1343,14 @@
         "download",
         "backup"
       ],
-      "answer": "An owner taps Export data in Settings, Company, under Your data, reset and delete. It downloads your company's jobs, clients, pay apps and records as one file. Photos and documents you uploaded are not in it, so keep your own copies of those.",
+      "answer": "Everything you can export is on Import/Export, Export. An owner taps Download everything for your company's jobs, clients, pay apps and records as one file; anyone can download each sent pay app's PDF and QuickBooks file, and copy the calendar feed. Photos and documents you uploaded are not in it, so keep your own copies of those.",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
-          "view": "company",
-          "label": "Open Company"
+          "view": "export",
+          "label": "Open Export"
         }
       ],
       "follow_ups": []
@@ -1424,7 +1424,7 @@
         "privacy",
         "who see"
       ],
-      "answer": "Each company's data is kept separate; only your team's logins can open it, apart from the private links you share: the Calendar address and each client's page. Owners decide who is on the team. Passwords are stored as one-way hashes; reset links work once and expire. Duracash is still early: keep your own copies of signed documents, and use Export data (Settings, Company) for a copy. Questions you ask here are saved so the team can add better answers.",
+      "answer": "Each company's data is kept separate; only your team's logins can open it, apart from the private links you share: the Calendar address and each client's page. Owners decide who is on the team. Passwords are stored as one-way hashes; reset links work once and expire. Duracash is still early: keep your own copies of signed documents, and use Download everything (Import/Export, Export) for a copy. Questions you ask here are saved so the team can add better answers.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1464,7 +1464,7 @@
         "sync",
         "accounting"
       ],
-      "answer": "Yes. On Money, Payments, open Import payments from QuickBooks (CSV), paste or choose a QuickBooks payments export (CSV or Excel) and tap Read payments: each payment is matched to its pay app where Duracash can tell (pick one from the Pick a pay app… list for the rest), and Record the ticked payments records the ones you tick. Or an owner taps Connect QuickBooks (when it is set up on the server): Then tap Read payments from QuickBooks, tick the ones to keep and tap Record the ticked payments. Duracash never changes your books. Each sent pay app also has Download for QuickBooks, a file QuickBooks imports as an invoice.",
+      "answer": "Yes. On Import/Export, Import, under Payments from QuickBooks, paste or choose a QuickBooks payments export (CSV or Excel) and tap Read payments: each payment is matched to its pay app where Duracash can tell (pick one from the Pick a pay app… list for the rest), and Record the ticked payments records the ones you tick. Or an owner taps Connect QuickBooks (when it is set up on the server): Then tap Read payments from QuickBooks, tick the ones to keep and tap Record the ticked payments. Duracash never changes your books. Each sent pay app also has Download for QuickBooks, a file QuickBooks imports as an invoice.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1667,7 +1667,7 @@
         "close account",
         "delete"
       ],
-      "answer": "An owner can delete the company in Settings, Company, under Your data, reset and delete: type your password and the company name, then tap Delete everything. It removes every job, file, client and record, and every user on the team, at once. Use Export data first if you want a copy. Server backups that already hold the data expire on their own (the newest 14 are kept by default).",
+      "answer": "An owner can delete the company in Settings, Company, under Your data, reset and delete: type your password and the company name, then tap Delete everything. It removes every job, file, client and record, and every user on the team, at once. Use Download everything (Import/Export, Export) first if you want a copy. Server backups that already hold the data expire on their own (the newest 14 are kept by default).",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1695,7 +1695,7 @@
         "lose data",
         "restore"
       ],
-      "answer": "Yes. The server makes a backup every 24 hours (and on start-up when the last one is older) and keeps the newest 14. Those copies sit on the server and guard against mistakes and bugs. When off-site backup is set up, each one is also encrypted and copied off the server. Keep your own copy with Export data too, and keep signed documents outside Duracash.",
+      "answer": "Yes. The server makes a backup every 24 hours (and on start-up when the last one is older) and keeps the newest 14. Those copies sit on the server and guard against mistakes and bugs. When off-site backup is set up, each one is also encrypted and copied off the server. Keep your own copy too, with Download everything on Import/Export, and keep signed documents outside Duracash.",
       "handler": null,
       "needs_job": false,
       "actions": [],

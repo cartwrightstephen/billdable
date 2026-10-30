@@ -1307,7 +1307,7 @@ def email_moot(job: dict[str, Any], e: dict[str, Any]) -> str:
 def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """What /api/state sends: bounded by the open work, not by the company's whole history."""
     since = ((now or datetime.now(timezone.utc)) - timedelta(days=RECENT_CLOSED_DAYS)).isoformat()
-    heavy = {"jobs", "audit", "email_log"}
+    heavy = {"jobs", "audit", "email_log", "inbox"}
     out = {k: deepcopy(v) for k, v in state.items() if k not in heavy}
     full, jobs = [], []
     closed_count, closed_collected = 0, 0
@@ -1340,6 +1340,10 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
         if due:
             payer["payapp_due_next"], payer["payapp_due_prev"] = due[0].isoformat(), due[1].isoformat()
     emails = state.get("email_log", [])
+    # The Inbox: what is waiting and the last few done; Communications pages the rest (C1).
+    inbox = state.get("inbox", [])
+    out["inbox"] = deepcopy(inbox_for_page_load(inbox))
+    out["inbox_total"] = len(inbox)
     out["email_log"] = mark_moot(state, deepcopy(emails[-RECENT_EMAILS:]))
     out["email_log_total"] = len(emails)
     # Today lists these with Send again, however old they are; the count is for the Today badge.
@@ -3310,3 +3314,4 @@ def _waiver_file_ids(state: dict[str, Any], job: dict[str, Any]) -> list[str]:
 from .validate import *  # noqa: E402,F401,F403
 from .tasks import *  # noqa: E402,F401,F403
 from .daily import *  # noqa: E402,F401,F403
+from .comms import *  # noqa: E402,F401,F403

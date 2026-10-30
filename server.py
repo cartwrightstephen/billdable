@@ -1118,6 +1118,32 @@ class Handler(BaseHTTPRequestHandler):
                 domain.mark_moot(state, page["entries"])
         self._json(200, page)
 
+    # ----- Communications and Import/Export (the comms-data stream) -----
+
+    def _g_inbox_page(self, m, user) -> None:
+        """Everything that came into the Inbox (C1), filtered and sorted on the server."""
+        offset, limit, q = self._paging()
+        one = lambda name: (q.get(name) or [""])[0]
+        source, status, sort = one("source"), one("status"), one("sort") or "newest"
+        if source and source not in domain.SOURCE_LABELS:
+            raise BadRequest("Source must be one of " + ", ".join(domain.SOURCE_LABELS) + ".")
+        if status and status not in domain.INBOX_STATUSES:
+            raise BadRequest("Status must be one of " + ", ".join(domain.INBOX_STATUSES) + ".")
+        if sort not in domain.INBOX_SORTS:
+            raise BadRequest("Sort must be one of " + ", ".join(domain.INBOX_SORTS) + ".")
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+            page = domain.inbox_page(state, offset, limit, source, status, one("job"), sort)
+        self._json(200, page)
+
+    def _g_sent_payapps(self, m, user) -> None:
+        """The Export page's sent pay apps, closed jobs' too (I1)."""
+        offset, limit, q = self._paging()
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+            page = domain.sent_payapps_page(state, offset, limit, (q.get("job") or [""])[0])
+        self._json(200, page)
+
     # ----- Billing with Stripe (billing.py) -----
 
     def _end_stripe_trial(self, company_id: str, subscription_id: str) -> None:
@@ -2436,6 +2462,8 @@ ROUTES = [
     # == stream: foundation ==
 
     # == stream: comms-data ==
+    Route("GET", r"/api/inbox", "_g_inbox_page", "user"),
+    Route("GET", r"/api/payapps/sent", "_g_sent_payapps", "user"),
 
     # == stream: tasks-daily ==
 
