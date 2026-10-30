@@ -1,0 +1,44 @@
+# The field rules' cases (G1), read by tests/test_validate.py (domain/validate.py) and
+# tests/js/validate.test.mjs (static/js/validate.js), so the page and the server agree.
+# rule <TAB> value <TAB> ok | bad <TAB> what a phone becomes (phone rows only)
+phone	404-555-0123	ok	(404) 555-0123
+phone	(404) 555-0123	ok	(404) 555-0123
+phone	4045550123	ok	(404) 555-0123
+phone	+1 404 555 0123	ok	(404) 555-0123
+phone	1.404.555.0123	ok	(404) 555-0123
+phone	404-555-0123 x12	ok	(404) 555-0123 x12
+phone	404 555 0123 ext. 7	ok	(404) 555-0123 x7
+phone	555-0123	bad
+phone	404-555-01234	bad
+phone	call me	bad
+zip	30303	ok
+zip	30303-1234	ok
+zip	3030	bad
+zip	303031234	bad
+zip	ABCDE	bad
+state	GA	ok
+state	ga	ok
+state	DC	ok
+state	PR	ok
+state	Ga.	ok
+state	XX	bad
+state	Georgia	bad
+email	ap@builder.com	ok
+email	pat.lee+bills@pine.example	ok
+email	ap@builder	bad
+email	ap builder.com	bad
+licence	RBQ-2041	ok
+licence	GC 0012/26	ok
+licence	-12	bad
+licence	12#4	bad
+licence	ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNO	bad
+contract_number	C-7	ok
+contract_number	PO 2026.114	ok
+contract_number	C_7	bad
+name	Oak Street kitchen	ok
+name	3	ok
+name	---	bad
+name	...	bad
+street	120 Peachtree St NE	ok
+street	,	bad
+city	Atlanta	ok

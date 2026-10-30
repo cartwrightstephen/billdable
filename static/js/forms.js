@@ -6,6 +6,7 @@
 // the server (a 409's "fields") lands under the right input.
 
 import { esc, centsFrom, dollarsText } from "./format.js";
+import { validate, tidy } from "./validate.js";
 
 export const formDraft = {};   // form key -> {field name: text as typed}
 export const formErrors = {};  // form key -> {field name: message, _form: a message for no one field}
@@ -26,12 +27,14 @@ export function clearForm(key) {
 // escaped here, so a value from the escaped state goes in through unesc().
 // options: [[value, text], ...] makes a select; multiline makes a textarea.
 // helpKey names the field's FIELD_HELP entry (the (i) text), put on the label as data-help.
+// rule names a check in validate.js (phone, zip, state, email, licence, contract_number, name,
+// street, city): the box is checked and tidied when it is left (watchForms), as the server does.
 export function field({ form, name, id, label, type = "text", required = false, help = "", value = "", placeholder = "",
-  autocomplete = "", inputmode = "", options = null, multiline = false, wide = false, attrs = "", helpKey = "" }) {
+  autocomplete = "", inputmode = "", options = null, multiline = false, wide = false, attrs = "", helpKey = "", rule = "" }) {
   const err = (formErrors[form] || {})[name] || "";
   const current = type === "password" ? "" : String(draftValue(form, name, value ?? ""));
   const describedBy = [help ? `${id}-help` : "", `${id}-err`].filter(Boolean).join(" ");
-  const common = `id="${id}" name="${esc(name)}" data-field="${esc(name)}"${required ? " required" : ""}${err ? ' aria-invalid="true"' : ""} aria-describedby="${describedBy}"${placeholder ? ` placeholder="${esc(placeholder)}"` : ""}${autocomplete ? ` autocomplete="${autocomplete}"` : ""}${inputmode ? ` inputmode="${inputmode}"` : ""}${attrs ? " " + attrs : ""}`;
+  const common = `id="${id}" name="${esc(name)}" data-field="${esc(name)}"${required ? " required" : ""}${err ? ' aria-invalid="true"' : ""} aria-describedby="${describedBy}"${placeholder ? ` placeholder="${esc(placeholder)}"` : ""}${autocomplete ? ` autocomplete="${autocomplete}"` : ""}${inputmode ? ` inputmode="${inputmode}"` : ""}${rule ? ` data-rule="${esc(rule)}"` : ""}${attrs ? " " + attrs : ""}`;
   let control;
   if (options) control = `<select ${common}>${options.map(([v, text]) => `<option value="${esc(v)}"${String(v) === current ? " selected" : ""}>${esc(text)}</option>`).join("")}</select>`;
   else if (multiline) control = `<textarea ${common}>${esc(current)}</textarea>`;
@@ -131,6 +134,7 @@ export function watchForms(root = document) {
   root.addEventListener("change", remember);
   root.addEventListener("focusout", (e) => {
     const el = e.target;
+    if (el && el.dataset && el.dataset.rule) checkRule(el);
     if (!el || !el.dataset || !el.dataset.money || !el.value.trim()) return;
     const { cents, error } = centsFrom(el.value);
     if (error) return;
@@ -138,6 +142,26 @@ export function watchForms(root = document) {
     const form = el.closest("[data-form-key]");
     if (form) (formDraft[form.dataset.formKey] ||= {})[el.dataset.field] = el.value;
   });
+}
+
+// A box with a rule, just left: tidied (a phone as (404) 555-0123), and its error shown under it,
+// or cleared, in place. Blank is left to the required check on save.
+export function checkRule(el) {
+  const rule = el.dataset.rule;
+  const value = tidy(rule, el.value.trim());
+  if (value !== el.value.trim()) el.value = value;
+  const form = el.closest && el.closest("[data-form-key]");
+  const key = form && form.dataset.formKey;
+  if (key && el.dataset.field) (formDraft[key] ||= {})[el.dataset.field] = el.value;
+  const msg = validate(rule, el.value);
+  if (key && el.dataset.field) {
+    const errs = (formErrors[key] ||= {});
+    if (msg) errs[el.dataset.field] = msg; else delete errs[el.dataset.field];
+  }
+  const span = document.getElementById(`${el.id}-err`);
+  if (span) span.textContent = msg;
+  if (msg) el.setAttribute("aria-invalid", "true"); else el.removeAttribute("aria-invalid");
+  return msg;
 }
 
 // Forget every form (moving to another page).
