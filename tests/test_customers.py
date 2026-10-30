@@ -2,11 +2,13 @@
 no job uses can be deleted by an owner (note 47)."""
 
 import http.client
+import io
 import json
 import sys
 import tempfile
 import threading
 import unittest
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -201,6 +203,108 @@ class CustomerHttpTests(unittest.TestCase):
         res, state = self.request("POST", f"/api/payers/{spare['id']}/delete", {}, owner)
         self.assertEqual(res.status, 200, state)
         self.assertNotIn(spare["id"], {p["id"] for p in state["payers"]})
+
+    def signup(self, email, company):
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": email, "password": "correct horse battery",
+                                                              "name": "Pat " + company, "company_name": company})
+        self.assertEqual(res.status, 200, data)
+        return res.getheader("Set-Cookie").split(";")[0], data["user"]
+
+    def raw(self, method, path, body=b"", cookie=None, headers=None):
+        conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
+        conn.request(method, path, body=body, headers={**(headers or {}), **({"Cookie": cookie} if cookie else {})})
+        res = conn.getresponse()
+        data = res.read()
+        conn.close()
+        return res, data
+
+    def test_new_job_takes_the_four_address_boxes_start_date_and_assignee(self):  # J1, J8, G1
+        owner, user = self.signup("parts@example.com", "Parts Builders")
+        job = {"name": "Oak kitchen", "customer": "Ironleaf GC", "client_type": "gc", "contract_cents": 4_850_000,
+               "street": "418 Oak Street", "city": "Decatur", "state": "GA", "zip": "300", "started_on": "2026-10-05"}
+        res, data = self.request("POST", "/api/jobs", job, owner)
+        self.assertEqual(res.status, 409)
+        self.assertEqual(set(data["fields"]), {"zip"})
+        res, data = self.request("POST", "/api/jobs", {**job, "zip": "30030", "assignee_id": "user-nobody"}, owner)
+        self.assertEqual((res.status, set(data["fields"])), (409, {"assignee_id"}))
+        res, state = self.request("POST", "/api/jobs", {**job, "zip": "30030"}, owner)
+        self.assertEqual(res.status, 200, state)
+        made = state["jobs"][-1]
+        self.assertEqual((made["address"], made["started_on"]), ("418 Oak Street, Decatur, GA 30030", "2026-10-05"))
+        self.assertEqual((made["assignee_id"], made["assignee_name"]), (user["id"], "Pat Parts Builders"), "the one who made it")
+        self.assertEqual(state["payers"][0]["client_type"], "gc")
+        res, state = self.request("POST", f"/api/jobs/{made['id']}/edit", {"street": "420 Oak Street", "city": "Decatur", "state": "GA",
+                                                                          "zip": "30030", "started_on": "2026-10-06"}, owner)
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual((state["jobs"][-1]["address"], state["jobs"][-1]["started_on"]), ("420 Oak Street, Decatur, GA 30030", "2026-10-06"))
+
+    def test_client_jobs_and_the_job_file(self):  # S10, J9
+        owner, _ = self.signup("file@example.com", "File Builders")
+        other, _ = self.signup("other@example.com", "Other Builders")
+        self.request("POST", "/api/payers", {"name": "Ruiz Family", "ap_email": "ruiz@example.com", "no_paperwork": True}, owner)
+        res, state = self.request("POST", "/api/jobs", {"name": "Porch", "address": "1 Elm St", "customer": "Ruiz Family", "contract_cents": 100_000}, owner)
+        job, payer = state["jobs"][-1], state["payers"][0]
+        res, data = self.raw("POST", f"/api/import/file?job={job['id']}&file=1&kind=contract", b"Signed subcontract", owner,
+                             {"Content-Type": "text/plain", "X-Filename": "contract.txt"})
+        self.assertEqual(res.status, 200, data)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/done", {}, owner)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, owner)
+        self.assertEqual(res.status, 200, state)
+        res, data = self.request("GET", f"/api/payers/{payer['id']}/jobs", cookie=owner)
+        self.assertEqual(res.status, 200, data)
+        row = data["jobs"][0]
+        self.assertEqual((row["name"], row["closed"], row["contract_total_cents"]), ("Porch", False, 100_000))
+        self.assertTrue(row["contract_file_id"], "the contract record's file, for the card's Contract link")
+        res, _ = self.request("GET", f"/api/payers/{payer['id']}/jobs", cookie=other)
+        self.assertEqual(res.status, 404, "another company's client")
+
+        res, data = self.raw("GET", f"/api/jobs/{job['id']}/archive.zip", cookie=owner)
+        self.assertEqual((res.status, res.getheader("Content-Type")), (200, "application/zip"))
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = z.namelist()
+            self.assertIn("summary.txt", names)
+            self.assertIn("activity.txt", names)
+            self.assertIn("record/Contract/contract.txt", names)
+            self.assertTrue(any(n.startswith("pay-apps/") and n.endswith(".pdf") for n in names), names)
+            summary = z.read("summary.txt").decode()
+        self.assertIn("Porch (PORC)", summary)
+        self.assertIn("Contract total: $1,000.00", summary)
+        res, _ = self.raw("GET", f"/api/jobs/{job['id']}/archive.zip")
+        self.assertEqual(res.status, 401, "signed in only")
+        res, _ = self.raw("GET", f"/api/jobs/{job['id']}/archive.zip", cookie=other)
+        self.assertEqual(res.status, 404, "another company can't open it")
+
+    def test_contract_read_fills_without_saving(self):  # G4, S12
+        owner, _ = self.signup("read@example.com", "Hartline Tile")
+        data = (Path(__file__).resolve().parent / "fixtures" / "contracts" / "subcontract.docx").read_bytes()
+        res, body = self.raw("POST", "/api/contract/read", data, owner, {"Content-Type": "application/octet-stream", "X-Filename": "subcontract.docx"})
+        self.assertEqual(res.status, 200)
+        found = json.loads(body)
+        self.assertEqual(found["fields"]["contract_cents"], 4_850_000)
+        self.assertEqual(found["fields"]["customer"], "Ironleaf General Contractors, LLC")
+        res, state = self.request("GET", "/api/state", cookie=owner)
+        self.assertEqual((state["jobs"], state["payers"]), ([], []), "nothing saved")
+        scan = (Path(__file__).resolve().parent / "fixtures" / "contracts" / "scanned.pdf").read_bytes()
+        res, body = self.raw("POST", "/api/contract/read", scan, owner, {"X-Filename": "scan.pdf"})
+        self.assertEqual(json.loads(body)["error"], "Couldn't read text from this file; fill the fields in by hand.")
+        res, _ = self.raw("POST", "/api/contract/read", data, None, {"X-Filename": "subcontract.docx"})
+        self.assertEqual(res.status, 401)
+
+    def test_add_client_with_its_type_paperwork_and_days(self):  # J2, S11, S13
+        owner, _ = self.signup("add@example.com", "Add Builders")
+        res, state = self.request("POST", "/api/payers", {"name": "Fulton County", "client_type": "public", "phone": "404-555-0100",
+                                                          "packet": "Signed contract, Insurance certificate, Punch list sign-off (closeout)",
+                                                          "payapp_due_day": 25, "payment_terms_days": "30"}, owner)
+        self.assertEqual(res.status, 200, state)
+        p = state["payers"][0]
+        self.assertEqual((p["client_type"], p["role"], p["phone"], p["payapp_due_day"], p["payment_terms_days"]),
+                         ("public", "Owner", "(404) 555-0100", 25, 30))
+        self.assertEqual(p["packet_items"], ["Signed contract", "Insurance certificate", "Punch list sign-off (closeout)"])
+        res, state = self.request("POST", "/api/payers", {"name": "Nothing Co", "no_paperwork": True}, owner)
+        q = next(x for x in state["payers"] if x["name"] == "Nothing Co")
+        self.assertEqual((q["packet"], q["no_paperwork"], q["packet_items"]), ("", True, []))
+        res, data = self.request("POST", "/api/payers", {"name": "Bad Days", "payapp_due_day": 40}, owner)
+        self.assertEqual((res.status, set(data["fields"])), (409, {"payapp_due_day"}))
 
 
 if __name__ == "__main__":

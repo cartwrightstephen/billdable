@@ -45,7 +45,22 @@ def _v3_to_v4(state: dict[str, Any]) -> None:
                 inv["contract_at_send"] = payapp_pdf.contract_terms(job, inv["sent_at"])
 
 
-STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4]
+def _jobs_clients_address_parts(state: dict[str, Any]) -> None:
+    """jobs-clients stream (Stephen's Oct 29 review, J1 and J2). A job's address is kept in four
+    parts (street, city, state, ZIP) beside the one line the PDF, the client's page and Inbox
+    matching read: an older job gets its parts from that line, split when it reads as
+    "Street, City, ST 12345", else all of it as the street, so nothing is lost and job.address
+    is untouched. A client saved before there were client types gets the one its role means
+    (GC: General contractor; Owner: Owner or developer)."""
+    for job in state.get("jobs", []):
+        if job.get("address") and not isinstance(job.get("address_parts"), dict):
+            job["address_parts"] = domain.parse_legacy_address(job["address"])
+    for payer in state.get("payers", []):
+        if payer.get("client_type") not in domain.CLIENT_TYPES:
+            payer["client_type"] = domain.client_type_of(payer)
+
+
+STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _jobs_clients_address_parts]
 SCHEMA_VERSION = len(STEPS) + 1
 
 
