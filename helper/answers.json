@@ -1027,7 +1027,7 @@
       "keywords": [
         "collections"
       ],
-      "answer": "Money, Unpaid lists every job with money owed: what is unpaid, days since it was sent, when it's due, when they said they'd pay, who to contact, and buttons to send a follow-up, email or call.",
+      "answer": "Money, Unpaid lists every job with money owed: what is unpaid, days since it was sent, when it's due, when they said they'd pay, who to contact, and buttons to send a follow-up, email or call. Open Recent contact under a job to see the last emails, calls and client page visits, newest first, and See all on the job for its whole history.",
       "handler": null,
       "needs_job": false,
       "actions": [

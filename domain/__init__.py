@@ -1180,6 +1180,9 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
         inv["remaining_cents"] = max(0, inv["amount_cents"] - paid) if inv["status"] in OPEN_FOR_PAYMENT else 0
     _payapp_figures(job, out)
     _co_flags(out)
+    # Money > Unpaid's Recent contact (M11), only on jobs with money owed, to keep the page light.
+    if out["money"]["outstanding_cents"] > 0:
+        out["recent_contact"], out["contact_total"] = contact_log(state, job["id"])
     return out
 
 
@@ -3570,3 +3573,4 @@ def _waiver_file_ids(state: dict[str, Any], job: dict[str, Any]) -> list[str]:
 from .validate import *  # noqa: E402,F401,F403
 from .tasks import *  # noqa: E402,F401,F403
 from .daily import *  # noqa: E402,F401,F403
+from .contact import *  # noqa: E402,F401,F403

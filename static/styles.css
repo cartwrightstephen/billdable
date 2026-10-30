@@ -598,7 +598,7 @@ textarea { font: inherit; }
    paper signer, and the change order's own page. */
 fieldset.co-items, fieldset.co-backup { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; }
 fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
-.co-item-row { display: grid; grid-template-columns: 2fr 1fr; gap: 0 12px; }
+.co-item-row { grid-template-columns: 2fr 1fr; margin-bottom: 8px; }
 .co-backup-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .co-backup-item input { min-width: auto; }
 .co-paper { margin-top: 8px; }
@@ -608,6 +608,15 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 @media (max-width: 600px) {
   .co-item-row { grid-template-columns: 1fr; }
 }
+/* Money > Unpaid: Recent contact under each job (M11). */
+.recent-contact { margin-top: 6px; font-size: 13px; }
+.recent-contact summary { cursor: pointer; color: var(--copper); }
+.recent-contact[open] { min-width: 15rem; }
+.recent-contact ul { list-style: none; margin: 6px 0; padding: 0; }
+.recent-contact li { padding: 4px 0; border-bottom: 1px solid var(--line); }
+.recent-contact li:last-child { border-bottom: 0; }
+/* The pay app page's summary (M2). */
+.payapp-summary .payapp-received { margin-top: 8px; }
 
 
 
