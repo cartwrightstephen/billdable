@@ -419,7 +419,6 @@ export const views = {
     const withSuggestion = items.filter(i => i.suggested_job_id).length;
     return `
       <h1>Inbox</h1>
-      <p class="sub">Duracash suggests the job; nothing is filed without you.</p>
       <div class="card inbox-waiting">
         <div class="top"><h2>Waiting (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
         ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting.")}

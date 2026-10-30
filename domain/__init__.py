@@ -578,7 +578,7 @@ def record_pencil_response(state: dict[str, Any], job_id: str, agreed: bool, not
     if not agreed and draft["pencil_note"]:
         suggest_packet_item(state, job["payer_id"], draft["pencil_note"], "pencil-copy changes", job["name"])
     what = "agreed to" if agreed else "asked for corrections on"
-    audit(state, job_id, "pencil_response", f"{actor} recorded that the payer {what} the pencil copy of {draft['number']}. {draft['pencil_note']}".strip(), actor)
+    audit(state, job_id, "pencil_response", f"{actor} recorded that the client {what} the draft of {draft['number']} sent for their review. {draft['pencil_note']}".strip(), actor)
     return job
 
 
@@ -1820,7 +1820,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
                 names = f"{_pay_app_list(unpaid)} are unpaid; the oldest" if len(unpaid) > 1 else oldest["number"]
                 since = f", last follow-up {_day_words(oldest['last_follow_up_at'])}" if oldest.get("last_follow_up_at") else ""
                 add(4, "follow_up", job, "Follow up", "copper",
-                    f"{names} was sent {_day_words(oldest.get('sent_at'))}{since}. Emails {payer.get('ap_email') or 'the customer'}.",
+                    f"{names} was sent {_day_words(oldest.get('sent_at'))}{since}. Emails {payer.get('ap_email') or 'the client'}.",
                     "Send follow-up", invoice_id=oldest["id"], due=follow.date().isoformat())
             # Approved on the customer's page (R4-08): no follow-up until the day after the date they gave.
             elif promised:
