@@ -9,7 +9,8 @@ Accepted bodies (the formats are from the providers' documentation as remembered
 checked against a live account; check them when the provider is chosen):
   - Postmark bounce or spam-complaint webhook: {"RecordType": "Bounce" | "SpamComplaint",
     "Email": ..., "Description": ..., "Type": ..., "Subject": ...}; out-of-office replies,
-    mail still being retried and the like (NOT_BOUNCES) are ignored
+    mail still being retried and the like (NOT_BOUNCES) are ignored. Its "MessageID" is
+    Postmark's own ID, not the Message-ID header we sent, so it is not used
   - SendGrid event webhook: a list of {"event": "bounce" | "dropped" | "spamreport",
     "email": ..., "reason": ..., "smtp-id": <the Message-ID>}; other events are ignored
   - Plain: {"email": ..., "reason": ..., "message_id": ..., "subject": ...}
@@ -17,14 +18,15 @@ checked against a live account; check them when the provider is chosen):
 An event marks one email: the one with its Message-ID (kept on the Outbox row when it was
 sent), or else the newest delivered email to that address with that subject, or with no
 subject the newest delivered email to that address in any company (the server picks it);
-never one delivered after the bounce happened ("BouncedAt", "timestamp" or "at").
+never one that started going out after the bounce happened ("BouncedAt", "timestamp" or
+"at"), allowing CLOCK_SLACK for the provider's clock.
 An event posted again finds the same email, already bounced, and changes nothing.
 """
 
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import domain
@@ -70,7 +72,7 @@ def normalize(body: Any) -> list[dict[str, str]]:
                 continue
             email, subject = item.get("Email"), item.get("Subject")
             reason = "marked as spam" if kind == "spamcomplaint" else (item.get("Description") or item.get("Type") or "bounced")
-            message_id, at = item.get("MessageID"), item.get("BouncedAt")
+            at = item.get("BouncedAt")  # its "MessageID" is Postmark's own, never our Message-ID header
         elif "event" in item:  # SendGrid
             if str(item.get("event", "")).lower() not in FAIL_EVENTS:
                 continue
@@ -100,7 +102,7 @@ def _subject(value: Any) -> str:
 def find(state: dict[str, Any], email: str, message_id: str = "", subject: str = "", before: str = "") -> dict[str, Any] | None:
     """The delivered email (sent, or already bounced) this event is about, or None: the one with
     its Message-ID; else the newest to that address, with that subject when the event names one,
-    delivered no later than the bounce (`before`, when the provider says when). An email that has
+    that started going out no later than the bounce (`before`, when the provider says when). An email that has
     a Message-ID of its own is never taken for an event naming another. An email sent before
     Message-IDs were kept is found by its address, as before."""
     delivered = [e for e in reversed(state.get("email_log", []))
@@ -111,11 +113,28 @@ def find(state: dict[str, Any], email: str, message_id: str = "", subject: str =
             return exact
     return next((e for e in delivered if not (message_id and e.get("message_id")) and str(e.get("to", "")).lower() == email
                  and (not subject or _subject(e.get("subject")) == subject)
-                 and (not before or not when_delivered(e) or when_delivered(e) <= before)), None)
+                 and (not before or not _went_out(e) or _went_out(e) <= _later(before, CLOCK_SLACK))), None)
 
 
 def when_delivered(entry: dict[str, Any]) -> str:
     return str(entry.get("delivered_at") or entry.get("at") or "")
+
+
+# The provider's clock may be a little behind ours.
+CLOCK_SLACK = timedelta(minutes=2)
+
+
+def _went_out(entry: dict[str, Any]) -> str:
+    """When the email started going out. delivered_at is written after the whole batch is sent,
+    so an email can bounce before its own delivered_at; it can't bounce before sending_at."""
+    return str(entry.get("sending_at") or when_delivered(entry))
+
+
+def _later(at: str, by: timedelta) -> str:
+    try:
+        return (datetime.fromisoformat(at) + by).isoformat(timespec="seconds")
+    except ValueError:
+        return at
 
 
 def apply(state: dict[str, Any], email: str, reason: str, now: str, message_id: str = "", subject: str = "",
