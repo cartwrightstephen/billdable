@@ -289,7 +289,7 @@ export const views = {
               ${p.present && p.present_reason === "Produced by Duracash" ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
               ${p.present && p.present_reason && p.present_reason !== "Produced by Duracash" ? `<div class="sub">Marked as in hand: ${p.present_reason}</div>` : ""}
               ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}
-              ${p.files_left_out ? `<div class="sub">Its files are left out of the email.</div>` : ""}
+              ${p.files_left_out && !p.present ? `<div class="sub">Its files are left out of the email.</div>` : ""}
               ${(p.attachments || []).map(a => attachmentRow(a, records, files)).join("")}
               ${p.present && p.present_reason !== "Produced by Duracash" && canRemove ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
             </div>

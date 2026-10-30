@@ -1856,6 +1856,7 @@ def _refresh_draft_gate(job: dict[str, Any], state: dict[str, Any] | None = None
         return
     if state is not None:
         _attach_from_record(state, job, active_packet(job), invoice["number"])
+    _items_follow_files(job, invoice)  # an item whose files are all left out of the email stays missing (M4)
     invoice["status"] = "draft" if blocker_lines(job) else "awaiting_approval"
 
 
@@ -2887,7 +2888,8 @@ MADE_HERE_REASON = "Produced by Duracash"
 # The standard paperwork (M6), for each pay app and for closeout: key (the item's kind), label,
 # the job-record kinds that fill it, the words that name it in a client's list, per_pay_app (a
 # record goes with one pay app only) and closeout (it belongs to the closeout paperwork). The
-# client playbook picks from the same list (PAPERWORK_CATALOG is what the page is sent).
+# client playbook's checkboxes (S11) are to pick from the same list: PAPERWORK_CATALOG is the
+# JSON-ready copy for that page, not sent anywhere yet.
 PAPERWORK_ITEMS = (
     {"key": "photo", "label": "Progress photos", "accepts_kinds": ("photo",), "words": re.compile(r"photo", re.I),
      "per_pay_app": True, "closeout": False},
@@ -2983,7 +2985,7 @@ def _attach_from_record(state: dict[str, Any], job: dict[str, Any], packet: list
         record = next((
             r for r in reversed(job.get("records", []))
             if r.get("kind") in kinds and not r.get("number_only") and r["id"] not in declined
-            and not (name in PER_PAY_APP and r["id"] in used) and _fits_waiver_item(r, item, owner)
+            and not ((name in PER_PAY_APP or name == "final_waiver") and r["id"] in used) and _fits_waiver_item(r, item, owner)
             and _fits_work(r, owner)
         ), None)
         if not record:
@@ -3004,7 +3006,10 @@ def _fits_waiver_item(record: dict[str, Any], item: dict[str, Any], invoice: dic
     has = record_waiver_kind(record)
     if has and has.split("_")[0] != item["waiver_kind"].split("_")[0]:
         return False
-    return not (invoice and record.get("invoice_id") and record["invoice_id"] != invoice["id"])
+    if has and (_record_kinds_for(item) or ("",))[0] == "final_waiver" and not has.endswith("_final"):
+        return False  # the closeout's final waiver is never a progress one
+    # Taken for a pay app: it stays that pay app's, never another's or the closeout's.
+    return not (record.get("invoice_id") and (invoice is None or record["invoice_id"] != invoice["id"]))
 
 
 def _fits_work(record: dict[str, Any], invoice: dict[str, Any] | None) -> bool:

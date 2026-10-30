@@ -223,6 +223,16 @@ class AttachmentTests(unittest.TestCase):  # M4
         self.assertTrue(photos["present"])
         self.assertEqual(self.inv["status"], "awaiting_approval")
 
+    def test_attaching_again_a_record_whose_files_are_left_out_keeps_the_item_missing(self):
+        photos = next(p for p in self.inv["packet"] if p["kind"] != "waiver" and "photo" in p["label"].lower())
+        for fid in self.photo["file_ids"]:
+            self.change("exclude_file", fid)
+        domain.detach_packet_item(self.state, self.job["id"], photos["id"])
+        domain.attach_record_to_packet(self.state, self.job["id"], photos["id"], self.photo["id"], "Sam")
+        self.assertEqual([a["record_id"] for a in photos["attachments"]], [self.photo["id"]])
+        self.assertFalse(photos["present"], "its files still do not go with the email")
+        self.assertEqual(self.inv["status"], "draft")
+
     def test_refusals(self):
         with self.assertRaises(domain.GateError):
             self.change("exclude_file", "file-not-going")

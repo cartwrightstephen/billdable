@@ -193,6 +193,19 @@ class OnFileTests(unittest.TestCase):  # M18
         with self.assertRaises(domain.GateError):
             domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
 
+    def test_the_closeout_final_waiver_is_not_filled_by_a_pay_apps_waiver(self):
+        state = new_state()
+        job = new_job(state, retainage=10, packet="Invoice.")
+        inv = sent_pay_app(state, job)
+        domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1")
+        signed_waiver(state, job["id"], "conditional_progress", "Spare conditional waiver")
+        domain.mark_done(state, job["id"])
+        final = next(p for p in job["closeout_packet"] if p["kind"] == "final_waiver")
+        self.assertFalse(final["present"], "neither the waiver sent with PA-1 nor a progress one is the final waiver")
+        rec = signed_waiver(state, job["id"], "conditional_final", "Conditional final waiver")
+        domain._attach_from_record(state, job, job["closeout_packet"], "the closeout paperwork")
+        self.assertEqual([a["record_id"] for a in final["attachments"]], [rec["id"]])
+
 
 class WaiverFormsTests(unittest.TestCase):  # M22
     def test_georgia_has_its_forms_and_other_states_a_plain_note(self):
