@@ -155,6 +155,17 @@ ROUTES_D3 = {
 }
 
 
+# The last three of Stephen's Oct 29 review: New pay app on Money (G10), quantities from the
+# contractor's own records (M1) and the CSV lists on Export (I1).
+ROUTES_NOT_DONES = {
+    "new pay app": "new-payapp", "can I make a pay app from money": "new-payapp", "where do I start a new pay app": "new-payapp",
+    "import quantities": "import-quantities", "import quantities from excel": "import-quantities",
+    "upload my takeoff quantities": "import-quantities", "how do I import quantities from my own records": "import-quantities",
+    "export my jobs to excel": "export", "download pay apps as csv": "export", "export payments to a spreadsheet": "export",
+    "how do i bill progress on a job": "progress", "what is a daily record": "daily-record",
+}
+
+
 class HelperRoutingTests(unittest.TestCase):
     def setUp(self):
         import sys
@@ -166,6 +177,15 @@ class HelperRoutingTests(unittest.TestCase):
     def test_review_questions_open_their_answer(self):
         wrong = {}
         for q, want in ROUTES_D3.items():
+            score, top = self.helper.rank(q, self.answers)[0]
+            got = top["id"] if score >= self.helper.ANSWER_AT else None
+            if got != want:
+                wrong[q] = (got, want, round(score, 2))
+        self.assertEqual(wrong, {})
+
+    def test_the_last_review_items_open_their_answer(self):
+        wrong = {}
+        for q, want in ROUTES_NOT_DONES.items():
             score, top = self.helper.rank(q, self.answers)[0]
             got = top["id"] if score >= self.helper.ANSWER_AT else None
             if got != want:
