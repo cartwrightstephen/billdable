@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import calendar_feed
 import domain
+from waiver_help import signed_waiver
 import helper
 import sov
 from seed import seed_state
@@ -46,6 +47,7 @@ class StatusLabelTests(unittest.TestCase):
         domain.match_payment(state, job["id"], pa2["amount_cents"], "chk1", invoice_id=pa2["id"])
         self.assertEqual(pa1["status"], "sent")
         self.assertEqual(domain.status_label(job), "Submitted, awaiting acknowledgment")
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], invoice_id=pa2["id"])
         self.assertEqual(domain.status_label(job), "Submitted, awaiting acknowledgment")
         snap = domain.snapshot(state)
@@ -68,7 +70,9 @@ class StatusLabelTests(unittest.TestCase):
         pa1, pa2 = job["invoices"]
         domain.match_payment(state, job["id"], pa1["amount_cents"], "chk1", invoice_id=pa1["id"])
         domain.match_payment(state, job["id"], pa2["amount_cents"], "chk2", invoice_id=pa2["id"])
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], invoice_id=pa1["id"])
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], invoice_id=pa2["id"])
         self.assertEqual(domain.status_label(job), "Paid")
 

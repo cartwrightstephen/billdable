@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+from waiver_help import signed_waiver
 from seed import seed_state
 
 
@@ -179,6 +180,7 @@ class TimelineTests(unittest.TestCase):
             domain.approve_and_send(state, job["id"], "t")
             inv = next(i for i in job["invoices"] if i["status"] == "sent")
             domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1", "t", invoice_id=inv["id"])
+            signed_waiver(state, job["id"])
             domain.send_waiver(state, job["id"], "t")
             domain.close_job(state, job["id"], "t")
         order = [r.get("action") or r.get("email_kind") for r in domain.timeline_page(state, job["id"], 0, 7)["entries"]]

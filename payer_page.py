@@ -165,14 +165,21 @@ def render(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], 
                     for l in invoice.get("lines", []))
     packet = []
     records = {r["id"]: r for r in job.get("records", [])}
+    # The files the email carried (M4): what was left out is not listed, records added to it are.
+    going = set(file_ids(state, job, invoice))
     for item in invoice.get("packet") or []:
         mark = '<span class="ok">✓</span>' if item.get("present") else '<span class="no">✗</span>'
         docs = []
         for att in item.get("attachments", []):
             for fid in (records.get(att.get("record_id")) or {}).get("file_ids", []):
-                if fid in files:
+                if fid in files and fid in going:
                     docs.append(f'<a href="{_e(base)}/file/{_e(fid)}">{_e(files[fid]["name"])}</a>')
         packet.append(f'<div class="row"><span>{mark} {_e(item.get("label"))}</span><span>{" · ".join(docs)}</span></div>')
+    extra = [f'<a href="{_e(base)}/file/{_e(fid)}">{_e(files[fid]["name"])}</a>'
+             for rid in invoice.get("extra_record_ids") or [] for fid in (records.get(rid) or {}).get("file_ids", [])
+             if fid in files and fid in going]
+    if extra:
+        packet.append(f'<div class="row"><span>Also sent</span><span>{" · ".join(extra)}</span></div>')
     if invoice.get("received_at"):
         received = (f'<div class="card received"><strong>Received</strong> by {_e(invoice.get("received_by") or "the payer")} '
                     f'on {_e(_date(invoice["received_at"]))}. Thank you.</div>')

@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+from waiver_help import signed_waiver
 import server
 from seed import seed_state
 
@@ -67,15 +68,23 @@ class RetainageTests(unittest.TestCase):
         domain.mark_done(state, job["id"])
         inv = send_open(state, job)
         domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1")
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner")
         with self.assertRaises(domain.GateError):
             domain.chase_retainage(state, job["id"])
-        item = job["closeout_packet"][0]
-        domain.resolve_packet_item(state, job["id"], item["id"], reason="Punch list signed")
+        for item in job["closeout_packet"]:  # the five closeout items (M6)
+            domain.resolve_packet_item(state, job["id"], item["id"], reason="In the closeout binder")
         domain.chase_retainage(state, job["id"])
         with self.assertRaises(domain.GateError):
             domain.close_job(state, job["id"])
         domain.record_retainage_payment(state, job["id"], 100_000, "CHK-2")
+        # The release owes its own waiver, unconditional on final payment (M20): close waits for it.
+        self.assertEqual(job["retainage_waivers"][-1]["kind"], "unconditional_final")
+        with self.assertRaises(domain.GateError) as raised:
+            domain.close_job(state, job["id"])
+        self.assertIn("A lien waiver is still due.", raised.exception.blockers)
+        signed_waiver(state, job["id"], "unconditional_final")
+        domain.send_waiver(state, job["id"], "Owner", release_id=job["retainage_waivers"][-1]["id"])
         domain.close_job(state, job["id"])
         self.assertTrue(job["closed"])
 
@@ -306,10 +315,12 @@ class PaymentTests(unittest.TestCase):
         send_open(state, job)
         a, b = job["invoices"]
         domain.match_payment(state, job["id"], a["amount_cents"], "CHK-1", invoice_id=a["id"])
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner")
         self.assertTrue(job["waiver_sent"])
         domain.match_payment(state, job["id"], b["amount_cents"], "CHK-2", invoice_id=b["id"])
         self.assertFalse(job["waiver_sent"])
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner")
         self.assertTrue(a["waiver_sent"] and b["waiver_sent"])
         self.assertEqual(len([e for e in state["email_log"] if e["kind"] == "waiver"]), 2)
@@ -368,7 +379,7 @@ class ReviewFindingTests(unittest.TestCase):
         send_open(state, job)
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"])
-        self.assertIn("closeout", str(raised.exception))
+        self.assertIn("marked done", str(raised.exception))
         self.assertFalse([e for e in state["email_log"] if e["kind"] == "retainage"])
 
     def test_co_after_done_billable_on_stale_legacy_record(self):
@@ -389,8 +400,10 @@ class ReviewFindingTests(unittest.TestCase):
         inv = clear_packet(state, job)
         domain.approve_and_send(state, "job-ponce", "Owner")
         domain.match_payment(state, "job-ponce", inv["amount_cents"], "CHK-P2", invoice_id=inv["id"])
+        signed_waiver(state, "job-ponce")
         domain.send_waiver(state, "job-ponce", "Owner")
         self.assertFalse(job["waiver_sent"], "the older waiver is still unsent")
+        signed_waiver(state, "job-ponce")
         domain.send_waiver(state, "job-ponce", "Owner")
         self.assertTrue(job["waiver_sent"])
         self.assertEqual(len([e for e in state["email_log"] if e["kind"] == "waiver"]), 2)
@@ -524,6 +537,7 @@ class ShortPayTests(unittest.TestCase):  # R4-01
         self.assertEqual((m["outstanding_cents"], m["short_paid_cents"], m["unbilled_completed_cents"]), (0, 125_000, 0))
         self.assertEqual(state["audit"][-1]["action"], "short_pay")
         self.assertEqual([b["kind"] for b in domain.close_blocker_items(job)], ["waiver"])
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
         domain.close_job(state, job["id"])
         self.assertTrue(job["closed"])
@@ -568,6 +582,7 @@ class ReopenAndUndoTests(unittest.TestCase):  # R4-02
         inv = send_open(state, job)
         domain.match_payment(state, job["id"], 900_000, "CHK 1")
         domain.settle_short_pay(state, job["id"], inv["id"], "Customer held $1,000 for touch-ups")
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
         domain.close_job(state, job["id"])
         with self.assertRaises(domain.GateError):
@@ -734,15 +749,17 @@ class RetainageChangeTests(unittest.TestCase):
         domain.record_progress(state, job["id"], 12_000_000)  # substantially complete, not marked done
         inv = send_open(state, job)
         self.assertEqual(domain.job_money(job)["retainage_open_cents"], 1_200_000)
-        with self.assertRaises(domain.GateError):
-            domain.chase_retainage(state, job["id"])  # all of it waits for closeout
+        # Every ask waits until the job is marked done (M24), part of it too.
+        for amount in (None, 500_000):
+            with self.assertRaises(domain.GateError) as raised:
+                domain.chase_retainage(state, job["id"], amount_cents=amount)
+            self.assertIn("Mark the job done first", str(raised.exception))
+        domain.mark_done(state, job["id"])
+        for item in job["closeout_packet"]:
+            domain.resolve_packet_item(state, job["id"], item["id"], reason="In the binder")
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"], amount_cents=1_300_000)
         self.assertIn("amount_cents", raised.exception.fields)
-        # All of it typed in the box before the job is done: refused under the box (review fix).
-        with self.assertRaises(domain.GateError) as raised:
-            domain.chase_retainage(state, job["id"], amount_cents=1_200_000)
-        self.assertIn("All of it waits until the job is done", raised.exception.fields["amount_cents"])
         domain.chase_retainage(state, job["id"], "Owner", amount_cents=500_000)
         mail = state["email_log"][-1]
         self.assertEqual(mail["subject"], "Application for release of retainage — $5,000.00 — Pine kitchen")
@@ -774,6 +791,7 @@ class BugHuntMoneyTests(unittest.TestCase):
         inv = send_open(state, job)
         domain.match_payment(state, job["id"], 800_000, "CHK 1")
         domain.settle_short_pay(state, job["id"], inv["id"], "Backcharge")
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
         body = state["email_log"][-1]["body"]
         self.assertIn("payment of $8,000.00 on", body)

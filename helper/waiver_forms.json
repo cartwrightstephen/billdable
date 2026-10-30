@@ -1,0 +1,30 @@
+{
+  "note": "Lien waiver forms set by state law, shown on the waiver page and on a conditional waiver item. Duracash points to the form; it never writes one. Add a state only from the statute's own text, with its citation as plain text.",
+  "states": {
+    "GA": {
+      "name": "Georgia",
+      "statute": true,
+      "citation": "O.C.G.A. § 44-14-366",
+      "forms": {
+        "conditional_progress": "Interim Waiver and Release Upon Payment",
+        "unconditional_progress": "Interim Waiver and Release Upon Payment",
+        "conditional_final": "Waiver and Release of Lien and Payment Bond Rights Upon Final Payment",
+        "unconditional_final": "Waiver and Release of Lien and Payment Bond Rights Upon Final Payment"
+      },
+      "notes": [
+        "Georgia sets two forms, one for progress payments and one for the final payment. Use the form as the law words it.",
+        "By law the waiver takes effect only once the payment it names is received, so the same form serves before and after payment.",
+        "Not paid after signing? File an affidavit of nonpayment within 90 days of the waiver's date, or the waiver stands as if you were paid."
+      ]
+    }
+  },
+  "other": {
+    "name": "Other states",
+    "statute": false,
+    "citation": "",
+    "forms": {},
+    "notes": [
+      "No state form is listed here for this state. Use the client's form or your own, and have it checked if you are unsure."
+    ]
+  }
+}

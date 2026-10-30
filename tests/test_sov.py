@@ -576,14 +576,19 @@ class ReviewFindingTests(unittest.TestCase):
         domain.record_progress(state, job["id"], 500_000)
         inv = send_open(state, job)
         domain.match_payment(state, job["id"], inv["amount_cents"], "chk 1", "Owner", invoice_id=inv["id"])
+        # No signed waiver on the job record: refused, nothing goes (M21).
+        with self.assertRaises(domain.GateError) as raised:
+            domain.send_waiver(state, job["id"], "Owner")
+        self.assertIn("Add the signed unconditional waiver", str(raised.exception))
+        self.assertFalse([e for e in state["email_log"] if e["kind"] == "waiver"])
+        job["records"].append({"id": "rec-w0", "kind": "waiver", "label": "Signed waiver", "file_ids": ["file-w0"]})
         domain.send_waiver(state, job["id"], "Owner")
-        self.assertIn("will follow separately", state["email_log"][-1]["body"])
-        self.assertEqual(state["email_log"][-1]["attachments"], [])
+        self.assertEqual(state["email_log"][-1]["attachments"], ["file-w0"])
         # With a waiver file on the record, the next waiver email carries it.
-        job["records"].append({"id": "rec-w", "kind": "waiver", "label": "Conditional waiver", "file_ids": ["file-w1"]})
         domain.record_progress(state, job["id"], 1_000_000)
         inv2 = send_open(state, job)
         domain.match_payment(state, job["id"], inv2["amount_cents"], "chk 2", "Owner", invoice_id=inv2["id"])
+        job["records"].append({"id": "rec-w", "kind": "waiver", "label": "Waiver", "file_ids": ["file-w1"]})
         domain.send_waiver(state, job["id"], "Owner")
         self.assertEqual(state["email_log"][-1]["attachments"], ["file-w1"])
         self.assertIn("is attached", state["email_log"][-1]["body"])

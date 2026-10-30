@@ -523,7 +523,7 @@
         "final",
         "complete"
       ],
-      "answer": "Open the job and tap Mark done (under More if you don't see it). Fill in Anything to note? (optional) and Period to, tap Confirm done, then confirm. Duracash drafts the final pay app for everything not billed yet. If a draft is already open, send it or tap Delete draft first; the message names it. A job with retainage also gets closeout paperwork for the punch list. Marked done by mistake? Undo done works until the final pay app goes out.",
+      "answer": "Open the job and tap Mark done (under More if you don't see it). Fill in Anything to note? (optional) and Period to, tap Confirm done, then confirm. Duracash drafts the final pay app for everything not billed yet. If a draft is already open, send it or tap Delete draft first; the message names it. Every job also gets its closeout paperwork: the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties. Marked done by mistake? Undo done works until the final pay app goes out.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -545,7 +545,7 @@
         "send",
         "approve"
       ],
-      "answer": "Open the job and tap Review & send. The pay app page shows Before you send: who it goes to, Also email (CC), the amount, the subject and what is attached; Open the PDF to check it. If your company address, phone or licence number is blank, it says so there with a Company details button; you can still send. Then tap Approve & send to. While paperwork is missing or an unsigned change order is on the pay app, the job shows Fix N things before sending (or Add N missing documents, or Get CO N signed) instead. It goes to the client's Email for pay apps with the PDF and paperwork attached, from your company name, and replies come back to you. Only owners send, unless an owner turns on Members can send in Settings, Company. Communications, Outbox shows whether it was delivered.",
+      "answer": "Open the job and tap Review & send. The pay app page shows Before you send: who it goes to, Also email (CC), the amount, the subject and every file the email carries, each with Leave out or Put back, and Add from the job record for an extra photo or receipt; Open the PDF to check it. If your company address, phone or licence number is blank, it says so there with a Company details button; you can still send. Then tap Approve & send to. While paperwork is missing or an unsigned change order is on the pay app, the job shows Fix N things before sending (or Add N missing documents, or Get CO N signed) instead. It goes to the client's Email for pay apps with the PDF and paperwork attached, from your company name, and replies come back to you. A signed unconditional waiver attached to a pay app gives up your lien rights before you are paid, so sending is refused until you take it off or an owner types why and taps Send anyway. Only owners send, unless an owner turns on Members can send in Settings, Company. Communications, Outbox shows whether it was delivered.",
       "handler": "blockers",
       "needs_job": false,
       "actions": [],
@@ -666,7 +666,7 @@
       "keywords": [
         "packet"
       ],
-      "answer": "Paperwork is everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate. Duracash lists the items from the client's settings (Paperwork needed with each pay app) and won't send the pay app until each one is in. See it in the Paperwork column of Money, Pay apps, or tap Open paperwork on the job.",
+      "answer": "Paperwork is everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate. Duracash lists the items from the client's settings (Paperwork needed with each pay app) and won't send the pay app until each one is in. Every pay app also asks for a conditional lien waiver unless the client was marked as not taking one. See it in the Paperwork column of Money, Pay apps, or tap Open paperwork on the job.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -697,7 +697,7 @@
         "attach",
         "clear"
       ],
-      "answer": "On the job, tap Add N missing documents (or Fix N things before sending, or Open paperwork). For each missing item:\n- Take a photo or Choose file: it goes on the job record and is attached in one step.\n- Choose a record… from the job record, then Attach.\n- I have this…: say where it is (optional, for example \"emailed to the GC on 10/12\"), then Save.\n- Not needed for this client, if they never need it.\nRemove takes an item back off while the pay app is a draft. The Activity log shows how each item was handled.",
+      "answer": "On the job, tap Add N missing documents (or Fix N things before sending, or Open paperwork). For each missing item:\n- Take a photo or Choose file: it goes on the job record and is attached in one step.\n- Under From the job record this period, pick Attach to… on a record, then Attach.\n- I have this…: say where it is (optional, for example \"emailed to the GC on 10/12\"), then Save.\n- Not needed for this client, if they never need it.\nRemove takes an item back off while the pay app is a draft. The Activity log shows how each item was handled.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -906,7 +906,7 @@
         "conditional",
         "unconditional"
       ],
-      "answer": "A lien waiver gives up your lien rights for money you've been paid. Conditional: it only takes effect if the payment clears. Unconditional: payment received. Some states require exact statutory forms, so use the form your state or the client requires; Duracash doesn't write it.",
+      "answer": "A lien waiver gives up your lien rights for money you've been paid. Conditional: it only takes effect if the payment clears; one goes with each pay app. Unconditional: payment received; you send it once the pay app is paid. Some states require exact statutory forms, so use the form your state or the client requires; Duracash doesn't write it. The waiver page names the form for the job's state where it knows it (Georgia so far).",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -925,7 +925,7 @@
       "keywords": [
         "send waiver"
       ],
-      "answer": "When a pay app is paid in full, the job shows Choose waiver and send (the Dashboard shows Waiver due). Put your signed waiver on the job record first (kind: Lien waiver), or tap Take a photo on the waiver page. Pick the type; the line under it says when it fits. Then tap Approve & send. The email attaches the newest lien waiver on the job record; with none, it tells the client the signed waiver follows separately. One waiver per paid pay app, and only after the payment is recorded. Duracash doesn't write waiver forms; states set them.",
+      "answer": "When a pay app is paid in full, the job shows Choose waiver and send (the Dashboard shows Waiver due). Put the signed waiver of that type on the job record first (kind: Lien waiver), or tap Take a photo on the waiver page; Approve & send stays off until it is there. Pick the type; the line under it says when it fits, and Check the signed form shows lists what the form must carry. Then tap Approve & send and confirm. The email attaches that signed waiver, never one that already went out with a pay app. One waiver per paid pay app and per retainage release, and only after the payment is recorded. Duracash doesn't write waiver forms; states set them.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -976,7 +976,7 @@
         "punch",
         "closeout"
       ],
-      "answer": "Retainage is paid at closeout. A job with retainage gets closeout paperwork: the items in the client's Paperwork needed with each pay app that mention closeout, retainage or punch, or a closeout and punch list signoff if none do. Mark the job done, add those items (Open closeout paperwork), then tap Ask for retainage and confirm. Before the job is done you can ask for part of it on Money, Closeout (Part to ask for now). When the money arrives, tap Record retainage paid on the job.",
+      "answer": "Retainage is paid at closeout, so it is asked for once the job is marked done. The closeout paperwork is the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties; mark one Not needed on this job if it doesn't apply. Mark the job done, add those items (Open closeout paperwork), then tap Ask for retainage and confirm, or type part of it in the amount box on Money, Closeout. The job's Retainage card shows what is held, the pay apps holding it, how often you asked and when you can ask again. When the money arrives, tap Record retainage paid on the job; each release then needs its lien waiver.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1610,7 +1610,7 @@
         "status label",
         "awaiting"
       ],
-      "answer": "Each job has a short status, such as Needs paperwork, Blocked, Ready to send, Sent, Partly paid or Waiver due, and a line that names what's holding it up, for example \"Conditional lien waiver is missing\" or \"Submitted, awaiting acknowledgment\". It never just says pending. The Next column says what to do.",
+      "answer": "Each job has a short status, such as Needs paperwork, Blocked, Ready to send, Sent, Partly paid or Waiver due, and a line that names what's holding it up, for example \"Conditional waiver on progress payment is missing\" or \"Submitted, awaiting acknowledgment\". It never just says pending. The Next column says what to do.",
       "handler": null,
       "needs_job": false,
       "actions": [],

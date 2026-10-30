@@ -67,7 +67,7 @@ class PeriodAndDueTests(unittest.TestCase):
         self.assertTrue(state["email_log"][-1]["subject"].startswith(f"Final pay application {inv['number']}"))
         domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-9", invoice_id=inv["id"])
         self.assertEqual(domain.suggested_waiver_kind(job, inv), "unconditional_final")
-        self.assertEqual(domain.suggested_waiver_kind(job, first), "unconditional_progress", "the first pay app is still owed")
+        self.assertEqual(domain.suggested_waiver_kind(job, first), "conditional_progress", "the first pay app is still owed (M17)")
 
 
 class NotesTests(unittest.TestCase):  # R4-12

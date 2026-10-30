@@ -263,16 +263,20 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
             domain.update_payer(state, job["payer_id"], {"packet": packet})
         return job
 
-    def test_gc_job_with_a_schedule_drafts_ready_to_send(self):
+    def test_gc_job_with_a_schedule_waits_only_on_the_waiver_and_tickets(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = self.gc_job(state, "AIA-style pay app, schedule of values, continuation sheet, pay-app backup")
         domain.save_sov(state, job["id"], self.SOV_LINES, "0")
         line_id = job["sov"]["lines"][0]["id"]
         domain.record_sov_progress(state, job["id"], {line_id: "40"})
         draft = job["invoices"][-1]
-        self.assertEqual(draft["status"], "awaiting_approval")
-        self.assertEqual(domain.blocker_lines(job), [])
-        self.assertEqual({p["present_reason"] for p in draft["packet"]}, {"Produced by Duracash"})
+        # What Duracash makes is in; the conditional waiver (M16) and, for a unit-price line, the
+        # daily tickets (M6) are what it waits on.
+        self.assertEqual(domain.blocker_lines(job), ["Conditional waiver on progress payment is missing.",
+                                                     "Daily tickets and time sheets are missing."])
+        made = [p for p in draft["packet"] if p["kind"] not in ("waiver", "ticket")]
+        self.assertEqual({p["present_reason"] for p in made}, {"Produced by Duracash"})
+        self.assertEqual(next(p for p in draft["packet"] if p["kind"] == "ticket")["covers"], ["Pavers"])
 
     def test_gc_default_list_leaves_out_the_pay_app_and_schedule(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}

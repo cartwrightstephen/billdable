@@ -184,7 +184,7 @@ test("Ask for retainage shows only once the work is done and the closeout paperw
   const job = (over) => jobOf({ close_blockers: ["$500.00 of retainage is still open."], ...over });
   const running = job({ money });
   assert.ok(!keys(jobActions(running).more).includes("retainage"));
-  assert.equal(retainageNote(running), "Released at closeout.");
+  assert.equal(retainageNote(running), "Asked for once the job is marked done.");  // M24
   const missing = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: false }], closeout_missing: ["Punch-list signoff"] });
   assert.ok(!keys([jobActions(missing).primary, ...jobActions(missing).more].filter(Boolean)).includes("retainage"));
   assert.equal(retainageNote(missing), "Closeout paperwork: 1 item missing.");
@@ -212,10 +212,9 @@ test("after a retainage request, Ask for retainage waits for the customer's days
   assert.equal(nextStep(asked, later), "Ask for the money held back once the closeout paperwork is in.");
   assert.equal(retainageNote(asked, later), "");
   assert.deepEqual(closeBlockerActions(asked, { kind: "retainage" }, null, later).map(x => x.label), ["Record retainage paid", "Ask for retainage"]);
-  // A part asked for before the job is done waits the same way.
+  // Before the job is done nothing is asked for (M24), whatever an older request says.
   const part = jobOf({ money, payer: { follow_up_days: 7 }, last_retainage_chase_at: "2026-10-28T15:00:00+00:00" });
-  assert.equal(retainageNote(part, now), "Released at closeout. Asked for part of it Oct 28, 2026; ask again from Nov 4, 2026.");
-  assert.equal(retainageNote(part, later), "Released at closeout.");
+  assert.equal(retainageNote(part, now), "Asked for once the job is marked done.");
 });
 
 // domain.chase_retainage refuses a done job with closeout paperwork missing before it looks at the wait.

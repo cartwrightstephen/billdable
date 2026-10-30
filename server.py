@@ -1108,6 +1108,10 @@ class Handler(BaseHTTPRequestHandler):
             view = domain.job_view(state, job)
         self._json(200, {"job": view})
 
+    def _g_waiver_forms(self, m, user) -> None:
+        """The lien waiver forms each state sets (M22), for the waiver page's state picker."""
+        self._json(200, domain.waiver_forms())
+
     def _g_log_page(self, m, user) -> None:
         offset, limit, q = self._paging()
         key = "email_log" if m.group(1) == "outbox" else "audit"
@@ -1903,6 +1907,8 @@ class Handler(BaseHTTPRequestHandler):
         # change order marks it signed, in the same step as the upload (R3-05, R3-06).
         attach_to = (query.get("attach") or [""])[0] if file_now else ""
         signed_co = (query.get("co") or [""])[0] if file_now else ""
+        # The type of a signed lien waiver taken on the waiver page or for a waiver item (M14).
+        waiver_kind = (query.get("waiver_kind") or [""])[0] if file_now else ""
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
@@ -1949,6 +1955,8 @@ class Handler(BaseHTTPRequestHandler):
             if file_now:
                 # Dropped on a job page: the person already chose the job.
                 filed = importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
+                if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
+                    domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor)
                 if attach_to:
                     domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor)
                 if signed_co:
@@ -2424,6 +2432,12 @@ class Handler(BaseHTTPRequestHandler):
             raise OwnerOnly()
         entry[1](self, state, job_id, item, ctx)
 
+    def _m_payapp_attachments(self, state: dict, m, ctx: "Ctx") -> None:
+        """What a draft pay app's email carries (M4): {action, record_id | file_id}."""
+        body = ctx.body
+        domain.change_payapp_attachments(state, m.group(1), m.group(2), _text(body, "action"),
+                                         _text(body, "record_id") or _text(body, "file_id"), ctx.actor)
+
     def _m_payer_suggestion(self, state: dict, m, ctx: "Ctx") -> None:
         domain.answer_packet_suggestion(state, m.group(1), m.group(2), m.group(3) == "add", ctx.actor)
 
@@ -2504,6 +2518,8 @@ ROUTES = [
     # == stream: payapps-cos ==
 
     # == stream: paperwork-waivers-retainage ==
+    Route("GET", r"/api/waiver-forms", "_g_waiver_forms", "user"),
+    Route("POST", r"/api/jobs/([^/]+)/payapp/([^/]+)/attachments", "_m_payapp_attachments", "mutate"),
 
     # == stream: settings-auth ==
 
@@ -2663,6 +2679,15 @@ def _retainage(h, st, j, i, c):
     return domain.chase_retainage(st, j, c.actor, amount_cents=None if amount in (None, "") else _number(c.body, "amount_cents", "the retainage to ask for"))
 
 
+def _send_payapp(h, st, j, i, c):
+    """Approve & send. Sending with a signed unconditional waiver attached takes a reason, and
+    only an owner may give one (M14)."""
+    override = _text(c.body, "unconditional_override").strip()
+    if override and c.user.get("role", "owner") != "owner":
+        raise domain.GateError("Only an owner can send a pay app with an unconditional waiver attached.")
+    return domain.approve_and_send(st, j, c.actor, unconditional_override=override, **_co_args(c))
+
+
 def _received_on(body: dict) -> str | None:
     """The date a payment came in (YYYY-MM-DD, R3-02); blank is today. Not a date, or a day
     still to come, is refused under the field."""
@@ -2712,11 +2737,14 @@ JOB_ACTIONS = {
                                                                                         period_end=_text(c.body, "period_to"))),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
-    "send": (False, _sends("the pay app", lambda h, st, j, i, c: domain.approve_and_send(st, j, c.actor, **_co_args(c)))),
+    "send": (False, _sends("the pay app", _send_payapp)),
     "follow-up": (False, _sends("the follow-up", lambda h, st, j, i, c: domain.record_follow_up(st, j, c.actor, early=c.body.get("early") is True, **_co_args(c)))),
     "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor,
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
-    "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None))),
+    "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None,
+                                                                                    release_id=_text(c.body, "release_id") or None))),
+    "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor)),
+    "record-work": (True, lambda h, st, j, i, c: domain.link_record_to_work(st, j, i, _text(c.body, "co_id"), _text(c.body, "sov_line_id"), c.actor)),
     "retainage": (False, _sends("the request", _retainage)),
     "note-contact": (False, lambda h, st, j, i, c: domain.note_contact(st, j, _text(c.body, "text"), _text(c.body, "next_on"), c.actor)),
     "retainage-paid": (False, lambda h, st, j, i, c: domain.record_retainage_payment(st, j, _number(c.body, "amount_cents", "the retainage received"), _text(c.body, "reference"), c.actor)),
