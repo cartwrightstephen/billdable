@@ -332,11 +332,11 @@ class ImportHttpTests(unittest.TestCase):
 
     def test_photo_of_a_signed_change_order_signs_it(self):  # R3-06
         cookie, job = self.company("co-photo@example.com")
-        res, state = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Owner buys fixtures", "amount_cents": -150_000, "schedule_days": "2"}, cookie=cookie)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Owner buys fixtures", "amount_cents": -150_000, "schedule_days": "2", "reason": "value_engineering"}, cookie=cookie)
         self.assertEqual(res.status, 200, state)
         co = state["jobs"][0]["change_orders"][-1]
         self.assertEqual((co["amount_cents"], co["schedule_days"]), (-150_000, 2))
-        res, state = self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=change_order&co={co['id']}", raw=b"\x89PNG fake",
+        res, state = self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=change_order&co={co['id']}&signer=Kim+Park&signed_on=2026-10-01", raw=b"\x89PNG fake",
                                   cookie=cookie, headers={"Content-Type": "image/png", "X-Filename": "IMG_0004.png"})
         self.assertEqual(res.status, 200, state)
         j = state["jobs"][0]

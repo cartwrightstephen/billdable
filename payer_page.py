@@ -251,16 +251,38 @@ def find_co(state: dict[str, Any], token: str) -> tuple[dict | None, dict | None
     return None, None
 
 
+def _co_rows(snap: dict[str, Any]) -> str:
+    """Scope, Price and Schedule (Stephen's Oct 29 review, M9), from what the signer sees and the
+    signature keeps (domain.co_snapshot). A signature from before version 2 has only the title,
+    description and amount."""
+    scope = [f"<strong>{_e(snap.get('title', ''))}</strong>"]
+    if snap.get("description"):
+        scope.append(f"<p>{_e(snap['description'])}</p>")
+    if snap.get("reason"):
+        scope.append(f'<p class="sub">Reason: {_e(snap["reason"])}</p>')
+    if snap.get("contract_ref"):
+        scope.append(f'<p class="sub">Changes: {_e(snap["contract_ref"])}</p>')
+    price = "".join(f'<div class="row"><span>{_e(i.get("label"))}</span><span>{_e(domain.money(i.get("amount_cents", 0)))}</span></div>'
+                    for i in snap.get("items") or [])
+    price += f'<div class="row total"><span>{_e(snap.get("pricing") or "Price")}</span><span>{_e(domain.money(snap.get("amount_cents", 0)))}</span></div>'
+    out = f'<h2>Scope</h2><div class="card">{"".join(scope)}</div><h2>Price</h2><div class="card">{price}</div>'
+    if "schedule_days" in snap:
+        days = int(snap.get("schedule_days") or 0)
+        words = f"{days:+d} day{'' if abs(days) == 1 else 's'} on the schedule" if days else "No change to the schedule"
+        out += f'<h2>Schedule</h2><div class="card">{_e(words)}</div>'
+    return out
+
+
 def render_co(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], base: str, error: str = "") -> str:
-    """The signing page for one change order (P2-3)."""
+    """The signing page for one change order (P2-3). Signed, it shows what was signed."""
     company = state.get("company", {}).get("name", "") or "Your contractor"
     title = f"Change order {co['number']} — {job['name']}"
     head = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
             f'<meta name="robots" content="noindex"><title>{_e(title)}</title><style>{PAGE_STYLE}</style></head><body><main>')
+    snap = (co.get("signature") or {}).get("snapshot") or domain.co_snapshot(state, job, co)
     summary = (f'<p class="sub">{_e(company)} · {_e(job["name"])} · {_e(job.get("address", ""))}</p>'
-               f"<h1>Change order {_e(co['number'])}: {_e(domain.money(co['amount_cents']))}</h1>"
-               f'<div class="card"><strong>{_e(co["title"])}</strong>'
-               + (f"<p>{_e(co['description'])}</p>" if co.get("description") else "") + "</div>")
+               f"<h1>Change order {_e(co['number'])}: {_e(domain.money(snap.get('amount_cents', co['amount_cents'])))}</h1>"
+               + _co_rows(snap))
     sig = co.get("signature")
     if sig:
         return (head + summary + f'<div class="card received"><strong>Signed</strong> by {_e(sig["name"])} on {_e(_date(sig["at"]))}. '
@@ -272,7 +294,7 @@ def render_co(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], ba
             + (f'<div class="card alert" role="alert"><span class="no">{_e(error)}</span></div>' if error else "")
             + f'<div class="card"><form class="sign-form" method="post" action="{_e(base)}/sign">'
             + f'<label class="agree"><input type="checkbox" name="agree" value="yes"> '
-            + f"<span>{_e(domain.CO_CONSENT)}</span></label>"
+            + f"<span>{_e(snap['consent'])}</span></label>"
             + '<label for="signer" class="sub">Your full name</label><input id="signer" name="name" maxlength="120" autocomplete="name" required class="signer">'
             + '<button class="btn" type="submit">Sign change order</button></form></div>'
             + f'<p class="foot">Your name, the time, your network address and this change order as shown are kept as the record of your signature. '

@@ -51,7 +51,7 @@ class NoSiteAddressTests(ServerCase):
         res, data = self.request("POST", "/api/jobs", {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim",
                                                        "ap_email": "ap@park.example", "contract_cents": 1_000_000}, cookie)
         job = data["jobs"][-1]
-        res, data = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Two outlets", "amount_cents": 45_000}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Two outlets", "amount_cents": 45_000, "reason": "owner_request"}, cookie)
         co = data["jobs"][-1]["change_orders"][-1]
         with mock.patch.object(server, "log_json") as log:
             res, data = self.request("POST", f"/api/jobs/{job['id']}/request-co-signature/{co['id']}", {}, cookie)

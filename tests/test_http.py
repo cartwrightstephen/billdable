@@ -270,7 +270,7 @@ class HttpTests(unittest.TestCase):
         cookie, _ = self.signup("iso@example.com")
         res, data = self.request("POST", "/api/jobs/job-oak/import-qbo", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
-        res, data = self.request("POST", "/api/jobs/job-oak/add-co", {"title": "x", "amount_cents": 100}, cookie=cookie)
+        res, data = self.request("POST", "/api/jobs/job-oak/add-co", {"title": "x", "amount_cents": 100, "reason": "owner_request"}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertIn("Job not found", data["error"])
 
