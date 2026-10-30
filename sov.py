@@ -406,21 +406,44 @@ AT_RATE_RE = re.compile(
     re.I,
 )
 # The one-cell patterns (AT_RATE_RE, DESC_QTY_UNIT_RE, DESC_AMOUNT_RE) slow down with the square of
-# a line's length, so they are tried only on lines no longer than a schedule line ever is; a longer
-# line is read cell by cell as usual.
-ONE_LINE_MAX = 200
+# a line's length when run whole. `_tail_match` reads them the same way in linear time: the part after
+# the description (quantity, unit, rate, amount) is matched where it can start, a whitespace run
+# within the last TAIL characters, and the description before it is checked once.
+TAIL = 80
+# What follows the description in each pattern, anchored at the end as in the whole pattern.
+AT_RATE_TAIL_RE = re.compile(AT_RATE_RE.pattern.split(r"\s+)?", 1)[1], re.I)
+_LETTER_I_RE = re.compile(r"[A-Za-z]", re.I)
+_LETTER_RE = re.compile(r"[A-Za-z]")
+_SPACE_THEN_TEXT_RE = re.compile(r"\s(?=\S)")
 
 
-def _desc_amount(line: str) -> "re.Match[str] | None":
-    line = line.strip()
-    return DESC_AMOUNT_RE.match(line) if len(line) <= ONE_LINE_MAX else None
+def _tail_match(text: str, tail_re: "re.Pattern[str]", desc_ok, desc_optional: bool = False) -> "dict[str, Any] | None":
+    """A description, a space and `tail_re`, read as the whole one-cell pattern reads it (the
+    shortest description that fits), with `desc_ok` saying whether a description fits, as
+    {group: text}. With `desc_optional`, a line that is the tail alone matches too, desc None."""
+    start = max(0, len(text) - TAIL)
+    for m in _SPACE_THEN_TEXT_RE.finditer(text, max(0, start - 1)):
+        q = m.end()
+        t = tail_re.match(text, q)
+        if t:
+            desc = text[:q].rstrip()
+            if desc and desc_ok(desc):
+                return {**t.groupdict(), "desc": desc}
+    if desc_optional and len(text) <= TAIL and (t := tail_re.match(text)):
+        return {**t.groupdict(), "desc": None}
+    return None
 
 
-def _at_rate(cell: str) -> "re.Match[str] | None":
+def _desc_amount(line: str) -> "dict[str, Any] | None":
+    """DESC_AMOUNT_RE.match(line.strip())."""
+    return _tail_match(line.strip(), DESC_AMOUNT_TAIL_RE,
+                       lambda d: "," not in d and '"' not in d and _LETTER_RE.search(d) is not None)
+
+
+def _at_rate(cell: str) -> "dict[str, Any] | None":
     """AT_RATE_RE, except that "x" between two plain numbers is a size ("Ceiling grid 2 x 2", "Tile
     12 x 24"), not a rate: "x" counts only with a unit word before it or a $ on the rate."""
-    cell = cell.strip()
-    m = AT_RATE_RE.match(cell) if len(cell) <= ONE_LINE_MAX else None
+    m = _tail_match(cell.strip(), AT_RATE_TAIL_RE, lambda d: "@" not in d and _LETTER_I_RE.search(d) is not None, True)
     if m and m["sep"].lower() == "x" and not m["dollar"] and (m["unit"] or "").lower().rstrip(".") not in UNIT_WORDS:
         return None
     return m
@@ -439,16 +462,17 @@ UNIT_WORDS = frozenset("""
 """.split())
 # "Concrete 2,400 SF" or "Haul 3 loads" in one cell: a description, a quantity and a unit word.
 DESC_QTY_UNIT_RE = re.compile(r"^(?P<desc>.*?[A-Za-z].*?)\s+(?P<qty>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>[A-Za-z]{1,6}\.?)$")
+DESC_QTY_UNIT_TAIL_RE = re.compile(DESC_QTY_UNIT_RE.pattern.split(r"\s+", 1)[1])
 
 
-def _desc_qty_unit(cell: str) -> "re.Match[str] | None":
-    cell = cell.strip()
-    m = DESC_QTY_UNIT_RE.match(cell) if len(cell) <= ONE_LINE_MAX else None
+def _desc_qty_unit(cell: str) -> "dict[str, Any] | None":
+    m = _tail_match(cell.strip(), DESC_QTY_UNIT_TAIL_RE, lambda d: "\n" not in d and _LETTER_RE.search(d) is not None)
     return m if m and m["unit"].lower().rstrip(".") in UNIT_WORDS else None
 
 
 # "Mobilization 12,500" or "Demo $3,500" on its own line: a description and a lump sum.
 DESC_AMOUNT_RE = re.compile(r"^(?P<desc>[^,\"]*?[A-Za-z][^,\"]*?)\s+(?P<amount>\$?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)$")
+DESC_AMOUNT_TAIL_RE = re.compile(DESC_AMOUNT_RE.pattern.split(r"\s+", 1)[1])
 TOTAL_RE = re.compile(r"^(sub\s*-?\s*total|grand\s+total|total|totals|overhead|o\s*&\s*p|profit|markup|retainage)\b", re.I)
 
 
