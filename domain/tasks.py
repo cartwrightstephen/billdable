@@ -225,6 +225,8 @@ def edit_task(state: dict[str, Any], task_id: str, body: dict[str, Any], members
             changes.append("put it in the client's court" if side == "client" else "put it in our court")
             task["ball_in_court"] = side
     if not changes:
+        if _only_cleared_due(body):
+            return task  # its box showed the blank-means-today date and was cleared: nothing to do
         raise GateError("Nothing changed.")
     audit(state, task.get("job_id", ""), "task_edit", f"{actor} changed the task {task['title']}: {', '.join(changes)}.", actor)
     return task
@@ -240,6 +242,12 @@ def set_task_done(state: dict[str, Any], task_id: str, done: bool, actor: str = 
     audit(state, task.get("job_id", ""), "task_done" if done else "task_reopen",
           f"{actor} {'ticked off' if done else 'reopened'} the task {task['title']}.", actor)
     return task
+
+
+def _only_cleared_due(body: dict[str, Any]) -> bool:
+    """A due box cleared when its date was only the blank-means-today default (todoItems): not a
+    change, and not an error either."""
+    return set(body) - {"key"} == {"due"} and not _due(body.get("due"))
 
 
 def assign_row(state: dict[str, Any], key: Any, body: dict[str, Any], members: dict[str, str] | None, actor: str = "owner",
@@ -271,6 +279,8 @@ def assign_row(state: dict[str, Any], key: Any, body: dict[str, Any], members: d
                 entry.pop("row_due", None)
             said.append(f"set it due {_when(due)}" if due else "put its due date back")
     if not said:
+        if _only_cleared_due(body):
+            return store.get(key)  # it had no date set by hand: clearing the box changes nothing
         raise GateError("Nothing changed.")
     entry.update(set_by=actor, set_at=utcnow())
     if entry.get("assignee_id") or entry.get("due_override"):

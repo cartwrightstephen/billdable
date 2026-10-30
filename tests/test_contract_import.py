@@ -104,6 +104,52 @@ class ContractFileTests(unittest.TestCase):
         good = flate(b"BT (This subcontract between Acme Builders and the tile contractor sets the work, the price and the schedule.) Tj ET")
         self.assertTrue(contract_import.read("ok.pdf", good)["ok"])
 
+    def test_a_long_run_of_gaps_is_read_quickly(self):
+        """A 2 KB PDF whose one TJ array is hundreds of thousands of wide gaps (no ET): each gap
+        is a space, and trimming the line ends must stay linear and inside the time limit."""
+        import time
+        for n in (60_000, 240_000):
+            content = b"BT /F1 12 Tf 72 700 Td [" + b"-200 " * n + b"] TJ"
+            data = b"%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n" + zlib.compress(content, 9) + b"\nendstream\nendobj\n"
+            start = time.monotonic()
+            r = contract_import.read("gaps.pdf", data)
+            self.assertLess(time.monotonic() - start, 2.0, n)
+            self.assertFalse(r["ok"])
+
+    def test_the_text_stops_at_its_limit_inside_one_array(self):
+        text = contract_import._content_text(b"[" + b"(ab) " * 5000 + b"] TJ", None, limit=100)
+        self.assertLessEqual(len(text), 200)
+
+    def test_line_ends_are_trimmed_as_before(self):
+        text = contract_import._content_text(b"BT (Line one   ) Tj T* (\tLine two\t) Tj T* T* T* T* (three) Tj ET")
+        self.assertEqual(text, "Line one\n\tLine two\n\nthree\n")
+
+    def test_adversarial_pasted_text_is_read_quickly(self):
+        """Every pattern the reader looks with stays linear: long runs of spaces, line ends,
+        letters, digits or repeated key words in pasted text never keep the server busy."""
+        import time
+        n = 200_000
+        cases = {
+            "spaces": "Contractor: AB" + " " * n,
+            "newlines": "\n" * n + "x",
+            "tabs": "Project:" + "\t" * n,
+            "letters": "invoices " + "a" * n,
+            "keywords": "invoices" * (n // 8),
+            "keywords spaced": "invoices " * (n // 9),
+            "capitals": "AB " + " " * n + "x",
+            "capital newlines": ("A\n" * (n // 2)),
+            "digits": "1" * n,
+            "digit spaces": "1 " * (n // 2),
+            "commas": "A," * (n // 2),
+            "dollars": "contract sum " + "$1" * (n // 2),
+            "emails": "billing " + "a." * (n // 2),
+            "schedule": "Schedule of values\n" + "a " * n,
+        }
+        for label, text in cases.items():
+            start = time.monotonic()
+            contract_import.read("pasted.txt", text.encode())
+            self.assertLess(time.monotonic() - start, 2.0, label)
+
     def test_pasted_text_without_the_usual_words_finds_nothing_to_fill(self):
         r = contract_import.read("pasted.txt", b"Notes from the walk-through with the owner about the tile and the grout colour.")
         self.assertTrue(r["ok"])

@@ -219,9 +219,9 @@ export function prefillPaymentAmount(invoiceId) {
 export const views = {
   job() {
     const j = state.jobs.find(x => x.id === currentJobId);
-    if (!j && jobDetailLoading === currentJobId) return backButton("jobs", "Jobs") + `<p class="sub">Loading the job…</p>`;
-    if (!j && jobDetailFailed === currentJobId) return backButton("jobs", "Jobs") + emptyState("Couldn't load this job", "Check your connection, then try again.", `<button class="btn" data-action="nav" data-view="job" data-id="${esc(currentJobId)}">Try again</button>`);
-    if (!j) return backButton("jobs", "Jobs") + emptyState("Job not found", "It may have been deleted, or the link belongs to another company.", `<button class="btn" data-action="nav" data-view="jobs">Go to Jobs</button>`);
+    if (!j && jobDetailLoading === currentJobId) return backButton("jobs", "Open jobs") + `<p class="sub">Loading the job…</p>`;
+    if (!j && jobDetailFailed === currentJobId) return backButton("jobs", "Open jobs") + emptyState("Couldn't load this job", "Check your connection, then try again.", `<button class="btn" data-action="nav" data-view="job" data-id="${esc(currentJobId)}">Try again</button>`);
+    if (!j) return backButton("jobs", "Open jobs") + emptyState("Job not found", "It may have been deleted, or the link belongs to another company.", `<button class="btn" data-action="nav" data-view="jobs">Go to Jobs</button>`);
     const m = j.money;
     const blocked = isBlocked(j);
     const openDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
@@ -235,7 +235,7 @@ export const views = {
     const hasPayApps = j.invoices.some(i => i.status !== "void");
     const ejf = jobFields("editjob", "ej", j);
     const head = `
-      ${j.closed ? backButton("history", "Job history") : backButton("jobs", "Jobs")}
+      ${j.closed ? backButton("history", "Job history") : backButton("jobs", "Open jobs")}
       <div class="job-head">
         <div>
           <h1>${j.name}</h1>

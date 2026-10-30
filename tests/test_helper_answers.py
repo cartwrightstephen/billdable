@@ -149,6 +149,9 @@ ROUTES_D3 = {
     "what came in": "everything-received",
     "automations": "automations", "what are automations": "automations",
     "where did my email go": "email-sent", "where is the daily record": "daily-record", "how do I add a new job": "create-job",
+    # Asking about clients isn't asking to add one; profiles are an owner's to change.
+    "who is my client": "playbook", "where are my clients": "playbook", "where do I see my clients": "playbook",
+    "can a member edit profiles": "edit-profiles", "who can change profiles": "edit-profiles",
 }
 
 
@@ -168,6 +171,11 @@ class HelperRoutingTests(unittest.TestCase):
             if got != want:
                 wrong[q] = (got, want, round(score, 2))
         self.assertEqual(wrong, {})
+
+    def test_the_profiles_answer_says_only_owners_change_them(self):
+        by_id = {e["id"]: e for e in self.answers}
+        self.assertTrue(by_id["edit-profiles"]["answer"].startswith("Only an owner can add, change or delete permission profiles."))
+        self.assertNotIn("client", [k for k in by_id["add-client"]["keywords"]], "a bare 'client' sent every client question to Add client")
 
     def test_answers_name_where_things_are_now(self):
         by_id = {e["id"]: e for e in self.answers}

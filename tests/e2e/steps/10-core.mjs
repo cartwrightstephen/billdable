@@ -359,7 +359,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.goto(BASE + "/jobs/job-inman");
       } else if (label === "Choose waiver and send") {
         await main.click();
-        await page.getByRole("heading", { name: /^Waivers:/ }).waitFor();
+        await page.getByRole("heading", { name: /^Closeout: / }).waitFor();
         const sendWaiver = page.locator('[data-action="waiver"]');
         await sendWaiver.first().waitFor();
         // The signed waiver goes on the job record first (M21): Choose file, then Approve & send asks first.

@@ -90,12 +90,41 @@ test("a signed waiver not said to be for a pay app asks which; one not needed sh
   page.setLocation("waiver-detail", "j1");
   const html = reg.views["waiver-detail"]();
   assert.match(html, /Lien waiver signed is on the job record\. More than one waiver is due/);
-  assert.match(html, /<select id="wfor-rec-9"[^>]*><option value="i2" selected>PA-2<\/option><option value="rw-1">Retainage released/);
-  assert.match(html, /data-action="waiver-for" data-id="j1" data-record="rec-9" data-kind="unconditional_progress"/);
+  // Each row has its own picker, with its own row chosen (the same waiver shows on both rows).
+  assert.match(html, /<select id="wfor-rec-9-i2"[^>]*><option value="i2" selected>PA-2<\/option><option value="rw-1">Retainage released/);
+  assert.match(html, /<select id="wfor-rec-9-rw-1"[^>]*><option value="i2">PA-2<\/option><option value="rw-1" selected>Retainage released/);
+  assert.match(html, /data-action="waiver-for" data-id="j1" data-record="rec-9" data-row="i2" data-kind="unconditional_progress"/);
+  assert.match(html, /data-action="waiver-for" data-id="j1" data-record="rec-9" data-row="rw-1" data-kind="unconditional_progress"/);
+  // The reason box and its button sit in a form row, like every other form.
+  assert.match(html, /<div data-form-key="wnn-i2">[^]*?<div class="form-row">[^]*?data-action="waiver-not-needed" data-id="j1" data-inv="i2"/);
   assert.match(html, /Not needed<\/span> Handed to Dee on site/);
   assert.match(html, /Not needed: Handed to Dee on site/, "the By pay app table says why");
   assert.doesNotMatch(html, /style=|onclick=/);
   assert.match(reg.views.waivers(), /<span class="pill">Not needed<\/span>/);
+  assert.match(reg.views.waivers(), /<td>PA-1<\/td>\s*<td>—<\/td>/, "a Not needed row has no type to choose");
+});
+
+test("This waiver is for it reads its own row's picker, not the first one on the page", async () => {
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  dom.byId["wfor-rec-9-i2"] = { value: "i2" };
+  dom.byId["wfor-rec-9-rw-1"] = { value: "rw-1" };
+  dom.requests.length = 0;
+  await reg.actions["waiver-for"]({ dataset: { record: "rec-9", row: "rw-1", kind: "unconditional_progress" } }, "j1");
+  const sent = dom.requests.find(r => r.path === "/api/jobs/j1/waiver-type/rec-9");
+  assert.deepEqual(sent.body, { kind: "unconditional_progress", for_id: "rw-1" });
+});
+
+test("an older job-level waiver still owed is its own row, and a choice in Which pay app?", () => {
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  const which = { kind: "unconditional_progress", status: "Which pay app?", record_label: "Waiver signed", record_id: "rec-7" };
+  const j = job({ waiver_state: "GA", retainage_waivers: [], legacy_waiver: { on_file: false, which: true, record_label: "Waiver signed", record_id: "rec-7" },
+    invoices: [{ id: "i2", number: "PA-2", status: "paid", amount_cents: 450000, waiver_due: true, waiver_sent: false, waiver_stages: { conditional: {}, unconditional: which } }] });
+  core.setState({ company: { name: "Pine" }, jobs: [j], payers: [], files: [] });
+  assert.deepEqual(waiverRows(j).map(r => [r.label, r.due, r.which]), [["PA-2", true, true], ["Earlier payment", true, true]]);
+  page.setLocation("waiver-detail", "j1");
+  const html = reg.views["waiver-detail"]();
+  assert.match(html, /<select id="wfor-rec-7-job"[^>]*><option value="i2">PA-2<\/option><option value="job" selected>Earlier payment<\/option>/);
+  assert.match(html, /data-action="waiver-for" data-id="j1" data-record="rec-7" data-row="job"/);
 });
 
 test("Before you send lists each file with Leave out or Put back, and warns of an unconditional waiver", () => {

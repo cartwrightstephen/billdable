@@ -52,6 +52,22 @@ test("after a save, the Daily record's job stays on the job just used", async ()
   core.setPage({ render() {} });
 });
 
+test("the quantities-not-added toast reads as plain words, not HTML entities", async () => {
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  const state = { ...company([job("jC", "CEDAR", [])]),
+    daily_records: [{ id: "d1", job_id: "jC", quantities_not_applied: "2. Tile & grout: 125% done is more than 100%." }] };
+  core.setState(state);
+  dom.bySelector["#daily-notes"] = { value: "Tiled the shower" };
+  dom.bySelector["#daily-job"] = { value: "jC" };
+  const toastEl = { textContent: "", style: {}, append() {} };
+  dom.byId.toast = toastEl;
+  dom.answers = [(p) => (p === "/api/jobs/jC/daily-record" ? { status: 200, body: state } : undefined)];
+  await reg.actions["daily-save"]();
+  assert.match(toastEl.textContent, /schedule of values: 2\. Tile & grout: 125% done/);
+  assert.doesNotMatch(toastEl.textContent, /&amp;/);
+  delete dom.byId.toast;
+});
+
 test("the Calendar's Tasks block lists To Do items and the calendar's dates in the period, overdue ones too", () => {  // T6
   page.setMe({ id: "u1", name: "Pat", company_id: "co-p", role: "owner" });
   const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };

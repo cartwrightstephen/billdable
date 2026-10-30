@@ -46,7 +46,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(new URL(page.url()).pathname, "/dashboard");
     // Opened from a link, Back goes to the page's own list.
     await page.goto(BASE + "/jobs/job-oak");
-    assert.equal(await page.locator(".back").innerText(), "← Jobs");
+    assert.equal(await page.locator(".back").innerText(), "← Open jobs");
   });
 
   await step("from a link, Back climbs to each page's parent and never loops (D1)", async () => {
@@ -55,7 +55,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.locator(".back").click();
     await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/jobs/job-oak");
-    assert.equal(await page.locator(".back").innerText(), "← Jobs");
+    assert.equal(await page.locator(".back").innerText(), "← Open jobs");
     await page.locator(".back").click();
     await page.getByRole("heading", { name: "Open jobs" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/jobs");

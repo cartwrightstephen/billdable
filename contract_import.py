@@ -257,11 +257,13 @@ def _decode(b: bytes) -> str:
 
 def _content_text(src: bytes, deadline: float | None = None, limit: int = MAX_TEXT) -> str:
     out: list[str] = []
+    size = 0  # characters in out so far: reading stops at `limit`
     operands: list[Any] = []
     array: list[Any] | None = None
     for kind, value in _tokens(src, deadline):
-        if len(out) >= limit:
+        if size >= limit:
             break
+        before = len(out)
         if kind == "[":
             array = []
         elif kind == "]":
@@ -277,18 +279,26 @@ def _content_text(src: bytes, deadline: float | None = None, limit: int = MAX_TE
                 out.append("\n" + _decode(operands[-1][1]))
             elif op == b"TJ" and operands and operands[-1][0] == "a":
                 for k, v in operands[-1][1]:
+                    if size >= limit:
+                        break
                     if k == "s":
                         out.append(_decode(v))
+                        size += len(out[-1])
                     elif k == "n" and v < -180:
                         out.append(" ")  # a wide gap between letters is a space
+                        size += 1
             elif op in (b"Td", b"TD"):
                 ty = operands[-1][1] if operands and operands[-1][0] == "n" else 0
                 out.append("\n" if ty else " ")
             elif op in (b"T*", b"Tm", b"ET"):
                 out.append("\n")
             operands = []
-    text = "".join(out)
-    return re.sub(r"[ \t]+\n", "\n", re.sub(r"\n{3,}", "\n\n", text))
+            if op != b"TJ":
+                size += sum(len(piece) for piece in out[before:])
+    # Blank lines are at most one, then spaces and tabs before a line end go: each one pass over
+    # the text (the regex [ \t]+\n was quadratic on a long run of spaces, review C1).
+    lines = re.sub(r"\n{3,}", "\n\n", "".join(out)[:limit]).split("\n")
+    return "\n".join([line.rstrip(" \t") for line in lines[:-1]] + lines[-1:])
 
 
 # ---------- what the contract says ----------
@@ -350,11 +360,41 @@ def _parties(text: str) -> list[tuple[str, str]]:
     """(name, role word) for each party the contract names: "Contractor: ABC Builders",
     "ABC Builders (the "Contractor")", "between ABC Builders ... and Hartline Tile"."""
     found: list[tuple[str, str]] = []
-    for m in re.finditer(r"(?im)^\s*(?:the\s+)?(general contractor|contractor|subcontractor|owner|developer|client|customer)\s*(?:name)?\s*[:\-]\s*(?:the\s+)?([^\n\t]{2,120})$", text):
+    for m in re.finditer(r"(?im)^[ \t]*(?:the\s+)?(general contractor|contractor|subcontractor|owner|developer|client|customer)\s*(?:name\s*)?[:\-]\s{0,10}(?:the\s+)?([^\n\t]{2,120})$", text):
         found.append((_clean_name(m.group(2)), m.group(1).lower()))
-    for m in re.finditer(r"([A-Z][A-Za-z0-9&.,' -]{2,80}?)\s*,?\s*\(\s*(?:hereinafter\s+(?:called\s+|referred to as\s+)?)?(?:the\s+)?[\"“']?(General Contractor|Contractor|Subcontractor|Owner|Developer)[\"”']?\s*\)", text):
-        found.append((_clean_name(m.group(1)), m.group(2).lower()))
+    after = 0  # a name never reaches back past an earlier bracket
+    for m in _ROLE_IN_BRACKETS.finditer(text):
+        name = _name_before(text, m.start(), after)
+        after = m.end()
+        if name:
+            found.append((_clean_name(name), m.group(1).lower()))
     return [(n, r) for n, r in found if n and re.search(r"[A-Za-z]", n)]
+
+
+_ROLE_IN_BRACKETS = re.compile(r"\(\s*(?:hereinafter\s+(?:called\s+|referred to as\s+)?)?(?:the\s+)?[\"“']?(General Contractor|Contractor|Subcontractor|Owner|Developer)[\"”']?\s*\)")
+_NAME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789&.,' -")
+
+
+def _name_before(text: str, at: int, start: int) -> str:
+    """The name just before "(the Owner)" at `at`: what the pattern
+    ([A-Z][A-Za-z0-9&.,' -]{2,80}?)\\s*,?\\s*\\( would take, found by walking back a bounded
+    distance (that pattern, searched over the whole text, was quadratic on a long run of spaces)."""
+    end = at  # the name ends where only spaces and one comma are left before the bracket
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    if end > start and text[end - 1] == ",":
+        end -= 1
+        while end > start and text[end - 1].isspace():
+            end -= 1
+    first = max(start, end - 81)
+    run = end  # the name's letters run back from its end, no further than 81 characters
+    while run > first and text[run - 1] in _NAME_CHARS:
+        run -= 1
+    for s in range(run, end):
+        stop = max(s + 3, end)  # at least three characters, taking spaces or a comma from the gap
+        if "A" <= text[s] <= "Z" and stop <= at and all(c in _NAME_CHARS for c in text[end:stop]):
+            return text[s:stop]
+    return ""
 
 
 def _client(text: str, company_name: str) -> tuple[str, str]:
@@ -374,15 +414,15 @@ def _client(text: str, company_name: str) -> tuple[str, str]:
 
 
 def _address(text: str) -> dict[str, str] | None:
-    m = _first(r"(?im)^\s*(?:project|job|site|property|work)?\s*(?:address|location)\s*[:\-]\s*(.+)$", text)
+    m = _first(r"(?im)^[ \t]*(?:(?:project|job|site|property|work)\s*)?(?:address|location)\s*[:\-]\s*(.+)$", text)
     if m:
-        line = m.group(1).strip()
+        line = m.group(1).strip()[:200]
         tail = text[m.end():m.end() + 120].strip().split("\n")[0].strip()
         for candidate in (line, f"{line}, {tail}" if tail else ""):
             parts = split_address(candidate) if candidate else None
             if parts and parts.get("zip"):
                 return parts
-    m = _first(r"\b\d{1,6}\s+[A-Za-z0-9 .'#-]{2,60},\s*[A-Za-z .'-]{2,40},?\s+[A-Z]{2}\.?\s+\d{5}(?:-\d{4})?\b", text, 0)
+    m = _first(r"\b\d{1,6}\s{1,3}[A-Za-z0-9 .'#-]{2,60},\s{0,3}[A-Za-z .'-]{2,40},?\s{1,3}[A-Z]{2}\.?\s{1,3}\d{5}(?:-\d{4})?\b", text, 0)
     return split_address(m.group(0)) if m else None
 
 
@@ -396,7 +436,7 @@ def _sov(text: str) -> dict[str, Any] | None:
         if block and not line.strip():
             break
         if line.strip():
-            block.append(line)
+            block.append(line[:500])  # a schedule's row is never this long; the row reader stays quick
     if not block:
         return None
     parsed = sov.parse_rows("\n".join(block))
@@ -420,13 +460,13 @@ def suggest(text: str, company_name: str = "") -> dict[str, Any]:
     if m and float(m.group(1)).is_integer() and 0 <= float(m.group(1)) <= 20:
         fields["retainage_pct"] = int(float(m.group(1)))
 
-    m = _first(r"\b(?:sub)?(?:contract|agreement|purchase\s+order|P\.?O\.?)\s*(?:no\.?|number|#)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9./_-]{1,39})", flat)
+    m = _first(r"\b(?:sub)?(?:contract|agreement|purchase\s+order|P\.?O\.?)\s*(?:no\.?|number|#)\s*(?:[:#]\s*)?([A-Za-z0-9][A-Za-z0-9./_-]{1,39})", flat)
     if m and re.search(r"\d", m.group(1)) and not check_field("contract_number", m.group(1).rstrip(".")):
         fields["contract_number"] = m.group(1).rstrip(".")
 
-    m = _first(r"(?im)^\s*(?:project|job)(?:\s+name)?\s*[:\-]\s*(.+)$", text)
+    m = _first(r"(?im)^[ \t]*(?:project|job)(?:\s+name)?\s*[:\-]\s*(.+)$", text)
     if m:
-        name = re.split(r"\s{2,}|\t", m.group(1).strip())[0].strip(" .,;")
+        name = re.split(r"\s{2,}|\t", m.group(1).strip()[:400])[0].strip(" .,;")
         if name and not split_address(name) and not check_field("name", name):
             fields["name"] = name[:120]
 
@@ -456,10 +496,10 @@ def suggest(text: str, company_name: str = "") -> dict[str, Any]:
     if m and 1 <= int(m.group(1)) <= 365:
         fields["payment_terms_days"] = int(m.group(1))
 
-    m = _first(r"(?:invoices?|pay(?:ment)?\s+app(?:lication)?s?|billing|accounts\s+payable|a/?p)[^@\n]{0,80}?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", flat)
+    m = _first(r"(?:invoices?|pay(?:ment)?\s+app(?:lication)?s?|billing|accounts\s+payable|a/?p)[^@\n]{0,80}?(?<![A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})", flat)
     if m:
         fields["ap_email"] = m.group(1)
-    m = _first(r"(?:phone|tel(?:ephone)?)\s*[:.]?\s*(\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4})", flat)
+    m = _first(r"(?:phone|tel(?:ephone)?)\s*(?:[:.]\s*)?(\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4})", flat)
     if m and normalize_phone(m.group(1)):
         fields["phone"] = normalize_phone(m.group(1))
 

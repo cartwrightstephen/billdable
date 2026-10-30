@@ -38,10 +38,10 @@ export function inPeriod(item, range, today) {
   return (!range.from || item.due >= range.from) && (!range.to || item.due <= range.to);
 }
 
-// One list from the server's rows and the open hand-added tasks, most urgent first. A row the
-// server sends with no due date is due today, the person's own today (the server's day is UTC). the server's
+// One list from the server's rows and the open hand-added tasks, most urgent first: the server's
 // order for its rows (rank), a task due today or before just after the paperwork rows (rank
-// 3.5), other tasks last; then soonest due. who: "mine" keeps only what is assigned to meId.
+// 3.5), other tasks last; then soonest due. A row the server sends with no due date is due today,
+// the person's own today (the server's day is UTC). who: "mine" keeps only what is assigned to meId.
 export function todoItems(state, { who = "everyone", meId = "" } = {}, today = localDay(new Date())) {
   const jobs = Object.fromEntries((state.jobs || []).map(j => [j.id, j]));
   const rows = (state.today_rows || []).map((r, n) => ({
