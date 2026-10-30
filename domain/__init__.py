@@ -2413,17 +2413,19 @@ def close_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[
 
 
 def reopen_job(state: dict[str, Any], job_id: str, reason: str, actor: str = "owner") -> dict[str, Any]:
-    """Bring a finished job back, for a late payment or a fix (R4-02). The reason goes in History."""
+    """Bring a finished job back, for a late payment, a fix or more work (R4-02; Add more work in
+    Stephen's Oct 29 review, J9): the same job opens again, so its record stays in one place. The
+    reason goes in its activity log."""
     job = _job(state, job_id)
     if not job.get("closed"):
         raise GateError(f"{job['name']} is not finished.")
     reason = _reason(reason)
     if not reason:
-        _refuse("", {"reason": "Enter why you are reopening it, like a late payment came in."})
+        _refuse("", {"reason": "Enter the new work, like the owner added a backsplash."})
     job["closed"] = False
     job.pop("closed_at", None)
     job["reopened_at"] = utcnow()
-    audit(state, job_id, "reopen_job", f"{actor} reopened {job['name']}: {reason}.", actor)
+    audit(state, job_id, "reopen_job", f"{actor} opened {job['name']} again to add more work: {reason}.", actor)
     return job
 
 
