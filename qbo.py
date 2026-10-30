@@ -392,7 +392,7 @@ def invoice_rows(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, 
     if invoice.get("status") == "void":
         raise domain.GateError(f"{invoice['number']} was deleted or pulled back, so there is nothing to put in QuickBooks.")
     if invoice.get("status") not in EXPORTABLE:
-        raise domain.GateError(f"{invoice['number']} hasn't gone to the customer, so it isn't ready for QuickBooks. Send it first.")
+        raise domain.GateError(f"{invoice['number']} hasn't gone to the client, so it isn't ready for QuickBooks. Send it first.")
     payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
     issued = _qb_date(invoice.get("sent_at") or invoice.get("created_at"))
     head = {"InvoiceNo": _cell(invoice["number"]), "Customer": _cell(payer.get("name", "")),

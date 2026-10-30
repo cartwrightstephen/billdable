@@ -10,8 +10,9 @@ const page = await import("../../static/js/state.js");
 const core = await import("../../static/js/app-core.js");
 const inbox = await import("../../static/js/views/inbox.js");
 const today = await import("../../static/js/views/today.js");
-const money = await import("../../static/js/views/money.js");
+const money = await import("../../static/js/views/payments.js");
 const auth = await import("../../static/js/views/auth.js");
+const reg = await import("../../static/js/views/index.js");
 
 const company = (name, jobs = []) => ({ company: { name }, jobs, payers: [], inbox: [], email_log: [], email_log_total: 0 });
 const closedJobA = { id: "job-a-old", name: "A's old job", code: "AOLD", payer_id: "", closed: true, invoices: [], payments: [] };
@@ -32,7 +33,7 @@ async function useCompanyA() {
   await inbox.loadImportSettings();
   await today.loadMetrics();
   await money.loadQboStatus();
-  await money.actions["inbox-read-payments"]({ dataset: { file: "f1" } });
+  await reg.actions["inbox-read-payments"]({ dataset: { file: "f1" } });
   core.listPage("outbox");
   await new Promise((r) => setTimeout(r, 0));
   assert.ok(core.jobDetails["job-a-old"], "A's closed job was fetched");

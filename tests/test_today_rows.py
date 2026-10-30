@@ -85,7 +85,7 @@ class TodayRowsTests(unittest.TestCase):
         self.job["waiver_due"] = True
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("waiver", 2, "Waiver due", "amber", "Review waiver"))
-        self.assertEqual(r["text"], "Paid in full: the customer is waiting for the lien waiver.")
+        self.assertEqual(r["text"], "Paid in full: the client is waiting for the lien waiver.")
 
     def test_finished_work_not_billed(self):
         self.draft()["status"] = "void"
@@ -137,7 +137,7 @@ class TodayRowsTests(unittest.TestCase):
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("email_failed", 0.5, "Didn't go out", "red", "Send again"))
         self.assertEqual(r["text"], f"Pay application {inv['number']} to dana@example.com: failed: recipient refused")
-        self.assertEqual((r["email_id"], r["invoice_id"], r["path"]), ("eml-1", inv["id"], "/today"))
+        self.assertEqual((r["email_id"], r["invoice_id"], r["path"]), ("eml-1", inv["id"], "/dashboard"))
 
     def test_inbox_says_the_job_is_done(self):
         self.sent(days_ago=1)
@@ -154,7 +154,7 @@ class TodayRowsTests(unittest.TestCase):
                                {"id": "in-3", "status": "filed", "subject": "Old", "suggested_job_id": self.job["id"]}]
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("inbox", 6, "Inbox", "", "Add to this job"))
-        self.assertEqual((r["text"], r["note"], r["item_id"], r["path"]), ("Signed CO 3", "names the job", "in-2", "/inbox"))
+        self.assertEqual((r["text"], r["note"], r["item_id"], r["path"]), ("Signed CO 3", "names the job", "in-2", "/communications"))
         # The kind it will be filed as goes with the row, to show and change there (Oct 23 note #46).
         self.assertEqual(r["item_kind"], "note")
         self.state["inbox"][0]["kind"] = "change_order"

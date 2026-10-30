@@ -1,5 +1,6 @@
 """Reading dates, kinds, amounts and jobs from imported notes, file names and pastes (R5-01, R5-02, R5-05, R5-06, R5-07)."""
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -214,10 +215,30 @@ class InboxCardTests(unittest.TestCase):  # R5-05, R5-06, R5-07
         self.assertIsNone(m["job_id"])
         self.assertEqual((sorted(m["candidates"]), m["tied"]), (["j1", "j2"], 2))
 
-    def test_a_supplier_invoice_is_a_ticket_unless_it_names_a_pay_app(self):
-        self.assertEqual(importer.guess_kind("ABC Supply invoice 4471.pdf", "", [".pdf"]), "ticket")
+    def test_a_supplier_invoice_is_its_own_kind_unless_it_names_a_pay_app(self):
+        self.assertEqual(importer.guess_kind("ABC Supply invoice 4471.pdf", "", [".pdf"]), "supplier_invoice")
+        self.assertEqual(importer.guess_kind("Home Depot receipt.jpg", "", [".jpg"]), "supplier_invoice")
         self.assertEqual(importer.guess_kind("Invoice", "Backup for PA-VEST-02 attached"), "pay_app")
         self.assertEqual(importer.guess_kind("Pay application 3", ""), "pay_app")
+
+    def test_closeout_and_paperwork_kinds_are_read_from_the_name(self):
+        for name, kind in [("Certificate of insurance 2026.pdf", "insurance"), ("ACME COI.pdf", "insurance"),
+                           ("Punch list signed.pdf", "punch"), ("Certificate of substantial completion.pdf", "completion"),
+                           ("As-builts rev 2.pdf", "asbuilt"), ("Roof warranty.pdf", "warranty"),
+                           ("Stored materials, October.pdf", "stored"), ("Rough-in inspection report.pdf", "inspection"),
+                           ("Delivery ticket 88.pdf", "ticket")]:
+            self.assertEqual(importer.guess_kind(name, "", [".pdf"]), kind, name)
+
+    def test_the_record_kinds_are_one_list(self):
+        import domain
+        self.assertEqual(set(importer.KINDS), set(domain.RECORD_KINDS))
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "jobs.js").read_text(encoding="utf-8")
+        block = js.split("export const RECORD_KINDS = {", 1)[1].split("};", 1)[0]
+        self.assertEqual(set(re.findall(r"(\w+): \"", block)), set(domain.RECORD_KINDS))
+        for key, words in importer.KINDS.items():
+            self.assertIn(f'{key}: "{words}"', block)
+        # Never a bare "invoice": that is a pay app's word.
+        self.assertNotIn("invoice", domain.RECORD_KINDS)
 
     def test_a_forwarded_email_is_read_from_its_headers(self):
         text = ("FYI, see below.\n\n---------- Forwarded message ---------\nFrom: Kim Park <ap@park.example>\n"
@@ -271,7 +292,7 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
     def test_a_sent_pay_app_says_pull_it_back_and_links_to_it(self):
         for status in ("sent", "approved"):
             exc = self.refusal(self.state(status))
-            self.assertIn("went to the customer with PA-OAK-3", str(exc))
+            self.assertIn("went to the client with PA-OAK-3", str(exc))
             self.assertIn("pull it back", str(exc))
             self.assertNotIn("Remove", str(exc))
             self.assertEqual(exc.action, {"label": "Open PA-OAK-3", "view": "payapp-detail", "job_id": "j1", "detail": "inv1"})
@@ -281,7 +302,7 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
             with self.assertRaises(importer.domain.GateError) as caught:
                 importer.undo_item(self.state(status), "inb1", "member", can_pull_back=False)
             exc = caught.exception
-            self.assertEqual(str(exc), "This record went to the customer with PA-OAK-3, so it stays on the job. "
+            self.assertEqual(str(exc), "This record went to the client with PA-OAK-3, so it stays on the job. "
                                        "Ask an owner to pull PA-OAK-3 back if it needs to change.")
             self.assertEqual(exc.action, {"label": "Open PA-OAK-3", "view": "payapp-detail", "job_id": "j1", "detail": "inv1"})
         # The draft's paperwork has Remove for everyone: same words either way.
@@ -325,7 +346,7 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
                 state["jobs"][0]["invoices"][0]["sent_at"] = "2026-10-20T10:00:00Z"
                 with self.assertRaises(importer.domain.GateError) as caught:
                     importer.undo_item(state, "inb1", "member", can_pull_back=can_pull_back)
-                self.assertIn("went to the customer with PA-OAK-3", str(caught.exception))
+                self.assertIn("went to the client with PA-OAK-3", str(caught.exception))
                 job = state["jobs"][0]
                 self.assertEqual(job["records"][0]["id"], "rec1")
                 item = job["invoices"][0]["packet"][0]

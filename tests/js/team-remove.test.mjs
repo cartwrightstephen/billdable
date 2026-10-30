@@ -10,6 +10,7 @@ const core = await import("../../static/js/app-core.js");
 const page = await import("../../static/js/state.js");
 const inbox = await import("../../static/js/views/inbox.js");
 const settings = await import("../../static/js/views/settings.js");
+const reg = await import("../../static/js/views/index.js");
 
 const company = () => ({ company: { name: "Pine" }, jobs: [], payers: [], inbox: [], email_log: [], email_log_total: 0 });
 
@@ -41,7 +42,7 @@ test("after a member is removed, the Inbox asks for the new addresses", async ()
   await inbox.loadImportSettings();
   assert.match(cal.innerHTML, /OLD/);
   const restore = confirmEverything();
-  try { await settings.actions["team-remove"]({ dataset: { user: "u2", name: "Sam" } }); }
+  try { await reg.actions["team-remove"]({ dataset: { user: "u2", name: "Sam" } }); }
   finally { restore(); }
   await inbox.loadImportSettings();
   assert.match(cal.innerHTML, /NEW/);

@@ -25,8 +25,8 @@ export function term(key) { return TERM[style][key]; }
 export function termText(text, s = style) {
   if (s !== "draws" || !text) return text;
   return String(text)
-    .replace(/\bPay apps\b/g, "Draws").replace(/\bpay apps\b/g, "draws")
-    .replace(/\bPay app\b/g, "Draw").replace(/\bpay app\b/g, "draw")
+    .replace(/\bPay [Aa]pps\b/g, "Draws").replace(/\bpay apps\b/g, "draws")
+    .replace(/\bPay [Aa]pp\b/g, "Draw").replace(/\bpay app\b/g, "draw")
     .replace(/\bPAY APPS\b/g, "DRAWS").replace(/\bPAY APP\b/g, "DRAW");
 }
 
@@ -36,7 +36,7 @@ export const ACTION_WORDS = {
   approve_send: "Pay app sent", draft_invoice: "Pay app drafted", record_progress: "Progress recorded",
   draft_replaced: "Draft replaced", draft_skipped: "Draft replaced", void_draft: "Draft deleted", void_sent: "Pay app pulled back",
   match_payment: "Payment recorded", short_pay: "Short pay accepted", retainage_paid: "Held-back money received",
-  chase_retainage: "Asked for held-back money", follow_up: "Follow-up sent", contact_noted: "Spoke to the customer",
+  chase_retainage: "Asked for held-back money", follow_up: "Follow-up sent", contact_noted: "Spoke to the client",
   send_waiver: "Waiver sent", job_done: "Job marked done", undo_done: "Back to in progress", close_job: "Job finished",
   reopen_job: "Job reopened", create_job: "Job added", edit_job: "Job changed", delete_job: "Job deleted",
   contract_changed: "Contract changed", add_co: "Change order added", approve_co: "Change order signed",
@@ -44,10 +44,10 @@ export const ACTION_WORDS = {
   request_co_signature: "Signature requested", add_record: "Added to the job record", edit_record: "Job record changed",
   add_evidence: "Added to the job record", attach_record: "Paperwork added", packet_attachment: "Paperwork added",
   packet_resolved: "Paperwork in", paperwork_detached: "Paperwork taken off", paperwork_not_needed: "Paperwork not needed",
-  daily_record: "Daily record saved", pencil_sent: "Draft sent for their review", pencil_response: "Customer answered the draft",
-  payer_received: "Customer opened it", payer_approved: "Customer approved", payer_question: "Customer asked a question",
-  reply_captured: "Customer replied", learn_rejection: "Customer's reason saved", playbook_learned: "Customer settings learned",
-  playbook_update: "Customer settings changed", payer_add: "Customer added", payer_merge: "Customers merged", payer_delete: "Customer deleted", payer_kept: "Customer kept",
+  daily_record: "Daily record saved", pencil_sent: "Draft sent for their review", pencil_response: "Client answered the draft",
+  payer_received: "Client opened it", payer_approved: "Client approved", payer_question: "Client asked a question",
+  reply_captured: "Client replied", learn_rejection: "Client's reason saved", playbook_learned: "Client playbook learned",
+  playbook_update: "Client playbook changed", payer_add: "Client added", payer_merge: "Clients merged", payer_delete: "Client deleted", payer_kept: "Client kept",
   import_filed: "Added to the job", import_undone: "Taken off the job", sov_saved: "Schedule of values saved", sov_removed: "Schedule of values removed",
   billing: "Billing changed", company_update: "Company changed", team: "Team changed", team_join: "Joined the team",
   qbo_connected: "QuickBooks connected", qbo_disconnected: "QuickBooks disconnected", read_only: "Read-only changed",
@@ -59,5 +59,3 @@ export function actionWords(code) {
   return known ? termText(known) : words(code);
 }
 
-// Each billing style's line under the Settings choice (R6-01).
-export const STYLE_NOTE = "Changes the word used across the app and sets the free trial: 90 days, or 45 for draws.";

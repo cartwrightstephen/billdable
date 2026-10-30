@@ -9,7 +9,7 @@ import { nav, moreOpen, emptyState, listPage, EMAIL_PATTERN, post, moreDetails, 
 
 // The job's own fields, the same on New job and Edit job (R2-01). prefix is the form's id
 // prefix (nj, ej); j holds the saved values (escaped, as in state), if any.
-// Who pays you: the two kinds of customer, as the forms show them.
+// Who pays you: the two kinds of client, as the forms show them.
 export const ROLE_OPTIONS = [["Owner", "The homeowner or property owner"], ["GC", "A general contractor (you are the sub)"]];
 export function roleLabel(role) { return unesc(role || "") === "GC" ? "General contractor" : "Homeowner or owner"; }
 
@@ -24,8 +24,8 @@ export function jobFields(form, prefix, j = {}) {
   };
 }
 
-// New job (R1-05): a customer already saved keeps who signs off and where pay apps go (changed
-// in Customer settings, never by a new job), so the form shows them instead of asking again.
+// New job (R1-05): a client already saved keeps who signs off and where pay apps go (changed
+// in the Client playbook, never by a new job), so the form shows them instead of asking again.
 // Matched like the server does: the same name, ignoring case.
 function knownPayer(name) {
   const key = String(name || "").trim().toLowerCase();
@@ -36,10 +36,10 @@ function knownPayerText(p) {
   return p ? `Pay apps go to ${p.approver || p.name} · ${p.ap_email || "no email yet"}` : "";
 }
 
-// "Same as ABC Builders?" (Oct 23 note 5): a new customer name that nearly matches a saved one
-// ("ABC Builders Inc", "abc builders, LLC") is refused by the server with the saved customer in
+// "Same as ABC Builders?" (Oct 23 note 5): a new client name that nearly matches a saved one
+// ("ABC Builders Inc", "abc builders, LLC") is refused by the server with the saved client in
 // same_customer, and the form asks. Nothing is merged without the person saying so: one button
-// uses the saved customer, the other keeps the typed name as a new customer.
+// uses the saved client, the other keeps the typed name as a new client.
 // keptNames[form] is the name the person chose to keep, sent again as new_customer: true.
 export const keptNames = {};
 
@@ -55,7 +55,7 @@ export function showSameCustomer(formKey, prefix, data) {
   const same = data && data.same_customer;
   if (!box || !same || !same.name) return false;
   box.innerHTML = `<button type="button" class="btn small" data-action="${prefix}-same-use" data-name="${esc(same.name)}" data-id="${esc(same.id || "")}">Use ${esc(same.name)}</button>`
-    + `<button type="button" class="btn small secondary" data-action="${prefix}-same-keep" data-name="${esc(same.typed || "")}">Keep “${esc(same.typed || "")}” as a new customer</button>`;
+    + `<button type="button" class="btn small secondary" data-action="${prefix}-same-keep" data-name="${esc(same.typed || "")}">Keep “${esc(same.typed || "")}” as a new client</button>`;
   box.hidden = false;
   return true;
 }
@@ -65,24 +65,24 @@ export function hideSameCustomer(formKey) {
   if (box) { box.hidden = true; box.innerHTML = ""; }
 }
 
-// How many jobs use a customer, finished ones included. The server's job_count counts them all;
+// How many jobs use a client, finished ones included. The server's job_count counts them all;
 // state.jobs holds only the open and recent ones, so it is the fallback for an older page.
-// The card's "N jobs", the Merge question and Delete customer all count this one way.
+// The card's "N jobs", the Merge question and Delete client all count this one way.
 export function payerJobCount(p, jobs = []) {
   return Number.isInteger(p.job_count) ? p.job_count : jobs.filter(j => j.payer_id === p.id).length;
 }
 
-// Delete customer, on Customer settings (Oct 23 note 47): owners only, and only for a customer
+// Delete client, on Client playbook (Oct 23 note 47): owners only, and only for a client
 // no job uses, finished jobs included. The server refuses the rest with the reason. canMerge:
-// another customer exists, so the Merge box is there to point at. p is escaped, as in state.
+// another client exists, so the Merge box is there to point at. p is escaped, as in state.
 export function deletePayerHtml(p, { owner = false, jobs = [], canMerge = false } = {}) {
   if (!owner) return "";
   const n = payerJobCount(p, jobs);
-  if (n > 0) return `<p class="sub delete-payer">A customer with jobs can't be deleted, finished jobs included. ${canMerge ? `To remove ${p.name}, merge it into another customer.` : "Its jobs need it."}</p>`;
-  return `<div class="form-inline delete-payer"><button type="button" class="btn small danger" data-action="delete-payer" data-id="${p.id}" data-name="${p.name}">Delete customer</button><span class="sub">No job uses ${p.name}.</span></div>`;
+  if (n > 0) return `<p class="sub delete-payer">A client with jobs can't be deleted, finished jobs included. ${canMerge ? `To remove ${p.name}, merge it into another client.` : "Its jobs need it."}</p>`;
+  return `<div class="form-inline delete-payer"><button type="button" class="btn small danger" data-action="delete-payer" data-id="${p.id}" data-name="${p.name}">Delete client</button><span class="sub">No job uses ${p.name}.</span></div>`;
 }
 
-// As the Customer box is typed in: swap the two contact boxes for the saved contact, or back.
+// As the Client box is typed in: swap the two contact boxes for the saved contact, or back.
 export function syncNewJobCustomer() {
   const form = document.querySelector('[data-form-key="newjob"]');
   if (!form) return;
@@ -95,8 +95,8 @@ export function syncNewJobCustomer() {
   if (email) email.hidden = !!(p && p.ap_email);
 }
 
-// Leaving the Customer box fills "Who signs off" with the customer when it is still empty: a
-// homeowner signs off on their own bills. A saved customer sets "Who pays you?" to theirs, and
+// Leaving the Client box fills "Who signs off" with the client when it is still empty: a
+// homeowner signs off on their own bills. A saved client sets "Who pays you?" to theirs, and
 // a general contractor's retainage to what their last job held (R2-01), unless already typed.
 export function prefillApprover() {
   const form = document.querySelector('[data-form-key="newjob"]');
@@ -152,13 +152,13 @@ export const views = {
           <div class="form-grid">
             ${jf.name}
             ${jf.address}
-            ${f({ name: "customer", id: "nj-customer", label: "Customer", required: true, autocomplete: "off", attrs: 'list="nj-customers"' })}
+            ${f({ name: "customer", id: "nj-customer", label: "Client", required: true, autocomplete: "off", attrs: 'list="nj-customers"' })}
             <datalist id="nj-customers">${(state.payers || []).map(p => `<option value="${p.name}"></option>`).join("")}</datalist>
             ${sameCustomerBox("newjob")}
             ${f({ name: "role", id: "nj-role", label: "Who pays you?", helpKey: "role", help: "Sets the paperwork they usually need and when to follow up. You can change both later.", options: ROLE_OPTIONS })}
             ${jf.contract_cents}
             <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
-              <button class="linkish" data-action="nav" data-view="playbook">Change in Customer settings</button></p>
+              <button class="linkish" data-action="nav" data-view="playbook">Change in the Client playbook</button></p>
           </div>
           <details class="more-details" data-more="newjob"${moreOpen("newjob") ? " open" : ""}>
             <summary>More details (optional)</summary>
@@ -166,7 +166,7 @@ export const views = {
               ${jf.contract_number}
               ${jf.retainage_pct}
               ${f({ name: "phone", id: "nj-phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off" })}
-              <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The customer, unless you say otherwise" })}</div>
+              <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The client, unless you say otherwise" })}</div>
               <div data-payer-slot="ap_email"${known && known.ap_email ? " hidden" : ""}>${f({ name: "ap_email", id: "nj-email", label: "Email for pay apps (can add later)", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
               ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
             </div>
@@ -175,7 +175,7 @@ export const views = {
         </div>` : ""}
       ${open.length ? `<div class="table-wrap">
         <table>
-          <tr><th>Job</th><th>Code</th><th>Customer</th><th>Status</th><th>Outstanding</th><th>Unbilled</th><th>Held back</th><th>Next</th></tr>
+          <tr><th>Job</th><th>Code</th><th>Client</th><th>Status</th><th>Outstanding</th><th>Unbilled</th><th>Held back</th><th>Next</th></tr>
           ${open.map(j => `
             <tr>
               <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a><div class="sub row-sub">${j.status_label}</div></td>
@@ -198,14 +198,13 @@ export const views = {
     const totalCollected = state.totals.closed_collected_cents || 0;
     return `
       <h1>Job history</h1>
-      <p class="sub">Finished jobs, kept on record.</p>
       <div class="summary-row">
         <div class="metric"><div class="k">Finished jobs</div><div class="v">${state.closed_jobs_total || 0}</div></div>
         <div class="metric"><div class="k">Received on finished jobs</div><div class="v">${money(totalCollected)}</div></div>
       </div>
       ${closed.length ? `<div class="table-wrap">
         <table>
-          <tr><th>Job</th><th>Customer</th><th>Contract total</th><th data-help="collected">Received</th><th>Finished</th><th>Notes</th></tr>
+          <tr><th>Job</th><th>Client</th><th>Contract total</th><th data-help="collected">Received</th><th>Finished</th><th>Notes</th></tr>
           ${closed.map(j => `
             <tr>
               <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
@@ -216,7 +215,7 @@ export const views = {
               <td>${j.done_notes || j.status_label}</td>
             </tr>`).join("")}
         </table>
-      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No finished jobs yet", "Once a job is paid in full, use Finish job.")}
+      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No finished jobs yet")}
     `;
   },
 };
@@ -228,9 +227,9 @@ export const actions = {
     const errors = {};
     if (!v.name) errors.name = "Enter the job name.";
     if (!v.address) errors.address = "Enter the job address.";
-    if (!v.customer) errors.customer = "Enter the customer: who pays for this job.";
-    // A saved customer keeps its contact (shown instead of the two boxes); a new one may leave
-    // both blank: who signs off defaults to the customer, the email is asked for before sending.
+    if (!v.customer) errors.customer = "Enter the client: who pays for this job.";
+    // A saved client keeps its contact (shown instead of the two boxes); a new one may leave
+    // both blank: who signs off defaults to the client, the email is asked for before sending.
     const known = knownPayer(v.customer);
     const approver = known ? "" : v.approver;
     const apEmail = known && known.ap_email ? "" : v.ap_email;
@@ -255,7 +254,7 @@ export const actions = {
     const made = state.jobs[state.jobs.length - 1];
     if (made) nav("job", made.id);
   },
-  // "Same as ABC Builders?": put the saved name in the Customer box and save the job with it.
+  // "Same as ABC Builders?": put the saved name in the Client box and save the job with it.
   "nj-same-use": (el) => {
     const box = document.querySelector('[data-form-key="newjob"] [data-field="customer"]');
     if (!box) return;
@@ -265,7 +264,7 @@ export const actions = {
     prefillApprover();
     return actions["create-job"]();
   },
-  // ...or keep the name as typed: a new customer, on purpose.
+  // ...or keep the name as typed: a new client, on purpose.
   "nj-same-keep": (el) => {
     keptNames.newjob = el.dataset.name || "";
     hideSameCustomer("newjob");

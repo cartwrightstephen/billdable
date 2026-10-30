@@ -47,7 +47,7 @@ test("missing paperwork alone is amber and says what to attach; an unsigned CO s
 test("each stage of the money path has one status and one next step", () => {
   assert.deepEqual(jobStatus(job({ invoices: [inv("draft")] })), ["Ready to send", "copper"]);
   assert.deepEqual(jobStatus(job({ invoices: [inv("sent")] })), ["Sent", "amber"]);
-  assert.match(nextStep(job({ invoices: [inv("sent")] })), /^Waiting on the customer/);
+  assert.match(nextStep(job({ invoices: [inv("sent")] })), /^Waiting on the client/);
   assert.deepEqual(jobStatus(job({ invoices: [inv("partial")] })), ["Partly paid", "amber"]);
   assert.deepEqual(jobStatus(job({ waiver_due: true })), ["Waiver due", "amber"]);
   const done = { work_status: "complete" };

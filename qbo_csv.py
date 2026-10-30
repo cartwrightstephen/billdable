@@ -334,7 +334,7 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
 
     out = []
     for n, row in enumerate(rows):
-        result = {**row, "status": "no match", "reason": "No open pay app has this number, or this customer and amount.",
+        result = {**row, "status": "no match", "reason": "No open pay app has this number, or this client and amount.",
                   "job_id": None, "invoice_id": None, "number": None, "candidates": []}
         cust = _norm(row["customer"])
         seen, maybe = seen_as[n] or (None, "")
@@ -357,9 +357,9 @@ def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
             same = [(j, i, r) for j, i, r in open_apps
                     if cust and _same(cust, _norm(payers.get(j.get("payer_id"), {}).get("name", ""))) and r == row["amount_cents"]]
             if len(same) == 1:
-                hit, reason = same[0], f"Same customer and exactly the {domain.money(row['amount_cents'])} still owed."
+                hit, reason = same[0], f"Same client and exactly the {domain.money(row['amount_cents'])} still owed."
             elif len(same) > 1:
-                result.update(status="pick one", reason=f"{len(same)} open pay apps for this customer are for this amount. Pick one.")
+                result.update(status="pick one", reason=f"{len(same)} open pay apps for this client are for this amount. Pick one.")
         if maybe:
             # Recorded a few days from this date (keyed in by hand, say): likely this payment, so
             # nothing is ticked, and the pay apps stay to pick from if it is another one.

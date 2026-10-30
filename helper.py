@@ -199,7 +199,7 @@ def _follow_up_btn(r: dict[str, Any]) -> dict[str, Any]:
 
 
 # A Today row whose button is on Today or in the Inbox opens that page.
-PAGE_LABELS = {"/today": "Open Today", "/inbox": "Open Inbox"}
+PAGE_LABELS = {"/dashboard": "Open Dashboard", "/communications": "Open Inbox"}
 
 
 def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
@@ -214,7 +214,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         # never disagree on what is due.
         rows = domain.today_rows(state) if state is not None else []
         if not rows:
-            return f"Nothing needs action right now at {company}. Nice.", [{"type": "nav", "view": "dashboard", "label": "Open Today"}]
+            return f"Nothing needs action right now at {company}. Nice.", [{"type": "nav", "view": "dashboard", "label": "Open Dashboard"}]
         lines = [f"- {r['job']}: {r['label']}. {r['text']}" for r in rows[:8]]
         actions, seen = [], set()
         for r in rows:
@@ -232,7 +232,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
                            if i["status"] in domain.BILLED_STATUSES and i.get("sent_at") and i["sent_at"][:7] == datetime.now(timezone.utc).strftime("%Y-%m"))
         return (f"Across open jobs:\n- Finished but not billed: {domain.money(t['unbilled_cents'])}\n"
                 f"- Billed and not paid: {domain.money(t['outstanding_cents'])}\n- Retainage still held: {domain.money(t['retainage_cents'])}\n"
-                f"- Billed this month: {domain.money(billed_month)}"), [{"type": "nav", "view": "dashboard", "label": "Open Today"},
+                f"- Billed this month: {domain.money(billed_month)}"), [{"type": "nav", "view": "dashboard", "label": "Open Dashboard"},
                                                                        {"type": "nav", "view": "collections", "label": "Open Unpaid"}]
     if name == "who_owes":
         owing = sorted((j for j in jobs if j["money"]["outstanding_cents"] > 0), key=lambda j: -j["money"]["outstanding_cents"])
@@ -249,7 +249,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         # The same follow-up rule as Today, including a call noted with a date to check again.
         due = [r for r in domain.today_rows(state) if r["kind"] == "follow_up"] if state is not None else []
         if not due:
-            return ("No follow-ups are due. Each customer's wait comes from Days between follow-ups in Customer settings.",
+            return ("No follow-ups are due. Each client's wait comes from Days between follow-ups in the Client playbook.",
                     [{"type": "nav", "view": "collections", "label": "Open Unpaid"}])
         lines = [f"- {r['job']}: {r['text']}" for r in due]
         actions = [_follow_up_btn(r) for r in due[:4]]

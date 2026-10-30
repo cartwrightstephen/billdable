@@ -1,27 +1,17 @@
-// Today: the overview with what needs you and the setup checklist, Results, Calendar and the
-// Daily record.
-import { esc, unesc, escDeep, money, toDate, fmtDate } from "../format.js";
-import { isBlocked, nextStep, statusPill, defaultJobId } from "../jobs.js";
+// Today: the overview with what needs you and the setup checklist, Results and Calendar. The
+// Daily record is in daily.js.
+import { unesc, escDeep, money, toDate, fmtDate } from "../format.js";
+import { isBlocked, nextStep, statusPill } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { worstKind, followUpEvent } from "../calendar.js";
 import { todayQueue, queueHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
-import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd } from "../state.js";
-import { post, toast, render, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
-import { qboStatus } from "./money.js";
+import { toast, render, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
+import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
-import { trialBannerHtml } from "./settings.js";
 
-// The Daily record starts on the job last used on this device (R2-07).
-const DAILY_JOB_KEY = "duracash-daily-job";
-function lastDailyJob() {
-  try { return localStorage.getItem(DAILY_JOB_KEY) || ""; } catch (_) { return ""; }
-}
-function rememberDailyJob(id) {
-  try { localStorage.setItem(DAILY_JOB_KEY, unesc(id)); } catch (_) { /* private window: the only open job still comes first */ }
-}
 export let metricsData = null;   // {period, data} from /api/metrics
 export let metricsPeriod = "90";
 let calYear = new Date().getFullYear();
@@ -37,7 +27,7 @@ export function setCalJobFilter(value) { calJobFilter = value; }
 // Signed out: Results' figures and the calendar's job filter are that company's.
 onSessionEnd(() => { metricsData = null; calJobFilter = "all"; calSelectedDay = null; });
 
-// Hide the setup checklist, or show it again (from Help). It is kept on the person's own
+// Hide the setup checklist, or show it again (from My account). It is kept on the person's own
 // account, so a teammate's choice doesn't change it.
 async function setChecklist(show) {
   const r = await postJson("/api/onboarding/dismiss", show ? { show: true } : {});
@@ -77,13 +67,13 @@ function onboardingHtml() {
   const steps = [
     { text: termText("Add your company address, phone and licence number (they print on every pay app)."), done: !!String(state.company.address || "").trim(),
       label: "Company details", attrs: `data-action="onb-go" data-view="company" data-focus="#co-address"`, always: true },
-    { text: termText("Create your first job: contract amount, customer and where pay apps go."), done: jobs.length > 0,
+    { text: termText("Create your first job: contract amount, client and where pay apps go."), done: jobs.length > 0,
       label: "New job", attrs: `data-action="onb-newjob"`, always: true },
     { text: "Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
     { text: "Set up a schedule of values to bill line by line (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present),
       label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.editable) || j.sov_view.present, "#sov-card"), needsJob: true },
-    { text: termText("Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the customer needs."), done: invoices.length > 0,
+    { text: termText("Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the client needs."), done: invoices.length > 0,
       label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
     { text: "Add the missing paperwork, then Approve & send.", done: invoices.some(i => i.sent_at),
       label: draft ? "Review & send" : "Open the job",
@@ -103,7 +93,7 @@ function onboardingHtml() {
   return `<div class="card onboarding">
     <button class="help-dismiss" data-action="onb-dismiss" title="Hide this" aria-label="Hide the setup checklist">×</button>
     <h2>${termText("Get your first pay app out")}</h2>
-    <p class="sub">${done} of ${required.length} steps done. Steps marked optional don't count. You can bring this back from Help.</p>
+    <p class="sub">${done} of ${required.length} steps done. Steps marked optional don't count. You can bring this back from Settings, My account.</p>
     <ol class="onb-steps">${steps.map(st => `<li class="${st.done ? "done" : st === next ? "next" : ""}">${st.done ? "✓ " : ""}${st.optional ? "Optional: " : ""}${st.text}${st === next || st.optional || st.always ? button(st) : ""}</li>`).join("")}</ol>
   </div>`;
 }
@@ -152,10 +142,9 @@ export const views = {
     const sortHead = (key, label) => `<th data-action="sort" data-sort="${key}" aria-sort="${dashSort === key ? (dashSortDir > 0 ? "ascending" : "descending") : "none"}">${label} ${dashSort === key ? (dashSortDir > 0 ? "↑" : "↓") : ""}</th>`;
     const stage = (key, label) => `<button class="stage ${dashFilter === key ? "active" : ""}" data-action="filter" data-filter="${key}" aria-pressed="${dashFilter === key}">${label}</button>`;
     return `
-      <h1>Today</h1>
-      ${trialBannerHtml()}
+      <h1>Overview</h1>
       ${onboardingHtml()}
-      ${!state.jobs.length && !state.closed_jobs_total && (me.onboarding_dismissed || isDemo) ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="onb-newjob">New job</button>`) : ""}
+      ${!state.jobs.length && !state.closed_jobs_total && (me.onboarding_dismissed || isDemo) ? emptyState("No jobs yet", "", `<button class="btn" data-action="onb-newjob">New job</button>`) : ""}
       ${isDemo && !helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
@@ -181,7 +170,7 @@ export const views = {
         <table class="sortable">
           <tr>
             ${sortHead("name", "Job")}
-            <th>Customer</th>
+            <th>Client</th>
             <th>Status</th>
             ${sortHead("contract", "Contract total")}
             ${sortHead("billed", "Billed")}
@@ -205,24 +194,23 @@ export const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("No jobs in this view", "Pick another filter above.")}` : ""}
+      </div>` : emptyState("No jobs in this view")}` : ""}
     `;
   },
   results() {
     const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
     const head = `<h1>Results</h1>
-      <p class="sub">${termText("What Duracash recorded for your company, counted from your own pay apps and payments. Nothing here is estimated.")}</p>
-      <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}
-        <button class="btn small secondary" data-action="metrics-email">Email me last month's summary</button></div>`;
+      <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}</div>`;
     if (!metricsData || metricsData.period !== metricsPeriod) return head + `<p class="sub">Loading…</p>`;
     const m = metricsData.data;
     const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
+    const num = (v) => v === null || v === undefined ? "—" : String(v);
     return head + `
       <div class="metrics">
-        <div class="metric"><div class="k">${termText("Work done to pay app sent")}</div><div class="v">${days(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
-        <div class="metric"><div class="k">${termText("Pay app sent to paid")}</div><div class="v">${days(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${days(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
+        <div class="metric"><div class="k">${termText("Days from Job Completion to Pay App Sent")}</div><div class="v">${num(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
+        <div class="metric"><div class="k">${termText("Days from Pay App Sent to Paid")}</div><div class="v">${num(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${num(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
         <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
-        <div class="metric"><div class="k">Sent back by the customer</div><div class="v">${m.sent_back}</div><div class="sub row-sub">reasons saved to customer settings and draft changes</div></div>
+        <div class="metric"><div class="k">${termText("Pay app rejections by Clients")}</div><div class="v">${m.sent_back}</div><div class="sub row-sub">of ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
       </div>
       <div class="metrics">
         <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} ${termText("pay apps")}</div></div>
@@ -230,37 +218,13 @@ export const views = {
         <div class="metric"><div class="k">Change orders billed</div><div class="v">${money(m.change_orders_billed_cents)}</div><div class="sub row-sub">signed, all time</div></div>
         <div class="metric"><div class="k">Held-back money received</div><div class="v">${money(m.retainage_collected_cents)}</div><div class="sub row-sub">all time</div></div>
       </div>
-      <div class="card"><h2>Done but not billed</h2>
-        ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">Every finished job has a pay app out.</p>`}
+      <div class="card"><h2>Jobs completed with outstanding billings</h2>
+        ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">None.</p>`}
       </div>
       ${m.by_payer.length ? `<div class="table-wrap"><table>
-        <tr><th>Customer</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
+        <tr><th>Client</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
         ${m.by_payer.map(r => `<tr><td>${r.payer}</td><td class="num">${r.average_days}</td><td class="num">${r.paid}</td></tr>`).join("")}
       </table></div>` : ""}
-    `;
-  },
-  daily() {
-    const openJobs = state.jobs.filter(j => !j.closed);
-    const pick = defaultJobId(openJobs, esc(lastDailyJob()));
-    const records = state.daily_records || [];
-    return `
-      <h1>Daily record</h1>
-      <p class="sub">What happened on site today, saved on the job record. ${termText("Add it to a pay app's paperwork later.")}</p>
-      <div class="card" data-form-key="daily">
-        <h2>New record</h2>
-        ${openJobs.length ? `<div class="form-grid">
-          <div><label>Job</label><select id="daily-job"><option value="">Pick a job…</option>${openJobs.map(j => `<option value="${j.id}"${j.id === pick ? " selected" : ""}>${j.name}</option>`).join("")}</select></div>
-          <div class="span-2"><label>What happened today</label><textarea id="daily-notes" data-field="notes" rows="3" placeholder="Framing done on the east wall, 4 crew, inspector booked for Thursday">${esc(draftValue("daily", "notes"))}</textarea></div>
-        </div>
-        <button class="btn" data-action="daily-save">Save to job record</button>` : `<p class="sub">Create a job first; daily records are saved on a job.</p>`}
-      </div>
-      <div class="card">
-        <h2>Recent records</h2>
-        ${records.length ? records.slice().reverse().map(r => {
-          const j = state.jobs.find(x => x.id === r.job_id);
-          return `<div class="list-item"><strong>${fmtDate(r.at)}</strong> · ${j ? `<a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a>` : "Deleted job"}<div>${r.notes}</div></div>`;
-        }).join("") : `<p class="sub">No daily records yet.</p>`}
-      </div>
     `;
   },
   calendar() {
@@ -318,7 +282,6 @@ export const views = {
       </div>` : "";
     return `
       <h1>Calendar</h1>
-      <p class="sub">Follow-ups, expected approvals, payments, and closeouts.</p>
       <p class="notice" id="cal-not-legal">These are your contract and follow-up dates, not legal deadlines. Check lien and prompt-pay deadlines with your attorney.</p>
       <div class="filter-bar">
         <label for="cal-filter" class="inline-label">Job</label>
@@ -363,7 +326,7 @@ export const views = {
       </div>
       <details class="card subscribe">
         <summary><strong>Put these dates on your phone (Google Calendar, Apple, Outlook)</strong></summary>
-        <p><a class="btn" id="cal-webcal" href="/today/calendar" hidden>Add to my phone's calendar</a></p>
+        <p><a class="btn" id="cal-webcal" href="/dashboard/calendar" hidden>Add to my phone's calendar</a></p>
         <p class="sub">On an iPhone or a Mac that button adds them in one tap. Or copy this private address. In Google Calendar on a computer: Other calendars, +, From URL, paste, Add calendar. It then shows on your phone. Calendar apps refresh subscribed calendars on their own schedule, often every few hours, so new dates are not instant.</p>
         <div class="copy-row"><code id="cal-url">Loading…</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button>${newAddressButton("calendar")}</div>
         <p class="sub">Anyone with this address can see the dates and job names. ${me && me.role === "owner" ? "Make a new address if it was shared by mistake." : "If it was shared by mistake, an owner can make a new one."}</p>
@@ -375,10 +338,6 @@ export const views = {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in app.js.
 export const actions = {
   "metrics-period": (el) => { metricsPeriod = el.dataset.period; metricsData = null; render(); },
-  "metrics-email": async () => {
-    const r = await postJson("/api/metrics/summary-email", {});
-    toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
-  },
   "onb-newjob": () => { nav("jobs"); formOpen.newjob = true; render(); document.getElementById("nj-name")?.focus(); },
   "onb-job": () => { const j = state.jobs.find(x => !x.closed) || state.jobs[0]; if (j) nav("job", j.id); },
   // A setup step: open its page and bring the part to use into view.
@@ -397,16 +356,6 @@ export const actions = {
   },
   "onb-dismiss": () => setChecklist(false),
   "onb-show": async () => { if (await setChecklist(true)) nav("dashboard"); },
-  "daily-save": async () => {
-    const notes = document.querySelector("#daily-notes")?.value || "";
-    const job = document.querySelector("#daily-job")?.value;
-    if (!job) { toast("Pick a job."); document.querySelector("#daily-job")?.focus(); return; }
-    if (!notes.trim()) { toast("Write what happened today."); document.querySelector("#daily-notes")?.focus(); return; }
-    // Remembered before saving: the save redraws the page, which picks the job last used.
-    rememberDailyJob(job);
-    const r = await post(`/api/jobs/${job}/daily-record`, { notes });
-    if (r && r.ok) { clearForm("daily"); render(); }   // saved: the box is empty for the next one
-  },
   "cal-prev": () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } calSelectedDay = null; render(); },
   "cal-next": () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } calSelectedDay = null; render(); },
   "cal-today": () => { const n = new Date(); calYear = n.getFullYear(); calMonth = n.getMonth(); calSelectedDay = null; render(); },

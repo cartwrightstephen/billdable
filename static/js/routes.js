@@ -7,16 +7,27 @@ import { unesc } from "./format.js";
 export const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-detail": "payapps", packets: "payapps", "co-detail": "cos", "waiver-detail": "waivers", retainage: "waivers" };
 
 export const VIEW_PATHS = {
-  dashboard: "/today", results: "/today/results", calendar: "/today/calendar", daily: "/today/daily",
-  jobs: "/jobs", history: "/jobs/history", inbox: "/inbox",
+  dashboard: "/dashboard", results: "/dashboard/results", calendar: "/dashboard/calendar",
+  jobs: "/jobs", daily: "/jobs/daily", history: "/jobs/history", playbook: "/jobs/clients",
+  inbox: "/communications", outbox: "/communications/outbox",
+  import: "/data/import", export: "/data/export",
   payapps: "/money", packets: "/money/packets", cos: "/money/change-orders", collections: "/money/collections",
-  payments: "/money/payments", waivers: "/money/waivers", retainage: "/money/retainage", outbox: "/money/outbox",
+  payments: "/money/payments", waivers: "/money/waivers", retainage: "/money/retainage",
+  automations: "/automations",
   company: "/settings/company", team: "/settings/team", account: "/settings/account", billing: "/settings/billing",
-  playbook: "/settings/playbook", audit: "/settings/audit", help: "/settings/help", "helper-admin": "/settings/helper-answers",
+  audit: "/settings/audit", "helper-admin": "/settings/helper-answers",
 };
 
-// Older addresses that still open a page: /settings was one page before it split (R6-03).
-export const PATH_ALIASES = { "/settings": "company" };
+// Older addresses that still open a page, so links in emails and bookmarks keep working:
+// /settings was one page before it split (R6-03); Today became Dashboard, the Inbox and the
+// Outbox moved to Communications, the Daily record and Customer settings (now the Client playbook)
+// to Jobs, and Help was emptied (its controls are on My account) in Stephen's Oct 29 review.
+export const PATH_ALIASES = {
+  "/settings": "company",
+  "/today": "dashboard", "/today/results": "results", "/today/calendar": "calendar", "/today/daily": "daily",
+  "/inbox": "inbox", "/money/outbox": "outbox", "/communications/inbox": "inbox", "/data": "import",
+  "/settings/playbook": "playbook", "/settings/help": "account",
+};
 
 export const DETAIL_PATHS = { "payapp-detail": "/money/pay-app", "packet-detail": "/money/packet", "co-detail": "/money/change-order", "waiver-detail": "/money/waiver" };
 
@@ -24,7 +35,7 @@ export function pathFor(view, jobId, detailId) {
   const seg = (x) => encodeURIComponent(unesc(String(x)));
   if (view === "job" && jobId) return `/jobs/${seg(jobId)}`;
   if (DETAIL_PATHS[view] && jobId) return [DETAIL_PATHS[view], seg(jobId)].concat(detailId ? [seg(detailId)] : []).join("/");
-  return VIEW_PATHS[view] || "/today";
+  return VIEW_PATHS[view] || "/dashboard";
 }
 
 // A refusal's way out (the server's GateError `action`, like Undo's "Open the paperwork for

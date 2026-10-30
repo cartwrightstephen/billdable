@@ -63,7 +63,7 @@ class SameCustomerTests(unittest.TestCase):
             domain.create_job(state, "Porch", "ABC Builders, LLC", 100_000, address="1 Elm St")
         err = ctx.exception
         self.assertEqual(str(err), "Same as ABC Builders?")
-        self.assertEqual(err.fields, {"customer": "Same as ABC Builders? Use the saved customer, or keep ABC Builders, LLC as a new one."})
+        self.assertEqual(err.fields, {"customer": "Same as ABC Builders? Use the saved client, or keep ABC Builders, LLC as a new one."})
         self.assertEqual(err.extra["same_customer"], {"id": saved["id"], "name": "ABC Builders", "typed": "ABC Builders, LLC"})
         self.assertEqual((len(state["payers"]), len(state["jobs"])), (1, 0), "nothing saved while it asks")
 
@@ -106,18 +106,18 @@ class DeleteCustomerTests(unittest.TestCase):
         used = next(p for p in state["payers"] if p["id"] == job["payer_id"])
         with self.assertRaises(domain.GateError) as ctx:
             domain.delete_payer(state, used["id"], "Pat")
-        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 1 job uses this customer. "
-                                             "To remove it, merge it into another customer.")
-        job["closed"] = True  # a finished job still needs its customer
+        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 1 job uses this client. "
+                                             "To remove it, merge it into another client.")
+        job["closed"] = True  # a finished job still needs its client
         with self.assertRaises(domain.GateError) as ctx:
             domain.delete_payer(state, used["id"], "Pat")
-        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 1 job uses this customer, counting finished jobs. "
-                                             "To remove it, merge it into another customer.")
+        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 1 job uses this client, counting finished jobs. "
+                                             "To remove it, merge it into another client.")
         self.assertIn(used, state["payers"])
 
         domain.delete_payer(state, spare["id"], "Pat")
         self.assertNotIn(spare, state["payers"])
-        self.assertEqual((state["audit"][-1]["action"], state["audit"][-1]["detail"]), ("payer_delete", "Pat deleted the customer Spare Customer."))
+        self.assertEqual((state["audit"][-1]["action"], state["audit"][-1]["detail"]), ("payer_delete", "Pat deleted the client Spare Customer."))
         with self.assertRaises(domain.GateError):
             domain.delete_payer(state, spare["id"], "Pat")
 
@@ -128,7 +128,7 @@ class DeleteCustomerTests(unittest.TestCase):
         self.assertEqual(len(state["payers"]), 1)
         with self.assertRaises(domain.GateError) as ctx:
             domain.delete_payer(state, job["payer_id"], "Pat")
-        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 2 jobs use this customer. Its jobs need it.")
+        self.assertEqual(str(ctx.exception), "Dana Lee can't be deleted: 2 jobs use this client. Its jobs need it.")
 
     def test_the_page_data_counts_every_job(self):
         state = seed_state()

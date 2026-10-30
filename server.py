@@ -108,7 +108,8 @@ STATIC_FILES.update({f"/{p.relative_to(STATIC).as_posix()}": (p.relative_to(STAT
                      for p in sorted([*(STATIC / "js").glob("*.js"), *(STATIC / "js" / "views").glob("*.js")])})
 # First path segments that belong to the browser app; each one serves index.html so
 # refresh, Back and links in emails land on the same page (the app reads the address).
-APP_SECTIONS = {"today", "jobs", "inbox", "money", "settings"}
+# The first part of every page address the app opens (static/js/routes.js), old ones included.
+APP_SECTIONS = {"dashboard", "jobs", "communications", "data", "money", "automations", "settings", "today", "inbox"}
 APP_PATH_RE = re.compile(r"^/(?:[a-z]+)(?:/[A-Za-z0-9_-]{1,64}){0,3}/?$")
 _ASSETS: dict = {}
 
@@ -490,9 +491,9 @@ def email_owners_question(company_id: str, asked: dict) -> list:
         return []
     subject = f"Question on {asked['number']} — {asked['job_name']}"
     link = app_url()
-    body = (f"{asked.get('from') or 'The customer'} asked on the customer page for {asked['number']}:\n\n{asked.get('text', '')}\n\n"
+    body = (f"{asked.get('from') or 'The client'} asked on the client page for {asked['number']}:\n\n{asked.get('text', '')}\n\n"
             + (f"Open the job: {link}/jobs/{asked['job_id']}\n" if link else "")
-            + "It is in your Inbox too. Reply to the customer by email or phone.")
+            + "It is in your Inbox too. Reply to the client by email or phone.")
     lines = [f"{to}: {send_system_email(to, subject, body, company_id)}" for to in auth.owner_emails(company_id)]
     for line in lines:
         log_json("info", msg="payer question emailed", company=company_id, result=line.split(": ", 1)[-1][:120])
@@ -1635,21 +1636,6 @@ class Handler(BaseHTTPRequestHandler):
                 results.append({"key": key, "reference": ref, "ok": False, "error": str(exc)})
         ctx.reply["import_results"] = results
 
-    def _p_summary_email(self, m, ctx: "Ctx") -> None:
-        if ctx.company_id == auth.DEMO_COMPANY_ID or not ctx.user.get("email_verified"):
-            self._json(409, {"error": "Confirm your email address first (Settings, My account)." if ctx.company_id != auth.DEMO_COMPANY_ID
-                             else "The demo account doesn't send email."})
-            return
-        first = datetime.now(timezone.utc).date().replace(day=1) - timedelta(days=1)
-        with company_lock(ctx.company_id):
-            state = load_company(ctx.company_id)
-        subject, text = metrics.month_summary(state, first.year, first.month)
-        result = self._system_email(ctx.user["email"], subject, text, ctx.company_id)
-        if result != "sent":
-            self._json(409, {"error": f"Not sent: {result}."})
-            return
-        self._json(200, {"ok": True, "message": f"Last month's summary is on its way to {ctx.user['email']}."})
-
     def _p_two_step(self, m, ctx: "Ctx") -> None:
         step = m.group(1)
         try:
@@ -2169,7 +2155,7 @@ class Handler(BaseHTTPRequestHandler):
         # "same-origin"); a form on another website is "cross-site" and could fill this person's
         # Inbox, or the shared-items prompt, with its own files.
         if (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
-            self._send(303, b"", "text/plain", {"Location": "/inbox"})
+            self._send(303, b"", "text/plain", {"Location": "/communications"})
             return
         user = self._session_user()
         data = self._read_raw(MAX_INBOUND_BYTES)
@@ -2178,7 +2164,7 @@ class Handler(BaseHTTPRequestHandler):
             key = None
             if _within_limit(f"share-hold:{self._client_ip()}", SHARE_HOLDS_PER_HOUR, 3600):
                 key = importer.hold_share(parsed)
-            headers = {"Location": "/inbox"}
+            headers = {"Location": "/communications"}
             if key:
                 headers.update(self._share_cookie(key))
             self._send(303, b"", "text/plain", headers)
@@ -2186,7 +2172,7 @@ class Handler(BaseHTTPRequestHandler):
         if not read_only_reason(user["company_id"]):
             self._add_shared(user["company_id"], parsed)
         # Read-only: the Inbox page shows why; nothing is stored.
-        self._send(303, b"", "text/plain", {"Location": "/inbox"})
+        self._send(303, b"", "text/plain", {"Location": "/communications"})
 
     def _share_cookie(self, key: str | None) -> dict:
         secure = "; Secure" if self._secure_cookie() else ""
@@ -2344,7 +2330,7 @@ class Handler(BaseHTTPRequestHandler):
         name = state.get("company", {}).get("name", "New company")
         if _text(ctx.body, "confirm").strip() != name:
             raise domain.GateError("Reset not done. Type your company name exactly to confirm.",
-                                   ["Reset deletes every job, customer and record in this company."])
+                                   ["Reset deletes every job, client and record in this company."])
         # As Delete asks for it: a session left open on a shared computer can't wipe the company (R6-05).
         if not auth.check_password(ctx.user["id"], ctx.body.get("password")):
             raise domain.GateError("Reset not done. Your password is wrong.", fields={"password": "Enter your password to confirm."})
@@ -2445,6 +2431,22 @@ class Route:
 
 TOKEN_LINK = r"([a-z0-9-]{1,40})\.([A-Za-z0-9_-]{20,64})"
 ROUTES = [
+    # One block per work stream for its new routes (the first match wins, so these come before
+    # the catch-alls below, like /api/jobs/<id>/<action>). Each stream adds lines to its own block.
+    # == stream: foundation ==
+
+    # == stream: comms-data ==
+
+    # == stream: tasks-daily ==
+
+    # == stream: jobs-clients ==
+
+    # == stream: payapps-cos ==
+
+    # == stream: paperwork-waivers-retainage ==
+
+    # == stream: settings-auth ==
+
     # pages and feeds
     Route("GET", r"/healthz", "_g_healthz"),
     Route("GET", r"/(terms|privacy)", "_g_legal"),
@@ -2504,7 +2506,6 @@ ROUTES = [
     Route("POST", r"/api/auth/2fa/(begin|enable|disable)", "_p_two_step", "body"),
     Route("POST", r"/api/import/payments-csv", "_p_payments_csv", "body"),
     Route("POST", r"/api/import/rotate", "_p_rotate", "body", owner=True),
-    Route("POST", r"/api/metrics/summary-email", "_p_summary_email", "body"),
     Route("POST", r"/api/qbo/connect", "_p_qbo_connect", "body", owner=True),
     Route("POST", r"/api/billing/checkout", "_p_billing_checkout", "body", owner=True),
     Route("POST", r"/api/billing/portal", "_p_billing_portal", "body", owner=True),
@@ -2659,7 +2660,7 @@ JOB_ACTIONS = {
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor)),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor)),
-    "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the customer sent the pay app back."), c.actor)),
+    "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),
     "import-qbo": (False, _import_qbo),
     "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),
     "reopen": (False, lambda h, st, j, i, c: domain.reopen_job(st, j, _text(c.body, "reason"), c.actor)),
@@ -2668,7 +2669,7 @@ JOB_ACTIONS = {
     "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
     "edit": (False, _edit_job),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
-    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter what happened on the job."), c.actor)),
+    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter the diary entry."), c.actor)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name", "attachment"), c.actor)),
 }
 

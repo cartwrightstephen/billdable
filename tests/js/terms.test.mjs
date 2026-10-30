@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { setBillingStyle, billingStyle, term, termText, actionWords, ACTION_WORDS, STYLE_NOTE } from "../../static/js/terms.js";
+import { setBillingStyle, billingStyle, term, termText, actionWords, ACTION_WORDS } from "../../static/js/terms.js";
 import { nextStep, jobActions, closeBlockerActions, jobStatus, waiverHint, waiverSendForm, RECORD_KINDS } from "../../static/js/jobs.js";
 import { queueHtml } from "../../static/js/today.js";
 import { INVOICE_WORDS } from "../../static/js/format.js";
@@ -44,7 +44,7 @@ test("draws: the company's word replaces pay app in the app's own copy", () => {
   assert.equal(termText("payapps and payapp-detail stay", "draws"), "payapps and payapp-detail stay");
 });
 
-test("draws: next steps, job buttons, Today and the settings note", () => {
+test("draws: next steps, job buttons and the Dashboard", () => {
   const job = {
     id: "j1", closed: false, work_status: "complete", invoices: [], change_orders: [], blockers: [], close_blockers: ["x"],
     close_blocker_items: [], money: { unbilled_completed_cents: 5000, outstanding_cents: 0, retainage_open_cents: 0, contract_total_cents: 10000 },
@@ -65,7 +65,8 @@ test("draws: next steps, job buttons, Today and the settings note", () => {
   }
   assert.equal(nextStep(job), "Draft a pay app for the work done and not billed.");
   assert.equal(jobActions(job).primary.label, "Draft pay app");
-  assert.equal(STYLE_NOTE, "Changes the word used across the app and sets the free trial: 90 days, or 45 for draws.");
+  // Title case too, as the Results card titles write it (T8).
+  assert.equal(termText("Days from Pay App Sent to Paid", "draws"), "Days from Draw Sent to Paid");
   setBillingStyle("monthly");
   assert.equal(billingStyle(), "pay_apps", "an unknown style reads pay apps");
 });
@@ -83,7 +84,7 @@ test("draws: Closeout's waiver lines and the record kind read draw too (review)"
   // The app's own sentences on the job page, Closeout and Today go through termText (app.js and
   // the views it imports from js/views/).
   const app = files.filter(f => f === "app.js" || f.startsWith("js/views/")).map(f => text[f]).join("\n");
-  for (const s of ["Pull back this pay app…", "By pay app", "Get your first pay app out", "One lien waiver per paid pay app.", "Follow-ups per pay app"]) {
+  for (const s of ["Pull back this pay app…", "By pay app", "Get your first pay app out", "Days from Job Completion to Pay App Sent", "Follow-ups per pay app"]) {
     assert.ok(app.includes(`termText("${s}`), s);
   }
   assert.ok(app.includes("${termText(b.text)}"), "the Before you can finish list");

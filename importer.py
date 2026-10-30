@@ -70,7 +70,15 @@ KINDS = {
     "change_order": "Change order",
     "waiver": "Lien waiver",
     "pay_app": "Backup for the pay app",
-    "ticket": "Delivery or time ticket",
+    "ticket": "Daily ticket or time sheet",
+    "supplier_invoice": "Supplier invoice or receipt",
+    "insurance": "Insurance certificate",
+    "inspection": "Inspection",
+    "stored": "Stored materials document",
+    "punch": "Punch list sign-off",
+    "completion": "Completion certificate",
+    "asbuilt": "As-builts",
+    "warranty": "Warranty",
     "photo": "Photo",
     "contract": "Contract",
     "daily": "Daily record",
@@ -82,8 +90,15 @@ _KIND_RULES = [
     ("change_order", r"\bchange order\b|\bc\.?o\.?\s*#?\s*\d+|\bextra work\b|\bfield (?:order|directive)\b"),
     ("waiver", r"\bwaiver\b|\blien release\b"),
     ("pay_app", r"\bpay app\b|\bpay application\b|\bapplication for payment\b|\bg70[23]\b|\brequisition\b|\bpencil\b"),
-    # An invoice is a supplier's bill (a ticket for the backup) unless it names one of our pay apps (R5-07).
-    ("invoice", r"\binvoice\b"),
+    ("insurance", r"\bcertificate of (?:liability )?insurance\b|\binsurance certificate\b|\bcoi\b"),
+    ("punch", r"\bpunch ?list\b"),
+    ("completion", r"\bcertificate of (?:substantial )?completion\b|\bcompletion certificate\b"),
+    ("asbuilt", r"\bas[- ]?builts?\b"),
+    ("warranty", r"\bwarrant(?:y|ies)\b"),
+    ("stored", r"\bstored materials?\b"),
+    ("inspection", r"\binspection (?:report|passed|failed|result)s?\b"),
+    # An invoice is a supplier's bill unless it names one of our pay apps (R5-07).
+    ("invoice", r"\binvoice\b|\breceipt\b"),
     ("ticket", r"\bdelivery ticket\b|\bticket\b|\bpacking slip\b|\btime sheet\b|\btimesheet\b"),
     ("contract", r"\bcontract\b|\bagreement\b|\bsubcontract\b|\bpurchase order\b"),
     ("daily", r"\bdaily (?:log|report|record)\b|\bcrew\b|\bon site today\b"),
@@ -375,7 +390,7 @@ def guess_kind(name: str, text: str, exts: str | list[str] | tuple = ()) -> str:
     for kind, pattern in _KIND_RULES:
         if re.search(pattern, hay):
             if kind == "invoice":
-                return "pay_app" if PAYAPP_NUMBER_RE.search(f"{name}\n{text[:4000]}") else "ticket"
+                return "pay_app" if PAYAPP_NUMBER_RE.search(f"{name}\n{text[:4000]}") else "supplier_invoice"
             return kind
     exts = [exts] if isinstance(exts, str) else list(exts)
     files = [e for e in exts if e and e != ".eml"]
@@ -512,10 +527,10 @@ def match_job(state: dict[str, Any], text: str, sender: str = "", names: str = "
             bump(job, 60, f"sent from {payer.get('name')}'s AP email")
         pname = _norm(payer.get("name", ""))
         if pname and len(pname) >= 4 and f" {pname} " in hay_padded:
-            bump(job, 50, f"mentions the customer {payer.get('name')}")
+            bump(job, 50, f"mentions the client {payer.get('name')}")
     ranked = sorted(scores.items(), key=lambda kv: -kv[1][0])
     if not ranked:
-        return {"job_id": None, "reason": "No job name, code, address or customer found.", "candidates": []}
+        return {"job_id": None, "reason": "No job name, code, address or client found.", "candidates": []}
     top_score = ranked[0][1][0]
     tied = [jid for jid, (s, _) in ranked if s == top_score]
     if len(tied) > 1:
@@ -629,7 +644,7 @@ def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor
     files = [f for f in state.get("files", []) if f["id"] in item["file_ids"]]
     label = item["subject"] or (files[0]["name"] if files else "") or (item["text"].strip().splitlines() or ["Imported note"])[0]
     label = label.strip()[:120] or "Imported note"
-    source_line = {"email": "Email", "sms": "Text message", "paste": "Pasted", "notes": "Notes import", "upload": "Upload", "payer_page": "Customer page"}.get(item["source"], item["source"])
+    source_line = {"email": "Email", "sms": "Text message", "paste": "Pasted", "notes": "Notes import", "upload": "Upload", "payer_page": "Client page"}.get(item["source"], item["source"])
     if item["from"]:
         source_line += f" from {item['from']}"
     record_ids = []
@@ -739,15 +754,15 @@ def _paperwork_refusal(job: dict[str, Any], rids: set[str], can_pull_back: bool 
         open_it = link(f"Open {number}", "payapp-detail", inv["id"])
         paid = inv.get("status") in {"partial", "paid"} or any(p.get("invoice_id") == inv["id"] for p in job.get("payments", []))
         if inv.get("status") == "void":
-            text = (f"This record went to the customer with {number}. {number} was pulled back, but what it sent "
+            text = (f"This record went to the client with {number}. {number} was pulled back, but what it sent "
                     "stays as it was, so the record stays on the job.")
         elif paid:
-            text = f"This record went to the customer with {number}, and a payment is recorded on it, so the record stays on the job."
+            text = f"This record went to the client with {number}, and a payment is recorded on it, so the record stays on the job."
         elif can_pull_back:
-            text = (f"This record went to the customer with {number}, so it stays on the job. To change what went out, "
+            text = (f"This record went to the client with {number}, so it stays on the job. To change what went out, "
                     f"open {number} and pull it back, then send a new one.")
         else:
-            text = (f"This record went to the customer with {number}, so it stays on the job. "
+            text = (f"This record went to the client with {number}, so it stays on the job. "
                     f"Ask an owner to pull {number} back if it needs to change.")
         return domain.GateError(text, action=open_it)
     drafts = [inv for inv in job.get("invoices", []) if inv.get("status") in domain.DRAFT_STATUSES and holds(inv.get("packet"))]
