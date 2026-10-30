@@ -56,6 +56,11 @@ _RESETS: dict[str, list[float]] = {}
 # an hour per person and kind, each working once until it expires.
 CODES_MAX_PER_HOUR = 5
 _CODES: dict[str, list[float]] = {}
+# Wrong emailed codes (A2): after this many for one person and kind, every live code of that
+# kind is dropped and a new one has to be asked for. Each wrong code also counts toward the
+# sign-in throttle above.
+CODE_MAX_WRONG = 5
+_CODE_WRONG: dict[str, int] = {}
 
 
 class AuthError(ValueError):
@@ -312,8 +317,11 @@ def create_user(
     return _public(user)
 
 
-def verify_login(email: str, password: str, ip: str | None = None) -> dict[str, Any] | None:
-    """Return the user, None on a wrong email or password, or raise RateLimited."""
+def verify_login(email: str, password: str, ip: str | None = None, clear_failures: bool = True) -> dict[str, Any] | None:
+    """Return the user, None on a wrong email or password, or raise RateLimited.
+
+    clear_failures=False (the sign-in route): a right password doesn't wipe the count of wrong
+    tries, since a code may follow; the caller calls login_succeeded() once the person is in (A2)."""
     if not isinstance(email, str) or not isinstance(password, str):
         return None
     email = email.strip().lower()
@@ -341,12 +349,18 @@ def verify_login(email: str, password: str, ip: str | None = None) -> dict[str, 
             if stored and stored["password_hash"] == user["password_hash"]:
                 _set_password(stored, salt, digest)
                 _save(data)
-    if not user.get("totp_enabled"):
+    if clear_failures and not user.get("totp_enabled"):
         # With two-step sign-in, only a right code clears the count (totp_check), so a known
         # password can't be used to reset the throttle on guessing codes.
         with LOCK:
             _FAILURES.pop(email, None)
     return _public(user)
+
+
+def login_succeeded(email: str) -> None:
+    """Every step of a sign-in passed: forget this account's wrong tries."""
+    with LOCK:
+        _FAILURES.pop(str(email or "").strip().lower(), None)
 
 
 def create_session(user: dict[str, Any]) -> str:
@@ -514,6 +528,19 @@ def issue_code(user_id: str, kind: str) -> str | None:
         return code
 
 
+def _wrong_code(data: dict[str, Any], kind: str, user_id: str) -> None:
+    """Count a wrong emailed code; at CODE_MAX_WRONG, drop every live code of this kind for this
+    person (saved here), so guessing can't go on against the same codes (A2). Call under LOCK."""
+    key = f"{kind}:{user_id}"
+    _CODE_WRONG[key] = _CODE_WRONG.get(key, 0) + 1
+    if _CODE_WRONG[key] >= CODE_MAX_WRONG:
+        _CODE_WRONG.pop(key, None)
+        data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v.get("kind") == kind and v.get("user_id") == user_id)}
+        _save(data)
+    if len(_CODE_WRONG) > 10_000:
+        _CODE_WRONG.clear()
+
+
 def _take_code(data: dict[str, Any], kind: str, user_id: str, code: Any) -> bool:
     """Use up a right code (and every other of its kind for this person). Call under LOCK."""
     raw = re.sub(r"\s+", "", str(code or ""))
@@ -523,6 +550,7 @@ def _take_code(data: dict[str, Any], kind: str, user_id: str, code: Any) -> bool
     if not entry or entry.get("kind") != kind or entry.get("expires_at", "") <= _iso(_utcnow()):
         return False
     data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v.get("kind") == kind and v.get("user_id") == user_id)}
+    _CODE_WRONG.pop(f"{kind}:{user_id}", None)
     return True
 
 
@@ -587,6 +615,7 @@ def reset_password(raw: Any, password: Any) -> dict[str, Any]:
         data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v["kind"] == "reset" and v.get("user_id") == user["id"])}
         _set_password(user, salt, digest)
         user["email_verified"] = True  # they received the link at this address
+        user.pop("devices", None)   # remembered devices (S7) ask for a code again (A6)
         _end_sessions(data, user["id"])  # everywhere else is signed out
         _save(data)
         _FAILURES.pop(user["email"], None)
@@ -652,6 +681,7 @@ def change_password(user_id: str, current: Any, new: Any, keep_session: str | No
         data = _load()
         user = next(u for u in data["users"] if u["id"] == user_id)
         if need_code and not _take_code(data, "pwchange", user_id, code):
+            _wrong_code(data, "pwchange", user_id)
             raise AuthError("That code didn't match, or it has expired. Ask for a new one.")
         _not_failed(user["email"], None, now)
         if need_code:
@@ -1085,6 +1115,7 @@ def login_code_check(user_id: str, code: Any, ip: str | None = None) -> bool:
             _FAILURES.pop(user["email"], None)
             return True
         _failed(user["email"], ip, now)
+        _wrong_code(data, "login", user_id)
         return False
 
 

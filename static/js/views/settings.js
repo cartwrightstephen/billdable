@@ -110,15 +110,16 @@ function teamCardHtml() {
 }
 
 // What each profile may do, one column each (S6). Owner holds everything and is locked; Member
-// and custom profiles can be changed by those who manage the team.
+// and custom profiles can be added, changed and deleted by owners only (A4; the server refuses
+// anyone else, so nobody who manages the team can give their own profile more).
 function profilesCardHtml() {
   if (!teamData || !teamData.profiles) return "";
-  const edit = can("team") && me.company_id !== DEMO_COMPANY_ID;
+  const edit = ownerMe() && me.company_id !== DEMO_COMPANY_ID;
   const list = teamData.profiles;
   const perms = teamData.permissions || [];
   const admin = (teamData.users || []).find(u => u.company_admin);
   return `<h2>Permission profiles</h2>
-    <p class="sub">What each profile can do. Everyone on the team can draft pay apps, add records and paperwork, and follow up. The Owner profile can do everything; only the Company Admin${admin ? ` (${admin.name})` : ""} can delete the company.</p>
+    <p class="sub">What each profile can do. Everyone on the team can draft pay apps, add records and paperwork, and follow up. The Owner profile can do everything, and only owners add or change profiles; only the Company Admin${admin ? ` (${admin.name})` : ""} can delete the company.</p>
     <div class="table-wrap"><table class="profiles-table">
       <tr><th>Permission</th>${list.map(p => `<th>${p.name}</th>`).join("")}</tr>
       ${perms.map(k => `<tr><td>${k.words}</td>${list.map(p => `<td class="center">${p.perms.includes(unesc(k.key)) ? `<span class="pill green" aria-label="Yes">Yes</span>` : `<span class="sub" aria-label="No">No</span>`}</td>`).join("")}</tr>`).join("")}
