@@ -405,10 +405,22 @@ AT_RATE_RE = re.compile(
     r"\s*(?P<sep>@|\bat\b|\bx\b)\s*(?P<dollar>\$)?(?P<rate>\d[\d,]*(?:\.\d{1,2})?)\s*(?:/\s*[A-Za-z]{1,6}\.?|\bper\s+[A-Za-z]{1,6}\.?)?$",
     re.I,
 )
+# The one-cell patterns (AT_RATE_RE, DESC_QTY_UNIT_RE, DESC_AMOUNT_RE) slow down with the square of
+# a line's length, so they are tried only on lines no longer than a schedule line ever is; a longer
+# line is read cell by cell as usual.
+ONE_LINE_MAX = 200
+
+
+def _desc_amount(line: str) -> "re.Match[str] | None":
+    line = line.strip()
+    return DESC_AMOUNT_RE.match(line) if len(line) <= ONE_LINE_MAX else None
+
+
 def _at_rate(cell: str) -> "re.Match[str] | None":
     """AT_RATE_RE, except that "x" between two plain numbers is a size ("Ceiling grid 2 x 2", "Tile
     12 x 24"), not a rate: "x" counts only with a unit word before it or a $ on the rate."""
-    m = AT_RATE_RE.match(cell.strip())
+    cell = cell.strip()
+    m = AT_RATE_RE.match(cell) if len(cell) <= ONE_LINE_MAX else None
     if m and m["sep"].lower() == "x" and not m["dollar"] and (m["unit"] or "").lower().rstrip(".") not in UNIT_WORDS:
         return None
     return m
@@ -430,7 +442,8 @@ DESC_QTY_UNIT_RE = re.compile(r"^(?P<desc>.*?[A-Za-z].*?)\s+(?P<qty>\d[\d,]*(?:\
 
 
 def _desc_qty_unit(cell: str) -> "re.Match[str] | None":
-    m = DESC_QTY_UNIT_RE.match(cell.strip())
+    cell = cell.strip()
+    m = DESC_QTY_UNIT_RE.match(cell) if len(cell) <= ONE_LINE_MAX else None
     return m if m and m["unit"].lower().rstrip(".") in UNIT_WORDS else None
 
 
@@ -460,7 +473,7 @@ def _split_rows(text: str) -> list[list[str]]:
                 # "Floor tile 1,200 sf at $8.50/sf" or "Concrete 2,400 SF": the comma is a thousands
                 # separator, not a column.
                 rows.append([line.strip()])
-            elif not saved_csv and (d := DESC_AMOUNT_RE.match(line.strip())):
+            elif not saved_csv and (d := _desc_amount(line)):
                 # "Mobilization 12,500": the comma is a thousands separator, not a column.
                 rows.append([d["desc"], d["amount"]])
             else:
@@ -475,7 +488,7 @@ def _saved_csv_row(line: str) -> bool:
     """A line with cells split by a comma and no space ("Description,Amount"), and none of the shapes
     where that comma is a thousands separator ("Mobilization 12,500", "Concrete 2,400 SF")."""
     line = line.strip()
-    if "," not in line or re.search(r"\S {2,}\S", line) or DESC_AMOUNT_RE.match(line):
+    if "," not in line or re.search(r"\S {2,}\S", line) or _desc_amount(line):
         return False
     if (r := _at_rate(line) or _desc_qty_unit(line)) and "," not in (r["desc"] or ""):
         return False

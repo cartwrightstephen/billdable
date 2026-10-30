@@ -248,6 +248,15 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(got("Concrete 2,400 SF\t\t")[0], [("Concrete", "2400", "SF", "")])
         self.assertEqual(got("Tile 1200 SF @ 8.50\t")[0], [("Tile", "1200", "SF", "8.50")])
 
+    def test_long_lines_read_quickly(self):
+        """Lines far longer than any schedule line can't slow the server (the one-cell patterns
+        are tried only on lines of a normal length)."""
+        import time
+        for line in ("a " * 1000, "Tile 12 SF " * 180, "1 x " * 500, "Demo 3,500 " * 180):
+            start = time.monotonic()
+            sov.parse_rows((line + "\n") * 50)
+            self.assertLess(time.monotonic() - start, 1.5, line[:20])
+
     def test_garbage_is_reported_not_crashed(self):
         self.assertEqual([l["rate"] for l in sov.parse_rows("Demo\x00, $3,500")["lines"]], ["3500.00"])
         out = sov.parse_rows("hello\n\n,,,\n$$$, abc\n")
