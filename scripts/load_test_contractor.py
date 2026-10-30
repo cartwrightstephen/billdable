@@ -311,7 +311,7 @@ def setup(run: Run) -> None:
         "stored": {ids.get("Restroom wall tile", "?"): "4000.00"}, "notes": "Lobby floor half set; wall tile delivered."})
     # BROO: change order pending.
     run.post("BROO: add CO 1 (pending)", f"/api/jobs/{j['BROO']}/add-co",
-             {"title": "Upgrade to large-format porcelain, units C4-C6", "amount_cents": 685_000,
+             {"title": "Upgrade to large-format porcelain, units C4-C6", "amount_cents": 685_000, "reason": "owner_request",
               "description": "Owner upgrade from 12x24 to 24x48 in three primary baths."})
 
 

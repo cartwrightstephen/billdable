@@ -142,7 +142,7 @@ class PayerPageTests(unittest.TestCase):
         cookie, state, link = self.sent_pay_app("payer3@example.com")
         res, raw = self.request("GET", link)
         page = raw.decode()
-        for words in ("Approve for payment", "This job", "Contract to date", "Balance to finish", "Send a question"):
+        for words in ("Approve for payment", "This job", "Contract sum to date", "Balance to finish", "Send a question"):
             self.assertIn(words, page)
         # A refused approval shows the page again with why, and changes nothing.
         res, raw = self.request("POST", link + "/approve", form={"name": "", "expected_on": "2020-01-01"})

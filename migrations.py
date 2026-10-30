@@ -9,6 +9,7 @@ version, including ones written by hand.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 import domain
@@ -54,7 +55,46 @@ def _tasks_daily_lists(state: dict[str, Any]) -> None:
         state["task_assignments"] = {}
 
 
-STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _tasks_daily_lists]
+
+# What each audit action means on a change order's own history (Stephen's Oct 29 review, M10).
+CO_AUDIT_EVENTS = {"add_co": "created", "include_co": "included", "approve_co": "signed", "withdraw_co": "withdrawn",
+                   "request_co_signature": "signature_requested", "change_order_off_draft": "off_draft"}
+
+
+CO_NAMED = re.compile(r"\bCO (\d+)\b")
+
+
+def _payapps_cos_co_history(state: dict[str, Any]) -> None:
+    """payapps-cos: a change order keeps its own history (who created, put on the bill, signed or
+    withdrew it, and when). Change orders made before that get it from the job's audit rows that
+    name them ("CO 3"), with created_at/by, included_at/by, approved_by and withdrawn_by filled the
+    same way. One without matching rows is left without a history."""
+    rows_by_job: dict[str, list[dict[str, Any]]] = {}
+    for row in state.get("audit", []):
+        if row.get("action") in CO_AUDIT_EVENTS:
+            rows_by_job.setdefault(row.get("job_id", ""), []).append(row)
+    stamps = {"created": ("created_at", "created_by"), "included": ("included_at", "included_by"),
+              "signed": ("approved_at", "approved_by"), "withdrawn": ("withdrawn_at", "withdrawn_by")}
+    for job in state.get("jobs", []):
+        for co in job.get("change_orders", []):
+            if co.get("history") or "number" not in co:
+                continue
+            history = []
+            for row in rows_by_job.get(job.get("id", ""), []):
+                # The first "CO N" in the row is the one it is about; a title can name another.
+                named = CO_NAMED.search(str(row.get("detail", "")))
+                if named and int(named.group(1)) == int(co["number"]):
+                    what = CO_AUDIT_EVENTS[row["action"]]
+                    history.append({"at": row.get("at", ""), "what": what, "by": row.get("actor", "")})
+                    at_key, by_key = stamps.get(what, (None, None))
+                    if at_key:
+                        co.setdefault(at_key, row.get("at", ""))
+                        co.setdefault(by_key, row.get("actor", ""))
+            if history:
+                co["history"] = history
+
+
+STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _tasks_daily_lists, _payapps_cos_co_history]
 SCHEMA_VERSION = len(STEPS) + 1
 
 

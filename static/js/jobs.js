@@ -86,7 +86,10 @@ function nextStepWords(j, now) {
 export function coSignature(co) {
   if (co.signature) return `<div class="money-row"><span class="label">Signed</span><span>${co.signature.name}, ${fmtDateTime(co.signature.at)} (online)</span></div>
     <p class="sub">Kept with it: the consent they agreed to, their network address and browser, and a fingerprint of what they saw (${String(co.signature.snapshot_sha256).slice(0, 12)}…).</p>`;
-  if (co.signed_evidence) return `<div class="money-row"><span class="label">Signed</span><span>Paper copy on the job record: ${co.signed_evidence.label} (recorded by ${co.signed_evidence.by}, ${fmtDate(co.signed_evidence.at)})</span></div>`;
+  // On paper (M9): who signed it and the date they signed, when recorded; then the copy on the job record.
+  const ev = co.signed_evidence;
+  if (ev) return `<div class="money-row"><span class="label">Signed</span><span>${ev.signer_name ? `${ev.signer_name}, ${fmtDate(ev.signed_on || ev.at)} (on paper)` : "On paper"}</span></div>
+    <p class="sub">Paper copy on the job record: ${ev.label} (recorded by ${ev.by}, ${fmtDate(ev.at)}).</p>`;
   return "";
 }
 

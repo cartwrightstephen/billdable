@@ -235,7 +235,7 @@ class UiServerTests(unittest.TestCase):
 
     def test_change_order_description_is_kept(self):
         cookie, job = self.company("co@example.com")
-        res, state = self.post(f"/api/jobs/{job['id']}/add-co", {"title": "Two outlets", "amount_cents": 45_000,
+        res, state = self.post(f"/api/jobs/{job['id']}/add-co", {"title": "Two outlets", "amount_cents": 45_000, "reason": "owner_request",
                                                                  "description": "Island outlets per owner"}, cookie)
         self.assertEqual(res.status, 200)
         self.assertEqual(state["jobs"][-1]["change_orders"][-1]["description"], "Island outlets per owner")

@@ -1178,7 +1178,38 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     for inv in out["invoices"]:
         paid = sum(p["amount_cents"] for p in job["payments"] if p.get("invoice_id") == inv["id"])
         inv["remaining_cents"] = max(0, inv["amount_cents"] - paid) if inv["status"] in OPEN_FOR_PAYMENT else 0
+    _payapp_figures(job, out)
+    _co_flags(out)
+    # Money > Unpaid's Recent contact (M11), only on jobs with money owed, to keep the page light.
+    if out["money"]["outstanding_cents"] > 0:
+        out["recent_contact"], out["contact_total"] = contact_log(state, job["id"])
     return out
+
+
+def payapp_figures(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
+    """The pay app's summary lines 1-9, as its PDF prints them (payapp_pdf.summary), plus the
+    payments received on the pay apps before it (Stephen's Oct 29 review, M2), for information."""
+    figures = payapp_pdf.summary(job, invoice)
+    earlier = set()
+    for inv in job.get("invoices", []):
+        if inv is invoice or inv.get("id") == invoice.get("id"):
+            break
+        earlier.add(inv.get("id"))
+    figures["received_before"] = sum(p["amount_cents"] for p in job.get("payments", []) if p.get("invoice_id") in earlier)
+    return figures
+
+
+def _payapp_figures(job: dict[str, Any], out: dict[str, Any]) -> None:
+    """Each pay app that isn't void gets its figures; a deleted draft's would only add weight."""
+    for stored, inv in zip(job.get("invoices", []), out.get("invoices", [])):
+        if stored.get("status") in sov.LIVE_STATUSES:
+            inv["figures"] = payapp_figures(job, stored)
+
+
+def _co_flags(out: dict[str, Any]) -> None:
+    """What the app shows on each change order (M9): work started before it was signed."""
+    for co in out.get("change_orders", []):
+        co["work_started_unsigned"] = co_started_unsigned(co)
 
 
 def _totals(views: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1224,6 +1255,7 @@ def job_summary(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
         inv.pop("lines", None)
     for co in out.get("change_orders", []):
         co.pop("snapshot", None)
+    _co_flags(out)
     out["summary"] = True
     return out
 
@@ -2022,20 +2054,109 @@ def answer_packet_suggestion(state: dict[str, Any], payer_id: str, suggestion_id
 
 MAX_SCHEDULE_DAYS = 365
 
+# Why the scope changed (Stephen's Oct 29 review, M7). Older change orders have none.
+CO_REASONS = {
+    "owner_request": "Owner request",
+    "unforeseen_condition": "Unforeseen condition",
+    "design_issue": "Design issue",
+    "value_engineering": "Value engineering",
+    "other": "Other",
+}
+# How the change is priced (M8): one agreed price, or time and materials.
+CO_PRICING = {"lump_sum": "Lump sum", "tm": "Time and materials"}
+MAX_CO_ITEMS = 50
+MAX_CO_TEXT = 200
+
+
+def co_event(co: dict[str, Any], what: str, actor: str, at: str | None = None, note: str = "") -> str:
+    """One row of a change order's own history (M10): what happened, who and when. Returns the time."""
+    at = at or utcnow()
+    row = {"at": at, "what": what, "by": actor}
+    if note:
+        row["note"] = note
+    co.setdefault("history", []).append(row)
+    return at
+
+
+def _co_items(items: Any, errors: dict[str, str]) -> list[dict[str, Any]]:
+    """The itemized cost breakdown (M8): [{label, amount_cents}], at most MAX_CO_ITEMS. Blank rows
+    (no label and no amount) are dropped; the rest need both."""
+    if items in (None, ""):
+        return []
+    if not isinstance(items, list):
+        errors["items"] = "Enter each cost line with a label and an amount."
+        return []
+    out = []
+    for n, item in enumerate(items):
+        item = item if isinstance(item, dict) else {}
+        label = " ".join(str(item.get("label") or "").split())[:120]
+        amount = item.get("amount_cents")
+        if not label and amount in (None, "", 0):
+            continue
+        if not label:
+            errors[f"item_label_{n}"] = "Enter what this cost line is, like Labor."
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount == 0:
+            errors[f"item_amount_{n}"] = "Enter this line's amount, like 450."
+        elif abs(amount) > MAX_AMOUNT_CENTS:
+            errors[f"item_amount_{n}"] = f"Enter an amount up to {money(MAX_AMOUNT_CENTS)}."
+        out.append({"label": label, "amount_cents": amount if isinstance(amount, int) and not isinstance(amount, bool) else 0})
+    if len(out) > MAX_CO_ITEMS:
+        errors["items"] = f"A change order can have up to {MAX_CO_ITEMS} cost lines."
+    return out
+
+
+def _past_day(value: Any, field: str, what: str) -> str:
+    """A date that has already happened (one day of slack for time zones), as YYYY-MM-DD; blank is ""."""
+    message = f"Enter {what}, like 2026-10-27."
+    day = _day(value, field, message)
+    if day is None:
+        return ""
+    if day > datetime.now(timezone.utc).date() + timedelta(days=1):
+        _refuse(message, {field: f"Enter {what} that has already happened."})
+    return day.isoformat()
+
 
 def add_change_order(
     state: dict[str, Any], job_id: str, title: str, amount_cents: int, actor: str = "owner", description: str = "",
-    schedule_days: int = 0,
+    schedule_days: int = 0, reason: str | None = None, pricing: str = "", items: Any = None, contract_ref: str = "",
+    support_record_ids: Any = None, work_started_on: Any = "",
 ) -> dict[str, Any]:
     """A change order, pending until signed. A negative amount is a credit (R3-06): signed, it
-    lowers the contract. `schedule_days` is how many days it adds to (or takes off) the schedule."""
+    lowers the contract. `schedule_days` is how many days it adds to (or takes off) the schedule.
+
+    Stephen's Oct 29 review (M7, M8): `reason` is one of CO_REASONS, and the description is
+    required when it is "other". The server always passes one; None is for callers from before
+    reasons (tests, scripts), which skip the check. `pricing` is lump sum (the default) or time and
+    materials; `items` is the cost breakdown, whose sum is the amount (a typed amount that differs
+    is refused; a blank one is set to the sum). `contract_ref` names the contract section or
+    original scope it changes, and `support_record_ids` the job records that back it up (quotes,
+    supplier invoices, T&M sheets). `work_started_on` (M9) is the day work began, if it already has."""
     job = _open_job(state, job_id)
     title = title.strip() if isinstance(title, str) else ""
     description = description.strip() if isinstance(description, str) else ""
+    contract_ref = " ".join(str(contract_ref or "").split())[:MAX_CO_TEXT]
     errors: dict[str, str] = {}
     if not title:
         errors["title"] = "Enter a title for the change order."
-    if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents == 0:
+    if reason is not None:
+        reason = str(reason or "").strip()
+        if reason not in CO_REASONS:
+            errors["reason"] = "Pick why the scope changed."
+        elif reason == "other" and not description:
+            errors["description"] = "Enter a description: what changed and why."
+    pricing = str(pricing or "lump_sum").strip()
+    if pricing not in CO_PRICING:
+        errors["pricing"] = "Pick lump sum or time and materials."
+    lines = _co_items(items, errors)
+    if lines and not any(k.startswith("item_") or k == "items" for k in errors):
+        total = sum(l["amount_cents"] for l in lines)
+        if isinstance(amount_cents, int) and not isinstance(amount_cents, bool) and amount_cents not in (0, total):
+            errors["amount_cents"] = f"The cost lines add up to {money(total)}. Make the amount match, or leave it blank."
+        else:
+            amount_cents = total
+    if "amount_cents" in errors:
+        pass
+    elif not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents == 0:
         errors["amount_cents"] = "Enter the change order amount, like 1,250, or -1,250 for a credit."
     elif abs(amount_cents) > MAX_AMOUNT_CENTS:
         errors["amount_cents"] = f"Enter a change order amount up to {money(MAX_AMOUNT_CENTS)}."
@@ -2043,6 +2164,16 @@ def add_change_order(
         errors["amount_cents"] = "Enter a credit no larger than the contract total."
     if not isinstance(schedule_days, int) or isinstance(schedule_days, bool) or abs(schedule_days) > MAX_SCHEDULE_DAYS:
         errors["schedule_days"] = f"Enter the schedule change in whole days, up to {MAX_SCHEDULE_DAYS}, or leave it blank."
+    records = {r["id"] for r in job.get("records", [])}
+    support = support_record_ids if isinstance(support_record_ids, list) else []
+    support = list(dict.fromkeys(str(r) for r in support if r))
+    if any(r not in records for r in support):
+        errors["support_record_ids"] = "Pick backup from this job's record."
+    try:
+        started = _past_day(work_started_on, "work_started_on", "the day work started")
+    except GateError as exc:
+        errors.update(exc.fields)
+        started = ""
     _refuse("Change order not saved.", errors)
     number = max((co["number"] for co in job["change_orders"]), default=0) + 1
     co = {
@@ -2053,13 +2184,26 @@ def add_change_order(
         "amount_cents": amount_cents,
         "status": "pending",
         "included_in_billing": False,
+        "pricing": pricing,
     }
+    if reason:
+        co["reason"] = reason
+    if lines:
+        co["items"] = lines
+    if contract_ref:
+        co["contract_ref"] = contract_ref
+    if support:
+        co["support_record_ids"] = support
     if schedule_days:
         co["schedule_days"] = schedule_days
+    co["created_at"] = co_event(co, "created", actor)
+    co["created_by"] = actor
     job["change_orders"].append(co)
     what = f"a credit of {money(-amount_cents)}" if amount_cents < 0 else money(amount_cents)
     days = f", {schedule_days:+d} day{'' if abs(schedule_days) == 1 else 's'} on the schedule" if schedule_days else ""
     audit(state, job_id, "add_co", f"{actor} added CO {number} — {title} for {what}{days}.", actor)
+    if started:
+        _set_work_started(state, job, co, started, actor)
     return job
 
 
@@ -2072,7 +2216,8 @@ def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
         raise GateError(f"CO {co['number']} is already approved.")
     co["status"] = "approved"
     co["included_in_billing"] = False  # no longer pending
-    co["approved_at"] = utcnow()
+    co["approved_at"] = co_event(co, "signed", actor)
+    co["approved_by"] = actor
     if sov.has_sov(job):
         _add_co_line(job, co)
     if job.get("work_status") == "complete":
@@ -2095,22 +2240,34 @@ def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
 
 # ---------- signed change orders (P2-3) ----------
 # Draft consent wording, written to describe what the code does; counsel should check it
-# against ESIGN and the state's rules before real customers rely on it.
+# against ESIGN and the state's rules before real customers rely on it. Stephen's Oct 29 review
+# (M9): the signer agrees to the scope, price and schedule by name.
 CO_CONSENT = (
-    "I agree to this change order. I agree to sign it electronically, and my typed name below is my signature."
+    "I agree to the scope, price and schedule in this change order. I agree to sign it electronically, "
+    "and my typed name below is my signature."
 )
+# What co_snapshot holds. Version 1 (no "version" key) had the title, description, amount and
+# consent only; a stored signature keeps its own snapshot and hash, so older ones still verify.
+CO_SNAPSHOT_VERSION = 2
 
 
 def co_snapshot(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any]) -> dict[str, Any]:
-    """Exactly what the signer saw; its SHA-256 is kept with the signature."""
+    """Exactly what the signer saw; its SHA-256 is kept with the signature. payer_page.render_co
+    draws the signing page from it."""
     return {
+        "version": CO_SNAPSHOT_VERSION,
         "contractor": state.get("company", {}).get("name", ""),
         "job": job["name"],
         "address": job.get("address", ""),
         "change_order": co["number"],
         "title": co["title"],
         "description": co.get("description", ""),
+        "reason": CO_REASONS.get(co.get("reason", ""), ""),
+        "contract_ref": co.get("contract_ref", ""),
+        "pricing": CO_PRICING.get(co.get("pricing", "lump_sum"), CO_PRICING["lump_sum"]),
+        "items": [{"label": i["label"], "amount_cents": i["amount_cents"]} for i in co.get("items", [])],
         "amount_cents": co["amount_cents"],
+        "schedule_days": int(co.get("schedule_days") or 0),
         "consent": CO_CONSENT,
     }
 
@@ -2144,13 +2301,15 @@ def request_co_signature(
     if not link_base or not company_id:
         raise GateError(NO_SIGNING_LINKS)
     co["sign_token"] = co.get("sign_token") or secrets.token_urlsafe(24)
-    co["signature_requested_at"] = utcnow()
+    co["signature_requested_at"] = co_event(co, "signature_requested", actor)
     link = f"{link_base.rstrip('/')}/s/{company_id}.{co['sign_token']}"
     payer = _payer(state, job["payer_id"])
     if payer.get("ap_email"):
+        days = int(co.get("schedule_days") or 0)
         body = (
             f"{payer.get('approver') or payer['name']},\n\nPlease review and sign change order {co['number']} for {job['name']}: "
-            f"{co['title']}, {money(co['amount_cents'])}."
+            f"{co['title']}, {money(co['amount_cents'])}"
+            + (f", {days:+d} day{'' if abs(days) == 1 else 's'} on the schedule" if days else "") + "."
             + (f"\n\n{co['description']}" if co.get("description") else "")
             + f"\n\nSign it here (type your name; nothing to print):\n{link}\n\nRequested by {actor}."
         )
@@ -2177,17 +2336,117 @@ def sign_change_order(
         "consent": CO_CONSENT, "snapshot": snap, "snapshot_sha256": snapshot_sha256(snap),
     }
     approve_change_order(state, job["id"], co["id"], actor=f"{name} (signed online)")
+    _note_signed_after_start(state, job, co)
     return co
 
 
-def mark_co_signed(state: dict[str, Any], job_id: str, co_id: str, record_id: str, actor: str = "owner") -> dict[str, Any]:
-    """Approve a change order signed on paper: the job record must hold the signed copy."""
+def mark_co_signed(
+    state: dict[str, Any], job_id: str, co_id: str, record_id: str, actor: str = "owner",
+    signer_name: Any = None, signed_on: Any = None,
+) -> dict[str, Any]:
+    """Approve a change order signed on paper: the job record must hold the signed copy. The
+    server also asks who signed it and the date they signed (M9), no later than today; None is
+    for callers from before that (tests, scripts)."""
     job, co = _pending_co(state, job_id, co_id)
+    errors: dict[str, str] = {}
     record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
     if not record:
         raise GateError("Pick the job record that holds the signed change order, or request an online signature.")
+    signer = None if signer_name is None else " ".join(str(signer_name or "").split())[:120]
+    if signer is not None and len(signer) < 2:
+        errors["signer_name"] = "Enter the name of the person who signed it."
+    day = ""
+    if signed_on is not None:
+        try:
+            day = _past_day(signed_on, "signed_on", "the date it was signed")
+            if not day:
+                errors["signed_on"] = "Enter the date it was signed, like 2026-10-27."
+        except GateError as exc:
+            errors.update(exc.fields)
+    _refuse("Not saved as signed.", errors)
     co["signed_evidence"] = {"record_id": record_id, "label": record.get("label", ""), "by": actor, "at": utcnow()}
+    if signer:
+        co["signed_evidence"]["signer_name"] = signer
+    if day:
+        co["signed_evidence"]["signed_on"] = day
     approve_change_order(state, job_id, co_id, actor)
+    if signer:
+        co["history"][-1]["note"] = f"signed on paper by {signer}" + (f" on {day}" if day else "")
+    _note_signed_after_start(state, job, co)
+    return job
+
+
+def co_signed_on(co: dict[str, Any]) -> str:
+    """The day the client signed (YYYY-MM-DD), or "" while unsigned."""
+    if co.get("signature"):
+        return str(co["signature"].get("at", ""))[:10]
+    ev = co.get("signed_evidence") or {}
+    if ev:
+        return str(ev.get("signed_on") or ev.get("at") or co.get("approved_at") or "")[:10]
+    return str(co.get("approved_at") or "")[:10] if co.get("status") == "approved" else ""
+
+
+def co_started_unsigned(co: dict[str, Any]) -> bool:
+    """Work began before the client signed (M9): pending with a start date, or signed after it.
+    The flag stays once signed, as a record."""
+    started = co.get("work_started_on")
+    if not started:
+        return False
+    if co.get("status") == "pending":
+        return True
+    signed = co_signed_on(co)
+    return co.get("status") == "approved" and bool(signed) and signed > started
+
+
+def _set_work_started(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], day: str, actor: str) -> None:
+    co["work_started_on"] = day
+    co["work_started_by"] = actor
+    co_event(co, "work_started", actor, note=day)
+    flag = " before it was signed" if co_started_unsigned(co) else ""
+    audit(state, job["id"], "co_work_started", f"{actor} recorded that work on CO {co['number']} started {day}{flag}.", actor)
+
+
+def _note_signed_after_start(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any]) -> None:
+    if co_started_unsigned(co):
+        audit(state, job["id"], "co_signed_after_start",
+              f"CO {co['number']} was signed {co_signed_on(co)}, after work started {co['work_started_on']}.", "duracash")
+
+
+def set_co_work_started(state: dict[str, Any], job_id: str, co_id: str, work_started_on: Any, actor: str = "owner") -> dict[str, Any]:
+    """The day work on a change order started (M9), recorded before or after it is signed."""
+    job = _open_job(state, job_id)
+    co = next((c for c in job["change_orders"] if c["id"] == co_id), None)
+    if not co:
+        raise GateError("Change order not found.")
+    if co["status"] == "withdrawn":
+        raise GateError(f"CO {co['number']} is withdrawn.")
+    day = _past_day(work_started_on, "work_started_on", "the day work started")
+    if not day:
+        _refuse("", {"work_started_on": "Enter the day work started, like 2026-10-27."})
+    _set_work_started(state, job, co, day, actor)
+    return job
+
+
+def mark_co_logged(state: dict[str, Any], job_id: str, co_id: str, logged: bool, actor: str = "owner") -> dict[str, Any]:
+    """"Client logged it on their end" (M8): after signing, the client has entered the change
+    order in their own system. Ticking it again off takes it back; both are in the history."""
+    job = _open_job(state, job_id)
+    co = next((c for c in job["change_orders"] if c["id"] == co_id), None)
+    if not co:
+        raise GateError("Change order not found.")
+    if co["status"] != "approved":
+        raise GateError(f"CO {co['number']} isn't signed yet. Mark it logged once it is signed.")
+    if logged == bool(co.get("client_logged_at")):
+        return job
+    if logged:
+        co["client_logged_at"] = co_event(co, "client_logged", actor)
+        co["client_logged_by"] = actor
+        audit(state, job_id, "co_client_logged", f"{actor} marked CO {co['number']} as logged by the client on their end.", actor)
+    else:
+        co.pop("client_logged_at", None)
+        co.pop("client_logged_by", None)
+        co_event(co, "client_logged_undone", actor)
+        audit(state, job_id, "co_client_logged", f"{actor} took off that the client logged CO {co['number']}.", actor)
     return job
 
 
@@ -2204,7 +2463,8 @@ def withdraw_change_order(state: dict[str, Any], job_id: str, co_id: str, actor:
         raise GateError(f"CO {co['number']} is on {open_draft['number']}. Delete that draft first, then withdraw the CO.")
     co["status"] = "withdrawn"
     co["included_in_billing"] = False
-    co["withdrawn_at"] = utcnow()
+    co["withdrawn_at"] = co_event(co, "withdrawn", actor)
+    co["withdrawn_by"] = actor
     audit(state, job_id, "withdraw_co", f"{actor} withdrew CO {co['number']} — {co['title']}.", actor)
     return job
 
@@ -2227,6 +2487,7 @@ def void_draft(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict
     for co in job["change_orders"]:
         if co["id"] in carried and co.get("included_in_billing"):
             co["included_in_billing"] = False
+            co_event(co, "off_draft", actor)
             audit(state, job_id, "change_order_off_draft", f"CO {co['number']} taken off the voided draft.", actor)
     return job
 
@@ -2341,6 +2602,8 @@ def include_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
     if open_draft:
         raise GateError(f"Send or finish {open_draft['number']} first. The CO goes on the next pay app.")
     co["included_in_billing"] = True
+    co["included_at"] = co_event(co, "included", actor)
+    co["included_by"] = actor
     audit(state, job_id, "include_co", f"{actor} put unsigned CO {co['number']} on the next pay app.", actor)
     return job
 
@@ -3371,3 +3634,4 @@ from .validate import *  # noqa: E402,F401,F403
 from .tasks import *  # noqa: E402,F401,F403
 from .daily import *  # noqa: E402,F401,F403
 from .comms import *  # noqa: E402,F401,F403
+from .contact import *  # noqa: E402,F401,F403

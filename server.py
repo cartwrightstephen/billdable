@@ -1952,7 +1952,9 @@ class Handler(BaseHTTPRequestHandler):
                 if attach_to:
                     domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor)
                 if signed_co:
-                    domain.mark_co_signed(state, job_id, signed_co, filed["record_ids"][0], actor)
+                    # Who signed the paper copy and when (M9) come with it; without them it is refused.
+                    domain.mark_co_signed(state, job_id, signed_co, filed["record_ids"][0], actor,
+                                          signer_name=(query.get("signer") or [""])[0], signed_on=(query.get("signed_on") or [""])[0])
 
         status, payload = self._mutate(company_id, add)
         if status != 200:
@@ -2595,6 +2597,23 @@ ROUTES = [
 ]
 
 
+def _add_co(st: dict, job_id: str, c: Ctx) -> None:
+    """New change order (M7-M9): the reason is always checked here, so a request without one is refused."""
+    body = c.body
+    items = _list(body, "items") or []
+    support = _list(body, "support_record_ids") or []
+    if any(not isinstance(x, dict) for x in items) or any(not isinstance(x, str) for x in support):
+        raise BadRequest(NOT_UNDERSTOOD)
+    domain.add_change_order(
+        st, job_id, _text(body, "title"), _number(body, "amount_cents", "the change order amount", 0), c.actor,
+        description=_text(body, "description"), schedule_days=_number(body, "schedule_days", "the schedule change in days", 0),
+        reason=_text(body, "reason"), pricing=_text(body, "pricing"), contract_ref=_text(body, "contract_ref"),
+        items=[{"label": _text(x, "label"), "amount_cents": domain.parse_int(x.get("amount_cents"), "the amount", f"item_amount_{n}", 0)}
+               for n, x in enumerate(items)],
+        support_record_ids=support, work_started_on=_text(body, "work_started_on"),
+    )
+
+
 def _co_args(ctx: Ctx) -> dict:
     return {"link_base": app_url(), "company_id": ctx.company_id}
 
@@ -2701,12 +2720,16 @@ JOB_ACTIONS = {
     "retainage": (False, _sends("the request", _retainage)),
     "note-contact": (False, lambda h, st, j, i, c: domain.note_contact(st, j, _text(c.body, "text"), _text(c.body, "next_on"), c.actor)),
     "retainage-paid": (False, lambda h, st, j, i, c: domain.record_retainage_payment(st, j, _number(c.body, "amount_cents", "the retainage received"), _text(c.body, "reference"), c.actor)),
-    "add-co": (False, lambda h, st, j, i, c: domain.add_change_order(st, j, _text(c.body, "title"), _number(c.body, "amount_cents", "the change order amount", 0), c.actor, description=_text(c.body, "description"),
-                                                                    schedule_days=_number(c.body, "schedule_days", "the schedule change in days", 0))),
+    "add-co": (False, lambda h, st, j, i, c: _add_co(st, j, c)),
     # A change order is approved by a signature: online (request-co-signature) or a signed
-    # copy on the job record. A bare status flip is not accepted (P2-3).
-    "approve-co": (True, lambda h, st, j, i, c: domain.mark_co_signed(st, j, i, _text(c.body, "record_id"), c.actor)),
+    # copy on the job record, with who signed it and when. A bare status flip is not accepted (P2-3).
+    "approve-co": (True, lambda h, st, j, i, c: domain.mark_co_signed(st, j, i, _text(c.body, "record_id"), c.actor,
+                                                                       signer_name=_text(c.body, "signer_name"), signed_on=_text(c.body, "signed_on"))),
     "request-co-signature": (True, _sends("the request", lambda h, st, j, i, c: _request_co_signature(st, j, i, c))),
+    # Stephen's Oct 29 review: the client logged a signed change order on their end (M8), and the
+    # day work on it started (M9).
+    "co-logged": (True, lambda h, st, j, i, c: domain.mark_co_logged(st, j, i, c.body.get("logged") is not False, c.actor)),
+    "co-work-started": (True, lambda h, st, j, i, c: domain.set_co_work_started(st, j, i, _text(c.body, "work_started_on"), c.actor)),
     "include-co": (True, lambda h, st, j, i, c: domain.include_change_order(st, j, i, c.actor)),
     "withdraw-co": (True, lambda h, st, j, i, c: domain.withdraw_change_order(st, j, i, c.actor)),
     "void-draft": (False, lambda h, st, j, i, c: domain.void_draft(st, j, c.actor)),

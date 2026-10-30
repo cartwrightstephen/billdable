@@ -43,6 +43,28 @@ function paperworkCell(a) {
   return `<a href="${pathFor("packet-detail", a.jobId, a.id)}" data-action="open-packet" data-job="${a.jobId}" data-inv="${a.id}">${missing ? `<span class="pill red">${missing} missing</span>` : `<span class="pill green">Complete</span>`}</a>`;
 }
 
+// The pay app's summary, lines 1-9 as its PDF prints them (Stephen's Oct 29 review, M2), from
+// the server's figures (domain.payapp_figures), and the payments received on earlier pay apps.
+export function payappSummaryHtml(inv) {
+  const f = inv.figures;
+  if (!f) return "";
+  const row = (label, cents, cls = "") => `<div class="money-row${cls}"><span class="label">${label}</span><span>${money(cents)}</span></div>`;
+  return `<div class="card payapp-summary">
+    <h2>${termText("Pay app summary")}</h2>
+    ${row("Contract sum", f.original)}
+    ${row("Approved change orders", f.net_co)}
+    ${f.unsigned_co ? row("Unsigned change orders billed here", f.unsigned_co) : ""}
+    ${row("Contract sum to date", f.contract_to_date, " strong")}
+    ${row("Completed and stored to date", f.completed)}
+    ${row("Retainage held", f.retainage)}
+    ${row("Earned less retainage", f.earned)}
+    ${row(termText("Less previous pay apps"), f.previous)}
+    ${row("Current amount due", f.due, " strong payapp-due")}
+    ${row("Balance to finish, including retainage", f.balance)}
+    <p class="sub payapp-received">Prior payments received: ${money(f.received_before || 0)}${f.released ? ` · Retainage released: ${money(f.released)}` : ""}</p>
+  </div>`;
+}
+
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   payappDetail() {
@@ -90,6 +112,7 @@ export const views = {
         ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
         ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" ${missing || (j.blockers || []).length || noEmail || locked ? "disabled" : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
       </div>` : ""}
+      ${payappSummaryHtml(inv)}
       <div class="card">
         <h2>Lines</h2>
         ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}

@@ -178,6 +178,14 @@ def sheet_columns(entry: dict[str, Any], retainage_pct: int = 0) -> dict[str, in
     }
 
 
+def qty_to_date(entry: dict[str, Any]) -> str:
+    """The quantity completed to date on a sheet entry, with its unit (Stephen's Oct 29 review,
+    M2), or "" for a lump sum and for entries from before quantities were kept."""
+    if str(entry.get("unit", "")).upper() == "LS" or entry.get("qty_milli_to_date") is None:
+        return ""
+    return f"{fmt_qty(entry['qty_milli_to_date'])} {entry.get('unit', '')}".strip()
+
+
 def totals(job: dict[str, Any]) -> dict[str, int]:
     base = [l for l in lines(job) if not l.get("co_id")]
     cos = [l for l in lines(job) if l.get("co_id")]
@@ -288,13 +296,15 @@ def continuation_sheet(job: dict[str, Any], invoice: dict[str, Any]) -> str:
     if not entries:
         return ""
     pct_ret = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)  # as held on this pay app (R4-07)
-    rows = [("Item", "Description", "Scheduled", "Previous", "This period", "Stored", "To date", "%", "Balance", "Retainage")]
+    rows = [("Item", "Description", "Scheduled", "Previous", "This period", "Stored", "Qty to date", "To date", "%", "Balance", "Retainage")]
     for e in entries:
         c = sheet_columns(e, pct_ret)
         rows.append((
             e.get("item", ""),
             e["description"][:40],
-            *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored", "to_date")),
+            *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored")),
+            qty_to_date(e),
+            f"{c['to_date'] / 100:,.2f}",
             f"{c['pct']}%",
             f"{c['balance'] / 100:,.2f}",
             f"{c['retainage'] / 100:,.2f}",

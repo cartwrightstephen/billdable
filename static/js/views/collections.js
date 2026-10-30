@@ -1,5 +1,5 @@
 // Money, Unpaid: what is unpaid, who to contact, and the follow-up.
-import { unesc, money, toDate, fmtDate } from "../format.js";
+import { unesc, money, toDate, fmtDate, fmtDateTime } from "../format.js";
 import { statusPill, followUpDue, payAppList } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
@@ -8,6 +8,17 @@ import { state } from "../state.js";
 import { post, emptyState } from "../app-core.js";
 import { owedText, shortPayButtons, sendsTo } from "./job.js";
 
+
+// Recent contact with the client (Stephen's Oct 29 review, M11): the last emails, calls and
+// client page visits, newest first, from the server (domain.contact_log), closed until opened.
+export function recentContactHtml(j) {
+  const rows = j.recent_contact || [];
+  if (!rows.length) return "";
+  return `<details class="recent-contact"><summary>Recent contact (${j.contact_total || rows.length})</summary>
+    <ul>${rows.map(c => `<li><span class="sub">${fmtDateTime(c.at)}</span> <strong>${c.label}</strong>${c.status ? ` · ${c.status}` : ""}${c.text ? `<div>${c.text}</div>` : ""}${c.by ? `<div class="sub">${c.by}</div>` : ""}</li>`).join("")}</ul>
+    <a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}" data-focus=".job-history">See all on the job</a>
+  </details>`;
+}
 
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
@@ -35,7 +46,7 @@ export const views = {
             const expected = approved ? `${fmtDate(approved.expected_payment_on)}<div class="sub row-sub">${approved.number} approved by ${approved.approved_by_payer || "the client"}</div>`
               : j.expected_payment_on ? `${fmtDate(j.expected_payment_on)}<div class="sub row-sub">they said on the phone</div>` : "—";
             return `<tr>
-              <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a><div class="sub row-sub">${statusPill(j)}</div></td>
+              <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a><div class="sub row-sub">${statusPill(j)}</div>${recentContactHtml(j)}</td>
               <td>${unpaid}</td>
               <td class="num">${days}</td>
               <td>${dueInv ? (late ? `<span class="pill red">Overdue</span><div class="sub row-sub">due ${fmtDate(dueInv.due_on)}</div>` : fmtDate(dueInv.due_on)) : "—"}</td>

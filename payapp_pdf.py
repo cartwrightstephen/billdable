@@ -295,9 +295,11 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
 
     if sheet:
         # G703 columns: C scheduled, D previous work, E work this period, F materials stored,
-        # G completed and stored to date, G/C, H balance, I retainage at the job's percent.
-        widths = [5, 24, 13, 13, 13, 12, 13, 4, 13, 12]
-        heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "To date", "%", "Balance", "Retainage"]
+        # the quantity completed to date (Stephen's Oct 29 review, M2), G completed and stored to
+        # date, G/C, H balance, I retainage at the job's percent. 141 Courier characters at 8 pt
+        # fit the 720 pt between the margins.
+        widths = [5, 20, 13, 13, 13, 12, 12, 13, 4, 13, 12]
+        heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "Qty to date", "To date", "%", "Balance", "Retainage"]
         pct_ret = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)   # as held on this pay app (R4-07)
         size = 8
 
@@ -320,8 +322,9 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
                 y -= 16
             c = sov.sheet_columns(e, pct_ret)
             page.text(MARGIN, y, row_text([
-                _fit(e.get("item", ""), 5), _fit(e["description"], 24),
-                *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored", "to_date")),
+                _fit(e.get("item", ""), 5), _fit(e["description"], 20),
+                *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored")),
+                _fit(sov.qty_to_date(e), 12), f"{c['to_date'] / 100:,.2f}",
                 f"{c['pct']}%", f"{c['balance'] / 100:,.2f}", f"{c['retainage'] / 100:,.2f}",
             ]), "F3", size)
             for i, k in enumerate(("scheduled", "previous", "this_period", "stored", "to_date", "retainage")):
@@ -338,8 +341,8 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
             op_sched = terms["op_scheduled_cents"]
             op_to = op_prev + op_this
             op_ret = sov.retainage_on(op_to, pct_ret)
-            page.text(MARGIN, y, row_text(["", _fit(f"Overhead and profit {bp / 100:g}%", 24), f"{op_sched / 100:,.2f}", f"{op_prev / 100:,.2f}",
-                                           f"{op_this / 100:,.2f}", "0.00", f"{op_to / 100:,.2f}",
+            page.text(MARGIN, y, row_text(["", _fit(f"Overhead and profit {bp / 100:g}%", 20), f"{op_sched / 100:,.2f}", f"{op_prev / 100:,.2f}",
+                                           f"{op_this / 100:,.2f}", "0.00", "", f"{op_to / 100:,.2f}",
                                            f"{(100 * op_to) // op_sched if op_sched else 0}%", f"{(op_sched - op_to) / 100:,.2f}",
                                            f"{op_ret / 100:,.2f}"]), "F3", size)
             for i, v in enumerate((op_sched, op_prev, op_this, 0, op_to, op_ret)):
@@ -357,14 +360,14 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
                 continue
             sched, to = co["amount_cents"], prev + this
             ret = sov.retainage_on(to, pct_ret)
-            page.text(MARGIN, y, row_text(["", _fit(f"CO {co.get('number', '')} (unsigned)", 24), f"{sched / 100:,.2f}", f"{prev / 100:,.2f}",
-                                           f"{this / 100:,.2f}", "0.00", f"{to / 100:,.2f}",
+            page.text(MARGIN, y, row_text(["", _fit(f"CO {co.get('number', '')} (unsigned)", 20), f"{sched / 100:,.2f}", f"{prev / 100:,.2f}",
+                                           f"{this / 100:,.2f}", "0.00", "", f"{to / 100:,.2f}",
                                            f"{(100 * to) // sched if sched else 0}%", f"{(sched - to) / 100:,.2f}", f"{ret / 100:,.2f}"]), "F3", size)
             for i, v in enumerate((sched, prev, this, 0, to, ret)):
                 totals[i] += v
             y -= 13
         page.line(MARGIN, y + 8, PAGE_W - MARGIN, y + 8)
-        page.text(MARGIN, y - 4, row_text(["", "Totals", *(f"{t / 100:,.2f}" for t in totals[:5]), "",
+        page.text(MARGIN, y - 4, row_text(["", "Totals", *(f"{t / 100:,.2f}" for t in totals[:4]), "", f"{totals[4] / 100:,.2f}", "",
                                            f"{(totals[0] - totals[4]) / 100:,.2f}", f"{totals[5] / 100:,.2f}"]), "F3", size)
         if pct_ret:
             page.text(MARGIN, y - 18, f"Retainage column: {pct_ret}% of the total to date on each line, for reference. Line 5 on page 1 is the retainage actually held to date.", "F1", 8)

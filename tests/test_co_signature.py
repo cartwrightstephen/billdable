@@ -180,7 +180,7 @@ class SigningHttpTests(unittest.TestCase):
         res, raw = self.request("POST", "/api/jobs", {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim",
                                                       "ap_email": "ap@park.example", "contract_cents": 1_000_000}, cookie)
         job = json.loads(raw)["jobs"][-1]
-        res, raw = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Two <b>outlets</b>", "amount_cents": 45_000}, cookie)
+        res, raw = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Two <b>outlets</b>", "amount_cents": 45_000, "reason": "owner_request"}, cookie)
         co = json.loads(raw)["jobs"][-1]["change_orders"][-1]
         res, raw = self.request("POST", f"/api/jobs/{job['id']}/approve-co/{co['id']}", {}, cookie)
         self.assertEqual(res.status, 409, "no bare approval")

@@ -1,7 +1,7 @@
 // Schedule of values arithmetic, the same as sov.py: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sovMilli, sovCents, lumpDone, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../../static/js/sov.js";
+import { sovMilli, sovCents, lumpDone, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, qtyToDate, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../../static/js/sov.js";
 import { formDraft, clearForm } from "../../static/js/forms.js";
 
 test("quantities in thousandths and money in cents, from what people type", () => {
@@ -99,4 +99,15 @@ test("a lump-sum percent goes to the server exactly, never rounded (99.95% is no
   assert.equal(lumpDone("33.33"), null);
   assert.equal(lumpDone("12.25"), null);
   assert.equal(lumpDone("lots"), "lots", "not a number: the server says what is wrong");
+});
+
+test("the continuation sheet has the quantity completed to date, blank for a lump sum (M2)", () => {
+  const html = continuationHtml({ sov_sheet: [
+    { item: "1", description: "Rough-in", unit: "ea", scheduled_cents: 1_800_000, to_date_cents: 810_000, amount_cents: 360_000, qty_milli_to_date: 180_000 },
+    { item: "2", description: "Panel", unit: "LS", scheduled_cents: 1_250_000, to_date_cents: 625_000, amount_cents: 625_000, qty_milli_to_date: 500 },
+  ] }, {});
+  assert.match(html, /<th>Stored<\/th><th>Qty to date<\/th><th>Total to date<\/th>/);
+  assert.match(html, /<td class="num">180 ea<\/td>/);
+  assert.match(html, /Panel[\s\S]*?<td class="num"><\/td><td class="num">\$6,250\.00<\/td>/, "a lump sum has no quantity");
+  assert.equal(qtyToDate({ unit: "ea" }), "", "an entry from before quantities were kept");
 });

@@ -186,6 +186,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator(".more-actions-rest > summary").click();
     await p.locator('.more-actions-rest [data-action="new-co"]').click();
     await p.fill("#co-title", "Owner buys the railing");
+    await p.selectOption("#co-reason", "value_engineering");
     await p.fill("#co-amt", "-500");
     await p.click('[data-action="add-co-here"]');
     const made = p.locator(".new-co-card");
@@ -379,7 +380,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         triedRefusal = true;
         const coId = await page.evaluate(async () => {
           const res = await fetch("/api/jobs/job-inman/add-co", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title: "Smoke test extra", amount_cents: 10000 }) });
+            body: JSON.stringify({ title: "Smoke test extra", amount_cents: 10000, reason: "owner_request" }) });
           const st = await res.json();
           return st.jobs.find((j) => j.id === "job-inman").change_orders.find((c) => c.status === "pending").id;
         });

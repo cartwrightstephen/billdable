@@ -788,7 +788,7 @@
         "changeorder",
         "extra work"
       ],
-      "answer": "Open the job and tap New change order (or use the form on Money, Change orders). Enter a Title and Amount ($), negative for a credit, and tap Create change order. It stays Unsigned until the client signs: tap Request signature to email them a signing link, or Signed on paper… and Take a photo of the signed copy. Once signed it is billable on the next pay app, even after the job is done.",
+      "answer": "Open the job and tap New change order, or tap New change order on Money, Change orders and pick the job. Enter a Title, pick the Reason (owner request, unforeseen condition, design issue, value engineering or other; Other needs a description) and the Amount ($), negative for a credit. You can also add cost lines (their total becomes the amount), pick lump sum or time and materials, name the contract section it changes, tick backup from the job record and enter the day work started. Tap Create change order. It stays Unsigned until the client signs: tap Request signature to email them a signing link, or Signed on paper…, enter who signed it and the date, and Save as signed with the signed copy (Take a photo of the signed copy adds it to the job record). Once signed it adds to the contract and is billable on the next pay app, even after the job is done. If work started before it was signed, it shows Work started before signing.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1027,7 +1027,7 @@
       "keywords": [
         "collections"
       ],
-      "answer": "Money, Unpaid lists every job with money owed: what is unpaid, days since it was sent, when it's due, when they said they'd pay, who to contact, and buttons to send a follow-up, email or call.",
+      "answer": "Money, Unpaid lists every job with money owed: what is unpaid, days since it was sent, when it's due, when they said they'd pay, who to contact, and buttons to send a follow-up, email or call. Open Recent contact under a job to see the last emails, calls and client page visits, newest first, and See all on the job for its whole history.",
       "handler": null,
       "needs_job": false,
       "actions": [
