@@ -91,8 +91,12 @@ async function postImport(path, body) {
   return true;
 }
 
+// One request at a time: Export's calendar card and each redraw of these pages all ask.
+let importSettingsAsking = false;
 export async function loadImportSettings() {
   if (importSettings) { fillImportSettings(); return; }
+  if (importSettingsAsking) return;
+  importSettingsAsking = true;
   const asked = me;
   try {
     const res = await fetch("/api/import/settings");
@@ -100,6 +104,7 @@ export async function loadImportSettings() {
     // Signed out (or someone else signed in) while this was asked: it is the last company's.
     if (data && me === asked) { importSettings = escDeep(data); fillImportSettings(); }
   } catch (_) { /* the cards keep their "loading" text; the banner covers outages */ }
+  finally { importSettingsAsking = false; }
 }
 
 function fillImportSettings() {

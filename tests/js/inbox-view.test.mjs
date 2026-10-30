@@ -123,3 +123,9 @@ test("Import has the file box, the paste box, the payments import and the schedu
   const row = data.sentPayAppRow({ job_id: "j1", job: "Oak", invoice_id: "inv-1", number: "PA-OAK-01", status: "paid", amount_cents: 100000, sent_at: "2026-10-01T00:00:00+00:00" });
   assert.match(row, /href="\/api\/jobs\/j1\/payapp\/inv-1\.pdf"[\s\S]*href="\/api\/jobs\/j1\/payapp\/inv-1\.csv" download>Download for QuickBooks/);
 });
+
+test("the setup step Import payments opens Import at the payments box", async () => {  // I1
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../static/js/views/today.js", import.meta.url), "utf8");
+  assert.match(src, /label: "Import payments", attrs: `data-action="onb-go" data-view="import" data-focus="#qbo-csv"`/);
+});

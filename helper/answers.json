@@ -1695,7 +1695,7 @@
         "lose data",
         "restore"
       ],
-      "answer": "Yes. The server makes a backup every 24 hours (and on start-up when the last one is older) and keeps the newest 14. Those copies sit on the server and guard against mistakes and bugs. When off-site backup is set up, each one is also encrypted and copied off the server. Keep your own copy with Export data too, and keep signed documents outside Duracash.",
+      "answer": "Yes. The server makes a backup every 24 hours (and on start-up when the last one is older) and keeps the newest 14. Those copies sit on the server and guard against mistakes and bugs. When off-site backup is set up, each one is also encrypted and copied off the server. Keep your own copy too, with Download everything on Import/Export, and keep signed documents outside Duracash.",
       "handler": null,
       "needs_job": false,
       "actions": [],

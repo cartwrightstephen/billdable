@@ -1,4 +1,4 @@
-// The Payments page's QuickBooks import (R5-03): rows the server proposed from a CSV, a pay app
+// The QuickBooks payments import on Import (R5-03): rows the server proposed from a CSV, a pay app
 // picked by hand for a row that needs one, a payment larger than its pay app split in two, and
 // what is left on the page after Record. Pure functions over the rows (already HTML-escaped on
 // arrival, like the rest of state), so node can test them (tests/js/payimport.test.mjs).
