@@ -50,7 +50,7 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", ext
     if (signedOut) return;
     if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { failed.push(`${f.name}: larger than ${MAX_UPLOAD_MB} MB`); return; }
     const name = f.name && f.name !== "image.png" ? f.name : `Screenshot ${new Date().toISOString().slice(0, 16).replace("T", " ").replace(":", ".")}.png`;
-    const also = fileNow ? `${extra.attach ? `&attach=${encodeURIComponent(extra.attach)}` : ""}${extra.co ? `&co=${encodeURIComponent(extra.co)}` : ""}${extra.waiverKind ? `&waiver_kind=${encodeURIComponent(extra.waiverKind)}` : ""}` : "";
+    const also = fileNow ? `${extra.attach ? `&attach=${encodeURIComponent(extra.attach)}` : ""}${extra.co ? `&co=${encodeURIComponent(extra.co)}` : ""}${extra.waiverKind ? `&waiver_kind=${encodeURIComponent(extra.waiverKind)}` : ""}${extra.waiverFor ? `&waiver_for=${encodeURIComponent(extra.waiverFor)}` : ""}` : "";
     const query = jobId ? `?job=${encodeURIComponent(jobId)}${fileNow ? "&file=1" : ""}${fileNow && kind ? `&kind=${encodeURIComponent(kind)}` : ""}${also}` : "";
     try {
       const res = await fetch(`/api/import/file${query}`, {
@@ -396,7 +396,7 @@ document.addEventListener("paste", (e) => {
 document.getElementById("file-input").addEventListener("change", (e) => {
   const input = e.target;
   const jobId = input.dataset.job || "", kind = input.dataset.kind || "", suggest = input.dataset.suggest || "";
-  const extra = { attach: input.dataset.attach || "", co: input.dataset.co || "", waiverKind: input.dataset.waiverKind || "" };
+  const extra = { attach: input.dataset.attach || "", co: input.dataset.co || "", waiverKind: input.dataset.waiverKind || "", waiverFor: input.dataset.waiverFor || "" };
   const files = [...input.files];
   input.value = "";
   input.dataset.job = "";   // the next pick starts with no job unless its button sets one
@@ -404,6 +404,7 @@ document.getElementById("file-input").addEventListener("change", (e) => {
   input.dataset.attach = "";
   input.dataset.co = "";
   input.dataset.waiverKind = "";
+  input.dataset.waiverFor = "";
   input.dataset.suggest = "";
   if (!jobId) { uploadFiles(files, suggest, false); return; }
   // One file goes on a paperwork item or a change order; the rest of a multi-pick only on the job record.
@@ -457,6 +458,7 @@ export const actions = {
       input.dataset.attach = el.dataset.attach || "";   // a paperwork item to attach it to
       input.dataset.co = el.dataset.co || "";   // a change order it is the signed copy of
       input.dataset.waiverKind = el.dataset.waiverKind || "";   // the type of a signed lien waiver (M14)
+      input.dataset.waiverFor = el.dataset.waiverFor || "";   // the paid pay app or release it is for (B1)
       // The Inbox's choose files: the job picked under "Which job?", suggested and not filed.
       input.dataset.suggest = el.dataset.askJob ? inboxUploadJob() : "";
       // "Take a photo" opens the rear camera directly; "choose files" offers every source.

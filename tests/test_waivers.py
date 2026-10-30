@@ -125,7 +125,7 @@ class SecondStageTests(unittest.TestCase):  # M18, M19, M21
         domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1")
         signed_waiver(state, job["id"], "unconditional_progress")
         domain.send_waiver(state, job["id"], "Owner")
-        self.assertIn("Not released by this waiver: the $400.00 retainage held on this pay app.", state["email_log"][-1]["body"])
+        self.assertIn("Not released by this waiver: the $400.00 retainage held to date on this job.", state["email_log"][-1]["body"])
 
 
 class SuggestedTypeTests(unittest.TestCase):  # M17
@@ -150,7 +150,8 @@ class SuggestedTypeTests(unittest.TestCase):  # M17
         self.assertTrue(inv["final"])
         self.assertEqual(domain.suggested_waiver_kind(job, inv), "unconditional_progress")
         stages = domain.waiver_stages(state, job, inv)
-        self.assertEqual(stages["conditional"], {"kind": "conditional_final", "status": "Sent"})
+        # The conditional one went as a progress waiver too: retainage was held on it (B3 of the Oct 30 review).
+        self.assertEqual(stages["conditional"], {"kind": "conditional_progress", "status": "Sent"})
         self.assertEqual(stages["unconditional"], {"kind": "unconditional_progress", "status": "Needed"})
         signed_waiver(state, job["id"])
         self.assertEqual(domain.waiver_stages(state, job, inv)["unconditional"]["status"], "Attached")

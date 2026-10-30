@@ -641,6 +641,7 @@ span.due-item { cursor: default; }
 @media (max-width: 640px) { .form-grid .address-row { grid-template-columns: 1fr 1fr; } .form-grid .address-row > .field:first-child { grid-column: span 2; } }
 .check-line { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink); margin: 4px 0; }
 .check-line input { width: auto; min-height: 0; }
+.check-note { display: block; margin: 0 0 6px 28px; }
 /* Import contract (G4, S12) and the boxes it filled. */
 .contract-import { border: 1px dashed var(--copper-line); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; background: var(--copper-wash); }
 .contract-import .form-inline { margin: 0; }

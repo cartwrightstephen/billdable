@@ -7,7 +7,8 @@ with its id on job["daily_records"], and one "daily" job record whose note reads
 paperwork and History show it. Everything but the Diary (notes) is optional and checked here:
 known section keys only, schedule lines and change orders of this job only, numbers 0 or more,
 text capped. Quantities put in place today add to each line's quantity done (M1, capped at the
-scheduled quantity) and refresh the period's draft pay app through record_sov_progress.
+scheduled quantity) and refresh the period's draft pay app through record_sov_progress. When
+they can't be added the record is still saved, with quantities_not_applied saying why.
 
 Imported at the bottom of domain/__init__.py (from .daily import *). Helpers from domain
 are imported inside each function, so the two modules never import each other at load time.
@@ -238,6 +239,8 @@ def daily_record_note(job: dict[str, Any], rec: dict[str, Any]) -> str:
         lines.append("Progress photos" + (f": {sections['photos']['note']}" if sections["photos"].get("note") else ""))
     if sections.get("quantities"):
         lines.append(f"Quantities: {_qty_words(job, sections['quantities'])}")
+        if rec.get("quantities_not_applied"):
+            lines.append(f"Not added to the schedule of values: {rec['quantities_not_applied']}")
     cos = {co["id"]: co for co in job.get("change_orders", [])}
     for row in sections.get("co_work", []):
         co = cos.get(row["co_id"])
@@ -258,26 +261,15 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
     """A dated note on the job: the Diary, and optionally crew, weather, materials, deliveries,
     ticked sections and files already on the job record (details, the request's body). `at` lets
     an import keep the day the note was written. Quantities put in place today add to the
-    schedule lines and refresh the draft pay app (M1) before the record is saved."""
-    from domain import _job, add_job_record, audit, utcnow, record_sov_progress, GateError, over_schedule_text
-    import sov
+    schedule lines and refresh the draft pay app (M1) before the record is saved; when they
+    can't, the record is saved anyway with quantities_not_applied saying why (_apply_quantities)."""
+    from domain import _job, add_job_record, audit, utcnow
     job = _job(state, job_id)
     extra = clean_daily_details(state, job, details or {}) if details is not None else {}
     when = at or utcnow()
     day = when[:10]
     quantities = (extra.get("sections") or {}).get("quantities") or []
-    if quantities:
-        by_id = {line["id"]: line for line in sov.lines(job)}
-        done, errors = {}, {}
-        for row in quantities:
-            line = by_id[row["line_id"]]
-            total = line["done_milli"] + row["qty_milli"]
-            if total > line["qty_milli"]:
-                errors[f"qty_{line['id']}"] = over_schedule_text(line, total)
-            done[line["id"]] = str(Decimal(total) / 1000)
-        if errors:
-            raise GateError("Daily record not saved.", list(errors.values()), fields=errors)
-        record_sov_progress(state, job_id, done, actor=actor, from_daily=day)
+    not_applied = _apply_quantities(state, job, quantities, actor, day) if quantities else ""
     rec = {
         "id": "dr-" + secrets.token_hex(4),
         "job_id": job_id,
@@ -287,6 +279,8 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
         "for_history": bool(job.get("closed")),
         **extra,
     }
+    if not_applied:
+        rec["quantities_not_applied"] = not_applied
     state.setdefault("daily_records", []).append(rec)
     job.setdefault("daily_records", []).append(rec["id"])
     label = f"Daily record {day}"
@@ -297,4 +291,40 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
         if record["id"] in rec.get("attachments", []):
             record["daily_record_id"] = rec["id"]
     audit(state, job_id, "daily_record", f"{actor} added a daily record to the job record.", actor)
+    if not_applied:
+        audit(state, job_id, "daily_quantities_not_applied",
+              f"The quantities on the daily record of {day} were kept on it and not added to the schedule of values: {not_applied}", "duracash")
     return job
+
+
+def _apply_quantities(state: dict[str, Any], job: dict[str, Any], rows: list[dict[str, Any]], actor: str, day: str) -> str:
+    """Add the quantities put in place today to the schedule lines and refresh the draft pay app
+    (M1). A daily record is never lost because they can't be added (B5 of the Oct 30 review): it
+    is saved anyway with them on it, and this returns why they weren't added, in plain words, for
+    the record, its note and the page. Blank when they were added."""
+    from domain import DRAFT_STATUSES, GateError, over_schedule_text, record_sov_progress
+    import sov
+    keep = " They are kept on this daily record."
+    if job.get("closed"):
+        return "The job is finished, so the schedule of values doesn't change." + keep
+    if job.get("work_status") == "complete":
+        return "The job is marked done, so every line is already counted as done." + keep
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if draft and draft.get("pencil_status") == "sent":
+        return (f"{draft['number']} is with the client for their review. Record their answer or delete the draft, "
+                "then enter these quantities on the job page." + keep)
+    by_id = {line["id"]: line for line in sov.lines(job)}
+    done, errors = {}, []
+    for row in rows:
+        line = by_id[row["line_id"]]
+        total = line["done_milli"] + row["qty_milli"]
+        if total > line["qty_milli"]:
+            errors.append(over_schedule_text(line, total))
+        done[line["id"]] = str(Decimal(total) / 1000)
+    if errors:
+        return " ".join(errors) + keep
+    try:
+        record_sov_progress(state, job["id"], done, actor=actor, from_daily=day)
+    except GateError as exc:
+        return " ".join(dict.fromkeys(exc.blockers or [str(exc)])) + keep
+    return ""

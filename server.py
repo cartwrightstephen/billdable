@@ -2148,6 +2148,8 @@ class Handler(BaseHTTPRequestHandler):
         signed_co = (query.get("co") or [""])[0] if file_now else ""
         # The type of a signed lien waiver taken on the waiver page or for a waiver item (M14).
         waiver_kind = (query.get("waiver_kind") or [""])[0] if file_now else ""
+        # The paid pay app or retainage release it is for, from that row of the waiver page (B1).
+        waiver_for = (query.get("waiver_for") or [""])[0] if file_now else ""
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
@@ -2195,7 +2197,7 @@ class Handler(BaseHTTPRequestHandler):
                 # Dropped on a job page: the person already chose the job.
                 filed = importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
                 if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
-                    domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor)
+                    domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for)
                 if attach_to:
                     domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor)
                 if signed_co:
@@ -3042,7 +3044,11 @@ JOB_ACTIONS = {
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None,
                                                                                     release_id=_text(c.body, "release_id") or None))),
-    "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor)),
+    # The type of a signed waiver on the job record, and which paid pay app or release it is for (B1).
+    "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"))),
+    # No waiver goes out through Duracash for this payment: handed over outside it, or not needed (B2).
+    "waiver-not-needed": (False, lambda h, st, j, i, c: domain.waiver_not_needed(st, j, _text(c.body, "reason"), invoice_id=_text(c.body, "invoice_id") or None,
+                                                                              release_id=_text(c.body, "release_id") or None, actor=c.actor)),
     "record-work": (True, lambda h, st, j, i, c: domain.link_record_to_work(st, j, i, _text(c.body, "co_id"), _text(c.body, "sov_line_id"), c.actor)),
     "retainage": (False, _sends("the request", _retainage)),
     "note-contact": (False, lambda h, st, j, i, c: domain.note_contact(st, j, _text(c.body, "text"), _text(c.body, "next_on"), c.actor)),

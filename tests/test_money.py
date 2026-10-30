@@ -97,14 +97,24 @@ class DraftTests(unittest.TestCase):
             domain.draft_invoice(state, job["id"], strict=True)
         self.assertIn("Nothing to draft", str(raised.exception))
 
-    def test_mark_done_with_open_draft_names_it(self):
+    def test_mark_done_with_a_draft_with_the_client_names_it(self):
         state = new_state()
         job = new_job(state)
         domain.record_progress(state, job["id"], 4_000_000)
+        domain.send_pencil(state, job["id"])
         with self.assertRaises(domain.GateError) as raised:
             domain.mark_done(state, job["id"])
         self.assertIn(job["invoices"][-1]["number"], str(raised.exception))
         self.assertEqual(job["work_status"], "in_progress")
+
+    def test_mark_done_turns_a_draft_only_here_into_the_final_pay_app(self):  # B6 of the Oct 30 review
+        state = new_state()
+        job = new_job(state)
+        domain.record_progress(state, job["id"], 4_000_000)
+        first = job["invoices"][-1]
+        domain.mark_done(state, job["id"])
+        final = job["invoices"][-1]
+        self.assertEqual((first["status"], final["number"], final["final"]), ("void", first["number"], True))
 
     def test_packet_built_from_playbook(self):  # M12
         state = new_state()
@@ -400,8 +410,10 @@ class ReviewFindingTests(unittest.TestCase):
         inv = clear_packet(state, job)
         domain.approve_and_send(state, "job-ponce", "Owner")
         domain.match_payment(state, "job-ponce", inv["amount_cents"], "CHK-P2", invoice_id=inv["id"])
-        signed_waiver(state, "job-ponce")
-        domain.send_waiver(state, "job-ponce", "Owner")
+        rec = signed_waiver(state, "job-ponce")
+        # Two are owed (this pay app's and the older one): it is said to be for the pay app (B1).
+        domain.set_waiver_type(state, "job-ponce", rec["id"], domain.suggested_waiver_kind(job, inv), for_id=inv["id"])
+        domain.send_waiver(state, "job-ponce", "Owner", invoice_id=inv["id"])
         self.assertFalse(job["waiver_sent"], "the older waiver is still unsent")
         signed_waiver(state, "job-ponce")
         domain.send_waiver(state, "job-ponce", "Owner")

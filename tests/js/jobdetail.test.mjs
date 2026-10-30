@@ -139,8 +139,8 @@ test("Client playbook: the paperwork as checkboxes and Other, the client type, a
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   const p = { id: "p-1", name: "Ellison", role: "GC", client_type: "sub", approver: "Mara", ap_email: "ap@e.example",
     packet: "Signed contract, Certified payroll", packet_items: ["Signed contract", "Certified payroll"], job_count: 0 };
-  const paperwork_catalog = [{ key: "contract", label: "Signed contract", closeout: false }, { key: "insurance", label: "Insurance certificate", closeout: false },
-    { key: "punch", label: "Punch list sign-off", closeout: true }];
+  const paperwork_catalog = [{ key: "contract", label: "Signed contract", closeout: false }, { key: "waiver", label: "Conditional waiver", closeout: false },
+    { key: "insurance", label: "Insurance certificate", closeout: false }, { key: "punch", label: "Punch list sign-off", closeout: true }];
   core.setState({ ...company(), jobs: [], payers: [p], paperwork_catalog });
   page.setLocation("playbook");
   page.formOpen.addpayer = true;
@@ -151,6 +151,9 @@ test("Client playbook: the paperwork as checkboxes and Other, the client type, a
     assert.doesNotMatch(html, /data-packet-choice="Insurance certificate" checked/);
     assert.match(html, /id="payer-p-1-pw-other"[^>]*value="Certified payroll"/);
     assert.match(html, /Nothing needed/);
+    // Stephen's rule kept (B8 of the Oct 30 review): said beside the box, with its way out.
+    assert.match(html, /data-packet-choice="Conditional waiver"[^>]*> Conditional waiver<\/label><span class="sub check-note">Asked for with every pay app, ticked or not\. If this client doesn't take one, tap Not needed for this client on it\.<\/span>/);
+    assert.match(html, /Nothing needed still asks for the conditional waiver/);
     assert.match(html, /<h4>At closeout<\/h4><label[^>]*><input type="checkbox"[^>]*data-packet-choice="Punch list sign-off"/, "the catalog's closeout items, from the server");
     assert.doesNotMatch(html, /name="packet"/, "no free-text paperwork box");
     assert.match(html, /<h2>Add client<\/h2>\s*<div class="contract-import" data-contract-import="addpayer">/);

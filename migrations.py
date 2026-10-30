@@ -175,10 +175,53 @@ def _followups_paperwork_catalog_labels(state: dict[str, Any]) -> None:
             payer["packet"] = ", ".join(new)
 
 
+def _review_oct30_money_waivers(state: dict[str, Any]) -> None:
+    """Fixes from the Oct 30 review of the money side (section B), on what is already stored:
+    - B2: a paid pay app or retainage release still owing its unconditional waiver, for a client
+      marked as not taking lien waivers (payer waiver_not_needed), owes none: it is marked Not
+      needed with the client's reason, as a new payment for that client is, and the job's flags follow.
+    - B3: an open draft's conditional waiver item asks for one on final payment only when no
+      retainage is held on it or still open on the job.
+    - B8: on an open draft, an item from the client's list naming an unconditional waiver is
+      that type, and the conditional waiver is asked for beside it.
+    Sent pay apps and finished jobs are not touched. Safe to run again."""
+    payers = {p.get("id"): p for p in state.get("payers", [])}
+    for job in state.get("jobs", []):
+        if job.get("closed"):
+            continue
+        skip = (payers.get(job.get("payer_id")) or {}).get("waiver_not_needed")
+        if skip:
+            for owed in job.get("invoices", []) + job.get("retainage_waivers", []):
+                if owed.get("waiver_due") and not owed.get("waiver_sent"):
+                    owed["waiver_due"] = False
+                    owed["waiver_not_needed"] = {"by": "duracash", "at": domain.utcnow(),
+                                                 "reason": skip.get("reason") or "Not needed for this client", "client": True}
+            domain._sync_waiver(job)
+        for inv in job.get("invoices", []):
+            if inv.get("status") not in domain.DRAFT_STATUSES or inv.get("packet_id") == "job-packet":
+                continue
+            packet = inv.get("packet") or []
+            waivers = [i for i in packet if (domain._record_kinds_for(i) or ("",))[0] == "waiver"]
+            for item in waivers:
+                label = str(item.get("label") or "").lower()
+                if "unconditional" in label and not str(item.get("waiver_kind", "")).startswith("unconditional"):
+                    item["waiver_kind"] = f"unconditional_{'final' if 'final' in label else 'progress'}"
+            if waivers and not any(str(i.get("waiver_kind", "")).startswith("conditional") for i in packet):
+                kind = "conditional_progress"
+                item = domain._packet_item(inv["id"], "waiver", domain.WAIVER_KINDS[kind], f"{domain.WAIVER_KINDS[kind]} is missing.")
+                item.update(waiver_kind=kind, auto_waiver=True)
+                if skip:
+                    item.update(required=False, skipped_reason=skip.get("reason") or "Not needed for this client", skipped_at=domain.utcnow())
+                packet.insert(0, item)
+            domain._name_conditional_waiver(job, inv)
+            if any(i.get("required") and not i.get("present") for i in packet) and inv.get("status") == "awaiting_approval":
+                inv["status"] = "draft"
+
+
 STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _tasks_daily_lists, _payapps_cos_co_history,
                                                    _paperwork_insurance_records, _jobs_clients_address_parts,
                                                    _settings_auth_company_address_parts, _settings_auth_permission_profiles,
-                                                   _followups_paperwork_catalog_labels]
+                                                   _followups_paperwork_catalog_labels, _review_oct30_money_waivers]
 
 
 # ----- steps for auth.json (the accounts file), run once at start-up by auth.upgrade_file -----

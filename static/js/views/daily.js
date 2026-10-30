@@ -116,6 +116,8 @@ export function recordMeta(r, rj) {
     if (!l) return fmtQty(q.qty_milli);
     return lumpSum(l) ? `${fmtQty(q.qty_milli * 100)}% ${l.description}` : `${fmtQty(q.qty_milli)} ${l.unit} ${l.description}`;
   }).join(", ")}`);
+  // Saved, but the quantities couldn't be added (B5 of the Oct 30 review): say why, under them.
+  if (s.quantities && r.quantities_not_applied) out.push(`<span class="blocker">Not added to the schedule of values: ${r.quantities_not_applied}</span>`);
   for (const c of s.co_work || []) {
     const co = cos[c.co_id];
     out.push(`Change order work (${co ? `CO ${co.number}` : "new, not priced yet"}): ${c.description}${c.hours_milli ? `, ${fmtQty(c.hours_milli)} h` : ""}`);
@@ -251,6 +253,11 @@ export const actions = {
     const body = dailyBody({ ...formValues("daily"), notes }, j, daily.checked);
     if (daily.uploaded.length) body.attachments = daily.uploaded.map(u => u.record_id);
     const r = await post(`/api/jobs/${job}/daily-record`, body, { formKey: "daily" });
-    if (r && r.ok) { resetDaily(); clearForm("daily"); render(); }   // saved: the form is empty for the next one
+    if (r && r.ok) {
+      resetDaily(); clearForm("daily"); render();   // saved: the form is empty for the next one
+      // The record is kept even when its quantities couldn't be added (B5): say so plainly.
+      const saved = (state.daily_records || []).filter(x => x.job_id === job).slice(-1)[0];
+      if (saved && saved.quantities_not_applied) toast(`Saved. The quantities were not added to the schedule of values: ${saved.quantities_not_applied}`);
+    }
   },
 };
