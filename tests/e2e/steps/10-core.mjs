@@ -237,8 +237,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(filed.status, "filed");
     assert.equal(filed.filed_job_id, ids["Maple porch"]);
     // Which job? first (on Import): the upload is suggested to that job, not filed.
-    await p.goto(BASE + "/data/import");
+    await p.goto(BASE + "/data/import", { waitUntil: "networkidle" });   // its QuickBooks and import settings have loaded
     await p.selectOption("#upload-job", ids["Cedar bath"]);
+    assert.equal(await p.inputValue("#upload-job"), ids["Cedar bath"]);
     const chooser = p.waitForEvent("filechooser");
     await p.locator('.dropzone .pointer-only [data-action="pick-files"]').click();  // desktop: the "choose files" link (R6-04)
     await (await chooser).setFiles({ name: "IMG_0412.jpg", mimeType: "image/jpeg", buffer: Buffer.from("not really a jpeg") });

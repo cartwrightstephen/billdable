@@ -151,7 +151,10 @@ export function newAddressButton(kind) {
 function uploadJobOptions() {
   const openJobs = state.jobs.filter(j => !j.closed);
   // "Not sure" stays picked once chosen, even with one open job.
-  const last = lastUploadJob();
+  // A redraw keeps what the box on screen shows (a pick made while the page was loading), then
+  // what was last picked on this device.
+  const onScreen = document.getElementById("upload-job");
+  const last = onScreen && onScreen.value ? onScreen.value : lastUploadJob();
   const pick = last === "" ? "" : defaultJobId(openJobs, last || "");
   return `<option value="">Not sure, file later</option>` + openJobs.map(j => `<option value="${j.id}"${pick === j.id ? " selected" : ""}>${j.name} (${j.code})</option>`).join("");
 }
