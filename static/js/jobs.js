@@ -120,16 +120,66 @@ export function waiverTypeText(j, paid) {
   return kind ? waiverKindLabel(kind) : "Not chosen yet";
 }
 
+// The type a waiver is sent as (M17): the server's suggestion for the pay app or the retainage
+// release (domain.suggested_waiver_kind, never final while retainage is held), else worked out
+// the same way for an older job-level waiver.
+export function waiverPick(j, inv = null, release = null) {
+  if (release) return unesc(release.kind || "") || "unconditional_progress";
+  const said = inv && inv.waiver_stages && inv.waiver_stages.unconditional && unesc(inv.waiver_stages.unconditional.kind || "");
+  if (said) return said;
+  const final = ((inv && inv.final) || (j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0))
+    && !(j.money.retainage_open_cents > 0);
+  return final ? "unconditional_final" : "unconditional_progress";
+}
+
 // disabled: sending is off (email not confirmed, or no email for the client); the page says why.
-export function waiverSendForm(j, inv, disabled = false) {
-  const key = inv ? inv.id : "job";
-  const final = (inv && inv.final) || (j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0);
-  const pick = final ? "unconditional_final" : "unconditional_progress";
+// release: a retainage release's waiver (M20) instead of a pay app's.
+export function waiverSendForm(j, inv, disabled = false, release = null) {
+  const key = release ? release.id : inv ? inv.id : "job";
+  const pick = waiverPick(j, inv, release);
   return `<div class="form-inline">
     <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}>${v}</option>`).join("")}</select>
-    <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}${disabled ? " disabled" : ""}>Approve & send</button>
+    <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}${release ? ` data-release="${release.id}"` : ""}${disabled ? " disabled" : ""}>Approve & send</button>
   </div>
   <p class="sub waiver-hint" data-waiver-hint="${key}">${waiverHint(pick)}</p>`;
+}
+
+// The type in a sentence, as domain.WAIVER_TYPE_WORDS: "the signed unconditional final waiver".
+export const WAIVER_TYPE_WORDS = { conditional_progress: "conditional", unconditional_progress: "unconditional",
+  conditional_final: "conditional final", unconditional_final: "unconditional final" };
+export function waiverTypeWords(code) { return WAIVER_TYPE_WORDS[unesc(code || "")] || ""; }
+
+// One waiver stage of a pay app (M17), as the server's waiver_stages has it: "Conditional,
+// progress payment: Attached", or the status alone when the type isn't known.
+export function waiverStageText(stage) {
+  if (!stage || !stage.status) return "—";
+  return stage.kind ? `${waiverKindLabel(stage.kind)}: ${stage.status}` : stage.status;
+}
+
+// Whole days from an ISO moment to now, for "Done 12 days ago" (M26). Null without a date.
+export function daysSince(iso, now = new Date()) {
+  const d = toDate(unesc(iso || ""));
+  return d ? Math.max(0, Math.floor((now - d) / 86400000)) : null;
+}
+
+export function daysAgoText(n) {
+  return n == null ? "" : n === 0 ? "today" : n === 1 ? "1 day ago" : `${n} days ago`;
+}
+
+// The figures of a job's Retainage card and Closeout's retainage table (M23, M25, M26): the pay
+// apps that held some (not drafts or cancelled ones), times asked, last asked, next allowed and
+// days since the job was done and since the last ask.
+export function retainageFacts(j, now = new Date()) {
+  const m = j.money;
+  const payApps = (j.invoices || []).filter(i => (i.retainage_cents || 0) > 0 && !["void", "draft", "awaiting_approval"].includes(i.status));
+  const due = retainageAskDue(j);
+  return {
+    pct: Number(j.retainage_pct) || 0, held: m.retainage_held_cents, released: m.retainage_released_cents, open: m.retainage_open_cents,
+    payApps, asked: Number(j.retainage_chases) || 0, last: due ? due.last : null, next: due ? due.due : null,
+    doneDays: j.work_status === "complete" ? daysSince(j.completed_at, now) : null,
+    askedDays: due ? daysSince(j.last_retainage_chase_at, now) : null,
+    releases: j.retainage_payments || [],
+  };
 }
 
 // The job a form starts on (R2-07): the one last used when it is still open, else the only open
@@ -249,7 +299,7 @@ export function retainageAskWaits(j, now = new Date()) {
 export function retainageNote(j, now = new Date()) {
   if (!(j.money.retainage_open_cents > 0) || j.closed) return "";
   const asked = retainageAskWaits(j, now);
-  if (j.work_status !== "complete") return "Released at closeout." + (asked ? ` Asked for part of it ${fmtDate(asked.last)}; ask again from ${fmtDate(asked.due)}.` : "");
+  if (j.work_status !== "complete") return "Asked for once the job is marked done.";
   const n = closeoutMissing(j);
   if (n) return `Closeout paperwork: ${n} item${n === 1 ? "" : "s"} missing.`;
   return asked ? `Asked for it ${fmtDate(asked.last)}; ask again from ${fmtDate(asked.due)}.` : "";

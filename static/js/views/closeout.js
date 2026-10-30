@@ -1,7 +1,7 @@
 // Money, Closeout: lien waivers by pay app and the money held back (retainage), and each job's
 // waiver page.
-import { money, centsFrom, fmtDate } from "../format.js";
-import { WAIVER_KINDS, waiverKindLabel, waiverHint, waiverTypeText, waiverSendForm, retainageAskWaits } from "../jobs.js";
+import { money, centsFrom, fmtDate, unesc } from "../format.js";
+import { WAIVER_KINDS, waiverKindLabel, waiverTypeWords, waiverHint, waiverSendForm, waiverPick, waiverStageText, retainageAskWaits, retainageFacts, daysAgoText } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { moneyField, formErrorLine, refuseForm, formValues } from "../forms.js";
@@ -10,18 +10,47 @@ import { state, currentJobId } from "../state.js";
 import { may, post, backButton, emptyState, nav } from "../app-core.js";
 import { OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
 import { sendsTo } from "./job.js";
+import { waiverChecklistHtml, waiverFormHtml } from "./paperwork.js";
 
-// Ask for retainage from the Retainage page (R4-07): an amount box, blank for all of it once
-// the job is done; before that, the part to ask for now.
+// Ask for retainage from Closeout (M24): only once the job is marked done; an amount box, blank
+// for all of it.
 function retainageAskHtml(j) {
-  const key = `retask-${j.id}`, done = j.work_status === "complete";
+  const key = `retask-${j.id}`;
+  if (j.work_status !== "complete") return `<span class="sub">Once the job is marked done.</span>`;
   if (!may("retainage")) return `<span class="sub">An owner asks for it.</span>`;
   // chase_retainage waits the client's days between contacts after the last request.
   const asked = retainageAskWaits(j);
   if (asked) return `<span class="sub">Asked ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}.</span>`;
   return `<div class="retainage-ask" data-form-key="${key}">${formErrorLine(key)}<div class="form-inline">
-    ${moneyField({ form: key, name: "amount_cents", id: `${key}-amt`, label: done ? "Amount ($), blank for all" : "Part to ask for now ($)" })}
+    ${moneyField({ form: key, name: "amount_cents", id: `${key}-amt`, label: "Amount ($), blank for all" })}
     <button class="btn small" data-action="retainage" data-id="${j.id}">Ask for retainage</button></div></div>`;
+}
+
+// Everything that owes or owed a lien waiver on a job (M20): each paid pay app, each retainage
+// release, and an older job-level one. {inv | release, kind, amount, due, sent, sent_at, label}.
+export function waiverRows(j) {
+  const rows = [];
+  for (const inv of j.invoices || []) {
+    if (!inv.waiver_due && !inv.waiver_sent) continue;
+    rows.push({ inv, label: inv.number, amount: inv.amount_cents - (inv.short_pay_cents || 0), due: !inv.waiver_sent,
+      sent_at: inv.waiver_sent_at, kind: inv.waiver_sent ? unesc(inv.waiver_kind || "") : waiverPick(j, inv),
+      onFile: !!(inv.waiver_stages && inv.waiver_stages.unconditional && inv.waiver_stages.unconditional.status === "Attached") });
+  }
+  for (const release of j.retainage_waivers || []) {
+    rows.push({ release, label: `Retainage released ${fmtDate(release.at)}`, amount: release.amount_cents, due: !release.waiver_sent,
+      sent_at: release.waiver_sent_at, kind: unesc(release.kind || ""), onFile: !!release.on_file });
+  }
+  if (!rows.length && (j.waiver_due || j.waiver_sent)) {
+    rows.push({ label: "Earlier payment", amount: null, due: !j.waiver_sent, sent_at: j.waiver_sent_at, kind: "", onFile: true });
+  }
+  return rows;
+}
+
+function uploadButtons(j, kind) {
+  return `<div class="form-inline">
+    <button class="btn small" data-action="pick-files" data-job="${j.id}" data-kind="waiver" data-waiver-kind="${kind}" data-capture="1">Take a photo</button>
+    <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-kind="waiver" data-waiver-kind="${kind}">Choose file</button>
+  </div>`;
 }
 
 // This module's pages, by the name their address opens (routes.js).
@@ -29,12 +58,12 @@ export const views = {
   waiverDetail() {
     const j = state.jobs.find(x => x.id === currentJobId);
     if (!j) return backButton("waivers", "Closeout") + emptyState("Waiver not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="waivers">Go to Closeout</button>`);
-    const due = j.invoices.filter(i => i.waiver_due && !i.waiver_sent);
-    const sent = j.invoices.filter(i => i.waiver_sent);
     const locked = emailUnconfirmed();
-    const owed = due.length || (j.waiver_due && !j.waiver_sent);
-    // Sending attaches the newest lien waiver on the job record; say so when there is none (R1-06).
-    const hasWaiver = (j.records || []).some(r => r.kind === "waiver");
+    const rows = waiverRows(j);
+    const owed = rows.some(r => r.due);
+    const first = rows.find(r => r.due);
+    const off = locked || !j.payer.ap_email;
+    const payApps = (j.invoices || []).filter(i => i.status !== "void" && i.waiver_stages);
     return `
       ${backButton("waivers", "Closeout")}
       <h1>Waivers: ${j.name}</h1>
@@ -42,32 +71,35 @@ export const views = {
         <h2>What the client needs</h2>
         <p>${j.waiver_standard || j.payer.packet || "See the Client playbook."}</p>
       </div>
-      ${owed && !j.summary && !hasWaiver ? `<div class="card no-waiver">
-        <h2>No signed waiver on the job yet</h2>
-        <p class="sub">Sending without one tells ${j.payer.name} the signed waiver follows separately.</p>
-        <div class="form-inline">
-          <button class="btn small" data-action="pick-files" data-job="${j.id}" data-kind="waiver" data-capture="1">Take a photo</button>
-          <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-kind="waiver">Choose file</button>
-        </div>
-      </div>` : ""}
       <div class="card send-check">
-        <h2>${termText("By pay app")}</h2>
+        <h2>Waivers due</h2>
         ${owed && j.payer.ap_email ? `<div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email}</span></div>` : ""}
         ${owed && !j.payer.ap_email ? `<p class="blocker">Add the email pay apps go to in <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>, then send.</p>` : ""}
         ${owed && locked ? confirmFirstHtml("the waiver") : ""}
-        ${due.concat(sent).length ? due.concat(sent).map(i => `<div class="list-item"><strong>${i.number}</strong> · ${money(i.amount_cents)} · ${i.waiver_sent ? `sent ${fmtDate(i.waiver_sent_at)}${i.waiver_kind ? " · " + waiverKindLabel(i.waiver_kind) : ""}` : `<span class="pill amber">Due</span>`}
-          ${!i.waiver_sent ? (may("waiver") ? waiverSendForm(j, i, locked || !j.payer.ap_email) : OWNER_SENDS) : ""}</div>`).join("")
-          : j.waiver_due && !j.waiver_sent ? (may("waiver") ? waiverSendForm(j, null, locked || !j.payer.ap_email) : OWNER_SENDS) : `<p class="sub">${j.waiver_sent ? "Sent " + fmtDate(j.waiver_sent_at) : termText("No waiver is due yet. One is due after each paid pay app.")}</p>`}
+        ${rows.length ? rows.map(r => `<div class="list-item waiver-row">
+            <div><strong>${r.label}</strong>${r.amount != null ? " · " + money(r.amount) : ""} · ${r.due ? `<span class="pill amber">Due</span>` : `sent ${fmtDate(r.sent_at)}${r.kind ? " · " + waiverKindLabel(r.kind) : ""}`}</div>
+            ${r.due && !j.summary && !r.onFile ? `<p class="blocker">Add the signed ${waiverTypeWords(r.kind)} waiver to the job record, then send.</p>${uploadButtons(j, r.kind)}` : ""}
+            ${r.due ? (may("waiver") ? waiverSendForm(j, r.inv || null, off || !r.onFile, r.release || null) : OWNER_SENDS) : ""}
+          </div>`).join("")
+          : `<p class="sub">${termText("No waiver is due yet. One is due after each paid pay app.")}</p>`}
       </div>
+      ${first ? `<div class="card">${waiverChecklistHtml(j, first.kind, first.inv || null, first.amount)}</div>` : ""}
+      <div class="card">${waiverFormHtml(j, first ? first.kind : "")}</div>
+      ${payApps.length ? `<div class="card">
+        <h2>${termText("By pay app")}</h2>
+        <div class="table-wrap"><table>
+          <tr><th>${termText("Pay app")}</th><th>Before payment</th><th>After payment</th></tr>
+          ${payApps.map(i => `<tr><td>${i.number}</td><td>${waiverStageText(i.waiver_stages.conditional)}</td><td>${waiverStageText(i.waiver_stages.unconditional)}</td></tr>`).join("")}
+        </table></div>
+      </div>` : ""}
     `;
   },
   "waiver-detail": function() { return views.waiverDetail(); },
-  // Closeout (R6-01): the lien waivers due and the money held back, one tab. /money/retainage
-  // opens the same page at the held-back part.
+  // Closeout (R6-01): the lien waivers, one row per pay app and per retainage release (M20), and
+  // the money held back. /money/retainage opens the same page at the held-back part.
   waivers() {
-    const due = state.jobs.filter(j => j.waiver_due && !j.waiver_sent);
-    const sent = state.jobs.filter(j => j.waiver_sent);
-    const rows = due.concat(sent);
+    const rows = state.jobs.flatMap(j => waiverRows(j).map(r => ({ j, r })));
+    rows.sort((a, b) => (b.r.due - a.r.due));
     const open = state.jobs.filter(j => j.money.retainage_open_cents > 0);
     return `
       <h1>Closeout</h1>
@@ -78,17 +110,15 @@ export const views = {
         </details>
         ${rows.length ? `<div class="table-wrap">
           <table>
-            <tr><th>Job</th><th>Type</th><th>Amount</th><th>Status</th><th>Action</th></tr>
-            ${rows.map(j => {
-              const paid = j.invoices.find(i => i.waiver_due && !i.waiver_sent) || [...j.invoices].reverse().find(i => i.status === "paid");
-              return `<tr>
+            <tr><th>Job</th><th>${termText("Pay app")}</th><th>Type</th><th>Amount</th><th>Status</th><th>Action</th></tr>
+            ${rows.map(({ j, r }) => `<tr>
                 <td><a href="${pathFor("waiver-detail", j.id)}" data-action="open-waiver" data-id="${j.id}">${j.name}</a></td>
-                <td>${waiverTypeText(j, paid)}</td>
-                <td class="num">${paid ? money(paid.amount_cents) : "—"}</td>
-                <td>${j.waiver_sent ? `<span class="pill green">Sent</span>` : `<span class="pill amber">Due</span>`}</td>
-                <td>${!j.waiver_sent && j.waiver_due ? `<button class="btn small" data-action="open-waiver" data-id="${j.id}">Choose type and send</button>` : "—"}</td>
-              </tr>`;
-            }).join("")}
+                <td>${r.label}</td>
+                <td>${r.kind ? waiverKindLabel(r.kind) : "Not chosen yet"}</td>
+                <td class="num">${r.amount != null ? money(r.amount) : "—"}</td>
+                <td>${r.due ? `<span class="pill amber">Due</span>` : `<span class="pill green">Sent</span>`}</td>
+                <td>${r.due ? `<button class="btn small" data-action="open-waiver" data-id="${j.id}">Choose type and send</button>` : "—"}</td>
+              </tr>`).join("")}
           </table>
         </div>` : emptyState("No waivers due")}
       </section>
@@ -96,12 +126,16 @@ export const views = {
         <h2 id="closeout-retainage-h">Held back, still owed</h2>
         ${open.length ? `<div class="table-wrap">
           <table>
-            <tr><th>Job</th><th>Held back</th><th>Holding it up</th><th>Next</th><th>Contact</th></tr>
+            <tr><th>Job</th><th>Held back</th><th>Done</th><th>Times asked</th><th>Last asked</th><th>Holding it up</th><th>Next</th><th>Contact</th></tr>
             ${open.map(j => {
               const missing = j.closeout_missing || [];   // labels (domain.closeout_missing)
+              const f = retainageFacts(j);
               return `<tr>
                 <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
                 <td class="num">${money(j.money.retainage_open_cents)}</td>
+                <td>${f.doneDays != null ? daysAgoText(f.doneDays) : "Not yet"}</td>
+                <td class="num">${f.asked}</td>
+                <td>${f.last ? `${fmtDate(f.last.toISOString())}<div class="sub row-sub">${daysAgoText(f.askedDays)}</div>` : "—"}</td>
                 <td>${missing.length ? missing.join(", ") : (j.work_status === "complete" ? "Closeout paperwork complete" : "Job still in progress")}</td>
                 <td>${j.work_status === "complete" && missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}" ${j.closeout_packet && j.closeout_packet.length ? `data-inv="closeout"` : ""}>Open closeout paperwork</button>` : retainageAskHtml(j)}</td>
                 <td>${j.payer.approver}<div class="sub row-sub"><a href="mailto:${j.payer.ap_email}">${j.payer.ap_email}</a></div></td>
@@ -117,12 +151,19 @@ export const views = {
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
+  // A person approves each waiver (M21): the confirm names the type, what it covers and who gets it.
   "waiver": async (el, id) => {
-    const kind = document.getElementById(`waiver-kind-${el.dataset.inv || "job"}`)?.value;
-    await post(`/api/jobs/${id}/waiver`, { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(kind ? { kind } : {}) });
+    const key = el.dataset.release || el.dataset.inv || "job";
+    const kind = document.getElementById(`waiver-kind-${key}`)?.value;
+    const j = state.jobs.find(x => x.id === id);
+    if (j) {
+      const row = waiverRows(j).find(r => (r.release && r.release.id === el.dataset.release) || (r.inv && r.inv.id === el.dataset.inv) || (!el.dataset.inv && !el.dataset.release && r.due));
+      const what = row ? `${unesc(row.label)}${row.amount != null ? ", " + money(row.amount) : ""}` : j.name;
+      if (!(await askConfirm(`Email the signed ${waiverTypeWords(kind || (row && row.kind) || "")} waiver for ${what} to ${sendsTo(j)}?`, "Send the waiver"))) return;
+    }
+    await post(`/api/jobs/${id}/waiver`, { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) });
   },
-  // All of the retainage, or the part typed on the Retainage page (R4-07): before the job is
-  // done only a part can be asked for.
+  // All of the retainage, or the part typed in the box, once the job is done (M24).
   "retainage": async (el, id) => {
     const j = state.jobs.find(x => x.id === id);
     const key = `retask-${id}`, form = document.querySelector(`[data-form-key="${key}"]`);
@@ -131,10 +172,8 @@ export const actions = {
     if (form) {
       const typed = String(formValues(key).amount_cents || "").trim();
       const a = centsFrom(typed);
-      if (!typed && j && j.work_status !== "complete") { refuseForm(key, { amount_cents: "Enter the part to ask for now. All of it waits until the job is done." }); return; }
       if (typed && (a.error || a.cents <= 0)) { refuseForm(key, { amount_cents: "Enter the retainage to ask for in dollars, like 5,000." }); return; }
       if (typed && a.cents > open) { refuseForm(key, { amount_cents: `Enter no more than the ${money(open)} held.` }); return; }
-      if (typed && a.cents >= open && j && j.work_status !== "complete") { refuseForm(key, { amount_cents: `Enter less than the ${money(open)} held. All of it waits until the job is done.` }); return; }
       if (typed) cents = a.cents;
     }
     const part = cents != null && cents < open;

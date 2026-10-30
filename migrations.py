@@ -9,6 +9,7 @@ version, including ones written by hand.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 import domain
@@ -45,7 +46,21 @@ def _v3_to_v4(state: dict[str, Any]) -> None:
                 inv["contract_at_send"] = payapp_pdf.contract_terms(job, inv["sent_at"])
 
 
-STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4]
+INSURANCE_LABEL_RE = re.compile(r"\b(?:insurance|coi|certificate of insurance)\b", re.I)
+
+
+def _paperwork_insurance_records(state: dict[str, Any]) -> None:
+    """Insurance certificates have their own record kind now (M6), which fills an Insurance
+    certificate item. A record filed as Other whose label clearly says insurance becomes one;
+    every other record keeps its kind."""
+    for job in state.get("jobs", []):
+        for rec in job.get("records", []):
+            if rec.get("kind") == "other" and INSURANCE_LABEL_RE.search(str(rec.get("label") or "")):
+                rec["kind"] = "insurance"
+
+
+STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4,
+                                                  _paperwork_insurance_records]
 SCHEMA_VERSION = len(STEPS) + 1
 
 

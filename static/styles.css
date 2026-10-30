@@ -598,6 +598,20 @@ textarea { font: inherit; }
 
 
 /* == stream: paperwork-waivers-retainage == */
+.plain-list { list-style: none; margin: 4px 0 8px; padding: 0; }
+.plain-list li { padding: 3px 0; }
+.attach-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding: 6px 0; }
+.attach-list li.left-out > span:first-child { color: var(--muted); text-decoration: line-through; }
+.attached-record { margin: 4px 0; }
+.file-link { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; }
+.thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
+.period-record { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.period-records h3, .retainage-card h3, .client-needs h3, .waiver-check h3, .waiver-form-state h3, .send-attachments h3 { margin: 12px 0 4px; font-size: 15px; }
+.client-needs-box { border-top: 1px solid var(--line); margin-top: 10px; }
+.unconditional-warning { background: var(--red-soft); border: 1px solid var(--red); border-radius: 6px; padding: 8px 10px; margin: 10px 0; }
+.waiver-details { margin-top: 6px; }
+.waiver-row { display: block; }
+.retainage-closeout .row-sub { display: block; }
 
 
 

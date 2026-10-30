@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
 import domain
+from waiver_help import signed_waiver
 import importer
 import server
 import storage
@@ -254,6 +255,7 @@ class WaiverKindTests(unittest.TestCase):
 
     def test_kind_is_recorded_on_the_pay_app_and_in_the_email(self):
         state, job, inv = self.paid_job()
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"], kind="conditional_final")
         self.assertEqual(inv["waiver_kind"], "conditional_final")
         self.assertEqual(job["waiver_kind"], "Conditional waiver on final payment")
@@ -265,6 +267,7 @@ class WaiverKindTests(unittest.TestCase):
         with self.assertRaises(domain.GateError):
             domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"], kind="made_up")
         self.assertFalse(inv["waiver_sent"], "a refused kind sends nothing")
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"])
         self.assertEqual(inv["waiver_kind"], domain.suggested_waiver_kind(job))
 

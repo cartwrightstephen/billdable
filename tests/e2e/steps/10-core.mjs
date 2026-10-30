@@ -347,8 +347,16 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.getByRole("heading", { name: /^Waivers:/ }).waitFor();
         const sendWaiver = page.locator('[data-action="waiver"]');
         await sendWaiver.first().waitFor();
+        // The signed waiver goes on the job record first (M21): Choose file, then Approve & send asks first.
+        if (await sendWaiver.first().isDisabled()) {
+          const [chooser] = await Promise.all([page.waitForEvent("filechooser"),
+            page.locator('.waiver-row [data-action="pick-files"]:not([data-capture])').first().click()]);
+          await chooser.setFiles({ name: "signed-waiver.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 signed waiver") });
+          for (let t = 0; t < 100 && (await sendWaiver.first().isDisabled()); t++) await new Promise((r) => setTimeout(r, 100));
+        }
         const before = await sendWaiver.count();
         await sendWaiver.first().click();
+        await confirmIfAsked(page);
         for (let t = 0; t < 100 && (await sendWaiver.count()) >= before; t++) await new Promise((r) => setTimeout(r, 100));
         await page.goto(BASE + "/jobs/job-inman");
       } else if (label === "Record a payment") {

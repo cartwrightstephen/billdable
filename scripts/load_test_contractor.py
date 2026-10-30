@@ -282,6 +282,7 @@ def setup(run: Run) -> None:
     run.clear_packet("PEAC")
     run.post("PEAC: approve & send PA-PEAC-01", f"/api/jobs/{j['PEAC']}/send")
     run.post("PEAC: match payment ACH 7781", f"/api/jobs/{j['PEAC']}/match-payment", {"amount_cents": 3_850_000, "reference": "ACH 7781"})
+    signed_waiver(run, "PEAC")
     run.post("PEAC: send waiver", f"/api/jobs/{j['PEAC']}/waiver")
     run.post("PEAC: close for record", f"/api/jobs/{j['PEAC']}/close")
     # DECA: finished, paid less retainage, waiver sent, retainage held.
@@ -289,6 +290,7 @@ def setup(run: Run) -> None:
     run.clear_packet("DECA")
     run.post("DECA: approve & send PA-DECA-01", f"/api/jobs/{j['DECA']}/send")
     run.post("DECA: match payment CHK 40871", f"/api/jobs/{j['DECA']}/match-payment", {"amount_cents": 5_760_000, "reference": "CHK 40871"})
+    signed_waiver(run, "DECA")
     run.post("DECA: send waiver", f"/api/jobs/{j['DECA']}/waiver", {"kind": "unconditional_progress"})
     # VEST, GLEN, WHIT: progress in dollars, pay app sent.
     for code, cents, note in (("VEST", 4_200_000, "Corridors and rooms 101-118 set."),
@@ -363,6 +365,15 @@ def check_setup(run: Run) -> None:
     run.record("KENN: active, nothing billed yet", not kenn.get("invoices") and kenn.get("work_status") == "in_progress")
     st = run.state()
     run.record("6 payers in the playbook", len(st.get("payers", [])) == 6, ", ".join(p["name"] for p in st.get("payers", [])))
+
+
+def signed_waiver(run: Run, code: str) -> None:
+    """The signed lien waiver the contractor adds to the job record before it can be sent (M21):
+    the waiver page's Choose file, filed as a lien waiver."""
+    data = (IMPORT / "13_Scan_kenn_subcontract.pdf").read_bytes()
+    status, payload = run.api.call("POST", f"/api/import/file?job={run.jobs[code]}&file=1&kind=waiver", raw=data,
+                                   headers={"Content-Type": "application/pdf", "X-Filename": f"signed-waiver-{code}.pdf"})
+    run.record(f"{code}: signed waiver on the job record", status == 200, f"HTTP {status} {payload.get('error', '')}".strip())
 
 
 def upload(run: Run, path: Path, query: str = "") -> Tuple[int, Dict[str, Any]]:

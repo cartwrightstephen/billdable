@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+from waiver_help import signed_waiver
 from seed import seed_state
 
 
@@ -118,6 +119,7 @@ class MoneyFileTests(unittest.TestCase):
         self.assertEqual(job["invoices"][-1]["status"], "paid")
         self.assertTrue(job["waiver_due"])
         self.assertEqual(domain.status_label(job), "Payment received, waiver not sent")
+        signed_waiver(state, "job-turner")
         domain.send_waiver(state, "job-turner")
         self.assertTrue(job["waiver_sent"])
 
@@ -299,6 +301,8 @@ class DeleteJobTests(unittest.TestCase):  # R3-09
         paid = domain.create_job(state, "Oak porch", "Lee Family", 1_000_000, address="2 Oak St", ap_email="lee@example.com")
         domain.update_payer(state, paid["payer_id"], {"packet": ""})  # nothing needed with each pay app
         domain.record_progress(state, paid["id"], 400_000, "", "owner")
+        waiver = next(p for p in paid["invoices"][-1]["packet"] if p["kind"] == "waiver")
+        domain.skip_packet_item(state, paid["id"], waiver["id"], "They take no waiver")
         domain.approve_and_send(state, paid["id"], "owner")
         domain.match_payment(state, paid["id"], 100_000, "1001", "owner")
         with self.assertRaises(domain.GateError) as raised:

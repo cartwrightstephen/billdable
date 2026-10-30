@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
 import domain
+from waiver_help import signed_waiver
 import helper
 import importer
 import mailer
@@ -171,6 +172,7 @@ class SubjectAndSignOffTests(unittest.TestCase):
         inv["sent_at"] = "2026-01-02T12:00:00+00:00"
         domain.record_follow_up(state, job["id"], "Alex Rivera")
         domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1", invoice_id=inv["id"])
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Alex Rivera")
         for e in state["email_log"]:
             self.assertNotIn("Approved by", e["body"], e["kind"])

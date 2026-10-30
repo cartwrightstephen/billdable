@@ -125,6 +125,7 @@ function companyView() {
         <div><label for="co-phone">Phone</label><input id="co-phone" data-field="phone" value="${typed("phone")}" inputmode="tel" autocomplete="tel"${owner ? "" : " disabled"}></div>
         <div class="span-2"><label for="co-address">Address</label><input id="co-address" data-field="address" value="${typed("address")}" placeholder="Street, city, state ZIP" autocomplete="street-address"${owner ? "" : " disabled"}></div>
         <div><label for="co-license">Contractor licence number</label><input id="co-license" data-field="license" value="${typed("license")}"${owner ? "" : " disabled"}></div>
+        <div><label for="co-legal-name">Legal name (on contracts and lien waivers)</label><input id="co-legal-name" data-field="legal_name" value="${typed("legal_name")}" placeholder="Same as the company name"${owner ? "" : " disabled"}></div>
       </div>
       ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
@@ -471,7 +472,7 @@ export const actions = {
   },
   "save-company": async () => {
     const v = (k) => document.getElementById(k)?.value || "";
-    const r = await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license") });
+    const r = await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license"), legal_name: v("co-legal-name") });
     // Saved: the boxes show what the server kept (spaces tidied), not the typed copy.
     if (r && r.ok) { clearForm("company"); render(); }
   },

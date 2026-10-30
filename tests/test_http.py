@@ -319,6 +319,13 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(res.status, 409)
         res, state = self.request("POST", f"/api/jobs/{jid}/match-payment", {"amount_cents": 3_600_000, "reference": "CHK-1"}, cookie=cookie)
         self.assertEqual(res.status, 200)
+        # The signed waiver goes on the job record first (M21); the type picked on the waiver page comes with it.
+        res, data = self.request("POST", f"/api/jobs/{jid}/waiver", {}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        res, state = self.request("POST", f"/api/import/file?job={jid}&file=1&kind=waiver&waiver_kind=unconditional_progress", raw=b"%PDF-1.4 signed",
+                                  cookie=cookie, headers={"Content-Type": "application/pdf", "X-Filename": "signed-waiver.pdf"})
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual(state["jobs"][0]["records"][-1]["waiver_kind"], "unconditional_progress")
         res, state = self.request("POST", f"/api/jobs/{jid}/waiver", {}, cookie=cookie)
         self.assertEqual(res.status, 200)
         res, data = self.request("POST", f"/api/jobs/{jid}/close", {}, cookie=cookie)
