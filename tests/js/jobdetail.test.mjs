@@ -165,6 +165,23 @@ test("an imported schedule that doesn't add up to the amount says by how much an
   delete formDraft.newjob;
 });
 
+test("leaving the amount box redraws only the schedule's difference line, so Save job is still there to click", async () => {
+  const { sovTotalChoice, updateSovChoice } = await import("../../static/js/views/jobs.js");
+  const { formDraft } = await import("../../static/js/forms.js");
+  const r = { sov: { total_cents: 4_500_000, lines: [{}, {}] } };
+  const box = { innerHTML: "" };
+  dom.byId["nj-sov-choice"] = box;
+  formDraft.newjob = { contract_cents: "50,000" };
+  updateSovChoice(r);
+  assert.equal(box.innerHTML, sovTotalChoice(r));
+  assert.match(box.innerHTML, /\$5,000\.00 less/);
+  formDraft.newjob = { contract_cents: "45,000" };
+  updateSovChoice(r);
+  assert.equal(box.innerHTML, "", "adds up now: the line goes");
+  delete formDraft.newjob;
+  delete dom.byId["nj-sov-choice"];
+});
+
 test("Client playbook: the paperwork as checkboxes and Other, the client type, and Add client's import (S11, J2, S12, S13)", () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   const p = { id: "p-1", name: "Ellison", role: "GC", client_type: "sub", approver: "Mara", ap_email: "ap@e.example",

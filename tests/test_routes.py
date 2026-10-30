@@ -102,6 +102,11 @@ class RouteEdgeTests(unittest.TestCase):
             res, data = self.request("POST", path, body, cookie=member)
             self.assertEqual(res.status, 403, path)
             self.assertIn(data.get("error"), (server.NO_PERMISSION, "Only the Company Admin can delete the company."), path)
+        # Profiles are an owner's: the refusal says so, not to ask someone who manages the team.
+        for path in ("/api/team/profiles", "/api/team/profiles/prof-x", "/api/team/profiles/prof-x/delete"):
+            res, data = self.request("POST", path, {"name": "Site lead", "permissions": []}, cookie=member)
+            self.assertEqual(res.status, 403, path)
+            self.assertEqual(data.get("error"), "Only an owner can add, change or delete permission profiles.", path)
         res, data = self.request("POST", f"/api/team/invites/{invite_id}/revoke", {}, cookie=owner)
         self.assertEqual((res.status, data["invites"]), (200, []))
         res, data = self.request("POST", f"/api/team/{joined['user']['id']}/role", {"role": "owner"}, cookie=owner)

@@ -715,7 +715,8 @@ def approve_and_send(
             rec = records.get(att.get("record_id"))
             if rec and rec.get("kind") == "waiver":
                 rec.setdefault("waiver_kind", cond["waiver_kind"])
-                rec.setdefault("invoice_id", invoice["id"])
+                if not _waiver_tie(rec):
+                    rec["invoice_id"] = invoice["id"]
     if override:
         invoice["unconditional_override"] = {"by": actor, "at": utcnow(), "reason": override,
                                              "record_ids": [r["id"] for r in unconditional]}
@@ -1078,30 +1079,32 @@ def record_waiver_kind(record: dict[str, Any]) -> str:
 def set_waiver_type(state: dict[str, Any], job_id: str, record_id: str, kind: str, actor: str = "owner",
                     for_id: str = "") -> dict[str, Any]:
     """Say which of the four types a signed waiver on the job record is (M14), and with for_id
-    which paid pay app or retainage release it is for (B1 of the Oct 30 review). An unconditional
-    one is tied as it is added when only one waiver is owed, so it can't go out for another."""
+    which paid pay app or retainage release it is for (B1 of the Oct 30 review), or "job" for the
+    older job-level waiver (Earlier payment). An unconditional one is tied as it is added when only
+    one waiver is owed, so it can't go out for another; never one that was unclear while several
+    were owed (waiver_needs_tie): a person says which that one is for."""
     job = _job(state, job_id)
     rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
     if not rec or rec.get("kind") != "waiver":
         raise GateError("That lien waiver is not on this job's record.")
     if kind not in WAIVER_KINDS:
         _refuse("", {"kind": "Pick the waiver type: conditional or unconditional, progress or final."})
-    owed = [o for o in _waiver_owed(job) if o["id"]]
+    owed = _waiver_owed(job)
     target = None
     if for_id:
         target = next((o for o in owed if o["id"] == for_id), None)
         if not target:
-            _refuse("", {"for_id": "Pick a paid pay app or retainage release that still owes its waiver."})
-    elif kind.startswith("unconditional") and not _waiver_tie(rec) and len(_waiver_owed(job)) == 1 and owed:
+            _refuse("", {"for_id": "Pick a paid pay app, retainage release or earlier payment that still owes its waiver."})
+    elif kind.startswith("unconditional") and not _waiver_tie(rec) and not rec.get("waiver_needs_tie") and len(owed) == 1:
         target = owed[0]
     before = record_waiver_kind(rec)
     rec["waiver_kind"] = kind
     if before != kind:
         audit(state, job_id, "waiver_type", f"{actor} set the type of {rec['label']}: {WAIVER_KINDS[kind].lower()}.", actor)
+    if target:
+        rec.pop("waiver_needs_tie", None)
     if target and _waiver_tie(rec) != target["id"]:
-        rec.pop("invoice_id", None)
-        rec.pop("release_id", None)
-        rec["release_id" if target["id"].startswith("rw-") else "invoice_id"] = target["id"]
+        _tie_waiver(rec, target["id"])
         audit(state, job_id, "waiver_type", f"{actor} said {rec['label']} is the waiver for {target['number']}.", actor)
     if not job.get("closed"):
         _refresh_draft_gate(job)
@@ -1113,32 +1116,59 @@ def _sent_file_ids(state: dict[str, Any], job: dict[str, Any]) -> set[str]:
     return {fid for e in state.get("email_log", []) if e.get("job_id") == job["id"] for fid in e.get("attachments", [])}
 
 
+# The older job-level waiver (records from before per-pay-app waivers), as a waiver_for choice.
+EARLIER_PAYMENT = "job"
+
+
 def _waiver_owed(job: dict[str, Any]) -> list[dict[str, Any]]:
     """Every waiver owed now, as {id, number}: each paid pay app and retainage release not sent
-    yet, and an older job-level one (id blank)."""
+    yet, and an older job-level one (id "job", Earlier payment)."""
     out = [{"id": x["id"], "number": x.get("number") or f"Retainage released {x['at'][:10]}"} for x in _pending_waivers(job)]
     if _legacy_waiver_pending(job):
-        out.append({"id": "", "number": "Earlier payment"})
+        out.append({"id": EARLIER_PAYMENT, "number": "Earlier payment"})
     return out
 
 
 def _waiver_tie(record: dict[str, Any]) -> str:
-    """The pay app or retainage release a signed waiver was taken for, if any."""
-    return record.get("invoice_id") or record.get("release_id") or ""
+    """The pay app or retainage release a signed waiver was taken for ("job" for the earlier
+    job-level payment), if any."""
+    return record.get("invoice_id") or record.get("release_id") or (EARLIER_PAYMENT if record.get("waiver_legacy") else "")
 
 
-def waiver_on_file(state: dict[str, Any], job: dict[str, Any], kind: str, invoice_id: str = "", release_id: str = "") -> dict[str, Any] | None:
+def _tie_waiver(record: dict[str, Any], target: str) -> None:
+    for key in ("invoice_id", "release_id", "waiver_legacy"):
+        record.pop(key, None)
+    if target == EARLIER_PAYMENT:
+        record["waiver_legacy"] = True
+    else:
+        record["release_id" if target.startswith("rw-") else "invoice_id"] = target
+
+
+def _hold_unclear_waivers(job: dict[str, Any]) -> None:
+    """Before a waiver stops being owed (sent or marked not needed): while several are owed, a
+    signed waiver not said to be for any is unclear (B1), and it stays unclear once fewer are owed,
+    so it never quietly becomes the waiver for whichever one is left. A person ties it."""
+    if len(_waiver_owed(job)) <= 1:
+        return
+    for record in job.get("records", []):
+        if record.get("kind") == "waiver" and not record.get("number_only") and not _waiver_tie(record):
+            record["waiver_needs_tie"] = True
+
+
+def waiver_on_file(state: dict[str, Any], job: dict[str, Any], kind: str, invoice_id: str = "", release_id: str = "",
+                   legacy: bool = False) -> dict[str, Any] | None:
     """The signed waiver that would go out for this type (M18): the newest waiver record of that
     type (or with no type said) whose files have not gone out in any email, taken for this pay
     app or release (invoice_id, release_id), else one taken for none. One taken for none is
     `ambiguous` when more than one waiver is owed (B1 of the Oct 30 review): the person says
-    which it is for (set_waiver_type's for_id) before it is sent."""
-    target = invoice_id or release_id
+    which it is for (set_waiver_type's for_id) before it is sent, and it stays so once fewer are
+    owed (waiver_needs_tie). `legacy` asks for the older job-level waiver (Earlier payment)."""
+    target = invoice_id or release_id or (EARLIER_PAYMENT if legacy else "")
     found = _waiver_on_file(state, job, kind, lambda tie: tie == target and bool(target)) \
         or _waiver_on_file(state, job, kind, lambda tie: not tie)
     if found:
         found["untied"] = not _waiver_tie(found["record"])
-        found["ambiguous"] = found["untied"] and len(_waiver_owed(job)) > 1
+        found["ambiguous"] = found["untied"] and (len(_waiver_owed(job)) > 1 or bool(found["record"].get("waiver_needs_tie")))
     return found
 
 
@@ -1199,6 +1229,8 @@ def send_waiver(
     job = _open_job(state, job_id)
     if kind is not None and kind not in WAIVER_KINDS:
         raise GateError("Pick the waiver type: conditional or unconditional, progress or final.")
+    if invoice_id == EARLIER_PAYMENT:
+        invoice_id = None  # the older job-level waiver, as the "Which pay app?" picker names it
     releases = [r for r in job.get("retainage_waivers", []) if r.get("waiver_due") and not r.get("waiver_sent")]
     pending = [inv for inv in job["invoices"] if inv.get("waiver_due") and not inv.get("waiver_sent")]
     if release_id:
@@ -1223,16 +1255,18 @@ def send_waiver(
     else:
         release = releases[0]
         kind = kind or release["kind"]
-    found = waiver_on_file(state, job, kind, invoice["id"] if invoice else "", release["id"] if release else "")
+    found = waiver_on_file(state, job, kind, invoice["id"] if invoice else "", release["id"] if release else "", legacy=legacy)
     if not found:
         message = f"Add the signed {WAIVER_TYPE_WORDS[kind]} waiver to the job record first."
         raise GateError(message, extra={"waiver_kind": kind})
     record, files = found["record"], found["file_ids"]
     if found["ambiguous"]:
         # More than one waiver is owed and this one wasn't said to be for any (B1): ask, send nothing.
-        raise GateError(f"Say which pay app {record['label']} is for first. More than one waiver is due on this job.",
+        why = "More than one waiver is due on this job." if len(_waiver_owed(job)) > 1 else "It was added while more than one waiver was due."
+        raise GateError(f"Say which pay app {record['label']} is for first. {why}",
                         fields={"for_id": "Pick the pay app or retainage release this signed waiver is for."},
-                        extra={"waiver_record_id": record["id"], "waiver_for": [o for o in _waiver_owed(job) if o["id"]]})
+                        extra={"waiver_record_id": record["id"], "waiver_for": _waiver_owed(job)})
+    _hold_unclear_waivers(job)
     now = utcnow()
     if legacy:
         which = ""
@@ -1263,10 +1297,8 @@ def send_waiver(
         detail = f"release of {money(amount)} retainage"
         through, held = "", 0
     record["waiver_kind"] = kind
-    if invoice and not _waiver_tie(record):
-        record["invoice_id"] = invoice["id"]
-    elif release and not _waiver_tie(record):
-        record["release_id"] = release["id"]
+    if not _waiver_tie(record):
+        _tie_waiver(record, invoice["id"] if invoice else release["id"] if release else EARLIER_PAYMENT)
     job["waiver_sent_at"] = now
     job["waiver_kind"] = WAIVER_KINDS[kind]
     job["external_status"] = "Waiver sent"
@@ -1302,6 +1334,8 @@ def waiver_not_needed(
     it and in the activity log, and the job's waiver page and Closeout show it as Not needed. The
     job can then be finished (M19 still holds for every waiver not settled this way)."""
     job = _open_job(state, job_id)
+    if invoice_id == EARLIER_PAYMENT:
+        invoice_id = None
     reason = _reason(reason)
     if not reason:
         _refuse("", {"reason": "Enter why no waiver goes out through Duracash, like handed to the owner on site."})
@@ -1321,6 +1355,7 @@ def waiver_not_needed(
                         [o["number"] for o in _waiver_owed(job)], {"invoice_id": "Pick the pay app or release."})
     if target is None:
         raise GateError("No waiver is due there.")
+    _hold_unclear_waivers(job)
     mark = {"by": actor, "at": utcnow(), "reason": reason}
     if target is job:
         which = "the earlier payment"
@@ -1621,6 +1656,13 @@ def _paperwork_view(state: dict[str, Any], job: dict[str, Any], out: dict[str, A
         if inv["status"] == "void":
             continue
         inv["waiver_stages"] = waiver_stages(state, job, by_id[inv["id"]])
+    if _legacy_waiver_pending(job):
+        # The older job-level waiver (Earlier payment): the signed one that would go out, or that
+        # it is unclear which payment one is for while several are owed (B1).
+        found = waiver_on_file(state, job, suggested_waiver_kind(job), legacy=True)
+        out["legacy_waiver"] = {"on_file": bool(found and not found["ambiguous"]), "which": bool(found and found["ambiguous"]),
+                                "record_label": found["record"]["label"] if found else "",
+                                "record_id": found["record"]["id"] if found else ""}
     for release in out.get("retainage_waivers", []):
         if release.get("waiver_due") and not release.get("waiver_sent"):
             found = waiver_on_file(state, job, release["kind"], release_id=release["id"])
@@ -2020,15 +2062,16 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     person, each with its link, and the open tasks due today or before; None on a day with nothing
     due. A pay app the customer approved with a date to pay is waiting, not due, and is left out.
     With user_id, only that person's items (G5): those assigned to them and, for an owner, those
-    assigned to nobody. A row with a date that says "not yet" waits for that day (review C7): a
-    "due soon" cutoff reminder, or a row someone dated by hand. Work that is ready (a pay app to
-    send, a block to clear, work not billed) is listed whatever its client's cutoff."""
+    assigned to nobody. A "due soon" row is listed as soon as it shows, so there is time to get
+    the pay app ready before the client's cutoff; only a row someone dated by hand for a later day
+    waits for that day (review C7). Work that is ready (a pay app to send, a block to clear, work
+    not billed) is listed whatever its client's cutoff."""
     now = now or datetime.now(timezone.utc)
     day = now.date().isoformat()
 
     def due_now(r: dict[str, Any]) -> bool:
-        dated = r["kind"] == "due_soon" or (r.get("due") or "") != (r.get("own_due") or "")
-        return not dated or (r.get("due") or day) <= day
+        by_hand = (r.get("due") or "") != (r.get("own_due") or "")
+        return not by_hand or (r.get("due") or day) <= day
 
     rows = rows_for_user([r for r in today_rows(state, now) if r["kind"] in DIGEST_NOUNS and due_now(r)], user_id, owner)
     tasks = rows_for_user(tasks_due_by(state, now.date()), user_id, owner)
@@ -3599,7 +3642,10 @@ def _fits_waiver_item(record: dict[str, Any], item: dict[str, Any], invoice: dic
         return False
     if has and (_record_kinds_for(item) or ("",))[0] == "final_waiver" and not has.endswith("_final"):
         return False  # the closeout's final waiver is never a progress one
-    # Taken for a pay app: it stays that pay app's, never another's or the closeout's.
+    # Taken for a pay app: it stays that pay app's, never another's or the closeout's; taken for
+    # the earlier job-level payment, it is that payment's.
+    if record.get("waiver_legacy"):
+        return False
     return not (record.get("invoice_id") and (invoice is None or record["invoice_id"] != invoice["id"]))
 
 

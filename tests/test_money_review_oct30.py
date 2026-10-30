@@ -116,6 +116,71 @@ class UnconditionalWaiverTiedToItsPayAppTests(unittest.TestCase):  # B1 (r8_two_
         self.assertEqual(rec["invoice_id"], inv["id"])
         self.assertEqual(domain.waiver_stages(s, job, inv)["unconditional"]["record_label"], "Lien waiver signed")
 
+    def test_an_unclear_waiver_stays_unclear_after_one_is_marked_not_needed(self):
+        """h12_notneeded_shift.py: marking PA-1's waiver not needed left one owed, and the waiver
+        signed for PA-1 quietly became PA-2's. It stays unclear until a person ties it."""
+        domain.waiver_not_needed(self.s, self.job["id"], "Handed the PA-1 waiver to Sam on site", invoice_id=self.a["id"])
+        self.assertEqual(domain.waiver_stages(self.s, self.job, self.b)["unconditional"]["status"], "Which pay app?")
+        sent = len(self.s["email_log"])
+        with self.assertRaises(domain.GateError) as raised:
+            domain.send_waiver(self.s, self.job["id"], invoice_id=self.b["id"])
+        self.assertIn("more than one waiver was due", str(raised.exception))
+        self.assertEqual(len(self.s["email_log"]), sent)
+        self.assertEqual(domain._waiver_tie(self.rec), "")
+        domain.set_waiver_type(self.s, self.job["id"], self.rec["id"], "unconditional_progress")  # retyped: still not tied
+        self.assertEqual(domain._waiver_tie(self.rec), "")
+        domain.set_waiver_type(self.s, self.job["id"], self.rec["id"], "unconditional_progress", for_id=self.b["id"])
+        self.assertEqual(domain.waiver_stages(self.s, self.job, self.b)["unconditional"]["status"], "Attached")
+        domain.send_waiver(self.s, self.job["id"], invoice_id=self.b["id"])
+        self.assertTrue(self.b["waiver_sent"])
+
+    def test_an_unclear_waiver_stays_unclear_after_the_other_is_sent(self):
+        other = record(self.s, self.job, "waiver", "Lien waiver PA-2 signed")
+        domain.set_waiver_type(self.s, self.job["id"], other["id"], "unconditional_progress", for_id=self.b["id"])
+        domain.send_waiver(self.s, self.job["id"], invoice_id=self.b["id"])
+        self.assertEqual(self.s["email_log"][-1]["record_id"], other["id"])
+        self.assertEqual(domain.waiver_stages(self.s, self.job, self.a)["unconditional"]["status"], "Which pay app?")
+
+
+class EarlierPaymentWaiverTests(unittest.TestCase):  # h1_legacy_ambig.py
+    """An older job-level waiver (Earlier payment) owed while a pay app owes one too: its signed
+    waiver can be said to be for the earlier payment, and then sent."""
+    def setUp(self):
+        self.s = new_state()
+        self.job = new_job(self.s, packet="Progress photos")
+        self.job["waiver_due"], self.job["waiver_sent"] = True, False
+        self.inv = send_one(self.s, self.job, 300_000, "PA-1")
+        domain.match_payment(self.s, self.job["id"], self.inv["amount_cents"], "chk1", invoice_id=self.inv["id"])
+        self.rec = record(self.s, self.job, "waiver", "Unconditional waiver for earlier payment signed")
+        domain.set_waiver_type(self.s, self.job["id"], self.rec["id"], "unconditional_progress")
+
+    def test_the_choices_name_the_earlier_payment(self):
+        with self.assertRaises(domain.GateError) as raised:
+            domain.send_waiver(self.s, self.job["id"])
+        self.assertEqual([o["number"] for o in raised.exception.extra["waiver_for"]], ["PA-PINE-01", "Earlier payment"])
+        self.assertIn(domain.EARLIER_PAYMENT, [o["id"] for o in raised.exception.extra["waiver_for"]])
+
+    def test_tied_to_the_earlier_payment_it_goes_out_for_it_only(self):
+        domain.set_waiver_type(self.s, self.job["id"], self.rec["id"], "unconditional_progress", for_id=domain.EARLIER_PAYMENT)
+        self.assertEqual(domain._waiver_tie(self.rec), domain.EARLIER_PAYMENT)
+        self.assertNotIn("invoice_id", self.rec)
+        self.assertEqual(domain.waiver_stages(self.s, self.job, self.inv)["unconditional"]["status"], "Needed")
+        view = {"invoices": [], "retainage_waivers": []}
+        domain._paperwork_view(self.s, self.job, view)
+        self.assertEqual(view["legacy_waiver"]["on_file"], True)
+        with self.assertRaises(domain.GateError):
+            domain.send_waiver(self.s, self.job["id"], invoice_id=self.inv["id"])
+        domain.send_waiver(self.s, self.job["id"])
+        self.assertEqual(self.s["email_log"][-1]["record_id"], self.rec["id"])
+        self.assertFalse(domain._legacy_waiver_pending(self.job))
+        self.assertFalse(self.inv["waiver_sent"])
+
+    def test_the_picker_choice_sends_the_earlier_payment_waiver_too(self):
+        domain.set_waiver_type(self.s, self.job["id"], self.rec["id"], "unconditional_progress", for_id=domain.EARLIER_PAYMENT)
+        domain.send_waiver(self.s, self.job["id"], invoice_id=domain.EARLIER_PAYMENT)
+        self.assertFalse(domain._legacy_waiver_pending(self.job))
+        self.assertTrue(self.inv["waiver_due"] and not self.inv["waiver_sent"])
+
 
 class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r11_old_flows.py)
     def test_a_client_who_takes_no_waivers_can_close(self):
@@ -428,7 +493,7 @@ class StoredDataTests(unittest.TestCase):  # migrations._review_oct30_money_waiv
         d["packet"] = [i for i in d["packet"] if not i.get("auto_waiver")]
         for i in d["packet"]:
             i.pop("waiver_kind", None)
-        s["schema_version"] = migrations.SCHEMA_VERSION - 1
+        s["schema_version"] = migrations.STEPS.index(migrations._review_oct30_money_waivers) + 1
         migrations.migrate(s)
         self.assertFalse(inv["waiver_due"])
         self.assertEqual(inv["waiver_not_needed"]["reason"], "Homeowner")
@@ -437,6 +502,63 @@ class StoredDataTests(unittest.TestCase):  # migrations._review_oct30_money_waiv
         self.assertEqual(kinds["Unconditional waiver for previous payment"], "unconditional_progress")
         self.assertEqual(kinds["Conditional waiver on progress payment"], "conditional_progress")
         self.assertEqual(d["status"], "draft")
+
+    def old_draft(self, label="Conditional lien waiver"):
+        """A draft as the code on main saved it: its waiver item has no type (h7_migrate_olddraft.py)."""
+        s = new_state()
+        job = new_job(s, packet="Progress photos")
+        domain.record_progress(s, job["id"], 300_000)
+        d = draft(job)
+        for p in d["packet"]:
+            if p.get("waiver_kind"):
+                p.pop("waiver_kind")
+                p.pop("auto_waiver", None)
+                p["label"], p["blocker"] = label, f"{label} is missing."
+        record(s, job, "photo", "Photos")
+        record(s, job, "waiver", "Signed conditional waiver")
+        return s, job, d
+
+    def test_an_old_drafts_waiver_item_is_read_as_the_conditional_one(self):
+        for label in ("Conditional lien waiver", "conditional waiver on payment", "Lien waiver"):
+            s, job, d = self.old_draft(label)
+            self.assertEqual(d["status"], "awaiting_approval", label)
+            migrations._review_oct30_money_waivers(s)
+            waivers = [p for p in d["packet"] if p["kind"] == "waiver"]
+            self.assertEqual(len(waivers), 1, label)
+            self.assertEqual(waivers[0]["waiver_kind"], "conditional_progress", label)
+            self.assertTrue(waivers[0]["present"], label)
+            self.assertEqual(d["status"], "awaiting_approval", label)
+            ids = [p["id"] for p in d["packet"]]
+            self.assertEqual(len(ids), len(set(ids)), label)
+
+    def test_an_added_conditional_item_never_takes_an_id_already_used(self):
+        s, job, d = self.old_draft("Unconditional waiver for previous payment")
+        migrations._review_oct30_money_waivers(s)
+        ids = [p["id"] for p in d["packet"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        kinds = sorted(p.get("waiver_kind") for p in d["packet"] if p["kind"] == "waiver")
+        self.assertEqual(kinds, ["conditional_progress", "unconditional_progress"])
+
+    def test_a_file_the_earlier_step_doubled_is_repaired(self):
+        """What the step did before this fix: a second, empty conditional item with the same id in
+        front of the old one, and the draft sent back from awaiting approval to draft."""
+        s, job, d = self.old_draft()
+        old = next(p for p in d["packet"] if p["kind"] == "waiver")
+        extra = domain._packet_item(d["id"], "waiver", "Conditional waiver on progress payment", "Conditional waiver on progress payment is missing.")
+        extra.update(waiver_kind="conditional_progress", auto_waiver=True)
+        self.assertEqual(extra["id"], old["id"])
+        d["packet"].insert(0, extra)
+        d["status"] = "draft"
+        s["schema_version"] = migrations.STEPS.index(migrations._review_oct30_money_waivers) + 2
+        migrations.migrate(s)
+        waivers = [p for p in d["packet"] if p["kind"] == "waiver"]
+        self.assertEqual(len(waivers), 1)
+        self.assertIs(waivers[0], old)
+        self.assertEqual(old["waiver_kind"], "conditional_progress")
+        self.assertEqual(domain.blocker_lines(job), [])
+        self.assertEqual(d["status"], "awaiting_approval")
+        found, _ = domain._find_packet_item(job, old["id"])
+        self.assertIs(found, old)
 
 
 if __name__ == "__main__":

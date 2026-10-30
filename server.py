@@ -953,7 +953,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(401, self._signed_out())
             return
         if route.owner and user["role"] != "owner":
-            self._json(403, {"error": NO_PERMISSION})
+            self._json(403, {"error": OWNER_ONLY.get(route.handler, NO_PERMISSION)})
             return
         if route.perm and not has_perm(user, route.perm):
             self._json(403, {"error": NO_PERMISSION})
@@ -3015,6 +3015,8 @@ def _edit_job(h, st, j, i, c):
 # Who may do what (S6): each person's permission profile (domain/profiles.py). Every job action
 # is listed in profiles.JOB_ACTION_PERMS with the permission it needs, or None for anyone.
 NO_PERMISSION = "Your permissions don't cover that. Someone who manages the team can change them."
+# What an owner-only route says to anyone else: only an owner can, so asking a manager won't help.
+OWNER_ONLY = {h: "Only an owner can add, change or delete permission profiles." for h in ("_p_profile_save", "_p_profile_delete")}
 
 
 def company_state(company_id: str) -> dict:

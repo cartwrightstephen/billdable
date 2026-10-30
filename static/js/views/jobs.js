@@ -228,7 +228,7 @@ export function contractMark(form, name) {
 export function contractImportHtml(form) {
   const r = contractRead && contractRead.form === form ? contractRead : null;
   const sovLine = r && r.sov && form === "newjob"
-    ? `<label class="check-line"><input type="checkbox" id="nj-use-sov"${r.useSov === false ? "" : " checked"}> Set up the schedule of values from the contract (${r.sov.lines.length} line${r.sov.lines.length === 1 ? "" : "s"}, ${money(r.sov.total_cents)})</label>${sovTotalChoice(r)}` : "";
+    ? `<label class="check-line"><input type="checkbox" id="nj-use-sov"${r.useSov === false ? "" : " checked"}> Set up the schedule of values from the contract (${r.sov.lines.length} line${r.sov.lines.length === 1 ? "" : "s"}, ${money(r.sov.total_cents)})</label><div id="nj-sov-choice">${sovTotalChoice(r)}</div>` : "";
   return `<div class="contract-import" data-contract-import="${form}">
       <div class="form-inline">
         <button type="button" class="btn small secondary" data-action="contract-pick" data-for="${form}">${form === "newjob" ? "Import contract" : "Import a contract"}</button>
@@ -261,6 +261,13 @@ export function sovTotalChoice(r) {
   const diff = r.sov.total_cents - amount;
   return `<p class="sub sov-difference" id="nj-sov-diff">The schedule adds up to ${money(r.sov.total_cents)}; the contract amount is ${money(amount)}, ${money(Math.abs(diff))} ${diff > 0 ? "more" : "less"}.</p>
     <label class="check-line"><input type="checkbox" id="nj-sov-total"${r.useSovTotal ? " checked" : ""}> Use the schedule total as the contract amount</label>`;
+}
+
+// The difference line and its checkbox, drawn again where they are (the rest of the form stays).
+export function updateSovChoice(r = contractRead) {
+  const box = document.getElementById("nj-sov-choice");
+  if (box && "innerHTML" in box) box.innerHTML = sovTotalChoice(r);
+  else render();
 }
 
 // What a read found, put in the form's boxes (as typed text, so the boxes show it).
@@ -593,8 +600,9 @@ if (typeof document !== "undefined" && document.addEventListener) {
   document.addEventListener("change", (e) => {
     if (e.target && e.target.id === "nj-use-sov" && contractRead) { contractRead.useSov = e.target.checked; render(); }
     if (e.target && e.target.id === "nj-sov-total" && contractRead) contractRead.useSovTotal = e.target.checked;
-    // A changed contract amount redraws the schedule's difference line (C6).
-    if (e.target && e.target.id === "nj-amount" && contractRead && contractRead.sov) render();
+    // A changed contract amount redraws the schedule's difference line (C6), in place: a whole
+    // redraw on leaving the box would replace Save job under the click that left it.
+    if (e.target && e.target.id === "nj-amount" && contractRead && contractRead.sov) updateSovChoice();
     // The job picked on Add to a job record: its buttons now add to that job.
     if (e.target && e.target.id === "jr-job" && state) { (formDraft.jobrecord ||= {}).job = e.target.value; render(); }
   });

@@ -201,27 +201,78 @@ def _review_oct30_money_waivers(state: dict[str, Any]) -> None:
             if inv.get("status") not in domain.DRAFT_STATUSES or inv.get("packet_id") == "job-packet":
                 continue
             packet = inv.get("packet") or []
-            waivers = [i for i in packet if (domain._record_kinds_for(i) or ("",))[0] == "waiver"]
-            for item in waivers:
-                label = str(item.get("label") or "").lower()
-                if "unconditional" in label and not str(item.get("waiver_kind", "")).startswith("unconditional"):
-                    item["waiver_kind"] = f"unconditional_{'final' if 'final' in label else 'progress'}"
+            waivers = _type_waiver_items(packet)
             if waivers and not any(str(i.get("waiver_kind", "")).startswith("conditional") for i in packet):
                 kind = "conditional_progress"
                 item = domain._packet_item(inv["id"], "waiver", domain.WAIVER_KINDS[kind], f"{domain.WAIVER_KINDS[kind]} is missing.")
-                item.update(waiver_kind=kind, auto_waiver=True)
+                item.update(id=_unused_id(packet, item["id"]), waiver_kind=kind, auto_waiver=True)
                 if skip:
                     item.update(required=False, skipped_reason=skip.get("reason") or "Not needed for this client", skipped_at=domain.utcnow())
                 packet.insert(0, item)
+                if item["required"] and inv.get("status") == "awaiting_approval":
+                    inv["status"] = "draft"  # the new item is missing, so the draft waits for it
             domain._name_conditional_waiver(job, inv)
-            if any(i.get("required") and not i.get("present") for i in packet) and inv.get("status") == "awaiting_approval":
-                inv["status"] = "draft"
+
+
+def _type_waiver_items(packet: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The packet's waiver items, each with its type, by domain._new_packet's rule: an item naming
+    an unconditional waiver is that type; any other waiver item without a type (a draft saved by
+    older code, "Conditional lien waiver") is the conditional waiver on progress payment."""
+    waivers = [i for i in packet if (domain._record_kinds_for(i) or ("",))[0] == "waiver"]
+    for item in waivers:
+        label = str(item.get("label") or "").lower()
+        if "unconditional" in label:
+            if not str(item.get("waiver_kind", "")).startswith("unconditional"):
+                item["waiver_kind"] = f"unconditional_{'final' if 'final' in label else 'progress'}"
+        elif not item.get("waiver_kind"):
+            item["waiver_kind"] = "conditional_progress"
+    return waivers
+
+
+def _unused_id(packet: list[dict[str, Any]], wanted: str) -> str:
+    used = {i.get("id") for i in packet}
+    n, candidate = 2, wanted
+    while candidate in used:
+        candidate, n = f"{wanted}-{n}", n + 1
+    return candidate
+
+
+def _review_oct30_waiver_repair(state: dict[str, Any]) -> None:
+    """Repairs what the first version of _review_oct30_money_waivers did to a draft saved by older
+    code: it didn't see that draft's untyped waiver item ("Conditional lien waiver") as the
+    conditional one, so it put a second, empty conditional item in front of it, often with the
+    same id, and sent a draft awaiting approval back to draft. That added item goes (its file,
+    if one was attached to it, moves to the old item), the old item gets its type, and the draft
+    is awaiting approval again when nothing else is missing. Safe to run again."""
+    for job in state.get("jobs", []):
+        if job.get("closed"):
+            continue
+        for inv in job.get("invoices", []):
+            if inv.get("status") not in domain.DRAFT_STATUSES or inv.get("packet_id") == "job-packet":
+                continue
+            packet = inv.get("packet") or []
+            olds = [i for i in packet if (domain._record_kinds_for(i) or ("",))[0] == "waiver" and not i.get("auto_waiver")
+                    and "unconditional" not in str(i.get("label") or "").lower()
+                    and (not i.get("waiver_kind") or str(i.get("waiver_kind")).startswith("conditional"))]
+            added = [i for i in packet if i.get("auto_waiver") and str(i.get("waiver_kind", "")).startswith("conditional")]
+            if not olds or not added:
+                continue
+            old = olds[0]
+            for extra in added:
+                files = {a.get("record_id") for a in old.get("attachments", [])}
+                old.setdefault("attachments", []).extend(a for a in extra.get("attachments", []) if a.get("record_id") not in files)
+                old["present"] = bool(old.get("present") or extra.get("present"))
+                packet.remove(extra)
+            _type_waiver_items(packet)
+            domain._name_conditional_waiver(job, inv)
+            inv["status"] = "draft" if domain.blocker_lines(job) else "awaiting_approval"
 
 
 STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _tasks_daily_lists, _payapps_cos_co_history,
                                                    _paperwork_insurance_records, _jobs_clients_address_parts,
                                                    _settings_auth_company_address_parts, _settings_auth_permission_profiles,
-                                                   _followups_paperwork_catalog_labels, _review_oct30_money_waivers]
+                                                   _followups_paperwork_catalog_labels, _review_oct30_money_waivers,
+                                                   _review_oct30_waiver_repair]
 
 
 # ----- steps for auth.json (the accounts file), run once at start-up by auth.upgrade_file -----

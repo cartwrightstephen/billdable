@@ -60,7 +60,7 @@ function pageName(e) {
   if (e.view === "payapp-detail") { const i = j && j.invoices.find(x => x.id === e.detailId); return i ? i.number : termText("Pay app"); }
   if (e.view === "packet-detail") return e.detailId === "closeout" ? "Closeout paperwork" : "Paperwork";
   if (e.view === "co-detail") { const co = j && j.change_orders.find(x => x.id === e.detailId); return co ? `CO ${co.number}` : "Change order"; }
-  if (e.view === "waiver-detail") return "Waivers";
+  if (e.view === "waiver-detail") return j ? `Closeout: ${j.name}` : "Closeout";   // as its heading and tab title
   if (e.view === "dashboard") return "Dashboard";
   return tabLabel(e.view) || sectionOf(e.view).label;
 }

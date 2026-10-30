@@ -388,7 +388,7 @@
       "keywords": [
         "add client",
         "new client",
-        "client"
+        "add a client"
       ],
       "answer": "Go to Jobs, Client playbook and tap Add client. Fill in Client name and Client type, then Who signs off on your bills, Email for pay apps, Phone, Pay apps due by (day of the month), Payment terms, days and the Paperwork needed with each pay app, and tap Add client. Have the contract? Tap Import a contract first: it fills the boxes it finds. A client can also be added with a job: type a new name in Client on New job.",
       "handler": null,
@@ -521,6 +521,37 @@
         }
       ],
       "follow_ups": []
+    },
+    {
+      "id": "edit-profiles",
+      "category": "Getting started",
+      "questions": [
+        "Can a member edit profiles?",
+        "Who can change permission profiles?",
+        "How do I edit a permission profile?",
+        "Add a permission profile",
+        "Delete a profile"
+      ],
+      "keywords": [
+        "edit profile",
+        "change profile",
+        "permission profile",
+        "edit profiles",
+        "change profiles"
+      ],
+      "answer": "Only an owner can add, change or delete permission profiles. An owner opens Settings, Team and, under Permission profiles, taps Edit on a profile to change what it can do, New profile to add one (like Office manager) with the permissions ticked, or Delete on one they added. Owner is built in and can do everything. Anyone else sees what each profile can do but can't change it; someone who manages the team can still pick which profile a person has, next to their name.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "team",
+          "label": "Open Team"
+        }
+      ],
+      "follow_ups": [
+        "Can I add my office manager?"
+      ]
     },
     {
       "id": "what-payapp",
@@ -792,12 +823,18 @@
         "Edit the packet requirements",
         "Customer rules",
         "Who signs off on my bills?",
-        "What is the email for pay apps?"
+        "What is the email for pay apps?",
+        "Where are my clients?",
+        "Who is my client?",
+        "Where do I see my clients?",
+        "List my clients"
       ],
       "keywords": [
         "playbook",
         "requirement",
-        "rules"
+        "rules",
+        "my clients",
+        "my client"
       ],
       "answer": "Jobs, Client playbook keeps each client's rules. Open a client to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Client type, Paperwork needed with each pay app (tick each item, add the rest under Other, or tick Nothing needed), They send pay apps back when, Also email (CC) and more, then tap Save client. New pay apps use the paperwork list. When a client sends a pay app back, add the reason to They send pay apps back when and tap Save client. While something is blocking send on a job, you can also note it there under Client sent a pay app back? Note why. Each client also lists its open and finished jobs, with a link to each job's contract and Add contract. Add client takes the same details, and Import a contract fills them from the contract.",
       "handler": null,
@@ -1713,7 +1750,7 @@
         "ball in court",
         "to do"
       ],
-      "answer": "On Dashboard, Overview, the To Do list shows each item's Ball in court (Us when someone here has to act, Client when you are waiting on the client), its Assignee and its Due date. Pick a name in an item's Assignee box to assign it; anyone on the team can. Change the date in its Due box to set when it is due; clear it to go back to the item's own date. Tap Add task for something of your own: what needs doing, and optionally the job, who, when and whose court. Tap Done when it is finished. Each person's morning email lists what is assigned to them (an item dated for a later day waits for that day), and an owner's also lists what nobody has. When someone leaves the team, their open items and the jobs assigned to them go to the owner who removed them.",
+      "answer": "On Dashboard, Overview, the To Do list shows each item's Ball in court (Us when someone here has to act, Client when you are waiting on the client), its Assignee and its Due date. Pick a name in an item's Assignee box to assign it; anyone on the team can. Change the date in its Due box to set when it is due; clear it to go back to the item's own date. Tap Add task for something of your own: what needs doing, and optionally the job, who, when and whose court. Tap Done when it is finished. Each person's morning email lists what is assigned to them (a pay app due soon is listed as soon as it shows, so there's time to get it ready; an item you dated for a later day waits for that day), and an owner's also lists what nobody has. When someone leaves the team, their open items and the jobs assigned to them go to the owner who removed them.",
       "handler": null,
       "needs_job": false,
       "actions": [

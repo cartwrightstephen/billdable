@@ -203,20 +203,31 @@ class HandTaskTests(unittest.TestCase):
         self.assertEqual(done["assignee_id"], "u-mo", "a done task keeps who did it")
         self.assertEqual(self.state["task_assignments"][key]["assignee_id"], "u-owner")
 
-    def test_the_daily_email_leaves_out_rows_due_later(self):
-        """Review C7: a row whose own due date is ahead (the client's pay app cutoff) waits for
-        that day; on the day, and after, it is listed."""
+    def test_the_daily_email_lists_a_due_soon_row_and_holds_one_dated_by_hand(self):
+        """A "due soon" row (the client's pay app cutoff is ahead) is listed as soon as it shows,
+        so there is time to get the pay app ready; only a row whose date was set by hand to a
+        later day waits for that day."""
         self.state["payers"][0]["payapp_due_day"] = 31
         rows = domain.today_rows(self.state, NOW)
         self.assertEqual([(r["kind"], r["due"]) for r in rows], [("due_soon", "2026-10-31")])
-        self.assertIsNone(domain.daily_digest(self.state, "", NOW))
-        on_the_day = NOW + timedelta(days=3)
-        subject, body = domain.daily_digest(self.state, "", on_the_day)
+        subject, body = domain.daily_digest(self.state, "", NOW)
         self.assertIn("Porch rebuild", body)
-        # A due date set by hand to today brings it in early.
         key = rows[0]["key"]
-        domain.assign_row(self.state, key, {"due": "2026-10-28"}, TEAM, now=NOW)
-        self.assertIsNotNone(domain.daily_digest(self.state, "", NOW))
+        domain.assign_row(self.state, key, {"due": "2026-11-02"}, TEAM, now=NOW)
+        self.assertIsNone(domain.daily_digest(self.state, "", NOW), "dated by hand for a later day: not yet")
+        self.assertIsNotNone(domain.daily_digest(self.state, "", NOW + timedelta(days=5)))
+
+    def test_clearing_a_due_box_that_only_showed_today_is_no_change_and_no_error(self):
+        rows = domain.today_rows(self.state, NOW)
+        audits = len(self.state["audit"])
+        key = rows[0]["key"]
+        self.assertIsNone(domain.assign_row(self.state, key, {"key": key, "due": ""}, TEAM, now=NOW))
+        task = domain.add_task(self.state, {"title": "Order grout"}, TEAM)
+        audits = len(self.state["audit"])
+        self.assertEqual(domain.edit_task(self.state, task["id"], {"due": ""}, TEAM)["due"], "")
+        self.assertEqual(len(self.state["audit"]), audits, "nothing changed, so nothing is logged")
+        with self.assertRaises(domain.GateError):
+            domain.edit_task(self.state, task["id"], {"title": "Order grout"}, TEAM)
 
     def test_the_daily_email_keeps_ready_work_and_holds_a_row_dated_by_hand(self):
         """Ready work is listed whatever its client's cutoff; a row someone dated for a later day

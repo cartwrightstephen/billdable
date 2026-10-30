@@ -259,7 +259,7 @@ export const actions = {
       resetDaily(); clearForm("daily"); render();   // saved: the form is empty for the next one
       // The record is kept even when its quantities couldn't be added (B5): say so plainly.
       const saved = (state.daily_records || []).filter(x => x.job_id === job).slice(-1)[0];
-      if (saved && saved.quantities_not_applied) toast(`Saved. The quantities were not added to the schedule of values: ${saved.quantities_not_applied}`);
+      if (saved && saved.quantities_not_applied) toast(`Saved. The quantities were not added to the schedule of values: ${unesc(saved.quantities_not_applied)}`);
     }
   },
 };

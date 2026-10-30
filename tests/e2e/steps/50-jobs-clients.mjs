@@ -38,6 +38,25 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.context().close();
   });
 
+  await step("New job: changing the amount and clicking Save job straight away takes the first click (the line under the schedule redraws in place)", async () => {
+    const p = await signedInPage({ width: 1280, height: 900 });
+    await p.goto(BASE + "/jobs");
+    await p.getByRole("button", { name: "New job" }).click();
+    const form = p.locator('[data-form-key="newjob"]');
+    const chooser = p.waitForEvent("filechooser");
+    await form.getByRole("button", { name: "Import contract" }).click();
+    await (await chooser).setFiles({ name: "subcontract.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer: readFileSync(CONTRACT) });
+    await form.locator(".contract-status", { hasText: "From the contract" }).waitFor();
+    await form.locator("#nj-amount").fill("50,000");
+    // One click, with the amount box still focused: leaving it redraws the difference line, and
+    // the click must still reach Save job (it used to be lost to a whole-page redraw).
+    await form.getByRole("button", { name: "Save job" }).click();
+    await form.locator("#nj-amount-err", { hasText: "The schedule of values from the contract adds up to $48,500.00" }).waitFor({ timeout: 3000 });
+    assert.match(await form.locator("#nj-sov-diff").innerText(), /\$1,500\.00 less/);
+    await p.context().close();
+  });
+
   await step("Add to a job record from the Jobs page, with the row's job picked (J4)", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     await p.goto(BASE + "/jobs");
