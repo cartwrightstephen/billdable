@@ -65,6 +65,16 @@ class ContactLogTests(unittest.TestCase):
         view = domain.job_view(self.state, self.job)
         self.assertNotIn("recent_contact", view)
 
+    def test_email_status_words(self):
+        log = self.state["email_log"]
+        cases = [({"status": "sent", "delivered_at": "2026-10-01T10:00:00+00:00"}, "Delivered"), ({"status": "sent"}, "Sent"),
+                 ({"status": "failed: no mail service"}, "Didn't go out"), ({"status": "queued"}, "Waiting to send"),
+                 ({"status": "not sent: demo account"}, "Not sent")]
+        for fields, words in cases:
+            log[-1].pop("delivered_at", None)
+            log[-1].update(fields)
+            self.assertEqual(domain.contact_log(self.state, self.job["id"])[0][0]["status"], words, fields)
+
     def test_draws_say_draw(self):
         self.state["company"]["billing_style"] = "draws"
         rows, _ = domain.contact_log(self.state, self.job["id"])

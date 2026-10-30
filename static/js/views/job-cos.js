@@ -24,6 +24,13 @@ export const CO_REASONS = {
 };
 export const CO_PRICING = { lump_sum: "Lump sum", tm: "Time and materials" };
 const MAX_CO_ITEMS = 50;
+
+// Today on this device (YYYY-MM-DD), the latest a signed or work-started date can be. The
+// server allows a day of slack, so a device ahead of UTC isn't refused.
+export function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 // Record kinds that can back up a change order: quotes, supplier invoices, T&M sheets, photos.
 const BACKUP_KINDS = new Set(["note", "photo", "contract", "change_order", "ticket", "supplier_invoice", "stored", "other"]);
 
@@ -52,7 +59,7 @@ export function coSignControls(j, co, extra = "", opts = {}) {
     ${formOpen[key] ? `<div class="co-paper" data-form-key="${key}">${formErrorLine(key)}
         <div class="form-grid">
           ${field({ form: key, name: "signer_name", id: `cosign-name-${co.id}`, label: "Signed by (name)", required: true, autocomplete: "off" })}
-          ${field({ form: key, name: "signed_on", id: `cosign-date-${co.id}`, label: "Date signed", type: "date", required: true, attrs: `max="${new Date().toISOString().slice(0, 10)}"` })}
+          ${field({ form: key, name: "signed_on", id: `cosign-date-${co.id}`, label: "Date signed", type: "date", required: true, attrs: `max="${localToday()}"` })}
         </div>
         <div class="form-inline">
           <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-kind="change_order" data-capture="1">Take a photo of the signed copy</button>
@@ -105,7 +112,7 @@ export function coFormFields(j) {
     </fieldset>
     <div class="form-grid">
       ${field({ form: "newco", name: "schedule_days", id: "co-days", label: "Schedule change, days (optional)", inputmode: "numeric", placeholder: "3" })}
-      ${field({ form: "newco", name: "work_started_on", id: "co-started", label: "Work started on (optional)", type: "date", attrs: `max="${new Date().toISOString().slice(0, 10)}"` })}
+      ${field({ form: "newco", name: "work_started_on", id: "co-started", label: "Work started on (optional)", type: "date", attrs: `max="${localToday()}"` })}
     </div>
     ${backup.length ? `<fieldset class="co-backup"><legend>Backup from the job record (optional)</legend>
       ${backup.map(r => `<label class="co-backup-item"><input type="checkbox" data-co-backup="${r.id}"${coBackup.has(unesc(r.id)) ? " checked" : ""}> <span class="pill">${termText(RECORD_KINDS[unesc(r.kind)] || r.kind)}</span> ${r.label}</label>`).join("")}

@@ -86,3 +86,12 @@ test("a signed change order waits on the client logging it, and an older one sho
   assert.match(html, /Revised contract sum<\/span>/);
   assert.match(html, /Created[\s\S]*Pat, [\s\S]*Signed[\s\S]*Kim \(signed online\)/);
 });
+
+test("a job without change orders: its page points to the job's form instead of a form of its own", () => {
+  core.setState(company([job("ja", "A job")]));
+  page.setLocation("co-detail", "ja", "");
+  const html = reg.views.coDetail();
+  assert.match(html, /No change orders on A job/);
+  assert.match(html, /data-action="co-open-form" data-id="ja">New change order</);
+  assert.doesNotMatch(html, /data-form-key="newco"/);
+});

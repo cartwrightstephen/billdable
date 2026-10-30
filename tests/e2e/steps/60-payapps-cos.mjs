@@ -33,6 +33,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.match(text, /Owner request/);
     assert.match(text, /Revised contract sum if signed/);
     assert.match(text, /History[\s\S]*Created/);
+    // Withdrawn, so the demo's Turner job is as it was for the steps after this one.
+    await p.locator('#main [data-action="withdraw-co"]').click();
+    await confirmIfAsked(p);
+    await p.locator("#main", { hasText: /History[\s\S]*Withdrawn/ }).waitFor();
     await p.context().close();
   });
 

@@ -1,7 +1,7 @@
 // Money, Change orders: the list, and each change order's page. A change order is made on its
 // job's page; New change order here asks for the job and opens that form (Stephen's Oct 29
 // review, G10).
-import { unesc, money, fmtDate, fmtDateTime } from "../format.js";
+import { esc, unesc, money, fmtDate, fmtDateTime } from "../format.js";
 import { coSignature, coStatusWords, defaultJobId, RECORD_KINDS } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
@@ -9,7 +9,7 @@ import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
 import { render, toast, post, backButton, emptyState, nav } from "../app-core.js";
-import { coFormFields, coSignControls, addChangeOrder, workStartedPill, CO_REASONS, CO_PRICING } from "./job-cos.js";
+import { coSignControls, workStartedPill, localToday, CO_REASONS, CO_PRICING } from "./job-cos.js";
 import { recordFiles } from "./job-record.js";
 
 let coPreselectJob = null;
@@ -70,14 +70,10 @@ export const views = {
     const j = state.jobs.find(x => x.id === currentJobId);
     if (!j) return backButton("cos", "Change orders") + emptyState("Change order not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="cos">Go to Change orders</button>`);
     const co = j.change_orders.find(c => c.id === currentDetailId) || j.change_orders[j.change_orders.length - 1];
+    // A job without change orders: they are made on the job's page (G10).
     if (!co) {
-      return `
-        ${backButton("cos", "Change orders")}
-        <h1>New change order</h1>
-        <div class="card" data-form-key="newco">${formErrorLine("newco")}
-          ${coFormFields(j)}
-          <button class="btn" data-action="add-co" data-id="${j.id}">Create</button>
-        </div>`;
+      return backButton("cos", "Change orders") + emptyState(`No change orders on ${j.name}`, "",
+        j.closed ? "" : `<button class="btn" data-action="co-open-form" data-id="${j.id}">New change order</button>`);
     }
     const items = co.items || [];
     const records = j.records || [];
@@ -104,7 +100,7 @@ export const views = {
           ? `<span>Client logged it on their end (${co.client_logged_by || ""}, ${fmtDate(co.client_logged_at)})</span> <button class="btn small secondary" data-action="co-logged" data-id="${j.id}" data-co="${co.id}" data-logged="0">Undo</button>`
           : `<button class="btn small secondary" data-action="co-logged" data-id="${j.id}" data-co="${co.id}" data-logged="1">Client logged it on their end</button>`}</div>` : ""}
         ${co.status !== "withdrawn" && !j.closed ? (formOpen[startKey] ? `<div class="co-start" data-form-key="${startKey}">${formErrorLine(startKey)}<div class="form-inline">
-            ${field({ form: startKey, name: "work_started_on", id: `co-start-${co.id}`, label: "Work started on", type: "date", attrs: `max="${new Date().toISOString().slice(0, 10)}"` })}
+            ${field({ form: startKey, name: "work_started_on", id: `co-start-${co.id}`, label: "Work started on", type: "date", attrs: `max="${localToday()}"` })}
             <button class="btn small" data-action="co-work-started" data-id="${j.id}" data-co="${co.id}">Save</button>
             <button class="btn small secondary" data-action="toggle-form" data-form="${startKey}">Cancel</button></div></div>`
           : `<div class="form-inline"><button class="btn small secondary" data-action="toggle-form" data-form="${startKey}" aria-expanded="false">${co.work_started_on ? "Change the day work started…" : "Work started…"}</button></div>`) : ""}
@@ -139,7 +135,7 @@ export const views = {
         <table>
           <tr><th>Change order</th><th>Job</th><th>Amount</th><th>Status</th><th>Waiting on</th><th>${termText("On a pay app")}</th></tr>
           ${cos.slice().reverse().map(c => `<tr>
-            <td><a href="${pathFor("co-detail", c.jobId, c.id)}" data-action="open-co" data-job="${c.jobId}" data-co="${c.id}">CO ${c.number}: ${c.title}</a>${c.reason || c.description ? `<div class="sub row-sub">${[c.reason ? CO_REASONS[unesc(c.reason)] || c.reason : "", c.description ? c.description.slice(0, 80) : ""].filter(Boolean).join(" · ")}</div>` : ""}</td>
+            <td><a href="${pathFor("co-detail", c.jobId, c.id)}" data-action="open-co" data-job="${c.jobId}" data-co="${c.id}">CO ${c.number}: ${c.title}</a>${c.reason || c.description ? `<div class="sub row-sub">${[c.reason ? CO_REASONS[unesc(c.reason)] || c.reason : "", c.description ? esc(unesc(c.description).slice(0, 80)) : ""].filter(Boolean).join(" · ")}</div>` : ""}</td>
             <td>${c.job}</td>
             <td class="num">${money(c.amount_cents)}</td>
             <td><span class="pill ${c.status === "approved" ? "green" : c.status === "withdrawn" ? "" : "amber"}">${coStatusWords(c.status)}</span>${workStartedPill(c)}</td>
@@ -166,10 +162,7 @@ export const actions = {
     if (!(await askConfirm("Withdraw this change order? Use this when the client will not sign it.", "Withdraw", true))) return;
     await post(`/api/jobs/${id}/withdraw-co/${el.dataset.co}`);
   },
-  "add-co": async (el, id) => {
-    const r = await addChangeOrder(id);
-    if (r && r.ok) nav("co-detail", id);
-  },
+  "co-open-form": (el, id) => openCoForm(id),
   "goto-co": (el, id) => { coPreselectJob = id; nav("cos"); },
   // New change order on the list (G10): with one open job its form opens; else pick the job first.
   "co-new": () => {
@@ -190,7 +183,7 @@ export const actions = {
     const key = `cosign-${el.dataset.co}`;
     const v = formValues(key);
     const recordId = document.getElementById(`cosign-rec-${el.dataset.co}`)?.value || "";
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     const errors = {};
     if ((v.signer_name || "").length < 2) errors.signer_name = "Enter the name of the person who signed it.";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(v.signed_on || "")) errors.signed_on = "Enter the date it was signed, like 2026-10-27.";

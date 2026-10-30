@@ -28,12 +28,15 @@ _ACTOR_TAIL = re.compile(r"\s*\(([^()]*)\)\s*$")
 _PAGE_WORDS = re.compile(r" on the (?:payer|customer|client) page", re.I)
 
 
-def _email_status(status: str) -> str:
-    status = str(status or "")
+def _email_status(entry: dict[str, Any]) -> str:
+    """How the email went, in a word or two: Delivered once the mail service says so, else Sent."""
+    status = str(entry.get("status") or "")
     if status == "sent":
-        return "Delivered"
+        return "Delivered" if entry.get("delivered_at") else "Sent"
     if status.startswith("bounced"):
         return "Bounced"
+    if status.startswith("failed"):
+        return "Didn't go out"
     if status in ("queued", "sending"):
         return "Waiting to send"
     return "Not sent" if status else ""
@@ -51,7 +54,7 @@ def contact_log(state: dict[str, Any], job_id: str, limit: int | None = RECENT_C
     for e in state.get("email_log", []):
         if e.get("job_id") == job_id and e.get("kind") in CONTACT_EMAIL_WORDS:
             out.append({"at": e.get("at", ""), "kind": "email", "label": term_text(CONTACT_EMAIL_WORDS[e["kind"]], style),
-                        "text": e.get("subject", ""), "by": e.get("approved_by", ""), "status": _email_status(e.get("status", ""))})
+                        "text": e.get("subject", ""), "by": e.get("approved_by", ""), "status": _email_status(e)})
     for row in state.get("audit", []):
         if row.get("job_id") != job_id:
             continue
