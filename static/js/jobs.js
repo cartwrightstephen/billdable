@@ -475,6 +475,17 @@ export function clientTypeLabel(p) {
 // Unpaid, Payments, Closeout), the Dashboard and the Calendar filter with this too.
 export function openJobs(jobs) { return (jobs || []).filter(j => !j.closed); }
 
+// The day of the daily record a draft's quantities came from (M1), as the schedule card shows
+// per line (from_daily_on): the latest among the lines this draft bills for work this period.
+// "" for a sent pay app, or when the quantities were typed on the job page.
+export function draftFromDailyOn(j, inv) {
+  if (!j || !inv || !["draft", "awaiting_approval"].includes(inv.status)) return "";
+  const lines = (j.sov_view && j.sov_view.lines) || [];
+  const days = (inv.sov_lines || []).filter(e => (e.qty_milli_this || 0) > 0)
+    .map(e => (lines.find(l => l.id === e.line_id) || {}).from_daily_on).filter(Boolean);
+  return days.sort().pop() || "";
+}
+
 // A job filter on a page of records (Activity log, Outbox, Everything received, Sent pay apps):
 // the open jobs, then the recently finished ones under "Finished jobs", so an old job's entries
 // can still be found. Names and ids come escaped from the server, as on every other picker.

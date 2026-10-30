@@ -1256,7 +1256,7 @@
         "daily",
         "log"
       ],
-      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app. Or paste many days at once in the Inbox as notes. Records live on the job record and can be attached to a pay app's paperwork as backup.",
+      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app, which then says Updated from daily records on that day. Or paste many days at once in the Inbox as notes. Records live on the job record and can be attached to a pay app's paperwork as backup.",
       "handler": null,
       "needs_job": false,
       "actions": [

@@ -1,6 +1,6 @@
 // Money, Pay apps: the list and each pay app's page (Before you send, lines, payments, approval).
 import { unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
-import { shortPayLabel, shortPayAttrs, canPullBack, openJobs } from "../jobs.js";
+import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
@@ -75,6 +75,7 @@ export const views = {
     const pkt = inv.packet || j.packet || [];
     const missing = pkt.filter(p => p.required && !p.present).length;
     const draft = ["draft", "awaiting_approval"].includes(inv.status);
+    const fromDaily = draftFromDailyOn(j, inv);
     const copies = (j.payer.copy && unesc(j.payer.copy) !== "None") ? j.payer.copy : "";
     const firstSend = draft && !j.payer.sent_before && !state.jobs.some(x => x.payer_id === j.payer_id && x.invoices.some(i => i.sent_at));
     const noEmail = !j.payer.ap_email;
@@ -88,6 +89,7 @@ export const views = {
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
       <p class="sub">${invoicePill(inv)} <a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(inv.amount_cents)}</p>
+      ${fromDaily ? `<p class="sov-daily payapp-daily">Updated from daily records on ${fmtDate(fromDaily)}</p>` : ""}
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a> <span class="sub">${termText("The same PDF goes with the email when the pay app is sent.")}</span></p>
       ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
