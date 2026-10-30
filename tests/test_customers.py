@@ -248,6 +248,11 @@ class CustomerHttpTests(unittest.TestCase):
                              {"Content-Type": "text/plain", "X-Filename": "contract.txt"})
         self.assertEqual(res.status, 200, data)
         res, state = self.request("POST", f"/api/jobs/{job['id']}/done", {}, owner)
+        # Every pay app needs its conditional waiver before it goes (Stephen's review, M16).
+        draft = next(i for i in state["jobs"][-1]["invoices"] if i["status"] in ("draft", "ready"))
+        for item in draft.get("packet") or []:
+            if "waiver" in item["label"].lower() and item.get("status") != "present":
+                self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "Signed waiver received by email"}, owner)
         res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, owner)
         self.assertEqual(res.status, 200, state)
         res, data = self.request("GET", f"/api/payers/{payer['id']}/jobs", cookie=owner)
