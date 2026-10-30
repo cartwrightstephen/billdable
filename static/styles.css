@@ -594,6 +594,20 @@ textarea { font: inherit; }
 
 
 /* == stream: payapps-cos == */
+/* Change orders (Stephen's Oct 29 review, M7-M10): the cost lines and backup on the form, the
+   paper signer, and the change order's own page. */
+fieldset.co-items, fieldset.co-backup { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; }
+fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
+.co-item-row { display: grid; grid-template-columns: 2fr 1fr; gap: 0 12px; }
+.co-backup-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.co-backup-item input { min-width: auto; }
+.co-paper { margin-top: 8px; }
+.co-desc { white-space: pre-wrap; }
+.co-cost-lines { margin: 6px 0 6px 12px; }
+.co-logged { margin-top: 8px; }
+@media (max-width: 600px) {
+  .co-item-row { grid-template-columns: 1fr; }
+}
 
 
 
