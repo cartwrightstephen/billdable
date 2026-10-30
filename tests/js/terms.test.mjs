@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { setBillingStyle, billingStyle, term, termText, actionWords, ACTION_WORDS } from "../../static/js/terms.js";
 import { nextStep, jobActions, closeBlockerActions, jobStatus, waiverHint, waiverSendForm, RECORD_KINDS } from "../../static/js/jobs.js";
-import { queueHtml } from "../../static/js/today.js";
+import { todoHtml } from "../../static/js/today.js";
 import { INVOICE_WORDS } from "../../static/js/format.js";
 import { NEW, OLD } from "./glossary.mjs";
 
@@ -58,7 +58,7 @@ test("draws: next steps, job buttons and the Dashboard", () => {
     assert.equal(primary.label, "Draft draw");
     assert.match(primary.why, /^A draw for/);
     assert.deepEqual(closeBlockerActions(job, { kind: "unbilled" }).map(a => a.label), ["Draft draw"]);
-    assert.match(queueHtml([], {}), /when a draw is ready to send/);
+    assert.match(todoHtml([], {}), /when a draw is ready to send/);
     assert.equal(actionWords("approve_send"), "Draw sent");
   } finally {
     setBillingStyle("pay_apps");

@@ -30,7 +30,7 @@ R6-11 boards and the final pass's changes. Copy this folder to the canvas to pub
 |---|---|---|
 | `Main.dc.html` | Map: five destinations and the money path | 1440 × 900 |
 | `Landing.dc.html` | Landing and sign-up | 1280 × 980 |
-| `Today.dc.html` | Today: Needs you three at a time, the metrics and the jobs table | 1280 × 2200 |
+| `Today.dc.html` | Today: To Do three at a time, the metrics and the jobs table | 1280 × 2200 |
 | `Jobs.dc.html` | Jobs, with the New job form for a saved customer | 1280 × 1450 |
 | `Job.dc.html` | Job page: Next step, More, Before you can finish, Money, job record, history; what opens in place | 1280 × 3450 |
 | `Packet.dc.html` | Paperwork for a pay app: Take a photo, Choose file, I have this…, Also blocking send | 1280 × 1400 |

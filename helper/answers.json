@@ -1244,7 +1244,7 @@
         "daily",
         "log"
       ],
-      "answer": "A daily record is a dated note of what happened on site: crew, work done, deliveries, problems. Go to Jobs, Daily record, pick the Job, type the Diary and tap Save to job record. Or paste many days at once in the Inbox as notes. They live on the job record and can be attached to a pay app's paperwork as backup.",
+      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app. Or paste many days at once in the Inbox as notes. Records live on the job record and can be attached to a pay app's paperwork as backup.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1268,7 +1268,7 @@
         "calendar",
         "dates"
       ],
-      "answer": "Dashboard, Calendar shows work complete, pay apps sent, follow-ups due, expected approvals, payments, waivers, finished jobs and pay app due dates. Pick a job in the Job filter to see only that job. Tap a day for its events. These are your billing dates, not legal deadlines.",
+      "answer": "Dashboard, Calendar starts with Tasks: your To Do items and the calendar's dates for This week, Next week, This month or a Custom range, each opening its day, with Add task. Below it the month shows work complete, pay apps sent, follow-ups due, expected approvals, payments, waivers, finished jobs and pay app due dates. Pick a job in the Job filter to see only that job. Tap a day for its events. These are your billing dates, not legal deadlines.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1558,7 +1558,35 @@
         "tile",
         "overview"
       ],
-      "answer": "Dashboard, Overview starts with Needs you: what to do next, most urgent first, each with its button. Below it are Done, not billed, Outstanding, Held back, still owed and Billed this month, how many jobs are active and how many can't be sent yet, then a table of jobs you can filter (Ready to send, Can't send yet, Unpaid, Waiver due, Completed this month). Hover a label and tap its (i) for what it means.",
+      "answer": "Dashboard, Overview starts with To Do: what to do next, most urgent first, each with its button, whose court it is in (Us or Client), who it is assigned to and when it is due. Pick Mine or Everyone, and This week, This month, Today or a Date range; overdue items always show. Below it are Done, not billed, Outstanding, Held back, still owed and Billed this month, how many jobs are active and how many can't be sent yet, then a table of jobs you can filter (Ready to send, Can't send yet, Unpaid, Waiver due, Completed this month). Hover a label and tap its (i) for what it means.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "dashboard",
+          "label": "Open Dashboard"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "tasks",
+      "category": "Screens",
+      "questions": [
+        "How do I assign a task to someone?",
+        "How do I add a task?",
+        "What does ball in court mean?",
+        "Who is this assigned to?"
+      ],
+      "keywords": [
+        "task",
+        "assign",
+        "assignee",
+        "ball in court",
+        "to do"
+      ],
+      "answer": "On Dashboard, Overview, the To Do list shows each item's Ball in court (Us when someone here has to act, Client when you are waiting on the client), its Assignee and its Due date. Pick a name in an item's Assignee box to assign it; anyone on the team can. Tap Add task for something of your own: what needs doing, and optionally the job, who, when and whose court. Tap Done when it is finished. Each person's morning email lists what is assigned to them, and an owner's also lists what nobody has. When someone leaves the team, their open items go to the owner who removed them.",
       "handler": null,
       "needs_job": false,
       "actions": [

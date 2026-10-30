@@ -36,6 +36,38 @@ test("Daily record: the note typed stays through a redraw and goes once saved", 
   delete dom.bySelector["#daily-notes"]; delete dom.bySelector["#daily-job"];
 });
 
+test("Daily record: crew, weather and the ticked sections stay through a redraw; the body sends them", async () => {  // T11, T12
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  const sovJob = job({ sov_view: { present: true, lines: [
+    { id: "l1", item: "1", description: "Rough-in wiring", unit: "LF", qty_milli: 400000, done_milli: 100000 },
+    { id: "l2", item: "2", description: "Panel", unit: "LS", qty_milli: 1000, done_milli: 1000 },
+  ] }, change_orders: [{ id: "co1", number: 2, title: "Extra outlets", status: "approved" }] });
+  core.setState(company([sovJob]));
+  page.setLocation("daily");
+  const daily = await import("../../static/js/views/daily.js");
+  forms.formDraft.daily = { crew_count: "4", weather: "Rain", materials: "Wire <12 boxes>", qty_l1: "120" };
+  daily.daily.checked.add("quantities");
+  daily.daily.checked.add("co_work");
+  const html = reg.views.daily();
+  assert.match(html, /id="daily-crew"[^>]*type="number" value="4"/);
+  assert.match(html, /<option value="Rain" selected>Rain<\/option>/);
+  assert.match(html, /data-field="materials"[^>]*>Wire &lt;12 boxes&gt;<\/textarea>/);
+  assert.match(html, /data-daily-section="quantities" checked/);
+  assert.match(html, /data-field="qty_l1" value="120"/);
+  assert.doesNotMatch(html, /data-field="qty_l2"/, "a finished line takes no more");
+  assert.match(html, /<option value="co1">CO 2 Extra outlets<\/option>/);
+  assert.doesNotMatch(html, /id="daily-punch"/, "an unticked section stays closed");
+  // A job without a schedule has no Quantities box.
+  core.setState(company([job()]));
+  assert.doesNotMatch(reg.views.daily(), /data-daily-section="quantities"/);
+  const body = daily.dailyBody({ notes: "Framing", crew_count: "4", weather: "Rain", qty_l1: "120", qty_l2: "", co_0: "co1", co_desc_0: "Two circuits", co_hours_0: "3",
+    punch: "Patch" }, sovJob, new Set(["quantities", "co_work"]));
+  assert.deepEqual(body, { notes: "Framing", crew_count: "4", weather: "Rain",
+    sections: { quantities: [{ line_id: "l1", qty: "120" }], co_work: [{ co_id: "co1", description: "Two circuits", hours: "3" }] } });
+  daily.daily.checked.clear();
+  forms.clearForm("daily");
+});
+
 test("Paste box: the pasted text, and what it looks like, stay through a redraw and go once added", async () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState(company());

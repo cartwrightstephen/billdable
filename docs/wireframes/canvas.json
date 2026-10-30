@@ -7,7 +7,7 @@
   "boards": {
     "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 900, "title": "Map: five destinations and the money path", "is_interactive": true},
     "Landing.dc.html": {"x": 1520, "y": 0, "w": 1280, "h": 980, "title": "Landing and sign-up", "expand": "fill"},
-    "Today.dc.html": {"x": 0, "y": 1400, "w": 1280, "h": 2200, "title": "Today: Needs you, three at a time", "expand": "fill", "is_interactive": true},
+    "Today.dc.html": {"x": 0, "y": 1400, "w": 1280, "h": 2200, "title": "Today: To Do, three at a time", "expand": "fill", "is_interactive": true},
     "Jobs.dc.html": {"x": 1360, "y": 1400, "w": 1280, "h": 1450, "title": "Jobs", "expand": "fill", "is_interactive": true},
     "Job.dc.html": {"x": 2720, "y": 1400, "w": 1280, "h": 3450, "title": "Job page: Next step, More, Before you can finish, Money", "expand": "fill", "is_interactive": true},
     "Packet.dc.html": {"x": 4080, "y": 1400, "w": 1280, "h": 1400, "title": "Paperwork for a pay app", "expand": "fill", "is_interactive": true},
