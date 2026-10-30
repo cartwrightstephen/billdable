@@ -15,7 +15,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("Closeout lists a waiver row per pay app and when retainage was asked for", async () => {  // M20, M25
     await page.goto(BASE + "/money/waivers");
     await page.getByRole("heading", { name: "Closeout" }).waitFor();
-    const heads = await page.locator(".closeout-waivers th").allInnerTexts();
+    // Each heading's own words, without its help icon.
+    const heads = await page.locator(".closeout-waivers th").evaluateAll(ths => ths.map(th => [...th.childNodes].filter(n => !(n.classList && n.classList.contains("info"))).map(n => n.textContent).join("").trim()));
     assert.deepEqual(heads, ["Job", "Pay app", "Type", "Amount", "Status", "Action"]);
     const ret = await page.locator(".closeout-retainage th").allInnerTexts();
     for (const want of ["Done", "Times asked", "Last asked"]) assert.ok(ret.includes(want), want);

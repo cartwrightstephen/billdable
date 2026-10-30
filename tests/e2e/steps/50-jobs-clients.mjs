@@ -82,7 +82,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const p = await signedInPage({ width: 1280, height: 900 });
     await p.goto(BASE + "/jobs/clients");
     const card = p.locator('[data-payer-card="payer-ellison"]');
-    await card.locator("summary").click();
+    await card.locator(":scope > summary").click();
     await card.locator(".client-jobs h3", { hasText: "Finished jobs" }).waitFor();
     assert.ok(await card.locator(".client-job", { hasText: "Maple Residence" }).count());
     const box = card.locator('[data-packet-choice="Insurance certificate"]');

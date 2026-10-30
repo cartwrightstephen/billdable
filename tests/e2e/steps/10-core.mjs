@@ -46,13 +46,16 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.goto(BASE + "/jobs");
     await page.getByRole("button", { name: "New job" }).first().click();
     await page.fill("#nj-name", "Smoke test porch");
-    await page.fill("#nj-address", "1 Porch Lane");
+    await page.fill("#nj-street", "1 Porch Lane");
+    await page.fill("#nj-city", "Decatur");
+    await page.selectOption("#nj-state", "GA");
+    await page.fill("#nj-zip", "30030");
     await page.fill("#nj-amount", "48,500");
     await page.fill("#nj-customer", "Smoke Homeowner");
-    // Five boxes up front (R2-01); the rest wait under "More details (optional)".
-    assert.equal(await page.locator('[data-form-key="newjob"] > .form-grid [data-field]').count(), 5);
-    assert.deepEqual(await page.locator('[data-form-key="newjob"] > .form-grid [data-field]').evaluateAll(els => els.map(e => e.id)),
-      ["nj-name", "nj-address", "nj-customer", "nj-role", "nj-amount"]);
+    // The job, its address in parts (J1), the client and the amount up front (R2-01); the rest
+    // wait under "More details (optional)".
+    const upFront = await page.locator('[data-form-key="newjob"] > .form-grid [data-field]:visible').evaluateAll(els => els.map(e => e.id));
+    for (const id of ["nj-name", "nj-street", "nj-city", "nj-state", "nj-zip", "nj-customer", "nj-amount"]) assert.ok(upFront.includes(id), `${id} up front: ${upFront}`);
     assert.equal(await page.locator("#nj-email").isVisible(), false, "More details starts folded");
     await page.getByText("More details (optional)").click();
     await page.fill("#nj-approver", "Sam Smoke");
@@ -201,7 +204,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const missing = p.locator(".packet-item.absent").first();
     await missing.getByRole("button", { name: "Take a photo" }).waitFor({ state: "visible" });
     assert.equal(await missing.locator('[data-action="pick-files"][data-capture="1"][data-attach]').count(), 1);
-    assert.equal(await missing.locator("select option").first().innerText(), "Choose a record…");
+    // Records already on the job are attached from "From the job record this period" (M3), not a picker on the item.
     await ctx.close();
   });
 

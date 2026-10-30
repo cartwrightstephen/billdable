@@ -32,11 +32,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const task = p.locator(".action-item", { hasText: "Order the decking boards" });
     await task.waitFor();
     assert.equal(await task.locator(".todo-assign").inputValue() !== "", true, "assigned to whoever added it");
-    // The job's own row: nobody has it until it is assigned.
+    // The job's own row is whoever has the job: the person who set it up, until it is reassigned.
     const row = p.locator(".action-item", { hasText: "Not billed yet" });
     await p.locator('[data-action="todo-who"][data-who="mine"]').click();
     await task.waitFor();
-    assert.equal(await row.count(), 0, "Mine: an unassigned row is left out");
+    await row.waitFor();
     await p.locator('[data-action="todo-who"][data-who="everyone"]').click();
     const me = await task.locator(".todo-assign").inputValue();
     await row.locator(".todo-assign").selectOption(me);
