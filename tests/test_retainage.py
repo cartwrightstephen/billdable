@@ -66,7 +66,11 @@ class ReleaseWaiverTests(unittest.TestCase):  # M20
         with self.assertRaises(domain.GateError) as raised:
             domain.close_job(state, job["id"])
         self.assertEqual(raised.exception.blockers, ["A lien waiver is still due."])
-        signed_waiver(state, job["id"], "unconditional_progress")
+        rec = signed_waiver(state, job["id"], "unconditional_progress")
+        with self.assertRaises(domain.GateError) as which:
+            domain.send_waiver(state, job["id"], "Owner", release_id=first["id"])  # two are owed: which is it for? (B1)
+        self.assertIn("for_id", which.exception.fields)
+        domain.set_waiver_type(state, job["id"], rec["id"], "unconditional_progress", for_id=first["id"])
         domain.send_waiver(state, job["id"], "Owner", release_id=first["id"])
         self.assertTrue(first["waiver_sent"])
         self.assertEqual(state["email_log"][-1]["release_id"], first["id"])

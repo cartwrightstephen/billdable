@@ -70,7 +70,8 @@ class StatusLabelTests(unittest.TestCase):
         pa1, pa2 = job["invoices"]
         domain.match_payment(state, job["id"], pa1["amount_cents"], "chk1", invoice_id=pa1["id"])
         domain.match_payment(state, job["id"], pa2["amount_cents"], "chk2", invoice_id=pa2["id"])
-        signed_waiver(state, job["id"])
+        rec = signed_waiver(state, job["id"])
+        domain.set_waiver_type(state, job["id"], rec["id"], "unconditional_progress", for_id=pa1["id"])  # two owed (B1)
         domain.send_waiver(state, job["id"], invoice_id=pa1["id"])
         signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], invoice_id=pa2["id"])

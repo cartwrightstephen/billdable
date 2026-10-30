@@ -157,7 +157,9 @@ export function waiverTypeWords(code) { return WAIVER_TYPE_WORDS[unesc(code || "
 // progress payment: Attached", or the status alone when the type isn't known.
 export function waiverStageText(stage) {
   if (!stage || !stage.status) return "—";
-  return stage.kind ? `${waiverKindLabel(stage.kind)}: ${stage.status}` : stage.status;
+  // Not needed says why (B2); a waiver on file names the record that would go (B1).
+  const status = stage.reason ? `${stage.status}: ${stage.reason}` : stage.record_label ? `${stage.status} (${stage.record_label})` : stage.status;
+  return stage.kind ? `${waiverKindLabel(stage.kind)}: ${status}` : status;
 }
 
 // Whole days from an ISO moment to now, for "Done 12 days ago" (M26). Null without a date.
@@ -328,7 +330,7 @@ export function waitingText(j, now = new Date()) {
 // Who may take a job action (S6): the permission each needs, as domain/profiles.py
 // JOB_ACTION_PERMS on the server, which refuses the same. An action not listed is anyone's.
 export const ACTION_PERM = {
-  send: "send_payapps", waiver: "send_waivers", retainage: "ask_retainage",
+  send: "send_payapps", waiver: "send_waivers", "waiver-not-needed": "send_waivers", retainage: "ask_retainage",
   "match-payment": "record_payments", "retainage-paid": "record_payments",
   "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",
   close: "close_jobs", reopen: "close_jobs",

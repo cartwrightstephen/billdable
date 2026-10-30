@@ -104,7 +104,8 @@ export function waiverChecklistHtml(j, kind, inv = null, amount = null) {
   const company = state && state.company || {};
   const legal = company.legal_name || company.name || "";
   const cents = amount != null ? amount : inv ? inv.amount_cents - (inv.short_pay_cents || 0) : null;
-  const held = inv && kind && kind.endsWith("progress") ? inv.retainage_cents || 0 : 0;
+  // What the job still holds to date, not only this pay app's share (B-wording of the Oct 30 review).
+  const held = inv && kind && kind.endsWith("progress") ? (j.money && j.money.retainage_open_cents) || 0 : 0;
   const items = [
     `Job: ${j.name}${j.address ? ", " + j.address : ""}`,
     `Client: ${(j.payer || {}).name || ""}`,
@@ -112,7 +113,7 @@ export function waiverChecklistHtml(j, kind, inv = null, amount = null) {
     cents != null ? `Amount covered: ${money(cents)}` : "",
     inv && inv.period_to ? `Work through: ${fmtDate(inv.period_to)}` : "",
     kind && kind.startsWith("conditional") ? "Conditional wording: it counts only once the payment clears" : "",
-    held ? `Not released: the ${money(held)} retainage held on ${inv.number}` : "",
+    held ? `Not released: the ${money(held)} retainage held to date on this job` : "",
     "Signature and date",
     kind ? `Type: ${waiverKindLabel(kind)}` : "",
   ].filter(Boolean);

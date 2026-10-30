@@ -4,7 +4,7 @@ import { money, centsFrom, fmtDate, unesc } from "../format.js";
 import { WAIVER_KINDS, waiverKindLabel, waiverTypeWords, waiverHint, waiverSendForm, waiverPick, waiverStageText, retainageAskWaits, retainageFacts, daysAgoText, openJobs } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
-import { moneyField, formErrorLine, refuseForm, formValues } from "../forms.js";
+import { moneyField, field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentJobId } from "../state.js";
 import { may, post, backButton, emptyState, nav } from "../app-core.js";
@@ -27,30 +27,67 @@ function retainageAskHtml(j) {
 }
 
 // Everything that owes or owed a lien waiver on a job (M20): each paid pay app, each retainage
-// release, and an older job-level one. {inv | release, kind, amount, due, sent, sent_at, label}.
+// release, and an older job-level one. {inv | release, kind, amount, due, sent, sent_at, label,
+// onFile, record (the signed waiver that would go out), which (it isn't said which pay app it is
+// for, B1), notNeeded (the reason none goes out through Duracash, B2)}.
 export function waiverRows(j) {
   const rows = [];
   for (const inv of j.invoices || []) {
-    if (!inv.waiver_due && !inv.waiver_sent) continue;
-    rows.push({ inv, label: inv.number, amount: inv.amount_cents - (inv.short_pay_cents || 0), due: !inv.waiver_sent,
-      sent_at: inv.waiver_sent_at, kind: inv.waiver_sent ? unesc(inv.waiver_kind || "") : waiverPick(j, inv),
-      onFile: !!(inv.waiver_stages && inv.waiver_stages.unconditional && inv.waiver_stages.unconditional.status === "Attached") });
+    const off = inv.waiver_not_needed;
+    if (!inv.waiver_due && !inv.waiver_sent && !off) continue;
+    const stage = (inv.waiver_stages && inv.waiver_stages.unconditional) || {};
+    rows.push({ inv, label: inv.number, amount: inv.amount_cents - (inv.short_pay_cents || 0), due: !inv.waiver_sent && !off,
+      sent_at: inv.waiver_sent_at, kind: inv.waiver_sent ? unesc(inv.waiver_kind || "") : off ? "" : waiverPick(j, inv),
+      onFile: stage.status === "Attached", which: stage.status === "Which pay app?", record: stage.record_label || "", recordId: unesc(stage.record_id || ""),
+      notNeeded: off ? off.reason || "Not needed" : "" });
   }
   for (const release of j.retainage_waivers || []) {
-    rows.push({ release, label: `Retainage released ${fmtDate(release.at)}`, amount: release.amount_cents, due: !release.waiver_sent,
-      sent_at: release.waiver_sent_at, kind: unesc(release.kind || ""), onFile: !!release.on_file });
+    const off = release.waiver_not_needed;
+    rows.push({ release, label: `Retainage released ${fmtDate(release.at)}`, amount: release.amount_cents, due: !release.waiver_sent && !off,
+      sent_at: release.waiver_sent_at, kind: unesc(release.kind || ""), onFile: !!release.on_file, which: !!release.waiver_which,
+      record: release.waiver_record_label || "", recordId: unesc(release.waiver_record_id || ""), notNeeded: off ? off.reason || "Not needed" : "" });
   }
-  if (!rows.length && (j.waiver_due || j.waiver_sent)) {
-    rows.push({ label: "Earlier payment", amount: null, due: !j.waiver_sent, sent_at: j.waiver_sent_at, kind: "", onFile: true });
+  if (!rows.length && (j.waiver_due || j.waiver_sent || j.waiver_not_needed)) {
+    const off = j.waiver_not_needed;
+    rows.push({ label: "Earlier payment", amount: null, due: !j.waiver_sent && !off, sent_at: j.waiver_sent_at, kind: "", onFile: true,
+      notNeeded: off ? off.reason || "Not needed" : "" });
   }
   return rows;
 }
 
-function uploadButtons(j, kind) {
+// "Take a photo" and "Choose file" for the signed waiver of one row: its type, and the pay app or
+// release it is for (B1), so it can't go out for another.
+function uploadButtons(j, kind, forId = "") {
+  const also = `data-waiver-kind="${kind}"${forId ? ` data-waiver-for="${forId}"` : ""}`;
   return `<div class="form-inline">
-    <button class="btn small" data-action="pick-files" data-job="${j.id}" data-kind="waiver" data-waiver-kind="${kind}" data-capture="1">Take a photo</button>
-    <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-kind="waiver" data-waiver-kind="${kind}">Choose file</button>
+    <button class="btn small" data-action="pick-files" data-job="${j.id}" data-kind="waiver" ${also} data-capture="1">Take a photo</button>
+    <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-kind="waiver" ${also}>Choose file</button>
   </div>`;
+}
+
+// A signed waiver is on the job record but not said to be for any pay app while several owe one
+// (B1): pick which, then it can be sent.
+function waiverForHtml(j, r, rows) {
+  const key = `wfor-${r.recordId}`;
+  const options = rows.filter(x => x.due && (x.inv || x.release)).map(x => {
+    const id = x.inv ? x.inv.id : x.release.id;
+    return `<option value="${id}"${(r.inv && r.inv.id === id) || (r.release && r.release.id === id) ? " selected" : ""}>${x.label}</option>`;
+  }).join("");
+  return `<div data-form-key="${key}">${formErrorLine(key)}
+    <p class="blocker">${r.record} is on the job record. More than one waiver is due: say which one it is for, then send.</p>
+    <div class="form-inline"><select id="${key}" aria-label="Which pay app this signed waiver is for">${options}</select>
+    <button class="btn small" data-action="waiver-for" data-id="${j.id}" data-record="${r.recordId}" data-kind="${r.kind}">This waiver is for it</button></div></div>`;
+}
+
+// The way out (B2): no waiver goes out through Duracash for this payment, with the reason, kept
+// and shown. The server keeps it in the activity log.
+function waiverNotNeededHtml(j, r) {
+  const key = `wnn-${r.inv ? r.inv.id : r.release ? r.release.id : "job"}`;
+  return `<details class="waiver-not-needed"><summary>Not needed, or handed over outside Duracash…</summary>
+    <div data-form-key="${key}">${formErrorLine(key)}
+      ${field({ form: key, name: "reason", id: `${key}-reason`, label: "Why no waiver goes out through Duracash", placeholder: "Handed the signed form to the owner on site", wide: true })}
+      <button class="btn small secondary" data-action="waiver-not-needed" data-id="${j.id}"${r.inv ? ` data-inv="${r.inv.id}"` : ""}${r.release ? ` data-release="${r.release.id}"` : ""}>Mark not needed</button>
+    </div></details>`;
 }
 
 // This module's pages, by the name their address opens (routes.js).
@@ -77,9 +114,11 @@ export const views = {
         ${owed && !j.payer.ap_email ? `<p class="blocker">Add the email pay apps go to in <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>, then send.</p>` : ""}
         ${owed && locked ? confirmFirstHtml("the waiver") : ""}
         ${rows.length ? rows.map(r => `<div class="list-item waiver-row">
-            <div><strong>${r.label}</strong>${r.amount != null ? " · " + money(r.amount) : ""} · ${r.due ? `<span class="pill amber">Due</span>` : `sent ${fmtDate(r.sent_at)}${r.kind ? " · " + waiverKindLabel(r.kind) : ""}`}</div>
-            ${r.due && !j.summary && !r.onFile ? `<p class="blocker">Add the signed ${waiverTypeWords(r.kind)} waiver to the job record, then send.</p>${uploadButtons(j, r.kind)}` : ""}
-            ${r.due ? (may("waiver") ? waiverSendForm(j, r.inv || null, off || !r.onFile, r.release || null) : OWNER_SENDS) : ""}
+            <div><strong>${r.label}</strong>${r.amount != null ? " · " + money(r.amount) : ""} · ${r.due ? `<span class="pill amber">Due</span>` : r.notNeeded ? `<span class="pill">Not needed</span> ${r.notNeeded}` : `sent ${fmtDate(r.sent_at)}${r.kind ? " · " + waiverKindLabel(r.kind) : ""}`}</div>
+            ${r.due && !j.summary && r.which && r.recordId && may("waiver") ? waiverForHtml(j, r, rows) : ""}
+            ${r.due && !j.summary && !r.onFile && !r.which ? `<p class="blocker">Add the signed ${waiverTypeWords(r.kind)} waiver to the job record, then send.</p>${uploadButtons(j, r.kind, r.inv ? r.inv.id : r.release ? r.release.id : "")}` : ""}
+            ${r.due && r.onFile && r.record ? `<p class="sub">Sends ${r.record} from the job record.</p>` : ""}
+            ${r.due ? (may("waiver") ? waiverSendForm(j, r.inv || null, off || !r.onFile, r.release || null) + (j.summary ? "" : waiverNotNeededHtml(j, r)) : OWNER_SENDS) : ""}
           </div>`).join("")
           : `<p class="sub">${termText("No waiver is due yet. One is due after each paid pay app.")}</p>`}
       </div>
@@ -118,7 +157,7 @@ export const views = {
                 <td>${r.label}</td>
                 <td>${r.kind ? waiverKindLabel(r.kind) : "Not chosen yet"}</td>
                 <td class="num">${r.amount != null ? money(r.amount) : "—"}</td>
-                <td>${r.due ? `<span class="pill amber">Due</span>` : `<span class="pill green">Sent</span>`}</td>
+                <td>${r.due ? `<span class="pill amber">Due</span>` : r.notNeeded ? `<span class="pill">Not needed</span>` : `<span class="pill green">Sent</span>`}</td>
                 <td>${r.due ? `<button class="btn small" data-action="open-waiver" data-id="${j.id}">Choose type and send</button>` : "—"}</td>
               </tr>`).join("")}
           </table>
@@ -183,4 +222,18 @@ export const actions = {
     await post(`/api/jobs/${id}/retainage`, cents != null ? { amount_cents: cents } : {}, form ? { formKey: key } : {});
   },
   "open-waiver": (el, id) => nav("waiver-detail", id),
+  // Say which paid pay app or release a signed waiver is for (B1), keeping its type.
+  "waiver-for": async (el, id) => {
+    const key = `wfor-${el.dataset.record}`;
+    const forId = document.getElementById(key)?.value || "";
+    await post(`/api/jobs/${id}/waiver-type/${el.dataset.record}`, { kind: el.dataset.kind, for_id: forId }, { formKey: key });
+  },
+  // No waiver through Duracash for this payment (B2): a reason is needed, and it is kept.
+  "waiver-not-needed": async (el, id) => {
+    const key = `wnn-${el.dataset.inv || el.dataset.release || "job"}`;
+    const reason = String(formValues(key).reason || "").trim();
+    if (!reason) { refuseForm(key, { reason: "Enter why no waiver goes out through Duracash, like handed to the owner on site." }); return; }
+    await post(`/api/jobs/${id}/waiver-not-needed`, { reason, ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}) },
+      { formKey: key });
+  },
 };

@@ -59,10 +59,14 @@ function paperworkHtml(key, p = null) {
       <legend data-help="packet">Paperwork needed with each pay app</legend>
       ${paperworkChoices(catalog).map(([title, list]) => `<div class="paperwork-group"><h4>${title}</h4>${list.map((label, n) => {
         const id = `${key}-pw-${title === "At closeout" ? "c" : "p"}${n}`;
-        return `<label class="check-line" for="${id}"><input type="checkbox" id="${id}" data-packet-choice="${esc(label)}"${t.checked.includes(label) ? " checked" : ""}${t.none ? " disabled" : ""}> ${esc(label)}</label>`;
+        // Stephen's rule (M16): the conditional waiver is asked for with every pay app; the way out
+        // is Not needed for this client on the pay app's item, which is kept and noted (B8).
+        const always = label === "Conditional waiver" ? `<span class="sub check-note">Asked for with every pay app, ticked or not. If this client doesn't take one, tap Not needed for this client on it.</span>` : "";
+        return `<label class="check-line" for="${id}"><input type="checkbox" id="${id}" data-packet-choice="${esc(label)}"${t.checked.includes(label) ? " checked" : ""}${t.none ? " disabled" : ""}> ${esc(label)}</label>${always}`;
       }).join("")}</div>`).join("")}
       ${field({ form: key, name: "packet_other", id: `${key}-pw-other`, label: "Other", value: saved.other, placeholder: "Certified payroll", wide: true })}
       <label class="check-line" for="${key}-pw-none"><input type="checkbox" id="${key}-pw-none" data-no-paperwork${t.none ? " checked" : ""}> Nothing needed</label>
+      <p class="sub">Nothing needed still asks for the conditional waiver, unless it was marked Not needed for this client.</p>
     </fieldset>`;
 }
 
