@@ -288,7 +288,7 @@ class HttpTests(unittest.TestCase):
         member = res.getheader("Set-Cookie").split(";")[0]
         res, data = self.request("GET", "/api/export", cookie=member)
         self.assertEqual(res.status, 403)
-        self.assertEqual(data["error"], "Only an owner can export the company's data.")
+        self.assertEqual(data["error"], "Your permissions don't cover exporting the company's data.")
         self.assertEqual(self.request("GET", "/api/export", cookie=cookie)[0].status, 200)
 
     def test_full_loop_over_http(self):

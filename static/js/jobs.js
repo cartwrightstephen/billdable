@@ -271,19 +271,26 @@ export function waitingText(j, now = new Date()) {
 // The job page's buttons (R3-04): one main button (or none while the client has the pay app and
 // no follow-up is due), then the rest in the order they matter. Each has a group for the "More"
 // list: bill, paid (get paid) or close (close out). demo adds the QuickBooks sample import.
-// Job actions only an owner may take (server.OWNER_ACTIONS, R4-09): "You approve every send".
-// The company setting members_can_send lets members send pay apps, waivers and retainage requests.
-export const OWNER_ONLY = ["send", "waiver", "retainage", "void-draft", "void-sent", "close", "delete", "accept-short-pay", "reopen"];
-const MEMBER_SEND = ["send", "waiver", "retainage"];
+// Who may take a job action (S6): the permission each needs, as domain/profiles.py
+// JOB_ACTION_PERMS on the server, which refuses the same. An action not listed is anyone's.
+export const ACTION_PERM = {
+  send: "send_payapps", waiver: "send_waivers", retainage: "ask_retainage",
+  "match-payment": "record_payments", "retainage-paid": "record_payments",
+  "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",
+  close: "close_jobs", reopen: "close_jobs",
+};
 
-// perms: {owner, membersCanSend}. Without perms (tests, older callers) everything is allowed.
+// perms: {list: the signed-in person's permissions (me.perms)}; {owner: true} allows all.
+// Without perms (tests, older callers) everything is allowed.
 export function mayTake(action, perms) {
-  if (!perms || perms.owner || !OWNER_ONLY.includes(action)) return true;
-  return MEMBER_SEND.includes(action) && !!perms.membersCanSend;
+  const need = ACTION_PERM[action];
+  if (!perms || !need) return true;
+  if (Array.isArray(perms.list)) return perms.list.includes(need);
+  return !!perms.owner;
 }
 
-// The job-page button keys that are owner-only actions.
-const KEY_ACTION = { send: "send", waiver: "waiver", retainage: "retainage", void: "void-draft", close: "close" };
+// The job-page button keys that need a permission.
+const KEY_ACTION = { send: "send", waiver: "waiver", retainage: "retainage", void: "void-draft", close: "close", match: "match-payment", retpay: "retainage-paid" };
 
 const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "contact", "pencil", "pencil-ok", "pencil-no", "packet",
   "draft", "progress", "done", "retainage", "retpay", "co", "close", "undo", "void", "qbo"];

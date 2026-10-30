@@ -191,12 +191,18 @@ def _read() -> dict[str, Any]:
     return _READ_CACHE["data"]
 
 
-def upgrade_file() -> None:
+def upgrade_file(steps: Any = ()) -> None:
     """Called at start-up: write back a file from before session hashing once, so _load()
-    stops re-hashing its session keys on every request."""
+    stops re-hashing its session keys on every request; and run the accounts-file steps
+    (migrations.AUTH_STEPS: each takes the loaded file and says whether it changed it)."""
     with LOCK:
-        if AUTH_PATH.exists() and not json.loads(AUTH_PATH.read_text()).get("sessions_hashed"):
-            _save(_load())
+        if not AUTH_PATH.exists():
+            return
+        stale = not json.loads(AUTH_PATH.read_text()).get("sessions_hashed")
+        data = _load()
+        changed = [step(data) for step in steps]
+        if stale or any(changed):
+            _save(data)
 
 
 def has_users() -> bool:
@@ -220,10 +226,41 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "name": user["name"],
         "company_id": user["company_id"],
         "role": user.get("role", "owner"),
+        # S6: the permission profile (accounts from before profiles read their role), and S8:
+        # whether this is the company's one Company Admin.
+        "profile_id": user.get("profile_id") or user.get("role", "owner"),
+        "company_admin": bool(user.get("company_admin")),
         "email_verified": bool(user.get("email_verified")),
         "two_step": bool(user.get("totp_enabled")),
         "onboarding_dismissed": bool(user.get("onboarding_dismissed")),
+        "appearance": _appearance(user.get("appearance")),
     }
+
+
+# ---------- appearance (G9): each person's theme and accent ----------
+
+THEMES = ("system", "light", "dark")
+ACCENTS = ("copper", "blue", "green", "slate")
+
+
+def _appearance(value: Any) -> dict[str, str]:
+    value = value if isinstance(value, dict) else {}
+    return {"theme": value.get("theme") if value.get("theme") in THEMES else "system",
+            "accent": value.get("accent") if value.get("accent") in ACCENTS else "copper"}
+
+
+def set_appearance(user_id: str, theme: Any, accent: Any) -> dict[str, Any]:
+    """Keep this person's theme (system, light or dark) and accent colour on their account."""
+    if theme not in THEMES:
+        raise AuthError("Pick a theme: same as this device, light or dark.")
+    if accent not in ACCENTS:
+        raise AuthError("Pick an accent colour from the list.")
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        user["appearance"] = {"theme": theme, "accent": accent}
+        _save(data)
+        return _public(user)
 
 
 def create_user(
@@ -268,6 +305,8 @@ def create_user(
         if any(u["email"] == email for u in data["users"]):
             raise ValueError("An account with that email already exists.")
         user = {"id": _new_user_id(data), **user}
+        if role == "owner" and not any(u["company_id"] == company_id for u in data["users"]):
+            user["company_admin"] = True   # the account that creates a company is its Company Admin (S8)
         data["users"].append(user)
         _save(data)
     return _public(user)
@@ -649,46 +688,89 @@ def verify_email(raw: Any) -> dict[str, Any]:
 
 
 # ---------- team ----------
+# Each person has a permission profile (S6): profile_id, kept with role ("owner" for the Owner
+# profile, "member" for any other) so older readers of role keep working. The profiles
+# themselves, and which of them hold "manage the team", are in the company's state
+# (domain/profiles.py); the server passes the ids it needs. One owner is the Company Admin (S8).
 
-def _require_owner(data: dict[str, Any], company_id: str, actor_id: str) -> dict[str, Any]:
-    """Checked under LOCK at the moment of the change, so a person removed or demoted a moment
-    ago can't finish a request they started while they were still an owner."""
+OWNER_PROFILE = "owner"
+# Someone who manages the team without being an Owner can't make, change or remove an Owner.
+ONLY_OWNERS_MAKE_OWNERS = "Only an owner can give someone the Owner profile, or change or remove an owner."
+
+
+def _profile_of(user: dict[str, Any]) -> str:
+    return str(user.get("profile_id") or user.get("role", "owner"))
+
+
+def _require_owner(data: dict[str, Any], company_id: str, actor_id: str,
+                   managers: Any = (OWNER_PROFILE,)) -> dict[str, Any]:
+    """The person making a team change must hold "manage the team" (managers: the profile ids
+    that do). Checked under LOCK at the moment of the change, so someone whose profile changed a
+    moment ago can't finish a request they started with their old rights."""
     actor = next((u for u in data["users"] if u["id"] == actor_id and u["company_id"] == company_id), None)
-    if not actor or actor.get("role", "owner") != "owner":
-        raise AuthError("Only an owner of this company can do that.")
+    if not actor or _profile_of(actor) not in set(managers):
+        raise AuthError("Your permissions don't cover managing the team.")
     return actor
 
 
-def require_owner(company_id: str, actor_id: str) -> None:
+def require_owner(company_id: str, actor_id: str, managers: Any = (OWNER_PROFILE,)) -> None:
     with LOCK:
-        _require_owner(_load(), company_id, actor_id)
+        _require_owner(_load(), company_id, actor_id, managers)
+
+
+def _admin(data: dict[str, Any], company_id: str) -> dict[str, Any] | None:
+    """The company's Admin: the account marked so, or (a file the start-up step hasn't reached
+    yet) the earliest-created owner."""
+    users = [u for u in data["users"] if u["company_id"] == company_id]
+    marked = next((u for u in users if u.get("company_admin")), None)
+    if marked:
+        return marked
+    owners = sorted((u for u in users if _profile_of(u) == OWNER_PROFILE), key=lambda u: u.get("created_at", ""))
+    return owners[0] if owners else None
+
+
+def is_company_admin(user_id: str, company_id: str) -> bool:
+    with LOCK:
+        admin = _admin(_read(), company_id)
+    return bool(admin and admin["id"] == user_id)
 
 
 def team(company_id: str) -> dict[str, Any]:
     with LOCK:
         data = _load()
         _prune_tokens(data)
+        admin = _admin(data, company_id)
         users = [
-            {**_public(u), "created_at": u.get("created_at", "")}
+            {**_public(u), "company_admin": bool(admin and admin["id"] == u["id"]), "created_at": u.get("created_at", "")}
             for u in data["users"] if u["company_id"] == company_id
         ]
         invites = [
-            {"id": v["id"], "email": v["email"], "role": v["role"], "invited_by": v.get("invited_by", ""),
-             "created_at": v["created_at"], "expires_at": v["expires_at"]}
+            {"id": v["id"], "email": v["email"], "role": v["role"], "profile_id": v.get("profile_id") or v["role"],
+             "invited_by": v.get("invited_by", ""), "created_at": v["created_at"], "expires_at": v["expires_at"]}
             for v in data["tokens"].values() if v["kind"] == "invite" and v.get("company_id") == company_id
         ]
     return {"users": users, "invites": invites}
 
 
-def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor_id: str = "") -> tuple[str, dict[str, Any]]:
+def _check_profile(profile_id: Any, profiles: Any) -> str:
+    if not isinstance(profile_id, str) or profile_id not in set(profiles):
+        raise AuthError("Pick a profile from the list.")
+    return profile_id
+
+
+def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor_id: str = "",
+                  profiles: Any = ROLES, managers: Any = (OWNER_PROFILE,)) -> tuple[str, dict[str, Any]]:
+    """Invite someone with a profile (role: the profile id; profiles: the ids that exist)."""
     if not isinstance(email, str) or not EMAIL_RE.match(email.strip()):
         raise AuthError("Enter the person's email address.")
-    if role not in ROLES:
-        raise AuthError("Role must be owner or member.")
+    profile_id = _check_profile(role, profiles)
+    role = "owner" if profile_id == OWNER_PROFILE else "member"
     email = email.strip().lower()
     with LOCK:
         data = _load()
-        _require_owner(data, company_id, actor_id)
+        actor = _require_owner(data, company_id, actor_id, managers)
+        if profile_id == OWNER_PROFILE and _profile_of(actor) != OWNER_PROFILE:
+            raise AuthError(ONLY_OWNERS_MAKE_OWNERS)
         if any(u["email"] == email for u in data["users"]):
             raise AuthError("That email already has a Duracash account. Each person belongs to one company.")
         pending = [v for v in data["tokens"].values() if v["kind"] == "invite" and v.get("company_id") == company_id]
@@ -697,17 +779,18 @@ def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor
         # Inviting the same address again replaces the older invite.
         data["tokens"] = {k: v for k, v in data["tokens"].items()
                           if not (v["kind"] == "invite" and v.get("company_id") == company_id and v.get("email") == email)}
-        raw = _new_token(data, "invite", company_id=company_id, email=email, role=role, invited_by=invited_by, invited_by_id=actor_id)
+        raw = _new_token(data, "invite", company_id=company_id, email=email, role=role, profile_id=profile_id,
+                         invited_by=invited_by, invited_by_id=actor_id)
         entry = data["tokens"][_digest(raw)]
         _save(data)
-        return raw, {"id": entry["id"], "email": email, "role": role}
+        return raw, {"id": entry["id"], "email": email, "role": role, "profile_id": profile_id}
 
 
 def invite_info(raw: Any) -> dict[str, Any] | None:
     with LOCK:
         _, entry = _find_token(_load(), "invite", raw)
     return {"email": entry["email"], "company_id": entry["company_id"], "role": entry["role"],
-            "invited_by": entry.get("invited_by", "")} if entry else None
+            "profile_id": entry.get("profile_id") or entry["role"], "invited_by": entry.get("invited_by", "")} if entry else None
 
 
 def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None = None) -> dict[str, Any]:
@@ -732,6 +815,7 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
             "name": name.strip()[:120],
             "company_id": entry["company_id"],
             "role": entry["role"],
+            "profile_id": entry.get("profile_id") or entry["role"],
             "salt": salt,
             "password_hash": digest,
             "kdf_iterations": KDF_ITERATIONS,
@@ -749,10 +833,10 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
         return _public(user)
 
 
-def revoke_invite(company_id: str, invite_id: str, actor_id: str = "") -> None:
+def revoke_invite(company_id: str, invite_id: str, actor_id: str = "", managers: Any = (OWNER_PROFILE,)) -> None:
     with LOCK:
         data = _load()
-        _require_owner(data, company_id, actor_id)
+        _require_owner(data, company_id, actor_id, managers)
         before = len(data["tokens"])
         data["tokens"] = {k: v for k, v in data["tokens"].items()
                           if not (v["kind"] == "invite" and v.get("company_id") == company_id and v["id"] == invite_id)}
@@ -762,47 +846,113 @@ def revoke_invite(company_id: str, invite_id: str, actor_id: str = "") -> None:
 
 
 def _owners(data: dict[str, Any], company_id: str) -> list[dict[str, Any]]:
-    return [u for u in data["users"] if u["company_id"] == company_id and u.get("role", "owner") == "owner"]
+    return [u for u in data["users"] if u["company_id"] == company_id and _profile_of(u) == OWNER_PROFILE]
 
 
 def _drop_invites_by(data: dict[str, Any], user_id: str) -> None:
-    """Invites someone sent stop working when they lose owner rights."""
+    """Invites someone sent stop working when they lose the right to manage the team."""
     data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v["kind"] == "invite" and v.get("invited_by_id") == user_id)}
 
 
-def set_role(company_id: str, user_id: str, role: Any, actor_id: str = "") -> dict[str, Any]:
-    if role not in ROLES:
-        raise AuthError("Role must be owner or member.")
+def set_role(company_id: str, user_id: str, role: Any, actor_id: str = "", profiles: Any = ROLES,
+             managers: Any = (OWNER_PROFILE,)) -> dict[str, Any]:
+    """Give someone another profile (role: the profile id). The company keeps at least one
+    Owner, and the Company Admin stays an Owner until they hand the Admin role on."""
+    profile_id = _check_profile(role, profiles)
     with LOCK:
         data = _load()
-        _require_owner(data, company_id, actor_id)
+        actor = _require_owner(data, company_id, actor_id, managers)
         user = next((u for u in data["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
         if not user:
             raise AuthError("That person is not on this team.")
-        if role == "member" and user.get("role", "owner") == "owner" and len(_owners(data, company_id)) == 1:
-            raise AuthError("A company needs at least one owner. Make someone else an owner first.")
-        user["role"] = role
-        if role == "member":
+        was = _profile_of(user)
+        if OWNER_PROFILE in (profile_id, was) and _profile_of(actor) != OWNER_PROFILE:
+            raise AuthError(ONLY_OWNERS_MAKE_OWNERS)
+        if profile_id != OWNER_PROFILE and was == OWNER_PROFILE:
+            if len(_owners(data, company_id)) == 1:
+                raise AuthError("A company needs at least one owner. Make someone else an owner first.")
+            admin = _admin(data, company_id)
+            if admin and admin["id"] == user_id:
+                raise AuthError(f"{user['name']} is the Company Admin. They hand that role to another owner first.")
+        user["profile_id"] = profile_id
+        user["role"] = "owner" if profile_id == OWNER_PROFILE else "member"
+        if profile_id not in set(managers):
             _drop_invites_by(data, user_id)
         _save(data)
         return _public(user)
 
 
-def remove_user(company_id: str, user_id: str, actor_id: str = "") -> dict[str, Any]:
+def profile_in_use(company_id: str, profile_id: str) -> bool:
+    """Whether anyone on the team, or an open invite, has this profile."""
     with LOCK:
         data = _load()
-        _require_owner(data, company_id, actor_id)
+        _prune_tokens(data)
+    return (any(u["company_id"] == company_id and _profile_of(u) == profile_id for u in data["users"])
+            or any(v["kind"] == "invite" and v.get("company_id") == company_id and (v.get("profile_id") or v.get("role")) == profile_id
+                   for v in data["tokens"].values()))
+
+
+def drop_invites_without(company_id: str, managers: Any) -> None:
+    """After a profile loses "manage the team": invites its holders sent stop working."""
+    with LOCK:
+        data = _load()
+        gone = {u["id"] for u in data["users"] if u["company_id"] == company_id and _profile_of(u) not in set(managers)}
+        before = len(data["tokens"])
+        data["tokens"] = {k: v for k, v in data["tokens"].items()
+                          if not (v["kind"] == "invite" and v.get("company_id") == company_id and v.get("invited_by_id") in gone)}
+        if len(data["tokens"]) != before:
+            _save(data)
+
+
+def remove_user(company_id: str, user_id: str, actor_id: str = "", managers: Any = (OWNER_PROFILE,)) -> dict[str, Any]:
+    with LOCK:
+        data = _load()
+        actor = _require_owner(data, company_id, actor_id, managers)
         user = next((u for u in data["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
         if not user:
             raise AuthError("That person is not on this team.")
-        if user.get("role", "owner") == "owner" and len(_owners(data, company_id)) == 1:
+        if _profile_of(user) == OWNER_PROFILE and _profile_of(actor) != OWNER_PROFILE:
+            raise AuthError(ONLY_OWNERS_MAKE_OWNERS)
+        if _profile_of(user) == OWNER_PROFILE and len(_owners(data, company_id)) == 1:
             raise AuthError("A company needs at least one owner. To close the company, delete the account instead.")
+        admin = _admin(data, company_id)
+        if admin and admin["id"] == user_id:
+            raise AuthError(f"{user['name']} is the Company Admin. They hand that role to another owner first.")
         data["users"] = [u for u in data["users"] if u["id"] != user_id]
         data["tokens"] = {k: v for k, v in data["tokens"].items() if v.get("user_id") != user_id}
         _drop_invites_by(data, user_id)
         _end_sessions(data, user_id)
         _save(data)
         return _public(user)
+
+
+def hand_over_admin(company_id: str, actor_id: str, to_id: str, password: Any) -> dict[str, Any]:
+    """The Company Admin (S8) hands the role to another owner, confirming with their password.
+    Returns the new Admin."""
+    with LOCK:
+        data = _load()
+        actor = next((u for u in data["users"] if u["id"] == actor_id and u["company_id"] == company_id), None)
+    admin = _admin(data, company_id)
+    if not actor or not admin or admin["id"] != actor_id:
+        raise AuthError("Only the Company Admin can hand the role on.")
+    if not isinstance(password, str) or not _matches(actor, password):
+        raise AuthError("Password is wrong. Nothing changed.")
+    with LOCK:
+        data = _load()
+        target = next((u for u in data["users"] if u["id"] == to_id and u["company_id"] == company_id), None)
+        if not target or target["id"] == actor_id:
+            raise AuthError("Pick another person on the team.")
+        if _profile_of(target) != OWNER_PROFILE:
+            raise AuthError(f"Make {target['name']} an owner first: the Company Admin is always an owner.")
+        current = _admin(data, company_id)
+        if not current or current["id"] != actor_id:
+            raise AuthError("Only the Company Admin can hand the role on.")
+        for u in data["users"]:
+            if u["company_id"] == company_id:
+                u.pop("company_admin", None)
+        target["company_admin"] = True
+        _save(data)
+        return _public(target)
 
 
 def check_password(user_id: str, password: Any) -> bool:

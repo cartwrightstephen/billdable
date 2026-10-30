@@ -611,3 +611,51 @@ textarea { font: inherit; }
 .signed-out-note { margin: 0 0 12px; }
 /* S1: the one Save at the bottom of Company and My account. */
 .save-bar { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 12px 0; background: var(--paper); border-top: 1px solid var(--line); margin-top: 8px; z-index: 5; }
+/* S7: the two-step setup card that comes first after signing in on a server without mail. */
+.two-step-prompt { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-wash); }
+/* S6: the table of permission profiles, and the profile form's ticks. */
+.profiles-table td.center, .profiles-table th { text-align: center; }
+.profiles-table td:first-child, .profiles-table th:first-child { text-align: left; }
+.perm-list { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0 12px; }
+.perm-list legend { font-weight: 600; padding: 0 4px; }
+
+/* G9: the dark palette, for "Same as this device" on a dark device and for Dark. Only the
+   tokens change; theme.js sets data-theme and data-accent on <html>. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #171513; --ink: #ece6dd; --muted: #a8a095; --copper: #e09468; --copper-soft: #3a2a20; --line: #35302a;
+    --card: #211e1b; --green: #72c89b; --red: #ec8f8f; --amber: #e3b366; --field: #81776c;
+    --rail: #1c1a17; --red-soft: #3b2323; --amber-soft: #352b17; --amber-line: #5a4826; --green-soft: #1d3327;
+    --ok-soft: #1e2a21; --error-soft: #36231c; --banner-ink: #f2a98b; --banner-line: #6b3a28; --copper-line: #4d3426;
+    --tint: #27231f; --field-bg: #15130f; --on-accent: #1a1714; --on-ink: #171513;
+    --copper-wash: rgba(224, 148, 104, 0.16); --copper-glow: rgba(224, 148, 104, 0.35); --scrim: rgba(0, 0, 0, 0.5);
+    --backdrop: rgba(0, 0, 0, 0.55); --shadow-soft: rgba(0, 0, 0, 0.2); --shadow: rgba(0, 0, 0, 0.5);
+    --shadow-panel: rgba(0, 0, 0, 0.45); --shadow-drawer: rgba(0, 0, 0, 0.55);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #171513; --ink: #ece6dd; --muted: #a8a095; --copper: #e09468; --copper-soft: #3a2a20; --line: #35302a;
+  --card: #211e1b; --green: #72c89b; --red: #ec8f8f; --amber: #e3b366; --field: #81776c;
+  --rail: #1c1a17; --red-soft: #3b2323; --amber-soft: #352b17; --amber-line: #5a4826; --green-soft: #1d3327;
+  --ok-soft: #1e2a21; --error-soft: #36231c; --banner-ink: #f2a98b; --banner-line: #6b3a28; --copper-line: #4d3426;
+  --tint: #27231f; --field-bg: #15130f; --on-accent: #1a1714; --on-ink: #171513;
+  --copper-wash: rgba(224, 148, 104, 0.16); --copper-glow: rgba(224, 148, 104, 0.35); --scrim: rgba(0, 0, 0, 0.5);
+  --backdrop: rgba(0, 0, 0, 0.55); --shadow-soft: rgba(0, 0, 0, 0.2); --shadow: rgba(0, 0, 0, 0.5);
+  --shadow-panel: rgba(0, 0, 0, 0.45); --shadow-drawer: rgba(0, 0, 0, 0.55);
+}
+:root[data-theme="light"] { color-scheme: light; }
+/* Accents in the light palette (each at least 4.5:1 against the card and the paper, with white on it). */
+:root[data-accent="blue"] { --copper: #1f4f8a; --copper-soft: #e3ebf5; --copper-line: #c7d6ea; --copper-wash: rgba(31, 79, 138, 0.12); --copper-glow: rgba(31, 79, 138, 0.3); }
+:root[data-accent="green"] { --copper: #1f6b45; --copper-soft: #e2f0e8; --copper-line: #c3dfcf; --copper-wash: rgba(31, 107, 69, 0.12); --copper-glow: rgba(31, 107, 69, 0.3); }
+:root[data-accent="slate"] { --copper: #3d4a5c; --copper-soft: #e6e9ee; --copper-line: #cdd3dc; --copper-wash: rgba(61, 74, 92, 0.12); --copper-glow: rgba(61, 74, 92, 0.3); }
+/* The same accents in the dark palette (light on dark, with dark text on the accent). */
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="blue"]:not([data-theme="light"]) { --copper: #86b4ec; --copper-soft: #1d2a3a; --copper-line: #2c4058; --copper-wash: rgba(134, 180, 236, 0.16); --copper-glow: rgba(134, 180, 236, 0.35); }
+  :root[data-accent="green"]:not([data-theme="light"]) { --copper: #72c89b; --copper-soft: #1d3327; --copper-line: #2b4a38; --copper-wash: rgba(114, 200, 155, 0.16); --copper-glow: rgba(114, 200, 155, 0.35); }
+  :root[data-accent="slate"]:not([data-theme="light"]) { --copper: #aebbcd; --copper-soft: #262b33; --copper-line: #3a424e; --copper-wash: rgba(174, 187, 205, 0.16); --copper-glow: rgba(174, 187, 205, 0.35); }
+}
+:root[data-theme="dark"][data-accent="blue"] { --copper: #86b4ec; --copper-soft: #1d2a3a; --copper-line: #2c4058; --copper-wash: rgba(134, 180, 236, 0.16); --copper-glow: rgba(134, 180, 236, 0.35); }
+:root[data-theme="dark"][data-accent="green"] { --copper: #72c89b; --copper-soft: #1d3327; --copper-line: #2b4a38; --copper-wash: rgba(114, 200, 155, 0.16); --copper-glow: rgba(114, 200, 155, 0.35); }
+:root[data-theme="dark"][data-accent="slate"] { --copper: #aebbcd; --copper-soft: #262b33; --copper-line: #3a424e; --copper-wash: rgba(174, 187, 205, 0.16); --copper-glow: rgba(174, 187, 205, 0.35); }

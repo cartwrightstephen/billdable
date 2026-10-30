@@ -25,6 +25,7 @@ export function clearSession() {
   state = null;
   teamData = null;
   formOpen = {};
+  twoStepPrompt = false;
   forgetters.forEach(fn => fn());
 }
 
@@ -81,6 +82,11 @@ export function setAccount(info) {
 export let signedOutNote = "";
 
 export function setSignedOutNote(text) { signedOutNote = text || ""; }
+
+// Right after signing in on a server without mail (S7): My account opens with the two-step
+// setup first, until it is done or put off with Not now.
+export let twoStepPrompt = false;
+export function setTwoStepPrompt(on) { twoStepPrompt = !!on; }
 
 // { email, verification } (escaped) right after sign-up: the "Check your email" panel.
 export let checkEmail = null;

@@ -3,7 +3,7 @@
 import { esc, escDeep } from "../format.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { field, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, clearForm } from "../forms.js";
-import { me, setMe, clearSession, pendingPath, setCheckEmail, setAccount, mailReady, readOnly, billingInfo, heldShare, setDrawerOpen, checkEmail, signedOutNote, setSignedOutNote, setPending } from "../state.js";
+import { me, setMe, clearSession, pendingPath, setCheckEmail, setAccount, mailReady, readOnly, billingInfo, heldShare, setDrawerOpen, checkEmail, signedOutNote, setSignedOutNote, setPending, setTwoStepPrompt } from "../state.js";
 import { setIdleSignOut } from "../idle.js";
 import { render, load, post, applyLocation, DEMO_COMPANY_ID, boot, toast, nav } from "../app-core.js";
 import { setAiVisible, helperLog } from "./helper.js";
@@ -77,10 +77,12 @@ export function renderLanding() {
           <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, paperwork and clients."}</p>
           ${!signup && signedOutNote ? `<p class="notice signed-out-note" role="status">${esc(signedOutNote)}</p>` : ""}
           ${!signup && loginCode ? `<form id="auth-form">
-            <label for="login-code">Code from your authenticator app</label>
+            <label for="login-code">${loginCode.method === "email" ? "Code from the email" : "Code from your authenticator app"}</label>
             <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" placeholder="123456" />
             ${loginNote ? `<p class="sub" role="status">${esc(loginNote)}</p>` : ""}
-            <p class="sub">Lost your phone? Type one of your recovery codes instead.</p>
+            ${loginCode.method === "email" ? `<label class="terms-check"><input type="checkbox" id="login-remember" name="remember" checked> Don't ask again on this device for 30 days</label>
+            <p class="sub">No email? Check the spam folder, or go back and sign in again for a new code.</p>`
+            : `<p class="sub">Lost your phone? Type one of your recovery codes instead.</p>`}
             <button class="btn" type="submit">Sign in</button>
             ${authError ? `<div class="auth-error" role="alert">${esc(authError)}</div>` : ""}
             <div class="auth-toggle"><button type="button" id="code-back">Back</button></div>
@@ -152,7 +154,7 @@ async function onAuthSubmit(e) {
   loginNote = "";
   const v = loginCode && authMode === "login" ? {} : formValues("auth");
   const body = loginCode && authMode === "login"
-    ? { ...loginCode, code: form.code.value }
+    ? { email: loginCode.email, password: loginCode.password, code: form.code.value, ...(loginCode.method === "email" ? { remember: !!form.remember?.checked } : {}) }
     : { email: v.email, password: form.password.value };
   if (authMode === "signup") {
     // Checked here first, in place: nothing typed is lost.
@@ -183,8 +185,11 @@ async function onAuthSubmit(e) {
   const data = await readJson(res);
   if (!res.ok) {
     if (data.needs_code && authMode === "login") {
+      // Two-step sign-in (S7): a code from the authenticator app, or one emailed to this
+      // address from a browser that hasn't signed in with a code in the last 30 days.
       authError = loginCode ? (data.error || "That code didn't work.") : "";
-      loginCode = { email: body.email, password: body.password };
+      if (!loginCode && data.method === "email") loginNote = data.error || "";
+      loginCode = { email: body.email, password: body.password, method: data.method === "email" ? "email" : "app" };
       renderLanding();
     } else if (loginCode) {
       authError = data.error || "Could not sign in.";
@@ -244,6 +249,9 @@ async function startSession(user) {
   applyLocation();
   await load();
   setAiVisible(true);
+  // Two-step sign-in (S7): on a server that can't email codes, the authenticator app is the
+  // second step, and setting it up is the first thing asked after signing in.
+  if (me && me.two_step_setup_due) { setTwoStepPrompt(true); nav("account"); }
 }
 
 // note: why, when the page signed out by itself (G2's idle sign-out); shown on Sign in.
@@ -297,7 +305,7 @@ function renderTokenScreen() {
       <button class="btn" id="token-done">Go to sign in</button>`;
   } else if (s.kind === "invite") {
     inner = `<h2>Join ${s.info.company_name}</h2>
-      <p class="sub">${s.info.invited_by ? s.info.invited_by + " invited you" : "You were invited"} as ${s.info.role}. Your sign-in email is <strong>${s.info.email}</strong>.</p>
+      <p class="sub">${s.info.invited_by ? s.info.invited_by + " invited you" : "You were invited"} as ${s.info.profile_name || s.info.role}. Your sign-in email is <strong>${s.info.email}</strong>.</p>
       <form id="token-form">
         <label>Your name</label><input name="name" required autocomplete="name">
         <label>Choose a password (at least 10 characters)</label><input name="password" type="password" required autocomplete="new-password" minlength="10">
@@ -336,6 +344,7 @@ function renderTokenScreen() {
       return;
     }
     await boot(false);
+    if (me && me.two_step_setup_due) { setTwoStepPrompt(true); nav("account"); }
     toast(s.kind === "invite" ? "Welcome to the team." : "Password changed. You're signed in.");
   });
 }

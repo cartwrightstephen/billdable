@@ -428,7 +428,10 @@
         "Add a user",
         "Invite my team",
         "Give someone access",
-        "What can a member do?"
+        "What can a member do?",
+        "What can an owner do?",
+        "Change someone's permissions",
+        "Custom permissions"
       ],
       "keywords": [
         "invite",
@@ -438,9 +441,11 @@
         "office manager",
         "member",
         "owner",
-        "role"
+        "role",
+        "profile",
+        "permission"
       ],
-      "answer": "Yes. An owner opens Settings, Team, enters Their email, picks They join as (Member or Owner) and taps Invite. Invite stays off until your own email is confirmed; the Team page says so, with Send the link again. Members draft pay apps, record payments and add paperwork. Owners also send, delete drafts, finish jobs, and manage the team, the inbound addresses, reset and deleting the company. To let members send, an owner turns on Members can send pay apps, lien waivers and retainage requests in Settings, Company. Every action is in the Activity log with the person's name. If the invite can't be emailed, the owner gets a link to pass on; it works once, for 7 days.",
+      "answer": "Yes. Someone who manages the team opens Settings, Team, enters Their email, picks a Profile and taps Invite. Invite stays off until your own email is confirmed; the Team page says so, with Send the link again. A profile says what a person can do. Owner can do everything. Member drafts pay apps, records payments and adds paperwork; on Settings, Team, Permission profiles, Edit on Member gives it more, such as Send pay apps. New profile adds your own, like Office manager, with the permissions you tick. To change someone's profile, pick another next to their name and tap Change. Everyone can draft, add records and follow up; the server refuses anything a person's profile doesn't allow. Every action is in the Activity log with the person's name. If the invite can't be emailed, you get a link to pass on; it works once, for 7 days.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1343,7 +1348,7 @@
         "download",
         "backup"
       ],
-      "answer": "An owner taps Export data in Settings, Company, under Your data, reset and delete. It downloads your company's jobs, clients, pay apps and records as one file. Photos and documents you uploaded are not in it, so keep your own copies of those.",
+      "answer": "Export data is in Settings, Company, under Your data, for anyone whose profile includes Export and reset data (owners do). It downloads your company's jobs, clients, pay apps and records as one file. Photos and documents you uploaded are not in it, so keep your own copies of those.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1367,7 +1372,7 @@
         "reset",
         "start over"
       ],
-      "answer": "An owner opens Settings, Company, Your data, reset and delete, and taps Reset data. Reset deletes every job, client and record in your company; a snapshot is kept on the server first. To confirm, type the company name exactly and your password, then tap Reset everything. On the demo account, Reset the demo puts the sample data back.",
+      "answer": "Open Settings, Company, Your data, and tap Reset data (it needs a profile with Export and reset data; owners have it). Reset deletes every job, client and record in your company; a snapshot is kept on the server first. To confirm, type the company name exactly and your password, then tap Reset everything. On the demo account, Reset the demo puts the sample data back.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1397,7 +1402,7 @@
         "login",
         "reset"
       ],
-      "answer": "On the sign-in screen, click Forgot your password? and enter your email: a reset link arrives that works once, for one hour, and signs you out everywhere else. Signed in, change it in Settings, My account. After 3 wrong passwords for one email, each new try has to wait a little longer, up to a minute. After 20 wrong passwords from one network, sign-in from that network pauses for 15 minutes. Passwords need at least 10 characters. If the server can't send email yet, the screen says so; ask the Duracash team.",
+      "answer": "On the sign-in screen, click Forgot your password? and enter your email: a reset link arrives that works once, for one hour, and signs you out everywhere else. Signed in, open Settings, My account and tap Change password: on its own page, tap Email me a code, then type the code, your current password and the new one (where the server can't send email yet, the current password is enough). Every other device is signed out. After 3 wrong passwords for one email, each new try has to wait a little longer, up to a minute. After 20 wrong passwords from one network, sign-in from that network pauses for 15 minutes. Passwords need at least 10 characters. If the server can't send email yet, the screen says so; ask the Duracash team.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1424,7 +1429,7 @@
         "privacy",
         "who see"
       ],
-      "answer": "Each company's data is kept separate; only your team's logins can open it, apart from the private links you share: the Calendar address and each client's page. Owners decide who is on the team. Passwords are stored as one-way hashes; reset links work once and expire. Duracash is still early: keep your own copies of signed documents, and use Export data (Settings, Company) for a copy. Questions you ask here are saved so the team can add better answers.",
+      "answer": "Each company's data is kept separate; only your team's logins can open it, apart from the private links you share: the Calendar address and each client's page. Those who manage the team decide who is on it and what each person can do. Signing in from a new device asks for a second step (a code by email, or from an authenticator app), and you are signed out after an hour without use. Passwords are stored as one-way hashes; reset links work once and expire. Duracash is still early: keep your own copies of signed documents, and use Export data (Settings, Company) for a copy. Questions you ask here are saved so the team can add better answers.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1667,7 +1672,7 @@
         "close account",
         "delete"
       ],
-      "answer": "An owner can delete the company in Settings, Company, under Your data, reset and delete: type your password and the company name, then tap Delete everything. It removes every job, file, client and record, and every user on the team, at once. Use Export data first if you want a copy. Server backups that already hold the data expire on their own (the newest 14 are kept by default).",
+      "answer": "Only the Company Admin can delete the company: the one owner shown on Settings, Team (at first, the person who created the company; they can hand the role to another owner with Hand over). The Company Admin opens Settings, Company, Your data, taps delete the company, types their password and the company name, then taps Delete everything. It removes every job, file, client and record, and every user on the team, at once. Use Export data first if you want a copy. Server backups that already hold the data expire on their own (the newest 14 are kept by default).",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1751,6 +1756,83 @@
       "follow_ups": [
         "Is my data safe?"
       ]
+    },
+    {
+      "id": "two-step",
+      "category": "Account and data",
+      "questions": [
+        "What is two-step sign-in?",
+        "Why did I get a sign-in code?",
+        "Set up an authenticator app",
+        "Turn off two-step sign-in",
+        "Stop asking for a code"
+      ],
+      "keywords": [
+        "two-step",
+        "code",
+        "authenticator",
+        "sign-in code",
+        "2fa"
+      ],
+      "answer": "Two-step sign-in is on for every account, so a stolen password isn't enough. Signing in from a new device asks for a 6-digit code we email to you; tick Don't ask again on this device for 30 days to skip it on that device. For a stronger second step, open Settings, My account and tap Use an authenticator app instead: scan the QR code, type the code and save the recovery codes. It can't be turned off. Where the server can't send email yet, the authenticator app is the second step, and setting it up is asked right after you sign in (Not now puts it off).",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "account",
+          "label": "Open My account"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "appearance",
+      "category": "Account and data",
+      "questions": [
+        "Is there a dark mode?",
+        "Change the colours",
+        "Change the theme",
+        "Make the screen darker"
+      ],
+      "keywords": [
+        "dark",
+        "theme",
+        "colour",
+        "color",
+        "appearance"
+      ],
+      "answer": "Yes. Open Settings, My account, Appearance: pick Theme (Same as this device, Light or Dark) and an Accent colour, then tap Save at the bottom. It is kept with your account, so it follows you to every device; your teammates keep their own. Pay app PDFs and your clients' pages stay as they are.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "account",
+          "label": "Open My account"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
+      "id": "signed-out",
+      "category": "Account and data",
+      "questions": [
+        "Why was I signed out?",
+        "It logged me out",
+        "Signed out after an hour"
+      ],
+      "keywords": [
+        "signed out",
+        "logged out",
+        "timeout",
+        "idle"
+      ],
+      "answer": "Duracash signs you out after an hour without use, so a screen left open isn't left signed in. Two minutes before, a note says Signing you out in 2 minutes with Stay signed in. Sign in again and the page you had open comes back.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": []
     }
   ]
 }

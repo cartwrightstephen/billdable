@@ -357,12 +357,12 @@ class AccountHttpTests(ServerCase):
         _, state = self.request("POST", "/api/jobs", job, cookie=owner)
         job_id = state["jobs"][0]["id"]
         res, out = self.request("POST", f"/api/jobs/{job_id}/reopen", {"reason": "Late check"}, cookie=member)
-        self.assertEqual((res.status, out["error"]), (403, "Only an owner can do that."))
+        self.assertEqual((res.status, out["error"]), (403, server.NO_PERMISSION))
         res, out = self.request("POST", f"/api/jobs/{job_id}/reopen", {"reason": "Late check"}, cookie=owner)
         self.assertEqual(res.status, 409, out)
         self.assertIn("is not finished", out["error"])
 
-    def test_member_sends_only_when_the_company_allows_it(self):  # R4-09
+    def test_member_sends_only_when_their_profile_allows_it(self):  # R4-09, S6
         owner, _ = self.signup("owner@sends.example", "Sends Co")
         _, out = self.request("POST", "/api/team/invite", {"email": "member@sends.example", "role": "member"}, cookie=owner)
         token = out["invite_path"].split("#invite=")[1]
@@ -380,21 +380,22 @@ class AccountHttpTests(ServerCase):
                 self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "In the email"}, cookie=member)
         for action in ("send", "void-draft", "close", "delete"):
             res, out = self.request("POST", f"/api/jobs/{job_id}/{action}", {}, cookie=member)
-            self.assertEqual((res.status, out["error"]), (403, "Only an owner can do that."), action)
-        # Only an owner turns the setting on.
-        res, _ = self.request("POST", "/api/company", {"members_can_send": True}, cookie=member)
+            self.assertEqual((res.status, out["error"]), (403, server.NO_PERMISSION), action)
+        # Only someone who manages the team gives Member the send permission.
+        sends = {"perms": ["record_payments", "send_payapps", "send_waivers", "ask_retainage"]}
+        res, _ = self.request("POST", "/api/team/profiles/member", sends, cookie=member)
         self.assertEqual(res.status, 403)
-        res, out = self.request("POST", "/api/company", {"members_can_send": True}, cookie=owner)
+        res, out = self.request("POST", "/api/team/profiles/member", sends, cookie=owner)
         self.assertEqual(res.status, 200, out)
-        self.assertTrue(out["company"]["members_can_send"])
+        self.assertIn("send_payapps", next(p for p in out["profiles"] if p["id"] == "member")["perms"])
         res, out = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie=member)
         self.assertEqual(res.status, 200, out)
         self.assertEqual(out["jobs"][0]["invoices"][-1]["status"], "sent")
         # Deleting and finishing stay with owners.
         res, _ = self.request("POST", f"/api/jobs/{job_id}/close", {}, cookie=member)
         self.assertEqual(res.status, 403)
-        res, out = self.request("POST", "/api/company", {"members_can_send": "yes"}, cookie=owner)
-        self.assertEqual((res.status, out["fields"]["members_can_send"]), (409, "Choose on or off."))
+        res, out = self.request("POST", "/api/team/profiles/member", {"perms": ["send_everything"]}, cookie=owner)
+        self.assertEqual((res.status, out["fields"]["perms"]), (409, "Tick the permissions from the list."))
 
     def test_setup_checklist_is_dismissed_per_person(self):  # R2-03
         owner, _ = self.signup("owner@checklist.example", "Checklist Co")

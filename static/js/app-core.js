@@ -197,7 +197,8 @@ export async function load() {
   setState(await readJson(res));
   // Signed in: the idle count starts (G2), and the person's own theme applies (G9).
   if (me && !idleWatching()) startIdleWatch(idleMinutes);
-  if (me) applyAppearance(me.appearance);
+  // The sample company is one account for every visitor: its look stays in each browser.
+  if (me && me.company_id !== DEMO_COMPANY_ID) applyAppearance(me.appearance);
   render();
 }
 
@@ -447,10 +448,16 @@ export function emptyState(title, body = "", action = "") {
   return `<div class="empty-state"><strong>${title}</strong>${body ? `<p>${body}</p>` : ""}${action}</div>`;
 }
 
-// What the signed-in person may do (R4-09): members draft and get things ready; an owner sends,
-// deletes and finishes, unless the company lets members send (Settings, Company).
+// What the signed-in person may do (S6): the permissions of their profile, from /api/auth/me.
+// An older page without them (a session from before profiles) falls back to the role.
 export function perms() {
-  return { owner: !me || me.role === "owner", membersCanSend: !!(state && state.company && state.company.members_can_send) };
+  return { owner: !me || me.role === "owner", list: me && Array.isArray(me.perms) ? me.perms : undefined };
+}
+
+// Whether the signed-in person holds a permission (S6), for pages that hide what they can't do.
+export function can(perm) {
+  if (!me) return false;
+  return Array.isArray(me.perms) ? me.perms.includes(perm) : me.role === "owner";
 }
 
 export function may(action) { return mayTake(action, perms()); }

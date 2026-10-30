@@ -7,8 +7,9 @@ import { field, formErrorLine, refuseForm, formValues, clearForm } from "../form
 import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
-import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail } from "../state.js";
-import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav } from "../app-core.js";
+import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt } from "../state.js";
+import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
+import { THEMES, ACCENTS, applyAppearance, normalizeAppearance, storedAppearance } from "../theme.js";
 import { qboCardHtml } from "./payments.js";
 import { forgetImportSettings } from "./inbox.js";
 
@@ -44,13 +45,18 @@ async function loadTeam() {
     if (!res.ok) return;
     setTeamData(escDeep(await readJson(res)));
   } catch (_) { setNetBanner(true); return; }
-  if (currentView === "team" && !patch("#team-card", teamCardHtml())) render();
+  if (currentView === "team" && !(patch("#team-card", teamCardHtml()) && patch("#profiles-card", profilesCardHtml()) && patch("#admin-card", adminCardHtml()))) render();
+}
+
+// The Team page's data from a reply: people, open invites, profiles and the permission list.
+function teamOnly(d) {
+  return { users: d.users || [], invites: d.invites || [], profiles: d.profiles || [], permissions: d.permissions || [] };
 }
 
 async function teamPost(path, body, okMessage) {
   const r = await postJson(path, body);
   if (!r.ok) { toast(r.data.error || "That didn't work."); return null; }
-  if (r.data.users) setTeamData(escDeep({ users: r.data.users, invites: r.data.invites || [] }));
+  if (r.data.users) setTeamData(escDeep(teamOnly(r.data)));
   if (okMessage) toast(okMessage);
   render();
   return r.data;
@@ -58,35 +64,97 @@ async function teamPost(path, body, okMessage) {
 
 // The team list fills in when /api/team answers, in place: the rest of the page (a company
 // address being typed, R2-03's step 0) is not redrawn.
+// Each person has a permission profile (S6); those who manage the team change it, invite with
+// one, and add profiles of their own. The table of profiles answers what each may do.
+let profileDraft = null;   // {id, name, perms} while a profile is being added or changed
+// Only an owner gives the Owner profile or changes an owner's (the server refuses the rest).
+const ownerMe = () => me && (me.profile_id || me.role) === "owner";
+function profileOptions(selected) {
+  return ((teamData && teamData.profiles) || []).filter(p => ownerMe() || p.id !== "owner").map(p => `<option value="${p.id}"${p.id === selected ? " selected" : ""}>${p.name}</option>`).join("");
+}
+
 function teamCardHtml() {
-  const owner = me.role === "owner";
+  const manage = can("team");
   const isDemo = me.company_id === DEMO_COMPANY_ID;
   const users = teamData ? teamData.users : [];
   const invites = teamData ? teamData.invites : [];
   // An unconfirmed owner can't invite on a server that sends mail (the server refuses): say so
   // before the tap, with the confirmation link to send again (Oct 23 note 2).
   const locked = inviteLocked(me, mailReady, DEMO_COMPANY_ID);
+  const edit = manage && !isDemo;
+  const mayChange = (u) => edit && u.id !== me.id && (ownerMe() || u.profile_id !== "owner");
   return `
       <h2>Team</h2>
       <div class="table-wrap"><table>
-        <tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr>
-        ${users.map(u => `<tr><td>${u.name}${u.id === me.id ? " (you)" : ""}</td><td>${u.email}</td><td>${words(u.role)}</td><td>${fmtDate(u.created_at)}</td>
-          <td>${owner && !isDemo && u.id !== me.id ? `
-            <button class="btn small secondary" data-action="team-role" data-user="${u.id}" data-role="${u.role === "owner" ? "member" : "owner"}">Make ${u.role === "owner" ? "member" : "owner"}</button>
-            <button class="btn small secondary" data-action="team-remove" data-user="${u.id}" data-name="${u.name}">Remove</button>` : ""}</td></tr>`).join("")}
+        <tr><th>Name</th><th>Email</th><th>Profile</th><th>Joined</th><th></th></tr>
+        ${users.map(u => `<tr><td>${u.name}${u.id === me.id ? " (you)" : ""}${u.company_admin ? ` <span class="pill copper">Company Admin</span>` : ""}</td><td>${u.email}</td>
+          <td>${mayChange(u) ? `<span class="form-inline"><select id="prof-${u.id}" aria-label="Profile for ${u.name}">${profileOptions(u.profile_id)}</select>
+            <button class="btn small secondary" data-action="team-profile" data-user="${u.id}">Change</button></span>` : u.profile_name || words(u.role)}</td>
+          <td>${fmtDate(u.created_at)}</td>
+          <td>${mayChange(u) && !u.company_admin ? `<button class="btn small secondary" data-action="team-remove" data-user="${u.id}" data-name="${u.name}">Remove</button>` : ""}</td></tr>`).join("")}
       </table></div>
-      ${owner && !isDemo ? `
+      ${edit ? `
         <h3>Invite someone</h3>
+        <p class="sub">They get an email with a link to join. Pick the profile that says what they can do; you can change it later.</p>
         ${locked ? inviteLockHtml() : ""}
         <div data-form-key="invite">${formErrorLine("invite")}<div class="form-row">
           ${field({ form: "invite", name: "email", id: "invite-email", label: "Their email", type: "email", autocomplete: "off", wide: true, rule: "email" })}
-          ${field({ form: "invite", name: "role", id: "invite-role", label: "They join as", options: [["member", "Member"], ["owner", "Owner"]] })}
+          ${field({ form: "invite", name: "profile_id", id: "invite-role", label: "Profile", value: "member", options: ((teamData && teamData.profiles) || [{ id: "member", name: "Member" }]).filter(p => ownerMe() || p.id !== "owner").map(p => [unesc(p.id), unesc(p.name)]) })}
           <button class="btn small" data-action="team-invite"${locked ? " disabled" : ""}>Invite</button>
         </div></div>
         ${lastInvite ? `<div class="invite-result">${lastInvite.emailed ? `Invite emailed to ${esc(lastInvite.email)}.` : `Not emailed (${esc(lastInvite.email_status)}). Send them this link yourself; it works once, for 7 days:`}
           <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}
-        ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
+        ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.profile_name || i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
           <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}`;
+}
+
+// What each profile may do, one column each (S6). Owner holds everything and is locked; Member
+// and custom profiles can be changed by those who manage the team.
+function profilesCardHtml() {
+  if (!teamData || !teamData.profiles) return "";
+  const edit = can("team") && me.company_id !== DEMO_COMPANY_ID;
+  const list = teamData.profiles;
+  const perms = teamData.permissions || [];
+  const admin = (teamData.users || []).find(u => u.company_admin);
+  return `<h2>Permission profiles</h2>
+    <p class="sub">What each profile can do. Everyone on the team can draft pay apps, add records and paperwork, and follow up. The Owner profile can do everything; only the Company Admin${admin ? ` (${admin.name})` : ""} can delete the company.</p>
+    <div class="table-wrap"><table class="profiles-table">
+      <tr><th>Permission</th>${list.map(p => `<th>${p.name}</th>`).join("")}</tr>
+      ${perms.map(k => `<tr><td>${k.words}</td>${list.map(p => `<td class="center">${p.perms.includes(unesc(k.key)) ? `<span class="pill green" aria-label="Yes">Yes</span>` : `<span class="sub" aria-label="No">No</span>`}</td>`).join("")}</tr>`).join("")}
+      ${edit ? `<tr><td></td>${list.map(p => `<td class="center">${p.locked ? `<span class="sub">Built in</span>` : `<button class="btn small secondary" data-action="profile-edit" data-profile="${p.id}">Edit</button>${p.built_in ? "" : ` <button class="btn small secondary" data-action="profile-delete" data-profile="${p.id}" data-name="${p.name}">Delete</button>`}`}</td>`).join("")}</tr>` : ""}
+    </table></div>
+    ${edit && !profileDraft ? `<button class="btn small" data-action="profile-new">New profile</button>` : ""}
+    ${edit && profileDraft ? profileFormHtml(perms) : ""}`;
+}
+
+function profileFormHtml(perms) {
+  const d = profileDraft;
+  const member = d.id === "member";
+  return `<div class="card profile-form" data-form-key="profile">${formErrorLine("profile")}
+    <h3>${d.id ? `Edit ${esc(d.name)}` : "New profile"}</h3>
+    ${member ? `<p class="sub">Member is built in: its name stays, its permissions can change.</p>` : `<div class="form-grid">${field({ form: "profile", name: "name", id: "profile-name", label: "Name", value: d.name || "", placeholder: "Office manager", required: true })}</div>`}
+    <fieldset class="perm-list"><legend>It can</legend>
+      ${perms.map(k => `<label class="terms-check"><input type="checkbox" data-perm="${k.key}"${(d.perms || []).includes(unesc(k.key)) ? " checked" : ""}> ${k.words}</label>`).join("")}
+    </fieldset>
+    <div class="form-inline"><button class="btn small" data-action="profile-save">Save profile</button><button class="btn small secondary" data-action="profile-cancel">Cancel</button></div>
+  </div>`;
+}
+
+// The Company Admin (S8): one owner, the only person who can delete the company. They can hand
+// the role to another owner.
+function adminCardHtml() {
+  if (!teamData || me.company_id === DEMO_COMPANY_ID) return "";
+  const admin = (teamData.users || []).find(u => u.company_admin);
+  const owners = (teamData.users || []).filter(u => u.profile_id === "owner" && !u.company_admin);
+  const mine = admin && admin.id === me.id;
+  return `<h2>Company Admin</h2>
+    <p class="sub">${admin ? `${admin.name}${mine ? " (you)" : ""} is the Company Admin` : "No Company Admin yet"}: an owner who can also delete the company. ${mine ? "You can hand the role to another owner." : ""}</p>
+    ${mine ? owners.length ? `<div class="form-inline">
+        <label for="admin-to" class="inline-label">Hand it to</label>
+        <select id="admin-to">${owners.map(u => `<option value="${u.id}">${u.name}</option>`).join("")}</select>
+        <input id="admin-password" type="password" placeholder="Your password" autocomplete="current-password" aria-label="Your password">
+        <button class="btn small secondary" data-action="admin-hand-over">Hand over</button></div>`
+      : `<p class="sub">To hand it on, give someone the Owner profile first.</p>` : ""}`;
 }
 
 // The company's on/off settings (R4-09, R4-10), owners only. Ticked boxes are saved with the rest
@@ -98,11 +166,9 @@ function companySwitchesHtml(owner) {
   const box = (key, checked, label, help) => `<label class="terms-check switch-row"><input type="checkbox" id="sw-${key}" data-company-switch="${key}"${checked ? " checked" : ""}${owner ? "" : " disabled"}> <span><strong>${label}</strong><br><span class="sub">${help}</span></span></label>`;
   return `<div class="card" id="switches-card">
       <h2>Sending and email</h2>
-      ${box("members_can_send", on("members_can_send", !!co.members_can_send), "Members can send pay apps, lien waivers and retainage requests",
-        "Off: you approve every send. Members draft and get the paperwork ready; an owner sends, deletes drafts, pulls back pay apps and finishes jobs.")}
       ${box("daily_email", on("daily_email", co.daily_email !== false), "Daily email of what's due",
         "Each morning owners get one email listing what's due today, with a link to each. Nothing is sent on a day with nothing due.")}
-      ${owner ? "" : `<p class="sub">Owners can change these.</p>`}
+      ${owner ? `<p class="sub">Who can send pay apps, waivers and retainage requests is set by each person's profile, on <button class="linkish" data-action="nav" data-view="team">Team</button>.</p>` : `<p class="sub">Your profile doesn't include changing these.</p>`}
     </div>`;
 }
 
@@ -130,7 +196,8 @@ export function companyChanges(values, company, switches) {
 // Company is one form with one Save at the bottom (S1): its details, the address in four boxes
 // (S3) and the switches. Your data sits folded at the end.
 function companyView() {
-  const owner = me.role === "owner";
+  const owner = can("company");
+  const data = can("data");
   const isDemo = me.company_id === DEMO_COMPANY_ID;
   // What was typed and not yet saved stays through a redraw (QuickBooks status arriving): the
   // boxes are a form (data-field), so watchForms keeps it.
@@ -143,7 +210,7 @@ function companyView() {
     <div data-form-key="company">${formErrorLine("company")}
     <div class="card" id="company-card">
       <h2>Company details</h2>
-      ${owner ? "" : `<p class="sub">Owners can change these.</p>`}
+      ${owner ? "" : `<p class="sub">Your profile doesn't include changing these.</p>`}
       <div class="form-grid">
         ${box("name", "co-name", "Company name", "name", { required: true, autocomplete: "organization" })}
         ${box("phone", "co-phone", "Phone", "phone", { type: "tel", inputmode: "tel", autocomplete: "tel", placeholder: "(404) 555-0123" })}
@@ -158,26 +225,19 @@ function companyView() {
     </div>
     ${qboCardHtml(false)}
     <details class="card danger-zone" data-more="danger"${formOpen.reset || moreDetails.danger ? " open" : ""}>
-      <summary><strong>${owner ? "Your data, reset and delete" : "Your data"}</strong></summary>
+      <summary><strong>Your data</strong></summary>
       <h2>Your data</h2>
-      ${owner ? `<p class="sub">Download everything in your company as one file, or start over.</p>
+      ${data ? `<p class="sub">Download everything in your company as one file, or start over.</p>
       <div class="form-inline">
         <a class="btn small secondary" href="/api/export" download>Export data</a>
         <button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>
-      </div>` : `<p class="sub">An owner can download everything in the company as one file.</p>`}
+      </div>` : `<p class="sub">Someone whose profile includes exporting data can download everything in the company as one file.</p>`}
       ${formOpen.reset && !isDemo ? `<div class="form-inline">
         <label for="reset-confirm" class="inline-label">Reset deletes every job, client and record; a snapshot is kept on the server. Type the company name and your password to confirm:</label>
         <input id="reset-confirm" placeholder="${state.company.name}" class="grow">
         <input id="reset-password" type="password" placeholder="Your password" autocomplete="current-password" aria-label="Your password">
         <button class="btn small danger" data-action="reset-confirm">Reset everything</button></div>` : ""}
-      ${owner && !isDemo ? `
-      <h2>Delete the company</h2>
-      <p class="sub">Deletes every job, file, client and record, and every user on this team. Export your data first if you want a copy. Server backups that already hold it expire on their own (the newest 14 are kept by default).</p>
-      <div class="form-inline">
-        <input id="del-password" type="password" placeholder="Your password" autocomplete="current-password">
-        <input id="del-confirm" placeholder="Type the company name: ${state.company.name}" class="grow">
-        <button class="btn small danger" data-action="delete-account">Delete everything</button>
-      </div>` : ""}
+      ${me.company_admin && !isDemo ? `<p class="sub">As the Company Admin you can also <button class="linkish" data-action="nav" data-view="delete-company">delete the company</button>.</p>` : ""}
     </details>
     ${owner ? `<div class="save-bar"><button class="btn" data-action="save-company">Save</button></div>` : ""}
   `;
@@ -188,7 +248,26 @@ function teamView() {
   return `
     <h1>Team</h1>
     <div class="card" id="team-card">${teamCardHtml()}</div>
+    <div class="card" id="profiles-card">${profilesCardHtml()}</div>
+    <div class="card" id="admin-card">${adminCardHtml()}</div>
   `;
+}
+
+// Delete the company (S8): its own page, for the Company Admin only (the server checks too).
+function deleteCompanyView() {
+  const back = backButton("company", "Company");
+  if (me.company_id === DEMO_COMPANY_ID) return `${back}<h1>Delete the company</h1>${emptyState("The demo company can't be deleted")}`;
+  if (!me.company_admin) return `${back}<h1>Delete the company</h1>${emptyState("Only the Company Admin can delete the company", "The Company Admin is shown on Settings, Team.")}`;
+  return `${back}
+    <h1>Delete the company</h1>
+    <div class="card danger-zone">
+      <p>This deletes every job, file, client and record, and every user on this team. Export your data first if you want a copy. Server backups that already hold it expire on their own (the newest 14 are kept by default).</p>
+      <div class="form-grid">
+        <div class="field"><label for="del-password">Your password</label><input id="del-password" type="password" autocomplete="current-password"></div>
+        <div class="field"><label for="del-confirm">Type the company name: ${state.company.name}</label><input id="del-confirm" autocomplete="off"></div>
+      </div>
+      <button class="btn danger" data-action="delete-account">Delete everything</button>
+    </div>`;
 }
 
 function myAccountView() {
@@ -198,35 +277,73 @@ function myAccountView() {
     : `<span class="pill amber">not confirmed</span> ${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : `<span class="sub">Confirming needs email set up on the server.</span>`}`;
   return `
     <h1>My account</h1>
+    ${twoStepPrompt && !isDemo ? twoStepCardHtml(true) : ""}
     <div class="card" data-form-key="account">${formErrorLine("account")}
       <h2>You</h2>
       ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-grid">${field({ form: "account", name: "name", id: "my-name", label: "Name", value: unesc(me.name), autocomplete: "name", rule: "name", required: true })}</div>`}
       <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
-      <div class="money-row"><span class="label">Role</span><span>${words(me.role)}</span></div>
+      <div class="money-row"><span class="label">Profile</span><span>${me.profile_name || words(me.role)}${me.company_admin ? ` <span class="pill copper">Company Admin</span>` : ""}</span></div>
       ${isDemo ? "" : `<div class="money-row"><span class="label">Password</span><span><button class="btn small secondary" data-action="nav" data-view="password">Change password</button></span></div>`}
     </div>
-    ${isDemo ? "" : `<div class="card" id="two-step">
-      <h2>Two-step sign-in</h2>
-      ${recoveryCodes ? `<div class="invite-result" role="status"><strong>Two-step sign-in is on.</strong> Save these recovery codes somewhere safe, such as your password manager. Each one signs you in once if you lose your phone. They are not shown again.
-        <div class="copy-row"><code id="recovery-codes">${recoveryCodes.join("  ")}</code><button class="btn small secondary" data-action="copy" data-target="recovery-codes">Copy</button><button class="btn small" data-action="2fa-done">I saved them</button></div></div>`
-      : me.two_step ? `<p class="sub"><span class="pill green">On</span> Signing in asks for a code from your authenticator app.</p>
-        <details><summary>Turn it off</summary><div class="form-inline">
-          <input id="2fa-off-pw" type="password" placeholder="Your password" autocomplete="current-password">
-          <input id="2fa-off-code" placeholder="Code from the app" autocomplete="one-time-code" inputmode="numeric">
-          <button class="btn small secondary" data-action="2fa-disable">Turn off</button></div></details>`
-      : twoStepSetup ? `<ol class="steps">
+    ${appearanceCardHtml()}
+    ${isDemo || twoStepPrompt ? "" : twoStepCardHtml()}
+    ${me.onboarding_dismissed && !isDemo ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
+    <p class="sub">Your account id: <code>${me.id}</code></p>
+    <div class="save-bar"><button class="btn" data-action="save-account">Save</button></div>
+  `;
+}
+
+// Appearance (G9): the theme and accent, kept on this person's account, saved with the page.
+function savedAppearance() {
+  if (me.company_id === DEMO_COMPANY_ID) return storedAppearance();
+  return normalizeAppearance(me.appearance ? { theme: unesc(me.appearance.theme), accent: unesc(me.appearance.accent) } : null);
+}
+
+function appearanceCardHtml() {
+  const a = savedAppearance();
+  return `<div class="card" id="appearance" data-form-key="appearance">${formErrorLine("appearance")}
+      <h2>Appearance</h2>
+      <div class="form-grid">
+        ${field({ form: "appearance", name: "theme", id: "app-theme", label: "Theme", value: a.theme, options: THEMES })}
+        ${field({ form: "appearance", name: "accent", id: "app-accent", label: "Accent colour", value: a.accent, options: ACCENTS })}
+      </div>
+      <p class="sub">Only for you, on every device you sign in on. Pay app PDFs and your clients' pages stay as they are.</p>
+    </div>`;
+}
+
+// Two-step sign-in (S7) is on for everyone but the demo. With mail on the server, a sign-in
+// from a new device asks for a code emailed to the person, and the authenticator app is the
+// stronger choice. Without mail, the app is the second step: right after signing in, this card
+// comes first (prompt), until it is set up or put off with Not now. It can't be turned off.
+function twoStepCardHtml(prompt = false) {
+  const setup = twoStepSetup ? `<ol class="steps">
           <li>In an authenticator app (Google Authenticator, 1Password, Authy, Microsoft Authenticator), add an account and scan this code. ${/Mobi|Android|iPhone/.test(navigator.userAgent) ? `On this phone, <a href="${esc(unesc(twoStepSetup.uri))}">open it in the app</a> instead.` : ""}
             ${twoStepSetup.qr ? `<img class="qr-code" id="2fa-qr" src="${twoStepSetup.qr}" alt="QR code of the two-step key" width="180" height="180">` : ""}</li>
           <li>Can't scan it? Choose to enter a key and type this one: <code id="2fa-key">${twoStepSetup.secret.match(/.{1,4}/g).join(" ")}</code> <button class="btn small secondary" data-action="copy" data-target="2fa-key">Copy</button></li>
           <li>Type the 6-digit code the app shows: <span class="form-inline"><input id="2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"><button class="btn small" data-action="2fa-enable">Turn on</button></span></li>
-        </ol>`
-      : `<p class="sub"><span class="pill">Off</span> Add a code from your phone to every sign-in, so a stolen password isn't enough. Recommended for owners.</p>
-        <button class="btn small" data-action="2fa-begin">Set up two-step sign-in</button>`}
-    </div>`}
-    ${me.onboarding_dismissed && !isDemo ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
-    <p class="sub">Your account id: <code>${me.id}</code></p>
-    ${isDemo ? "" : `<div class="save-bar"><button class="btn" data-action="save-account">Save</button></div>`}
-  `;
+        </ol>` : "";
+  let body;
+  if (recoveryCodes) {
+    body = `<div class="invite-result" role="status"><strong>Two-step sign-in uses your authenticator app now.</strong> Save these recovery codes somewhere safe, such as your password manager. Each one signs you in once if you lose your phone. They are not shown again.
+        <div class="copy-row"><code id="recovery-codes">${recoveryCodes.join("  ")}</code><button class="btn small secondary" data-action="copy" data-target="recovery-codes">Copy</button><button class="btn small" data-action="2fa-done">I saved them</button></div></div>`;
+  } else if (me.two_step) {
+    body = `<p class="sub"><span class="pill green">On</span> Authenticator app. Signing in asks for a code from the app.</p>
+      ${codesByEmail ? `<details><summary>Use email codes instead</summary><div class="form-inline">
+          <input id="2fa-off-pw" type="password" placeholder="Your password" autocomplete="current-password" aria-label="Your password">
+          <input id="2fa-off-code" placeholder="Code from the app" autocomplete="one-time-code" inputmode="numeric" aria-label="Code from the app">
+          <button class="btn small secondary" data-action="2fa-disable">Use email codes</button></div></details>` : ""}`;
+  } else if (codesByEmail) {
+    body = `<p class="sub"><span class="pill green">On</span> Email codes. Signing in on a new device asks for a 6-digit code we email to ${me.email}; that device is then remembered for 30 days.</p>
+      ${setup || `<button class="btn small secondary" data-action="2fa-begin">Use an authenticator app instead</button>`}`;
+  } else {
+    body = `<p class="sub"><span class="pill amber">Not set up</span> Add a code from your phone to every sign-in, so a stolen password isn't enough.</p>
+      ${setup || `<button class="btn small" data-action="2fa-begin">Set up two-step sign-in</button>`}`;
+  }
+  return `<div class="card${prompt ? " two-step-prompt" : ""}" id="two-step">
+      <h2>${prompt ? "One more step: two-step sign-in" : "Two-step sign-in"}</h2>
+      ${body}
+      ${prompt && !recoveryCodes ? `<div class="form-inline"><button class="btn small secondary" data-action="2fa-later">Not now</button></div>` : ""}
+    </div>`;
 }
 
 // Change password (S2), its own page under My account. On a server that sends mail, a 6-digit
@@ -251,14 +368,14 @@ function passwordView() {
 }
 
 function billingView() {
-  const owner = me.role === "owner";
+  const owner = can("billing");
   const isDemo = me.company_id === DEMO_COMPANY_ID;
   // A member sees where the trial and the subscription stand; an owner changes them (R6-10).
   if (!owner) return `<h1>Billing</h1>
     ${trialBannerHtml()}
     ${!isDemo && billingInfo && billingInfo.configured ? `<p class="sub billing-status">Subscription: ${billingInfo.status ? (BILLING_WORDS[billingInfo.status] || words(billingInfo.status)) : "none yet"}.</p>` : ""}
     ${billingInfo && billingInfo.warning ? `<p class="blocker">${billingInfo.warning}</p>` : ""}
-    <p class="sub">An owner of this company manages the subscription.</p>`;
+    <p class="sub">Someone whose profile includes billing manages the subscription.</p>`;
   return `
     <h1>Billing</h1>
     ${trialBannerHtml()}
@@ -288,7 +405,7 @@ export function trialBannerHtml() {
 
 // Signed out: what one person had open in Settings isn't kept for the next.
 export function forgetSettings() {
-  twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {}; codeSentTo = "";
+  twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {}; codeSentTo = ""; profileDraft = null;
   helperReview = null; helperDraft = null; auditJobFilter = "all";
 }
 onSessionEnd(forgetSettings);
@@ -425,6 +542,7 @@ export const views = {
   team() { return teamView(); },
   account() { return myAccountView(); },
   password() { return passwordView(); },
+  "delete-company"() { return deleteCompanyView(); },
   billing() { return billingView(); },
   "helper-admin"() {
     return `<h1>Helper answers</h1>
@@ -483,15 +601,48 @@ export const actions = {
   "team-invite": async () => {
     const v = formValues("invite");
     if (refuseForm("invite", /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email) ? {} : { email: "Enter their email, like pat@yourcompany.com." })) return;
-    const r = await postJson("/api/team/invite", { email: v.email, role: v.role || "member" });
+    const r = await postJson("/api/team/invite", { email: v.email, profile_id: v.profile_id || "member" });
     if (!r.ok) { refuseForm("invite", r.data.fields || { _form: r.data.error || "That didn't work." }); return; }
     const data = r.data;
-    if (data.users) setTeamData(escDeep({ users: data.users, invites: data.invites || [] }));
+    if (data.users) setTeamData(escDeep(teamOnly(data)));
     clearForm("invite");
     lastInvite = { link: data.invite_link || (location.origin + data.invite_path), emailed: data.emailed, email_status: data.email_status, email: v.email };
     render();
   },
-  "team-role": async (el) => { await teamPost(`/api/team/${el.dataset.user}/role`, { role: el.dataset.role }, "Role changed."); },
+  "team-profile": async (el) => {
+    const pick = document.getElementById(`prof-${el.dataset.user}`);
+    if (pick) await teamPost(`/api/team/${el.dataset.user}/role`, { profile_id: pick.value }, "Profile changed.");
+  },
+  "profile-new": () => { profileDraft = { id: null, name: "", perms: [] }; clearForm("profile"); render(); document.getElementById("profile-name")?.focus(); },
+  "profile-edit": (el) => {
+    const p = (teamData.profiles || []).find(x => x.id === el.dataset.profile);
+    if (!p) return;
+    profileDraft = { id: unesc(p.id), name: unesc(p.name), perms: p.perms.map(unesc) };
+    clearForm("profile"); render();
+  },
+  "profile-cancel": () => { profileDraft = null; clearForm("profile"); render(); },
+  "profile-save": async () => {
+    const perms = [...document.querySelectorAll("[data-perm]")].filter(b => b.checked).map(b => b.dataset.perm);
+    const name = profileDraft.id === "member" ? "" : (formValues("profile").name || "");
+    if (profileDraft.id !== "member" && refuseForm("profile", name.trim() ? {} : { name: "Name the profile, like Office manager." })) return;
+    const r = await postJson(profileDraft.id ? `/api/team/profiles/${encodeURIComponent(profileDraft.id)}` : "/api/team/profiles", { name, perms });
+    if (!r.ok) { refuseForm("profile", r.data.fields || { _form: r.data.error || "Not saved." }); return; }
+    setTeamData(escDeep(teamOnly(r.data)));
+    profileDraft = null; clearForm("profile");
+    toast("Profile saved.");
+    render();
+  },
+  "profile-delete": async (el) => {
+    if (!(await askConfirm(`Delete the ${unesc(el.dataset.name)} profile?`, "Delete", true))) return;
+    await teamPost(`/api/team/profiles/${encodeURIComponent(el.dataset.profile)}/delete`, {}, "Profile deleted.");
+  },
+  "admin-hand-over": async () => {
+    const to = document.getElementById("admin-to")?.value || "";
+    const name = document.querySelector(`#admin-to option[value="${to}"]`)?.textContent || "them";
+    if (!(await askConfirm(`Hand the Company Admin role to ${name}? Only they will be able to delete the company.`, "Hand over", true))) return;
+    const r = await teamPost("/api/team/admin", { user_id: to, password: document.getElementById("admin-password")?.value || "" }, "The Company Admin role was handed over.");
+    if (r) setMe({ ...me, company_admin: false });
+  },
   "team-remove": async (el) => {
     if (!(await askConfirm(`Remove ${unesc(el.dataset.name)} from the team? They are signed out right away.`, "Remove", true))) return;
     // The server made new inbound email, text and calendar addresses: the Inbox and Calendar show those.
@@ -520,7 +671,12 @@ export const actions = {
     if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
     twoStepSetup = null; recoveryCodes = escDeep(r.data.recovery_codes); me.two_step = true; render();
   },
-  "2fa-done": () => { recoveryCodes = null; render(); },
+  "2fa-done": () => {
+    recoveryCodes = null;
+    if (twoStepPrompt) { setTwoStepPrompt(false); me.two_step_setup_due = false; nav("dashboard"); return; }
+    render();
+  },
+  "2fa-later": () => { setTwoStepPrompt(false); twoStepSetup = null; nav("dashboard"); },
   "2fa-disable": async () => {
     const r = await postJson("/api/auth/2fa/disable", { password: document.getElementById("2fa-off-pw")?.value || "", code: document.getElementById("2fa-off-code")?.value || "" });
     toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
@@ -534,16 +690,27 @@ export const actions = {
     // Saved: the boxes show what the server kept (a phone as (404) 555-0123), not the typed copy.
     if (r && r.ok) { switchDraft = {}; clearForm("company"); render(); }
   },
-  // My account's one Save (S1): the name, when it changed.
+  // My account's one Save (S1): the name, when it changed, and the appearance (G9).
   "save-account": async () => {
     const v = formValues("account");
-    if (refuseForm("account", checkFields(v, { name: "name" }, ["name"]))) return;
+    // The sample company has no name box: only its appearance is saved, in this browser.
+    if ("name" in v && refuseForm("account", checkFields(v, { name: "name" }, ["name"]))) return;
     if ("name" in v && v.name !== unesc(me.name)) {
       const r = await postJson("/api/auth/name", { name: v.name });
       if (!r.ok) { refuseForm("account", r.data.fields || { _form: r.data.error || "Not saved." }); return; }
       setMe(escDeep(r.data.user));
     }
-    clearForm("account");
+    const look = formValues("appearance");
+    const was = savedAppearance();
+    const wanted = { theme: look.theme || was.theme, accent: look.accent || was.accent };
+    if (me.company_id === DEMO_COMPANY_ID) applyAppearance(wanted);   // this browser only
+    else if (wanted.theme !== was.theme || wanted.accent !== was.accent) {
+      const r = await postJson("/api/me/appearance", wanted);
+      if (!r.ok) { refuseForm("appearance", r.data.fields || { _form: r.data.error || "Not saved." }); return; }
+      setMe(escDeep(r.data.user));
+      applyAppearance(r.data.user.appearance);
+    }
+    clearForm("account"); clearForm("appearance");
     toast("Saved");
     render();
   },

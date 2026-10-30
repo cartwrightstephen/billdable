@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 import domain
 import payapp_pdf
+from domain import profiles
 
 
 def _v1_to_v2(state: dict[str, Any]) -> None:
@@ -58,8 +59,39 @@ def _settings_auth_company_address_parts(state: dict[str, Any]) -> None:
             company[key] = value
 
 
+def _settings_auth_permission_profiles(state: dict[str, Any]) -> None:
+    """settings-auth (S6): the company's permission profiles, Owner and Member. Where "Members
+    can send" was on, Member gets the three send permissions; the switch itself is retired.
+    Each person's profile comes from their role (auth.py reads a missing profile_id that way)."""
+    profiles.migrate_company(state)
+
+
 STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4,
-                                                 _settings_auth_company_address_parts]
+                                                 _settings_auth_company_address_parts,
+                                                 _settings_auth_permission_profiles]
+
+
+# ----- steps for auth.json (the accounts file), run once at start-up by auth.upgrade_file -----
+
+def _settings_auth_company_admins(data: dict[str, Any]) -> bool:
+    """settings-auth (S8): each company gets its one Company Admin, the only person who can delete
+    the company: the earliest-created owner, where no one holds it yet. Returns whether anything
+    changed. Safe to run again."""
+    changed = False
+    by_company: dict[str, list[dict[str, Any]]] = {}
+    for user in data.get("users", []):
+        by_company.setdefault(user.get("company_id", ""), []).append(user)
+    for users in by_company.values():
+        if any(u.get("company_admin") for u in users):
+            continue
+        owners = sorted((u for u in users if u.get("role", "owner") == "owner"), key=lambda u: u.get("created_at", ""))
+        if owners:
+            owners[0]["company_admin"] = True
+            changed = True
+    return changed
+
+
+AUTH_STEPS: list[Callable[[dict[str, Any]], bool]] = [_settings_auth_company_admins]
 SCHEMA_VERSION = len(STEPS) + 1
 
 

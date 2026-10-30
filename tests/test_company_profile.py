@@ -73,7 +73,7 @@ class CompanyDetailsTests(unittest.TestCase):
                             ("Unit 4, 88 Mill Rd", ("Unit 4, 88 Mill Rd", None, None, None))):
             state = seed_state()
             state["company"] = {"name": "Old Co", "address": line}
-            state["schema_version"] = migrations.SCHEMA_VERSION - 1
+            state["schema_version"] = migrations.STEPS.index(migrations._settings_auth_company_address_parts) + 1
             migrations.migrate(state)
             c = state["company"]
             self.assertEqual(tuple(c.get(k) for k in ("street", "city", "state", "zip")), parts)

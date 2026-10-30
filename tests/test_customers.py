@@ -194,7 +194,7 @@ class CustomerHttpTests(unittest.TestCase):
         self.assertEqual(spare["job_count"], 0)
 
         res, data = self.request("POST", f"/api/payers/{spare['id']}/delete", {}, member)
-        self.assertEqual((res.status, data["error"]), (403, "Only an owner can do that."))
+        self.assertEqual((res.status, data["error"]), (403, server.NO_PERMISSION))
         res, data = self.request("POST", f"/api/payers/{saved['id']}/delete", {}, owner)
         self.assertEqual(res.status, 409)
         self.assertIn("can't be deleted", data["error"])

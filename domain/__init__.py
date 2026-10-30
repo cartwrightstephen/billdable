@@ -1886,10 +1886,10 @@ ADDRESS_WORDS = {"street": "street address", "city": "city", "state": "state", "
 # The G1 rule each company field is checked by (domain/validate.py) when it changes.
 COMPANY_RULES = {"name": "name", "phone": "phone", "license": "licence", "street": "street", "city": "city", "state": "state", "zip": "zip"}
 BILLING_STYLES = {"pay_apps", "draws"}
-# On/off company settings on Settings, Company, with their default: members may send pay apps,
-# waivers and retainage requests (R4-09); owners get the daily "due today" email (R4-10).
-COMPANY_SWITCHES = {"members_can_send": False, "daily_email": True}
-SWITCH_WORDS = {"members_can_send": "members can send", "daily_email": "daily email of what's due"}
+# On/off company settings on Settings, Company, with their default: owners get the daily "due
+# today" email (R4-10). Who may send is a permission now (S6, domain/profiles.py), not a switch.
+COMPANY_SWITCHES = {"daily_email": True}
+SWITCH_WORDS = {"daily_email": "daily email of what's due"}
 
 
 def payer_timing(state: dict[str, Any]) -> dict[str, tuple[float, int]]:

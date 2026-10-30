@@ -5,7 +5,7 @@ import { unesc } from "./format.js";
 // A page's tab: a detail page's list, Retainage, which is part of the Closeout tab (R6-01), and
 // Paperwork, which is a column of Pay apps (R6-03).
 export const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-detail": "payapps", packets: "payapps", "co-detail": "cos", "waiver-detail": "waivers", retainage: "waivers",
-  password: "account" };
+  password: "account", "delete-company": "company" };
 
 export const VIEW_PATHS = {
   dashboard: "/dashboard", results: "/dashboard/results", calendar: "/dashboard/calendar",
@@ -17,7 +17,7 @@ export const VIEW_PATHS = {
   automations: "/automations",
   company: "/settings/company", team: "/settings/team", account: "/settings/account", billing: "/settings/billing",
   audit: "/settings/audit", "helper-admin": "/settings/helper-answers",
-  password: "/settings/account/password",
+  password: "/settings/account/password", "delete-company": "/settings/company/delete",
 };
 
 // Older addresses that still open a page, so links in emails and bookmarks keep working:
