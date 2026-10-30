@@ -430,8 +430,10 @@ function a11yPass(root) {
   });
 }
 
-export function emptyState(title, body, action = "") {
-  return `<div class="empty-state"><strong>${title}</strong><p>${body}</p>${action}</div>`;
+// An empty list: its title and, when there is one, the button to fill it (G6: no sentence about
+// the app). body is only for a not-found page's reason.
+export function emptyState(title, body = "", action = "") {
+  return `<div class="empty-state"><strong>${title}</strong>${body ? `<p>${body}</p>` : ""}${action}</div>`;
 }
 
 // What the signed-in person may do (R4-09): members draft and get things ready; an owner sends,

@@ -90,6 +90,10 @@ class UiServerTests(unittest.TestCase):
             self.assertIn(b'<div id="app">', body, path)
             self.assertEqual(res.getheader("Cache-Control"), "no-cache", path)
 
+    def test_the_summary_email_route_is_gone(self):  # T5: nothing in the app calls it
+        self.assertFalse(any("summary-email" in r.pattern for r in server.ROUTES))
+        self.assertFalse(hasattr(server.Handler, "_p_summary_email"))
+
     def test_every_page_address_has_its_section(self):
         # Each first part of a page address in static/js/routes.js (old ones included) serves the app.
         import re

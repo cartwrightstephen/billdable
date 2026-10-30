@@ -11,7 +11,6 @@ import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpande
 import { toast, render, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
 import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
-import { trialBannerHtml } from "./settings.js";
 
 export let metricsData = null;   // {period, data} from /api/metrics
 export let metricsPeriod = "90";
@@ -144,9 +143,8 @@ export const views = {
     const stage = (key, label) => `<button class="stage ${dashFilter === key ? "active" : ""}" data-action="filter" data-filter="${key}" aria-pressed="${dashFilter === key}">${label}</button>`;
     return `
       <h1>Overview</h1>
-      ${trialBannerHtml()}
       ${onboardingHtml()}
-      ${!state.jobs.length && !state.closed_jobs_total && (me.onboarding_dismissed || isDemo) ? emptyState("No jobs yet", "Create the first job. Its record holds notes and files until a pay app needs them.", `<button class="btn" data-action="onb-newjob">New job</button>`) : ""}
+      ${!state.jobs.length && !state.closed_jobs_total && (me.onboarding_dismissed || isDemo) ? emptyState("No jobs yet", "", `<button class="btn" data-action="onb-newjob">New job</button>`) : ""}
       ${isDemo && !helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
@@ -196,24 +194,23 @@ export const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("No jobs in this view", "Pick another filter above.")}` : ""}
+      </div>` : emptyState("No jobs in this view")}` : ""}
     `;
   },
   results() {
     const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
     const head = `<h1>Results</h1>
-      <p class="sub">${termText("What Duracash recorded for your company, counted from your own pay apps and payments. Nothing here is estimated.")}</p>
-      <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}
-        <button class="btn small secondary" data-action="metrics-email">Email me last month's summary</button></div>`;
+      <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}</div>`;
     if (!metricsData || metricsData.period !== metricsPeriod) return head + `<p class="sub">Loading…</p>`;
     const m = metricsData.data;
     const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
+    const num = (v) => v === null || v === undefined ? "—" : String(v);
     return head + `
       <div class="metrics">
-        <div class="metric"><div class="k">${termText("Work done to pay app sent")}</div><div class="v">${days(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
-        <div class="metric"><div class="k">${termText("Pay app sent to paid")}</div><div class="v">${days(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${days(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
+        <div class="metric"><div class="k">${termText("Days from Job Completion to Pay App Sent")}</div><div class="v">${num(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
+        <div class="metric"><div class="k">${termText("Days from Pay App Sent to Paid")}</div><div class="v">${num(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${num(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
         <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
-        <div class="metric"><div class="k">Sent back by the client</div><div class="v">${m.sent_back}</div><div class="sub row-sub">reasons saved to the client playbook and draft changes</div></div>
+        <div class="metric"><div class="k">${termText("Pay app rejections by Clients")}</div><div class="v">${m.sent_back}</div><div class="sub row-sub">of ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
       </div>
       <div class="metrics">
         <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} ${termText("pay apps")}</div></div>
@@ -221,8 +218,8 @@ export const views = {
         <div class="metric"><div class="k">Change orders billed</div><div class="v">${money(m.change_orders_billed_cents)}</div><div class="sub row-sub">signed, all time</div></div>
         <div class="metric"><div class="k">Held-back money received</div><div class="v">${money(m.retainage_collected_cents)}</div><div class="sub row-sub">all time</div></div>
       </div>
-      <div class="card"><h2>Done but not billed</h2>
-        ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">Every finished job has a pay app out.</p>`}
+      <div class="card"><h2>Jobs completed with outstanding billings</h2>
+        ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">None.</p>`}
       </div>
       ${m.by_payer.length ? `<div class="table-wrap"><table>
         <tr><th>Client</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
@@ -285,7 +282,6 @@ export const views = {
       </div>` : "";
     return `
       <h1>Calendar</h1>
-      <p class="sub">Follow-ups, expected approvals, payments, and closeouts.</p>
       <p class="notice" id="cal-not-legal">These are your contract and follow-up dates, not legal deadlines. Check lien and prompt-pay deadlines with your attorney.</p>
       <div class="filter-bar">
         <label for="cal-filter" class="inline-label">Job</label>
@@ -342,10 +338,6 @@ export const views = {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in app.js.
 export const actions = {
   "metrics-period": (el) => { metricsPeriod = el.dataset.period; metricsData = null; render(); },
-  "metrics-email": async () => {
-    const r = await postJson("/api/metrics/summary-email", {});
-    toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
-  },
   "onb-newjob": () => { nav("jobs"); formOpen.newjob = true; render(); document.getElementById("nj-name")?.focus(); },
   "onb-job": () => { const j = state.jobs.find(x => !x.closed) || state.jobs[0]; if (j) nav("job", j.id); },
   // A setup step: open its page and bring the part to use into view.

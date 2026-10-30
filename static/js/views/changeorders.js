@@ -49,7 +49,6 @@ export const views = {
     const openJobs = state.jobs.filter(j => !j.closed);
     return `
       <h1>Change orders</h1>
-      <p class="sub">Extra or changed work. Not billable until the client signs.</p>
       ${openJobs.length ? `<div class="card" data-form-key="newco">
         <h2>New change order</h2>
         ${formErrorLine("newco")}
@@ -71,7 +70,7 @@ export const views = {
             <td>${c.included_in_billing ? "Yes" : "No"}</td>
           </tr>`).join("")}
         </table>
-      </div>` : emptyState("No change orders", openJobs.length ? "Create one above when the scope changes." : "Create a job first.")}
+      </div>` : emptyState("No change orders", "", openJobs.length ? "" : `<button class="btn" data-action="onb-newjob">New job</button>`)}
     `;
   },
 };

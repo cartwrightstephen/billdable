@@ -1636,21 +1636,6 @@ class Handler(BaseHTTPRequestHandler):
                 results.append({"key": key, "reference": ref, "ok": False, "error": str(exc)})
         ctx.reply["import_results"] = results
 
-    def _p_summary_email(self, m, ctx: "Ctx") -> None:
-        if ctx.company_id == auth.DEMO_COMPANY_ID or not ctx.user.get("email_verified"):
-            self._json(409, {"error": "Confirm your email address first (Settings, My account)." if ctx.company_id != auth.DEMO_COMPANY_ID
-                             else "The demo account doesn't send email."})
-            return
-        first = datetime.now(timezone.utc).date().replace(day=1) - timedelta(days=1)
-        with company_lock(ctx.company_id):
-            state = load_company(ctx.company_id)
-        subject, text = metrics.month_summary(state, first.year, first.month)
-        result = self._system_email(ctx.user["email"], subject, text, ctx.company_id)
-        if result != "sent":
-            self._json(409, {"error": f"Not sent: {result}."})
-            return
-        self._json(200, {"ok": True, "message": f"Last month's summary is on its way to {ctx.user['email']}."})
-
     def _p_two_step(self, m, ctx: "Ctx") -> None:
         step = m.group(1)
         try:
@@ -2516,7 +2501,6 @@ ROUTES = [
     Route("POST", r"/api/auth/2fa/(begin|enable|disable)", "_p_two_step", "body"),
     Route("POST", r"/api/import/payments-csv", "_p_payments_csv", "body"),
     Route("POST", r"/api/import/rotate", "_p_rotate", "body", owner=True),
-    Route("POST", r"/api/metrics/summary-email", "_p_summary_email", "body"),
     Route("POST", r"/api/qbo/connect", "_p_qbo_connect", "body", owner=True),
     Route("POST", r"/api/billing/checkout", "_p_billing_checkout", "body", owner=True),
     Route("POST", r"/api/billing/portal", "_p_billing_portal", "body", owner=True),
@@ -2680,7 +2664,7 @@ JOB_ACTIONS = {
     "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
     "edit": (False, _edit_job),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
-    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter what happened on the job."), c.actor)),
+    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter the diary entry."), c.actor)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name", "attachment"), c.actor)),
 }
 

@@ -16,7 +16,6 @@ export const views = {
     const today = new Date();
     return `
       <h1>Unpaid</h1>
-      <p class="sub">What is unpaid, who to contact, and a one-tap follow-up.</p>
       ${open.length ? `<div class="table-wrap">
         <table>
           <tr><th>Job</th><th>Unpaid</th><th>Days since sent</th><th>Due</th><th>Expected</th><th>Contact</th><th>Follow up</th></tr>
@@ -51,7 +50,7 @@ export const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("Nothing unpaid", termText("Unpaid pay apps show up here after one is sent."))}
+      </div>` : emptyState("Nothing unpaid")}
     `;
   },
 };

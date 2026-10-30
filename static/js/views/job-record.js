@@ -41,13 +41,11 @@ export function recordCardHtml(j) {
   return `<div class="card">
         <h2>Job record</h2>
         ${j.closed ? "" : `<div class="dropzone small" data-job="${j.id}">
-          <strong>${(j.records || []).length ? "Add photos, PDFs, saved emails or spreadsheets" : "Nothing in the record yet. Add the contract, photos and tickets"}</strong>
           <div class="capture-buttons">
             <button class="btn small" data-action="pick-files" data-job="${j.id}" data-capture="1">Take a photo</button>
             <button class="btn small secondary" data-action="pick-files" data-job="${j.id}">Add a file</button>
           </div>
-          <span class="sub pointer-only">Or drop files here or paste a screenshot.</span>
-          <span class="sub">Forwarded emails and texts come in through the <button class="linkish" data-action="nav" data-view="inbox">Inbox</button>.</span>
+          <span class="sub pointer-only">Or drop files here.</span>
         </div>
         <details class="paste-job"><summary>Paste an email, a text thread, or notes</summary>${pasteBoxHtml(j.id)}</details>`}
         ${(j.records || []).slice().reverse().map(r => recordRow(j, r)).join("")}

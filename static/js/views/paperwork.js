@@ -47,7 +47,7 @@ export const views = {
           <div class="list-item packet-item ${p.present || skipped ? "present" : "absent"}">
             <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
               ${!p.present && !skipped ? `<span class="field-error">${p.blocker}</span>` : ""}
-              ${skipped ? `<div class="sub">Not needed for this client${!["Not needed for this customer", "Not needed for this client"].includes(p.skipped_reason) ? ": " + p.skipped_reason : ""}</div>` : ""}
+              ${skipped ? `<div class="sub">Not needed for this client${/^Not needed for this \w+$/.test(unesc(p.skipped_reason)) ? "" : ": " + p.skipped_reason}</div>` : ""}
               ${p.present && p.present_reason === "Produced by Duracash" ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
               ${p.present && p.present_reason && p.present_reason !== "Produced by Duracash" ? `<div class="sub">Marked as in hand: ${p.present_reason}</div>` : ""}
               ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}

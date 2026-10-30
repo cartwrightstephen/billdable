@@ -4,7 +4,7 @@ import { esc, unesc, escDeep, fmtDate, fmtDateTime, words } from "../format.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues, clearForm, draftValue } from "../forms.js";
-import { actionWords, STYLE_NOTE } from "../terms.js";
+import { actionWords } from "../terms.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
 import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding } from "../app-core.js";
@@ -67,7 +67,6 @@ function teamCardHtml() {
   const locked = inviteLocked(me, mailReady, DEMO_COMPANY_ID);
   return `
       <h2>Team</h2>
-      <p class="sub">Owners manage the team, inbound addresses, reset and deletion, and send, delete drafts and finish jobs. Members do everything else: they draft pay apps, record payments and add paperwork. Every action is in the Activity log with the person's name.</p>
       <div class="table-wrap"><table>
         <tr><th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th></tr>
         ${users.map(u => `<tr><td>${u.name}${u.id === me.id ? " (you)" : ""}</td><td>${u.email}</td><td>${words(u.role)}</td><td>${fmtDate(u.created_at)}</td>
@@ -116,21 +115,16 @@ function companyView() {
   // arriving): the boxes are a form (data-field), so watchForms keeps it.
   const co = state.company;
   const typed = (name) => esc(draftValue("company", name, unesc(co[name] || "")));
-  const style = draftValue("company", "billing_style", co.billing_style === "draws" ? "draws" : "pay_apps");
   return `
     <h1>Company</h1>
     <div class="card" id="company-card" data-form-key="company">
       <h2>Company details</h2>
-      <p class="sub">On every pay app and its PDF, in the From block.${owner ? "" : " Owners can change these."}</p>
+      ${owner ? "" : `<p class="sub">Owners can change these.</p>`}
       <div class="form-grid">
         <div><label for="co-name">Company name</label><input id="co-name" data-field="name" value="${typed("name")}"${owner ? "" : " disabled"}></div>
         <div><label for="co-phone">Phone</label><input id="co-phone" data-field="phone" value="${typed("phone")}" inputmode="tel" autocomplete="tel"${owner ? "" : " disabled"}></div>
         <div class="span-2"><label for="co-address">Address</label><input id="co-address" data-field="address" value="${typed("address")}" placeholder="Street, city, state ZIP" autocomplete="street-address"${owner ? "" : " disabled"}></div>
         <div><label for="co-license">Contractor licence number</label><input id="co-license" data-field="license" value="${typed("license")}"${owner ? "" : " disabled"}></div>
-        <div><label for="co-style">How you bill</label><select id="co-style" data-field="billing_style"${owner ? "" : " disabled"}>
-          <option value="pay_apps"${style === "draws" ? "" : " selected"}>Pay apps to GCs or owners</option>
-          <option value="draws"${style === "draws" ? " selected" : ""}>Draws from homeowners</option></select>
-          <span class="sub">${STYLE_NOTE} Either ends when the first one sent through Duracash is paid.</span></div>
       </div>
       ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
@@ -232,7 +226,6 @@ function billingView() {
       ${billingInfo.partner ? `<p class="sub"><span class="pill copper">Design partner</span> The design-partner price applies.</p>` : ""}
       <p class="sub">Charged on the ${ordinal(Number(billingInfo.billing_day) || 5)} of each month, after your own pay apps are out. Payment by card through Stripe. Duracash never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
     </div>` : ""}
-    ${isDemo || !(billingInfo && billingInfo.configured) ? `<p class="sub">Billing isn't live on this server yet, so there is nothing to pay.</p>` : ""}
   `;
 }
 
@@ -242,9 +235,9 @@ export function trialBannerHtml() {
   const day = (iso) => new Date(unesc(iso)).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   const live = !!(billingInfo && billingInfo.configured);
   if (t.state === "active") {
-    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Duracash is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.${live ? "" : " Billing isn't live yet."}</div>`;
+    return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Duracash is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.</div>`;
   }
-  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : me && me.role === "owner" ? " Subscribe in Settings, Billing." : " An owner can subscribe in Settings, Billing.") : " Billing isn't live yet, so nothing changes for now."}</div>`;
+  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : me && me.role === "owner" ? " Subscribe in Settings, Billing." : " An owner can subscribe in Settings, Billing.") : ""}</div>`;
 }
 
 // Signed out: what one person had open in Settings isn't kept for the next.
@@ -388,7 +381,7 @@ export const views = {
   billing() { return billingView(); },
   "helper-admin"() {
     return `<h1>Helper answers</h1>
-      <p class="sub">What clients asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
+      <p class="sub">What users asked the helper that it couldn't answer well, and the answers it uses. Write an answer once; every company gets it right away. Only accounts listed in HELPER_ADMIN_USER_IDS see this page.</p>
       <div id="helper-admin-body">Loading…</div>
       <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial and, once Stripe is set up, its subscription. Nothing is enforced unless BILLING_ENFORCE=1.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
   },
@@ -397,7 +390,7 @@ export const views = {
     const events = page ? page.entries : [];
     return `
       <h1>Activity log</h1>
-      <p class="sub">Every action: what was drafted, who sent it, and when.${state.audit_chain ? ` ${state.audit_chain.ok ? "The chain of records checks out." : `<span class="blocker">The chain of records is broken at ${state.audit_chain.broken_at}.</span>`}` : ""}</p>
+      ${state.audit_chain && !state.audit_chain.ok ? `<p class="blocker">The chain of records is broken at ${state.audit_chain.broken_at}.</p>` : ""}
       <div class="filter-bar">
         <label for="audit-filter" class="inline-label">Job</label>
         <select id="audit-filter" data-filter-for="audit">
@@ -410,7 +403,7 @@ export const views = {
           <tr><th>What happened</th><th>When</th><th>Who</th><th>Action</th></tr>
           ${events.map(e => `<tr><td>${e.detail}</td><td>${fmtDateTime(e.at)}</td><td>${e.actor}</td><td>${actionWords(e.action)}</td></tr>`).join("")}
         </table>
-      </div>${moreButton("audit", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("Nothing logged yet", "Actions on jobs are recorded here.")}
+      </div>${moreButton("audit", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("Nothing logged yet")}
     `;
   },
 };
@@ -478,7 +471,7 @@ export const actions = {
   },
   "save-company": async () => {
     const v = (k) => document.getElementById(k)?.value || "";
-    const r = await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license"), billing_style: v("co-style") || "pay_apps" });
+    const r = await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license") });
     // Saved: the boxes show what the server kept (spaces tidied), not the typed copy.
     if (r && r.ok) { clearForm("company"); render(); }
   },

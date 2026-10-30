@@ -198,7 +198,6 @@ export const views = {
     const totalCollected = state.totals.closed_collected_cents || 0;
     return `
       <h1>Job history</h1>
-      <p class="sub">Finished jobs, kept on record.</p>
       <div class="summary-row">
         <div class="metric"><div class="k">Finished jobs</div><div class="v">${state.closed_jobs_total || 0}</div></div>
         <div class="metric"><div class="k">Received on finished jobs</div><div class="v">${money(totalCollected)}</div></div>
@@ -216,7 +215,7 @@ export const views = {
               <td>${j.done_notes || j.status_label}</td>
             </tr>`).join("")}
         </table>
-      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No finished jobs yet", "Once a job is paid in full, use Finish job.")}
+      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No finished jobs yet")}
     `;
   },
 };

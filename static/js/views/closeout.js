@@ -38,7 +38,6 @@ export const views = {
     return `
       ${backButton("waivers", "Closeout")}
       <h1>Waivers: ${j.name}</h1>
-      <p class="sub">Duracash never writes a waiver: state law sets the forms. Drop your signed waiver on the job record; sending attaches the newest one.</p>
       <div class="card">
         <h2>What the client needs</h2>
         <p>${j.waiver_standard || j.payer.packet || "See the Client playbook."}</p>
@@ -72,10 +71,8 @@ export const views = {
     const open = state.jobs.filter(j => j.money.retainage_open_cents > 0);
     return `
       <h1>Closeout</h1>
-      <p class="sub">${termText("Lien waivers for each paid pay app, and the money held back until the job is closed out.")}</p>
       <section class="card closeout-waivers" aria-labelledby="closeout-waivers-h">
         <h2 id="closeout-waivers-h">Lien waivers</h2>
-        <p class="sub">${termText("One lien waiver per paid pay app. Duracash never writes the waiver; it sends the signed one on the job record.")}</p>
         <details class="waiver-hints"><summary>Which type?</summary>
           <ul>${Object.entries(WAIVER_KINDS).map(([k, v]) => `<li><strong>${v}.</strong> ${waiverHint(k)}</li>`).join("")}</ul>
         </details>
@@ -93,11 +90,10 @@ export const views = {
               </tr>`;
             }).join("")}
           </table>
-        </div>` : emptyState("No waivers due", "A waiver is due once a payment is recorded.")}
+        </div>` : emptyState("No waivers due")}
       </section>
       <section class="card closeout-retainage" id="closeout-retainage" aria-labelledby="closeout-retainage-h">
         <h2 id="closeout-retainage-h">Held back, still owed</h2>
-        <p class="sub">Retainage: what is holding each release, and how to get it. Before a job is done you can ask for part of it, for example at substantial completion.</p>
         ${open.length ? `<div class="table-wrap">
           <table>
             <tr><th>Job</th><th>Held back</th><th>Holding it up</th><th>Next</th><th>Contact</th></tr>
@@ -112,7 +108,7 @@ export const views = {
               </tr>`;
             }).join("")}
           </table>
-        </div>` : emptyState("Nothing held back", "Money held back (retainage) shows here once a job holds it. Set a retainage percent when creating the job.")}
+        </div>` : emptyState("Nothing held back")}
       </section>
     `;
   },

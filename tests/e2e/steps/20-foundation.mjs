@@ -62,6 +62,29 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await phone.context().close();
   });
 
+  await step("the Dashboard and Results carry no notes about the app (T2, T4, T5, T7, T8)", async () => {
+    await page.goto(BASE + "/dashboard");
+    await page.getByRole("heading", { name: "Overview" }).waitFor();
+    assert.equal(await page.locator("#view .trial-banner").count(), 0, "no trial banner on the Overview");
+    await page.goto(BASE + "/dashboard/results");
+    await page.locator(".metric .k", { hasText: "Days from Job Completion to Pay App Sent" }).waitFor();
+    assert.deepEqual((await page.locator(".metrics").first().locator(".metric .k").allInnerTexts()).map(s => s.trim()),
+      ["Days from Job Completion to Pay App Sent", "Days from Pay App Sent to Paid", "Follow-ups per pay app", "Pay app rejections by Clients"]);
+    await page.getByRole("heading", { name: "Jobs completed with outstanding billings" }).waitFor();
+    for (const gone of ["Nothing here is estimated", "Email me last month's summary", "Every finished job has a pay app out"]) {
+      assert.equal(await page.getByText(gone).count(), 0, gone);
+    }
+  });
+
+  await step("the Daily record has a Diary, and a job page opens it with that job picked (T9, T10)", async () => {
+    await page.goto(BASE + "/jobs/job-oak");
+    await page.getByRole("button", { name: "New daily record" }).click();
+    await page.getByRole("heading", { name: "Daily record" }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/jobs/daily");
+    assert.equal(await page.inputValue("#daily-job"), "job-oak");
+    await page.locator("label", { hasText: "Diary" }).waitFor();
+  });
+
   await step("retainage boxes have no number spinner (J3)", async () => {
     await page.goto(BASE + "/jobs?new=1");
     const box = page.locator("#nj-retainage");

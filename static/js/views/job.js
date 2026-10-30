@@ -57,8 +57,7 @@ function contactFormHtml(j) {
     ${field({ form: "contact", name: "text", id: "contact-text", label: "What did they say?", required: true, placeholder: "Check goes out Friday", wide: true })}
     ${field({ form: "contact", name: "next_on", id: "contact-next", label: "Check again on (optional)", type: "date", attrs: `min="${todayIso()}"` })}
     <button class="btn small" data-action="note-contact" data-id="${j.id}">Save</button>
-    <button class="btn small secondary" data-action="toggle-form" data-form="contact">Cancel</button></div>
-    <p class="sub">Kept on the job record. It counts as a follow-up; with a date, Today waits until then.</p></div>`;
+    <button class="btn small secondary" data-action="toggle-form" data-form="contact">Cancel</button></div></div>`;
 }
 
 // Today on this device, as a date box wants it (YYYY-MM-DD).
@@ -191,7 +190,8 @@ export const views = {
           <h1>${j.name}</h1>
           <p class="sub">${statusPill(j)} ${j.code} · ${j.address} · ${j.payer.name}</p>
         </div>
-        ${j.closed ? "" : `<button class="btn secondary small" data-action="toggle-form" data-form="editjob" aria-expanded="${!!formOpen.editjob}">${formOpen.editjob ? "Cancel" : "Edit job"}</button>`}
+        ${j.closed ? "" : `<div class="form-inline"><button class="btn secondary small" data-action="daily-for-job" data-id="${j.id}">New daily record</button>
+          <button class="btn secondary small" data-action="toggle-form" data-form="editjob" aria-expanded="${!!formOpen.editjob}">${formOpen.editjob ? "Cancel" : "Edit job"}</button></div>`}
       </div>
       ${formOpen.editjob ? `
         <div class="card" data-form-key="editjob">
@@ -204,7 +204,7 @@ export const views = {
             ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : ejf.contract_cents}
             ${ejf.retainage_pct}
           </div>
-          <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The job code ${j.code} stays the same, because emails and texts are filed by it. Who pays you and where pay apps go are in <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
+          <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}Who pays you and where pay apps go: <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
           <div class="form-inline">
             <button class="btn" data-action="save-job" data-id="${j.id}">Save changes</button>
             ${j.can_delete && may("delete") ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
@@ -225,7 +225,6 @@ export const views = {
             <input id="learn-reason" placeholder="For example: needs a revised schedule of values" class="grow">
             <button class="btn small secondary" data-action="learn" data-id="${j.id}">Save to the client playbook</button>
           </div>
-          <p class="sub">The reason is kept in this client's playbook and shown before the next send.</p>
         </details>
       </div>` : ""}
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j, periodField("sovprogress", j), formErrorLine("sovprogress")) : ""}
@@ -284,7 +283,7 @@ export const views = {
           ${j.change_orders.length ? j.change_orders.map(co => `
             <div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${coStatusWords(co.status)}</span>${co.included_in_billing ? ` <span class="sub">${termText("on a pay app")}</span>` : ""}
               ${coSignControls(j, co, !co.included_in_billing && !openDraft && co.amount_cents > 0 ? `<button class="btn small secondary" data-action="include-co" data-id="${j.id}" data-co="${co.id}">Bill now (send waits for signature)</button>` : "")}
-            </div>`).join("") : `<p class="sub">No change orders. Add one if the scope changed.</p>`}
+            </div>`).join("") : `<p class="sub">None.</p>`}
         </div>
       </div>
       ${recordCardHtml(j)}

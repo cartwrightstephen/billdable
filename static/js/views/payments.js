@@ -87,7 +87,7 @@ export function qboCardHtml(onPayments) {
         ${qboReconcile ? (qboReconcile.rows.length
           ? `<h3>Where Duracash and QuickBooks differ</h3>${qboReconcile.rows.map(r => `<div class="list-item"><span class="pill">${RECON_WORDS[r.kind] || words(r.kind)}</span> <a href="${pathFor("job", r.job_id)}" data-action="open-job" data-id="${r.job_id}">${r.job}</a>: ${r.detail}${r.kind === "missing" && r.invoice_id ? " " + qboCsvLink(r.job_id, r.invoice_id) : ""}</div>`).join("")}`
           : `<p class="sub">Duracash and QuickBooks agree on every sent pay app (${qboReconcile.invoices} QuickBooks invoices checked).</p>`) : ""}`}
-    <p class="sub">Each sent pay app also has <strong>Download for QuickBooks</strong>: a file QuickBooks imports as an invoice, with retainage as its own line.</p></div>`;
+    </div>`;
 }
 
 // This module's pages, by the name their address opens (routes.js).
@@ -97,7 +97,7 @@ export const views = {
     state.jobs.forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     const imp = paymentImport;
     const importCard = `<details class="card"${imp || !pays.length ? " open" : ""}><summary><strong>Import payments from QuickBooks (CSV)</strong></summary>
-      <p class="sub">In QuickBooks, export a report to CSV and paste it here. Any QuickBooks report with payments in it works; invoices and refunds are skipped. Duracash proposes a pay app for each payment and records nothing until you tick and apply. A check already recorded from the same client is skipped, so importing the same file twice is safe.</p>
+      <p class="sub">Paste a QuickBooks report with payments in it (CSV), or choose the file. Nothing is recorded until you tick and apply.</p>
       ${imp ? `${imp.warnings.length ? `<div class="sov-warn">${imp.warnings.map(w => `<div>${w}</div>`).join("")}</div>` : ""}
         <div class="table-wrap"><table>
           <tr><th>Record</th><th>Date</th><th>Client</th><th>Number</th><th>Amount</th><th>Pay app</th><th>Why</th></tr>
@@ -129,7 +129,7 @@ export const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("No payments yet", "Paste your QuickBooks payments export above, or record one from a job page with Record a payment.")}
+      </div>` : emptyState("No payments yet")}
     `;
   },
 };

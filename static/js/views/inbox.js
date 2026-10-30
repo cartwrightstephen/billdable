@@ -160,8 +160,7 @@ export function pasteBoxHtml(jobId = "") {
         </div>
         <textarea id="paste-text" data-field="text" rows="6" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in">${esc(text)}</textarea>
         <p id="paste-hint" class="sub paste-hint" role="status"></p>
-        <div class="form-inline"><button class="btn" data-action="import-text"${jobId ? ` data-job="${jobId}"` : ""}>${jobId ? "Add to job" : "Add to Inbox"}</button>
-        <span class="sub">Notes split at every line that starts with a date (10/12, Oct 12, 2026-10-12). Exported Apple Notes or a typed-up notebook work.</span></div></div>`;
+        <div class="form-inline"><button class="btn" data-action="import-text"${jobId ? ` data-job="${jobId}"` : ""}>${jobId ? "Add to job" : "Add to Inbox"}</button></div></div>`;
 }
 
 // Typing or pasting in the box: pick what it looks like, unless the person already chose.
@@ -313,10 +312,10 @@ export const views = {
     const jobName = (id) => (state.jobs.find(j => j.id === id) || {}).name || "a job";
     return `
       <h1>Inbox</h1>
-      <p class="sub">Bring in photos, PDFs, saved emails, text threads and notes. Duracash suggests the job from the job code, address, name or sender; you file it with one click. Nothing is filed without you.</p>
+      <p class="sub">Duracash suggests the job; nothing is filed without you.</p>
       <div class="card inbox-waiting">
         <div class="top"><h2>Waiting (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
-        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting", "Take a photo, add files, paste an email or notes below, or set up email and text forwarding.")}
+        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting.")}
       </div>
       <div class="dropzone" tabindex="0">
         <label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>
@@ -324,11 +323,8 @@ export const views = {
           <button class="btn" data-action="pick-files" data-ask-job="1" data-capture="1">Take a photo</button>
           <button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button>
         </div>
-        <span class="sub touch-only">Photos, PDFs, Word, Excel, CSV, saved emails, up to ${MAX_UPLOAD_MB} MB each. They wait below for you to add them to the job.</span>
-        <div class="pointer-only">
-          <strong>Drop files anywhere on this page</strong>
-          <span class="sub">Photos, PDFs, Word, Excel, CSV, saved emails (.eml), up to ${MAX_UPLOAD_MB} MB each. Or <button class="linkish" data-action="pick-files" data-ask-job="1">choose files</button>, or press Ctrl+V / ⌘V to paste a screenshot. They wait below for you to add them to the job.</span>
-        </div>
+        <div class="pointer-only"><button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button></div>
+        <span class="sub">Photos, PDFs, Office files, CSV or saved emails, up to ${MAX_UPLOAD_MB} MB.<span class="pointer-only"> Drop them anywhere or press Ctrl+V / ⌘V.</span></span>
       </div>
       <div class="card">
         <h2>Paste an email, a text thread, or notes</h2>

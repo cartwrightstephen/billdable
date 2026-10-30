@@ -405,7 +405,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
 
   await step("the audit chain checks out after all that", async () => {
     await page.goto(BASE + "/settings/audit");
-    await page.getByText("The chain of records checks out.").waitFor();
+    await page.getByRole("heading", { name: "Activity log" }).waitFor();
+    await page.locator("#view table").waitFor();
+    // Only a broken chain is said (S14); an intact one shows nothing.
+    assert.equal(await page.locator("#view .blocker", { hasText: "chain of records is broken" }).count(), 0);
+    assert.equal(await page.getByText("checks out").count(), 0);
   });
 
   await step("Today's queue: one main button per row, and a follow-up names who it goes to first", async () => {

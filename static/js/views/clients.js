@@ -31,7 +31,6 @@ export const views = {
       <div class="job-head">
         <div>
           <h1>Client playbook</h1>
-          <p class="sub">Who each client is, where pay apps go, the paperwork they need, and how long they take to pay. These set follow-up timing and the calendar.</p>
         </div>
         <button class="btn secondary small" data-action="toggle-form" data-form="addpayer" aria-expanded="${!!formOpen.addpayer}">${formOpen.addpayer ? "Cancel" : "Add client"}</button>
       </div>
@@ -85,7 +84,7 @@ export const views = {
           </details>` : ""}
           ${deletePayerHtml(p, { owner: !me || me.role === "owner", jobs: state.jobs, canMerge: others.length > 0 })}
         </details>`;
-      }).join("") : emptyState("No clients yet", "Add one here, or one is added with the first job for that client.", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add client</button>`)}
+      }).join("") : emptyState("No clients yet", "", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add client</button>`)}
     `;
   },
 };

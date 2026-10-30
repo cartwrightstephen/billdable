@@ -19,7 +19,7 @@ test("typed company details survive a redraw, and each box is part of the compan
   core.setState(company());
   const saved = reg.views.company();
   assert.match(saved, /data-form-key="company"/);
-  for (const [id, field] of [["co-name", "name"], ["co-phone", "phone"], ["co-address", "address"], ["co-license", "license"], ["co-style", "billing_style"]])
+  for (const [id, field] of [["co-name", "name"], ["co-phone", "phone"], ["co-address", "address"], ["co-license", "license"]])
     assert.match(saved, new RegExp(`id="${id}" data-field="${field}"`));
   assert.match(saved, /id="co-name" data-field="name" value="Pine &amp; Co"/);
   // Typed (watchForms keeps it), then a switch saves and the page is drawn again.
@@ -35,10 +35,14 @@ test("once saved, the boxes show what was saved", async () => {
   core.setState(company());
   forms.formDraft.company = { address: "2  Elm St" };
   const box = (value) => ({ value });
-  Object.assign(dom.byId, { "co-name": box("Pine & Co"), "co-address": box("2  Elm St"), "co-phone": box(""), "co-license": box(""), "co-style": box("pay_apps") });
+  Object.assign(dom.byId, { "co-name": box("Pine & Co"), "co-address": box("2  Elm St"), "co-phone": box(""), "co-license": box("") });
   dom.answers = [(p) => (p === "/api/company" ? { status: 200, body: company({ address: "2 Elm St" }) } : undefined)];
   await reg.actions["save-company"]();
   assert.equal(forms.formDraft.company, undefined);
+  // How you bill is no longer on the page (S4): the save leaves the company's billing style alone.
+  const sent = dom.requests.find(r => r.path === "/api/company");
+  assert.equal("billing_style" in sent.body, false);
+  assert.doesNotMatch(reg.views.company(), /co-style|How you bill|free trial/);
   assert.match(reg.views.company(), /id="co-address" data-field="address" value="2 Elm St"/);
-  for (const id of ["co-name", "co-address", "co-phone", "co-license", "co-style"]) delete dom.byId[id];
+  for (const id of ["co-name", "co-address", "co-phone", "co-license"]) delete dom.byId[id];
 });

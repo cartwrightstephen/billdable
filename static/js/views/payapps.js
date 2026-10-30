@@ -120,7 +120,7 @@ export const views = {
         <div class="money-row"><span class="label">Received by the client</span><span>${inv.received_at ? `${inv.received_by || "the client"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
         ${inv.approved_at ? `<div class="money-row"><span class="label">Approved by the client</span><span>${inv.approved_by_payer || "the client"}, ${fmtDateTime(inv.approved_at)}</span></div>
         <div class="money-row"><span class="label">Payment expected by</span><span>${fmtDate(inv.expected_payment_on)}</span></div>` : ""}
-        ${inv.customer_page ? `<p class="sub">The client's page for this pay app (it went in the email): <a href="/api/jobs/${j.id}/payapp/${inv.id}/page" target="_blank" rel="noopener">open it</a>. They can see the pay app and its paperwork, mark it received, approve it for payment with a date, or send you a question.</p>` : ""}
+        ${inv.customer_page ? `<p class="sub">The client's page for this pay app: <a href="/api/jobs/${j.id}/payapp/${inv.id}/page" target="_blank" rel="noopener">open it</a>.</p>` : ""}
         ${canPullBack(j, inv) && may("void-sent") ? pullBackHtml(j, inv) : ""}
       </div>
     `;
@@ -149,7 +149,7 @@ export const views = {
             <td>${a.blockers.join("; ") || "—"}</td>
           </tr>`).join("")}
         </table>
-      </div>` : emptyState(payappFilter === "all" ? termText("No pay apps yet") : "None in this view", payappFilter === "all" ? "Draft one from a job. Its paperwork list comes with it." : "Pick another filter above.")}
+      </div>` : emptyState(payappFilter === "all" ? termText("No pay apps yet") : "None in this view")}
     `;
   },
   // Paperwork is a column of Pay apps now (R6-03); /money/packets still opens it.

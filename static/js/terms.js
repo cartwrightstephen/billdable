@@ -25,8 +25,8 @@ export function term(key) { return TERM[style][key]; }
 export function termText(text, s = style) {
   if (s !== "draws" || !text) return text;
   return String(text)
-    .replace(/\bPay apps\b/g, "Draws").replace(/\bpay apps\b/g, "draws")
-    .replace(/\bPay app\b/g, "Draw").replace(/\bpay app\b/g, "draw")
+    .replace(/\bPay [Aa]pps\b/g, "Draws").replace(/\bpay apps\b/g, "draws")
+    .replace(/\bPay [Aa]pp\b/g, "Draw").replace(/\bpay app\b/g, "draw")
     .replace(/\bPAY APPS\b/g, "DRAWS").replace(/\bPAY APP\b/g, "DRAW");
 }
 
@@ -59,5 +59,3 @@ export function actionWords(code) {
   return known ? termText(known) : words(code);
 }
 
-// Each billing style's line under the Settings choice (R6-01).
-export const STYLE_NOTE = "Changes the word used across the app and sets the free trial: 90 days, or 45 for draws.";

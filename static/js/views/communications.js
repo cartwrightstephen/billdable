@@ -19,7 +19,6 @@ export const views = {
     const emails = page ? page.entries : [];
     return `
       <h1>Outbox</h1>
-      <p class="sub">Every approved send and follow-up, with what happened to it.</p>
       <p class="sub" id="outbox-mode"></p>
       <div class="filter-bar">
         <label for="outbox-filter" class="inline-label">Job</label>
@@ -33,7 +32,7 @@ export const views = {
           <tr><th>Subject</th><th>When</th><th>Kind</th><th>To</th><th>Status</th></tr>
           ${emails.map(e => `<tr><td><a href="${pathFor("job", e.job_id)}" data-action="open-job" data-id="${e.job_id}">${e.subject}</a><details class="email-details"><summary>Show message</summary><div class="sub email-body">${e.body || ""}</div></details>${e.payapp_invoice_id ? `<div class="sub">Pay app PDF attached</div>` : ""}${(e.attachments || []).length ? `<div class="sub">${e.attachments.length} attachment${e.attachments.length === 1 ? "" : "s"}${(e.not_attached || []).length ? "; not attached: " + e.not_attached.join("; ") : ""}</div>` : ""}</td><td>${fmtDateTime(e.at)}</td><td>${words(e.kind)}</td><td>${e.to}</td><td>${emailStatusHtml(e)}</td></tr>`).join("")}
         </table>
-      </div>${moreButton("outbox", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("Outbox is empty", "Approved sends and follow-ups are listed here.")}
+      </div>${moreButton("outbox", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("Outbox is empty")}
     `;
   },
 };
