@@ -3,6 +3,7 @@
 import { unesc, escDeep, emailOutcome } from "./format.js";
 import { mayTake } from "./jobs.js";
 import { pathFor, routeFromPath, refusalLink, refusalLinkData, refusalToastAction } from "./routes.js";
+import { resetTrail, stepTrail, previousPage } from "./trail.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./help.js";
 import { readJson, setNetBanner } from "./net.js";
 import { labelTables } from "./dom.js";
@@ -12,8 +13,9 @@ import { state, me, currentView, currentJobId, currentDetailId, formOpen, setDat
 
 // The shell's render and boot live in app.js and the landing page in views/auth.js; app.js hands
 // them over at start (setPage). A view can't import app.js: index.html loads it as /app.js?v=...,
-// so an import would load a second copy of the page.
-const page = { render() {}, renderLanding() {}, boot() {} };
+// so an import would load a second copy of the page. pageName({view, jobId, detailId}) is what
+// the menu calls a page, for the Back button.
+const page = { render() {}, renderLanding() {}, boot() {}, pageName() { return ""; } };
 export function setPage(fns) { Object.assign(page, fns); }
 export function render() { page.render(); }
 export function renderLanding() { page.renderLanding(); }
@@ -169,6 +171,7 @@ export function applyLocation() {
   if (r.view === "jobs" && ask.get("new") === "1") formOpen.newjob = true;
   if (r.view === "inbox" && ask.get("camera") === "1") setCameraAsk(true);
   setLocation(r.view, r.jobId, r.detailId);
+  resetTrail(currentView, currentJobId, currentDetailId);   // arrived from outside the app
   history.replaceState(null, "", pathFor(currentView, currentJobId, currentDetailId));
 }
 
@@ -214,6 +217,7 @@ export function setState(data) {
 // Signed out: the jobs fetched whole, the paged lists and what was typed belong to that company.
 // stateVersion moves on, so a job still loading for it is dropped when it arrives.
 onSessionEnd(() => {
+  resetTrail(null);
   stateVersion++;
   jobDetails = {};
   jobDetailLoading = null;
@@ -368,6 +372,7 @@ export function nav(view, jobId = null, detailId = null, opts = {}) {
   jobDetailFailed = null;   // a job that didn't load is asked for again
   const moved = view !== currentView || jobId !== currentJobId || detailId !== currentDetailId;
   setLocation(view, jobId, detailId);
+  stepTrail(view, jobId, detailId, opts.fromHistory ? "history" : opts.replace ? "replace" : "push");
   closeForms();
   clearAllForms();
   setDrawerOpen(false);
@@ -396,7 +401,13 @@ export function toggleForm(key) {
   render();
 }
 
+// Back (G3): to the page the person came from in the app, named as the menu names it, through
+// the browser's own history; opened from a link or after a refresh, to the page's fixed parent
+// (view, label, jobId).
 export function backButton(view, label, jobId = null) {
+  const prev = previousPage();
+  const name = prev && page.pageName(prev);
+  if (name) return `<div class="top"><button class="back" data-action="back">← ${name}</button></div>`;
   return `<div class="top"><button class="back" data-action="nav" data-view="${view}"${jobId ? ` data-id="${jobId}"` : ""}>← ${label}</button></div>`;
 }
 

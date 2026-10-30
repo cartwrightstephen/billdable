@@ -31,6 +31,24 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     }
   });
 
+  await step("Back returns to the page you came from: Dashboard > job > pay app > Back > Back (G3)", async () => {
+    await page.goto(BASE + "/dashboard");
+    await page.getByRole("heading", { name: "Overview" }).waitFor();
+    await page.locator('#view a[data-action="open-job"][data-id="job-oak"]').first().click();
+    await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
+    assert.equal(await page.locator(".back").innerText(), "← Dashboard");
+    await page.locator('#view [data-action="open-payapp"]').first().click();
+    await page.locator(".back", { hasText: "← Oak Street kitchen" }).waitFor();
+    await page.locator(".back").click();
+    await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
+    await page.locator(".back").click();
+    await page.getByRole("heading", { name: "Overview" }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/dashboard");
+    // Opened from a link, Back goes to the page's own list.
+    await page.goto(BASE + "/jobs/job-oak");
+    assert.equal(await page.locator(".back").innerText(), "← Jobs");
+  });
+
   await step("phone: five sections, with Import/Export and Automations under More", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
     await phone.goto(BASE + "/dashboard");

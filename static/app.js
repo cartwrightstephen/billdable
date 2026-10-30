@@ -51,6 +51,20 @@ function tabLabel(view) {
   for (const s of SECTIONS) for (const [k, label] of s.views) if (k === view) return termText(label);
   return "";
 }
+// What the menu calls a page, for the Back button (G3): the job's name, a pay app's number, a
+// change order's, else the page's tab ("Dashboard" for the Overview).
+function pageName(e) {
+  if (!state || !e) return "";
+  const j = e.jobId && state.jobs.find(x => x.id === e.jobId);
+  if (e.view === "job") return j ? j.name : "Job";
+  if (e.view === "payapp-detail") { const i = j && j.invoices.find(x => x.id === e.detailId); return i ? i.number : termText("Pay app"); }
+  if (e.view === "packet-detail") return e.detailId === "closeout" ? "Closeout paperwork" : "Paperwork";
+  if (e.view === "co-detail") { const co = j && j.change_orders.find(x => x.id === e.detailId); return co ? `CO ${co.number}` : "Change order"; }
+  if (e.view === "waiver-detail") return "Waivers";
+  if (e.view === "dashboard") return "Dashboard";
+  return tabLabel(e.view) || sectionOf(e.view).label;
+}
+
 function pageTitle() {
   if (!state) return "Duracash";
   const j = currentJobId && state.jobs.find(x => x.id === currentJobId);
@@ -208,6 +222,8 @@ const ACTIONS = {
   "menu": () => { setDrawerOpen(!drawerOpen); render(); if (drawerOpen) document.querySelector(".nav button")?.focus(); },
   "scrim": () => { setDrawerOpen(false); render(); },
   "nav": (el) => { nav(el.dataset.view, el.dataset.id || null, el.dataset.detail || null); },
+  // The Back button when the page before is known (G3): the browser goes back, and popstate draws it.
+  "back": () => history.back(),
   "list-more": (el) => { const k = el.dataset.kind, pg = listPages[k]; if (pg && !pg.loading) loadListPage(k, pg.job, pg.entries.length, 50); },
   "copy": async (el) => {
     const text = document.getElementById(el.dataset.target)?.textContent || "";
@@ -305,7 +321,7 @@ document.addEventListener("keydown", (e) => {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 // The views reach render, the landing page and boot through app-core.js.
-setPage({ render, renderLanding, boot });
+setPage({ render, renderLanding, boot, pageName });
 window.nav = nav;
 watchForms(document);
 boot();

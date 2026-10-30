@@ -98,3 +98,27 @@ test("/jobs/daily and /jobs/clients are pages, not job ids", () => {
   assert.deepEqual(routeFromPath("/jobs/history"), { view: "history" });
   assert.deepEqual(routeFromPath("/jobs/job-daily"), { view: "job", jobId: "job-daily" });
 });
+
+test("the back trail: Dashboard > job > pay app, then back, back lands on the Dashboard (G3)", async () => {
+  const { resetTrail, stepTrail, previousPage, trailLength } = await import("../../static/js/trail.js");
+  resetTrail("dashboard");
+  assert.equal(previousPage(), null, "opened from outside: no page before");
+  stepTrail("job", "j1");
+  assert.deepEqual(previousPage(), { view: "dashboard", jobId: null, detailId: null });
+  stepTrail("payapp-detail", "j1", "inv1");
+  assert.deepEqual(previousPage(), { view: "job", jobId: "j1", detailId: null });
+  stepTrail("job", "j1", null, "history");          // Back
+  assert.deepEqual(previousPage(), { view: "dashboard", jobId: null, detailId: null });
+  stepTrail("dashboard", null, null, "history");    // Back again
+  assert.equal(previousPage(), null);
+  assert.equal(trailLength(), 1);
+  // Forward, or a jump the trail can't follow, starts it again; the same page twice is one step.
+  stepTrail("payapp-detail", "j1", "inv1", "history");
+  assert.equal(trailLength(), 1);
+  stepTrail("payapp-detail", "j1", "inv1");
+  assert.equal(trailLength(), 1);
+  stepTrail("cos", null, null, "replace");
+  assert.deepEqual([trailLength(), previousPage()], [1, null]);
+  resetTrail(null);
+  assert.equal(trailLength(), 0);
+});
