@@ -141,7 +141,7 @@ export const views = {
     const jf = jobFields("newjob", "nj", { retainage_pct: 0 });
     return `
       <div class="top">
-        <h1>Jobs</h1>
+        <h1>Open jobs</h1>
         <button class="btn" data-action="toggle-form" data-form="newjob">${formOpen.newjob ? "Cancel" : "New job"}</button>
       </div>
       ${formOpen.newjob ? `
