@@ -1722,6 +1722,27 @@ class Handler(BaseHTTPRequestHandler):
         importer.rotate_token(ctx.company_id, kind)
         self._json(200, {"ok": True})
 
+    # ----- the To Do list's tasks and assignments (tasks-daily stream: G5, T3) -----
+    # Owners and members alike add, assign and tick off. The assignee must be on the team, which
+    # is read before the company's lock is taken (auth has its own lock).
+
+    def _task_change(self, ctx: "Ctx", run) -> None:
+        members = {u["id"]: u.get("name") or u.get("email") or "" for u in auth.team(ctx.company_id)["users"]}
+        status, payload = self._mutate(ctx.company_id, lambda st: run(st, members), ctx.user)
+        self._json(status, payload)
+
+    def _p_task_add(self, m, ctx: "Ctx") -> None:
+        self._task_change(ctx, lambda st, members: domain.add_task(st, ctx.body, members, ctx.actor, ctx.user.get("id", "")))
+
+    def _p_task_edit(self, m, ctx: "Ctx") -> None:
+        self._task_change(ctx, lambda st, members: domain.edit_task(st, m.group(1), ctx.body, members, ctx.actor))
+
+    def _p_task_done(self, m, ctx: "Ctx") -> None:
+        self._task_change(ctx, lambda st, members: domain.set_task_done(st, m.group(1), ctx.body.get("done", True) is not False, ctx.actor))
+
+    def _p_task_assign(self, m, ctx: "Ctx") -> None:
+        self._task_change(ctx, lambda st, members: domain.assign_row(st, _text(ctx.body, "key", limit=200), ctx.body, members, ctx.actor))
+
     # ----- accounts and team -----
 
     def _system_email(self, to: str, subject: str, body: str, company_id: str = "") -> str:
@@ -1748,8 +1769,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # The five team routes are owners only by the route table (R6-08); each answers with the team.
 
-    def _team_change(self, ctx: "Ctx", run) -> None:
-        """run(user) makes the change and returns (what the Activity log says, extra reply fields)."""
+    def _team_change(self, ctx: "Ctx", run, also=None) -> None:
+        """run(user) makes the change and returns (what the Activity log says, extra reply fields).
+        also(state), if given, changes the company's state with the audit row."""
         if ctx.company_id == auth.DEMO_COMPANY_ID:
             self._json(403, {"error": "The demo account's team can't be changed."})
             return
@@ -1758,7 +1780,7 @@ class Handler(BaseHTTPRequestHandler):
         except auth.AuthError as exc:
             self._json(409, {"error": str(exc)})
             return
-        self._mutate(ctx.company_id, lambda st: domain.audit(st, "", "team", detail, ctx.user["name"]))
+        self._mutate(ctx.company_id, lambda st: (domain.audit(st, "", "team", detail, ctx.user["name"]), also and also(st)))
         self._json(200, {**auth.team(ctx.company_id), **(note or {})})
 
     def _p_team_invite(self, m, ctx: "Ctx") -> None:
@@ -1799,17 +1821,21 @@ class Handler(BaseHTTPRequestHandler):
         self._team_change(ctx, role)
 
     def _p_team_remove(self, m, ctx: "Ctx") -> None:
+        gone: list = []
+
         def remove(user: dict) -> tuple:
             if m.group(1) == user["id"]:
                 raise auth.AuthError("You can't remove yourself. Ask another owner.")
             removed = auth.remove_user(user["company_id"], m.group(1), actor_id=user["id"])
+            gone.append(removed["id"])
             # They knew the inbound and calendar addresses, so those change too.
             for kind in ("email", "sms", "calendar"):
                 importer.rotate_token(user["company_id"], kind)
             return (f"{user['name']} removed {removed['name']} ({removed['email']}) from the team. "
                     "The inbound email, text and calendar addresses were changed."), {"rotated": True}
 
-        self._team_change(ctx, remove)
+        # Their open tasks and To Do rows go to the owner who removed them (G5).
+        self._team_change(ctx, remove, also=lambda st: gone and domain.reassign_open_tasks(st, gone[0], ctx.user["id"], ctx.user["name"], ctx.user["name"]))
 
     def _p_account_delete(self, m, ctx: "Ctx") -> None:
         if ctx.company_id == auth.DEMO_COMPANY_ID:
@@ -2466,6 +2492,10 @@ ROUTES = [
     Route("GET", r"/api/payapps/sent", "_g_sent_payapps", "user"),
 
     # == stream: tasks-daily ==
+    Route("POST", r"/api/tasks/assign", "_p_task_assign", "body"),
+    Route("POST", r"/api/tasks/(task-[0-9a-f]{8})/done", "_p_task_done", "body"),
+    Route("POST", r"/api/tasks/(task-[0-9a-f]{8})", "_p_task_edit", "body"),
+    Route("POST", r"/api/tasks", "_p_task_add", "body"),
 
     # == stream: jobs-clients ==
 
@@ -2697,7 +2727,8 @@ JOB_ACTIONS = {
     "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
     "edit": (False, _edit_job),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
-    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter the diary entry."), c.actor)),
+    # The Diary, and crew, weather, materials, deliveries, ticked sections and files (T11, T12, M1).
+    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter the diary entry."), c.actor, details=c.body)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name", "attachment"), c.actor)),
 }
 

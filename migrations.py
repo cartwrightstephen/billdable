@@ -45,7 +45,16 @@ def _v3_to_v4(state: dict[str, Any]) -> None:
                 inv["contract_at_send"] = payapp_pdf.contract_terms(job, inv["sent_at"])
 
 
-STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4]
+def _tasks_daily_lists(state: dict[str, Any]) -> None:
+    """tasks-daily stream (G5, T3): the To Do list's hand-added tasks and who each computed row is
+    assigned to start empty. Daily records keep their shape; the new fields are optional."""
+    if not isinstance(state.get("tasks"), list):
+        state["tasks"] = []
+    if not isinstance(state.get("task_assignments"), dict):
+        state["task_assignments"] = {}
+
+
+STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _tasks_daily_lists]
 SCHEMA_VERSION = len(STEPS) + 1
 
 

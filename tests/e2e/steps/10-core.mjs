@@ -24,7 +24,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("the Dashboard lists what needs you and opens a job by its address", async () => {
     await page.goto(BASE + "/dashboard");
     await page.getByRole("heading", { name: "Overview" }).waitFor();
-    await page.getByRole("heading", { name: /Needs you/ }).waitFor();
+    await page.getByRole("heading", { name: /To Do/ }).waitFor();
     await page.locator(".action-item", { hasText: "Oak Street kitchen" }).getByRole("button", { name: "Open" }).click();
     await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/jobs/job-oak");

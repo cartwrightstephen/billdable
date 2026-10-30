@@ -51,3 +51,24 @@ test("after a save, the Daily record's job stays on the job just used", async ()
   assert.doesNotMatch(drawn, /<option value="jB" selected>/);
   core.setPage({ render() {} });
 });
+
+test("the Calendar's Tasks block lists To Do items and the calendar's dates in the period, overdue ones too", () => {  // T6
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-p", role: "owner" });
+  const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  core.setState({ ...company([job("j1", "OAK", [])]),
+    today_rows: [{ key: "ready:j1:i1", kind: "ready", label: "Ready to send", job_id: "j1", job: "OAK job", due: day(-3), ball_in_court: "us", assignee_id: "" }],
+    tasks: [{ id: "task-a", title: "Order tile", status: "open", due: day(40), assignee_id: "u1", assignee_name: "Pat" },
+      { id: "task-b", title: "Call inspector", status: "open", due: "", assignee_id: "" }] });
+  const html = reg.views.calendar();
+  const block = html.split('<section class="tasks-block"')[1].split("</section>")[0];
+  assert.match(block, /<h2 id="tasks-head">Tasks<\/h2>/);
+  assert.match(block, /data-action="tasks-period" data-period="week" aria-pressed="true">This week</);
+  assert.match(block, /class="due-item overdue" data-action="cal-day"[^>]*>[^<]*Ready to send · OAK job</);
+  assert.match(block, /No date · Call inspector/);
+  assert.doesNotMatch(block, /Order tile/, "40 days out is not this week");
+  reg.actions["tasks-period"]({ dataset: { period: "custom" } });
+  const custom = reg.views.calendar().split('<section class="tasks-block"')[1].split("</section>")[0];
+  assert.match(custom, /id="tasks-from" data-period-from="tasks"/);
+  assert.match(custom, /Order tile · Pat/, "a custom range with no dates is open-ended");
+  reg.actions["tasks-period"]({ dataset: { period: "week" } });
+});

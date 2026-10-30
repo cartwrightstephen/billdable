@@ -1,5 +1,6 @@
-// Today's queue (UI/UX Option B): everything that needs a person, most urgent first, each with
-// the one button that does it. The rows come from the server (domain.today_rows, sent in
+// The Dashboard's To Do list (UI/UX Option B, T3): everything that needs a person, each with
+// the one button that does it, its ball in court, assignee and due date (static/js/tasks.js
+// merges these rows with the tasks people add and filters them by period). The rows come from the server (domain.today_rows, sent in
 // /api/state as today_rows, R4-10), the same rows the daily email lists, so the rules live in one
 // place; this file only draws them. Nothing that emails a pay app or a waiver goes out from here:
 // those open the pay app's "Before you send" card, or the waiver page with its type, which show
@@ -9,6 +10,9 @@
 
 import { termText } from "./terms.js";
 import { RECORD_KINDS } from "./jobs.js";
+import { fmtDate } from "./format.js";
+import { pathFor } from "./routes.js";
+import { BALL_WORDS } from "./tasks.js";
 
 const WENT_OUT = ["sent", "approved", "partial", "paid"];
 export const QUEUE_SHOWN = 3;   // rows shown before "and N more"
@@ -53,19 +57,50 @@ export function rowButtons(r) {
   return main + spoke + open;
 }
 
-// The rows, three at a time until "and N more" is tapped (expanded; reset when the page changes).
-// With nothing waiting, "Nothing is waiting on you." only once a pay app has gone out; before
-// that, what will show up here.
-export function queueHtml(queue, { expanded = false, anySent = false } = {}) {
-  if (!queue.length) return anySent ? `<p class="sub">Nothing is waiting on you.</p>`
+// One To Do row's buttons: a row the jobs make keeps its own (rowButtons); a task added by hand
+// is ticked off with Done, and opens its job when it has one.
+export function itemButtons(i) {
+  if (i.source === "row") return rowButtons(i.row);
+  return `<button class="btn small" data-action="task-done" data-id="${i.key}">Done</button>`
+    + (i.job_id ? `<button class="btn small secondary" data-action="open-job" data-id="${i.job_id}">Open</button>` : "");
+}
+
+// Who an item is assigned to: a select of the team, "Unassigned" first. Changing it saves.
+export function assignSelect(i, people) {
+  const label = `Assignee: ${i.source === "row" ? i.row.label : i.title}${i.job ? `, ${i.job}` : ""}`;
+  return `<select class="todo-assign" data-todo-assign="${i.source}" data-key="${i.key}" aria-label="${label}">`
+    + `<option value="">Unassigned</option>`
+    + people.map(p => `<option value="${p.id}"${p.id === i.assignee_id ? " selected" : ""}>${p.name}</option>`).join("")
+    + `</select>`;
+}
+
+// The To Do card's table (T3): Activity, Job, Ball in court, Assignee, Due and the buttons, three
+// rows until "and N more" is tapped (expanded; reset when the page changes). total is how many
+// items there are before the period and Mine filters: with none at all, "Nothing is waiting on
+// you." once a pay app has gone out, and before that what will show up here.
+export function todoHtml(items, { expanded = false, anySent = false, total = items.length, people = [], today = "" } = {}) {
+  if (!total) return anySent ? `<p class="sub">Nothing is waiting on you.</p>`
     : `<p class="sub">${termText("Work shows up here when a pay app is ready to send, paperwork is missing, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.")}</p>`;
-  const rows = expanded ? queue : queue.slice(0, QUEUE_SHOWN);
-  const more = queue.length - rows.length;
-  return rows.map(r => `
-          <div class="action-item">
-            <div class="action-text"><span class="pill ${r.tone || ""}">${r.label}</span> <strong>${r.job}</strong><div class="next-action">${r.text}${r.note ? ` <span class="sub">(${r.note})</span>` : ""}</div></div>
-            <div class="action-buttons">${rowButtons(r)}</div>
-          </div>`).join("")
+  if (!items.length) return `<p class="sub">Nothing due in this period.</p>`;
+  const rows = expanded ? items : items.slice(0, QUEUE_SHOWN);
+  const more = items.length - rows.length;
+  const activity = (i) => i.source === "row"
+    ? `<span class="pill ${i.row.tone || ""}">${i.row.label}</span><div class="next-action">${i.row.text}${i.row.note ? ` <span class="sub">(${i.row.note})</span>` : ""}</div>`
+    : `<strong>${i.title}</strong>`;
+  return `<div class="table-wrap todo-wrap"><table class="todo-table">
+          <tr><th>Activity</th><th>Job</th><th>Ball in court</th><th>Assignee</th><th>Due</th><th></th></tr>
+          ${rows.map(i => {
+            const late = i.due && today && i.due < today;
+            return `<tr class="action-item${late ? " overdue" : ""}">
+            <td class="todo-activity">${activity(i)}</td>
+            <td>${i.job_id ? `<a href="${pathFor("job", i.job_id)}" data-action="open-job" data-id="${i.job_id}">${i.job}</a>` : ""}</td>
+            <td><span class="pill ball-${i.ball}">${BALL_WORDS[i.ball] || "Us"}</span></td>
+            <td>${assignSelect(i, people)}</td>
+            <td class="todo-due">${i.due ? fmtDate(i.due) : "No date"}${late ? ` <span class="pill red">Overdue</span>` : ""}</td>
+            <td><div class="action-buttons">${itemButtons(i)}</div></td>
+          </tr>`;
+          }).join("")}
+        </table></div>`
     + (more > 0 ? `<button class="linkish queue-more" data-action="queue-more" aria-expanded="false">and ${more} more</button>` : "");
 }
 

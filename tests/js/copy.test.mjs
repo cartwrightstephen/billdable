@@ -18,7 +18,7 @@ const GONE = [
   "Billing isn't live", "sets the free trial", "STYLE_NOTE", "How you bill", "Owners manage the team", "Every action is in the Activity log",
   "Every action: what was drafted", "The chain of records checks out", "One lien waiver per paid pay app", "Duracash never writes",
   "What happened today", "Write what happened today", "They wait below for you", "Notes split at every line",
-  "Customer settings", "Payer playbook", "Go to Today", "<h1>Today</h1>", "<h1>Help</h1>",
+  "Customer settings", "Payer playbook", "Go to Today", "<h1>Today</h1>", "<h1>Help</h1>", "Needs you", "<h2>This week</h2>",
 ];
 
 test("the notes Stephen asked to remove don't come back", () => {

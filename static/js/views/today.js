@@ -1,14 +1,16 @@
-// Today: the overview with what needs you and the setup checklist, Results and Calendar. The
-// Daily record is in daily.js.
-import { unesc, escDeep, money, toDate, fmtDate } from "../format.js";
+// Dashboard: the overview with the To Do list and the setup checklist, Results, and Calendar
+// with its Tasks block. The Daily record is in daily.js.
+import { unesc, esc, escDeep, money, toDate, fmtDate } from "../format.js";
 import { isBlocked, nextStep, statusPill } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
+import { TODO_PERIODS, TASK_PERIODS, BALL_WORDS, localDay, periodRange, todoItems, itemsInPeriod, assignees } from "../tasks.js";
+import { field, formValues, refuseForm } from "../forms.js";
 import { worstKind, followUpEvent } from "../calendar.js";
-import { todayQueue, queueHtml, anyPayAppSent, billedThisMonth } from "../today.js";
+import { todoHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
-import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd } from "../state.js";
-import { toast, render, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
+import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd, teamData, setTeamData } from "../state.js";
+import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post } from "../app-core.js";
 import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
 
@@ -24,8 +26,123 @@ let dashSortDir = 1;
 let calJobFilter = "all";
 export function setCalJobFilter(value) { calJobFilter = value; }
 
-// Signed out: Results' figures and the calendar's job filter are that company's.
-onSessionEnd(() => { metricsData = null; calJobFilter = "all"; calSelectedDay = null; });
+// The To Do list's filters (T3): Mine or Everyone, and a period (This week first); the Calendar's
+// Tasks block has its own period (T6). Both use static/js/tasks.js, so they agree.
+let todoWho = "everyone";
+let todoPeriod = "week";
+const todoRange = { from: "", to: "" };
+let tasksPeriod = "week";
+const tasksRange = { from: "", to: "" };
+let teamAsked = false;
+
+// Signed out: Results' figures, the calendar's job filter and the team are that company's.
+onSessionEnd(() => { metricsData = null; calJobFilter = "all"; calSelectedDay = null; teamAsked = false; todoWho = "everyone"; });
+
+// The team, for the assignee selects: asked for once, when a list that needs it is drawn.
+async function loadTeamOnce() {
+  if (teamAsked || teamData) return;
+  teamAsked = true;
+  try {
+    const res = await fetch("/api/team");
+    if (!res.ok) return;
+    setTeamData(escDeep(await readJson(res)));
+  } catch (_) { setNetBanner(true); return; }
+  if (currentView === "dashboard" || currentView === "calendar") render();
+}
+
+const periodButtons = (periods, current, action) => periods.map(([k, label]) =>
+  `<button class="${current === k ? "btn" : "btn secondary"} small" data-action="${action}" data-period="${k}" aria-pressed="${current === k}">${label}</button>`).join("");
+const rangeInputs = (which, range) => `<span class="period-range">
+    <label class="inline-label" for="${which}-from">From</label><input type="date" id="${which}-from" data-period-from="${which}" value="${esc(range.from)}">
+    <label class="inline-label" for="${which}-to">To</label><input type="date" id="${which}-to" data-period-to="${which}" value="${esc(range.to)}">
+  </span>`;
+
+// Add a task by hand (G5): what needs doing, and optionally the job, who, when and whose court.
+function taskFormHtml(people) {
+  if (!formOpen.task) return "";
+  const open = state.jobs.filter(j => !j.closed);
+  return `<div class="card task-form" data-form-key="task">
+    <div class="form-grid">
+      ${field({ form: "task", name: "title", id: "task-title", label: "What needs doing", required: true, wide: true, placeholder: "Order the tile for the Oak Street bath" })}
+      ${field({ form: "task", name: "job_id", id: "task-job", label: "Job", options: [["", "No job"], ...open.map(j => [j.id, unesc(j.name)])] })}
+      ${field({ form: "task", name: "assignee_id", id: "task-assignee", label: "Assignee", options: [["", "Unassigned"], ...people.map(p => [p.id, unesc(p.name)])], value: me ? me.id : "" })}
+      ${field({ form: "task", name: "due", id: "task-due", label: "Due", type: "date" })}
+      ${field({ form: "task", name: "ball_in_court", id: "task-ball", label: "Ball in court", options: Object.entries(BALL_WORDS) })}
+    </div>
+    <div class="form-inline"><button class="btn" data-action="task-add">Add task</button><button class="btn secondary" data-action="task-cancel">Cancel</button></div>
+  </div>`;
+}
+
+// The To Do card (T3).
+function todoCardHtml() {
+  loadTeamOnce();
+  const today = localDay(new Date());
+  const everyone = todoItems(state);
+  const items = todoWho === "mine" ? todoItems(state, { who: "mine", meId: me ? me.id : "" }) : everyone;
+  const shown = itemsInPeriod(items, periodRange(todoPeriod, new Date(), todoRange.from, todoRange.to), today);
+  const people = assignees(teamData, me, everyone);
+  const who = (k, label) => `<button class="${todoWho === k ? "btn" : "btn secondary"} small" data-action="todo-who" data-who="${k}" aria-pressed="${todoWho === k}">${label}</button>`;
+  return `<section class="card action-queue" aria-labelledby="needs-action">
+        <div class="top"><h2 id="needs-action">To Do${shown.length ? ` <span class="count-badge">${shown.length}</span>` : ""}</h2>
+          <button class="btn small secondary" data-action="task-new">Add task</button></div>
+        <div class="filter-bar todo-filters">
+          <span role="group" aria-label="Whose">${who("mine", "Mine")}${who("everyone", "Everyone")}</span>
+          <span role="group" aria-label="Due">${periodButtons(TODO_PERIODS, todoPeriod, "todo-period")}</span>
+          ${todoPeriod === "range" ? rangeInputs("todo", todoRange) : ""}
+        </div>
+        ${taskFormHtml(people)}
+        ${todoHtml(shown, { expanded: queueExpanded, anySent: anyPayAppSent(state), total: everyone.length, people, today })}
+      </section>`;
+}
+
+// The Calendar's Tasks block (T6): the To Do items and the calendar's dates in a period, soonest
+// first. Each opens its day; an item on a job opens the job too.
+function tasksBlockHtml(eventsByDay) {
+  loadTeamOnce();
+  const today = localDay(new Date());
+  const range = periodRange(tasksPeriod, new Date(), tasksRange.from, tasksRange.to);
+  const people = assignees(teamData, me, todoItems(state));
+  const nameOf = (i) => i.assignee_id ? (people.find(p => p.id === i.assignee_id) || {}).name || i.assignee_name : "";
+  const items = itemsInPeriod(todoItems(state), range, today)
+    .filter(i => calJobFilter === "all" || i.job_id === calJobFilter)
+    .map(i => ({ date: i.due, label: i.source === "row" ? i.row.label : i.title, job: i.job, jobId: i.job_id, who: nameOf(i), overdue: !!i.due && i.due < today }));
+  const events = Object.entries(eventsByDay)
+    .filter(([d]) => (!range.from || d >= range.from) && (!range.to || d <= range.to))
+    .flatMap(([d, evs]) => evs.map(e => ({ date: d, label: e.label, jobId: e.jobId, job: "", who: "", overdue: e.kind === "overdue" })));
+  const all = items.concat(events).sort((a, b) => (a.date || "9999") < (b.date || "9999") ? -1 : (a.date || "9999") > (b.date || "9999") ? 1 : 0);
+  return `<section class="tasks-block" aria-labelledby="tasks-head">
+      <div class="top"><h2 id="tasks-head">Tasks</h2><button class="btn small secondary" data-action="task-new">Add task</button></div>
+      <div class="filter-bar" role="group" aria-label="Period">${periodButtons(TASK_PERIODS, tasksPeriod, "tasks-period")}${tasksPeriod === "custom" ? rangeInputs("tasks", tasksRange) : ""}</div>
+      ${taskFormHtml(people)}
+      ${all.length ? `<div class="due-strip week-list">${all.map(e => {
+        const text = `${e.date ? fmtDate(e.date).replace(/, \d{4}$/, "") : "No date"} · ${e.label}${e.job ? ` · ${e.job}` : ""}${e.who ? ` · ${e.who}` : ""}`;
+        const opens = e.date ? `data-action="cal-day" data-day="${e.date}"` : e.jobId ? `data-action="open-job" data-id="${e.jobId}"` : "";
+        return opens ? `<button class="due-item${e.overdue ? " overdue" : ""}" ${opens}>${text}</button>` : `<span class="due-item">${text}</span>`;
+      }).join("")}</div>` : `<p class="sub">Nothing in this period.</p>`}
+    </section>`;
+}
+
+// Saves an assignee picked in a To Do row (G5): a row the jobs make by its key, a task by its id.
+async function assignFrom(sel) {
+  const value = sel.value;
+  const key = sel.dataset.key;
+  const r = sel.dataset.todoAssign === "task"
+    ? await post(`/api/tasks/${encodeURIComponent(key)}`, { assignee_id: value }, { quiet: true, anchor: sel })
+    : await post("/api/tasks/assign", { key, assignee_id: value }, { quiet: true, anchor: sel });
+  if (r && r.ok) toast(value ? "Assigned." : "Unassigned.");
+}
+
+document.addEventListener("change", (e) => {
+  const el = e.target;
+  if (!el || !el.dataset) return;
+  if (el.dataset.todoAssign) { assignFrom(el); return; }
+  const which = el.dataset.periodFrom || el.dataset.periodTo;
+  if (!which) return;
+  const range = which === "todo" ? todoRange : tasksRange;
+  range[el.dataset.periodFrom ? "from" : "to"] = el.value;
+  setQueueExpanded(false);
+  render();
+});
 
 // Hide the setup checklist, or show it again (from My account). It is kept on the person's own
 // account, so a teammate's choice doesn't change it.
@@ -137,7 +254,6 @@ export const views = {
     const jobs = filteredJobs();
     const isDemo = me && me.company_id === DEMO_COMPANY_ID;
     const open = state.jobs.filter(j => !j.closed);
-    const queue = todayQueue(state);
     const hero = t.unbilled_cents > 0 ? "unbilled" : t.outstanding_cents > 0 ? "outstanding" : "";
     const sortHead = (key, label) => `<th data-action="sort" data-sort="${key}" aria-sort="${dashSort === key ? (dashSortDir > 0 ? "ascending" : "descending") : "none"}">${label} ${dashSort === key ? (dashSortDir > 0 ? "↑" : "↓") : ""}</th>`;
     const stage = (key, label) => `<button class="stage ${dashFilter === key ? "active" : ""}" data-action="filter" data-filter="${key}" aria-pressed="${dashFilter === key}">${label}</button>`;
@@ -150,11 +266,7 @@ export const views = {
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
           <strong>Try the demo:</strong> open a job, add its missing paperwork, Review & send, record the payment, send the waiver, then finish the job.
         </div>` : ""}
-      ${state.jobs.length ? `
-      <section class="card action-queue" aria-labelledby="needs-action">
-        <h2 id="needs-action">Needs you${queue.length ? ` <span class="count-badge">${queue.length}</span>` : ""}</h2>
-        ${queueHtml(queue, { expanded: queueExpanded, anySent: anyPayAppSent(state) })}
-      </section>` : ""}
+      ${state.jobs.length || (state.tasks || []).length ? todoCardHtml() : ""}
       <div class="metrics">
         <div class="metric ${hero === "unbilled" ? "highlight" : ""}"><div class="k">Done, not billed</div><div class="v">${money(t.unbilled_cents)}</div></div>
         <div class="metric ${hero === "outstanding" ? "highlight" : ""}"><div class="k">Outstanding</div><div class="v">${money(t.outstanding_cents)}</div></div>
@@ -270,10 +382,6 @@ export const views = {
     }
     while (cells.length % 7) cells.push({ other: true });
     const monthName = first.toLocaleString("en-US", { month: "long" });
-    const thisWeek = Object.entries(eventsByDay).filter(([d]) => {
-      const diff = (toDate(d) - toDate(todayKey)) / 86400000;
-      return diff >= -1 && diff <= 7;
-    }).sort(([a], [b]) => (a < b ? -1 : 1)).flatMap(([d, evs]) => evs.map(e => ({ ...e, date: d })));
     const selected = calSelectedDay ? (eventsByDay[calSelectedDay] || []) : [];
     const dayCard = calSelectedDay ? `
       <div class="card day-detail" id="day-detail">
@@ -290,7 +398,7 @@ export const views = {
           ${state.jobs.map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
         </select>
       </div>
-      ${thisWeek.length ? `<h2>This week</h2><div class="due-strip week-list">${thisWeek.slice(0, 8).map(e => `<button class="due-item ${e.kind === "overdue" ? "overdue" : ""}" data-action="cal-day" data-day="${e.date}">${fmtDate(e.date).replace(/, \d{4}$/, "")} · ${e.label}</button>`).join("")}</div>` : ""}
+      ${tasksBlockHtml(eventsByDay)}
       ${dayCard}
       <div class="cal-header">
         <div>
@@ -366,6 +474,18 @@ export const actions = {
     document.getElementById("day-detail")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   },
   "queue-more": () => { setQueueExpanded(true); render(); },
+  "todo-who": (el) => { todoWho = el.dataset.who; setQueueExpanded(false); render(); },
+  "todo-period": (el) => { todoPeriod = el.dataset.period; setQueueExpanded(false); render(); if (todoPeriod === "range") document.getElementById("todo-from")?.focus(); },
+  "tasks-period": (el) => { tasksPeriod = el.dataset.period; render(); if (tasksPeriod === "custom") document.getElementById("tasks-from")?.focus(); },
+  "task-new": () => { formOpen.task = true; render(); document.getElementById("task-title")?.focus(); },
+  "task-cancel": () => { formOpen.task = false; render(); },
+  "task-add": async () => {
+    const body = formValues("task");
+    if (!body.title) { refuseForm("task", { title: "Enter what needs doing." }); return; }
+    const r = await post("/api/tasks", body, { formKey: "task", close: "task" });
+    if (r && r.ok) toast("Task added.");
+  },
+  "task-done": async (el, id) => { const r = await post(`/api/tasks/${encodeURIComponent(id)}/done`, { done: true }, { quiet: true }); if (r && r.ok) toast("Done."); },
   "dismiss-help": () => { helpDismissed = true; try { localStorage.setItem("duracash-help-dismissed", "1"); } catch (_) { /* hidden for this visit */ } render(); },
   "filter": (el) => { dashFilter = el.dataset.filter; render(); },
   "sort": (el) => {

@@ -56,6 +56,7 @@ OLD = {
     r"(?-i:\bChange Orders\b)": "Change orders",
     r"(?-i:\bDaily Record\b)": "Daily record",
     r"\bai assisted\b": "(never used)",
+    r"(?-i:\bNeeds you\b)": "To Do",
 }
 
 PARENTHESES = re.compile(r"\([^()]*\)")

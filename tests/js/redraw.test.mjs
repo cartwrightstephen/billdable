@@ -36,6 +36,60 @@ test("Daily record: the note typed stays through a redraw and goes once saved", 
   delete dom.bySelector["#daily-notes"]; delete dom.bySelector["#daily-job"];
 });
 
+test("Daily record: crew, weather and the ticked sections stay through a redraw; the body sends them", async () => {  // T11, T12
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  const sovJob = job({ sov_view: { present: true, lines: [
+    { id: "l1", item: "1", description: "Rough-in wiring", unit: "LF", qty_milli: 400000, done_milli: 100000 },
+    { id: "l2", item: "2", description: "Panel", unit: "LS", qty_milli: 1000, done_milli: 1000 },
+  ] }, change_orders: [{ id: "co1", number: 2, title: "Extra outlets", status: "approved" }] });
+  core.setState(company([sovJob]));
+  page.setLocation("daily");
+  const daily = await import("../../static/js/views/daily.js");
+  forms.formDraft.daily = { crew_count: "4", weather: "Rain", materials: "Wire <12 boxes>", qty_l1: "120" };
+  daily.daily.checked.add("quantities");
+  daily.daily.checked.add("co_work");
+  const html = reg.views.daily();
+  assert.match(html, /id="daily-crew"[^>]*type="number" value="4"/);
+  assert.match(html, /<option value="Rain" selected>Rain<\/option>/);
+  assert.match(html, /data-field="materials"[^>]*>Wire &lt;12 boxes&gt;<\/textarea>/);
+  assert.match(html, /data-daily-section="quantities" checked/);
+  assert.match(html, /data-field="qty_l1" value="120"/);
+  assert.doesNotMatch(html, /data-field="qty_l2"/, "a finished line takes no more");
+  assert.match(html, /<option value="co1">CO 2 Extra outlets<\/option>/);
+  assert.doesNotMatch(html, /id="daily-punch"/, "an unticked section stays closed");
+  // A job without a schedule has no Quantities box.
+  core.setState(company([job()]));
+  assert.doesNotMatch(reg.views.daily(), /data-daily-section="quantities"/);
+  const body = daily.dailyBody({ notes: "Framing", crew_count: "4", weather: "Rain", qty_l1: "120", qty_l2: "", co_0: "co1", co_desc_0: "Two circuits", co_hours_0: "3",
+    punch: "Patch" }, sovJob, new Set(["quantities", "co_work"]));
+  assert.deepEqual(body, { notes: "Framing", crew_count: "4", weather: "Rain",
+    sections: { quantities: [{ line_id: "l1", qty: "120" }], co_work: [{ co_id: "co1", description: "Two circuits", hours: "3" }] } });
+  daily.daily.checked.clear();
+  forms.clearForm("daily");
+});
+
+test("Daily record: Recent records show the crew, the sections and links to the files attached", async () => {  // T11, T12
+  const daily = await import("../../static/js/views/daily.js");
+  const sovJob = job({ sov_view: { present: true, lines: [
+    { id: "l1", item: "1", description: "Rough-in wiring", unit: "LF", qty_milli: 400000, done_milli: 220000 },
+    { id: "l2", item: "2", description: "Panel", unit: "LS", qty_milli: 1000, done_milli: 250 },
+  ] }, change_orders: [{ id: "co1", number: 2, title: "Extra outlets", status: "approved" }],
+  records: [{ id: "r9", kind: "photo", label: "deck.jpg", file_ids: ["f1"] }] });
+  core.setState({ ...company([sovJob]), files: [{ id: "f1", name: "deck.jpg" }] });
+  const meta = daily.recordMeta({ crew_names: ["Ana", "Ben"], weather: "Rain", attachments: ["r9"], sections: {
+    quantities: [{ line_id: "l1", qty_milli: 120000 }, { line_id: "l2", qty_milli: 250 }],
+    co_work: [{ co_id: "co1", description: "Two circuits", hours_milli: 3000 }, { co_id: "", description: "Moved a box", hours_milli: 0 }],
+    inspections: [{ type: "discussion", who: "GC super", outcome: "Start Monday" }], punch: ["Patch"] } }, sovJob);
+  assert.match(meta, /<div>Crew: Ana, Ben<\/div>/);
+  assert.match(meta, /Weather: Rain/);
+  assert.match(meta, /Quantities: 120 LF Rough-in wiring, 25% Panel/);
+  assert.match(meta, /Change order work \(CO 2\): Two circuits, 3 h/);
+  assert.match(meta, /Change order work \(new, not priced yet\): Moved a box</);
+  assert.match(meta, /Discussion with GC super: Start Monday/);
+  assert.match(meta, /New punchlist items: Patch/);
+  assert.match(meta, /Files: <a href="\/api\/files\/f1"[^>]*>deck.jpg<\/a>/);
+});
+
 test("Paste box: the pasted text, and what it looks like, stay through a redraw and go once added", async () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState(company());
@@ -101,4 +155,14 @@ test("Job page: 'Customer wants changes' and a record's Edit box keep what was t
   assert.equal(forms.formDraft["record-r1"], undefined);
   for (const id of ["pencil-note", "rec-edit-label-r1", "rec-edit-kind-r1"]) delete dom.byId[id];
   page.formOpen.pencilchanges = false;
+});
+
+test("Schedule progress: an open draft is named as the one it replaces, until it is with the client", async () => {  // M1
+  const { sovProgressHtml } = await import("../../static/js/sov.js");
+  const lines = [{ id: "l1", item: "1", description: "Rough-in", unit: "LF", qty_milli: 400000, done_milli: 100000, stored_cents: 0 }];
+  const draft = { id: "i1", number: "PA-OAK-3", status: "draft", amount_cents: 450000 };
+  const sovJob = (invoices) => job({ invoices, sov_view: { present: true, lines } });
+  assert.match(sovProgressHtml(sovJob([draft])), /This replaces PA-OAK-3 \(\$4,500\.00\)\. Its number and paperwork stay\./);
+  assert.doesNotMatch(sovProgressHtml(sovJob([{ ...draft, pencil_status: "sent" }])), /This replaces/);
+  assert.doesNotMatch(sovProgressHtml(sovJob([{ ...draft, status: "sent" }])), /This replaces/);
 });
