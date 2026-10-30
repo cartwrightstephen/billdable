@@ -541,7 +541,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(await first.innerText(), "Take a photo");
     assert.equal(await first.getAttribute("data-capture"), "1");
     await p.locator(".dropzone").getByRole("button", { name: "Choose files" }).waitFor({ state: "visible" });
-    assert.equal(await p.locator(".dropzone .pointer-only").isVisible(), false);
+    assert.equal(await p.locator(".dropzone .pointer-only:visible").count(), 0);
     await ctx.close();
   });
 

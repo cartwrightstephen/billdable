@@ -7,7 +7,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("the menu has seven sections; each tab's heading matches its tab", async () => {
     await page.goto(BASE + "/dashboard");
     await page.getByRole("heading", { name: "Overview" }).waitFor();
-    assert.deepEqual(await page.locator(".nav > button[data-section]").allInnerTexts().then(l => l.map(s => s.replace(/\s*\d+$/, "").trim())),
+    assert.deepEqual(await page.locator(".nav > button[data-section]").allInnerTexts().then(l => l.map(s => s.split("\n")[0].trim())),
       ["Dashboard", "Jobs", "Communications", "Import/Export", "Money", "Automations", "Settings"]);
     for (const [path, tabs] of [["/jobs", ["Open jobs", "Daily record", "Job history", "Client playbook"]], ["/communications", ["Inbox", "Outbox"]],
       ["/data/import", ["Import", "Export"]], ["/dashboard", ["Overview", "Results", "Calendar"]]]) {
@@ -54,7 +54,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await phone.goto(BASE + "/dashboard");
     await phone.locator("#menu-btn").click();
     const shown = await phone.locator(".nav > button[data-section]:visible").allInnerTexts();
-    assert.deepEqual(shown.map(s => s.replace(/\s*\d+$/, "").trim()), ["Dashboard", "Jobs", "Communications", "Money", "Settings"]);
+    assert.deepEqual(shown.map(s => s.split("\n")[0].trim()), ["Dashboard", "Jobs", "Communications", "Money", "Settings"]);
     await phone.locator(".nav-more summary").click();
     await phone.locator('.nav-more button[data-section="automations"]').click();
     await phone.getByRole("heading", { name: "Automations" }).waitFor();
