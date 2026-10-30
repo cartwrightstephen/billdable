@@ -1062,10 +1062,17 @@ def waiver_on_file(state: dict[str, Any], job: dict[str, Any], kind: str, invoic
     type (or with no type said) whose files have not gone out in any email, that was not taken
     for another pay app."""
     sent = _sent_file_ids(state, job)
+    # A waiver put on a conditional waiver item (a pay app's or the closeout one) is that
+    # conditional waiver, even when its type was never said: never the one sent after payment.
+    conditional = {a.get("record_id") for packet in [inv.get("packet") or [] for inv in job["invoices"] if inv.get("status") != "void"]
+                   + [job.get("closeout_packet") or []] for item in packet
+                   if str(item.get("waiver_kind", "")).startswith("conditional") for a in item.get("attachments", [])}
     for record in reversed(job.get("records", [])):
         if record.get("kind") != "waiver" or record.get("number_only"):
             continue
         has = record_waiver_kind(record)
+        if not has and record["id"] in conditional:
+            continue
         if has and has != kind:
             continue
         if record.get("invoice_id") and invoice_id and record["invoice_id"] != invoice_id:
@@ -1718,7 +1725,10 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             add(1, "ready", job, "Ready to send", "green", f"{draft['number']} for {money(draft['amount_cents'])} to {payer.get('approver') or payer.get('name', '')}. "
                 "Check what goes out, then approve.", "Review & send", f"/money/pay-app/{job['id']}/{draft['id']}", invoice_id=draft["id"])
         elif job.get("waiver_due") and not job.get("waiver_sent"):
-            add(2, "waiver", job, "Waiver due", "amber", "Paid in full: the client is waiting for the lien waiver.", "Review waiver",
+            released = any(r.get("waiver_due") and not r.get("waiver_sent") for r in job.get("retainage_waivers", []))
+            add(2, "waiver", job, "Waiver due", "amber", ("Retainage received" if released and not any(
+                inv.get("waiver_due") and not inv.get("waiver_sent") for inv in job["invoices"]) else "Paid in full")
+                + ": the client is waiting for the lien waiver.", "Review waiver",
                 f"/money/waiver/{job['id']}")
         elif job.get("work_status") == "complete" and m["unbilled_completed_cents"] > 0:
             add(5, "not_billed", job, "Not billed", "copper",
@@ -3049,7 +3059,9 @@ def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: s
     if str(item.get("waiver_kind", "")).startswith("conditional") and _invoice:
         # The conditional waiver comes back on every pay app (M16) unless the client doesn't take one.
         payer["waiver_not_needed"] = {"by": actor, "at": utcnow(), "reason": item["skipped_reason"]}
-    labels = parse_packet_text(payer.get("packet", ""))
+    # A closeout item (M6: five by default) is not needed on this job only; the client's list stays.
+    closeout = any(x is item for x in job.get("closeout_packet") or [])
+    labels = [] if closeout else parse_packet_text(payer.get("packet", ""))
     if not labels and _invoice:
         # No list saved: this pay app used the default one, so save what it asked for, less this.
         labels = [p["label"] for p in _invoice.get("packet") or [] if p is item or not p.get("skipped_reason")]

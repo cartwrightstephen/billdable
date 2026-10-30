@@ -46,7 +46,7 @@ export function retainageCardHtml(j, now = new Date()) {
   const waivers = j.retainage_waivers || [];
   return `<section class="card retainage-card" aria-labelledby="retainage-h-${j.id}">
       <h2 id="retainage-h-${j.id}">Retainage</h2>
-      <div class="money-row"><span class="label">Rate</span><span>${f.pct}%</span></div>
+      ${f.pct > 0 ? `<div class="money-row"><span class="label">Rate</span><span>${f.pct}%</span></div>` : ""}
       <div class="money-row"><span class="label">Retainage held</span><span>${money(f.held)}</span></div>
       <div class="money-row"><span class="label">Retainage released</span><span>${money(f.released)}</span></div>
       <div class="money-row strong"><span class="label">Still held</span><span>${money(f.open)}</span></div>
@@ -56,7 +56,7 @@ export function retainageCardHtml(j, now = new Date()) {
       <div class="money-row"><span class="label">Next ask allowed</span><span>${fmtDate(f.next.toISOString())}</span></div>` : ""}
       ${note ? `<p class="sub retainage-note">${note}</p>` : ""}
       <h3>Pay apps holding it</h3>
-      ${f.payApps.length ? `<ul class="plain-list">${f.payApps.map(i => `<li><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}">${i.number}</a> · ${money(i.retainage_cents)} · ${INVOICE_WORDS[i.status] || words(i.status)}</li>`).join("")}</ul>` : `<p class="sub">None yet.</p>`}
+      ${f.payApps.length ? `<ul class="plain-list">${f.payApps.map(i => `<li><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}">${i.number}</a> · ${money(i.retainage_cents)} · ${INVOICE_WORDS[i.status] || words(i.status)}</li>`).join("")}</ul>` : `<p class="sub">${f.held > 0 ? "Not recorded on each pay app." : "None yet."}</p>`}
       <h3>Releases</h3>
       ${f.releases.length ? `<ul class="plain-list">${f.releases.map(r => {
         const w = waivers.find(x => x.at === r.at);

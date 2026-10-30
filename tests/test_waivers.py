@@ -177,5 +177,38 @@ class StagesTests(unittest.TestCase):
             domain.set_waiver_type(state, job["id"], rec["id"], "made_up")
 
 
+class OnFileTests(unittest.TestCase):  # M18
+    def test_an_untyped_waiver_on_a_drafts_conditional_item_is_not_the_one_sent_after_payment(self):
+        state = new_state()
+        job = new_job(state, packet="Invoice.")
+        inv = sent_pay_app(state, job)
+        domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1")
+        domain.record_progress(state, job["id"], 600_000)
+        nxt = draft(job)
+        rec = record(state, job, "waiver", "Lien waiver PA-2")
+        item = next(p for p in nxt["packet"] if p["kind"] == "waiver")
+        if not item["present"]:
+            domain.attach_record_to_packet(state, job["id"], item["id"], rec["id"], "Sam")
+        self.assertIsNone(domain.waiver_on_file(state, job, "unconditional_progress", inv["id"]))
+        with self.assertRaises(domain.GateError):
+            domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
+
+
+class WaiverFormsTests(unittest.TestCase):  # M22
+    def test_georgia_has_its_forms_and_other_states_a_plain_note(self):
+        forms = domain.waiver_forms()
+        ga = forms["states"]["GA"]
+        self.assertEqual(ga["citation"], "O.C.G.A. § 44-14-366")
+        self.assertEqual(set(ga["forms"]), set(domain.WAIVER_KINDS))
+        self.assertEqual(list(forms["states"]), ["GA"], "add a state only from its statute's own text")
+        self.assertTrue(forms["other"]["notes"])
+        self.assertFalse(forms["other"]["citation"])
+
+    def test_the_jobs_state_comes_from_its_address(self):
+        self.assertEqual(domain.job_state({"address": "12 Pine St, Atlanta, GA 30307"}), "GA")
+        self.assertEqual(domain.job_state({"address": "Back lot behind the mill"}), "")
+        self.assertEqual(domain.job_state({"address": ""}), "")
+
+
 if __name__ == "__main__":
     unittest.main()

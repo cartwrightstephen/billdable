@@ -75,6 +75,19 @@ class CatalogTests(unittest.TestCase):
         domain.mark_done(state, job["id"])
         self.assertEqual([p["label"] for p in job["closeout_packet"]], ["Punch list", "As-builts before retainage"])
 
+    def test_a_closeout_item_not_needed_on_this_job_leaves_the_clients_list(self):
+        state = new_state()
+        job = new_job(state, packet="Invoice, conditional waiver. Punch list and as-builts before retainage.")
+        domain.mark_done(state, job["id"])
+        payer = next(p for p in state["payers"] if p["id"] == job["payer_id"])
+        before = payer["packet"]
+        item = job["closeout_packet"][1]
+        domain.skip_packet_item(state, job["id"], item["id"], actor="Sam")
+        self.assertFalse(item["required"])
+        self.assertEqual(payer["packet"], before)
+        self.assertNotIn("waiver_not_needed", payer)
+        self.assertEqual([p["label"] for p in domain.closeout_missing(job)], ["Punch list"])
+
 
 class ConditionalWaiverTests(unittest.TestCase):  # M13, M16, M19
     def test_a_client_list_without_a_waiver_still_blocks_send(self):

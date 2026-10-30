@@ -285,7 +285,7 @@ export const views = {
             <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
               ${!p.present && !skipped ? `<span class="field-error">${p.blocker}</span>` : ""}
               ${(p.covers || []).length ? `<div class="sub">For ${p.covers.join(", ")}</div>` : ""}
-              ${skipped ? `<div class="sub">Not needed for this client${/^Not needed for this \w+$/.test(unesc(p.skipped_reason)) ? "" : ": " + p.skipped_reason}</div>` : ""}
+              ${skipped ? `<div class="sub">Not needed ${isCloseout ? "on this job" : "for this client"}${/^Not needed for this \w+$/.test(unesc(p.skipped_reason)) ? "" : ": " + p.skipped_reason}</div>` : ""}
               ${p.present && p.present_reason === "Produced by Duracash" ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
               ${p.present && p.present_reason && p.present_reason !== "Produced by Duracash" ? `<div class="sub">Marked as in hand: ${p.present_reason}</div>` : ""}
               ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}
@@ -299,7 +299,7 @@ export const views = {
             </div>
             <div class="form-inline">
               <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">I have this…</button>
-              ${isCloseout ? "" : `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">Not needed for this client</button>`}
+              <button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">${isCloseout ? "Not needed on this job" : "Not needed for this client"}</button>
             </div>
             ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Where is it? (optional)" aria-label="Where is it? (optional)" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save</button></div>` : ""}` : ""}
             ${waiver && !skipped ? `<details class="waiver-details"><summary>What the signed waiver must show</summary>${waiverChecklistHtml(j, waiver, inv)}${waiverFormHtml(j, waiver)}</details>` : ""}

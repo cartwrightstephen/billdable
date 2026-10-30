@@ -265,12 +265,12 @@ Code: **New change order** `new-co` static/js/views/job-cos.js:76 (a job action,
 
 ```mermaid
 flowchart TD
-    A["Job page or Dashboard row: 'Fix N things before sending' or 'Add N missing documents'"] --> B["Paperwork page 'Paperwork for PA-x': 'Required items', each ✓, ✗ or –"]
+    A["Job page or Dashboard row: 'Fix N things before sending' or 'Add N missing documents'"] --> B["Paperwork page 'Paperwork for PA-x': 'What (client) needs to pay', then 'Required items', each ✓, ✗ or –"]
     B --> C{"Item missing?"}
     C -->|"No, all in"| D["Pay app is 'Ready to send'"]
     C -->|"Yes"| E{"Where is the document?"}
     E -->|"In your hand or on the phone"| F["'Take a photo' or 'Choose file': filed on the job record and attached in one step"]
-    E -->|"Already on the job record"| G["'Choose a record…', then 'Attach'"]
+    E -->|"Already on the job record"| G["'From the job record this period', grouped by kind: 'Attach to…', then 'Attach'"]
     E -->|"The client has it already"| H["'I have this…', 'Where is it? (optional)', 'Save'"]
     E -->|"This client never needs it"| I["'Not needed for this client'"]
     F --> C
@@ -278,11 +278,12 @@ flowchart TD
     H --> C
     I --> C
     C -->|"A change order is unsigned too"| J["'Also blocking send': 'Open CO N', section 6"]
+    B -.->|"Conditional waiver item"| W["'What the signed waiver must show': 'Check the signed form shows' and 'State form'"]
     T0["Job page while blocked: card 'Blocking send:'"] --> K{"Client sent a pay app back before?"}
     K -->|"Yes"| L["'Client sent a pay app back? Note why.': type the reason, 'Save to the client playbook'"]
 ```
 
-Code: the blocker button's words `domain.blocker_button`, domain/__init__.py:272; paperwork page `views.packetDetail`, static/js/views/paperwork.js:25-75 (**Take a photo** / **Choose file** upload with `?attach=`, **Choose a record…** / **Attach** `attach-record` static/js/views/paperwork.js:95, **I have this…** / **Save** `resolve` static/js/views/paperwork.js:81, **Not needed for this client** `packet-skip` static/js/views/paperwork.js:94, **Remove** on a draft's, the job's and closeout paperwork `packet-detach` static/js/views/paperwork.js:93, **Also blocking send**); server `attach_record_to_packet` domain/__init__.py:2757, `resolve_packet_item` :578, `skip_packet_item` :2647, `detach_packet_item` :2619; the note-why card in `views.job` (`learn` static/js/views/job.js:382, server `learn_rejection`, domain/__init__.py:2331). The list comes from the Client playbook, Paperwork needed with each pay app; a pay app, schedule of values or continuation sheet item is in from the start ("Produced by Duracash with the pay app").
+Code: the blocker button's words `domain.blocker_button`, domain/__init__.py:273; paperwork page `views.packetDetail`, static/js/views/paperwork.js:259-315 (**What (client) needs to pay** `clientNeedsHtml` :57; **Required items**, each attached record with its kind, its files as links and photos as small pictures, and who attached it when (`attachmentRow`, `recordFileLinks` :28); **Take a photo** / **Choose file** upload with `?attach=` and, on a waiver item, `&waiver_kind=` :297-298; **I have this…** / **Save** `resolve` :321; **Not needed for this client** (closeout: **Not needed on this job**) `packet-skip` :302, :334; **Remove** on a draft's, the job's and closeout paperwork `packet-detach` :294, :333; **What the signed waiver must show** with `waiverChecklistHtml` :103 and `waiverFormHtml` :85; **Also blocking send**); **From the job record this period** `periodHtml` :194 (the records after the previous pay app's period, grouped Photos, Daily records, Tickets and time sheets, Change orders, Waivers, Other; **Attach to…** lists only the missing items that take that kind of record, from the server's `accepts_kinds`, plus **Send with the pay app** `attach-from-period` :336; a waiver's type `waiver-type` :358; a ticket's change order or line `record-work` :353). Server: the standard items `PAPERWORK_ITEMS`, domain/__init__.py:2891 (progress photos, daily tickets and time sheets, supplier invoices and receipts, insurance certificate, stored materials documents, signed contract, conditional waiver; closeout: punch list sign-off, completion certificate, final lien waivers, as-builts, warranties); a new pay app's list `_new_packet` :2799 (the client's list, or the default one, and always a conditional waiver named by its type unless this client was marked as not taking one); daily tickets when the pay app bills a change order or a unit-price line `_add_ticket_item` :2850; closeout paperwork for every job at Mark done `_ensure_closeout_packet` :2763; `attach_record_to_packet` :3162, `resolve_packet_item` :585, `skip_packet_item` :3047, `detach_packet_item` :3019, `set_waiver_type` :1038, `link_record_to_work` :3728; the note-why card in `views.job` (`learn` static/js/views/job.js:382, server `learn_rejection`, domain/__init__.py:2593). The list comes from the Client playbook, Paperwork needed with each pay app; a pay app, schedule of values or continuation sheet item is in from the start ("Produced by Duracash with the pay app").
 
 **Taps from start to done:** 1 to open, then 2 per missing item (Take a photo, take it) or 2 to attach a record (pick, Attach).
 
@@ -315,7 +316,8 @@ flowchart TD
     M -->|"Yes"| N["Paperwork, section 7"]
     N --> M
     M -->|"No"| O["Job page or Dashboard: 'Review & send'"]
-    O --> P["Pay app page, card 'Before you send': To, Also email (CC), Amount, Period to, Payment due, Subject, Attached; 'Open the PDF'"]
+    O --> P["Pay app page, card 'Before you send': To, Also email (CC), Amount, Period to, Payment due, Subject, 'The email carries' (each file with 'Leave out' or 'Put back', 'Add from the job record…'), 'What (client) needs to pay'; 'Open the PDF'"]
+    P -.->|"A signed unconditional waiver is attached"| PU["'An unconditional waiver is attached…': take it off, or an owner types why and taps 'Send anyway', confirm"]
     P -.->|"Company address, phone or licence number blank"| PW["'Your company … is blank on this PDF.' with 'Company details' (a warning: sending stays open)"]
     P --> P1{"Email for pay apps known and your email confirmed?"}
     P1 -->|"No email"| P2["'Email for pay apps' box, 'Save email'"]
@@ -326,7 +328,7 @@ flowchart TD
     R -->|"No"| T["Dashboard row 'Didn't go out' with 'Send again'; the Outbox has it too"]
 ```
 
-Code: **Progress pay app** and **Mark done** in `jobActions`, static/js/jobs.js:290-291; progress card `progressFormHtml`, static/js/views/job.js:94-118 (`progressFigures`, static/js/jobs.js:155, checks it as the server does), line-by-line card `sovProgressHtml` static/js/sov.js:91-111 (a lump-sum line's **% done** takes at most one decimal, `lumpDone` static/js/sov.js:34, never rounded); **Draft progress pay app** `progress` static/js/views/job.js:301 and `sov-progress` static/js/views/job-sov.js:242; Mark done card in `views.job` and its confirm static/js/views/job.js:312; server `record_progress` domain/__init__.py:322, `record_sov_progress` :3127, `mark_done` :402, `draft_invoice` :436; **Review & send** opens the pay app page at `.send-check` (static/js/jobs.js:309, static/js/today.js:22); pay app page `views.payappDetail`, static/js/views/payapps.js:48-127 (**Before you send**, **Open the PDF**, **Download for QuickBooks**, **Approve & send to …**; the blank company details warning `companyGapsHtml` static/js/setup.js:29, a warning only); server `approve_and_send`, domain/__init__.py:604; **Send again** `email-retry` static/js/views/communications.js:42. Mistakes: **Undo done** (before the final pay app goes out, `undo_mark_done`, domain/__init__.py:2272), **Delete draft** (`void_draft`, domain/__init__.py:2187), **Pull back this pay app…** on a sent one with nothing paid (`void_sent_pay_app`, domain/__init__.py:2213).
+Code: **Progress pay app** and **Mark done** in `jobActions`, static/js/jobs.js:290-291; progress card `progressFormHtml`, static/js/views/job.js:94-118 (`progressFigures`, static/js/jobs.js:155, checks it as the server does), line-by-line card `sovProgressHtml` static/js/sov.js:91-111 (a lump-sum line's **% done** takes at most one decimal, `lumpDone` static/js/sov.js:34, never rounded); **Draft progress pay app** `progress` static/js/views/job.js:301 and `sov-progress` static/js/views/job-sov.js:242; Mark done card in `views.job` and its confirm static/js/views/job.js:312; server `record_progress` domain/__init__.py:322, `record_sov_progress` :3127, `mark_done` :402, `draft_invoice` :436; **Review & send** opens the pay app page at `.send-check` (static/js/jobs.js:309, static/js/today.js:22); pay app page `views.payappDetail`, static/js/views/payapps.js:48-127 (**Before you send**, **Open the PDF**, **Download for QuickBooks**, **Approve & send to …**; the blank company details warning `companyGapsHtml` static/js/setup.js:29, a warning only); the paperwork part of Before you send `beforeYouSendHtml`, static/js/views/paperwork.js:209 (**Leave out** / **Put back** / **Take off** `payapp-attach` :343, **Add from the job record…** `payapp-add` :348, **Send anyway** `send-override` :368; server `change_payapp_attachments` domain/__init__.py:3656, only while the pay app is a draft, `POST /api/jobs/<id>/payapp/<inv>/attachments` server.py:2462); server `approve_and_send`, domain/__init__.py:632 (an attached unconditional waiver is refused without an owner's reason, `unconditional_waivers_attached` :614, `_send_payapp` server.py:2605; the conditional waiver type that went with it is kept on the pay app); **Send again** `email-retry` static/js/views/communications.js:42. Mistakes: **Undo done** (before the final pay app goes out, `undo_mark_done`, domain/__init__.py:2272), **Delete draft** (`void_draft`, domain/__init__.py:2187), **Pull back this pay app…** on a sent one with nothing paid (`void_sent_pay_app`, domain/__init__.py:2213).
 
 **Taps from start to done:** 3 for a progress bill with nothing missing (Progress pay app, Draft progress pay app, Review & send) plus Approve & send: 4.
 
@@ -409,32 +411,32 @@ Code: **Record a payment** card in `views.job` (`match` static/js/views/job.js:3
 
 ## 11. Lien waiver
 
-**Goal:** send the signed lien waiver for each pay app that is paid.
+**Goal:** a conditional waiver goes with each pay app; once it is paid, send the signed unconditional one.
 
 ```mermaid
 flowchart TD
-    A["Before: the signed waiver on the job record, kind 'Lien waiver' (or take a photo of it on the waiver page)"] --> B{"Where are you?"}
+    A0["Before payment: each pay app's paperwork has a conditional waiver (progress, or final on the final pay app), section 7"] --> A
+    A["Payment recorded: 'Payment received, waiver not sent'"] --> B{"Where are you?"}
     B -->|"Dashboard row 'Waiver due'"| C["Tap 'Review waiver'"]
     B -->|"Job page"| C2["Tap 'Choose waiver and send'"]
-    B -->|"Money, Closeout"| C3["Row 'Due': 'Choose type and send'"]
+    B -->|"Money, Closeout"| C3["Row 'Due' (one per pay app and per retainage release): 'Choose type and send'"]
     C --> D["Waiver page 'Waivers: (job)'"]
     C2 --> D
     C3 --> D
-    D --> E{"A signed waiver on the job?"}
-    E -->|"No"| E1["Card 'No signed waiver on the job yet': 'Take a photo' or 'Choose file'"]
+    D --> E{"A signed waiver of that type on the job record?"}
+    E -->|"No"| E1["'Add the signed unconditional waiver to the job record, then send.': 'Take a photo' or 'Choose file'; 'Approve & send' stays off"]
     E1 --> F
-    E -->|"Yes"| F["Pick the type; the line under it says when it fits; tap 'Approve & send'"]
-    F --> H{"A 'Lien waiver' record with a file?"}
-    H -->|"Yes"| I["Emailed with the newest one attached"]
-    H -->|"No"| J["Emailed saying the signed waiver will follow separately"]
+    E -->|"Yes"| F["Pick the type; check 'Check the signed form shows' and 'State form'; tap 'Approve & send'"]
+    F --> G["Confirm names the type, pay app, amount and who gets it"]
+    G --> I["Emailed with that signed waiver attached, the amount, the period and any retainage it does not release"]
 ```
 
-Code: Dashboard row kind `waiver` (**Review waiver**, `open-waiver`); job page **Choose waiver and send** static/js/jobs.js:310; Closeout `views.waivers`, static/js/views/closeout.js:65 (**Which type?**, **Not chosen yet**, **Choose type and send**); waiver page `views.waiverDetail`, static/js/views/closeout.js:29-63; type picker and hint `waiverSendForm` / `WAIVER_HINTS`, static/js/jobs.js:107-132; server `send_waiver`, domain/__init__.py:963 (the "will follow separately" wording :1003).
+Code: Dashboard row kind `waiver` (**Review waiver**, `open-waiver`); job page **Choose waiver and send** static/js/jobs.js:360; Closeout `views.waivers`, static/js/views/closeout.js:100 (one row per pay app and per retainage release, `waiverRows` :31; **Which type?**, **Not chosen yet**, **Choose type and send**); waiver page `views.waiverDetail`, static/js/views/closeout.js:58-96 (**Waivers due**, **Check the signed form shows**, **State form**, **By pay app** with **Before payment** and **After payment**); the confirm `waiver` :155; type picker and hint `waiverSendForm` / `WAIVER_HINTS`, static/js/jobs.js:108-145; server `send_waiver`, domain/__init__.py:1091 (refused until a signed waiver of the type is on the job record, `waiver_on_file` :1060, never one that already went out in any email, the pay app's included), both stages `waiver_stages` :1205, the type it suggests `suggested_waiver_kind` :1009 (conditional before payment, unconditional after, never final while retainage is held); state forms `helper/waiver_forms.json` (Georgia so far), `GET /api/waiver-forms` server.py:2461.
 
-**Taps from start to done:** 2 (Review waiver, Approve & send), plus the type if it isn't the one picked for you.
+**Taps from start to done:** 2 (Review waiver, Approve & send) and the confirm, plus the type if it isn't the one picked for you.
 
 **Where it could still be simpler:**
-- Add the signed waiver to the job record; Duracash attaches it. State forms are deferred until Stephen decides (improvement plan section 5).
+- Duracash does not write the waiver: sign the form your state or the client requires and add it to the job record. Only Georgia's forms are listed so far.
 
 ---
 
@@ -444,28 +446,27 @@ Code: Dashboard row kind `waiver` (**Review waiver**, `open-waiver`); job page *
 
 ```mermaid
 flowchart TD
-    A["Money, Closeout: 'Held back, still owed', each job with 'Holding it up' and 'Next'"] --> B{"Job marked done?"}
-    B -->|"No"| C["'Part to ask for now ($)', 'Ask for retainage' (for example at substantial completion)"]
+    A["Job page 'Retainage' card, or Money, Closeout: 'Held back, still owed' (Done, Times asked, Last asked, Holding it up, Next)"] --> B{"Job marked done?"}
+    B -->|"No"| C["'Once the job is marked done.': no ask yet"]
     B -->|"Yes"| D{"Closeout paperwork complete?"}
     D -->|"No"| E["'Open closeout paperwork': add or mark items, section 7"]
     E --> D
     D -->|"Yes"| F["'Amount ($), blank for all', 'Ask for retainage', confirm"]
-    C --> G
     F --> G["Email asking for the retainage, with the closeout paperwork"]
     G --> J["When paid, job page: 'Record retainage paid'"]
     J --> K["'Retainage received ($)', 'Reference', 'Record'"]
     K --> L{"More than what is held?"}
     L -->|"Yes"| M["Refused under the amount"]
     M --> K
-    L -->|"No"| N["Recorded; the job can finish if nothing else is open"]
+    L -->|"No"| N["Recorded; its lien waiver is due (section 11): unconditional, final once nothing is held"]
 ```
 
-Code: Closeout's held-back table in `views.waivers`, static/js/views/closeout.js:67-114, `retainageAskHtml` static/js/views/closeout.js:16; job page **Ask for retainage** only once the work is done and the closeout paperwork is in (static/js/jobs.js:324; the Money card says why otherwise, `retainageNote` static/js/jobs.js:249); after a request, whole or part, the next waits the client's **Days between follow-ups**: the job page and Closeout show when it was asked and when to ask again instead of the button (`retainageAskWaits` static/js/jobs.js:243, the server's wait in `chase_retainage` domain/__init__.py:1030); the confirm static/js/views/closeout.js:141; server `chase_retainage`, domain/__init__.py:1030 (before done: :1049); **Record retainage paid** card in `views.job`, `retainage-paid` static/js/views/job.js:331, server `record_retainage_payment`, domain/__init__.py:1097.
+Code: the job page's **Retainage** card `retainageCardHtml`, static/js/views/job-money.js:39 (rate, held, released, still held, **Job done**, **Times asked**, **Last asked**, **Next ask allowed**, **Pay apps holding it**, **Releases** with each one's waiver, **Closeout paperwork** with its files; figures `retainageFacts` static/js/jobs.js:172); Closeout's held-back table in `views.waivers`, static/js/views/closeout.js:100-150, `retainageAskHtml` :17; job page **Ask for retainage** only once the work is done and the closeout paperwork is in (static/js/jobs.js:374; the card says why otherwise, `retainageNote` static/js/jobs.js:299); after a request, whole or part, the next waits the client's **Days between follow-ups** (`retainageAskWaits` static/js/jobs.js:293, the server's wait in `chase_retainage`); the confirm static/js/views/closeout.js:167; server `chase_retainage`, domain/__init__.py:1229 (refused before the job is marked done); **Record retainage paid** card in `views.job`, `retainage-paid` static/js/views/job.js:331, server `record_retainage_payment`, domain/__init__.py:1291 (each release owes a lien waiver, `retainage_waivers`).
 
-**Taps from start to done:** 4 (Ask for retainage and the confirm, then later Record retainage paid, Record).
+**Taps from start to done:** 4 (Ask for retainage and the confirm, then later Record retainage paid, Record), then the release's waiver (section 11).
 
 **Where it could still be simpler:**
-- The Dashboard has no row for "retainage ready to ask for"; Closeout shows it.
+- The Dashboard has no row for "retainage ready to ask for"; the job page and Closeout show it.
 
 ---
 
@@ -486,7 +487,7 @@ flowchart TD
     H -->|"Yes, owner"| I["'Reopen job…': 'Why reopen it?', 'Reopen job'"]
 ```
 
-Code: the card in `views.job` from `close_blocker_items`, domain/__init__.py:187, buttons `closeBlockerActions`, static/js/jobs.js:347-349; **Finish job** static/js/jobs.js:319 and its confirm static/js/views/job.js:376; server `close_job`, domain/__init__.py:2342; **Reopen job…** in `views.job`, server `reopen_job`, domain/__init__.py:2353 (owners only); a job with only drafts deleted before they were sent and no payments can be deleted instead (**Delete job** under Edit job, `can_delete_job` :3016).
+Code: the card in `views.job` from `close_blocker_items`, domain/__init__.py:188 ("A lien waiver is still due." until every paid pay app's and every retainage release's waiver is sent), buttons `closeBlockerActions`, static/js/jobs.js:347-349; **Finish job** static/js/jobs.js:319 and its confirm static/js/views/job.js:376; server `close_job`, domain/__init__.py:2342; **Reopen job…** in `views.job`, server `reopen_job`, domain/__init__.py:2353 (owners only); a job with only drafts deleted before they were sent and no payments can be deleted instead (**Delete job** under Edit job, `can_delete_job` :3016).
 
 **Taps from start to done:** 2 (Finish job, the confirm).
 
