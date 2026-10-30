@@ -115,4 +115,62 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator("#export-calendar #cal-url").filter({ hasText: /\/api\/calendar\// }).waitFor();
     await ctx.close();
   });
+
+  await step("Import: quantities from a CSV file show row by row, then go onto the job's schedule of values and its draft", async () => {  // M1
+    const { ctx, p } = await newCompany("qty");
+    const jobId = await p.evaluate(async () => {
+      const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const st = await (await post("/api/jobs", { name: "Elm wiring", address: "9 Elm St", customer: "Park GC", role: "GC",
+        ap_email: "ap@park.example", contract_cents: 3450000 })).json();
+      const id = st.jobs.find((j) => j.name === "Elm wiring").id;
+      await post(`/api/jobs/${id}/sov`, { op_pct: "15", lines: [
+        { item: "1", description: "Rough-in wiring", quantity: "400", unit: "ea", rate: "45.00" },
+        { item: "2", description: "Panel and feeders", quantity: "1", unit: "LS", rate: "12000" },
+      ] });
+      return id;
+    });
+    await p.goto(BASE + "/data/import");
+    const card = p.locator("#qty-import");
+    await card.getByRole("heading", { name: "Quantities done" }).waitFor();
+    await p.selectOption("#qty-import-job", jobId);
+    const [chooser] = await Promise.all([p.waitForEvent("filechooser"), card.getByRole("button", { name: "Choose the file" }).click()]);
+    await chooser.setFiles({ name: "foreman-log.csv", mimeType: "text/csv",
+      buffer: Buffer.from("Item,Description,Qty this period\n1,Rough-in wiring,30\n2,Panel and feeders,25%\n9,Gutters,4\n") });
+    const table = card.locator("table.qty-preview");
+    await table.waitFor();
+    assert.match(await table.locator("tr", { hasText: "1. Rough-in wiring" }).innerText(), /0 ea\s+30 ea\s+30 ea\s+400 ea/);
+    await table.locator("tr.qty-problem", { hasText: "Gutters" }).waitFor();
+    const before = await p.evaluate(async (id) => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === id).invoices.length, jobId);
+    assert.equal(before, 0, "the preview changes nothing");
+    await card.getByRole("button", { name: "Add 2 to the schedule of values" }).click();
+    await card.getByText(/2 lines added to PA-/).waitFor();
+    await card.locator(".qty-result").getByText(/Row 4 \(Gutters\)/).waitFor();
+    const job = await p.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()), jobId);
+    const j = job.job || job;
+    assert.deepEqual(j.sov.lines.map((l) => l.done_milli), [30000, 250]);
+    assert.equal(j.invoices.filter((i) => i.status === "draft").length, 1, "the living draft");
+    await ctx.close();
+  });
+
+  await step("Export: jobs, pay apps, payments and change orders download as CSV files", async () => {  // I1
+    const { ctx, p } = await newCompany("csv");
+    await p.goto(BASE + "/data/export");
+    const lists = p.locator("#export-lists");
+    const [download] = await Promise.all([p.waitForEvent("download"), lists.getByRole("link", { name: "Jobs" }).click()]);
+    assert.match(download.suggestedFilename(), /^duracash-jobs-\d{8}\.csv$/);
+    const files = await p.evaluate(async () => {
+      const out = {};
+      for (const kind of ["jobs", "payapps", "payments", "change-orders"]) {
+        const res = await fetch(`/api/export/${kind}.csv`);
+        out[kind] = [res.status, (await res.text()).replace(/^\ufeff/, "").split("\r\n")[0]];
+      }
+      return out;
+    });
+    assert.equal(files.jobs[0], 200);
+    assert.match(files.jobs[1], /^Job,Code,Client,Address,Contract,/);
+    assert.match(files.payapps[1], /^Number,Job,Client,Period to,Amount,Retainage,Status/);
+    assert.match(files.payments[1], /^Date,Job,Client,Pay app,For,Amount,Reference$/);
+    assert.match(files["change-orders"][1], /^Number,Job,Title,Reason,Amount,Status,Signed on,On a pay app$/);
+    await ctx.close();
+  });
 }
