@@ -222,7 +222,7 @@ function onboardingHtml() {
   return `<div class="card onboarding">
     <button class="help-dismiss" data-action="onb-dismiss" title="Hide this" aria-label="Hide the setup checklist">×</button>
     <h2>${termText("Get your first pay app out")}</h2>
-    <p class="sub">${done} of ${required.length} steps done. Steps marked optional don't count. You can bring this back from Settings, My account.</p>
+    <p class="sub">${done} of ${required.length} steps done.</p>
     <ol class="onb-steps">${steps.map(st => `<li class="${st.done ? "done" : st === next ? "next" : ""}">${st.done ? "✓ " : ""}${st.optional ? "Optional: " : ""}${st.text}${st === next || st.optional || st.always ? button(st) : ""}</li>`).join("")}</ol>
   </div>`;
 }

@@ -262,7 +262,7 @@ export const views = {
     const isCloseout = currentDetailId === "closeout";
     const inv = isCloseout ? null : (j.invoices.find(i => i.id === currentDetailId) || [...j.invoices].reverse().find(i => i.packet) || j.invoices[j.invoices.length - 1]);
     const packet = isCloseout ? (j.closeout_packet || []) : ((inv && inv.packet) || j.packet || []);
-    if (!inv && !packet.length) return backButton("job", j.name, j.id) + emptyState("No paperwork yet", "Draft a pay app. Its paperwork list comes with it, from this client's playbook. Until then, add notes and files to the job record.", `<button class="btn" data-action="open-job" data-id="${j.id}">Back to ${j.name}</button>`);
+    if (!inv && !packet.length) return backButton("job", j.name, j.id) + emptyState(isCloseout ? "No closeout paperwork yet" : "No paperwork yet", "", `<button class="btn" data-action="open-job" data-id="${j.id}">Back to ${j.name}</button>`);
     const missing = packet.filter(p => p.required && !p.present).length;
     // Unsigned change orders on the bill block the same send; say so here with a way to them (R3-05).
     const cosBlocking = !isCloseout && isBlocked(j) ? coBlockers(j) : [];

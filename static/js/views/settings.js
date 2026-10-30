@@ -117,9 +117,7 @@ function profilesCardHtml() {
   const edit = ownerMe() && me.company_id !== DEMO_COMPANY_ID;
   const list = teamData.profiles;
   const perms = teamData.permissions || [];
-  const admin = (teamData.users || []).find(u => u.company_admin);
   return `<h2>Permission profiles</h2>
-    <p class="sub">What each profile can do. Everyone on the team can draft pay apps, add records and paperwork, and follow up. The Owner profile can do everything, and only owners add or change profiles; only the Company Admin${admin ? ` (${admin.name})` : ""} can delete the company.</p>
     <div class="table-wrap"><table class="profiles-table">
       <tr><th>Permission</th>${list.map(p => `<th>${p.name}</th>`).join("")}</tr>
       ${perms.map(k => `<tr><td>${k.words}</td>${list.map(p => `<td class="center">${p.perms.includes(unesc(k.key)) ? `<span class="pill green" aria-label="Yes">Yes</span>` : `<span class="sub" aria-label="No">No</span>`}</td>`).join("")}</tr>`).join("")}
@@ -309,7 +307,6 @@ function appearanceCardHtml() {
         ${field({ form: "appearance", name: "theme", id: "app-theme", label: "Theme", value: a.theme, options: THEMES })}
         ${field({ form: "appearance", name: "accent", id: "app-accent", label: "Accent colour", value: a.accent, options: ACCENTS })}
       </div>
-      <p class="sub">Only for you, on every device you sign in on. Pay app PDFs and your clients' pages stay as they are.</p>
     </div>`;
 }
 
