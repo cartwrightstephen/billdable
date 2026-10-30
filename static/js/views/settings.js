@@ -3,7 +3,8 @@
 import { esc, unesc, escDeep, fmtDate, fmtDateTime, words } from "../format.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { moreButton, askConfirm } from "../dom.js";
-import { field, formErrorLine, refuseForm, formValues, clearForm, draftValue } from "../forms.js";
+import { field, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
+import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
 import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo } from "../state.js";
@@ -78,7 +79,7 @@ function teamCardHtml() {
         <h3>Invite someone</h3>
         ${locked ? inviteLockHtml() : ""}
         <div data-form-key="invite">${formErrorLine("invite")}<div class="form-row">
-          ${field({ form: "invite", name: "email", id: "invite-email", label: "Their email", type: "email", autocomplete: "off", wide: true })}
+          ${field({ form: "invite", name: "email", id: "invite-email", label: "Their email", type: "email", autocomplete: "off", wide: true, rule: "email" })}
           ${field({ form: "invite", name: "role", id: "invite-role", label: "They join as", options: [["member", "Member"], ["owner", "Owner"]] })}
           <button class="btn small" data-action="team-invite"${locked ? " disabled" : ""}>Invite</button>
         </div></div>
@@ -88,47 +89,73 @@ function teamCardHtml() {
           <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}`;
 }
 
-// The company's on/off settings (R4-09, R4-10). Saved as soon as a box is ticked; owners only.
+// The company's on/off settings (R4-09, R4-10), owners only. Ticked boxes are saved with the rest
+// of the page by its one Save (S1); until then a tick is kept here, through redraws.
+let switchDraft = {};
 function companySwitchesHtml(owner) {
   const co = state.company || {};
-  const box = (key, on, label, help) => `<label class="terms-check switch-row"><input type="checkbox" data-company-switch="${key}"${on ? " checked" : ""}${owner ? "" : " disabled"}> <span><strong>${label}</strong><br><span class="sub">${help}</span></span></label>`;
+  const on = (key, saved) => (key in switchDraft ? switchDraft[key] : saved);
+  const box = (key, checked, label, help) => `<label class="terms-check switch-row"><input type="checkbox" id="sw-${key}" data-company-switch="${key}"${checked ? " checked" : ""}${owner ? "" : " disabled"}> <span><strong>${label}</strong><br><span class="sub">${help}</span></span></label>`;
   return `<div class="card" id="switches-card">
       <h2>Sending and email</h2>
-      ${box("members_can_send", !!co.members_can_send, "Members can send pay apps, lien waivers and retainage requests",
+      ${box("members_can_send", on("members_can_send", !!co.members_can_send), "Members can send pay apps, lien waivers and retainage requests",
         "Off: you approve every send. Members draft and get the paperwork ready; an owner sends, deletes drafts, pulls back pay apps and finishes jobs.")}
-      ${box("daily_email", co.daily_email !== false, "Daily email of what's due",
+      ${box("daily_email", on("daily_email", co.daily_email !== false), "Daily email of what's due",
         "Each morning owners get one email listing what's due today, with a link to each. Nothing is sent on a day with nothing due.")}
       ${owner ? "" : `<p class="sub">Owners can change these.</p>`}
     </div>`;
 }
 
-export async function companySwitch(box) {
-  await post("/api/company", { [box.dataset.companySwitch]: box.checked }, { anchor: box });
+// A switch ticked (app.js's change listener): kept until Save.
+export function companySwitch(box) {
+  switchDraft[box.dataset.companySwitch] = !!box.checked;
+}
+
+// The company form's boxes and the G1 rule each is checked by (as domain.COMPANY_RULES).
+const COMPANY_RULES = { name: "name", phone: "phone", license: "licence", street: "street", city: "city", state: "state", zip: "zip" };
+const ADDRESS_KEYS = ["street", "city", "state", "zip"];
+
+// What Save sends for the company page, and the boxes to mark first: a box is checked only when
+// it changed (a value saved before the rules stays until edited), and once any address box is
+// filled, all four are needed.
+export function companyChanges(values, company, switches) {
+  const changed = Object.fromEntries(Object.entries(values).filter(([k, v]) => v !== String(unesc(company[k] ?? ""))));
+  const errors = checkFields(changed, COMPANY_RULES);
+  if (!values.name) errors.name = "Enter the company name.";
+  if (ADDRESS_KEYS.some(k => values[k])) Object.assign(errors, checkFields(values, Object.fromEntries(ADDRESS_KEYS.map(k => [k, COMPANY_RULES[k]])), ADDRESS_KEYS.filter(k => !values[k])));
+  return { body: { ...values, ...switches }, errors };
 }
 
 // Settings, one page each (R6-03): Company, Team, My account and Billing (members see it read-only, R6-10).
-// Your data and Delete the company sit folded at the end of Company.
+// Company is one form with one Save at the bottom (S1): its details, the address in four boxes
+// (S3) and the switches. Your data sits folded at the end.
 function companyView() {
   const owner = me.role === "owner";
   const isDemo = me.company_id === DEMO_COMPANY_ID;
-  // What was typed and not yet saved stays through a redraw (a switch saved, QuickBooks status
-  // arriving): the boxes are a form (data-field), so watchForms keeps it.
+  // What was typed and not yet saved stays through a redraw (QuickBooks status arriving): the
+  // boxes are a form (data-field), so watchForms keeps it.
   const co = state.company;
-  const typed = (name) => esc(draftValue("company", name, unesc(co[name] || "")));
+  const saved = (name) => unesc(co[name] || "");
+  const lock = owner ? "" : "disabled";
+  const box = (name, id, label, rule, extra = {}) => field({ form: "company", name, id, label, rule, value: saved(name), attrs: lock, ...extra });
   return `
     <h1>Company</h1>
-    <div class="card" id="company-card" data-form-key="company">
+    <div data-form-key="company">${formErrorLine("company")}
+    <div class="card" id="company-card">
       <h2>Company details</h2>
       ${owner ? "" : `<p class="sub">Owners can change these.</p>`}
       <div class="form-grid">
-        <div><label for="co-name">Company name</label><input id="co-name" data-field="name" value="${typed("name")}"${owner ? "" : " disabled"}></div>
-        <div><label for="co-phone">Phone</label><input id="co-phone" data-field="phone" value="${typed("phone")}" inputmode="tel" autocomplete="tel"${owner ? "" : " disabled"}></div>
-        <div class="span-2"><label for="co-address">Address</label><input id="co-address" data-field="address" value="${typed("address")}" placeholder="Street, city, state ZIP" autocomplete="street-address"${owner ? "" : " disabled"}></div>
-        <div><label for="co-license">Contractor licence number</label><input id="co-license" data-field="license" value="${typed("license")}"${owner ? "" : " disabled"}></div>
+        ${box("name", "co-name", "Company name", "name", { required: true, autocomplete: "organization" })}
+        ${box("phone", "co-phone", "Phone", "phone", { type: "tel", inputmode: "tel", autocomplete: "tel", placeholder: "(404) 555-0123" })}
+        ${box("street", "co-address", "Street address", "street", { wide: true, autocomplete: "address-line1" })}
+        ${box("city", "co-city", "City", "city", { autocomplete: "address-level2" })}
+        ${box("state", "co-state", "State", "state", { options: [["", "Pick a state"], ...US_STATES.map(c => [c, c])] })}
+        ${box("zip", "co-zip", "ZIP code", "zip", { inputmode: "numeric", autocomplete: "postal-code", placeholder: "30303" })}
+        ${box("license", "co-license", "Contractor licence number", "licence")}
       </div>
-      ${owner ? `<button class="btn small" data-action="save-company">Save company details</button>` : ""}
     </div>
     ${isDemo ? "" : companySwitchesHtml(owner)}
+    </div>
     ${qboCardHtml(false)}
     <details class="card danger-zone" data-more="danger"${formOpen.reset || moreDetails.danger ? " open" : ""}>
       <summary><strong>${owner ? "Your data, reset and delete" : "Your data"}</strong></summary>
@@ -152,6 +179,7 @@ function companyView() {
         <button class="btn small danger" data-action="delete-account">Delete everything</button>
       </div>` : ""}
     </details>
+    ${owner ? `<div class="save-bar"><button class="btn" data-action="save-company">Save</button></div>` : ""}
   `;
 }
 
@@ -170,9 +198,9 @@ function myAccountView() {
     : `<span class="pill amber">not confirmed</span> ${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : `<span class="sub">Confirming needs email set up on the server.</span>`}`;
   return `
     <h1>My account</h1>
-    <div class="card">
+    <div class="card" data-form-key="account">${formErrorLine("account")}
       <h2>You</h2>
-      ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-inline"><label for="my-name" class="inline-label">Name</label><input id="my-name" value="${me.name}" autocomplete="name" class="grow"><button class="btn small secondary" data-action="save-my-name">Save name</button></div>`}
+      ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-grid">${field({ form: "account", name: "name", id: "my-name", label: "Name", value: unesc(me.name), autocomplete: "name", rule: "name", required: true })}</div>`}
       <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
       <div class="money-row"><span class="label">Role</span><span>${words(me.role)}</span></div>
       ${isDemo ? "" : `<div data-form-key="password">${formErrorLine("password")}<div class="form-row">
@@ -201,6 +229,7 @@ function myAccountView() {
     </div>`}
     ${me.onboarding_dismissed && !isDemo ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
     <p class="sub">Your account id: <code>${me.id}</code></p>
+    ${isDemo ? "" : `<div class="save-bar"><button class="btn" data-action="save-account">Save</button></div>`}
   `;
 }
 
@@ -242,7 +271,7 @@ export function trialBannerHtml() {
 
 // Signed out: what one person had open in Settings isn't kept for the next.
 export function forgetSettings() {
-  twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null;
+  twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {};
   helperReview = null; helperDraft = null; auditJobFilter = "all";
 }
 onSessionEnd(forgetSettings);
@@ -469,16 +498,26 @@ export const actions = {
     toast(r.ok ? r.data.message : (r.data.error || "That didn't work."));
     if (r.ok) { me.two_step = false; render(); }
   },
+  // The Company page's one Save (S1): the details, the address and the switches together.
   "save-company": async () => {
-    const v = (k) => document.getElementById(k)?.value || "";
-    const r = await post("/api/company", { name: v("co-name"), address: v("co-address"), phone: v("co-phone"), license: v("co-license") });
-    // Saved: the boxes show what the server kept (spaces tidied), not the typed copy.
-    if (r && r.ok) { clearForm("company"); render(); }
+    const { body, errors } = companyChanges(formValues("company"), state.company, switchDraft);
+    if (refuseForm("company", errors)) return;
+    const r = await post("/api/company", body, { formKey: "company" });
+    // Saved: the boxes show what the server kept (a phone as (404) 555-0123), not the typed copy.
+    if (r && r.ok) { switchDraft = {}; clearForm("company"); render(); }
   },
-  "save-my-name": async () => {
-    const r = await postJson("/api/auth/name", { name: document.getElementById("my-name")?.value || "" });
-    if (!r.ok) { toast(r.data.error || "Not saved."); return; }
-    setMe(escDeep(r.data.user)); toast("Saved"); render();
+  // My account's one Save (S1): the name, when it changed.
+  "save-account": async () => {
+    const v = formValues("account");
+    if (refuseForm("account", checkFields(v, { name: "name" }, ["name"]))) return;
+    if ("name" in v && v.name !== unesc(me.name)) {
+      const r = await postJson("/api/auth/name", { name: v.name });
+      if (!r.ok) { refuseForm("account", r.data.fields || { _form: r.data.error || "Not saved." }); return; }
+      setMe(escDeep(r.data.user));
+    }
+    clearForm("account");
+    toast("Saved");
+    render();
   },
   "billing-checkout": () => openBilling("/api/billing/checkout"),
   "billing-portal": () => openBilling("/api/billing/portal"),

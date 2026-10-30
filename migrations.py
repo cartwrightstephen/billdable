@@ -45,7 +45,21 @@ def _v3_to_v4(state: dict[str, Any]) -> None:
                 inv["contract_at_send"] = payapp_pdf.contract_terms(job, inv["sent_at"])
 
 
-STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4]
+def _settings_auth_company_address_parts(state: dict[str, Any]) -> None:
+    """settings-auth (S3): the company address in four boxes. A one-line address that reads as
+    'Street, City, ST 12345' is split into street, city, state and zip; one that doesn't goes
+    whole into street, so the owner sees it and fills in the rest. The line itself is kept."""
+    company = state.get("company") or {}
+    address = str(company.get("address") or "").strip()
+    if not address or any(company.get(k) for k in domain.ADDRESS_PARTS):
+        return
+    for key, value in domain.parse_legacy_address(address).items():
+        if value:
+            company[key] = value
+
+
+STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4,
+                                                 _settings_auth_company_address_parts]
 SCHEMA_VERSION = len(STEPS) + 1
 
 

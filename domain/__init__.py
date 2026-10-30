@@ -1880,6 +1880,11 @@ def payapp_due(payer: dict[str, Any], today: date | None = None) -> tuple[date, 
 
 
 COMPANY_FIELDS = {"name": 120, "address": 200, "phone": 40, "license": 60}
+# The company address in four boxes (S3), with the longest each may be; "address" is composed.
+ADDRESS_PARTS = {"street": 120, "city": 60, "state": 3, "zip": 10}
+ADDRESS_WORDS = {"street": "street address", "city": "city", "state": "state", "zip": "ZIP code"}
+# The G1 rule each company field is checked by (domain/validate.py) when it changes.
+COMPANY_RULES = {"name": "name", "phone": "phone", "license": "licence", "street": "street", "city": "city", "state": "state", "zip": "zip"}
 BILLING_STYLES = {"pay_apps", "draws"}
 # On/off company settings on Settings, Company, with their default: members may send pay apps,
 # waivers and retainage requests (R4-09); owners get the daily "due today" email (R4-10).
@@ -1909,7 +1914,13 @@ def payer_timing(state: dict[str, Any]) -> dict[str, tuple[float, int]]:
 def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
     """The company's own details: its name, and the address, phone and licence number that go on
     every pay app. Blank clears a field; the name can't be blank. Also the on/off settings in
-    COMPANY_SWITCHES."""
+    COMPANY_SWITCHES.
+
+    The address comes as its four parts (S3): street, city, state and zip, checked by
+    domain/validate.py and kept as parts with the composed one-line "address" ("12 Peach St,
+    Atlanta, GA 30303") that the pay app PDF, the client's page and the menu show. A bare
+    "address" (pages from before S3) is split the same way. Each field is checked only when it
+    changes, so a value saved before the rules (G1) isn't refused until someone edits it."""
     company = state.setdefault("company", {})
     clean: dict[str, Any] = {}
     errors: dict[str, str] = {}
@@ -1921,19 +1932,44 @@ def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = 
             errors["billing_style"] = "Pick how you bill: pay apps or draws."
         else:
             clean["billing_style"] = updates["billing_style"]
-    labels = {"name": "the company name", "address": "the address", "phone": "the phone number", "license": "the licence number"}
-    for k, limit in COMPANY_FIELDS.items():
+    labels = {"name": "the company name", "address": "the address", "phone": "the phone number", "license": "the licence number",
+              **{k: f"the {w}" for k, w in ADDRESS_WORDS.items()}}
+    texts: dict[str, str] = {}
+    for k in (*COMPANY_FIELDS, *ADDRESS_PARTS):
         if k not in updates:
             continue
         v = updates[k]
         if not isinstance(v, str):
             errors[k] = f"Enter {labels[k]} as text."
             continue
-        v = " ".join(v.split())
+        texts[k] = " ".join(v.split())
+    if any(k in texts for k in ADDRESS_PARTS):
+        parts = {k: texts.get(k, company.get(k, "")) for k in ADDRESS_PARTS}
+        if parts["state"]:
+            parts["state"] = normalize_state(parts["state"]) or parts["state"]
+        if any(parts.values()):
+            changed_parts = {k: v for k, v in parts.items() if v != company.get(k, "")}
+            # The four boxes are one address: once any part is typed, every part is needed.
+            missing = {k: v for k, v in check_address(parts).items() if k in changed_parts or not parts[k]}
+            errors.update(missing)
+        texts.update(parts)
+        texts["address"] = compose_address(parts)
+    elif "address" in texts:
+        texts.update(parse_legacy_address(texts["address"]) if texts["address"] else {k: "" for k in ADDRESS_PARTS})
+    for k, v in texts.items():
+        if k in errors:
+            continue
+        limit = COMPANY_FIELDS.get(k) or ADDRESS_PARTS[k]
         if len(v) > limit:
             errors[k] = f"Shorten {labels[k]} to {limit} characters or fewer."
         elif k == "name" and not v:
             errors[k] = "Enter the company name."
+        elif k in COMPANY_RULES and v and v != company.get(k, ""):
+            rule = COMPANY_RULES[k]
+            if rule == "phone":
+                v = normalize_phone(v) or v
+            errors.update(check_field(rule, v, k))
+            clean[k] = v
         else:
             clean[k] = v
     for k in COMPANY_SWITCHES:
@@ -1955,8 +1991,10 @@ def update_company(state: dict[str, Any], updates: dict[str, Any], actor: str = 
             company.pop(k, None)
     if changed:
         names = {"billing_style": f"billing style ({'draws' if clean.get('billing_style') == 'draws' else 'pay apps'})",
-                 **{k: f"setting \"{SWITCH_WORDS[k]}\" ({'on' if clean.get(k) else 'off'})" for k in COMPANY_SWITCHES}}
-        audit(state, "", "company_update", f"{actor} updated the company's {', '.join(names.get(k, k) for k in changed)}.", actor)
+                 **{k: f"setting \"{SWITCH_WORDS[k]}\" ({'on' if clean.get(k) else 'off'})" for k in COMPANY_SWITCHES},
+                 **ADDRESS_WORDS}
+        shown = list(dict.fromkeys("address" if k in ADDRESS_PARTS else k for k in changed))
+        audit(state, "", "company_update", f"{actor} updated the company's {', '.join(names.get(k, k) for k in shown)}.", actor)
     return company
 
 

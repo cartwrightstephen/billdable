@@ -609,3 +609,5 @@ textarea { font: inherit; }
   background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; box-shadow: 0 6px 24px var(--shadow); max-width: calc(100vw - 32px); }
 .idle-warning p { margin: 0; }
 .signed-out-note { margin: 0 0 12px; }
+/* S1: the one Save at the bottom of Company and My account. */
+.save-bar { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 12px 0; background: var(--paper); border-top: 1px solid var(--line); margin-top: 8px; z-index: 5; }

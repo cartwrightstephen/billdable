@@ -39,14 +39,55 @@ class CompanyDetailsTests(unittest.TestCase):
                 domain.update_company(state, bad, "Alex")
         self.assertEqual(c["name"], "Hartline Remodeling LLC")
 
+    def test_address_in_four_boxes(self):  # S3
+        state = seed_state()
+        c = domain.update_company(state, {"street": " 12  Peach St ", "city": "Atlanta", "state": "ga", "zip": "30303-1234"}, "Alex")
+        self.assertEqual((c["street"], c["city"], c["state"], c["zip"]), ("12 Peach St", "Atlanta", "GA", "30303-1234"))
+        self.assertEqual(c["address"], "12 Peach St, Atlanta, GA 30303-1234", "the PDF and the menu read the composed line")
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.update_company(state, {"street": "12 Peach St", "city": "", "state": "ZZ", "zip": "3030"}, "Alex")
+        self.assertEqual(set(ctx.exception.fields), {"city", "state", "zip"})
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.update_company(state, {"zip": "abcde"}, "Alex")
+        self.assertEqual(set(ctx.exception.fields), {"zip"}, "one box changed: the others are kept")
+        domain.update_company(state, {"city": "Decatur", "zip": "30030"}, "Alex")
+        self.assertEqual(c["address"], "12 Peach St, Decatur, GA 30030")
+        domain.update_company(state, {"street": "", "city": "", "state": "", "zip": ""}, "Alex")
+        self.assertFalse(any(k in c for k in ("street", "city", "state", "zip", "address")), "all blank clears the address")
+        # A page from before the four boxes sends one line: it is split the same way.
+        domain.update_company(state, {"address": "9 Elm Ave, Macon, GA 31201"}, "Alex")
+        self.assertEqual((c["street"], c["city"], c["state"], c["zip"]), ("9 Elm Ave", "Macon", "GA", "31201"))
+
+    def test_rules_apply_only_to_what_changes(self):  # G1
+        state = seed_state()
+        state["company"].update(phone="555-0101", license="LIC #12 (old)")
+        domain.update_company(state, {"name": "Hartline", "phone": "555-0101", "license": "LIC #12 (old)"}, "Alex")
+        self.assertEqual(state["company"]["phone"], "555-0101", "saved before the rules: kept until edited")
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.update_company(state, {"phone": "555-0102", "license": "LIC #13"}, "Alex")
+        self.assertEqual(set(ctx.exception.fields), {"phone", "license"})
+
+    def test_an_old_one_line_address_is_split_by_the_upgrade(self):
+        import migrations
+        for line, parts in (("12 Peach St, Atlanta, GA 30303", ("12 Peach St", "Atlanta", "GA", "30303")),
+                            ("Unit 4, 88 Mill Rd", ("Unit 4, 88 Mill Rd", None, None, None))):
+            state = seed_state()
+            state["company"] = {"name": "Old Co", "address": line}
+            state["schema_version"] = migrations.SCHEMA_VERSION - 1
+            migrations.migrate(state)
+            c = state["company"]
+            self.assertEqual(tuple(c.get(k) for k in ("street", "city", "state", "zip")), parts)
+            self.assertEqual(c["address"], line, "the line itself is kept")
+
     def test_the_pay_app_pdf_carries_them(self):
         state = seed_state()
         domain.update_company(state, {"address": "12 Peach St, Atlanta, GA 30303", "phone": "404-555-0100", "license": "RBQA001234"}, "Alex")
+        self.assertEqual(state["company"]["phone"], "(404) 555-0100")
         job = next(j for j in state["jobs"] if j["code"] == "TRN")
         payer = next(p for p in state["payers"] if p["id"] == job["payer_id"])
         pdf = payapp_pdf.render(state["company"], job, payer, job["invoices"][-1])
         self.assertIn(b"(12 Peach St, Atlanta, GA 30303)", pdf)
-        self.assertIn(b"404-555-0100", pdf)
+        self.assertIn(b"(404) 555-0100", pdf.replace(b"\\(", b"(").replace(b"\\)", b")"))
         self.assertIn(b"Lic. RBQA001234", pdf)
         self.assertIn(b"(Hartline Remodeling)", payapp_pdf.render("Hartline Remodeling", job, payer, job["invoices"][-1]), "a name still works")
 
@@ -126,16 +167,23 @@ class CompanyHttpTests(unittest.TestCase):
         auth.create_user("mem@example.com", "member password 12", "Mo Member", cid, role="member")
         member = self.sign_in("mem@example.com", "member password 12")
 
-        res, state = self.request("POST", "/api/company", {"name": "Pine Builders Inc", "address": "1 Pine Rd", "phone": "555-0101"}, cookie=owner)
+        res, state = self.request("POST", "/api/company", {"name": "Pine Builders Inc", "street": "1 Pine Rd", "city": "Macon", "state": "GA",
+                                                           "zip": "31201", "phone": "478-555-0101"}, cookie=owner)
         self.assertEqual(res.status, 200, state)
-        self.assertEqual((state["company"]["name"], state["company"]["address"]), ("Pine Builders Inc", "1 Pine Rd"))
+        self.assertEqual((state["company"]["name"], state["company"]["address"], state["company"]["phone"]),
+                         ("Pine Builders Inc", "1 Pine Rd, Macon, GA 31201", "(478) 555-0101"))
+        res, data = self.request("POST", "/api/company", {"phone": "555-0101", "zip": "312"}, cookie=owner)
+        self.assertEqual(res.status, 409)
+        self.assertEqual(set(data["fields"]), {"phone", "zip"}, "each box is named")
         res, _ = self.request("POST", "/api/company", {"name": "Taken over"}, cookie=member)
         self.assertEqual(res.status, 403)
 
         res, data = self.request("POST", "/api/auth/name", {"name": "  Mo  Builder "}, cookie=member)
         self.assertEqual((res.status, data["user"]["name"]), (200, "Mo Builder"))
-        res, data = self.request("POST", "/api/auth/name", {"name": " "}, cookie=member)
-        self.assertEqual(res.status, 400)
+        for bad in (" ", "--"):
+            res, data = self.request("POST", "/api/auth/name", {"name": bad}, cookie=member)
+            self.assertEqual(res.status, 409)
+            self.assertIn("name", data["fields"])
         res, me = self.request("GET", "/api/auth/me", cookie=member)
         self.assertEqual(me["user"]["name"], "Mo Builder")
 

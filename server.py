@@ -1748,6 +1748,11 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {**auth.team(ctx.company_id), **(note or {})})
 
     def _p_team_invite(self, m, ctx: "Ctx") -> None:
+        wrong = domain.check_field("email", ctx.body.get("email") if isinstance(ctx.body.get("email"), str) else "", "email", required=True)
+        if wrong:  # G1: under the Their email box
+            self._json(409, {"error": wrong["email"], "fields": wrong})
+            return
+
         def invite(user: dict) -> tuple:
             company_id = user["company_id"]
             if mailer.configured() and app_url() and not user.get("email_verified"):
@@ -2389,10 +2394,14 @@ class Handler(BaseHTTPRequestHandler):
         domain.update_company(state, ctx.body, ctx.actor)
 
     def _p_my_name(self, m, ctx: "Ctx") -> None:
+        # The name rule (G1): at least one letter or number. Refused under the box (409 fields).
+        wrong = domain.check_field("name", ctx.body.get("name") if isinstance(ctx.body.get("name"), str) else "", "name", required=True)
         try:
+            if wrong:
+                raise auth.AuthError(wrong["name"])
             user = auth.update_name(ctx.user["id"], ctx.body.get("name"))
         except auth.AuthError as exc:
-            self._json(400, {"error": str(exc)})
+            self._json(409, {"error": str(exc), "fields": {"name": str(exc)}})
             return
         self._json(200, {"user": user})
 

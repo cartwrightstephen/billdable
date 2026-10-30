@@ -148,7 +148,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.match(await warn.innerText(), /Your company address, phone and licence number are blank on this PDF/);
     await warn.getByRole("button", { name: "Company details" }).click();
     await p.locator("#co-address").waitFor();
-    await p.fill("#co-address", "2 Elm St, Decatur, GA 30030");
+    // The address is four boxes (S3): Street address (#co-address), City, State and ZIP.
+    await p.fill("#co-address", "2 Elm St");
+    await p.fill("#co-city", "Decatur");
+    await p.selectOption("#co-state", "GA");
+    await p.fill("#co-zip", "30030");
     await p.click('[data-action="save-company"]');
     for (let t = 0; t < 50; t++) {
       const addr = await p.evaluate(async () => (await (await fetch("/api/state")).json()).company.address);
