@@ -2,7 +2,7 @@
 // job's page; New change order here asks for the job and opens that form (Stephen's Oct 29
 // review, G10).
 import { esc, unesc, money, fmtDate, fmtDateTime } from "../format.js";
-import { coSignature, coStatusWords, defaultJobId, RECORD_KINDS } from "../jobs.js";
+import { coSignature, coStatusWords, defaultJobId, openJobs as jobsOpen, RECORD_KINDS } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
@@ -116,8 +116,9 @@ export const views = {
   "co-detail": function() { return views.coDetail(); },
   cos() {
     const cos = [];
-    state.jobs.forEach(j => j.change_orders.forEach(co => cos.push({ ...co, job: j.name, jobId: j.id })));
-    const openJobs = state.jobs.filter(j => !j.closed);
+    // A finished job's change orders are in its job file (J9).
+    const openJobs = jobsOpen(state.jobs);
+    openJobs.forEach(j => j.change_orders.forEach(co => cos.push({ ...co, job: j.name, jobId: j.id })));
     const picking = formOpen.copick && openJobs.length > 1;
     return `
       <div class="job-head"><h1>Change orders</h1>
@@ -166,7 +167,7 @@ export const actions = {
   "goto-co": (el, id) => { coPreselectJob = id; nav("cos"); },
   // New change order on the list (G10): with one open job its form opens; else pick the job first.
   "co-new": () => {
-    const open = state.jobs.filter(j => !j.closed);
+    const open = jobsOpen(state.jobs);
     if (open.length === 1) { openCoForm(open[0].id); return; }
     formOpen.copick = !formOpen.copick;
     render();

@@ -471,9 +471,18 @@ export function clientTypeLabel(p) {
 }
 
 // The jobs still being worked (J9): a finished job leaves the working lists, pickers and the
-// calendar, and stays under Job history and its client's card. Money, Dashboard and Closeout
-// filter with this too.
+// calendar, and stays under Job history and its client's card. Money (Pay apps, Change orders,
+// Unpaid, Payments, Closeout), the Dashboard and the Calendar filter with this too.
 export function openJobs(jobs) { return (jobs || []).filter(j => !j.closed); }
+
+// A job filter on a page of records (Activity log, Outbox, Everything received, Sent pay apps):
+// the open jobs, then the recently finished ones under "Finished jobs", so an old job's entries
+// can still be found. Names and ids come escaped from the server, as on every other picker.
+export function jobFilterOptions(jobs, selected = "") {
+  const opt = (j) => `<option value="${j.id}"${selected === j.id ? " selected" : ""}>${j.name}</option>`;
+  const done = (jobs || []).filter(j => j.closed);
+  return openJobs(jobs).map(opt).join("") + (done.length ? `<optgroup label="Finished jobs">${done.map(opt).join("")}</optgroup>` : "");
+}
 
 // The job record in groups (J5), each with its kinds (RECORD_KINDS keys). A kind not listed
 // goes under Notes and other.

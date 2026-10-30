@@ -1,6 +1,6 @@
 // Money, Unpaid: what is unpaid, who to contact, and the follow-up.
 import { unesc, money, toDate, fmtDate, fmtDateTime } from "../format.js";
-import { statusPill, followUpDue, payAppList } from "../jobs.js";
+import { statusPill, followUpDue, payAppList, openJobs } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
@@ -23,7 +23,7 @@ export function recentContactHtml(j) {
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   collections() {
-    const open = state.jobs.filter(j => j.money.outstanding_cents > 0);
+    const open = openJobs(state.jobs).filter(j => j.money.outstanding_cents > 0);
     const today = new Date();
     return `
       <h1>Unpaid</h1>

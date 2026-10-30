@@ -1,7 +1,7 @@
 // Dashboard: the overview with the To Do list and the setup checklist, Results, and Calendar
 // with its Tasks block. The Daily record is in daily.js.
 import { unesc, esc, escDeep, money, toDate, fmtDate } from "../format.js";
-import { isBlocked, nextStep, statusPill } from "../jobs.js";
+import { isBlocked, nextStep, statusPill, openJobs } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { TODO_PERIODS, TASK_PERIODS, BALL_WORDS, localDay, periodRange, todoItems, itemsInPeriod, assignees } from "../tasks.js";
@@ -353,7 +353,8 @@ export const views = {
     };
     const today = new Date();
     const todayKey = localDay(today);
-    state.jobs.filter(j => calJobFilter === "all" || j.id === calJobFilter).forEach(j => {
+    // The jobs being worked (J9): a finished job's dates are in its job file.
+    openJobs(state.jobs).filter(j => calJobFilter === "all" || j.id === calJobFilter).forEach(j => {
       if (j.completed_at) add(j.completed_at, `${j.code} work complete`, "paid", j.id);
       // One follow-up per job, on the day Today raises it (followUpEvent).
       const follow = followUpEvent(j, today);
@@ -395,7 +396,7 @@ export const views = {
         <label for="cal-filter" class="inline-label">Job</label>
         <select id="cal-filter" data-filter-for="calendar">
           <option value="all">All jobs</option>
-          ${state.jobs.map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
+          ${openJobs(state.jobs).map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
         </select>
       </div>
       ${tasksBlockHtml(eventsByDay)}

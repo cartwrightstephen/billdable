@@ -2,7 +2,7 @@
 // text, and the forwarding addresses for email, texts and the calendar. The Inbox page shows
 // what is waiting and everything received (C1); the file and paste boxes are on Import (data.js).
 import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
-import { RECORD_KINDS, SOURCE_LABELS, defaultJobId } from "../jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, defaultJobId, jobFilterOptions } from "../jobs.js";
 import { readJson, setNetBanner, inBatches } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { webcalUrl } from "../calendar.js";
@@ -256,11 +256,11 @@ const SOURCE_OPTIONS = () => Object.entries(SOURCE_LABELS);
 const STATUS_OPTIONS = [["new", "Waiting"], ["filed", "Filed"], ["auto", "Filed automatically"], ["dismissed", "Dismissed"]];
 const SORT_OPTIONS = [["newest", "Newest first"], ["oldest", "Oldest first"], ["from", "Sender (A-Z)"], ["job", "Job (A-Z)"]];
 
-function receivedSelect(name, label, all, options) {
+function receivedSelect(name, label, all, options, more = "") {
   const opts = (all ? [["", all]] : []).concat(options);
   return `<label for="received-${name}" class="inline-label">${label}</label>
         <select id="received-${name}" data-received-filter="${name}">
-          ${opts.map(([v, l]) => `<option value="${v}"${receivedFilter[name] === v ? " selected" : ""}>${l}</option>`).join("")}
+          ${opts.map(([v, l]) => `<option value="${v}"${receivedFilter[name] === v ? " selected" : ""}>${l}</option>`).join("")}${more}
         </select>`;
 }
 
@@ -273,7 +273,7 @@ function receivedHtml() {
       <div class="filter-bar">
         ${receivedSelect("source", "Came in by", "All", SOURCE_OPTIONS())}
         ${receivedSelect("status", "Status", "All", STATUS_OPTIONS)}
-        ${receivedSelect("job", "Job", "All jobs", state.jobs.map(j => [j.id, j.name]))}
+        ${receivedSelect("job", "Job", "All jobs", [], jobFilterOptions(state.jobs, receivedFilter.job))}
         ${receivedSelect("sort", "Sort", "", SORT_OPTIONS)}
       </div>
       ${rows.length ? `<div class="table-wrap"><table>

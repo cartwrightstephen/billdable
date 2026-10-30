@@ -6,6 +6,7 @@ import { moreButton, askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
 import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
+import { jobFilterOptions } from "../jobs.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
 import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
@@ -560,7 +561,7 @@ export const views = {
         <label for="audit-filter" class="inline-label">Job</label>
         <select id="audit-filter" data-filter-for="audit">
           <option value="all">All jobs</option>
-          ${state.jobs.map(j => `<option value="${j.id}" ${auditJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
+          ${jobFilterOptions(state.jobs, auditJobFilter)}
         </select>
       </div>
       ${events.length ? `<div class="table-wrap">

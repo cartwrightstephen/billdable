@@ -1280,7 +1280,7 @@
         "calendar",
         "dates"
       ],
-      "answer": "Dashboard, Calendar starts with Tasks: your To Do items and the calendar's dates for This week, Next week, This month or a Custom range, each opening its day, with Add task. Below it the month shows work complete, pay apps sent, follow-ups due, expected approvals, payments, waivers, finished jobs and pay app due dates. Pick a job in the Job filter to see only that job. Tap a day for its events. These are your billing dates, not legal deadlines.",
+      "answer": "Dashboard, Calendar starts with Tasks: your To Do items and the calendar's dates for This week, Next week, This month or a Custom range, each opening its day, with Add task. Below it the month shows work complete, pay apps sent, follow-ups due, expected approvals, payments, waivers and pay app due dates for the open jobs. Pick a job in the Job filter to see only that job. A finished job leaves the calendar; its dates stay in its job file. Tap a day for its events. These are your billing dates, not legal deadlines.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1641,7 +1641,7 @@
         "audit",
         "history action"
       ],
-      "answer": "Settings, Activity log lists every action: what happened, when, who (the signed-in person) and what kind of action. Pick a job in the Job filter to see only that job.",
+      "answer": "Settings, Activity log lists every action: what happened, when, who (the signed-in person) and what kind of action. Pick a job in the Job filter to see only that job; finished jobs are listed after the open ones.",
       "handler": null,
       "needs_job": false,
       "actions": [

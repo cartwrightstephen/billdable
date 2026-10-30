@@ -502,18 +502,18 @@ flowchart TD
     D --> B
     B -->|"No"| E["Next step 'Ready to finish the job.': tap 'Finish job', confirm"]
     E --> F["The job page is its job file: 'Where this job stands', 'Job file' (contract, signed change orders, billed, received, retainage released, Started with 'Change', Finished), each pay app with its PDF, payments, change orders, waivers sent, the job record and Activity"]
-    F --> G["Jobs: off Open jobs, the job pickers and the record card; listed under 'Job history' and on its client's card"]
+    F --> G["Off Open jobs, the job pickers, the record card, Money's Pay apps, Change orders, Unpaid, Payments and Closeout, and the Calendar; listed under 'Job history', on its client's card, and under 'Finished jobs' in the Job filter of the Activity log, Outbox, Everything received and Sent pay apps"]
     F --> DL["'Download job file': one zip of the record's files, the sent pay apps' PDFs, a summary and the activity"]
     F --> H{"More work, a late payment or a mistake?"}
     H -->|"Yes, owner"| I["'Add more work': 'What is the new work?', 'Add more work': the same job opens again"]
 ```
 
-Code: the card in `views.job` from `close_blocker_items`, domain/__init__.py:188 ("A lien waiver is still due." until every paid pay app's and every retainage release's waiver is sent), buttons `closeBlockerActions`, static/js/jobs.js:409-411; **Finish job** static/js/jobs.js:380 and its confirm static/js/views/job.js:447; server `close_job`, domain/__init__.py:2612; the job file `archiveHtml` static/js/views/job.js:155 (J9) with **Change** for the start date (`save-start` :422; the server takes only the start date on a finished job, `edit_job` domain/__init__.py:3776); **Download job file** GET /api/jobs/<id>/archive/job-file.zip, `job_archive.build` job_archive.py:84 (anyone signed in to the company); **Add more work** in `views.job` (:244-254, `reopen` :416), server `reopen_job`, domain/__init__.py:2629 (owners only); the open jobs `openJobs` static/js/jobs.js:476; a job with only drafts deleted before they were sent and no payments can be deleted instead (**Delete job** under Edit job, `can_delete_job` :3353).
+Code: the card in `views.job` from `close_blocker_items`, domain/__init__.py:188 ("A lien waiver is still due." until every paid pay app's and every retainage release's waiver is sent), buttons `closeBlockerActions`, static/js/jobs.js:409-411; **Finish job** static/js/jobs.js:380 and its confirm static/js/views/job.js:447; server `close_job`, domain/__init__.py:2612; the job file `archiveHtml` static/js/views/job.js:155 (J9) with **Change** for the start date (`save-start` :422; the server takes only the start date on a finished job, `edit_job` domain/__init__.py:3776); **Download job file** GET /api/jobs/<id>/archive/job-file.zip, `job_archive.build` job_archive.py:84 (anyone signed in to the company); **Add more work** in `views.job` (:244-254, `reopen` :416), server `reopen_job`, domain/__init__.py:2629 (owners only); the open jobs `openJobs` static/js/jobs.js:476, used by Money's lists (`views.payapps`, `views.cos`, `views.collections`, `views.payments`, `views.waivers`) and `views.calendar`; the job filters on pages of records `jobFilterOptions` static/js/jobs.js:481 (open jobs, then "Finished jobs"); a job with only drafts deleted before they were sent and no payments can be deleted instead (**Delete job** under Edit job, `can_delete_job` :3353).
 
 **Taps from start to done:** 2 (Finish job, the confirm).
 
 **Where it could still be simpler:**
-- Money's lists, the calendar and the Activity log's job filter still list a recently finished job; they take `openJobs` when the streams that own them merge.
+- The Job filters on the pages of records offer only jobs finished in the last 90 days; an older job's records are in its job file under Job history.
 
 ---
 

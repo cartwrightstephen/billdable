@@ -1,7 +1,7 @@
 // Money, Closeout: lien waivers by pay app and the money held back (retainage), and each job's
 // waiver page.
 import { money, centsFrom, fmtDate, unesc } from "../format.js";
-import { WAIVER_KINDS, waiverKindLabel, waiverTypeWords, waiverHint, waiverSendForm, waiverPick, waiverStageText, retainageAskWaits, retainageFacts, daysAgoText } from "../jobs.js";
+import { WAIVER_KINDS, waiverKindLabel, waiverTypeWords, waiverHint, waiverSendForm, waiverPick, waiverStageText, retainageAskWaits, retainageFacts, daysAgoText, openJobs } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { moneyField, formErrorLine, refuseForm, formValues } from "../forms.js";
@@ -98,9 +98,11 @@ export const views = {
   // Closeout (R6-01): the lien waivers, one row per pay app and per retainage release (M20), and
   // the money held back. /money/retainage opens the same page at the held-back part.
   waivers() {
-    const rows = state.jobs.flatMap(j => waiverRows(j).map(r => ({ j, r })));
+    // A finished job's waivers and releases are in its job file (J9).
+    const jobs = openJobs(state.jobs);
+    const rows = jobs.flatMap(j => waiverRows(j).map(r => ({ j, r })));
     rows.sort((a, b) => (b.r.due - a.r.due));
-    const open = state.jobs.filter(j => j.money.retainage_open_cents > 0);
+    const open = jobs.filter(j => j.money.retainage_open_cents > 0);
     return `
       <h1>Closeout</h1>
       <section class="card closeout-waivers" aria-labelledby="closeout-waivers-h">

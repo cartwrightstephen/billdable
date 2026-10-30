@@ -9,6 +9,7 @@ import { state, me, currentView, onSessionEnd } from "../state.js";
 import { render, toast, emptyState, nav, setState } from "../app-core.js";
 import { canRecord, needsPick, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "../payimport.js";
 import { qboCsvLink } from "./money.js";
+import { openJobs } from "../jobs.js";
 
 export let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV or the QuickBooks connection
 export let qboStatus = null;      // /api/qbo/status: configured, connected, environment (escaped)
@@ -114,7 +115,8 @@ export function paymentsImportHtml() {
 export const views = {
   payments() {
     const pays = [];
-    state.jobs.forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
+    // A finished job's payments are in its job file (J9).
+    openJobs(state.jobs).forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     return `
       <h1>Payments</h1>
       <p class="sub">Import payments from QuickBooks, a CSV file or the connection, on <a href="/data/import" data-action="nav" data-view="import">Import</a>.</p>

@@ -3,6 +3,7 @@
 // inbox.js.
 import { fmtDateTime, words, emailStatusHtml } from "../format.js";
 import { pathFor } from "../routes.js";
+import { jobFilterOptions } from "../jobs.js";
 import { moreButton } from "../dom.js";
 import { state, onSessionEnd } from "../state.js";
 import { post, emptyState, listPage } from "../app-core.js";
@@ -65,7 +66,7 @@ export const views = {
         <label for="outbox-filter" class="inline-label">Job</label>
         <select id="outbox-filter" data-filter-for="outbox">
           <option value="all">All jobs</option>
-          ${state.jobs.map(j => `<option value="${j.id}" ${outboxJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
+          ${jobFilterOptions(state.jobs, outboxJobFilter)}
         </select>
       </div>
       ${emails.length ? `<div class="table-wrap">

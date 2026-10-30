@@ -1,6 +1,6 @@
 // Money, Pay apps: the list and each pay app's page (Before you send, lines, payments, approval).
 import { unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
-import { shortPayLabel, shortPayAttrs, canPullBack } from "../jobs.js";
+import { shortPayLabel, shortPayAttrs, canPullBack, openJobs } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
@@ -151,7 +151,8 @@ export const views = {
   "payapp-detail": function() { return views.payappDetail(); },
   payapps() {
     let apps = [];
-    state.jobs.forEach(j => j.invoices.forEach(inv => apps.push({ ...inv, job: j.name, jobId: j.id, jobPacket: j.packet, blockers: ["draft", "awaiting_approval"].includes(inv.status) ? j.blockers : [] })));
+    // A finished job's pay apps are in its job file (J9), not on this working list.
+    openJobs(state.jobs).forEach(j => j.invoices.forEach(inv => apps.push({ ...inv, job: j.name, jobId: j.id, jobPacket: j.packet, blockers: ["draft", "awaiting_approval"].includes(inv.status) ? j.blockers : [] })));
     // "Unpaid" (the sent filter) holds every pay app out for payment, part-paid ones too (R3-02).
     const shown = { draft: ["draft", "awaiting_approval"], sent: ["sent", "approved", "partial"] };
     if (payappFilter !== "all") apps = apps.filter(a => (shown[payappFilter] || [payappFilter]).includes(a.status));

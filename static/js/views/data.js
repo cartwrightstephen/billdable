@@ -4,6 +4,7 @@
 // and the logs. Emails and texts that come in by themselves are on Communications.
 import { money, fmtDate, words } from "../format.js";
 import { pathFor } from "../routes.js";
+import { jobFilterOptions } from "../jobs.js";
 import { moreButton } from "../dom.js";
 import { state, me, onSessionEnd } from "../state.js";
 import { toast, nav, emptyState, listPage, render } from "../app-core.js";
@@ -83,7 +84,7 @@ export const views = {
           <label for="sent-filter" class="inline-label">Job</label>
           <select id="sent-filter" data-sent-filter="1">
             <option value="all">All jobs</option>
-            ${state.jobs.map(j => `<option value="${j.id}"${sentJobFilter === j.id ? " selected" : ""}>${j.name}</option>`).join("")}
+            ${jobFilterOptions(state.jobs, sentJobFilter)}
           </select>
         </div>
         ${rows.length ? `<div class="table-wrap"><table>
