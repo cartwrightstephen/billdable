@@ -30,6 +30,17 @@ test("only jobs the job page would offer a pay app on, with that page's step", (
   assert.deepEqual(starts.map(s => [s.job.id, s.step]), [["jg", "progress"], ["jd", "draft"]]);
 });
 
+test("a job with a draft open, or with the client to approve, or with nothing left to bill isn't listed", () => {
+  const goingDrafted = job("jgd", "Going drafted", { invoices: [{ id: "i2", number: "PA-JGD-01", status: "draft", amount_cents: 1 }] });
+  const goingAwaiting = job("jga", "Going awaiting", { invoices: [{ id: "i3", number: "PA-JGA-01", status: "awaiting_approval", amount_cents: 1 }] });
+  const goingBilled = job("jgb", "Going billed", { money: money({ billed_cents: 900_000, retainage_held_cents: 100_000 }),
+    invoices: [{ id: "i4", number: "PA-JGB-01", status: "sent", amount_cents: 900_000 }] });
+  const goingPart = job("jgp", "Going part billed", { money: money({ billed_cents: 450_000, retainage_held_cents: 50_000 }),
+    invoices: [{ id: "i5", number: "PA-JGP-01", status: "paid", amount_cents: 450_000 }] });
+  const starts = payAppStarts([going, goingDrafted, goingAwaiting, goingBilled, goingPart]);
+  assert.deepEqual(starts.map(s => s.job.id), ["jg", "jgp"]);
+});
+
 test("the list has New pay app; with several jobs to bill it asks which job, listing only those", () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState(company([going, doneToBill, doneSettled, finished]));

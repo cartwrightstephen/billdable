@@ -622,7 +622,7 @@
         "start payapp",
         "create payapp"
       ],
-      "answer": "Two places, one way of drafting. On a job, tap Progress pay app while the work goes on, or Draft pay app once the job is marked done. Or on Money, Pay apps tap New pay app: with more than one job that has something to bill, pick it under Which job? and tap Continue. It opens that job's Progress pay app form, or drafts it the way Draft pay app does for a job marked done. A job with nothing to bill, or with a draft already open, isn't listed: open its draft with Review & send.",
+      "answer": "Two places, one way of drafting. On a job, tap Progress pay app while the work goes on, or Draft pay app once the job is marked done. Or on Money, Pay apps tap New pay app: with more than one job that has something to bill, pick it under Which job? and tap Continue. It opens that job's Progress pay app form, or drafts it the way Draft pay app does for a job marked done. A job isn't listed when it already has a draft open, including one waiting for the client's approval (open that draft with Review & send), when its contract is billed in full, or, once marked done, when it has no work left to bill.",
       "handler": null,
       "needs_job": false,
       "actions": [
