@@ -3813,6 +3813,8 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
         if key not in updates or (key == "address" and any(k in updates for k in ("street", "city", "state", "zip"))):
             continue
         value = str(updates[key] or "").strip()
+        if value == str(job.get(key, "") or "").strip():
+            continue  # left as it was: a value saved before the rules doesn't block other edits (C4)
         if key != "contract_number" and not value:
             problems[key] = f"Enter the {label.lower()}."
         elif key == "name" and check_field("name", value):
@@ -3827,10 +3829,14 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
 
     if any(k in updates for k in ("street", "city", "state", "zip")):
         parts = {k: str(updates.get(k) or "").strip() for k in ("street", "city", "state", "zip")}
-        bad = check_address(parts)
+        # The address is checked only when a box changed from what the form showed (the saved
+        # parts, or an older one-line address read into them); then all four are needed (C4).
+        was = job.get("address_parts") or parse_legacy_address(job.get("address", ""))
+        same = all(parts[k] == str(was.get(k) or "").strip() for k in parts)
+        bad = {} if same else check_address(parts)
         if bad:
             problems.update(bad)
-        else:
+        elif not same:
             parts["state"] = normalize_state(parts["state"]) or parts["state"]
             value = compose_address(parts)
             if value != job.get("address", "") or parts != job.get("address_parts"):

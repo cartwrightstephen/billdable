@@ -28,9 +28,13 @@ US_STATES = (
     "DC", "PR", "VI", "GU", "AS", "MP",
 )
 
-_PHONE_RE = re.compile(r"^\s*(?:\+?1[\s.-]*)?\(?(\d{3})\)?[\s.-]*(\d{3})[\s.-]*(\d{4})\s*(?:(?:x|ext\.?|extension)\s*(\d{1,6}))?\s*$", re.I)
-_ZIP_RE = re.compile(r"^\d{5}(?:-\d{4})?$")
-_NUMBER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ./-]*$")
+# [0-9], not \d: Python's \d also takes other scripts' digits ("٣٠٣٠٣"), which the page's rules refuse.
+_PHONE_RE = re.compile(r"^\s*(?:\+?1[\s.-]*)?\(?([0-9]{3})\)?[\s.-]*([0-9]{3})[\s.-]*([0-9]{4})\s*(?:(?:x|ext\.?|extension)\s*([0-9]{1,6}))?\s*$", re.I)
+_ZIP_RE = re.compile(r"^[0-9]{5}(?:-[0-9]{4})?$")
+# Contract and licence numbers as GCs write them: "PO# 4500-12", "SC_2026_014", "2026-014 (Rev 1)".
+_NUMBER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ./#_&()-]*$")
+# A name, street or city has a letter (any alphabet) or a digit: "Café Ñandú", "北京路 12" pass.
+_HAS_WORD_RE = re.compile(r"[^\W_]")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")   # the same as domain.EMAIL_RE
 
 # rule -> (the message when it fails, the longest it may be)
@@ -39,10 +43,10 @@ FIELD_RULES: dict[str, tuple[str, int]] = {
     "zip": ("Enter a 5-digit ZIP code, like 30303, or ZIP+4, like 30303-1234.", 10),
     "state": ("Enter the two-letter state, like GA.", 3),
     "email": ("Enter an email address, like name@example.com.", 254),
-    "licence": ("Use letters, numbers, spaces and - / . only, up to 40.", 40),
-    "contract_number": ("Use letters, numbers, spaces and - / . only, up to 40.", 40),
+    "licence": ("Use letters, numbers, spaces and - / . # _ & ( ) only, up to 40.", 40),
+    "contract_number": ("Use letters, numbers, spaces and - / . # _ & ( ) only, up to 40.", 40),
     "name": ("Enter a name with at least one letter or number, up to 120.", 120),
-    "street": ("Enter the street address, like 120 Peachtree St NE.", 120),
+    "street": ("Enter the street address, up to 120 characters, like 120 Peachtree St NE.", 120),
     "city": ("Enter the city.", 60),
 }
 
@@ -79,7 +83,7 @@ def _passes(rule: str, value: str) -> bool:
     if rule in ("licence", "contract_number"):
         return bool(_NUMBER_RE.match(value))
     if rule in ("name", "street", "city"):
-        return bool(re.search(r"[A-Za-z0-9]", value))
+        return bool(_HAS_WORD_RE.search(value))
     raise KeyError(rule)
 
 
@@ -112,7 +116,7 @@ def refuse_fields(errors: dict[str, str], message: str = "Check the marked boxes
 # ---------- addresses: Street, City, ST 12345 ----------
 
 _ADDRESS_RE = re.compile(
-    r"^\s*(?P<street>.+?)\s*,\s*(?P<city>[^,]+?)\s*,?\s+(?P<state>[A-Za-z]{2})\.?(?:\s+(?P<zip>\d{5}(?:-\d{4})?))?\s*$")
+    r"^\s*(?P<street>.+?)\s*,\s*(?P<city>[^,]+?)\s*,?\s+(?P<state>[A-Za-z]{2})\.?(?:\s+(?P<zip>[0-9]{5}(?:-[0-9]{4})?))?\s*$")
 
 
 def compose_address(parts: dict[str, Any]) -> str:

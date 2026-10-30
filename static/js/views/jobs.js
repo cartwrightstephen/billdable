@@ -51,10 +51,30 @@ export function jobFields(form, prefix, j = {}) {
 const ADDRESS_RULES = { street: "street", city: "city", state: "state", zip: "zip" };
 
 // {field: message} for a job form's values: the address, name and contract number, by the rules.
-export function jobFieldErrors(v) {
+// With `saved` (Edit job: the values the boxes opened with), a box left as it was isn't checked
+// (the address's four boxes as one: all checked when any changed),
+// so a contract number or address saved before the rules doesn't block an unrelated edit (C4);
+// the server does the same.
+export function jobFieldErrors(v, saved = null) {
   const errors = checkFields(v, { ...ADDRESS_RULES, name: "name", contract_number: "contract_number" }, ["street", "city", "state", "zip"]);
   if (!v.name) errors.name = "Enter the job name.";
+  if (saved) {
+    const same = (k) => String(v[k] ?? "").trim() === String(saved[k] ?? "").trim();
+    // The address's four boxes go together: checked only when one of them changed.
+    const addressSame = Object.keys(ADDRESS_RULES).every(same);
+    for (const k of Object.keys(errors)) {
+      if (k in ADDRESS_RULES ? addressSame : (k in saved && same(k))) delete errors[k];
+    }
+  }
   return errors;
+}
+
+// What Edit job's boxes opened with (jobFields' values), for jobFieldErrors' `saved`.
+export function savedJobFields(j) {
+  const parts = (j && j.address_parts) || {};
+  const out = { name: unesc((j && j.name) || ""), contract_number: unesc((j && j.contract_number) || "") };
+  for (const k of ["street", "city", "state", "zip"]) out[k] = unesc(parts[k] || "");
+  return out;
 }
 
 // The person a job's tasks go to (assignee_id): a team member, the one who made it unless another

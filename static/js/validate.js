@@ -12,7 +12,10 @@ export const US_STATES = [
 
 const PHONE_RE = /^\s*(?:\+?1[\s.-]*)?\(?(\d{3})\)?[\s.-]*(\d{3})[\s.-]*(\d{4})\s*(?:(?:x|ext\.?|extension)\s*(\d{1,6}))?\s*$/i;
 const ZIP_RE = /^\d{5}(?:-\d{4})?$/;
-const NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9 ./-]*$/;
+// Contract and licence numbers as GCs write them: "PO# 4500-12", "SC_2026_014", "2026-014 (Rev 1)".
+const NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9 ./#_&()-]*$/;
+// A name, street or city has a letter (any alphabet) or a digit, as the server's [^\W_].
+const HAS_WORD_RE = /[\p{L}\p{N}]/u;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 // rule -> [the message when it fails, the longest it may be]
@@ -21,10 +24,10 @@ export const FIELD_RULES = {
   zip: ["Enter a 5-digit ZIP code, like 30303, or ZIP+4, like 30303-1234.", 10],
   state: ["Enter the two-letter state, like GA.", 3],
   email: ["Enter an email address, like name@example.com.", 254],
-  licence: ["Use letters, numbers, spaces and - / . only, up to 40.", 40],
-  contract_number: ["Use letters, numbers, spaces and - / . only, up to 40.", 40],
+  licence: ["Use letters, numbers, spaces and - / . # _ & ( ) only, up to 40.", 40],
+  contract_number: ["Use letters, numbers, spaces and - / . # _ & ( ) only, up to 40.", 40],
   name: ["Enter a name with at least one letter or number, up to 120.", 120],
-  street: ["Enter the street address, like 120 Peachtree St NE.", 120],
+  street: ["Enter the street address, up to 120 characters, like 120 Peachtree St NE.", 120],
   city: ["Enter the city.", 60],
 };
 
@@ -47,7 +50,7 @@ function passes(rule, v) {
   if (rule === "state") return normalizeState(v) !== null;
   if (rule === "email") return EMAIL_RE.test(v);
   if (rule === "licence" || rule === "contract_number") return NUMBER_RE.test(v);
-  return /[A-Za-z0-9]/.test(v);   // name, street, city
+  return HAS_WORD_RE.test(v);   // name, street, city
 }
 
 // The message for a value that breaks the rule, else "". Blank passes unless required.

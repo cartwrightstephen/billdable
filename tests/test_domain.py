@@ -365,12 +365,36 @@ class JobFieldsTests(unittest.TestCase):
         job = domain.create_job(state, "Porch", "Dana Homeowner", 100_000, address="2 Elm St")
         self.assertNotIn("address_parts", job)
         self.assertEqual(domain.job_view(state, job)["address_parts"], {"street": "2 Elm St", "city": "", "state": "", "zip": ""})
+        # Sent back as the form showed it, with another change: not checked, kept as it was (C4).
+        domain.edit_job(state, job["id"], {"name": "Back porch", "street": "2 Elm St", "city": "", "state": "", "zip": ""})
+        self.assertEqual((job["name"], job["address"]), ("Back porch", "2 Elm St"))
         with self.assertRaises(domain.GateError) as raised:
-            domain.edit_job(state, job["id"], {"street": "2 Elm St", "city": "", "state": "", "zip": ""})
+            domain.edit_job(state, job["id"], {"street": "2 Elm Street", "city": "", "state": "", "zip": ""})
         self.assertEqual(set(raised.exception.fields), {"city", "state", "zip"}, "once edited, all four are needed")
         domain.edit_job(state, job["id"], {"street": "2 Elm St", "city": "Decatur", "state": "GA", "zip": "30030-1234"})
         self.assertEqual(job["address"], "2 Elm St, Decatur, GA 30030-1234")
         self.assertIn('job address from "2 Elm St" to "2 Elm St, Decatur, GA 30030-1234"', state["audit"][-1]["detail"])
+
+    def test_edit_job_checks_only_what_changed(self):
+        """Review C4: a contract number or address saved before the field rules doesn't block an
+        unrelated edit; a changed one is checked."""
+        state = blank_company()
+        job = domain.create_job(state, "Porch", "Dana Lee", 1_000_000, address="1 Elm St, Atlanta, GA 30303")
+        job["contract_number"] = "PO#4500-12; Rev 2"          # any text was taken before G1
+        long_street = "Lot 4, behind the old mill on the county road past the second bridge, " * 2
+        job.pop("address_parts", None)
+        job["address"] = long_street.strip()                  # longer than the 120 the street box takes
+        body = {"name": job["name"], "contract_number": job["contract_number"],
+                **domain.parse_legacy_address(job["address"]), "retainage_pct": 5}
+        domain.edit_job(state, job["id"], body)
+        self.assertEqual(job["retainage_pct"], 5)
+        self.assertEqual(job["contract_number"], "PO#4500-12; Rev 2")
+        with self.assertRaises(domain.GateError) as raised:
+            domain.edit_job(state, job["id"], {"contract_number": "PO#4500-12; Rev 3"})
+        self.assertIn("contract_number", raised.exception.fields)
+        for number in ("PO# 4500-12", "SC_2026_014", "2026-014 (Rev 1)", "A&B-12"):
+            domain.edit_job(state, job["id"], {"contract_number": number})
+            self.assertEqual(job["contract_number"], number)
 
     def test_a_new_clients_pay_app_day_and_terms_come_with_the_job_a_saved_ones_stay(self):  # S12
         state = blank_company()
@@ -388,12 +412,12 @@ class JobFieldsTests(unittest.TestCase):
     def test_phone_contract_number_and_names_follow_the_field_rules(self):
         state = blank_company()
         with self.assertRaises(domain.GateError) as raised:
-            domain.create_job(state, "!!!", "...", 100_000, address_parts=PARTS, phone="555", contract_number="C#100")
+            domain.create_job(state, "!!!", "...", 100_000, address_parts=PARTS, phone="555", contract_number="C*100")
         self.assertEqual(set(raised.exception.fields), {"name", "customer", "phone", "contract_number"})
         job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS, phone="404.555.0142", contract_number="SC-114")
         self.assertEqual(state["payers"][0]["phone"], "(404) 555-0142")
         with self.assertRaises(domain.GateError) as raised:
-            domain.edit_job(state, job["id"], {"contract_number": "SC 114 / #2"})
+            domain.edit_job(state, job["id"], {"contract_number": "SC 114 / *2"})
         self.assertIn("contract_number", raised.exception.fields)
         payer = state["payers"][0]
         with self.assertRaises(domain.GateError) as raised:

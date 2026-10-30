@@ -75,6 +75,13 @@ class ContractFileTests(unittest.TestCase):
             self.assertTrue(r["error"], name)
         self.assertIn("Word file", contract_import.read("a.exe", b"MZ")["error"])
 
+    def test_a_contract_number_with_underscores_is_found(self):
+        """Review C4: "SC_2026_014" is a contract number as GCs write them."""
+        text = ("Subcontract No. SC_2026_014\nThis agreement between Acme Builders and Hartline Tile covers the tile work "
+                "for the lobby. The contract sum is $48,500.00.")
+        r = contract_import.read("pasted.txt", text.encode())
+        self.assertEqual(r["fields"].get("contract_number"), "SC_2026_014")
+
     def test_a_small_crafted_pdf_is_read_quickly(self):
         """A few KB that inflate to megabytes of operators, thousands of empty streams, or one
         string of escapes: each is read in well under 2 s (review C1: the reader was quadratic)."""

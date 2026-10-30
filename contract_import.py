@@ -420,7 +420,7 @@ def suggest(text: str, company_name: str = "") -> dict[str, Any]:
     if m and float(m.group(1)).is_integer() and 0 <= float(m.group(1)) <= 20:
         fields["retainage_pct"] = int(float(m.group(1)))
 
-    m = _first(r"\b(?:sub)?(?:contract|agreement|purchase\s+order|P\.?O\.?)\s*(?:no\.?|number|#)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9./-]{1,39})", flat)
+    m = _first(r"\b(?:sub)?(?:contract|agreement|purchase\s+order|P\.?O\.?)\s*(?:no\.?|number|#)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9./_-]{1,39})", flat)
     if m and re.search(r"\d", m.group(1)) and not check_field("contract_number", m.group(1).rstrip(".")):
         fields["contract_number"] = m.group(1).rstrip(".")
 
