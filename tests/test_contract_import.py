@@ -75,6 +75,28 @@ class ContractFileTests(unittest.TestCase):
             self.assertTrue(r["error"], name)
         self.assertIn("Word file", contract_import.read("a.exe", b"MZ")["error"])
 
+    def test_a_small_crafted_pdf_is_read_quickly(self):
+        """A few KB that inflate to megabytes of operators, thousands of empty streams, or one
+        string of escapes: each is read in well under 2 s (review C1: the reader was quadratic)."""
+        import time
+
+        def flate(content):
+            return b"%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n" + zlib.compress(content, 9) + b"\nendstream\nendobj\n"
+
+        cases = [("ops", flate(b"1 0 0 1 72 720 Tm " * 90_000)),
+                 ("streams", b"%PDF-1.4\n" + b"stream\nendstream" * 60_000),
+                 ("escapes", flate(b"(" + b"\\0" * 3_000_000 + b") Tj")),
+                 ("names", flate(b"/N " * 2_000_000))]
+        self.assertLess(len(cases[0][1]), 5000)
+        for label, data in cases:
+            start = time.monotonic()
+            r = contract_import.read("crafted.pdf", data)
+            self.assertLess(time.monotonic() - start, 2.0, label)
+            self.assertIn("ok", r, label)
+        # The real text after a crafted part is still read when time allows.
+        good = flate(b"BT (This subcontract between Acme Builders and the tile contractor sets the work, the price and the schedule.) Tj ET")
+        self.assertTrue(contract_import.read("ok.pdf", good)["ok"])
+
     def test_pasted_text_without_the_usual_words_finds_nothing_to_fill(self):
         r = contract_import.read("pasted.txt", b"Notes from the walk-through with the owner about the tile and the grout colour.")
         self.assertTrue(r["ok"])

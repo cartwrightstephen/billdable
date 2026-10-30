@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+import time
 import zlib
 from datetime import date, datetime
 from typing import Any
@@ -94,16 +95,26 @@ def _para(p: ElementTree.Element) -> str:
 # ---------- PDF ----------
 
 _STREAM = re.compile(rb"stream\r?\n")
+_SKIP = re.compile(rb"/Subtype\s*/Image|/Type\s*/(ObjStm|XRef|XObject)|/Length1")
+MAX_INFLATED = 30 * 1024 * 1024  # the most all of a PDF's streams may inflate to, together
+MAX_HEAD = 4096                  # how far back a stream's dictionary is looked for
+READ_SECONDS = 1.5               # a PDF is read for this long at most; what was read by then is kept
 
 
-def pdf_text(data: bytes) -> str:
+def pdf_text(data: bytes, seconds: float = READ_SECONDS) -> str:
     """The text a PDF draws, from its content streams (inflated when FlateDecode). Fonts with
-    their own encodings come out as nonsense, which then reads as no text."""
+    their own encodings come out as nonsense, which then reads as no text. Every step moves
+    forward through the file, and the reading stops at MAX_TEXT characters, MAX_INFLATED bytes
+    inflated or `seconds`, so a small crafted file can't keep the server busy."""
     if not data.startswith(b"%PDF"):
         raise ValueError("not a PDF")
+    deadline = time.monotonic() + seconds
     parts: list[str] = []
+    kept = 0
+    budget = MAX_INFLATED
     pos = 0
-    while True:
+    last_obj, obj_from = -1, 0
+    while kept < MAX_TEXT and budget > 0 and time.monotonic() < deadline:
         m = _STREAM.search(data, pos)
         if not m:
             break
@@ -111,25 +122,35 @@ def pdf_text(data: bytes) -> str:
         if end < 0:
             break
         pos = end + 9
-        head = data[max(0, data.rfind(b"obj", 0, m.start())):m.start()]
-        if re.search(rb"/Subtype\s*/Image|/Type\s*/(ObjStm|XRef|XObject)|/Length1", head):
+        while True:  # the last "obj" before this stream, found moving forward only
+            k = data.find(b"obj", obj_from, m.start())
+            if k < 0:
+                break
+            last_obj, obj_from = k, k + 3
+        obj_from = max(obj_from, m.start())
+        head = data[max(0, last_obj, m.start() - MAX_HEAD):m.start()]
+        if _SKIP.search(head):
             continue  # pictures, packed objects and embedded fonts hold no page text
         raw = data[m.end():end].rstrip(b"\r\n")
         if b"/FlateDecode" in head or b"/Fl " in head or b"/Fl]" in head:
-            raw = _inflate(raw)
+            raw = _inflate(raw, min(MAX_PART, budget))
             if raw is None:
                 continue
+            budget -= len(raw)
         elif b"/Filter" in head:
             continue  # other filters (pictures, mostly) are not read
         if b"T" in raw:
-            parts.append(_content_text(raw))
-    return "\n".join(p for p in parts if p.strip())
+            text = _content_text(raw, deadline, MAX_TEXT - kept)
+            if text.strip():
+                parts.append(text)
+                kept += len(text)
+    return "\n".join(parts)
 
 
-def _inflate(raw: bytes) -> bytes | None:
+def _inflate(raw: bytes, limit: int = MAX_PART) -> bytes | None:
     try:
         d = zlib.decompressobj()
-        out = d.decompress(raw, MAX_PART)
+        out = d.decompress(raw, max(1, limit))
         return out
     except zlib.error:
         return None
@@ -138,20 +159,43 @@ def _inflate(raw: bytes) -> bytes | None:
 _ESCAPES = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b", b"f": b"\f", b"(": b"(", b")": b")", b"\\": b"\\"}
 
 
-def _tokens(src: bytes):
+_OCTAL = re.compile(rb"[0-7]{1,3}")
+_NAME = re.compile(rb"/[^\s/\[\]()<>{}%]*")
+_NUMBER = re.compile(rb"[+-]?(\d+\.?\d*|\.\d+)")
+_WORD = re.compile(rb"[^\s/\[\]()<>{}%]+")
+_NOT_HEX = re.compile(rb"[^0-9A-Fa-f]")
+_PLAIN = re.compile(rb"[^()\\]+")
+_LINE_END = re.compile(rb"[\r\n]")
+
+
+def _tokens(src: bytes, deadline: float | None = None):
     """The tokens of a content stream: ("s", bytes) strings, ("n", float) numbers, "[" and "]",
-    and ("o", operator)."""
-    i, n = 0, len(src)
+    and ("o", operator). Each pattern is matched in place (pattern.match(src, i)), never on a
+    copy of the rest of the stream, so reading is linear in the stream's length; past
+    `deadline` the tokens simply end."""
+    i, n, steps = 0, len(src), 0
     while i < n:
+        steps += 1
+        if deadline is not None and not steps % 1024 and time.monotonic() >= deadline:
+            return
         c = src[i:i + 1]
         if c in b" \t\r\n\f\x00":
             i += 1
         elif c == b"%":
-            while i < n and src[i:i + 1] not in b"\r\n":
-                i += 1
+            m = _LINE_END.search(src, i)
+            i = m.start() if m else n
         elif c == b"(":
             depth, i, buf = 1, i + 1, bytearray()
             while i < n and depth:
+                steps += 1
+                if deadline is not None and not steps % 1024 and time.monotonic() >= deadline:
+                    return
+                run = _PLAIN.match(src, i)
+                if run:  # letters with no brackets or escapes, taken in one step
+                    if len(buf) < MAX_TEXT:
+                        buf += run.group(0)
+                    i = run.end()
+                    continue
                 ch = src[i:i + 1]
                 if ch == b"\\":
                     nxt = src[i + 1:i + 2]
@@ -159,7 +203,7 @@ def _tokens(src: bytes):
                         buf += _ESCAPES[nxt]
                         i += 2
                     elif nxt and nxt in b"01234567":
-                        octal = re.match(rb"[0-7]{1,3}", src[i + 1:i + 4]).group(0)
+                        octal = _OCTAL.match(src, i + 1, i + 4).group(0)
                         buf.append(int(octal, 8) & 0xFF)
                         i += 1 + len(octal)
                     else:
@@ -178,25 +222,25 @@ def _tokens(src: bytes):
         elif c == b"<" and src[i + 1:i + 2] != b"<":
             end = src.find(b">", i)
             end = n if end < 0 else end
-            hexed = re.sub(rb"[^0-9A-Fa-f]", b"", src[i + 1:end])
+            hexed = _NOT_HEX.sub(b"", src[i + 1:end])
             yield ("s", bytes.fromhex((hexed + b"0" * (len(hexed) % 2)).decode()))
             i = end + 1
         elif c in b"[]":
             yield (c.decode(), None)
             i += 1
         elif c == b"/":
-            m = re.match(rb"/[^\s/\[\]()<>{}%]*", src[i:])
+            m = _NAME.match(src, i)
             yield ("name", m.group(0))
             i += len(m.group(0))
         elif c in b"<>{}":
             i += 2 if src[i:i + 2] in (b"<<", b">>") else 1
         else:
-            m = re.match(rb"[+-]?(\d+\.?\d*|\.\d+)", src[i:])
+            m = _NUMBER.match(src, i)
             if m:
                 yield ("n", float(m.group(0)))
                 i += len(m.group(0))
                 continue
-            m = re.match(rb"[^\s/\[\]()<>{}%]+", src[i:])
+            m = _WORD.match(src, i)
             word = m.group(0) if m else src[i:i + 1]
             yield ("o", word)
             i += len(word)
@@ -211,11 +255,13 @@ def _decode(b: bytes) -> str:
     return b.decode("latin-1")
 
 
-def _content_text(src: bytes) -> str:
+def _content_text(src: bytes, deadline: float | None = None, limit: int = MAX_TEXT) -> str:
     out: list[str] = []
     operands: list[Any] = []
     array: list[Any] | None = None
-    for kind, value in _tokens(src):
+    for kind, value in _tokens(src, deadline):
+        if len(out) >= limit:
+            break
         if kind == "[":
             array = []
         elif kind == "]":
