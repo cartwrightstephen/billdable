@@ -1349,6 +1349,9 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     out["audit_total"] = len(state.get("audit", []))
     # Today's queue, drawn from the same rows as the daily email (R4-10).
     out["today_rows"] = today_rows(state, now)
+    # The To Do list's own tasks (G5): open ones, and those done in the last 30 days.
+    out["tasks"] = visible_tasks(state, now)
+    out["task_assignments"] = deepcopy(state.get("task_assignments") or {})
     out["closed_jobs_total"] = closed_count
     out["audit_chain"] = check_audit(state)
     out["trial"] = trial.status(state)
@@ -1409,7 +1412,11 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
     words (the app maps `kind` to what it does); path the app page that does it.
     Kinds: email_failed, says_done, blocked, ready, waiver, not_billed, due_soon, new_job,
     follow_up, approved, inbox. "approved" is a pay app the customer approved with a date to pay:
-    waiting, not due, so it has no button."""
+    waiting, not due, so it has no button.
+    The To Do list (T3, G5) adds key (kind:job_id:item), due (YYYY-MM-DD: the client's next pay app
+    cutoff for a pay app to send or bill, the follow-up day, the day the client said they'd pay,
+    else today), ball_in_court ("us" or "client") and assignee_id/assignee_name
+    (domain/tasks.py decorate_rows)."""
     now = now or datetime.now(timezone.utc)
     today = now.date()
     jobs = {j["id"]: j for j in state.get("jobs", []) if not j.get("closed")}
@@ -1427,7 +1434,8 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             label, text, button = (term_text(x, style, keep) for x in (label, text, button))
         out.append({"rank": rank, "kind": kind, "job_id": job["id"], "job": job["name"], "payer": payer.get("name", ""),
                     "label": label, "tone": tone, "text": text, "note": ids.pop("note", ""), "button": button,
-                    "path": path or f"/jobs/{job['id']}", "invoice_id": "", "co_id": "", "email_id": "", "item_id": "", **ids})
+                    "path": path or f"/jobs/{job['id']}", "invoice_id": "", "co_id": "", "email_id": "", "item_id": "",
+                    "due": ids.pop("due", ""), **ids})
 
     # An email that didn't go out: the latest per pay app or follow-up, open jobs only.
     for e in email_failures(state):
@@ -1458,6 +1466,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         may_bill = job.get("work_status") != "complete" or m["unbilled_completed_cents"] > 0
         due_soon = bool(due) and may_bill and not billed_this_cycle and (due[0] - today).days <= 5
         before = len(out)
+        cutoff_day = due[0].isoformat() if due else ""
         # One next step per job, in the job page's order (jobActions): blockers first.
         if is_blocked(job):
             more = f" And {len(items) - 1} more." if len(items) > 1 else ""
@@ -1465,22 +1474,22 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             cos = [b for b in items if b["kind"] == "co"]
             add(3, "blocked", job, "Needs paperwork" if paperwork else "Blocked", "amber" if paperwork else "red", items[0]["text"] + more,
                 blocker_button(job), f"/money/packet/{job['id']}/{draft['id']}" if draft else f"/money/packet/{job['id']}",
-                invoice_id=draft["id"] if draft else "", co_id=cos[0]["co_id"] if cos and len(cos) == len(items) else "")
+                invoice_id=draft["id"] if draft else "", co_id=cos[0]["co_id"] if cos and len(cos) == len(items) else "", due=cutoff_day)
         elif draft:
             add(1, "ready", job, "Ready to send", "green", f"{draft['number']} for {money(draft['amount_cents'])} to {payer.get('approver') or payer.get('name', '')}. "
-                "Check what goes out, then approve.", "Review & send", f"/money/pay-app/{job['id']}/{draft['id']}", invoice_id=draft["id"])
+                "Check what goes out, then approve.", "Review & send", f"/money/pay-app/{job['id']}/{draft['id']}", invoice_id=draft["id"], due=cutoff_day)
         elif job.get("waiver_due") and not job.get("waiver_sent"):
             add(2, "waiver", job, "Waiver due", "amber", "Paid in full: the client is waiting for the lien waiver.", "Review waiver",
                 f"/money/waiver/{job['id']}")
         elif job.get("work_status") == "complete" and m["unbilled_completed_cents"] > 0:
             add(5, "not_billed", job, "Not billed", "copper",
-                f"{money(m['unbilled_completed_cents'])} of finished work has no pay app yet. Drafting sends nothing.", "Draft pay app")
+                f"{money(m['unbilled_completed_cents'])} of finished work has no pay app yet. Drafting sends nothing.", "Draft pay app", due=cutoff_day)
         elif due_soon:
-            add(2.5, "due_soon", job, "Due soon", "amber", "Record this month's progress and draft the pay app.", "Bill progress")
+            add(2.5, "due_soon", job, "Due soon", "amber", "Record this month's progress and draft the pay app.", "Bill progress", due=cutoff_day)
         # A new job (R2-04): nothing billed on it yet, so Today says what comes next instead of nothing.
         elif not any(i["status"] not in {"void", "replaced"} for i in invoices):
             add(5, "new_job", job, "Not billed yet", "copper", f"{job['name']} has no pay app yet. Bill the work done so far, or mark it done.",
-                "Bill progress")
+                "Bill progress", due=cutoff_day)
         # A cutoff makes the job's row more urgent, and says so.
         if due_soon and len(out) > before:
             row = out[-1]
@@ -1503,19 +1512,19 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
                 since = f", last follow-up {_day_words(oldest['last_follow_up_at'])}" if oldest.get("last_follow_up_at") else ""
                 add(4, "follow_up", job, "Follow up", "copper",
                     f"{names} was sent {_day_words(oldest.get('sent_at'))}{since}. Emails {payer.get('ap_email') or 'the customer'}.",
-                    "Send follow-up", invoice_id=oldest["id"])
+                    "Send follow-up", invoice_id=oldest["id"], due=follow.date().isoformat())
             # Approved on the customer's page (R4-08): no follow-up until the day after the date they gave.
             elif promised:
                 add(4.5, "approved", job, "Approved", "green",
                     f"Approved by {oldest.get('approved_by_payer') or payer.get('approver') or payer.get('name', '')}, "
-                    f"expect payment {_day_words(promised.isoformat())} ({oldest['number']}).", "", invoice_id=oldest["id"])
+                    f"expect payment {_day_words(promised.isoformat())} ({oldest['number']}).", "", invoice_id=oldest["id"], due=promised.isoformat())
     for item in inbox:
         job = jobs.get(item.get("suggested_job_id"))
         if job and not item.get("says_done_job_id"):
             # item_kind: the kind the Inbox guessed, which the row shows and lets you change before filing.
             add(6, "inbox", job, "Inbox", "", (item.get("subject") or item.get("text") or "An item").split("\n")[0][:100], "Add to this job",
                 "/communications", item_id=item.get("id", ""), note=item.get("match_reason") or "", item_kind=item.get("kind") or "note")
-    return sorted(out, key=lambda r: r["rank"])
+    return decorate_rows(state, sorted(out, key=lambda r: r["rank"]), today)
 
 
 DIGEST_NOUNS = {
@@ -1526,20 +1535,32 @@ DIGEST_NOUNS = {
 }
 
 
-def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = None) -> tuple[str, str] | None:
+def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = None, user_id: str | None = None,
+                 owner: bool = True) -> tuple[str, str] | None:
     """The daily "due today" email (R4-10): (subject, body) listing every Today row that needs a
-    person, each with its link; None on a day with nothing due. A pay app the customer approved
-    with a date to pay is waiting, not due, and is left out."""
-    rows = [r for r in today_rows(state, now) if r["kind"] in DIGEST_NOUNS]
-    if not rows:
+    person, each with its link, and the open tasks due today or before; None on a day with nothing
+    due. A pay app the customer approved with a date to pay is waiting, not due, and is left out.
+    With user_id, only that person's items (G5): those assigned to them and, for an owner, those
+    assigned to nobody."""
+    now = now or datetime.now(timezone.utc)
+    rows = rows_for_user([r for r in today_rows(state, now) if r["kind"] in DIGEST_NOUNS], user_id, owner)
+    tasks = rows_for_user(tasks_due_by(state, now.date()), user_id, owner)
+    if not rows and not tasks:
         return None
     counts: dict[str, int] = {}
     for r in rows:
         counts[r["kind"]] = counts.get(r["kind"], 0) + 1
     style = billing_style(state)
     parts = [term_text(f"{n} {DIGEST_NOUNS[k][0] if n == 1 else DIGEST_NOUNS[k][1]}", style) for k, n in counts.items()]
+    if tasks:
+        parts.append(f"{len(tasks)} task{'' if len(tasks) == 1 else 's'}")
     subject = f"Due today in Duracash: {', '.join(parts)}"
     lines = [f"- {r['job']}: {r['label']}. {r['text']}" + (f"\n  {base}{r['path']}" if base else "") for r in rows]
+    jobs = {j["id"]: j for j in state.get("jobs", [])}
+    for t in tasks:
+        job = jobs.get(t.get("job_id") or "")
+        late = f", due {_day_words(t['due'])}" if t.get("due") and t["due"] < now.date().isoformat() else ""
+        lines.append(f"- Task: {t['title']}{' (' + job['name'] + ')' if job else ''}{late}" + (f"\n  {base}/dashboard" if base else ""))
     company = state.get("company", {}).get("name", "")
     body = (f"What needs you today{' at ' + company if company else ''}:\n\n" + "\n".join(lines)
             + "\n\nNothing goes out until you approve it in Duracash."
@@ -2365,22 +2386,7 @@ def reopen_job(state: dict[str, Any], job_id: str, reason: str, actor: str = "ow
     return job
 
 
-def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str = "owner", at: str | None = None) -> dict[str, Any]:
-    """A dated note on the job. `at` lets an import keep the day the note was written."""
-    job = _job(state, job_id)
-    rec = {
-        "id": "dr-" + secrets.token_hex(4),
-        "job_id": job_id,
-        "notes": notes,
-        "at": at or utcnow(),
-        "actor": actor,
-        "for_history": bool(job.get("closed")),
-    }
-    state.setdefault("daily_records", []).append(rec)
-    job.setdefault("daily_records", []).append(rec["id"])
-    add_job_record(state, job_id, f"Daily record {rec['at'][:10]}", "daily", notes, actor)
-    audit(state, job_id, "daily_record", f"{actor} added a daily record to the job record.", actor)
-    return job
+# add_daily_record is in domain/daily.py (T11, T12, M1).
 
 
 def add_packet_attachment(state: dict[str, Any], job_id: str, item_id: str, name: str, actor: str = "owner") -> dict[str, Any]:
@@ -3132,24 +3138,79 @@ def record_sov_progress(
     actor: str = "owner",
     stored: Any = None,
     period_end: Any = "",
+    from_daily: str = "",
 ) -> dict[str, Any]:
     """Record quantities completed to date, and materials stored, on schedule lines; draft the
     progress pay app. `done` maps line id -> quantity to date; `stored` maps line id -> dollars of
-    materials on site and not yet installed (G703 column F). period_end: the date it runs to (R4-04)."""
+    materials on site and not yet installed (G703 column F). period_end: the date it runs to (R4-04).
+    The period's pay app is one draft that keeps up (M1): while it is only here, new progress
+    replaces it, keeping its number, paperwork and notes, the way record_progress does for dollar
+    jobs. Once it is with the client for review it has to be answered or voided first.
+    from_daily is the day of the daily record the quantities came from (YYYY-MM-DD): the lines it
+    moved carry it as from_daily_on, which the schedule card shows; progress typed on the job page
+    clears it from the lines it changes."""
     job = _open_job(state, job_id)
     if not sov.has_sov(job):
         raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
     if job.get("work_status") == "complete":
         raise GateError("Job is already marked done. Draft the remaining pay app instead.")
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
-    if open_draft:
-        raise GateError(f"{open_draft['number']} is still a draft. Send or void it, then record more progress.")
+    if open_draft and open_draft.get("pencil_status") == "sent":
+        raise GateError(f"{open_draft['number']} is with the client as a draft. Void it or record their answer first.")
     runs_to = period_to(job, period_end)
     done = done if isinstance(done, dict) else {}
     stored = stored if isinstance(stored, dict) else {}
+    # The open draft is about to be replaced: it doesn't count as billed while the new figures
+    # are checked. Put back if they are refused.
+    draft_status = open_draft["status"] if open_draft else ""
+    if open_draft:
+        open_draft["status"] = "void"
+    try:
+        changes, rebill = _check_sov_progress(job, done, stored, replacing=open_draft)
+    except GateError:
+        if open_draft:
+            open_draft["status"] = draft_status
+        raise
+    summary = []
+    for line, qty, store in changes:
+        part = f"{line['description']} {sov.fmt_qty(line['done_milli'])} → {sov.fmt_qty(qty)} {line['unit']}"
+        if store != int(line.get("stored_cents") or 0):
+            part += f", stored {money(int(line.get('stored_cents') or 0))} → {money(store)}"
+        summary.append(part)
+        if from_daily and qty != line["done_milli"]:
+            line["from_daily_on"] = from_daily
+        elif qty != line["done_milli"]:
+            line.pop("from_daily_on", None)
+        line["done_milli"] = qty
+        line["stored_cents"] = store
+    job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
+    notes = (notes or "").strip()[:2000]
+    audit(
+        state,
+        job_id,
+        "record_progress",
+        (f"{actor} recorded progress to date{' from the daily record' if from_daily else ''}: {'; '.join(summary)}." if summary
+         else f"{actor} billed the work recorded before, unchanged.")
+        + f" Completed and stored to date {money(job['completed_value_cents'])}."
+        + (f" {notes}" if notes else ""),
+        actor,
+    )
+    if open_draft:
+        open_draft["voided_at"] = utcnow()
+        open_draft["replaced"] = True
+        audit(state, job_id, "draft_replaced", f"{open_draft['number']} ({money(open_draft['amount_cents'])}) replaced at the new quantities to date.", "duracash")
+        return draft_invoice(state, job_id, actor="duracash", replaces=open_draft, period_end=runs_to, notes=notes)
+    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
+
+
+def _check_sov_progress(job: dict[str, Any], done: dict[str, Any], stored: dict[str, Any],
+                        replacing: dict[str, Any] | None = None) -> tuple[list[tuple[dict[str, Any], int, int]], bool]:
+    """The lines whose quantity to date or stored materials change, each (line, quantity, stored),
+    checked against the schedule and what is already billed; and whether work recorded earlier and
+    not on a pay app is drafted again unchanged. Raises GateError with every problem."""
     # Work recorded and not on a pay app (one pulled back, or a draft deleted): the same
-    # quantities draft it again.
-    rebill = job_money(job)["unbilled_completed_cents"] > 0
+    # quantities draft it again. A draft being replaced is not that: it needs a change.
+    rebill = not replacing and job_money(job)["unbilled_completed_cents"] > 0
     if not done and not stored and not rebill:
         raise GateError("Enter the quantity completed to date on at least one line.")
     by_id = {line["id"]: line for line in sov.lines(job)}
@@ -3162,7 +3223,7 @@ def record_sov_progress(
         if not line:
             errors.append(f"Line {str(line_id)[:20]} is not on this job's schedule.")
             continue
-        name = f"{line.get('item', '')}. {line['description']}".strip(". ")
+        name = sov_line_name(line)
         qty, store = line["done_milli"], int(line.get("stored_cents") or 0)
         try:
             if not blank(done.get(line_id)):
@@ -3176,7 +3237,7 @@ def record_sov_progress(
         if qty < 0 or store < 0:
             errors.append(f"{name}: quantity and stored materials can't be negative.")
         elif qty > line["qty_milli"]:
-            errors.append(f"{name}: {sov.fmt_qty(qty)} is more than the scheduled {sov.fmt_qty(line['qty_milli'])} {line['unit']}. Extra scope is a change order.")
+            errors.append(over_schedule_text(line, qty))
         elif qty < billed_qty.get(line_id, 0):
             errors.append(f"{name}: {sov.fmt_qty(billed_qty[line_id])} {line['unit']} is already billed; the quantity to date can't go below that.")
         elif sov.line_completed(trial_line) + store > line["scheduled_cents"]:
@@ -3187,28 +3248,23 @@ def record_sov_progress(
             changes.append((line, qty, store))
     if errors:
         raise GateError("Progress not recorded.", errors)
+    if not changes and replacing:
+        raise GateError(f"{replacing['number']} is already drafted at those quantities. Enter the corrected quantities to date.")
     if not changes and not rebill:
         raise GateError("Nothing changed. Enter quantities to date or stored materials that differ from the last ones recorded.")
-    summary = []
-    for line, qty, store in changes:
-        part = f"{line['description']} {sov.fmt_qty(line['done_milli'])} → {sov.fmt_qty(qty)} {line['unit']}"
-        if store != int(line.get("stored_cents") or 0):
-            part += f", stored {money(int(line.get('stored_cents') or 0))} → {money(store)}"
-        summary.append(part)
-        line["done_milli"] = qty
-        line["stored_cents"] = store
-    job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
-    notes = (notes or "").strip()[:2000]
-    audit(
-        state,
-        job_id,
-        "record_progress",
-        (f"{actor} recorded progress to date: {'; '.join(summary)}." if summary else f"{actor} billed the work recorded before, unchanged.")
-        + f" Completed and stored to date {money(job['completed_value_cents'])}."
-        + (f" {notes}" if notes else ""),
-        actor,
-    )
-    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
+    return changes, rebill
+
+
+def sov_line_name(line: dict[str, Any]) -> str:
+    """"1. Rough-in wiring": how a refusal names a schedule line."""
+    return f"{line.get('item', '')}. {line['description']}".strip(". ")
+
+
+def over_schedule_text(line: dict[str, Any], qty: int) -> str:
+    """The refusal for a quantity to date past the line's scheduled quantity (one wording for the
+    job page and the daily record)."""
+    return (f"{sov_line_name(line)}: {sov.fmt_qty(qty)} is more than the scheduled {sov.fmt_qty(line['qty_milli'])} {line['unit']}. "
+            "Extra scope is a change order.")
 
 
 def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:

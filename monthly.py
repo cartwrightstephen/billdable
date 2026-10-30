@@ -72,9 +72,23 @@ def daily_email_hour() -> int:
         return 11
 
 
+def _digests(state: dict, company_id: str, base: str, now: datetime) -> list:
+    """(address, digest or None) for each person the daily email goes to (G5): each owner gets
+    what is assigned to them and what nobody has; a member with a confirmed email gets only what
+    is assigned to them, and nothing on a day with none."""
+    out = []
+    for addr in auth.owner_emails(company_id):
+        user = auth.user_by_email(addr)
+        out.append((addr, domain.daily_digest(state, base, now, user_id=user["id"] if user else None)))
+    for user in auth.all_users():
+        if user.get("company_id") == company_id and user.get("role") != "owner" and user.get("email_verified"):
+            out.append((user["email"], domain.daily_digest(state, base, now, user_id=user["id"], owner=False)))
+    return out
+
+
 def send_daily_digests(site, now: datetime | None = None) -> list:
     """Once a day per company, from the hourly loop (R4-10): what's due today to each owner with
-    a confirmed email, unless the company turned "Daily email of what's due" off. Nothing on a
+    a confirmed email, and to each member with something assigned to them (G5), unless the company turned "Daily email of what's due" off. Nothing on a
     day with nothing due. The day each company got it is kept in <data dir>/daily_jobs.json so a
     restart doesn't repeat it. Returns one line per company emailed, for the log."""
     now = now or datetime.now(timezone.utc)
@@ -95,10 +109,9 @@ def send_daily_digests(site, now: datetime | None = None) -> list:
             state = site.read(company_id)
             if state is None or state.get("company", {}).get("daily_email") is False:
                 continue
-            digest = domain.daily_digest(state, base, now)
-            to = auth.owner_emails(company_id)
-            if digest and to:
-                lines.append(f"{company_id}  daily email: {_sent([site.send(addr, digest[0], digest[1], company_id) for addr in to])}")
+            results = [site.send(addr, d[0], d[1], company_id) for addr, d in _digests(state, company_id, base, now) if d]
+            if results:
+                lines.append(f"{company_id}  daily email: {_sent(results)}")
         except Exception as exc:
             _failed(site, company_id, "daily email", exc)
     storage.write_json(path, done)

@@ -417,9 +417,10 @@ class BillingTests(unittest.TestCase):
             domain.record_sov_progress(state, job["id"], {rough: "401"})
         self.assertIn("change order", " ".join(ctx.exception.blockers))
         domain.record_sov_progress(state, job["id"], {rough: "100"})
+        # The same quantities again while the draft is open: nothing to replace it with.
         with self.assertRaises(domain.GateError) as ctx:
-            domain.record_sov_progress(state, job["id"], {rough: "150"})
-        self.assertIn("still a draft", str(ctx.exception))
+            domain.record_sov_progress(state, job["id"], {rough: "100"})
+        self.assertIn("already drafted at those quantities", str(ctx.exception))
         send_open(state, job)
         with self.assertRaises(domain.GateError) as ctx:
             domain.record_sov_progress(state, job["id"], {rough: "90"})
@@ -703,3 +704,88 @@ class BugHuntSovCoLineTests(unittest.TestCase):
         done[rough] = "150"
         domain.record_sov_progress(state, job["id"], done)
         self.assertEqual(job["invoices"][-1]["status"] in domain.DRAFT_STATUSES, True)
+
+
+class LivingDraftTests(unittest.TestCase):  # M1: the period's pay app is one draft that keeps up
+    def setUp(self):
+        self.state = new_state()
+        self.job = sov_job(self.state)
+        self.rough = line(self.job, "1")["id"]
+        self.panel = line(self.job, "2")["id"]
+
+    def draft(self):
+        return [i for i in self.job["invoices"] if i["status"] in domain.DRAFT_STATUSES][-1]
+
+    def test_progress_while_a_draft_is_open_replaces_it_keeping_number_paperwork_and_notes(self):
+        domain.record_sov_progress(self.state, self.job["id"], {self.rough: "100"}, notes="East wing rough-in")
+        first = self.draft()
+        first["packet"][0]["present"] = True
+        domain.record_sov_progress(self.state, self.job["id"], {self.rough: "150"})
+        second = self.draft()
+        self.assertIsNot(first, second)
+        self.assertEqual((first["status"], first.get("replaced")), ("void", True))
+        self.assertEqual(second["number"], first["number"])
+        self.assertEqual(second["replaces"], first["id"])
+        self.assertTrue(second["packet"][0]["present"], "paperwork carried over")
+        self.assertEqual(second["progress_notes"], "East wing rough-in")
+        # 150 ea x $45 = $6,750 + 15% = $7,762.50 gross, less 10%.
+        self.assertEqual(second["gross_cents"], 776_250)
+        self.assertEqual(len([i for i in self.job["invoices"] if i["status"] in domain.DRAFT_STATUSES]), 1)
+        self.assertEqual(gross_billed(self.job), 776_250)
+
+    def test_a_refused_replacement_leaves_the_draft_as_it_was(self):
+        domain.record_sov_progress(self.state, self.job["id"], {self.rough: "100"})
+        first = self.draft()
+        status = first["status"]
+        with self.assertRaises(domain.GateError):
+            domain.record_sov_progress(self.state, self.job["id"], {self.rough: "401"})
+        self.assertEqual(first["status"], status)
+        self.assertIs(self.draft(), first)
+
+    def test_a_draft_with_the_client_for_review_still_refuses(self):
+        domain.record_sov_progress(self.state, self.job["id"], {self.rough: "100"})
+        domain.send_pencil(self.state, self.job["id"])
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.record_sov_progress(self.state, self.job["id"], {self.rough: "150"})
+        self.assertIn("with the client as a draft", str(ctx.exception))
+
+    def test_a_daily_quantity_adds_to_the_line_and_raises_the_draft(self):
+        domain.record_sov_progress(self.state, self.job["id"], {self.rough: "100"})
+        number = self.draft()["number"]
+        domain.add_daily_record(self.state, self.job["id"], "Rough-in east wing", "Ana", at="2026-10-30T15:00:00+00:00",
+                                details={"sections": {"quantities": [{"line_id": self.rough, "qty": "120"}, {"line_id": self.panel, "qty": "25"}]}})
+        self.assertEqual(line(self.job, "1")["done_milli"], 220_000)
+        self.assertEqual(line(self.job, "2")["done_milli"], 250, "25% of a lump sum")
+        self.assertEqual(line(self.job, "1")["from_daily_on"], "2026-10-30")
+        draft = self.draft()
+        self.assertEqual(draft["number"], number)
+        # 220 x $45 = $9,900 + 25% of $12,000 = $3,000; base $12,900 + 15% = $14,835.
+        self.assertEqual(draft["gross_cents"], 1_483_500)
+        rec = self.job["records"][-1]
+        self.assertEqual(rec["label"], "Daily record 2026-10-30: 120 ea Rough-in wiring, 25% Panel and feeders")
+        # Typed on the job page later, the line no longer says it came from a daily record.
+        domain.record_sov_progress(self.state, self.job["id"], {self.rough: "230"})
+        self.assertNotIn("from_daily_on", line(self.job, "1"))
+        self.assertEqual(line(self.job, "2")["from_daily_on"], "2026-10-30")
+
+    def test_a_daily_quantity_creates_the_draft_when_there_is_none(self):
+        domain.add_daily_record(self.state, self.job["id"], "Started", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "10"}]}})
+        self.assertEqual(self.draft()["gross_cents"], 51_750)  # 10 x $45 + 15%
+
+    def test_a_daily_quantity_over_the_schedule_is_refused_and_nothing_is_saved(self):
+        domain.record_sov_progress(self.state, self.job["id"], {self.rough: "390"})
+        records = len(self.job["records"])
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.add_daily_record(self.state, self.job["id"], "Too much", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "11"}]}})
+        self.assertIn("1. Rough-in wiring: 401 is more than the scheduled 400 ea. Extra scope is a change order.", ctx.exception.blockers)
+        self.assertIn(f"qty_{self.rough}", ctx.exception.fields)
+        self.assertEqual(line(self.job, "1")["done_milli"], 390_000)
+        self.assertEqual(len(self.job["records"]), records)
+        self.assertEqual(self.state.get("daily_records", []), [])
+
+    def test_daily_quantities_wait_for_a_draft_with_the_client(self):
+        domain.record_sov_progress(self.state, self.job["id"], {self.rough: "100"})
+        domain.send_pencil(self.state, self.job["id"])
+        with self.assertRaises(domain.GateError):
+            domain.add_daily_record(self.state, self.job["id"], "More", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "5"}]}})
+        self.assertEqual(line(self.job, "1")["done_milli"], 100_000)
