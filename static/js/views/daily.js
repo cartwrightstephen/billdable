@@ -6,6 +6,7 @@ import { esc, unesc, fmtDate } from "../format.js";
 import { defaultJobId } from "../jobs.js";
 import { fmtQty } from "../sov.js";
 import { pathFor } from "../routes.js";
+import { localDay } from "../tasks.js";
 import { recordFiles } from "./job-record.js";
 import { readJson, setNetBanner } from "../net.js";
 import { draftValue, clearForm, field, formValues, formErrors } from "../forms.js";
@@ -250,6 +251,7 @@ export const actions = {
     const j = state.jobs.find(x => x.id === job);
     const body = dailyBody({ ...formValues("daily"), notes }, j, daily.checked);
     if (daily.uploaded.length) body.attachments = daily.uploaded.map(u => u.record_id);
+    body.today = localDay(new Date());   // the record's day is the person's own date, not the server's UTC one
     const r = await post(`/api/jobs/${job}/daily-record`, body, { formKey: "daily" });
     if (r && r.ok) { resetDaily(); clearForm("daily"); render(); }   // saved: the form is empty for the next one
   },

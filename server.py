@@ -788,6 +788,8 @@ class Handler(BaseHTTPRequestHandler):
                 state = load_company(company_id)
                 waiting = {e.get("id") for e in state.get("email_log", []) if e.get("status") == "queued"}
                 fn(state)
+                # To Do assignments of rows that are gone, or of an earlier turn of a row, go (C5).
+                domain.prune_assignments(state)
                 # The first paid pay app ends the free trial (trial.py): tell Stripe, once.
                 trial_sub = billing.trial_end_due(state) if end_trial and billing.configured() else None
                 save_company(company_id, state)
@@ -2018,7 +2020,7 @@ class Handler(BaseHTTPRequestHandler):
             return (f"{user['name']} removed {removed['name']} ({removed['email']}) from the team. "
                     "The inbound email, text and calendar addresses were changed."), {"rotated": True}
 
-        # Their open tasks and To Do rows go to the owner who removed them (G5).
+        # Their open tasks, To Do rows and jobs go to the owner who removed them (G5).
         self._team_change(ctx, remove, also=lambda st: gone and domain.reassign_open_tasks(st, gone[0], ctx.user["id"], ctx.user["name"], ctx.user["name"]))
 
     def _p_account_delete(self, m, ctx: "Ctx") -> None:
@@ -2667,6 +2669,8 @@ class Handler(BaseHTTPRequestHandler):
             started_on=_text(body, "started_on"), assignee_id=assignee_id, assignee_name=assignee_name,
             # S12: what an imported contract said about the client's pay app day and terms.
             payer_days={k: body.get(k) for k in ("payapp_due_day", "payment_terms_days") if k in body},
+            # The page's own date: the start date when none was typed (review C3).
+            today=_text(body, "today"),
         )
 
     def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:

@@ -5,7 +5,9 @@ Two kinds of item make the To Do list:
 - the rows domain.today_rows works out from the jobs (a pay app to send, a follow-up due...),
   which are not stored. Each has a stable `key` (kind:job_id:item). Who it is assigned to, and a
   due date someone set by hand, are kept in state["task_assignments"][key] =
-  {assignee_id, assignee_name, due_override, set_by, set_at}.
+  {assignee_id, assignee_name, due_override, row_due, set_by, set_at}. row_due is the row's own
+  due date when the override was set: a row that comes back under the same key (the next
+  follow-up, next month's cutoff) has a new one, and the old override no longer applies.
 - tasks a person adds by hand: state["tasks"] = [{id, title, job_id, assignee_id, assignee_name,
   due, ball_in_court, status open/done, created_by, created_at, done_by, done_at}].
 
@@ -26,7 +28,7 @@ from typing import Any
 __all__ = [
     "BALL_SIDES", "CLIENT_KINDS", "TASK_TITLE_MAX", "DONE_TASKS_SHOWN_DAYS", "row_key", "decorate_rows",
     "add_task", "edit_task", "set_task_done", "assign_row", "reassign_open_tasks", "visible_tasks",
-    "tasks_due_by", "rows_for_user",
+    "tasks_due_by", "rows_for_user", "prune_assignments",
 ]
 
 BALL_SIDES = ("us", "client")
@@ -47,7 +49,9 @@ def row_key(row: dict[str, Any]) -> str:
 def decorate_rows(state: dict[str, Any], rows: list[dict[str, Any]], today: date) -> list[dict[str, Any]]:
     """Give each of today_rows its key, ball in court, assignee and due date (today_rows calls this).
     A row's own due date (row["due"], from the job's dates) gives way to one set by hand; with
-    neither it is due today. The assignee is the one set on the row, else the job's default
+    neither it is blank, which means today where the person is (static/js/tasks.js todoItems;
+    the daily email counts it as due), so a row isn't dated with the server's UTC day, which is
+    already tomorrow on a US evening (review C3). The assignee is the one set on the row, else the job's default
     assignee (job["assignee_id"], when the job has one), else nobody."""
     jobs = {j["id"]: j for j in state.get("jobs", [])}
     assigned = state.get("task_assignments") or {}
@@ -61,8 +65,45 @@ def decorate_rows(state: dict[str, Any], rows: list[dict[str, Any]], today: date
         else:
             row["assignee_id"] = str(job.get("assignee_id") or "")
             row["assignee_name"] = str(job.get("assignee_name") or "") if row["assignee_id"] else ""
-        row["due"] = a.get("due_override") or row.get("due") or today.isoformat()
+        own = row.get("due") or ""
+        row["own_due"] = own
+        row["due"] = (a.get("due_override") if _override_holds(a, own) else "") or own
     return rows
+
+
+def _override_holds(entry: dict[str, Any], own_due: str) -> bool:
+    """Whether a hand-set due date still belongs to the row: set while the row had the same own
+    due date (review C5). One saved before row_due was kept holds."""
+    return bool(entry.get("due_override")) and entry.get("row_due", own_due) == own_due
+
+
+def _prune(store: dict[str, Any], rows: dict[str, dict[str, Any]]) -> bool:
+    """Drop assignments of rows that are gone (sent, paid, filed) and due dates set for an earlier
+    turn of a row that came back. True when anything changed."""
+    changed = False
+    for key in list(store):
+        row = rows.get(key)
+        entry = store[key]
+        if row is None:
+            del store[key]
+            changed = True
+        elif entry.get("due_override") and not _override_holds(entry, row.get("own_due", "")):
+            entry.pop("due_override", None)
+            entry.pop("row_due", None)
+            if not entry.get("assignee_id"):
+                del store[key]
+            changed = True
+    return changed
+
+
+def prune_assignments(state: dict[str, Any], now: datetime | None = None) -> bool:
+    """_prune against the rows as they are now; run before every save (server._mutate) so
+    assignments of rows that are gone don't pile up."""
+    from domain import today_rows
+    store = state.get("task_assignments")
+    if not store:
+        return False
+    return _prune(store, {r["key"]: r for r in today_rows(state, now)})
 
 
 def _members(members: dict[str, str] | None) -> dict[str, str]:
@@ -213,8 +254,7 @@ def assign_row(state: dict[str, Any], key: Any, body: dict[str, Any], members: d
     if not row:
         raise GateError("That item is no longer on the To Do list.")
     store = state.setdefault("task_assignments", {})
-    for gone in [k for k in store if k not in rows]:
-        del store[gone]
+    _prune(store, rows)
     entry = dict(store.get(key) or {})
     said = []
     if "assignee_id" in body:
@@ -226,6 +266,9 @@ def assign_row(state: dict[str, Any], key: Any, body: dict[str, Any], members: d
         due = _due(body.get("due"))
         if due != entry.get("due_override", ""):
             entry["due_override"] = due
+            entry["row_due"] = row.get("own_due", "")
+            if not due:
+                entry.pop("row_due", None)
             said.append(f"set it due {_when(due)}" if due else "put its due date back")
     if not said:
         raise GateError("Nothing changed.")
@@ -239,8 +282,9 @@ def assign_row(state: dict[str, Any], key: Any, body: dict[str, Any], members: d
 
 
 def reassign_open_tasks(state: dict[str, Any], from_user: str, to_user: str, to_name: str, actor: str = "owner") -> int:
-    """Someone left the team: their open tasks and their To Do rows go to `to_user` (the owner who
-    removed them). Returns how many moved."""
+    """Someone left the team: their open tasks, their To Do rows and the jobs they were the default
+    assignee of (job["assignee_id"], whose rows would otherwise reach nobody) go to `to_user` (the
+    owner who removed them). Returns how many moved."""
     from domain import audit
     if not from_user:
         return 0
@@ -252,6 +296,10 @@ def reassign_open_tasks(state: dict[str, Any], from_user: str, to_user: str, to_
     for entry in (state.get("task_assignments") or {}).values():
         if entry.get("assignee_id") == from_user:
             entry["assignee_id"], entry["assignee_name"] = to_user, to_name
+            moved += 1
+    for job in state.get("jobs", []):
+        if job.get("assignee_id") == from_user:
+            job["assignee_id"], job["assignee_name"] = to_user, to_name
             moved += 1
     if moved:
         audit(state, "", "task_assign", f"{moved} open item{'' if moved == 1 else 's'} moved to {to_name or 'the owner'}.", actor)

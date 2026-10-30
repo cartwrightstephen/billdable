@@ -1850,9 +1850,12 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     person, each with its link, and the open tasks due today or before; None on a day with nothing
     due. A pay app the customer approved with a date to pay is waiting, not due, and is left out.
     With user_id, only that person's items (G5): those assigned to them and, for an owner, those
-    assigned to nobody."""
+    assigned to nobody. Only rows due today or before (a blank due is today): a pay app whose
+    cutoff, or a follow-up whose day, is still ahead waits for that day (review C7)."""
     now = now or datetime.now(timezone.utc)
-    rows = rows_for_user([r for r in today_rows(state, now) if r["kind"] in DIGEST_NOUNS], user_id, owner)
+    day = now.date().isoformat()
+    rows = rows_for_user([r for r in today_rows(state, now) if r["kind"] in DIGEST_NOUNS and (r.get("due") or day) <= day],
+                         user_id, owner)
     tasks = rows_for_user(tasks_due_by(state, now.date()), user_id, owner)
     if not rows and not tasks:
         return None
@@ -3613,6 +3616,7 @@ def create_job(
     assignee_id: str = "",
     assignee_name: str = "",
     payer_days: dict[str, Any] | None = None,
+    today: Any = "",
 ) -> dict[str, Any]:
     """Add a job and its record. The packet is created later, with a pay app, from the payer's
     paperwork list (Customer settings); `note` is kept on the job record and never becomes it.
@@ -3624,7 +3628,8 @@ def create_job(
     whole as address too ("Street, City, ST 12345") for the pay app PDF, the client's page and
     Inbox matching. A caller that sends only the one line (an older page, an import) is still
     taken. Phone, contract number and names go through the field rules (G1). started_on is the
-    start date (J8, today when blank); assignee_id is the team member the job's tasks go to.
+    start date (J8, today when blank: `today`, the page's own date, through local_today);
+    assignee_id is the team member the job's tasks go to.
     payer_days (the pay app due day and payment terms an imported contract found, S12) are saved
     on a new client only: a saved client's are changed in the Client playbook."""
     name = (name or "").strip()
@@ -3746,7 +3751,7 @@ def create_job(
         "name": name,
         "address": address,
         "payer_id": payer["id"],
-        "started_on": start or datetime.now(timezone.utc).date().isoformat(),
+        "started_on": start or local_today(today),
         "payer_role": role,
         "work_status": "in_progress",
         "completed_at": None,

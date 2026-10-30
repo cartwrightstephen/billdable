@@ -64,3 +64,16 @@ test("the assignee list is the team, or me before it loads, plus anyone already 
   assert.deepEqual(assignees({ users: [{ id: "u1", name: "Pat" }, { id: "u3", name: "", email: "x@y.example" }] }, null, []),
     [{ id: "u1", name: "Pat" }, { id: "u3", name: "x@y.example" }]);
 });
+
+test("a row the server sends with no due date is due on the person's own today (review C3)", () => {
+  // Thursday Oct 29, 8:30 pm where the person is: the server's UTC day is already the 30th.
+  const evening = new Date(2026, 9, 29, 20, 30);
+  const today = localDay(evening);
+  const [item] = todoItems({ today_rows: [{ key: "new_job:j1:", kind: "new_job", label: "New job", job_id: "j1", job: "Porch", due: "" }] }, {}, today);
+  assert.equal(item.due, "2026-10-29");
+  assert.equal(inPeriod(item, periodRange("today", evening), today), true);
+  // Saturday evening stays in "This week".
+  const sat = new Date(2026, 9, 31, 20, 30);
+  const [late] = todoItems({ today_rows: [{ key: "k", due: "" }] }, {}, localDay(sat));
+  assert.equal(inPeriod(late, periodRange("week", sat), localDay(sat)), true);
+});

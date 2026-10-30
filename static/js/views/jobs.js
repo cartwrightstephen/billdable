@@ -8,6 +8,7 @@ import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, fo
 import { checkFields, US_STATES } from "../validate.js";
 import { readJson, sendFile } from "../net.js";
 import { pasteGuess } from "../inbox.js";
+import { localDay } from "../tasks.js";
 import { termText } from "../terms.js";
 import { state, me, formOpen, teamData, setTeamData, onSessionEnd } from "../state.js";
 import { nav, moreOpen, emptyState, listPage, post, moreDetails, toast, render, load, clearJobDetails } from "../app-core.js";
@@ -463,7 +464,7 @@ export const actions = {
     const r = await post("/api/jobs", {
       name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer: v.customer, approver,
       ap_email: apEmail, phone: v.phone, client_type: known ? "" : (v.client_type || "gc"),
-      contract_number: v.contract_number, note: v.note, started_on: v.started_on || "",
+      contract_number: v.contract_number, note: v.note, started_on: v.started_on || "", today: localDay(new Date()),
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
       contract_cents: amount.cents, retainage_pct: ret.value, ...days,
       new_customer: !known && keptNames.newjob === v.customer,
