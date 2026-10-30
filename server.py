@@ -67,6 +67,7 @@ COMPANIES = storage.DATA_DIR / "companies"
 PORT = int(os.environ.get("PORT", "8765"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 COOKIE = "duracash_session"
+DEVICE_COOKIE = "duracash_device"  # this browser signed in with an emailed code: 30 days without one (S7)
 SHARE_COOKIE = "duracash_share"  # the key of what this browser shared while signed out (R6-10)
 SHARE_HOLDS_PER_HOUR = 10  # holds an hour from one network
 PAYER_QUESTIONS_PER_HOUR = 5   # questions from one customer-page link an hour
@@ -672,7 +673,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/"):
             self.send_header("Cache-Control", "no-store")
         for k, v in (headers or {}).items():
-            self.send_header(k, v)
+            for one in (v if isinstance(v, list) else [v]):   # two Set-Cookie headers (S7)
+                self.send_header(k, one)
         self.end_headers()
         if body:
             self.wfile.write(body)
@@ -809,7 +811,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = outbox.deliver_queued(SITE, company_id, user, only=queued, rid=self._rid) or payload
         return 200, payload
 
-    def _token(self) -> str | None:
+    def _token(self, name: str = COOKIE) -> str | None:
         raw = self.headers.get("Cookie", "")
         if not raw:
             return None
@@ -818,8 +820,12 @@ class Handler(BaseHTTPRequestHandler):
             jar.load(raw)
         except Exception:
             return None
-        morsel = jar.get(COOKIE)
+        morsel = jar.get(name)
         return morsel.value if morsel else None
+
+    def _device_cookie(self, raw: str) -> str:
+        secure = "; Secure" if self._secure_cookie() else ""
+        return f"{DEVICE_COOKIE}={raw}; Path=/api/auth/login; HttpOnly; SameSite=Lax; Max-Age={60 * 60 * 24 * auth.DEVICE_DAYS}{secure}"
 
     def _secure_cookie(self) -> bool:
         if os.environ.get("COOKIE_SECURE") == "1":
@@ -1065,7 +1071,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
-        self._json(200, {"user": user, "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
+        self._json(200, {"user": self._me_user(user), "company": state.get("company", {}), "helper_admin": is_helper_admin(user),
                          "mail_ready": bool(mailer.configured() and app_url()),
                          "idle_minutes": auth.idle_minutes(),
                          # Codes by email (S2's password change, S7's sign-in): the server sends mail.
@@ -1380,20 +1386,72 @@ class Handler(BaseHTTPRequestHandler):
         if not user or (not demo_enabled() and user["company_id"] == auth.DEMO_COMPANY_ID):
             self._json(401, {"error": "Email or password is wrong."})
             return
+        cookies = []
         if user.get("two_step"):
             code = _text(body, "code", limit=40)
             if not code:
-                self._json(401, {"error": "Enter the 6-digit code from your authenticator app.", "needs_code": True})
+                self._json(401, {"error": "Enter the 6-digit code from your authenticator app.", "needs_code": True, "method": "app"})
                 return
             try:
                 ok = auth.totp_check(user["id"], code, self._client_ip())
             except auth.RateLimited as exc:
-                self._json(429, {"error": str(exc), "needs_code": True})
+                self._json(429, {"error": str(exc), "needs_code": True, "method": "app"})
                 return
             if not ok:
-                self._json(401, {"error": "That code didn't work. Codes change every 30 seconds; a recovery code works once.", "needs_code": True})
+                self._json(401, {"error": "That code didn't work. Codes change every 30 seconds; a recovery code works once.", "needs_code": True, "method": "app"})
                 return
-        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+        elif self._email_code_due(user):
+            # Two-step by default (S7): from a browser that hasn't signed in with a code in the
+            # last 30 days, a 6-digit code goes to the person's email.
+            code = _text(body, "code", limit=40).strip()
+            if not code:
+                sent = self._send_login_code(user)
+                if sent is not None:
+                    self._json(401, {"error": sent, "needs_code": True, "method": "email", "email": user["email"]})
+                    return
+                # The code couldn't be sent (the mail server is down): never locked out; the
+                # password signs in, and the server log says why no code was asked.
+            else:
+                try:
+                    ok = auth.login_code_check(user["id"], code, self._client_ip())
+                except auth.RateLimited as exc:
+                    self._json(429, {"error": str(exc), "needs_code": True, "method": "email", "email": user["email"]})
+                    return
+                if not ok:
+                    self._json(401, {"error": "That code didn't match, or it has expired. Check the newest email, or go back and sign in again for a new code.",
+                                     "needs_code": True, "method": "email", "email": user["email"]})
+                    return
+                user = auth.user_by_email(user["email"]) or user   # the code confirmed the email
+                if body.get("remember") is not False:
+                    cookies.append(self._device_cookie(auth.remember_device(user["id"])))
+        session = self._set_cookie(auth.create_session(user))["Set-Cookie"]
+        self._json(200, {"user": self._me_user(user)}, {"Set-Cookie": [session, *cookies]})
+
+    def _email_code_due(self, user: dict) -> bool:
+        """Whether this sign-in needs an emailed code (S7): on a server that sends mail, for
+        everyone but the demo, unless this browser is remembered."""
+        if user["company_id"] == auth.DEMO_COMPANY_ID or not mailer.configured():
+            return False
+        return not auth.device_known(user["id"], self._token(DEVICE_COOKIE))
+
+    def _send_login_code(self, user: dict) -> str | None:
+        """Email a sign-in code. Returns what the page shows while it waits for it, or None when
+        no code could be sent (then the password alone signs in)."""
+        code = auth.issue_code(user["id"], "login")
+        if not code:
+            return f"Five codes were sent to {user['email']} in the last hour. Enter the newest one."
+        subject, text = mailer.login_code_email(user["name"], code)
+        status = self._system_email(user["email"], subject, text)
+        if status != "sent":
+            log_json("warn", msg="sign-in code not sent; signed in with the password only", reason=str(status)[:200], rid=self._rid)
+            return None
+        return f"We emailed a 6-digit code to {user['email']}. Enter it to sign in. It works for 10 minutes."
+
+    def _me_user(self, user: dict) -> dict:
+        """The signed-in user as the page reads it, with two_step_setup_due (S7): on a server
+        without mail, the authenticator app is the second step, and the page asks to set it up."""
+        due = user["company_id"] != auth.DEMO_COMPANY_ID and not user.get("two_step") and not mailer.configured()
+        return {**user, "two_step_setup_due": due}
 
     def _p_signup(self, m) -> None:
         body = self._read_json()
@@ -1418,7 +1476,7 @@ class Handler(BaseHTTPRequestHandler):
                 save_company(company_id, fresh)
             token = auth.create_session(user)
             verification = self._send_verification(user)
-            self._json(200, {"user": user, "verification": verification}, self._set_cookie(token))
+            self._json(200, {"user": self._me_user(user), "verification": verification}, self._set_cookie(token))
         except ValueError as exc:
             # An email that already has an account: the page offers "Sign in instead".
             self._json(400, {"error": str(exc), **({"exists": True} if "already exists" in str(exc) else {})})
@@ -1680,8 +1738,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "recovery_codes": codes,
                                  "message": "Two-step sign-in is on. Keep the recovery codes somewhere safe; each works once."})
             else:
+                # Two-step sign-in stays on (S7): the authenticator app can only give way to
+                # emailed codes, on a server that sends mail.
+                if not mailer.configured():
+                    raise auth.AuthError("Two-step sign-in stays on. On this server it uses the authenticator app.")
                 auth.totp_disable(ctx.user["id"], ctx.body.get("password"), _text(ctx.body, "code", limit=40))
-                self._json(200, {"ok": True, "message": "Two-step sign-in is off."})
+                self._json(200, {"ok": True, "message": "Two-step sign-in now uses codes sent to your email."})
         except auth.RateLimited as exc:
             self._json(429, {"error": str(exc)})
         except auth.AuthError as exc:

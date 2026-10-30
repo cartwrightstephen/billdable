@@ -104,7 +104,20 @@ class ServerCase(unittest.TestCase):
 
     def login(self, email_addr, password=PASSWORD):
         res, data = self.request("POST", "/api/auth/login", {"email": email_addr, "password": password})
+        if res.status == 401 and data.get("method") == "email":
+            # Two-step by default (S7): with mail on, a new browser gets a code by email.
+            res, data = self.request("POST", "/api/auth/login", {"email": email_addr, "password": password, "code": self.last_code()})
         return res, (res.getheader("Set-Cookie") or "").split(";")[0]
+
+    def last_code(self):
+        for _ in range(50):
+            for msg in reversed(self.sink.messages):
+                text = email.message_from_bytes(msg["data"], policy=email.policy.default).get_body(("plain",)).get_content()
+                m = re.search(r"Your code to sign in to Duracash is (\d{6})", text)
+                if m:
+                    return m.group(1)
+            time.sleep(0.05)
+        self.fail("no sign-in code was emailed")
 
     def link_token(self, kind, message=None):
         msg = message or self.sink.messages[-1]

@@ -907,8 +907,57 @@ def totp_check(user_id: str, code: Any, ip: str | None = None) -> bool:
         return False
 
 
+# ---------- two-step by default (S7): emailed sign-in codes and remembered devices ----------
+
+DEVICE_DAYS = 30
+MAX_DEVICES = 10
+
+
+def login_code_check(user_id: str, code: Any, ip: str | None = None) -> bool:
+    """At sign-in from a new device: the 6-digit code emailed by issue_code(user_id, "login").
+    Wrong codes count toward the same throttle as wrong passwords (RateLimited past it)."""
+    now = time.monotonic()
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        _throttle(user["email"], ip, now)
+        if _take_code(data, "login", user_id, code):
+            user["email_verified"] = True   # the code reached this address
+            user.setdefault("verified_at", _iso(_utcnow()))
+            _save(data)
+            _FAILURES.pop(user["email"], None)
+            return True
+        _failed(user["email"], ip, now)
+        return False
+
+
+def remember_device(user_id: str) -> str:
+    """A token for this browser's cookie: signing in from it skips the emailed code for 30 days.
+    Only its hash is kept on the user; a password change forgets every device."""
+    raw = secrets.token_urlsafe(32)
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        now = _iso(_utcnow())
+        devices = {k: v for k, v in (user.get("devices") or {}).items() if v > now}
+        devices[_digest(raw)] = _iso(_utcnow() + timedelta(days=DEVICE_DAYS))
+        user["devices"] = dict(sorted(devices.items(), key=lambda kv: kv[1])[-MAX_DEVICES:])
+        _save(data)
+    return raw
+
+
+def device_known(user_id: str, raw: Any) -> bool:
+    if not isinstance(raw, str) or not raw or len(raw) > 200:
+        return False
+    with LOCK:
+        user = next((u for u in _read()["users"] if u["id"] == user_id), None)
+        expires = ((user or {}).get("devices") or {}).get(_digest(raw), "")
+    return expires > _iso(_utcnow())
+
+
 def totp_disable(user_id: str, password: Any, code: Any) -> None:
-    """Turn two-step sign-in off: needs the password and a current code (or a recovery code)."""
+    """Turn two-step sign-in off: needs the password and a current code (or a recovery code).
+    The server only allows it where email codes take over (S7: two-step stays on)."""
     if not check_password(user_id, password):
         raise AuthError("Password is wrong.")
     if not totp_check(user_id, code):
