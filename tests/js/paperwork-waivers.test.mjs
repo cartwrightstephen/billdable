@@ -89,3 +89,12 @@ test("Before you send lists each file with Leave out or Put back, and warns of a
   assert.match(html, /What Lee GC needs to pay/);
   assert.equal(recordWaiverKind({ label: "Unconditional final waiver" }), "unconditional_final");
 });
+
+test("Add your legal name opens Settings, Company at the legal-name box (D2)", async () => {
+  const { waiverChecklistHtml } = await import("../../static/js/views/paperwork.js");
+  core.setState({ company: { name: "Pine" }, jobs: [job()], payers: [], files: [] });
+  const html = waiverChecklistHtml(job(), "unconditional_progress");
+  assert.match(html, /<button class="linkish" data-action="onb-go" data-view="company" data-focus="#co-legal-name">Add your legal name<\/button>/);
+  assert.ok(reg.views.company, "the page it opens exists");
+  assert.ok(!reg.views.settings);
+});

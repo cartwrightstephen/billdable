@@ -108,7 +108,7 @@ export function waiverChecklistHtml(j, kind, inv = null, amount = null) {
   const items = [
     `Job: ${j.name}${j.address ? ", " + j.address : ""}`,
     `Client: ${(j.payer || {}).name || ""}`,
-    `Your legal name: ${legal}${company.legal_name ? "" : ` <button class="linkish" data-action="nav" data-view="settings">Add your legal name</button>`}`,
+    `Your legal name: ${legal}${company.legal_name ? "" : ` <button class="linkish" data-action="onb-go" data-view="company" data-focus="#co-legal-name">Add your legal name</button>`}`,
     cents != null ? `Amount covered: ${money(cents)}` : "",
     inv && inv.period_to ? `Work through: ${fmtDate(inv.period_to)}` : "",
     kind && kind.startsWith("conditional") ? "Conditional wording: it counts only once the payment clears" : "",

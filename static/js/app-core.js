@@ -382,13 +382,15 @@ function showRefusal(anchor, data) {
   card.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
-// opts.fromHistory: Back/Forward already changed the address; opts.replace: don't add a history entry.
+// opts.fromHistory: Back/Forward already changed the address; opts.replace: don't add a history entry;
+// opts.fresh: the trail starts again here (Back to a fixed parent, D1).
 export function nav(view, jobId = null, detailId = null, opts = {}) {
   if (view === "team") setTeamData(null);  // fresh team list each time the page opens
   jobDetailFailed = null;   // a job that didn't load is asked for again
   const moved = view !== currentView || jobId !== currentJobId || detailId !== currentDetailId;
   setLocation(view, jobId, detailId);
-  stepTrail(view, jobId, detailId, opts.fromHistory ? "history" : opts.replace ? "replace" : "push");
+  if (opts.fresh) resetTrail(view, jobId, detailId);
+  else stepTrail(view, jobId, detailId, opts.fromHistory ? "history" : opts.replace ? "replace" : "push");
   closeForms();
   clearAllForms();
   setDrawerOpen(false);
@@ -419,12 +421,13 @@ export function toggleForm(key) {
 
 // Back (G3): to the page the person came from in the app, named as the menu names it, through
 // the browser's own history; opened from a link or after a refresh, to the page's fixed parent
-// (view, label, jobId).
+// (view, label, jobId). That one ("up") takes this page's place in history and starts the trail
+// again there, so the parent's own Back goes to its parent, not back here in a loop (D1).
 export function backButton(view, label, jobId = null) {
   const prev = previousPage();
   const name = prev && page.pageName(prev);
   if (name) return `<div class="top"><button class="back" data-action="back">← ${name}</button></div>`;
-  return `<div class="top"><button class="back" data-action="nav" data-view="${view}"${jobId ? ` data-id="${jobId}"` : ""}>← ${label}</button></div>`;
+  return `<div class="top"><button class="back" data-action="up" data-view="${view}"${jobId ? ` data-id="${jobId}"` : ""}>← ${label}</button></div>`;
 }
 
 // Every field gets an accessible name: its <label> when there is one, else its placeholder.

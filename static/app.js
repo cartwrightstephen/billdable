@@ -228,6 +228,8 @@ const ACTIONS = {
   "nav": (el) => { nav(el.dataset.view, el.dataset.id || null, el.dataset.detail || null); },
   // The Back button when the page before is known (G3): the browser goes back, and popstate draws it.
   "back": () => history.back(),
+  // The Back button opened from a link or a refresh: the page's fixed parent, in this page's place (D1).
+  "up": (el) => { nav(el.dataset.view, el.dataset.id || null, null, { replace: true, fresh: true }); },
   "list-more": (el) => { const k = el.dataset.kind, pg = listPages[k]; if (pg && !pg.loading) loadListPage(k, pg.job, pg.entries.length, 50); },
   "copy": async (el) => {
     const text = document.getElementById(el.dataset.target)?.textContent || "";

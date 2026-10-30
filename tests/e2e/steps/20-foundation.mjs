@@ -49,6 +49,18 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(await page.locator(".back").innerText(), "← Jobs");
   });
 
+  await step("from a link, Back climbs to each page's parent and never loops (D1)", async () => {
+    await page.goto(BASE + "/money/pay-app/job-oak/inv-oak-1");
+    await page.locator(".back", { hasText: "← Oak Street kitchen" }).waitFor();
+    await page.locator(".back").click();
+    await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/jobs/job-oak");
+    assert.equal(await page.locator(".back").innerText(), "← Jobs");
+    await page.locator(".back").click();
+    await page.getByRole("heading", { name: "Open jobs" }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/jobs");
+  });
+
   await step("phone: five sections, with Import/Export and Automations under More", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
     await phone.goto(BASE + "/dashboard");
