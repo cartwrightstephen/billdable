@@ -7,7 +7,7 @@ import { pathFor } from "../routes.js";
 import { jobFilterOptions } from "../jobs.js";
 import { moreButton } from "../dom.js";
 import { state, me, onSessionEnd } from "../state.js";
-import { toast, nav, emptyState, listPage, render } from "../app-core.js";
+import { toast, nav, emptyState, listPage, render, can } from "../app-core.js";
 import { dropzoneHtml, pasteBoxHtml, calendarFeedHtml } from "./inbox.js";
 import { paymentsImportHtml, qboCardHtml, qboStatus, loadQboStatus } from "./payments.js";
 import { qboCsvLink, QBO_READY } from "./money.js";
@@ -67,7 +67,7 @@ export const views = {
     `;
   },
   export() {
-    const owner = me && me.role === "owner";
+    const owner = can("data");   // GET /api/export needs Export and reset data
     const page = listPage("sentpayapps", sentJobFilter);
     const rows = page ? page.entries : [];
     return `

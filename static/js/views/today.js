@@ -10,7 +10,7 @@ import { worstKind, followUpEvent } from "../calendar.js";
 import { todoHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
 import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd, teamData, setTeamData } from "../state.js";
-import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post } from "../app-core.js";
+import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post, can } from "../app-core.js";
 import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
 
@@ -438,7 +438,7 @@ export const views = {
         <p><a class="btn" id="cal-webcal" href="/dashboard/calendar" hidden>Add to my phone's calendar</a></p>
         <p class="sub">On an iPhone or a Mac that button adds them in one tap. Or copy this private address. In Google Calendar on a computer: Other calendars, +, From URL, paste, Add calendar. It then shows on your phone. Calendar apps refresh subscribed calendars on their own schedule, often every few hours, so new dates are not instant.</p>
         <div class="copy-row"><code id="cal-url">Loading…</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button>${newAddressButton("calendar")}</div>
-        <p class="sub">Anyone with this address can see the dates and job names. ${me && me.role === "owner" ? "Make a new address if it was shared by mistake." : "If it was shared by mistake, an owner can make a new one."}</p>
+        <p class="sub">Anyone with this address can see the dates and job names. ${can("company") ? "Make a new address if it was shared by mistake." : "If it was shared by mistake, an owner can make a new one."}</p>
       </details>
     `;
   },

@@ -83,8 +83,10 @@ test("a finished job is its job file: Download job file, Add more work, no worki
   assert.match(html, /href="\/api\/jobs\/j-1\/payapp\/i1\.pdf"/);
   assert.doesNotMatch(html, /Reopen/);
   assert.doesNotMatch(html, /Edit job|next-card|Take a photo/);
-  page.setMe({ name: "Sam", company_id: "co-p", role: "member" });
-  assert.doesNotMatch(reg.views.job(), /Add more work/, "owners only, as the server");
+  page.setMe({ name: "Sam", company_id: "co-p", role: "member", perms: ["record_payments"] });
+  assert.doesNotMatch(reg.views.job(), /Add more work/, "only with Finish and reopen jobs, as the server");
+  page.setMe({ name: "Lee", company_id: "co-p", role: "member", perms: ["close_jobs"] });
+  assert.match(reg.views.job(), /Add more work/, "a member whose profile may finish and reopen jobs");
 });
 
 test("Edit job: the address in four boxes, an older one-line address all in Street (J1, J8)", () => {

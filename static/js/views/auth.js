@@ -5,7 +5,7 @@ import { readJson, setNetBanner, postJson } from "../net.js";
 import { field, formErrorLine, refuseForm, showFieldErrors, formValues, formErrors, clearForm } from "../forms.js";
 import { me, setMe, clearSession, pendingPath, setCheckEmail, setAccount, mailReady, readOnly, billingInfo, heldShare, setDrawerOpen, checkEmail, signedOutNote, setSignedOutNote, setPending, setTwoStepPrompt } from "../state.js";
 import { setIdleSignOut } from "../idle.js";
-import { render, load, post, applyLocation, DEMO_COMPANY_ID, boot, toast, nav } from "../app-core.js";
+import { render, load, post, applyLocation, DEMO_COMPANY_ID, boot, toast, nav, can } from "../app-core.js";
 import { setAiVisible, helperLog } from "./helper.js";
 
 // Someone who has signed in on this device before lands on Sign in, not on Create account (R2-02).
@@ -394,7 +394,7 @@ export function heldShareHtml() {
 
 export function verifyBannerHtml() {
   if (readOnly) return `<div class="verify-banner read-only-banner" role="status">${readOnly}</div>`;
-  if (billingInfo && billingInfo.warning) return `<div class="verify-banner" role="status">${billingInfo.warning}${me && me.role === "owner" ? ` <button class="linkish" data-action="nav" data-view="billing">Billing</button>` : ""}</div>`;
+  if (billingInfo && billingInfo.warning) return `<div class="verify-banner" role="status">${billingInfo.warning}${can("billing") ? ` <button class="linkish" data-action="nav" data-view="billing">Billing</button>` : ""}</div>`;
   if (checkEmail && me && !me.email_verified) return checkEmailHtml();
   if (!mailReady || !me || me.email_verified || me.company_id === DEMO_COMPANY_ID) return "";
   return `<div class="verify-banner">Confirm your email (${me.email}) so Duracash can send pay apps for you; replies come back to it.

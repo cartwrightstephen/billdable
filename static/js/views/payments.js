@@ -6,7 +6,7 @@ import { readJson, setNetBanner, postJson } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { field, draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, onSessionEnd } from "../state.js";
-import { render, toast, emptyState, nav, setState } from "../app-core.js";
+import { render, toast, emptyState, nav, setState, can } from "../app-core.js";
 import { canRecord, needsPick, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "../payimport.js";
 import { qboCsvLink } from "./money.js";
 import { openJobs } from "../jobs.js";
@@ -77,7 +77,7 @@ function qboPayAppCell(row, n) {
 // The QuickBooks card, on Import and on Settings > Company (R4-11).
 export function qboCardHtml(onImport) {
   const q = qboStatus;
-  const owner = me && me.role === "owner";
+  const owner = can("company");   // connect and disconnect need Edit company details and connections
   return !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
       !q.configured ? `<p class="sub">Not set up on this server yet: it needs the keys of Duracash's Intuit app. Until then, use the CSV import ${onImport ? "below" : "on Import"}.</p>`
       : !q.connected ? (owner

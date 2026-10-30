@@ -401,7 +401,7 @@ export function trialBannerHtml() {
   if (t.state === "active") {
     return `<div class="trial-banner">Free trial: nothing to pay until the first pay app you send through Duracash is paid, or until ${day(t.ends_by)}${t.extended ? " (extended because a pay app is still unpaid)" : ""}.</div>`;
   }
-  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : me && me.role === "owner" ? " Subscribe in Settings, Billing." : " An owner can subscribe in Settings, Billing.") : ""}</div>`;
+  return `<div class="trial-banner">Your free trial ended on ${day(t.ended_at)}${t.reason === "paid" ? `, when ${t.first_paid} on ${t.first_paid_job} was paid` : ""}.${live ? (billingInfo.status === "active" || billingInfo.status === "trialing" ? " Your subscription is on." : can("billing") ? " Subscribe in Settings, Billing." : " An owner can subscribe in Settings, Billing.") : ""}</div>`;
 }
 
 // Signed out: what one person had open in Settings isn't kept for the next.

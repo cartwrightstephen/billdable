@@ -7,7 +7,7 @@ import { CLIENT_TYPES, clientTypeLabel, paperworkChoices, packetChoices, packetT
 import { readJson } from "../net.js";
 import { pathFor } from "../routes.js";
 import { state, me, formOpen, onSessionEnd } from "../state.js";
-import { post, render, emptyState } from "../app-core.js";
+import { post, render, emptyState, can } from "../app-core.js";
 import { sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount, contractImportHtml, contractMark, forgetClosedContract } from "./jobs.js";
 
 // Each client's jobs, finished ones too (S10), asked for when its card opens:
@@ -178,7 +178,7 @@ export const views = {
             </div>
             <p class="sub">Every job of ${p.name} moves to the client you pick, which keeps its own settings. ${p.name} is then removed.</p>
           </details>` : ""}
-          ${deletePayerHtml(p, { owner: !me || me.role === "owner", jobs: state.jobs, canMerge: others.length > 0 })}
+          ${deletePayerHtml(p, { owner: can("company"), jobs: state.jobs, canMerge: others.length > 0 })}
         </details>`;
       }).join("") : emptyState("No clients yet", "", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add client</button>`)}
     `;

@@ -62,3 +62,25 @@ test("a job filter on a page of records lists open jobs first, finished ones und
     assert.match(html, /<optgroup label="Finished jobs">/, `${name} keeps finished jobs to filter by`);
   }
 });
+
+// The page shows what a person's profile allows, as the server's route checks (S6), not by role.
+test("buttons follow the profile's permissions, not the Owner role", async () => {
+  const { deletePayerHtml } = await import("../../static/js/views/jobs.js");
+  const { newAddressButton } = await import("../../static/js/views/inbox.js");
+  const { verifyBannerHtml } = await import("../../static/js/views/auth.js");
+  const state = await import("../../static/js/state.js");
+  load();
+  const officeManager = { name: "Lee", company_id: "co-p", role: "member", perms: ["company", "data", "billing"] };
+  const member = { name: "Sam", company_id: "co-p", role: "member", perms: ["record_payments"] };
+  for (const [who, allowed] of [[officeManager, true], [member, false]]) {
+    page.setMe(who);
+    const has = (html, re, what) => (allowed ? assert.match : assert.doesNotMatch)(html, re, `${who.name}: ${what}`);
+    has(newAddressButton("calendar"), /Make a new address/, "rotate an address (company)");
+    has(reg.views.export(), /href="\/api\/export" download/, "download everything (data)");
+    has(reg.views.calendar(), /Make a new address if it was shared by mistake/, "calendar address note (company)");
+    state.setAccount({ billingInfo: { warning: "Card declined." } });
+    has(verifyBannerHtml(), /data-view="billing"/, "billing link (billing)");
+  }
+  state.setAccount({ billingInfo: null });
+  assert.equal(deletePayerHtml({ id: "p1", name: "Ridge", job_count: 0 }, { owner: false }), "");
+});

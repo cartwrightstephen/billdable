@@ -241,14 +241,14 @@ export const views = {
           <h1>${j.name}</h1>
           <p class="sub">${statusPill(j)} ${j.code} · ${j.address} · ${j.payer.name} <span class="client-type">${clientTypeLabel(j.payer)}</span></p>
         </div>
-        ${j.closed ? (me && me.role === "owner" && !formOpen.reopen ? `<button class="btn secondary small" data-action="toggle-form" data-form="reopen" aria-expanded="false">Add more work</button>` : "")
+        ${j.closed ? (may("reopen") && !formOpen.reopen ? `<button class="btn secondary small" data-action="toggle-form" data-form="reopen" aria-expanded="false">Add more work</button>` : "")
           : `<div class="form-inline"><button class="btn secondary small" data-action="daily-for-job" data-id="${j.id}">New daily record</button>
           <button class="btn secondary small" data-action="toggle-form" data-form="editjob" aria-expanded="${!!formOpen.editjob}">${formOpen.editjob ? "Cancel" : "Edit job"}</button></div>`}
       </div>`;
     // A finished job is its job file (J9): what it came to, its papers and its activity. Add more
-    // work opens the same job again, so its record stays in one place (owners only, with a reason).
+    // work opens the same job again, so its record stays in one place (Finish and reopen jobs, with a reason).
     if (j.closed) return `${head}
-      ${formOpen.reopen && me && me.role === "owner" ? `<div class="card reopen-card" data-form-key="reopen"><h2>Add more work</h2>${formErrorLine("reopen")}<div class="form-row">
+      ${formOpen.reopen && may("reopen") ? `<div class="card reopen-card" data-form-key="reopen"><h2>Add more work</h2>${formErrorLine("reopen")}<div class="form-row">
           ${field({ form: "reopen", name: "reason", id: "reopen-reason", label: "What is the new work?", required: true, placeholder: "The owner added a backsplash", wide: true })}
           <button class="btn small" data-action="reopen" data-id="${j.id}">Add more work</button>
           <button class="btn small secondary" data-action="toggle-form" data-form="reopen">Cancel</button></div></div>` : ""}

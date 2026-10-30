@@ -1686,7 +1686,7 @@
         "record",
         "history"
       ],
-      "answer": "An owner finishes a job. Finish job appears for an owner when the work is done and nothing is left: no open draft, no unsigned change order, nothing unbilled or unpaid, retainage paid and waivers sent. Until then the job page shows Before you can finish this job, one line per thing with a button for each. Tap Finish job and confirm: the job moves to Jobs, Job history and leaves the working lists. Its page becomes its job file: what it came to, every pay app with its PDF, payments, change orders, waivers sent, the job record and its activity, with Download job file for all of it in one zip. An owner can tap Add more work to open the same job again, for more work or a late payment.",
+      "answer": "Finishing a job takes the Finish and reopen jobs permission, which owners have. Finish job appears when the work is done and nothing is left: no open draft, no unsigned change order, nothing unbilled or unpaid, retainage paid and waivers sent. Until then the job page shows Before you can finish this job, one line per thing with a button for each. Tap Finish job and confirm: the job moves to Jobs, Job history and leaves the working lists. Its page becomes its job file: what it came to, every pay app with its PDF, payments, change orders, waivers sent, the job record and its activity, with Download job file for all of it in one zip. Anyone with that permission can tap Add more work to open the same job again, for more work or a late payment.",
       "handler": "closeable",
       "needs_job": false,
       "actions": [],

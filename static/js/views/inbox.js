@@ -10,7 +10,7 @@ import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "../inbox.js";
 import { termText } from "../terms.js";
 import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
-import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage } from "../app-core.js";
+import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can } from "../app-core.js";
 import { moreButton } from "../dom.js";
 import { printSheet } from "./communications.js";
 
@@ -141,9 +141,10 @@ export function calendarFeedHtml() {
         <div class="copy-row"><code id="cal-url">${url || "Loading…"}</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button>${newAddressButton("calendar")}</div>`;
 }
 
-// Only an owner can replace a private web address (the server refuses members too).
+// Replacing a private web address needs Edit company details and connections (the server's
+// /api/import/rotate refuses anyone else).
 export function newAddressButton(kind) {
-  return me && me.role === "owner" ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
+  return can("company") ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
 }
 
 // Import's "Which job?" for files added there: the last one picked, or the only open job.
@@ -414,7 +415,7 @@ document.getElementById("file-input").addEventListener("change", (e) => {
 export const views = {
   inbox() {
     const items = (state.inbox || []).filter(i => i.status === "new").slice().reverse();
-    const owner = me && me.role === "owner";   // the provider web addresses are an owner's (R6-07)
+    const owner = can("company");   // the server sends the provider web addresses only with this (R6-07)
     const withSuggestion = items.filter(i => i.suggested_job_id).length;
     return `
       <h1>Inbox</h1>
