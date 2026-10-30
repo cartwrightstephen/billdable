@@ -47,7 +47,7 @@ test("the redrawn wireframes use the plain words the screens use, and the app ha
     PhoneJob: ["Client sent a pay app back? Note why.", "Before you can finish this job", "Take a photo", "Add a file", "Signed on paper…"],
     Money: ["Paperwork", "Unpaid", "Closeout", "Not chosen yet", "Which type?", "Held back, still owed", "Open closeout paperwork"],
     PaymentsImport: ["Record the ticked payments", "Pick a pay app…", "Download for QuickBooks", "Read payments from QuickBooks"],
-    Inbox: ["Waiting (", "Which job?", "Other job", "Change type (", "Add to job", "Read as payments (", "Recently added or dismissed"],
+    Inbox: ["Waiting (", "Other job", "Change type (", "Add to job", "Read as payments (", "Everything received", "Came in by", "Filed automatically to "],
     Settings: ["Activity log", "Recommended for owners.", "Sending and email", "They join as", "Delete everything"],
     PayerPage: ["Approve for payment", "Payment expected by", "Something not right?", "Send a question", "Mark as received"],
     Today: ["Needs you", "Needs paperwork", "Spoke to them…", "Done, not billed", "Held back, still owed",
@@ -90,9 +90,9 @@ function boardTabs(name, label) {
   return [...nav.matchAll(/<a [^>]*>([^<]+)<\/a>/g)].map(m => m[1].replace(/&amp;/g, "&"));
 }
 
-test("the Money and Settings boards have the app's tabs, in the app's order", () => {
+test("the Money, Import and Settings boards have the app's tabs, in the app's order", () => {
   assert.deepEqual(boardTabs("Money", "Money"), appTabs("money"));
-  assert.deepEqual(boardTabs("PaymentsImport", "Money"), appTabs("money"));
+  assert.deepEqual(boardTabs("PaymentsImport", "Import/Export"), appTabs("data"));
   // Helper answers is a founders' page: not drawn.
   assert.deepEqual(boardTabs("Settings", "Settings"), appTabs("settings").filter(t => t !== "Helper answers"));
   assert.deepEqual(boardTabs("Job", "Jobs"), appTabs("jobs"));

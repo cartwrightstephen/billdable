@@ -47,9 +47,12 @@ export const missingJobs = new Set();  // ids the server said aren't there (404)
 // asked for again on the next visit to it (nav) or the next state from the server.
 export let jobDetailFailed = null;
 export function clearJobDetails() { jobDetails = {}; }
-export let listPages = {};           // outbox | audit | history -> {job, entries, total, loading, stale}
-const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api/jobs?status=closed&", timeline: "/api/timeline?" };
-const LIST_VIEWS = { timeline: "job" };   // the view that shows a list, where it isn't the list's own name
+export let listPages = {};           // outbox | audit | history | inbox | sentpayapps -> {job, entries, total, loading, stale}
+const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api/jobs?status=closed&", timeline: "/api/timeline?",
+  inbox: "/api/inbox?", sentpayapps: "/api/payapps/sent?" };
+const LIST_VIEWS = { timeline: "job", sentpayapps: "export" };   // the view that shows a list, where it isn't the list's own name
+// Lists whose filter is a whole query string (several filters and a sort), not one job id.
+const LIST_QUERY = new Set(["inbox"]);
 let toastTimer = null;
 export const DEMO_COMPANY_ID = "co-hartline";
 
@@ -266,7 +269,8 @@ export async function loadListPage(kind, job, offset, limit) {
   const p = listPages[kind];
   p.loading = true;
   try {
-    const res = await fetch(`${LIST_URLS[kind]}offset=${offset}&limit=${limit}${job !== "all" ? "&job=" + encodeURIComponent(unesc(job)) : ""}`);
+    const filter = LIST_QUERY.has(kind) ? (job ? "&" + job : "") : job !== "all" ? "&job=" + encodeURIComponent(unesc(job)) : "";
+    const res = await fetch(`${LIST_URLS[kind]}offset=${offset}&limit=${limit}${filter}`);
     if (!res.ok) { p.loading = false; return; }
     const data = escDeep(await readJson(res));
     if (listPages[kind] !== p) return;

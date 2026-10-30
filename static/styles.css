@@ -582,6 +582,22 @@ textarea { font: inherit; }
 
 
 /* == stream: comms-data == */
+/* Communications: Everything received on the Inbox (C1), the Outbox's attachments, and Print (M27). */
+.row-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.email-files a, .received td a { overflow-wrap: anywhere; }
+/* The one message being printed: drawn outside the page, shown only on paper. */
+.print-sheet { display: none; }
+@media print {
+  body.printing > *:not(.print-sheet) { display: none !important; }
+  body.printing { background: var(--on-accent); }
+  body.printing .print-sheet { display: block; color: var(--ink); font-size: 12pt; }
+  .print-sheet h1 { font-size: 16pt; margin: 0 0 12px; }
+  .print-sheet h2 { font-size: 13pt; margin: 16px 0 6px; }
+  .print-sheet dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 12px; }
+  .print-sheet dt { font-weight: 600; }
+  .print-sheet dd { margin: 0; }
+  .print-sheet .print-body { white-space: pre-wrap; border-top: 1px solid var(--line); padding-top: 10px; }
+}
 
 
 

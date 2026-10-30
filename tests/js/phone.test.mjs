@@ -86,12 +86,13 @@ test("Money has five tabs and Settings is split into Company, Team, My account a
   assert.match(css, /\.tabs\.more-right \{/);
 });
 
-test("the Inbox opens on Waiting, with Take a photo before Choose files", () => {
+test("the Inbox opens on Waiting; Import's file box has Take a photo before Choose files", () => {
   const start = inboxView.indexOf("  inbox() {");
   assert.ok(start > 0, "the Inbox view is in js/views/inbox.js");
   const inbox = inboxView.slice(start, inboxView.indexOf("\n  },\n", start));
-  assert.ok(inbox.indexOf("Waiting (${items.length})") < inbox.indexOf('class="dropzone"'), "Waiting comes first");
-  assert.ok(inbox.indexOf(">Take a photo<") < inbox.indexOf(">Choose files<"));
+  assert.ok(inbox.indexOf("Waiting (${items.length})") < inbox.indexOf("receivedHtml()"), "Waiting comes first");
+  const box = inboxView.slice(inboxView.indexOf("export function dropzoneHtml("));
+  assert.ok(box.indexOf(">Take a photo<") < box.indexOf(">Choose files<"));
   assert.match(css, /@media \(pointer: coarse\), \(max-width: 600px\) \{\s*\.touch-only/);
 });
 

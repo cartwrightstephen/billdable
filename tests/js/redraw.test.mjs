@@ -58,18 +58,18 @@ test("Paste box: the pasted text, and what it looks like, stay through a redraw 
   delete dom.bySelector["#paste-text"]; delete dom.bySelector["#paste-source"];
 });
 
-test("Payments: the pasted QuickBooks CSV stays through a redraw and goes once read", async () => {
+test("Import: the pasted QuickBooks CSV stays through a redraw and goes once read", async () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
-  page.setLocation("payments");
+  page.setLocation("import");
   core.setState(company());
   forms.formDraft.qbocsv = { csv: "Date,Customer,Amount" };
-  assert.match(reg.views.payments(), /data-form-key="qbocsv"[\s\S]*<textarea id="qbo-csv"[^>]*data-field="csv"[^>]*>Date,Customer,Amount<\/textarea>/);
+  assert.match(reg.views.import(), /data-form-key="qbocsv"[\s\S]*<textarea id="qbo-csv"[^>]*data-field="csv"[^>]*>Date,Customer,Amount<\/textarea>/);
   dom.byId["qbo-csv"] = { value: "Date,Customer,Amount" };
   dom.answers = [(p) => (p === "/api/import/payments-csv" ? { status: 200, body: { rows: [], warnings: [] } } : undefined)];
   await reg.actions["qbo-read"]();
   assert.equal(forms.formDraft.qbocsv, undefined);
   await reg.actions["qbo-cancel"]();
-  assert.match(reg.views.payments(), /data-field="csv"[^>]*><\/textarea>/);
+  assert.match(reg.views.import(), /data-field="csv"[^>]*><\/textarea>/);
   delete dom.byId["qbo-csv"];
 });
 

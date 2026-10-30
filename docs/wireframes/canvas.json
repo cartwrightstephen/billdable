@@ -21,7 +21,7 @@
     "PhoneJob.dc.html": {"x": 940, "y": 8240, "w": 390, "h": 2400, "title": "Phone: job page", "is_interactive": true},
     "PhonePacket.dc.html": {"x": 1410, "y": 8240, "w": 390, "h": 1150, "title": "Phone: paperwork", "is_interactive": true},
     "Results.dc.html": {"x": 0, "y": 11060, "w": 1280, "h": 1250, "title": "Today: Results", "expand": "fill", "is_interactive": true},
-    "PaymentsImport.dc.html": {"x": 1360, "y": 11060, "w": 1280, "h": 1850, "title": "Money: payments, QuickBooks and the payments import", "expand": "fill", "is_interactive": true},
+    "PaymentsImport.dc.html": {"x": 1360, "y": 11060, "w": 1280, "h": 1850, "title": "Import/Export: files, pasted text, QuickBooks payments and the schedule of values", "expand": "fill", "is_interactive": true},
     "Playbook.dc.html": {"x": 2720, "y": 11060, "w": 1280, "h": 1600, "title": "Settings: customer settings, a suggested paperwork item, timing", "expand": "fill", "is_interactive": true},
     "History.dc.html": {"x": 4080, "y": 11060, "w": 1280, "h": 900, "title": "Jobs: job history, paged", "expand": "fill", "is_interactive": true},
     "TwoStep.dc.html": {"x": 5440, "y": 11060, "w": 1400, "h": 760, "title": "Two-step sign-in", "expand": "fill"},

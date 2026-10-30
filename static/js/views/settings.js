@@ -133,11 +133,10 @@ function companyView() {
     <details class="card danger-zone" data-more="danger"${formOpen.reset || moreDetails.danger ? " open" : ""}>
       <summary><strong>${owner ? "Your data, reset and delete" : "Your data"}</strong></summary>
       <h2>Your data</h2>
-      ${owner ? `<p class="sub">Download everything in your company as one file, or start over.</p>
+      ${owner ? `<p class="sub">Download everything in your company as one file on <a href="/data/export" data-action="nav" data-view="export">Export</a>, or start over.</p>
       <div class="form-inline">
-        <a class="btn small secondary" href="/api/export" download>Export data</a>
         <button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>
-      </div>` : `<p class="sub">An owner can download everything in the company as one file.</p>`}
+      </div>` : `<p class="sub">Exports are on <a href="/data/export" data-action="nav" data-view="export">Export</a>; an owner can download everything in the company as one file there.</p>`}
       ${formOpen.reset && !isDemo ? `<div class="form-inline">
         <label for="reset-confirm" class="inline-label">Reset deletes every job, client and record; a snapshot is kept on the server. Type the company name and your password to confirm:</label>
         <input id="reset-confirm" placeholder="${state.company.name}" class="grow">

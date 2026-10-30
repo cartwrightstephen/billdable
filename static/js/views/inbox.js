@@ -1,5 +1,6 @@
 // The Inbox, and bringing things in: uploads (choose, drop or paste a file anywhere), pasted
-// text, and the forwarding addresses for email, texts and the calendar.
+// text, and the forwarding addresses for email, texts and the calendar. The Inbox page shows
+// what is waiting and everything received (C1); the file and paste boxes are on Import (data.js).
 import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
 import { RECORD_KINDS, SOURCE_LABELS, defaultJobId } from "../jobs.js";
 import { readJson, setNetBanner, inBatches } from "../net.js";
@@ -9,9 +10,11 @@ import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "../inbox.js";
 import { termText } from "../terms.js";
 import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
-import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav } from "../app-core.js";
+import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage } from "../app-core.js";
+import { moreButton } from "../dom.js";
+import { printSheet } from "./communications.js";
 
-// Files added in the Inbox go with the job last picked under "Which job?" on this device (R5-07).
+// Files added on Import go with the job last picked under "Which job?" on this device (R5-07).
 // "" is "Not sure, file later". Kept in memory too, for a private window.
 const UPLOAD_JOB_KEY = "duracash-upload-job";
 let uploadJob = null;
@@ -123,12 +126,22 @@ function fillImportSettings() {
   set("sms-number", s.sms_number ? `Text photos and notes to <strong>${s.sms_number}</strong>.` : "No texting number is set up yet (a Twilio number has to be connected first; see steps).");
 }
 
+// The calendar feed on Export: the private address with Copy, and the phone's one-tap link. Drawn
+// from the addresses already asked for, else filled in when they arrive (fillImportSettings).
+export function calendarFeedHtml() {
+  if (!importSettings) loadImportSettings();
+  const url = importSettings ? importSettings.calendar_url : "";
+  const feed = url ? webcalUrl(unesc(String(url))) : "";
+  return `<p><a class="btn secondary" id="cal-webcal" href="${feed ? esc(feed) : "/data/export"}"${feed ? "" : " hidden"}>Add to my phone's calendar</a></p>
+        <div class="copy-row"><code id="cal-url">${url || "Loading…"}</code><button class="btn small secondary" data-action="copy" data-target="cal-url">Copy</button>${newAddressButton("calendar")}</div>`;
+}
+
 // Only an owner can replace a private web address (the server refuses members too).
 export function newAddressButton(kind) {
   return me && me.role === "owner" ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
 }
 
-// The Inbox's "Which job?" for files added there: the last one picked, or the only open job.
+// Import's "Which job?" for files added there: the last one picked, or the only open job.
 function uploadJobOptions() {
   const openJobs = state.jobs.filter(j => !j.closed);
   // "Not sure" stays picked once chosen, even with one open job.
@@ -137,12 +150,31 @@ function uploadJobOptions() {
   return `<option value="">Not sure, file later</option>` + openJobs.map(j => `<option value="${j.id}"${pick === j.id ? " selected" : ""}>${j.name} (${j.code})</option>`).join("");
 }
 
-// The job for files added on the Inbox page: suggested on the card, never filed by itself.
+// The job for files added on Import: suggested on the Inbox card, never filed by itself.
 function inboxUploadJob() {
-  return currentView === "inbox" ? document.getElementById("upload-job")?.value || "" : "";
+  return currentView === "import" ? document.getElementById("upload-job")?.value || "" : "";
 }
 
-// The paste box, on the Inbox and (with jobId) on a job page, where it files straight to the job.
+// The file box on Import: Which job?, Take a photo and Choose files, and one line of what it takes.
+// On a phone the Inbox shows only the camera button, which the Take a photo shortcut focuses
+// (its id keeps the focus when the page redraws).
+export function dropzoneHtml(cameraOnly = false) {
+  if (cameraOnly) {
+    return `<div class="dropzone touch-only" tabindex="0"><div class="capture-buttons">
+        <button class="btn" id="inbox-camera" data-action="pick-files" data-capture="1">Take a photo</button></div></div>`;
+  }
+  return `<div class="dropzone" tabindex="0">
+        <label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>
+        <div class="capture-buttons touch-only">
+          <button class="btn" data-action="pick-files" data-ask-job="1" data-capture="1">Take a photo</button>
+          <button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button>
+        </div>
+        <div class="pointer-only"><button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button></div>
+        <span class="sub">Photos, PDFs, Office files, CSV or saved emails, up to ${MAX_UPLOAD_MB} MB.<span class="pointer-only"> Drop them anywhere or press Ctrl+V / ⌘V.</span></span>
+      </div>`;
+}
+
+// The paste box, on Import and (with jobId) on a job page, where it files straight to the job.
 // "Something else" until the text looks like notes or an email (R5-06).
 // What was pasted, and the kind (picked, else guessed from it), stay through a redraw until added.
 export function pasteBoxHtml(jobId = "") {
@@ -177,8 +209,76 @@ export function guessPasteSource() {
 // one button for the suggested job (R5-05).
 const inboxOpen = new Set();
 
-// Signed out: the private email, text and calendar addresses are that company's.
-onSessionEnd(() => { importSettings = null; inboxOpen.clear(); });
+// Everything received (C1): the filters and sort, sent to GET /api/inbox as they are picked.
+const NO_FILTER = { source: "", status: "", job: "", sort: "newest" };
+let receivedFilter = { ...NO_FILTER };
+export function setReceivedFilter(name, value) {
+  if (name in NO_FILTER) receivedFilter = { ...receivedFilter, [name]: value || NO_FILTER[name] };
+}
+// The query for the list: only what was picked, the default sort left out.
+export function receivedQuery(f = receivedFilter) {
+  return Object.keys(NO_FILTER).filter(k => f[k] && f[k] !== NO_FILTER[k]).map(k => `${k}=${encodeURIComponent(unesc(f[k]))}`).join("&");
+}
+document.addEventListener("change", (e) => {
+  const s = e.target && e.target.closest ? e.target.closest("select[data-received-filter]") : null;
+  if (!s) return;
+  setReceivedFilter(s.dataset.receivedFilter, s.value);
+  render();
+});
+
+// Signed out: the private email, text and calendar addresses, and a job picked in a filter, are that company's.
+onSessionEnd(() => { importSettings = null; inboxOpen.clear(); receivedFilter = { ...NO_FILTER }; });
+
+// A row's status in words: Waiting, Filed to <job> as <kind>, Filed automatically to <job>, or Dismissed.
+export function receivedStatus(r) {
+  const job = r.job_name || "a job";
+  if (r.status === "new") return r.job_name ? `Waiting (suggested: ${r.job_name})` : "Waiting";
+  if (r.status === "auto") return `Filed automatically to ${job}`;
+  if (r.status === "filed") return `Filed to ${job} as ${termText(RECORD_KINDS[r.kind] || r.kind || "a record")}`;
+  return "Dismissed";
+}
+
+// A row's files, each opening in a new tab; a file taken off the job record since says so.
+export function receivedFilesHtml(r) {
+  const links = (r.files || []).map(f => `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>`).join(" · ");
+  const gone = r.files_gone ? `${r.files_gone} file${r.files_gone === 1 ? "" : "s"} no longer on the job record` : "";
+  return links || gone ? `<div class="sub">Files: ${[links, gone].filter(Boolean).join(" · ")}</div>` : "";
+}
+
+const SOURCE_OPTIONS = () => Object.entries(SOURCE_LABELS);
+const STATUS_OPTIONS = [["new", "Waiting"], ["filed", "Filed"], ["auto", "Filed automatically"], ["dismissed", "Dismissed"]];
+const SORT_OPTIONS = [["newest", "Newest first"], ["oldest", "Oldest first"], ["from", "Sender (A-Z)"], ["job", "Job (A-Z)"]];
+
+function receivedSelect(name, label, all, options) {
+  const opts = (all ? [["", all]] : []).concat(options);
+  return `<label for="received-${name}" class="inline-label">${label}</label>
+        <select id="received-${name}" data-received-filter="${name}">
+          ${opts.map(([v, l]) => `<option value="${v}"${receivedFilter[name] === v ? " selected" : ""}>${l}</option>`).join("")}
+        </select>`;
+}
+
+function receivedHtml() {
+  const page = listPage("inbox", receivedQuery());
+  const rows = page ? page.entries : [];
+  const filtered = !!receivedQuery({ ...receivedFilter, sort: "newest" });
+  return `<div class="card received">
+      <h2>Everything received</h2>
+      <div class="filter-bar">
+        ${receivedSelect("source", "Came in by", "All", SOURCE_OPTIONS())}
+        ${receivedSelect("status", "Status", "All", STATUS_OPTIONS)}
+        ${receivedSelect("job", "Job", "All jobs", state.jobs.map(j => [j.id, j.name]))}
+        ${receivedSelect("sort", "Sort", "", SORT_OPTIONS)}
+      </div>
+      ${rows.length ? `<div class="table-wrap"><table>
+        <tr><th>Received</th><th>From</th><th>Subject</th><th>Came in by</th><th>Status</th></tr>
+        ${rows.map(r => `<tr data-received="${r.id}"><td>${fmtDate(r.sent_at || r.received_at)}</td><td>${r.from || "—"}</td>
+          <td>${r.title}${receivedFilesHtml(r)}</td><td>${SOURCE_LABELS[r.source] || r.source}</td>
+          <td>${receivedStatus(r)}${r.why ? `<div class="sub">${r.why}</div>` : ""}
+            <div class="row-actions">${r.status === "new" ? "" : `<button class="btn small secondary" data-action="inbox-undo" data-item="${r.id}">Undo</button>`}<button class="linkish" data-action="print-received" data-item="${r.id}">Print</button></div></td></tr>`).join("")}
+      </table></div>${moreButton("inbox", page)}`
+      : !page ? `<p class="sub">Loading…</p>` : emptyState(filtered ? "Nothing matches these filters." : "Nothing has come in yet.")}
+    </div>`;
+}
 
 function inboxItemCard(i) {
   const openJobs = state.jobs.filter(j => !j.closed);
@@ -306,10 +406,8 @@ document.getElementById("file-input").addEventListener("change", (e) => {
 export const views = {
   inbox() {
     const items = (state.inbox || []).filter(i => i.status === "new").slice().reverse();
-    const done = (state.inbox || []).filter(i => i.status !== "new").slice(-20).reverse();
     const owner = me && me.role === "owner";   // the provider web addresses are an owner's (R6-07)
     const withSuggestion = items.filter(i => i.suggested_job_id).length;
-    const jobName = (id) => (state.jobs.find(j => j.id === id) || {}).name || "a job";
     return `
       <h1>Inbox</h1>
       <p class="sub">Duracash suggests the job; nothing is filed without you.</p>
@@ -317,22 +415,9 @@ export const views = {
         <div class="top"><h2>Waiting (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
         ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting.")}
       </div>
-      <div class="dropzone" tabindex="0">
-        <label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>
-        <div class="capture-buttons touch-only">
-          <button class="btn" data-action="pick-files" data-ask-job="1" data-capture="1">Take a photo</button>
-          <button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button>
-        </div>
-        <div class="pointer-only"><button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button></div>
-        <span class="sub">Photos, PDFs, Office files, CSV or saved emails, up to ${MAX_UPLOAD_MB} MB.<span class="pointer-only"> Drop them anywhere or press Ctrl+V / ⌘V.</span></span>
-      </div>
-      <div class="card">
-        <h2>Paste an email, a text thread, or notes</h2>
-        ${pasteBoxHtml()}
-      </div>
-      ${done.length ? `<details class="card"><summary><strong>Recently added or dismissed</strong></summary>
-        ${done.map(i => `<div class="list-item">${i.status === "filed" ? `${i.auto_filed ? "Reply filed automatically" : "Filed"} to ${jobName(i.filed_job_id)} as ${termText(RECORD_KINDS[i.filed_kind] || i.filed_kind)}` : "Dismissed"}: ${i.subject || (i.text || "").slice(0, 60) || "item"} <button class="btn small secondary" data-action="inbox-undo" data-item="${i.id}">Undo</button></div>`).join("")}
-      </details>` : ""}
+      ${dropzoneHtml(true)}
+      <p class="sub">Add files or paste notes on <a href="/data/import" data-action="nav" data-view="import">Import</a>.</p>
+      ${receivedHtml()}
       <details class="card">
         <summary><strong>Bring emails and texts in automatically</strong></summary>
         <h3>Email</h3>
@@ -422,6 +507,13 @@ export const actions = {
     if (item) nav("job", item.filed_job_id);
   },
   "inbox-undo": (el) => post(`/api/inbox/${el.dataset.item}/undo`),
+  // One row of Everything received on paper: who, when, how it came in, what became of it, its text and files.
+  "print-received": (el) => {
+    const r = ((listPage("inbox", receivedQuery()) || {}).entries || []).find(x => x.id === el.dataset.item);
+    if (!r) return;
+    printSheet([["From", r.from || "—"], ["Received", fmtDate(r.sent_at || r.received_at)], ["Came in by", SOURCE_LABELS[r.source] || r.source],
+      ["Status", receivedStatus(r)]], r.title, r.text, (r.files || []).map(f => f.name).concat(r.files_gone ? [`${r.files_gone} file${r.files_gone === 1 ? "" : "s"} no longer on the job record`] : []));
+  },
   "rotate-token": async (el) => {
     if (!(await askConfirm("Make a new address? The old one stops working right away.", "Make a new address"))) return;
     // Through post(), so a refusal (members can't do this) shows like any other.

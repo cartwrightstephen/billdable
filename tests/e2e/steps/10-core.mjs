@@ -228,11 +228,14 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const filed = await p.evaluate(async () => (await (await fetch("/api/state")).json()).inbox.find((i) => i.text.startsWith("Railing posts")));
     assert.equal(filed.status, "filed");
     assert.equal(filed.filed_job_id, ids["Maple porch"]);
-    // Which job? first: the upload is suggested to that job, not filed.
+    // Which job? first (on Import): the upload is suggested to that job, not filed.
+    await p.goto(BASE + "/data/import");
     await p.selectOption("#upload-job", ids["Cedar bath"]);
     const chooser = p.waitForEvent("filechooser");
     await p.locator('.dropzone .pointer-only [data-action="pick-files"]').click();  // desktop: the "choose files" link (R6-04)
     await (await chooser).setFiles({ name: "IMG_0412.jpg", mimeType: "image/jpeg", buffer: Buffer.from("not really a jpeg") });
+    await p.getByText("1 file in the Inbox.").waitFor();
+    await p.goto(BASE + "/communications");
     const photo = p.locator(".inbox-item", { hasText: "IMG_0412.jpg" });
     await photo.getByRole("button", { name: "Add to Cedar bath" }).waitFor();
     assert.match(await photo.innerText(), /Suggested because it was uploaded for this job/);
@@ -507,7 +510,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(new URL(page.url()).pathname, "/settings/company");
   });
 
-  await step("phone: a schedule of values is one card per line, and the Inbox offers Take a photo first", async () => {  // R6-02, R6-04
+  await step("phone: a schedule of values is one card per line, and Import offers Take a photo first", async () => {  // R6-02, R6-04
     const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
     const p = await ctx.newPage();
     p.on("pageerror", (e) => errors.push(e.message));
@@ -535,8 +538,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator("#sov-card .sov-edit").waitFor();
     await noSideways("the schedule editor");
     await p.goto(BASE + "/communications");
-    // Waiting first, then the camera; the drop-and-paste sentence is for a mouse.
+    // Waiting first; on Import the camera comes first, and the drop-and-paste sentence is for a mouse.
     assert.equal(await p.locator("#view .card").first().locator("h2").innerText(), "Waiting (0)");
+    await p.goto(BASE + "/data/import");
     const first = p.locator('.dropzone [data-action="pick-files"]:visible').first();
     assert.equal(await first.innerText(), "Take a photo");
     assert.equal(await first.getAttribute("data-capture"), "1");
