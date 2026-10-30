@@ -609,7 +609,8 @@ textarea { font: inherit; }
 }
 /* Import's Quantities done (M1): a row that can't be added reads in red; Export's CSV lists (I1) wrap on a phone. */
 .qty-preview tr.qty-problem td { color: var(--red); }
-.qty-preview td { overflow-wrap: anywhere; }
+.qty-preview td.qty-text { overflow-wrap: anywhere; }
+.qty-preview td.num { white-space: nowrap; }
 .qty-result { margin-bottom: 12px; }
 .export-lists { flex-wrap: wrap; }
 

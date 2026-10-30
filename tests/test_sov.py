@@ -250,12 +250,26 @@ class ParseTests(unittest.TestCase):
 
     def test_long_lines_read_quickly(self):
         """Lines far longer than any schedule line can't slow the server (the one-cell patterns
-        are tried only on lines of a normal length)."""
+        match the end of a line, never the whole of a long one)."""
         import time
         for line in ("a " * 1000, "Tile 12 SF " * 180, "1 x " * 500, "Demo 3,500 " * 180):
             start = time.monotonic()
             sov.parse_rows((line + "\n") * 50)
             self.assertLess(time.monotonic() - start, 1.5, line[:20])
+
+    def test_a_long_line_reads_like_a_short_one(self):
+        """A line over 200 characters is read the same way as a short one: its comma stays a
+        thousands separator, and it doesn't turn the whole paste into a saved CSV."""
+        def got(text):
+            return [(l["description"][-6:], l["quantity"], l["unit"], l["rate"]) for l in sov.parse_rows(text)["lines"]]
+        d = ("Furnish and install hollow metal door frames and finish hardware per spec section 08 11 13 and 08 71 00 "
+             "including closers kick plates and silencers at all stair and corridor openings level 1 thru 4")
+        self.assertGreater(len(d), 190)
+        self.assertEqual(got(f"{d} 82,350"), [("thru 4", "1", "LS", "82350.00")])
+        self.assertEqual(got(f"Mobilization 12,500\n{d} 82,350"),
+                         [("zation", "1", "LS", "12500.00"), ("thru 4", "1", "LS", "82350.00")])
+        for tail in ("1,200 SF @ 8.50", "2,400 SF", "82,350"):
+            self.assertFalse(sov._saved_csv_row(f"{d} {tail}"), tail)
 
     def test_garbage_is_reported_not_crashed(self):
         self.assertEqual([l["rate"] for l in sov.parse_rows("Demo\x00, $3,500")["lines"]], ["3500.00"])

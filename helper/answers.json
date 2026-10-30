@@ -622,7 +622,7 @@
         "start payapp",
         "create payapp"
       ],
-      "answer": "Two places, one way of drafting. On a job, tap Progress pay app while the work goes on, or Draft pay app once the job is marked done. Or on Money, Pay apps tap New pay app: with more than one job that has something to bill, pick it under Which job? and tap Continue. It opens that job's Progress pay app form, or drafts it the way Draft pay app does for a job marked done. A job with nothing to bill, or with a draft already open, isn't listed: open its draft with Review & send.",
+      "answer": "Two places, one way of drafting. On a job, tap Progress pay app while the work goes on, or Draft pay app once the job is marked done. Or on Money, Pay apps tap New pay app: with more than one job that has something to bill, pick it under Which job? and tap Continue. It opens that job's Progress pay app form, or drafts it the way Draft pay app does for a job marked done. A job isn't listed when it already has a draft open, including one waiting for the client's approval (open that draft with Review & send), when its contract is billed in full, or, once marked done, when it has no work left to bill.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1463,7 +1463,7 @@
         "takeoff",
         "qty"
       ],
-      "answer": "On Import/Export, Import, under Quantities done, pick the Job (only jobs with a schedule of values are listed), then tap Choose the file for a CSV or Excel file, or paste the rows and tap Read quantities. Each row needs the item number or description of a schedule line and the quantity done this period; a lump sum line takes the % done this period. The table shows each row: the line, Done to date, Add, New total and Scheduled, and why a row can't be added (no line matches, it would go past the scheduled quantity, the line is twice in the file). Nothing changes until you tap Add to the schedule of values: then the rows that can go on add to each line's quantity done and update the draft pay app, the same as a daily record's quantities. What couldn't be added is listed, and the import is kept on the job record.",
+      "answer": "On Import/Export, Import, under Quantities done, pick the Job (only jobs with a schedule of values are listed), then tap Choose the file for a CSV or Excel file, or paste the rows and tap Read quantities. Each row needs the item number or description of a schedule line and the quantity done this period; a lump sum line takes the % done this period. The table shows each row: the line, Done to date, Add, New total and Scheduled, and why a row can't be added (no line matches, the item number and description name different lines, the quantity is in another unit or is a % on a line that isn't a lump sum, it would go past the scheduled quantity or, with stored materials, past the line's value, the line is twice in the file). Nothing changes until you tap Add to the schedule of values: then the rows that can go on add to each line's quantity done and update the draft pay app, the same as a daily record's quantities. What couldn't be added is listed, and the import is kept on the job record.",
       "handler": null,
       "needs_job": false,
       "actions": [

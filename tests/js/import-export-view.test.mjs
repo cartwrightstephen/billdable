@@ -3,6 +3,7 @@
 // jobs, pay apps, payments and change orders as CSV files (I1). node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { installFakeDom } from "./fakedom.mjs";
 
 const dom = installFakeDom();
@@ -45,12 +46,17 @@ test("Read needs a job and rows; the preview escapes what the file said, and Add
   await data.actions["qty-read"]();
   assert.deepEqual(dom.requests.map(r => [r.path, r.body]), [["/api/import/quantities/preview", { job_id: "ja", csv: "1,30", name: "" }]]);
   const html = data.views.import();
-  assert.match(html, /<td>1\. Rough-in<\/td>\s*<td>0 ea<\/td><td>30 ea<\/td><td>30 ea<\/td><td>400 ea<\/td><td>—<\/td>/);
+  // Only the Line and "Can't add because" cells wrap anywhere; the numbers stay on one line.
+  assert.match(html, /<td class="num">2<\/td><td class="qty-text">1\. Rough-in<\/td>\s*<td class="num">0 ea<\/td><td class="num">30 ea<\/td><td class="num">30 ea<\/td><td class="num">400 ea<\/td><td class="qty-text">—<\/td>/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /data-action="qty-apply">Add 1 to the schedule of values</);
   assert.match(html, /Row 5 \(Total\) looks like a total/);
   assert.doesNotMatch(html, /style=|onclick=/);
+  const css = readFileSync(new URL("../../static/styles.css", import.meta.url), "utf8");
+  assert.match(css, /\.qty-preview td\.qty-text \{ overflow-wrap: anywhere; \}/);
+  assert.match(css, /\.qty-preview td\.num \{ white-space: nowrap; \}/);
+  assert.doesNotMatch(css, /\.qty-preview td \{ overflow-wrap/);
   dom.requests.length = 0;
   const after = { ...company([job("ja", "Elm wiring", true), job("jd", "Pine wiring", true)]),
     quantity_import: { added: [{ n: 2, line: "1. Rough-in", add: "30 ea", new_total: "30 ea" }], not_added: [{ n: 3, what: "Gutters", problem: "No line matches." }], number: "PA-JA-01" } };

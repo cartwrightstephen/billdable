@@ -1802,7 +1802,7 @@ class Handler(BaseHTTPRequestHandler):
                 raw = base64.b64decode(xlsx, validate=True)
             except ValueError:
                 raise BadRequest("Send the Excel file again.")
-            text = qbo_csv.xlsx_to_csv(raw)
+            text = qbo_csv.xlsx_to_csv(raw, digits=3)
             if not text:
                 raise domain.GateError("That Excel file couldn't be read. In QuickBooks, export the report to CSV instead.")
         else:
@@ -2938,7 +2938,7 @@ def _sheet_text(body: dict) -> str:
             raw = base64.b64decode(xlsx, validate=True)
         except ValueError:
             raise BadRequest("Send the Excel file again.")
-        text = qbo_csv.xlsx_to_csv(raw)
+        text = qbo_csv.xlsx_to_csv(raw, digits=3)
         if not text:
             raise domain.GateError("That Excel file couldn't be read. Save it as CSV and try again.")
         return text

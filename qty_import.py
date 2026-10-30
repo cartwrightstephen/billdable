@@ -30,10 +30,20 @@ HEADERS = {
     "item": ("item", "item no", "item #", "item number", "no", "#", "line", "line no", "line #", "line number", "code", "cost code"),
     "description": ("description", "desc", "item description", "scope", "work", "task", "line item", "name", "activity"),
     # This period's quantity only: a "to date" or "% complete" column is a running total, not what to add.
-    "quantity": ("qty", "quantity", "quantities", "qty this period", "quantity this period", "this period", "qty installed",
-                 "quantity installed", "installed", "installed this period", "completed this period", "work completed this period",
-                 "count", "units", "% this period"),
+    # "Units" is the unit of measure, never the quantity.
+    "quantity": ("qty this period", "quantity this period", "this period", "qty installed", "quantity installed", "installed",
+                 "installed this period", "completed this period", "work completed this period", "% this period",
+                 "qty", "quantity", "quantities", "count"),
 }
+# A sheet with both "Qty" and "Installed" lists the line's scheduled quantity and this period's:
+# the named one wins over a bare "qty", "quantity" or "count".
+GENERAL_QUANTITY = frozenset(("qty", "quantity", "quantities", "count"))
+MAX_RECORD_LINES = 20
+MIN_WORDS_MATCH = 4
+# Unit words that mean the same thing ("ea" and "each"); a plural "s" never matters.
+SAME_UNITS = (("ea", "each", "pc", "piece"), ("sf", "sqft", "sq ft"), ("lf", "ft", "feet", "foot", "lin ft"),
+              ("sy", "sq yd", "sqyd"), ("cy", "cu yd", "cuyd"), ("hr", "hour"), ("wk", "week"), ("mo", "month"),
+              ("yd", "yard"), ("gal", "gallon"), ("lb", "pound"))
 QTY_RE = re.compile(r"^(-?(?:\d[\d,]*(?:\.\d+)?|\.\d+))\s*(%|[A-Za-z]{1,6}\.?)?$")
 
 
@@ -43,11 +53,17 @@ def _key(cell: str) -> str:
 
 def _header(row: list[str]) -> dict[str, int] | None:
     found: dict[str, int] = {}
+    general = False
     for i, cell in enumerate(row):
         key = _key(cell)
         for field, words in HEADERS.items():
-            if key in words and field not in found:
-                found[field] = i
+            if key in words:
+                if field not in found:
+                    found[field] = i
+                    general = key in GENERAL_QUANTITY
+                elif field == "quantity" and general and key not in GENERAL_QUANTITY:
+                    found[field] = i
+                    general = False
                 break
     if "quantity" in found and ({"item", "description"} & set(found)):
         return found
@@ -66,12 +82,27 @@ def norm_desc(text: str) -> str:
 
 def _rows(text: str) -> list[tuple[int, list[str]]]:
     """A CSV (as saved, or as qbo_csv.xlsx_to_csv writes an Excel sheet) or rows pasted from a
-    spreadsheet (tabs), one line at a time, bounded as sov._split_rows bounds a pasted schedule, each
-    row with its line number in the file. csv only: no pattern runs over a whole line, so a long
-    one costs no more than reading it."""
-    lines_in = [line[:2000].replace("\x00", "") for line in text.splitlines()[:2000]]
-    rows = [(n, [c.strip()[:200] for c in row[:sov.MAX_CELLS]])
-            for n, line in enumerate(lines_in, start=1) for row in csv.reader([line], delimiter="\t" if "\t" in line else ",")]
+    spreadsheet (tabs), each row with the number of the line it starts on, bounded as
+    sov._split_rows bounds a pasted schedule. A quoted cell may hold a line break ("Rough-in" on one
+    line, "wiring" on the next) and stays one cell; a quote left open past MAX_RECORD_LINES lines is
+    read as that one line, so it can't swallow the rest of the file. csv only: no pattern runs over
+    a whole line, so a long one costs no more than reading it."""
+    lines_in = [line[:2000].replace("\x00", "") for line in text.splitlines(keepends=True)[:2000]]
+    rows: list[tuple[int, list[str]]] = []
+    at = 0
+    while at < len(lines_in):
+        line = lines_in[at]
+        delimiter = "\t" if "\t" in line else ","
+        # A blank line after the window: a record still open when it is reached never closed.
+        window = lines_in[at:at + MAX_RECORD_LINES] + ["\n"]
+        reader = csv.reader(window, delimiter=delimiter)
+        row = next(reader, [])
+        used = reader.line_num
+        if used >= len(window):
+            row, used = next(csv.reader([line.rstrip("\r\n")], delimiter=delimiter), []), 1
+        cells = [" ".join(c.split()) if "\n" in c or "\r" in c else c.strip() for c in row[:sov.MAX_CELLS]]
+        rows.append((at + 1, [c[:200] for c in cells]))
+        at += max(used, 1)
     return [(n, r) for n, r in rows if any(r)]
 
 
@@ -138,23 +169,44 @@ def parse(text: str) -> dict[str, Any]:
     return {"rows": out, "warnings": warnings}
 
 
-def _match(lines: list[dict[str, Any]], item: str, description: str) -> tuple[dict[str, Any] | None, str]:
-    """The schedule line a row names, or None and why."""
-    if item:
-        hits = [line for line in lines if norm_item(line.get("item", "")) == norm_item(item)]
-        if len(hits) == 1:
-            return hits[0], ""
+def _prepare(lines: list[dict[str, Any]]) -> list[tuple[dict[str, Any], str, str]]:
+    """Each schedule line with its item and description normalized, once per file."""
+    return [(line, norm_item(line.get("item", "")), norm_desc(line["description"])) for line in lines]
+
+
+def _by_description(prepared: list[tuple[dict[str, Any], str, str]], want: str) -> list[dict[str, Any]]:
+    hits = [line for line, _, desc in prepared if desc == want]
+    if not hits and len(want) >= MIN_WORDS_MATCH:
+        # Tolerant, by whole words: "Rough-in" for "Rough-in wiring", or "Panel and feeders, main" for
+        # "Panel and feeders"; never "Doorstops" for "Doors". The shorter side is at least MIN_WORDS_MATCH long.
+        padded = f" {want} "
+        hits = [line for line, _, desc in prepared
+                if len(desc) >= MIN_WORDS_MATCH and (padded in f" {desc} " or f" {desc} " in padded)]
+    return hits
+
+
+def _match(lines: list[dict[str, Any]], item: str, description: str,
+           prepared: list[tuple[dict[str, Any], str, str]] | None = None) -> tuple[dict[str, Any] | None, str]:
+    """The schedule line a row names, or None and why. With both an item number and a description,
+    they must not name two different lines."""
+    prepared = _prepare(lines) if prepared is None else prepared
     want = norm_desc(description)
-    if want:
-        hits = [line for line in lines if norm_desc(line["description"]) == want]
-        if not hits and len(want) >= 4:
-            # Tolerant: "Rough-in" for "Rough-in wiring", or "Panel and feeders, main" for "Panel and feeders".
-            hits = [line for line in lines if want in norm_desc(line["description"]) or norm_desc(line["description"]) in want]
+    by_desc = _by_description(prepared, want) if want else []
+    if item:
+        key = norm_item(item)
+        hits = [line for line, it, _ in prepared if it == key]
         if len(hits) == 1:
+            if len(by_desc) == 1 and by_desc[0] is not hits[0]:
+                other = by_desc[0]
+                return None, (f"Item {item} is {hits[0]['description']}, but the description fits "
+                              + (f"item {other['item']}, {other['description']}" if other.get("item") else other["description"])
+                              + ". Correct the row and read the file again.")
             return hits[0], ""
-        if len(hits) > 1:
-            names = ", ".join(_name(line) for line in hits[:4])
-            return None, f"It fits more than one line ({names}). Put the item number on the row."
+    if len(by_desc) == 1:
+        return by_desc[0], ""
+    if len(by_desc) > 1:
+        names = ", ".join(_name(line) for line in by_desc[:4])
+        return None, f"It fits more than one line ({names}). Put the item number on the row."
     named = " ".join(x for x in (f"item {item}" if item else "", f'"{description}"' if description else "") if x)
     return None, f"No line on this job's schedule of values matches {named}."
 
@@ -174,12 +226,28 @@ def qty_text(line: dict[str, Any], milli: int) -> str:
     return f"{sov.fmt_qty(milli)} {line['unit']}".strip()
 
 
+def _unit_key(unit: str) -> str:
+    key = " ".join(str(unit or "").lower().replace(".", " ").split())
+    key = key[:-1] if len(key) > 2 and key.endswith("s") else key
+    return next((group[0] for group in SAME_UNITS if key in group), key)
+
+
 def _amount(line: dict[str, Any], raw: str) -> tuple[int, str]:
     """The row's quantity in thousandths of the line's unit, or 0 and why not. A lump sum's is the %
-    done this period (1000 thousandths is 100%), as on a daily record."""
+    done this period (1000 thousandths is 100%), as on a daily record; any other line's is in its
+    own unit, so a % or another unit word is refused."""
     m = QTY_RE.match(raw.replace(" ", ""))
     if not m:
         return 0, f"The quantity {raw[:30]!r} isn't a number."
+    written = (m.group(2) or "").rstrip(".")
+    unit = str(line.get("unit", "")).strip()
+    if written == "%" and not _lump(line):
+        return 0, f"{_name(line)} is measured in {unit or 'units'}, not %. Put the quantity installed this period on the row."
+    if written and written != "%":
+        if _lump(line) and _unit_key(written) != "ls":
+            return 0, f"{_name(line)} is a lump sum. Put the % done this period on the row, like 25%."
+        if not _lump(line) and unit and _unit_key(written) != _unit_key(unit):
+            return 0, f"The quantity is in {written}, but {_name(line)} is measured in {unit}."
     try:
         milli = sov.to_milli(m.group(1), "The quantity")
     except sov.SovError as exc:
@@ -193,14 +261,21 @@ def _amount(line: dict[str, Any], raw: str) -> tuple[int, str]:
     return milli, ""
 
 
-def basis(job: dict[str, Any], text: str) -> str:
-    """What a preview was worked out from: the file and the job's lines and pay apps as they were.
-    Apply refuses another basis, so a preview tapped twice, or one the schedule moved on from (a
-    daily record, another import), never adds what the person didn't see."""
+def basis(job: dict[str, Any], text: str, rows: list[dict[str, Any]]) -> str:
+    """What a preview was worked out from and what it showed: the file, the job's lines and pay apps
+    as they were, and the line and amount each row was read as. Apply refuses another basis, so a
+    preview tapped twice, or one the schedule moved on from (a daily record, another import, lines
+    renumbered or renamed), never adds what the person didn't see."""
     lines = [(line["id"], line["done_milli"], line["qty_milli"], int(line.get("stored_cents") or 0)) for line in sov.lines(job)]
     pays = [(inv["id"], inv["status"], inv.get("amount_cents")) for inv in job.get("invoices", [])]
-    raw = json.dumps([job["id"], text, lines, pays, job.get("work_status"), bool(job.get("closed"))], sort_keys=True)
+    shown = [(r["n"], r["line_id"], r["add_milli"]) for r in rows]
+    raw = json.dumps([job["id"], text, lines, pays, job.get("work_status"), bool(job.get("closed")), shown], sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _done_text(line: dict[str, Any], milli: int) -> str:
+    """The line's quantity to date after adding `milli`, as record_sov_progress takes it."""
+    return str(Decimal(line["done_milli"] + milli) / 1000)
 
 
 def preview(state: dict[str, Any], job: dict[str, Any], parsed: dict[str, Any], text: str = "") -> dict[str, Any]:
@@ -208,14 +283,15 @@ def preview(state: dict[str, Any], job: dict[str, Any], parsed: dict[str, Any], 
     {rows: [{n, item, description, qty, line_id, line, done, add, new_total, scheduled, add_milli, problem}],
      warnings, blocked (why nothing can be added to this job now, or ""), can_add (rows that can)}."""
     from domain.daily import quantities_blocked
-    from domain import over_schedule_text
+    from domain import GateError, _check_sov_progress
     lines = sov.lines(job)
+    prepared = _prepare(lines)
     seen: dict[str, int] = {}
     rows = []
     for raw in parsed["rows"]:
         out = {"n": raw["n"], "item": raw["item"], "description": raw["description"], "qty": raw["qty"],
                "line_id": "", "line": "", "done": "", "add": "", "new_total": "", "scheduled": "", "add_milli": 0, "problem": ""}
-        line, why = _match(lines, raw["item"], raw["description"])
+        line, why = _match(lines, raw["item"], raw["description"], prepared)
         if line:
             out.update(line_id=line["id"], line=_name(line), done=qty_text(line, line["done_milli"]), scheduled=qty_text(line, line["qty_milli"]))
             milli, why = _amount(line, raw["qty"])
@@ -225,15 +301,18 @@ def preview(state: dict[str, Any], job: dict[str, Any], parsed: dict[str, Any], 
                 seen[line["id"]] = raw["n"]
                 total = line["done_milli"] + milli
                 out.update(add=qty_text(line, milli), new_total=qty_text(line, total), add_milli=milli)
-                if total > line["qty_milli"]:
-                    why = over_schedule_text(line, total)
+                try:
+                    # The checks apply makes, line by line: the scheduled quantity, stored materials, what is billed.
+                    _check_sov_progress(job, {line["id"]: _done_text(line, milli)}, {})
+                except GateError as exc:
+                    why = " ".join(exc.blockers) or str(exc)
         out["problem"] = why
         if why:
             out["add_milli"] = 0
         rows.append(out)
     blocked = quantities_blocked(job)
     return {"job_id": job["id"], "rows": rows, "warnings": parsed["warnings"], "blocked": blocked,
-            "can_add": 0 if blocked else sum(1 for r in rows if not r["problem"]), "basis": basis(job, text)}
+            "can_add": 0 if blocked else sum(1 for r in rows if not r["problem"]), "basis": basis(job, text, rows)}
 
 
 def apply(state: dict[str, Any], job_id: str, text: str, actor: str, source: str = "", seen: str | None = None) -> dict[str, Any]:
@@ -244,9 +323,9 @@ def apply(state: dict[str, Any], job_id: str, text: str, actor: str, source: str
     give now. Returns {added: [...], not_added: [...], number}."""
     from domain import GateError, _job, add_job_record, audit, record_sov_progress
     job = _job(state, job_id)
-    if seen is not None and seen != basis(job, text):
-        raise GateError("The schedule of values changed since this file was read, or it was already added. Read the file again to see what it adds now.")
     result = preview(state, job, parse(text), text)
+    if seen is not None and seen != result["basis"]:
+        raise GateError("The schedule of values changed since this file was read, or it was already added. Read the file again to see what it adds now.")
     if result["blocked"]:
         raise GateError(result["blocked"])
     good = [r for r in result["rows"] if not r["problem"]]
@@ -255,7 +334,7 @@ def apply(state: dict[str, Any], job_id: str, text: str, actor: str, source: str
         raise GateError("Nothing was added: no row of the file can go on this job's schedule of values.",
                         [f"Row {r['n']}: {r['problem']}" for r in bad[:20]] or ["The file has no rows with a quantity."])
     by_id = {line["id"]: line for line in sov.lines(job)}
-    done = {r["line_id"]: str(Decimal(by_id[r["line_id"]]["done_milli"] + r["add_milli"]) / 1000) for r in good}
+    done = {r["line_id"]: _done_text(by_id[r["line_id"]], r["add_milli"]) for r in good}
     record_sov_progress(state, job_id, done, actor=actor)
     name = (source or "a file").strip()[:120]
     added = [f"{r['line']}: +{r['add']} (now {r['new_total']})" for r in good]

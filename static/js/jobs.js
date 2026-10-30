@@ -481,13 +481,25 @@ export function openJobs(jobs) { return (jobs || []).filter(j => !j.closed); }
 // The open jobs a new pay app can be started on from Money, Pay apps (G10), each with the job
 // page's own step for it as jobActions offers it to this person: "progress" (the Progress pay app
 // form, while the work goes on) or "draft" (Draft pay app, for a job marked done with work not
-// billed). One way of drafting, whichever page it starts from.
+// billed). One way of drafting, whichever page it starts from. Left out: a job with a draft open,
+// including one waiting for the client's approval (Review & send opens it), and a job in progress
+// whose contract is billed in full.
 export function payAppStarts(jobs, perms = null) {
   return openJobs(jobs).flatMap(j => {
+    if ((j.invoices || []).some(i => DRAFTS.includes(i.status))) return [];
+    if (j.work_status !== "complete" && fullyBilled(j)) return [];
     const { primary, more } = jobActions(j, { perms });
     const step = [primary, ...more].find(a => a && (a.key === "draft" || a.key === "progress"));
     return step ? [{ job: j, step: step.key }] : [];
   });
+}
+
+// Billed and retainage held already reach the contract (with approved change orders), as the
+// server counts what is left to bill. A job with no contract amount is never counted as billed.
+function fullyBilled(j) {
+  const m = j.money || {};
+  const total = m.contract_total_cents || 0;
+  return total > 0 && (m.billed_cents || 0) + (m.retainage_held_cents || 0) >= total;
 }
 
 // The day of the daily record a draft's quantities came from (M1), as the schedule card shows
