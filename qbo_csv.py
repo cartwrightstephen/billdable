@@ -22,6 +22,7 @@ import io
 import re
 import zipfile
 from datetime import datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from xml.etree import ElementTree
 from typing import Any
 
@@ -86,9 +87,21 @@ def _col(ref: str) -> int:
     return max(n - 1, 0)
 
 
-def xlsx_to_csv(data: bytes) -> str:
+def _rounded(number: str, digits: int) -> str:
+    """"30.000000000000004" as "30", "12.5" as "12.5": at most `digits` decimals, no trailing zeros."""
+    try:
+        value = Decimal(number).quantize(Decimal(1).scaleb(-digits), rounding=ROUND_HALF_UP)
+    except InvalidOperation:  # too large to round: keep it as written
+        return number
+    text = f"{value:f}"
+    text = text.rstrip("0").rstrip(".") if "." in text else text
+    return "0" if text == "-0" else text
+
+
+def xlsx_to_csv(data: bytes, digits: int | None = None) -> str:
     """The first sheet of an Excel file as CSV text, read with the standard library (R5-04).
-    Numbers stay as written; a cell in a date format becomes MM/DD/YYYY. Anything unreadable gives ""."""
+    Numbers stay as written, or with `digits` are rounded to that many decimals (Excel keeps 0.1 * 3
+    as 0.30000000000000004); a cell in a date format becomes MM/DD/YYYY. Anything unreadable gives ""."""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             def xml(name: str):
@@ -136,6 +149,8 @@ def xlsx_to_csv(data: bytes) -> str:
                             value = (datetime(1899, 12, 30) + timedelta(days=float(v.text))).strftime("%m/%d/%Y")
                         except OverflowError:  # past the year 9999: not a date, keep the number
                             value = v.text
+                    elif digits is not None and kind in (None, "n") and re.fullmatch(r"-?\d+(\.\d+)?([eE][-+]?\d+)?", v.text):
+                        value = _rounded(v.text, digits)
                     else:
                         value = v.text
                     col = _col(c.get("r", ""))

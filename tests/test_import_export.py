@@ -166,6 +166,114 @@ class QuantityApplyTests(unittest.TestCase):
         self.assertEqual(domain.sov.lines(self.job)[0]["done_milli"], 30_000)
 
 
+class QuantityHuntTests(unittest.TestCase):
+    """Rows the Oct 30 bug hunt found read wrongly."""
+
+    def setUp(self):
+        self.state = new_state()
+        self.job = sov_job(self.state)
+
+    def rows(self, text, job=None):
+        p = qty_import.preview(self.state, job or self.job, qty_import.parse(text), text)
+        return [(r["line"], r["add"], r["problem"]) for r in p["rows"]], p
+
+    def test_a_this_period_column_wins_over_a_bare_quantity_column(self):
+        got, _ = self.rows("Item,Description,Quantity,Unit,Installed\n1,Rough-in wiring,400,ea,30\n2,Panel and feeders,1,LS,25%\n")
+        self.assertEqual([(l, a) for l, a, _ in got], [("1. Rough-in wiring", "30 ea"), ("2. Panel and feeders", "25%")])
+        got, _ = self.rows("Item,Description,Qty,Qty this period\n1,Rough-in wiring,400,30\n")
+        self.assertEqual(got[0][1], "30 ea")
+
+    def test_a_units_column_is_the_unit_not_the_quantity(self):
+        got, _ = self.rows("Item,Description,Units,Qty\n1,Rough-in wiring,ea,30\n")
+        self.assertEqual(got, [("1. Rough-in wiring", "30 ea", "")])
+        got, _ = self.rows("Item,Description,Units,Installed\n1,Rough-in wiring,ea,30\n")
+        self.assertEqual(got, [("1. Rough-in wiring", "30 ea", "")])
+
+    def test_a_percent_or_another_unit_on_a_measured_line_is_refused(self):
+        got, p = self.rows("Item,Description,% this period\n1,Rough-in wiring,25%\n2,Panel and feeders,25%\n")
+        self.assertIn("%", got[0][2])
+        self.assertEqual(got[0][1], "")
+        self.assertEqual((got[1][1], got[1][2]), ("25%", ""))
+        self.assertEqual(p["can_add"], 1)
+        got, _ = self.rows("Item,Qty\n1,5 LF\n1,5 EA\n")
+        self.assertIn("LF", got[0][2])
+        lines = [{"item": "1", "description": "Tile", "quantity": "900", "unit": "SF", "rate": "10"}]
+        job = new_job(self.state, contract=9000_00, retainage=10)
+        domain.save_sov(self.state, job["id"], lines, "0")
+        got, _ = self.rows("Item,Qty\n1,5 LF\n", job)
+        self.assertIn("LF", got[0][2])
+        got, _ = self.rows("Item,Qty\n1,5 sf\n", job)
+        self.assertEqual(got[0][1:], ("5 SF", ""))
+
+    def test_a_preview_the_schedule_was_renumbered_since_is_refused(self):
+        text = "Item,Description,Qty\n1,,30\n"
+        p = qty_import.preview(self.state, self.job, qty_import.parse(text), text)
+        ls = domain.sov.lines(self.job)
+        edited = [{"id": l["id"], "item": {"1": "2", "2": "1"}[l["item"]], "description": l["description"], "unit": l["unit"],
+                   "quantity": domain.sov.fmt_qty(l["qty_milli"]).replace(",", ""), "rate": f"{l['rate_cents'] / 100:.2f}"} for l in ls]
+        domain.save_sov(self.state, self.job["id"], edited, "15")
+        with self.assertRaises(domain.GateError):
+            qty_import.apply(self.state, self.job["id"], text, "Pat", seen=p["basis"])
+        self.assertEqual([l["done_milli"] for l in domain.sov.lines(self.job)], [0, 0])
+
+    def test_an_item_and_a_description_naming_different_lines_is_refused(self):
+        got, p = self.rows("Item,Description,Qty\n1,Panel and feeders,25\n")
+        self.assertEqual(got[0][1], "")
+        self.assertIn("Panel and feeders", got[0][2])
+        self.assertEqual(p["can_add"], 0)
+        # A description in other words still goes by the item number.
+        got, _ = self.rows("Item,Description,Qty\n1,Wiring for level 2,25\n")
+        self.assertEqual(got[0][:2], ("1. Rough-in wiring", "25 ea"))
+
+    def test_a_description_matches_whole_words_only(self):
+        lines = [{"id": "a", "item": "1", "description": "Doors"}, {"id": "b", "item": "2", "description": "Base"},
+                 {"id": "c", "item": "3", "description": "Paint"}]
+        self.assertIsNone(qty_import._match(lines, "", "Doorstops")[0])
+        self.assertIsNone(qty_import._match(lines, "", "Baseboard heaters")[0])
+        self.assertEqual(qty_import._match(lines, "", "Doors, level 2")[0]["id"], "a")
+        self.assertIsNone(qty_import._match([{"id": "x", "item": "1", "description": "Paint and tile"}], "", "and")[0])
+
+    def test_many_rows_against_a_long_schedule_are_quick(self):
+        import time
+        job = new_job(self.state, contract=300_000_00, retainage=10)
+        lines = [{"item": str(i), "description": ("Line description number %d " % i) * 7, "quantity": "100", "unit": "ea", "rate": "10"}
+                 for i in range(300)]
+        domain.save_sov(self.state, job["id"], lines, "0", update_contract=True)
+        for text in ("Description,Qty\n" + "\n".join(("zz%dqq " % i) * 30 + ",5" for i in range(600)),
+                     "Description,Qty\n" + "\n".join("Line description number,5" for _ in range(600))):
+            start = time.monotonic()
+            qty_import.preview(self.state, job, qty_import.parse(text), text)
+            self.assertLess(time.monotonic() - start, 0.8)
+
+    def test_preview_refuses_what_apply_would_and_apply_adds_the_rest(self):
+        l1 = domain.sov.lines(self.job)[0]
+        domain.record_sov_progress(self.state, self.job["id"], {}, stored={l1["id"]: "15000"})
+        text = "Item,Description,Qty\n1,Rough-in wiring,100\n2,Panel and feeders,10%\n"
+        got, p = self.rows(text)
+        self.assertIn("stored", got[0][2])
+        self.assertEqual((got[1][1], got[1][2], p["can_add"]), ("10%", "", 1))
+        out = qty_import.apply(self.state, self.job["id"], text, "Pat", seen=p["basis"])
+        self.assertEqual([a["line"] for a in out["added"]], ["2. Panel and feeders"])
+        self.assertEqual([n["n"] for n in out["not_added"]], [2])
+        self.assertEqual([l["done_milli"] for l in domain.sov.lines(self.job)], [0, 100])
+
+    def test_a_quoted_cell_with_a_line_break_is_one_row(self):
+        text = 'Item,Description,Qty\n1,"Rough-in\nwiring",30\n2,Panel and feeders,10\n'
+        parsed = qty_import.parse(text)
+        self.assertEqual([(r["n"], r["item"], r["description"], r["qty"]) for r in parsed["rows"]],
+                         [(2, "1", "Rough-in wiring", "30"), (4, "2", "Panel and feeders", "10")])
+        self.assertEqual(parsed["warnings"], [])
+        # A quote left open doesn't swallow the rest of the file.
+        parsed = qty_import.parse('Item,Description,Qty\n1,"Rough-in wiring,30\n2,Panel and feeders,10\n')
+        self.assertIn(("2", "Panel and feeders", "10"), [(r["item"], r["description"], r["qty"]) for r in parsed["rows"]])
+
+    def test_excel_numbers_are_rounded_to_three_decimals(self):
+        import server
+        data = xlsx_bytes([["Item", "Description", "Qty"], ["1", "Rough-in wiring", 0.1 * 3 * 100], ["2", "Panel and feeders", 12.5]])
+        text = server._sheet_text({"xlsx": base64.b64encode(data).decode()})
+        self.assertEqual(text, "Item,Description,Qty\n1,Rough-in wiring,30\n2,Panel and feeders,12.5\n")
+
+
 class ExportFileTests(unittest.TestCase):
     def setUp(self):
         self.state = new_state()
