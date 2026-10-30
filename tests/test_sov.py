@@ -188,6 +188,18 @@ class ParseTests(unittest.TestCase):
         # A $ amount at the end of a cell in a saved CSV is one number too; a plain one is left split.
         self.assertEqual(got("1,Demo $3,500")[0], [("Demo", "1", "LS", "3500.00")])
         self.assertEqual(got("Description,Qty,Rate\nLevel 2,3,500")[0], [("Level 2", "3", "ea", "500.00")])
+        # In a saved CSV (a header or other rows split by a comma with no space), "Building 2,750" is
+        # "Building 2" at $750, not "Building" at $2,750.
+        self.assertEqual(got("Description,Amount\nBuilding 2,750\nBuilding 3,900")[0],
+                         [("Building 2", "1", "LS", "750.00"), ("Building 3", "1", "LS", "900.00")])
+        self.assertEqual(got("Description,Amount\nUnit 101,500")[0], [("Unit 101", "1", "LS", "500.00")])
+        self.assertEqual(got("Mobilization,1200\nLot 12,850")[0],
+                         [("Mobilization", "1", "LS", "1200.00"), ("Lot 12", "1", "LS", "850.00")])
+        # A $ amount in a saved CSV is still one number.
+        self.assertEqual(got("Description,Amount\nDemo $3,500")[0], [("Demo", "1", "LS", "3500.00")])
+        # Lines that are all "words N,NNN" have no other columns to go by: lump sums.
+        self.assertEqual(got("Mobilization 12,500\nDemo 3,500")[0],
+                         [("Mobilization", "1", "LS", "12500.00"), ("Demo", "1", "LS", "3500.00")])
 
     def test_quantity_at_rate_in_one_cell(self):  # Oct 23 note 9
         def got(text):
