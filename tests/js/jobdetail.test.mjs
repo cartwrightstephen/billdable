@@ -130,9 +130,39 @@ test("New job: the four address boxes, Client type only for a new client, the st
 test("the job form's own checks name each box, as the server's (G1, J1)", async () => {
   const { jobFieldErrors } = await import("../../static/js/views/jobs.js");
   assert.deepEqual(jobFieldErrors({ name: "Oak", street: "1 Main St", city: "Atlanta", state: "GA", zip: "30303", contract_number: "SC-1" }), {});
-  const errors = jobFieldErrors({ name: "", street: "", city: "Atlanta", state: "ZZ", zip: "3030", contract_number: "SC#1" });
+  const errors = jobFieldErrors({ name: "", street: "", city: "Atlanta", state: "ZZ", zip: "3030", contract_number: "SC*1" });
   assert.deepEqual(Object.keys(errors).sort(), ["contract_number", "name", "state", "street", "zip"]);
   assert.match(errors.zip, /5-digit ZIP/);
+});
+
+test("Edit job checks only the boxes that changed (review C4)", async () => {
+  const { jobFieldErrors, savedJobFields } = await import("../../static/js/views/jobs.js");
+  const j = { name: "Porch", contract_number: "PO*4500; Rev 2", address_parts: { street: "Lot 4 behind the mill", city: "", state: "", zip: "" } };
+  const saved = savedJobFields(j);
+  const v = { ...saved, retainage_pct: "5" };
+  assert.deepEqual(Object.keys(jobFieldErrors(v)).sort(), ["city", "contract_number", "state", "zip"], "without saved, all checked");
+  assert.deepEqual(jobFieldErrors(v, saved), {}, "left as they were: nothing to fix");
+  assert.deepEqual(Object.keys(jobFieldErrors({ ...v, street: "Lot 5 behind the mill" }, saved)).sort(), ["city", "state", "zip"]);
+  assert.deepEqual(Object.keys(jobFieldErrors({ ...v, contract_number: "PO*4501" }, saved)), ["contract_number"]);
+  assert.deepEqual(jobFieldErrors({ ...v, contract_number: "SC_2026_014" }, saved), {});
+});
+
+test("an imported schedule that doesn't add up to the amount says by how much and offers its total (review C6)", async () => {
+  const { sovTotalChoice } = await import("../../static/js/views/jobs.js");
+  const { formDraft } = await import("../../static/js/forms.js");
+  const r = { sov: { total_cents: 4_500_000, lines: [{}, {}] } };
+  formDraft.newjob = { contract_cents: "50,000" };
+  const html = sovTotalChoice(r);
+  assert.match(html, /The schedule adds up to \$45,000\.00; the contract amount is \$50,000\.00, \$5,000\.00 less\./);
+  assert.match(html, /id="nj-sov-total"/);
+  assert.match(html, /Use the schedule total as the contract amount/);
+  assert.doesNotMatch(html, /style=/);
+  assert.match(sovTotalChoice({ ...r, useSovTotal: true }), /id="nj-sov-total" checked/);
+  formDraft.newjob = { contract_cents: "45,000" };
+  assert.equal(sovTotalChoice(r), "", "adds up: nothing to say");
+  formDraft.newjob = { contract_cents: "50,000" };
+  assert.equal(sovTotalChoice({ ...r, useSov: false }), "", "schedule unticked");
+  delete formDraft.newjob;
 });
 
 test("Client playbook: the paperwork as checkboxes and Other, the client type, and Add client's import (S11, J2, S12, S13)", () => {

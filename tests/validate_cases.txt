@@ -11,11 +11,13 @@ phone	404 555 0123 ext. 7	ok	(404) 555-0123 x7
 phone	555-0123	bad
 phone	404-555-01234	bad
 phone	call me	bad
+phone	٤٠٤٥٥٥٠١٢٣	bad
 zip	30303	ok
 zip	30303-1234	ok
 zip	3030	bad
 zip	303031234	bad
 zip	ABCDE	bad
+zip	٣٠٣٠٣	bad
 state	GA	ok
 state	ga	ok
 state	DC	ok
@@ -30,15 +32,28 @@ email	ap builder.com	bad
 licence	RBQ-2041	ok
 licence	GC 0012/26	ok
 licence	-12	bad
-licence	12#4	bad
+licence	12#4	ok
+licence	#12	bad
+licence	12*4	bad
 licence	ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNO	bad
 contract_number	C-7	ok
 contract_number	PO 2026.114	ok
-contract_number	C_7	bad
+contract_number	C_7	ok
+contract_number	PO# 4500-12	ok
+contract_number	SC_2026_014	ok
+contract_number	2026-014 (Rev 1)	ok
+contract_number	A&B-12	ok
+contract_number	(Rev 1)	bad
+contract_number	C-7; drop	bad
 name	Oak Street kitchen	ok
 name	3	ok
 name	---	bad
 name	...	bad
+name	Café Ñandú	ok
+name	北京路工程	ok
+name	Москва	ok
+name	___	bad
 street	120 Peachtree St NE	ok
 street	,	bad
+street	12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 	bad
 city	Atlanta	ok

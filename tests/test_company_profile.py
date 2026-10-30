@@ -60,11 +60,11 @@ class CompanyDetailsTests(unittest.TestCase):
 
     def test_rules_apply_only_to_what_changes(self):  # G1
         state = seed_state()
-        state["company"].update(phone="555-0101", license="LIC #12 (old)")
-        domain.update_company(state, {"name": "Hartline", "phone": "555-0101", "license": "LIC #12 (old)"}, "Alex")
+        state["company"].update(phone="555-0101", license="LIC *12 (old)")
+        domain.update_company(state, {"name": "Hartline", "phone": "555-0101", "license": "LIC *12 (old)"}, "Alex")
         self.assertEqual(state["company"]["phone"], "555-0101", "saved before the rules: kept until edited")
         with self.assertRaises(domain.GateError) as ctx:
-            domain.update_company(state, {"phone": "555-0102", "license": "LIC #13"}, "Alex")
+            domain.update_company(state, {"phone": "555-0102", "license": "LIC *13"}, "Alex")
         self.assertEqual(set(ctx.exception.fields), {"phone", "license"})
 
     def test_an_old_one_line_address_is_split_by_the_upgrade(self):

@@ -10,7 +10,7 @@ import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, dr
 import { termText, actionWords } from "../terms.js";
 import { state, me, currentJobId, formOpen } from "../state.js";
 import { may, listPage, DEMO_COMPANY_ID, perms, post, toast, render, jobDetailLoading, jobDetailFailed, backButton, emptyState, nav, moreOpen } from "../app-core.js";
-import { jobFields, jobFieldErrors, assigneeField } from "./jobs.js";
+import { jobFields, jobFieldErrors, savedJobFields, assigneeField } from "./jobs.js";
 import { coSignControls, newCoCardHtml } from "./job-cos.js";
 import { sovCardHtml } from "./job-sov.js";
 import { recordCardHtml } from "./job-record.js";
@@ -465,7 +465,7 @@ export const actions = {
     const body = { name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, contract_number: v.contract_number };
     if (v.started_on) body.started_on = v.started_on;
     if ("assignee_id" in v) body.assignee_id = v.assignee_id;
-    const errors = jobFieldErrors(v);
+    const errors = jobFieldErrors(v, savedJobFields(state.jobs.find(x => x.id === id)));
     if ("contract_cents" in v) {
       const amount = centsFrom(v.contract_cents);
       if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";

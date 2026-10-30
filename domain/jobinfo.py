@@ -13,7 +13,7 @@ from typing import Any
 
 __all__ = [
     "CLIENT_TYPES", "client_type_role", "client_type_of", "START_BACK_DAYS", "START_AHEAD_DAYS", "parse_start_date",
-    "job_started_on", "JOB_STAGES", "job_stage", "job_key_dates", "payer_jobs", "payer_extras",
+    "local_today", "job_started_on", "JOB_STAGES", "job_stage", "job_key_dates", "payer_jobs", "payer_extras",
 ]
 
 # Client type (J2): five kinds of client, each mapped onto the two sets of defaults the app
@@ -60,6 +60,19 @@ def parse_start_date(value: Any, today: date | None = None) -> str:
     if not today - timedelta(days=START_BACK_DAYS) <= day <= today + timedelta(days=START_AHEAD_DAYS):
         raise GateError("Job not saved.", fields={"started_on": START_MESSAGE})
     return day.isoformat()
+
+
+def local_today(value: Any = "", now: datetime | None = None) -> str:
+    """Today where the person is: the YYYY-MM-DD the page sends (its own date), when it is
+    within a day of the server's UTC date (every time zone is); otherwise the UTC date. For the
+    defaults dated "today" (a new job's start, a Diary entry's day), so a US evening, already
+    tomorrow in UTC, isn't dated tomorrow (review C3)."""
+    utc = (now or datetime.now(timezone.utc)).date()
+    try:
+        day = datetime.strptime(str(value or "").strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return utc.isoformat()
+    return day.isoformat() if abs((day - utc).days) <= 1 else utc.isoformat()
 
 
 def job_started_on(state: dict[str, Any], job: dict[str, Any]) -> str:

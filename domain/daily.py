@@ -260,14 +260,15 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
                      details: dict[str, Any] | None = None) -> dict[str, Any]:
     """A dated note on the job: the Diary, and optionally crew, weather, materials, deliveries,
     ticked sections and files already on the job record (details, the request's body). `at` lets
-    an import keep the day the note was written. Quantities put in place today add to the
+    an import keep the day the note was written; otherwise the day is the page's own date
+    (details["today"], through local_today; review C3). Quantities put in place today add to the
     schedule lines and refresh the draft pay app (M1) before the record is saved; when they
     can't, the record is saved anyway with quantities_not_applied saying why (_apply_quantities)."""
-    from domain import _job, add_job_record, audit, utcnow
+    from domain import _job, add_job_record, audit, utcnow, local_today
     job = _job(state, job_id)
     extra = clean_daily_details(state, job, details or {}) if details is not None else {}
     when = at or utcnow()
-    day = when[:10]
+    day = when[:10] if at else local_today((details or {}).get("today"))
     quantities = (extra.get("sections") or {}).get("quantities") or []
     not_applied = _apply_quantities(state, job, quantities, actor, day) if quantities else ""
     rec = {

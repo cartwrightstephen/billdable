@@ -38,14 +38,15 @@ export function inPeriod(item, range, today) {
   return (!range.from || item.due >= range.from) && (!range.to || item.due <= range.to);
 }
 
-// One list from the server's rows and the open hand-added tasks, most urgent first: the server's
+// One list from the server's rows and the open hand-added tasks, most urgent first. A row the
+// server sends with no due date is due today, the person's own today (the server's day is UTC). the server's
 // order for its rows (rank), a task due today or before just after the paperwork rows (rank
 // 3.5), other tasks last; then soonest due. who: "mine" keeps only what is assigned to meId.
 export function todoItems(state, { who = "everyone", meId = "" } = {}, today = localDay(new Date())) {
   const jobs = Object.fromEntries((state.jobs || []).map(j => [j.id, j]));
   const rows = (state.today_rows || []).map((r, n) => ({
     source: "row", key: r.key, row: r, title: r.label, job_id: r.job_id, job: r.job, ball: r.ball_in_court || "us",
-    assignee_id: r.assignee_id || "", assignee_name: r.assignee_name || "", due: r.due || "", rank: r.rank ?? 5, order: n,
+    assignee_id: r.assignee_id || "", assignee_name: r.assignee_name || "", due: r.due || today, rank: r.rank ?? 5, order: n,
   }));
   const tasks = (state.tasks || []).filter(t => t.status !== "done").map((t, n) => ({
     source: "task", key: t.id, task: t, title: t.title, job_id: t.job_id || "", job: t.job_id && jobs[t.job_id] ? jobs[t.job_id].name : "",

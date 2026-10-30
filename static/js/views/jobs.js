@@ -8,6 +8,7 @@ import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, fo
 import { checkFields, US_STATES } from "../validate.js";
 import { readJson, sendFile } from "../net.js";
 import { pasteGuess } from "../inbox.js";
+import { localDay } from "../tasks.js";
 import { termText } from "../terms.js";
 import { state, me, formOpen, teamData, setTeamData, onSessionEnd } from "../state.js";
 import { nav, moreOpen, emptyState, listPage, post, moreDetails, toast, render, load, clearJobDetails } from "../app-core.js";
@@ -50,10 +51,30 @@ export function jobFields(form, prefix, j = {}) {
 const ADDRESS_RULES = { street: "street", city: "city", state: "state", zip: "zip" };
 
 // {field: message} for a job form's values: the address, name and contract number, by the rules.
-export function jobFieldErrors(v) {
+// With `saved` (Edit job: the values the boxes opened with), a box left as it was isn't checked
+// (the address's four boxes as one: all checked when any changed),
+// so a contract number or address saved before the rules doesn't block an unrelated edit (C4);
+// the server does the same.
+export function jobFieldErrors(v, saved = null) {
   const errors = checkFields(v, { ...ADDRESS_RULES, name: "name", contract_number: "contract_number" }, ["street", "city", "state", "zip"]);
   if (!v.name) errors.name = "Enter the job name.";
+  if (saved) {
+    const same = (k) => String(v[k] ?? "").trim() === String(saved[k] ?? "").trim();
+    // The address's four boxes go together: checked only when one of them changed.
+    const addressSame = Object.keys(ADDRESS_RULES).every(same);
+    for (const k of Object.keys(errors)) {
+      if (k in ADDRESS_RULES ? addressSame : (k in saved && same(k))) delete errors[k];
+    }
+  }
   return errors;
+}
+
+// What Edit job's boxes opened with (jobFields' values), for jobFieldErrors' `saved`.
+export function savedJobFields(j) {
+  const parts = (j && j.address_parts) || {};
+  const out = { name: unesc((j && j.name) || ""), contract_number: unesc((j && j.contract_number) || "") };
+  for (const k of ["street", "city", "state", "zip"]) out[k] = unesc(parts[k] || "");
+  return out;
 }
 
 // The person a job's tasks go to (assignee_id): a team member, the one who made it unless another
@@ -207,7 +228,7 @@ export function contractMark(form, name) {
 export function contractImportHtml(form) {
   const r = contractRead && contractRead.form === form ? contractRead : null;
   const sovLine = r && r.sov && form === "newjob"
-    ? `<label class="check-line"><input type="checkbox" id="nj-use-sov"${r.useSov === false ? "" : " checked"}> Set up the schedule of values from the contract (${r.sov.lines.length} line${r.sov.lines.length === 1 ? "" : "s"}, ${money(r.sov.total_cents)})</label>` : "";
+    ? `<label class="check-line"><input type="checkbox" id="nj-use-sov"${r.useSov === false ? "" : " checked"}> Set up the schedule of values from the contract (${r.sov.lines.length} line${r.sov.lines.length === 1 ? "" : "s"}, ${money(r.sov.total_cents)})</label>${sovTotalChoice(r)}` : "";
   return `<div class="contract-import" data-contract-import="${form}">
       <div class="form-inline">
         <button type="button" class="btn small secondary" data-action="contract-pick" data-for="${form}">${form === "newjob" ? "Import contract" : "Import a contract"}</button>
@@ -223,6 +244,23 @@ export function contractImportHtml(form) {
       ${r && (r.notes || []).length ? `<ul class="contract-notes">${r.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
       ${sovLine}
     </div>`;
+}
+
+// The contract amount typed in New job, in cents, or null.
+function newJobAmount() {
+  const a = centsFrom(draftValue("newjob", "contract_cents", ""));
+  return a.error || !(a.cents > 0) ? null : a.cents;
+}
+
+// When the imported schedule of values doesn't add up to the contract amount, the server won't
+// take it as it is (review C6): say by how much beside the checkbox, and offer to make the
+// schedule's total the contract amount (sent as update_contract with the schedule).
+export function sovTotalChoice(r) {
+  const amount = newJobAmount();
+  if (!r || !r.sov || r.useSov === false || amount === null || amount === r.sov.total_cents) return "";
+  const diff = r.sov.total_cents - amount;
+  return `<p class="sub sov-difference" id="nj-sov-diff">The schedule adds up to ${money(r.sov.total_cents)}; the contract amount is ${money(amount)}, ${money(Math.abs(diff))} ${diff > 0 ? "more" : "less"}.</p>
+    <label class="check-line"><input type="checkbox" id="nj-sov-total"${r.useSovTotal ? " checked" : ""}> Use the schedule total as the contract amount</label>`;
 }
 
 // What a read found, put in the form's boxes (as typed text, so the boxes show it).
@@ -277,8 +315,10 @@ async function fileContract(jobId, r) {
   if (r.sov && r.useSov === false) {
     // The person unticked it: nothing to set up.
   } else if (r.sov) {
-    const res = await post(`/api/jobs/${jobId}/sov`, { lines: r.sov.lines, op_pct: 0, update_contract: false }, { quiet: true });
-    if (res && res.ok) toast("Job saved with the schedule of values from the contract");
+    const res = await post(`/api/jobs/${jobId}/sov`, { lines: r.sov.lines, op_pct: 0, update_contract: !!r.useSovTotal }, { quiet: true });
+    if (res && res.ok) toast(r.useSovTotal ? "Job saved with the schedule of values from the contract and its total as the contract amount"
+      : "Job saved with the schedule of values from the contract");
+    else toast(`The job is saved, but the schedule of values wasn't set up: ${(res && res.data && res.data.error) || "set it up on the job page"}.`);
   }
   if (contractRead === r) contractRead = null;
   clearJobDetails();
@@ -454,16 +494,22 @@ export const actions = {
       if (v.payment_terms_days && !(/^\d+$/.test(v.payment_terms_days) && +v.payment_terms_days >= 1 && +v.payment_terms_days <= 365)) errors.payment_terms_days = "Enter the days they have to pay as a whole number from 1 to 365.";
       else if (v.payment_terms_days) days.payment_terms_days = Number(v.payment_terms_days);
     }
-    if (refuseForm("newjob", errors)) return;
     // The contract read this job is saved with: the save closes the form, which forgets it.
     const read = contractRead && contractRead.form === "newjob" ? contractRead : null;
     const useSov = document.getElementById("nj-use-sov");
     if (read && useSov) read.useSov = useSov.checked;
+    const useTotal = document.getElementById("nj-sov-total");
+    if (read) read.useSovTotal = !!(useTotal && useTotal.checked);
+    // A schedule that doesn't add up to the amount would be refused after the job is saved (C6).
+    if (read && read.sov && read.useSov !== false && !read.useSovTotal && !errors.contract_cents && amount.cents !== read.sov.total_cents) {
+      errors.contract_cents = `The schedule of values from the contract adds up to ${money(read.sov.total_cents)}. Change the amount, tick Use the schedule total as the contract amount, or untick the schedule.`;
+    }
+    if (refuseForm("newjob", errors)) return;
     const before = new Set(state.jobs.map(j => j.id));
     const r = await post("/api/jobs", {
       name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer: v.customer, approver,
       ap_email: apEmail, phone: v.phone, client_type: known ? "" : (v.client_type || "gc"),
-      contract_number: v.contract_number, note: v.note, started_on: v.started_on || "",
+      contract_number: v.contract_number, note: v.note, started_on: v.started_on || "", today: localDay(new Date()),
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
       contract_cents: amount.cents, retainage_pct: ret.value, ...days,
       new_customer: !known && keptNames.newjob === v.customer,
@@ -545,7 +591,10 @@ export const actions = {
 // The SOV choice is kept across a redraw of the form.
 if (typeof document !== "undefined" && document.addEventListener) {
   document.addEventListener("change", (e) => {
-    if (e.target && e.target.id === "nj-use-sov" && contractRead) contractRead.useSov = e.target.checked;
+    if (e.target && e.target.id === "nj-use-sov" && contractRead) { contractRead.useSov = e.target.checked; render(); }
+    if (e.target && e.target.id === "nj-sov-total" && contractRead) contractRead.useSovTotal = e.target.checked;
+    // A changed contract amount redraws the schedule's difference line (C6).
+    if (e.target && e.target.id === "nj-amount" && contractRead && contractRead.sov) render();
     // The job picked on Add to a job record: its buttons now add to that job.
     if (e.target && e.target.id === "jr-job" && state) { (formDraft.jobrecord ||= {}).job = e.target.value; render(); }
   });
