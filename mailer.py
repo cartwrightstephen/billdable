@@ -12,13 +12,13 @@ Settings (environment):
     SMTP_PASSWORD
     SMTP_SECURITY     starttls (default), ssl, or none (none is for local testing)
     MAIL_FROM         sender address on a domain the provider has verified,
-                      e.g. billing@billdable.com; required with SMTP_HOST
+                      e.g. billing@duracash.com; required with SMTP_HOST
     MAIL_DAILY_LIMIT  emails per company per 24 hours, default 50
 
-The From name is "<company> via Billdable" and Reply-To is the signed-in user,
+The From name is "<company> via Duracash" and Reply-To is the signed-in user,
 so the payer's answer goes to the contractor, not to us. When the company has an
 inbound address (INBOUND_EMAIL_ADDRESS_TEMPLATE), Reply-To lists it too, so the
-answer also lands in Billdable and is filed to the job it answers.
+answer also lands in Duracash and is filed to the job it answers.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ MAX_ATTACH_BYTES = 15 * 1024 * 1024
 TIMEOUT_SECONDS = 20
 NOT_SET_UP = "not sent: email delivery is not set up"
 DEMO = "not sent: demo account"
-UNVERIFIED = "not sent: verify your email address first (Team & account page), then Send again"
+UNVERIFIED = "not sent: verify your email address first (Settings, My account), then Send again"
 
 
 def settings() -> dict[str, Any]:
@@ -131,7 +131,7 @@ def build_message(
     if not EMAIL_RE.match(to):
         raise ValueError(f"the address {to!r} is not a valid email address")
     msg = EmailMessage()
-    sender_name = _clean_header(sender_name or f"{company_name or 'Billdable'} via Billdable", 120)
+    sender_name = _clean_header(sender_name or f"{company_name or 'Duracash'} via Duracash", 120)
     local, _, domain = cfg["from"].partition("@")
     msg["From"] = Address(display_name=sender_name, username=local, domain=domain)
     msg["To"] = to
@@ -170,6 +170,34 @@ def build_message(
     # The envelope recipients are given explicitly, never re-read from the headers.
     msg.recipients = [to] + cc  # type: ignore[attr-defined]
     return msg, left_off
+
+
+def invite_email(inviter: str, inviter_email: str, company_name: str, role: str, link: str) -> tuple[str, str]:
+    """(subject, body) of a team invite (moved from server.py, R6-08). Names typed by users go in
+    the body only, flattened and shortened; the subject is fixed."""
+    flat = lambda text, n: " ".join(str(text).split())[:n]
+    return ("You're invited to a team on Duracash",
+            f"{flat(inviter, 80)} ({inviter_email}) invited you to join the company "
+            f"\"{flat(company_name, 80)}\" on Duracash as {role}.\n\n"
+            f"Accept here (the link works for 7 days):\n{link}\n\n"
+            "If you don't know this person, ignore this email.")
+
+
+def password_change_email(name: str, code: str) -> tuple[str, str]:
+    """(subject, body) of the code that confirms a password change (S2)."""
+    return ("Your Duracash code to change your password",
+            f"Hi {' '.join(str(name).split())[:80]},\n\nYour code to change your Duracash password is {code}. "
+            "It works once, for 15 minutes.\n\n"
+            "If you didn't ask to change your password, someone may be signed in as you: sign in and change it, "
+            "or ignore this email and nothing changes.")
+
+
+def login_code_email(name: str, code: str) -> tuple[str, str]:
+    """(subject, body) of the code that signs someone in from a new device (S7)."""
+    return ("Your Duracash sign-in code",
+            f"Hi {' '.join(str(name).split())[:80]},\n\nYour code to sign in to Duracash is {code}. "
+            "It works once, for 10 minutes.\n\n"
+            "If you didn't just try to sign in, someone has your password: change it from Settings, My account.")
 
 
 def _mime(name: str) -> tuple[str, str]:
@@ -213,7 +241,14 @@ def send(messages: list[EmailMessage], cfg: dict[str, Any], connect: Callable[..
         for i, msg in enumerate(messages):
             try:
                 refused = server.send_message(msg, to_addrs=getattr(msg, "recipients", None))
-                results[i] = ("refused: " + ", ".join(f"{k} ({v[0]})" for k, v in refused.items())) if refused else None
+                # smtplib returns the refused addresses only when another one was accepted. If
+                # only copy addresses were refused, the email reached its To address: it was sent,
+                # and the refused copies are listed on it (msg.refused).
+                words = [f"{k} ({v[0]})" for k, v in refused.items()]
+                to = (getattr(msg, "recipients", None) or [str(msg["To"])])[0]
+                to_refused = any(str(k).lower() == to.lower() for k in refused)
+                results[i] = ("refused: " + ", ".join(words)) if to_refused else None
+                msg.refused = [] if to_refused else words  # type: ignore[attr-defined]
             except smtplib.SMTPRecipientsRefused as exc:
                 results[i] = "recipient refused: " + ", ".join(exc.recipients.keys())
             except Exception as exc:  # one bad message must not stop the rest

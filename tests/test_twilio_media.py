@@ -1,4 +1,4 @@
-"""Photos and PDFs texted to the Billdable number are downloaded (P3)."""
+"""Photos and PDFs texted to the Duracash number are downloaded (P3)."""
 
 import base64
 import hashlib

@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -23,16 +24,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import auth
 import backup
+import domain
 import helper
 import importer
 import mailer
+import monthly
 import server
 import storage
 import trial
 from test_mail import Sink
 
 PASSWORD = "correct horse battery"
-ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "BILLDABLE_URL", "HELPER_ADMIN_USER_IDS", "BACKUP_KEEP")
+ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "DURACASH_URL", "HELPER_ADMIN_USER_IDS", "BACKUP_KEEP")
 
 
 class ServerCase(unittest.TestCase):
@@ -74,7 +77,7 @@ class ServerCase(unittest.TestCase):
 
     def mail_on(self):
         os.environ.update({"SMTP_HOST": "127.0.0.1", "SMTP_PORT": str(self.sink.server_address[1]), "SMTP_SECURITY": "none",
-                           "MAIL_FROM": "billing@billdable.test", "BILLDABLE_URL": "https://app.billdable.test"})
+                           "MAIL_FROM": "billing@duracash.test", "DURACASH_URL": "https://app.duracash.test"})
 
     def request(self, method, path, body=None, cookie=None, headers=None, raw=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
@@ -101,7 +104,20 @@ class ServerCase(unittest.TestCase):
 
     def login(self, email_addr, password=PASSWORD):
         res, data = self.request("POST", "/api/auth/login", {"email": email_addr, "password": password})
+        if res.status == 401 and data.get("method") == "email":
+            # Two-step by default (S7): with mail on, a new browser gets a code by email.
+            res, data = self.request("POST", "/api/auth/login", {"email": email_addr, "password": password, "code": self.last_code()})
         return res, (res.getheader("Set-Cookie") or "").split(";")[0]
+
+    def last_code(self):
+        for _ in range(50):
+            for msg in reversed(self.sink.messages):
+                text = email.message_from_bytes(msg["data"], policy=email.policy.default).get_body(("plain",)).get_content()
+                m = re.search(r"Your code to sign in to Duracash is (\d{6})", text)
+                if m:
+                    return m.group(1)
+            time.sleep(0.05)
+        self.fail("no sign-in code was emailed")
 
     def link_token(self, kind, message=None):
         msg = message or self.sink.messages[-1]
@@ -132,14 +148,14 @@ class AccountHttpTests(ServerCase):
         old_cookie, _ = self.signup("reset@pine.example")
         self.wait_for_mail(1)  # the verification email
         self.sink.messages.clear()
-        # The link is built from BILLDABLE_URL, never from the Host header a stranger controls.
+        # The link is built from DURACASH_URL, never from the Host header a stranger controls.
         res, data = self.request("POST", "/api/auth/forgot", {"email": "Reset@Pine.example"}, headers={"Host": "evil.example"})
         same, data2 = self.request("POST", "/api/auth/forgot", {"email": "nobody@pine.example"})
         self.assertEqual(data["message"], data2["message"])  # no hint which emails exist
         self.wait_for_mail(1)
         self.assertEqual(len(self.sink.messages), 1)
         base, token = self.link_token("reset")
-        self.assertEqual(base, "https://app.billdable.test")
+        self.assertEqual(base, "https://app.duracash.test")
         res, data = self.request("POST", "/api/auth/reset", {"token": token, "password": "short"})
         self.assertEqual(res.status, 400)
         res, data = self.request("POST", "/api/auth/reset", {"token": token, "password": "a new long password"})
@@ -162,6 +178,60 @@ class AccountHttpTests(ServerCase):
         time.sleep(0.5)
         self.assertEqual(len(self.sink.messages), auth.RESET_MAX_PER_HOUR)
 
+    def test_reset_emails_do_not_use_up_the_companys_daily_limit(self):
+        self.mail_on()
+        _, data = self.signup("allowance@pine.example")
+        company_id = data["user"]["company_id"]
+        self.wait_for_mail(1)
+        self.sink.messages.clear()
+        before = mailer.sent_in_last_day(company_id)
+        for _ in range(auth.RESET_MAX_PER_HOUR):
+            self.request("POST", "/api/auth/forgot", {"email": "allowance@pine.example"})
+        self.wait_for_mail(auth.RESET_MAX_PER_HOUR)
+        time.sleep(0.2)
+        self.assertEqual(len(self.sink.messages), auth.RESET_MAX_PER_HOUR)
+        self.assertEqual(mailer.sent_in_last_day(company_id), before, "a stranger can't spend the company's allowance")
+        # And a company at its daily limit can still get a reset link to its owner.
+        mailer.record_sent(company_id, mailer.settings()["daily_limit"])
+        auth._RESETS.clear()
+        self.sink.messages.clear()
+        self.request("POST", "/api/auth/forgot", {"email": "allowance@pine.example"})
+        self.wait_for_mail(1)
+        self.assertEqual(len(self.sink.messages), 1)
+
+    # ----- sign-up -----
+
+    def test_a_new_company_never_takes_an_existing_companys_id(self):
+        _, first = self.signup("first-co@pine.example", company="First Co")
+        taken = first["user"]["company_id"]
+        real, repeats = server.secrets.token_hex, [3]
+
+        def token_hex(n=None):  # the next new company id comes out as the one already taken
+            if n == 4 and repeats[0] and sys._getframe(1).f_globals.get("__name__") == "server":
+                repeats[0] -= 1
+                return taken[len("co-"):]
+            return real(n)
+        with mock.patch.object(server.secrets, "token_hex", token_hex):
+            _, second = self.signup("second-co@pine.example", company="Second Co")
+        self.assertNotEqual(second["user"]["company_id"], taken)
+        self.assertEqual(server.load_company(taken)["company"]["name"], "First Co")
+
+    # ----- replies are written after the company lock is let go -----
+
+    def test_paged_lists_are_written_without_holding_the_company_lock(self):
+        cookie, data = self.signup("slowreader@pine.example")
+        lock = server.company_lock(data["user"]["company_id"])
+        held, real = [], server.Handler._json
+
+        def spy(handler, *args, **kwargs):
+            held.append(lock._is_owned())
+            return real(handler, *args, **kwargs)
+        with mock.patch.object(server.Handler, "_json", spy):
+            for path in ("/api/jobs?limit=200", "/api/outbox?limit=200", "/api/audit?limit=200"):
+                res, _ = self.request("GET", path, cookie=cookie)
+                self.assertEqual(res.status, 200, path)
+        self.assertEqual(held, [False, False, False])
+
     # ----- email verification -----
 
     def test_verification_and_the_send_rule(self):
@@ -173,19 +243,23 @@ class AccountHttpTests(ServerCase):
         _, me = self.request("GET", "/api/auth/me", cookie=cookie)
         self.assertFalse(me["user"]["email_verified"])
         self.assertTrue(me["mail_ready"])
-        # Unverified: an approved email is held, not sent.
+        # Unverified: sending is refused with the reason, not held in the Outbox without a word (R1-07).
         job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
                "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         job_id = state["jobs"][0]["id"]
         self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 500_000}, cookie=cookie)
-        _, state = self.request("POST", f"/api/jobs/{job_id}/pencil", {}, cookie=cookie)
-        self.assertEqual(state["email_log"][-1]["status"], mailer.UNVERIFIED)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/pencil", {}, cookie=cookie)
+        self.assertEqual(res.status, 409, data)
+        self.assertIn("Confirm your email first", data["error"])
+        _, state = self.request("GET", "/api/state", cookie=cookie)
+        self.assertFalse(state.get("email_log"), "nothing was queued")
         before = len(self.sink.messages)
         res, data = self.request("POST", "/api/auth/verify", {"token": token})
         self.assertEqual(res.status, 200, data)
         self.assertTrue(data["user"]["email_verified"])
-        res, state = self.request("POST", f"/api/outbox/{state['email_log'][-1]['id']}/retry", {}, cookie=cookie)
+        res, state = self.request("POST", f"/api/jobs/{job_id}/pencil", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
         self.assertEqual(len(self.sink.messages), before + 1)
         res, _ = self.request("POST", "/api/auth/resend-verify", {}, cookie=cookie)
@@ -204,12 +278,26 @@ class AccountHttpTests(ServerCase):
 
     # ----- team -----
 
+    def test_unconfirmed_owner_is_told_before_inviting_and_refused(self):
+        """Oct 23 note 2: the page reads mail_ready and email_verified to turn Invite off with the
+        reason (static/js/setup.js inviteLocked); the server still refuses the tap itself."""
+        self.mail_on()
+        owner, _ = self.signup("unconfirmed@team.example", "Unconfirmed Co")
+        self.wait_for_mail(1)
+        res, me = self.request("GET", "/api/auth/me", cookie=owner)
+        self.assertEqual((me["mail_ready"], me["user"]["email_verified"]), (True, False))
+        res, out = self.request("POST", "/api/team/invite", {"email": "helper@team.example", "role": "member"}, cookie=owner)
+        self.assertEqual(res.status, 409)
+        self.assertEqual(out["error"], "Confirm your own email address before inviting people.")
+        res, team = self.request("GET", "/api/team", cookie=owner)
+        self.assertEqual(team["invites"], [])
+
     def test_team_invites_roles_and_removal(self):
         owner, data = self.signup("owner@team.example", "Team Co")
         res, out = self.request("POST", "/api/team/invite", {"email": "member@team.example", "role": "member"}, cookie=owner)
         self.assertEqual(res.status, 200, out)
         self.assertFalse(out["emailed"])  # no mail on this server: the owner gets the link to pass on
-        self.assertIsNone(out["invite_link"])  # no BILLDABLE_URL: only the path, never a Host-header link
+        self.assertIsNone(out["invite_link"])  # no DURACASH_URL: only the path, never a Host-header link
         token = out["invite_path"].split("#invite=")[1]
         res, info = self.request("POST", "/api/auth/invite-info", {"token": token})
         self.assertEqual((info["email"], info["company_name"], info["role"]), ("member@team.example", "Team Co", "member"))
@@ -217,6 +305,7 @@ class AccountHttpTests(ServerCase):
         self.assertEqual(res.status, 200, joined)
         member = res.getheader("Set-Cookie").split(";")[0]
         self.assertEqual(joined["user"]["company_id"], data["user"]["company_id"])
+        self.assertTrue(joined["user"]["email_verified"])  # the invite link reached this address (R1-07)
         _, state = self.request("GET", "/api/state", cookie=member)
         self.assertEqual(state["company"]["name"], "Team Co")
         _, page = self.request("GET", "/api/audit", cookie=member)
@@ -257,6 +346,74 @@ class AccountHttpTests(ServerCase):
         res, _ = self.request("POST", "/api/team/invite", {"email": "other@team.example"}, cookie=owner)
         self.assertEqual(res.status, 409)
 
+    def test_only_an_owner_reopens_a_job(self):  # R4-02
+        owner, _ = self.signup("owner@reopen.example", "Reopen Co")
+        _, out = self.request("POST", "/api/team/invite", {"email": "member@reopen.example", "role": "member"}, cookie=owner)
+        token = out["invite_path"].split("#invite=")[1]
+        res, _ = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
+               "contract_cents": 1_000_000, "role": "Owner"}
+        _, state = self.request("POST", "/api/jobs", job, cookie=owner)
+        job_id = state["jobs"][0]["id"]
+        res, out = self.request("POST", f"/api/jobs/{job_id}/reopen", {"reason": "Late check"}, cookie=member)
+        self.assertEqual((res.status, out["error"]), (403, server.NO_PERMISSION))
+        res, out = self.request("POST", f"/api/jobs/{job_id}/reopen", {"reason": "Late check"}, cookie=owner)
+        self.assertEqual(res.status, 409, out)
+        self.assertIn("is not finished", out["error"])
+
+    def test_member_sends_only_when_their_profile_allows_it(self):  # R4-09, S6
+        owner, _ = self.signup("owner@sends.example", "Sends Co")
+        _, out = self.request("POST", "/api/team/invite", {"email": "member@sends.example", "role": "member"}, cookie=owner)
+        token = out["invite_path"].split("#invite=")[1]
+        res, _ = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
+               "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+        _, state = self.request("POST", "/api/jobs", job, cookie=owner)
+        job_id = state["jobs"][0]["id"]
+        # A member drafts and gets the paperwork ready.
+        res, state = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 400_000}, cookie=member)
+        self.assertEqual(res.status, 200, state)
+        for item in state["jobs"][0]["invoices"][-1].get("packet") or []:
+            if not item["present"]:
+                self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "In the email"}, cookie=member)
+        for action in ("send", "void-draft", "close", "delete"):
+            res, out = self.request("POST", f"/api/jobs/{job_id}/{action}", {}, cookie=member)
+            self.assertEqual((res.status, out["error"]), (403, server.NO_PERMISSION), action)
+        # Only someone who manages the team gives Member the send permission.
+        sends = {"perms": ["record_payments", "send_payapps", "send_waivers", "ask_retainage"]}
+        res, _ = self.request("POST", "/api/team/profiles/member", sends, cookie=member)
+        self.assertEqual(res.status, 403)
+        res, out = self.request("POST", "/api/team/profiles/member", sends, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        self.assertIn("send_payapps", next(p for p in out["profiles"] if p["id"] == "member")["perms"])
+        res, out = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie=member)
+        self.assertEqual(res.status, 200, out)
+        self.assertEqual(out["jobs"][0]["invoices"][-1]["status"], "sent")
+        # Deleting and finishing stay with owners.
+        res, _ = self.request("POST", f"/api/jobs/{job_id}/close", {}, cookie=member)
+        self.assertEqual(res.status, 403)
+        res, out = self.request("POST", "/api/team/profiles/member", {"perms": ["send_everything"]}, cookie=owner)
+        self.assertEqual((res.status, out["fields"]["perms"]), (409, "Tick the permissions from the list."))
+
+    def test_setup_checklist_is_dismissed_per_person(self):  # R2-03
+        owner, _ = self.signup("owner@checklist.example", "Checklist Co")
+        res, out = self.request("POST", "/api/team/invite", {"email": "member@checklist.example", "role": "member"}, cookie=owner)
+        token = out["invite_path"].split("#invite=")[1]
+        res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
+        member = res.getheader("Set-Cookie").split(";")[0]
+        res, out = self.request("POST", "/api/onboarding/dismiss", {}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        _, who = self.request("GET", "/api/auth/me", cookie=owner)
+        self.assertTrue(who["user"]["onboarding_dismissed"])
+        _, who = self.request("GET", "/api/auth/me", cookie=member)
+        self.assertFalse(who["user"]["onboarding_dismissed"], "the second person still sees the checklist")
+        # Help > "Show the setup checklist" brings it back.
+        res, out = self.request("POST", "/api/onboarding/dismiss", {"show": True}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        self.assertFalse(out["user"]["onboarding_dismissed"])
+
     def test_invite_is_emailed_when_mail_is_ready(self):
         self.mail_on()
         owner, data = self.signup("owner2@team.example", "Mail Team\n\nYour account is locked. Verify at https://evil.example")
@@ -269,10 +426,10 @@ class AccountHttpTests(ServerCase):
         _, out = self.request("POST", "/api/team/invite", {"email": "new@team.example", "role": "owner"}, cookie=owner)
         self.assertTrue(out["emailed"], out)
         msg = email.message_from_bytes(self.sink.messages[-1]["data"], policy=email.policy.default)
-        self.assertEqual(msg["Subject"], "You're invited to a team on Billdable")  # nothing typed by users in the subject
+        self.assertEqual(msg["Subject"], "You're invited to a team on Duracash")  # nothing typed by users in the subject
         self.assertNotIn("\n\nYour account is locked", msg.get_body(("plain",)).get_content())  # names are flattened
         base, token = self.link_token("invite")
-        self.assertEqual(base, "https://app.billdable.test")
+        self.assertEqual(base, "https://app.duracash.test")
         self.assertEqual(self.sink.messages[-1]["to"], ["new@team.example"])
 
     # ----- deleting the company -----
@@ -318,9 +475,16 @@ class AccountHttpTests(ServerCase):
     def test_health_check(self):
         res, data = self.request("GET", "/healthz")
         self.assertEqual(res.status, 200)
-        self.assertEqual(set(data), {"ok", "storage", "email", "last_backup", "offsite_backup", "env"})
+        self.assertEqual(set(data), {"ok", "storage", "disk_free_mb", "email", "last_backup", "offsite_backup", "env"})
         self.assertTrue(data["ok"])
+        self.assertIsInstance(data["disk_free_mb"], int)
         self.assertTrue(res.getheader("X-Request-Id"))
+        # A nearly full disk fails every save and backup: the monitor hears it first (R6-06).
+        nearly_full = type("Usage", (), {"free": 150 * 1024 * 1024})()
+        with mock.patch.object(server.shutil, "disk_usage", lambda path: nearly_full):
+            res, data = self.request("GET", "/healthz")
+        self.assertEqual((res.status, data["ok"], data["disk_free_mb"]), (503, False, 150))
+        self.assertEqual(data["storage"], "under 200 MB free")
 
     def test_crash_gives_a_request_id(self):
         cookie, _ = self.signup("crash@pine.example")
@@ -337,6 +501,19 @@ class AccountHttpTests(ServerCase):
         self.assertEqual(server.redact("/api/inbound/email/abcDEF123_-xyz"), "/api/inbound/email/[token]")
         self.assertEqual(server.redact("/api/calendar/abc123.ics"), "/api/calendar/[token].ics")
         self.assertEqual(server.redact('"GET /api/files/f1?x=secret HTTP/1.1"'), '"GET /api/files/f1 HTTP/1.1"')
+        # The monthly run logs counts and company ids, never an owner's address (R6-09).
+        _, data = self.signup("monthly-log@pine.example", "Log Co")
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))
+        logged = []
+        with mock.patch.object(server, "log_json", lambda level, **fields: logged.append(json.dumps(fields))), \
+                mock.patch.object(monthly.backup, "backups", return_value=[]), \
+                mock.patch.object(monthly.mailer, "configured", return_value=True), \
+                mock.patch.object(server, "send_system_email", return_value="sent"), \
+                mock.patch.dict(os.environ, {"MONTHLY_SUMMARY_EMAILS": "1"}):
+            monthly.run_once(server.SITE, datetime(2099, 11, 2, 12, tzinfo=timezone.utc))
+        self.assertTrue(any("monthly summaries for 2099-10" in line for line in logged), logged)
+        self.assertTrue(any(f"{data['user']['company_id']}: 1 of 1 sent" in line for line in logged), logged)
+        self.assertFalse([line for line in logged if "@" in line], "no email address in the log")
 
     def test_pay_app_pdf_download(self):
         cookie, _ = self.signup("pdf@pine.example")
@@ -360,9 +537,14 @@ class AccountHttpTests(ServerCase):
         self.assertEqual(state["trial"]["state"], "active")
         ends = datetime.fromisoformat(state["trial"]["ends_by"])
         self.assertAlmostEqual((ends - datetime.now(timezone.utc)).days, 89, delta=1)
-        self.assertFalse(state["company"].get("onboarding_dismissed", False))
-        _, state = self.request("POST", "/api/onboarding/dismiss", {}, cookie=cookie)
-        self.assertTrue(state["company"]["onboarding_dismissed"])
+        _, who = self.request("GET", "/api/auth/me", cookie=cookie)
+        self.assertFalse(who["user"]["onboarding_dismissed"])
+        res, out = self.request("POST", "/api/onboarding/dismiss", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, out)
+        self.assertTrue(out["user"]["onboarding_dismissed"])
+        _, who = self.request("GET", "/api/auth/me", cookie=cookie)
+        self.assertTrue(who["user"]["onboarding_dismissed"])
+        self.assertNotIn("onboarding_dismissed", self.request("GET", "/api/state", cookie=cookie)[1]["company"])
         res, _ = self.request("GET", "/api/admin/companies", cookie=cookie)
         self.assertEqual(res.status, 403)
         os.environ["HELPER_ADMIN_USER_IDS"] = data["user"]["id"]
@@ -545,8 +727,10 @@ class ReviewFourTests(ServerCase):
         self.request("POST", f"/api/jobs/{job_id}/void-draft", {}, cookie=cookie)
         self.mail_on()
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))
-        _, state = self.request("POST", f"/api/outbox/{email_id}/retry", {}, cookie=cookie)
-        self.assertIn("voided", state["email_log"][-1]["status"])
+        res, out = self.request("POST", f"/api/outbox/{email_id}/retry", {}, cookie=cookie)
+        # Send again is refused up front with the reason; the delivery check stays as a backstop.
+        self.assertEqual(res.status, 409, out)
+        self.assertIn("was deleted", out["error"])
         self.assertEqual([m for m in self.sink.messages if "ap@park.example" in m["to"]], [])
 
     def test_deleted_company_stays_deleted(self):  # L2
@@ -555,16 +739,30 @@ class ReviewFourTests(ServerCase):
         self.request("POST", "/api/helper/ask", {"q": "how do I add a job"}, cookie=cookie)
         mailer.record_sent(company_id, 1)
         self.request("POST", "/api/account/delete", {"password": PASSWORD, "confirm": "L2 Co"}, cookie=cookie)
-        server.save_company(company_id, server.empty_state("ghost"))  # a request that was already running
+        with self.assertRaises(domain.GateError):  # a request that was already running is refused (R6-06)
+            server.save_company(company_id, server.empty_state("ghost"))
         self.assertFalse(server.company_exists(company_id))
         log = json.loads(helper.LOG_PATH.read_text()) if helper.LOG_PATH.exists() else []
         self.assertFalse(any(e.get("company_id") == company_id for e in log))
         self.assertEqual(mailer.sent_in_last_day(company_id), 0)
 
+    def test_missing_company_is_an_outage_not_a_blank(self):  # R6-06
+        cookie, data = self.signup("lost@team.example", "Lost Co")
+        company_id = data["user"]["company_id"]
+        server.company_store().delete(company_id)  # lost, not deleted: a deploy without the disk
+        res, body = self.request("GET", "/api/state", cookie=cookie)
+        self.assertEqual(res.status, 503)
+        self.assertEqual(body["error"], "Your company's data isn't available right now. Nothing was changed; we've been alerted.")
+        job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example", "contract_cents": 100_000}
+        res, body = self.request("POST", "/api/jobs", job, cookie=cookie)
+        self.assertEqual(res.status, 503)
+        self.assertEqual(self.request("GET", "/api/auth/me", cookie=cookie)[0].status, 503)
+        self.assertFalse(server.company_exists(company_id), "no blank company was saved over it")
+
     def test_reset_keeps_the_trial(self):  # L3
         cookie, _ = self.signup("l3@team.example", "L3 Co")
         _, before = self.request("GET", "/api/state", cookie=cookie)
-        _, after = self.request("POST", "/api/reset", {"confirm": "L3 Co"}, cookie=cookie)
+        _, after = self.request("POST", "/api/reset", {"confirm": "L3 Co", "password": PASSWORD}, cookie=cookie)
         self.assertEqual(after["trial"]["started_at"], before["trial"]["started_at"])
 
     def test_an_earlier_reset_link_still_works(self):  # L4
@@ -591,13 +789,13 @@ class ReviewFourTests(ServerCase):
         _, data = self.signup("terms@team.example")
         stored = next(u for u in json.loads(auth.AUTH_PATH.read_text())["users"] if u["email"] == "terms@team.example")
         self.assertEqual(stored["terms_version"], server.legal.TERMS_VERSION)
-        os.environ["LEGAL_ENTITY"] = "Billdable <script>LLC"
+        os.environ["LEGAL_ENTITY"] = "Duracash <script>LLC"
         try:
             res, page = self.request("GET", "/terms")
         finally:
             os.environ.pop("LEGAL_ENTITY", None)
         self.assertEqual(res.status, 200)
-        self.assertIn(b"Billdable &lt;script&gt;LLC", page)
+        self.assertIn(b"Duracash &lt;script&gt;LLC", page)
         self.assertIn(b"Draft", page)
         res, page = self.request("GET", "/privacy")
         self.assertEqual(res.status, 200)

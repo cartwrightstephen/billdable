@@ -22,7 +22,7 @@ CASES = {
     "does it work with quickbooks": "quickbooks", "how much does it cost": "pricing", "customer paid half": "partial",
     "write a reminder email to turner": "draft-followup", "how do i import my apple notes": "import-notes",
     "change order not signed yet can i bill it": "unsigned-co", "how do i delete a job": "edit-job", "is my data safe": "security",
-    "what is a pencil draft": "pencil", "can billdable call my customers": "voice-calls", "how to add a new job": "create-job",
+    "what is a pencil draft": "pencil", "can duracash call my customers": "voice-calls", "how to add a new job": "create-job",
     "can my bookkeeper log in": "team-users", "where do i see what i sent": "email-sent", "status of oak street": "job-status",
     "how do i delete my account": "delete-account", "is my data backed up": "backups",
     "how do i set up a schedule of values": "sov", "can i paste my estimate from excel": "sov", "bill by unit rates": "sov",
@@ -61,6 +61,15 @@ class HelperTests(unittest.TestCase):
             if got != want:
                 wrong[q] = (got, want, round(score, 2))
         self.assertEqual(wrong, {})
+
+    def test_quickbooks_answer_names_what_the_app_has(self):
+        # R5-09: the answer used to say QuickBooks was "not yet" and payments were matched by hand.
+        reply = helper.answer("does it work with quickbooks", seed_state(), "co-x", "u-1")
+        self.assertEqual(reply["matched"], "quickbooks")
+        for words in ("Read payments", "CSV", "Connect QuickBooks", "Download for QuickBooks"):
+            self.assertIn(words, reply["text"])
+        self.assertNotIn("Not yet", reply["text"])
+        self.assertNotIn("Match payment", reply["text"])
 
     def test_unknown_question_is_logged_for_review(self):
         reply = helper.answer("what's the weather in boise", seed_state(), "co-x", "u-1")
@@ -105,6 +114,74 @@ class HelperTests(unittest.TestCase):
         helper.feedback(reply["log_id"], False, "wrong list", "co-x")
         self.assertEqual(helper.review()["stats"]["unhelpful"], 1)
 
+
+    def test_today_answer_is_todays_queue(self):
+        # One rule set: the helper lists Today's rows (domain.today_rows), most urgent first.
+        state = seed_state()
+        rows = domain.today_rows(state)
+        self.assertTrue(rows)
+        reply = helper.answer("what should i do today", state, "co-x", "u-1")
+        listed = [line for line in reply["text"].split("\n") if line.startswith("- ")]
+        self.assertEqual(listed, [f"- {r['job']}: {r['label']}. {r['text']}" for r in rows[:8]])
+        paths = {r["path"] for r in rows}
+        for a in reply["actions"]:
+            if a["type"] == "path":
+                self.assertIn(a["path"], paths)
+        self.assertNotIn("packet", " ".join(a["label"] for a in reply["actions"]).lower())
+
+    def test_followups_answer_matches_today(self):
+        state = seed_state()
+        due = [r for r in domain.today_rows(state) if r["kind"] == "follow_up"]
+        reply = helper.answer("which follow-ups are due", state, "co-x", "u-1")
+        for r in due:
+            self.assertIn(f"- {r['job']}: {r['text']}", reply["text"])
+        if not due:
+            self.assertIn("No follow-ups are due", reply["text"])
+
+    def test_blocked_means_what_today_means(self):
+        # Grant Park has paperwork missing but no draft yet: what the next pay app will need, not a block.
+        state = seed_state()
+        reply = helper.answer("which jobs are blocked", state, "co-x", "u-1")
+        self.assertNotIn("Grant Park addition", reply["text"])
+        self.assertIn("Oak Street kitchen", reply["text"])
+        reply = helper.answer("what's blocking grant park", state, "co-x", "u-1")
+        self.assertIn("isn't blocked yet", reply["text"])
+
+    def test_follow_up_answer_covers_an_approved_pay_app(self):
+        # A pay app the customer approved is still out for payment; the server follows up on it.
+        state = seed_state()
+        job = next(j for j in state["jobs"] if j["id"] == "job-turner")
+        job["invoices"][0]["status"] = "approved"
+        reply = helper.answer("draft a follow-up for turner", state, "co-x", "u-1")
+        self.assertNotIn("has no sent, unpaid pay app", reply["text"])
+        self.assertIn(job["invoices"][0]["number"], reply["text"])
+        self.assertTrue(any(a.get("label") == "Send the follow-up" for a in reply["actions"]))
+
+    def test_billed_this_month_leaves_out_a_pulled_back_pay_app(self):
+        state = seed_state()
+        month = domain.datetime.now(domain.timezone.utc).strftime("%Y-%m")
+        job = next(j for j in state["jobs"] if j["id"] == "job-turner")
+        inv = job["invoices"][0]
+        inv["sent_at"] = month + "-01T12:00:00+00:00"
+        counted = helper.answer("what are my totals", state, "co-x", "u-1")["text"]
+        inv["status"] = "void"
+        pulled = helper.answer("what are my totals", state, "co-x", "u-1")["text"]
+        cents = lambda text: round(float(text.split("Billed this month: $")[1].split()[0].replace(",", "")) * 100)
+        self.assertEqual(cents(counted) - cents(pulled), inv["amount_cents"])
+
+    def test_retainage_list_waits_like_chase_retainage(self):
+        # domain.chase_retainage refuses until the customer's days between contacts have passed.
+        now = domain.datetime.now(domain.timezone.utc)
+        job = {"id": "j1", "name": "Elm", "work_status": "complete", "closeout_missing": [],
+               "money": {"retainage_open_cents": 500000}, "payer": {"name": "ABC", "follow_up_days": 7},
+               "last_retainage_chase_at": (now - domain.timedelta(days=1)).isoformat()}
+        snap = {"company": {"name": "Pine"}, "jobs": [job]}
+        text = helper.handle("retainage_list", snap, None)[0]
+        self.assertNotIn("ready to ask for release", text)
+        due = (now + domain.timedelta(days=6)).date().isoformat()
+        self.assertIn(f"asked {(now - domain.timedelta(days=1)).date().isoformat()}, ask again from {due}", text)
+        job["last_retainage_chase_at"] = (now - domain.timedelta(days=8)).isoformat()
+        self.assertIn("ready to ask for release", helper.handle("retainage_list", snap, None)[0])
 
 if __name__ == "__main__":
     unittest.main()

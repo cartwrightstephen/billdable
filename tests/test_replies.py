@@ -65,14 +65,42 @@ class ReplyCaptureTests(unittest.TestCase):
         self.assertNotIn("last_reply", job)
         self.assertEqual(item["status"], "new")
 
+    def test_undo_keeps_a_newer_status_line(self):
+        state = state_with_sent_payapp()
+        job = next(j for j in state["jobs"] if j["code"] == "BRK")
+        item = reply(state, "payables@ponceproperty.example")
+        importer.capture_reply(state, item)
+        job["external_status"] = "Approved by Kim, expect payment Nov 14"  # the customer approved it the next day
+        importer.undo_item(state, item["id"], "owner")
+        self.assertEqual(job["external_status"], "Approved by Kim, expect payment Nov 14")
+        self.assertNotIn("last_reply", job)
+        self.assertEqual(item["status"], "new")
+
+    def test_undoing_two_replies_puts_the_first_status_line_back(self):
+        # Newest first, then oldest first: either way the line ends as it was before both replies.
+        for newest_first in (True, False):
+            state = state_with_sent_payapp()
+            job = next(j for j in state["jobs"] if j["code"] == "BRK")
+            before = job.get("external_status")
+            first = reply(state, "payables@ponceproperty.example", text="We need the lien waiver first.")
+            importer.capture_reply(state, first)
+            second = reply(state, "payables@ponceproperty.example", text="Approved, paying Friday.")
+            importer.capture_reply(state, second)
+            for item in ((second, first) if newest_first else (first, second)):
+                importer.undo_item(state, item["id"], "owner")
+                if item is second and newest_first:
+                    self.assertIn("We need the lien waiver first.", job["external_status"])
+            self.assertEqual(job.get("external_status"), before, f"newest first: {newest_first}")
+            self.assertNotIn("last_reply", job)
+
 
 class ReplyToHeaderTests(unittest.TestCase):
-    CFG = {"from": "billing@billdable.example"}
+    CFG = {"from": "billing@duracash.example"}
 
     def test_reply_to_lists_the_approver_and_the_inbound_address(self):
         msg, _ = mailer.build_message({"to": "ap@payer.example", "subject": "Pay application PA-X-1", "body": "Hi"},
-                                      "Pine", "pat@pine.example", [], self.CFG, inbound="jobs+abc123@in.billdable.example")
-        self.assertEqual(msg["Reply-To"], "pat@pine.example, jobs+abc123@in.billdable.example")
+                                      "Pine", "pat@pine.example", [], self.CFG, inbound="jobs+abc123@in.duracash.example")
+        self.assertEqual(msg["Reply-To"], "pat@pine.example, jobs+abc123@in.duracash.example")
 
     def test_without_an_inbound_address_only_the_approver(self):
         msg, _ = mailer.build_message({"to": "ap@payer.example", "subject": "s", "body": "b"}, "Pine", "pat@pine.example", [], self.CFG)

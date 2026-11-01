@@ -2,7 +2,9 @@
 endpoints. The shapes here are what qbo.py expects; the first real sandbox connection checks them."""
 
 import base64
+import csv
 import http.client
+import io
 import json
 import sys
 import tempfile
@@ -14,12 +16,15 @@ from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import auth
+import domain
 import qbo
 import server
 import storage
 from seed import seed_state
+from test_money import new_job, new_state, send_open
 
 CLIENT = ("qbo-client", "qbo-secret")
 REALM = "4620816365"
@@ -38,6 +43,7 @@ PAYMENTS = [
 class FakeIntuit(BaseHTTPRequestHandler):
     tokens = {"access": None, "refresh": None, "n": 0}
     queries = []
+    revoked = []
 
     def log_message(self, *a):
         pass
@@ -57,9 +63,11 @@ class FakeIntuit(BaseHTTPRequestHandler):
         return {"access_token": t["access"], "refresh_token": t["refresh"], "expires_in": 3600, "x_refresh_token_expires_in": 8726400}
 
     def do_POST(self):
-        form = parse_qs(self.rfile.read(int(self.headers["Content-Length"])).decode())
+        raw = self.rfile.read(int(self.headers["Content-Length"])).decode()
         if self.path == "/revoke":
+            FakeIntuit.revoked.append(json.loads(raw).get("token"))
             return self._reply(200, {})
+        form = parse_qs(raw)
         basic = "Basic " + base64.b64encode(f"{CLIENT[0]}:{CLIENT[1]}".encode()).decode()
         if self.headers.get("Authorization") != basic:
             return self._reply(401, {"error": "invalid_client"})
@@ -83,6 +91,46 @@ class FakeIntuit(BaseHTTPRequestHandler):
         self._reply(200, {"QueryResponse": {entity: rows[start - 1:start - 1 + size]}})
 
 
+class InvoiceCsvTests(unittest.TestCase):  # R4-11: Download for QuickBooks
+    def rows(self, state, job, inv):
+        return list(csv.DictReader(io.StringIO(qbo.invoice_csv(state, job, inv))))
+
+    def test_columns_and_sums_equal_the_pay_app(self):
+        state = new_state()
+        job = new_job(state, contract=10_000_000, retainage=10)
+        domain.update_payer(state, job["payer_id"], {"payment_terms_days": 30})
+        domain.add_change_order(state, job["id"], "Extra outlet", 50_000)
+        co = job["change_orders"][-1]
+        domain.approve_change_order(state, job["id"], co["id"])
+        domain.record_progress(state, job["id"], 4_000_000)
+        inv = send_open(state, job)
+        text = qbo.invoice_csv(state, job, inv)
+        self.assertEqual(text.splitlines()[0], "InvoiceNo,Customer,InvoiceDate,DueDate,Item,ItemDescription,ItemAmount")
+        rows = self.rows(state, job, inv)
+        self.assertEqual(len(rows), len(inv["lines"]))
+        self.assertEqual({r["InvoiceNo"] for r in rows}, {inv["number"]})
+        self.assertEqual({r["Customer"] for r in rows}, {"Jones Family"})
+        sent, due = inv["sent_at"][:10], inv["due_on"]
+        self.assertEqual(rows[0]["InvoiceDate"], f"{sent[5:7]}/{sent[8:10]}/{sent[:4]}")
+        self.assertEqual(rows[0]["DueDate"], f"{due[5:7]}/{due[8:10]}/{due[:4]}")
+        cents = [round(float(r["ItemAmount"]) * 100) for r in rows]
+        self.assertEqual(sum(cents), inv["amount_cents"], "the lines add up to what the pay app asks for")
+        self.assertEqual(sum(c for c in cents if c > 0), inv["gross_cents"])
+        ret = [r for r in rows if r["Item"] == "Retainage"]
+        self.assertEqual([round(float(r["ItemAmount"]) * 100) for r in ret], [-inv["retainage_cents"]], "retainage as a negative line")
+        self.assertTrue(all(r["ItemDescription"].startswith("Pine kitchen: ") for r in rows))
+
+    def test_drafts_are_refused_and_formulas_are_defused(self):
+        state = new_state()
+        job = new_job(state, name="=HYPERLINK(1)")
+        domain.record_progress(state, job["id"], 1_000_000)
+        draft = job["invoices"][-1]
+        with self.assertRaises(domain.GateError):
+            qbo.invoice_csv(state, job, draft)
+        inv = send_open(state, job)
+        self.assertTrue(all(r["ItemDescription"].startswith("'=") for r in self.rows(state, job, inv)))
+
+
 class QboTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -94,7 +142,7 @@ class QboTests(unittest.TestCase):
         threading.Thread(target=cls.intuit.serve_forever, daemon=True).start()
         fake = f"http://127.0.0.1:{cls.intuit.server_address[1]}"
         cls.env = mock.patch.dict("os.environ", {"QBO_CLIENT_ID": CLIENT[0], "QBO_CLIENT_SECRET": CLIENT[1], "QBO_TOKEN_URL": fake + "/token",
-                                                 "QBO_REVOKE_URL": fake + "/revoke", "QBO_API_BASE": fake, "BILLDABLE_URL": "http://localhost:8765"})
+                                                 "QBO_REVOKE_URL": fake + "/revoke", "QBO_API_BASE": fake, "DURACASH_URL": "http://localhost:8765"})
         cls.env.start()
         cls.httpd = server.Server(("127.0.0.1", 0), server.Handler)
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
@@ -140,9 +188,9 @@ class QboTests(unittest.TestCase):
     def test_connect_read_match_once_refresh_reconcile_disconnect(self):
         cookie, cid = self.company("qbo@example.com")
         state = self.connect(cookie)
-        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}")
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=cookie)
         self.assertEqual((res.status, res.getheader("Location")), (303, "/money/payments"))
-        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}")
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=cookie)
         self.assertEqual(res.status, 400, "a state works once")
         res, st = self.request("GET", "/api/qbo/status", cookie=cookie)
         self.assertTrue(st["connected"])
@@ -177,28 +225,138 @@ class QboTests(unittest.TestCase):
         self.assertIn(("PA-TRN-01", "open_in_qbo"), kinds)
         self.assertIn(("PA-OAK-01", "missing"), kinds)
         self.assertNotIn("PA-BRK-01", {n for n, _ in kinds}, "paid on both sides, same amount")
+        missing = next(r for r in rec["rows"] if r["kind"] == "missing")
+        res, text = self.request("GET", f"/api/jobs/{missing['job_id']}/payapp/{missing['invoice_id']}.csv", cookie=cookie)
+        self.assertEqual(res.status, 200)
+        self.assertTrue(res.getheader("Content-Type").startswith("text/csv"))
+        self.assertIn("attachment", res.getheader("Content-Disposition"))
+        self.assertTrue(text.startswith("InvoiceNo,Customer,"))
+        self.assertIn(missing["number"], text)
+        res, _ = self.request("GET", f"/api/jobs/{missing['job_id']}/payapp/nope.csv", cookie=cookie)
+        self.assertEqual(res.status, 404)
+        res, _ = self.request("GET", f"/api/jobs/{missing['job_id']}/payapp/{missing['invoice_id']}.csv")
+        self.assertEqual(res.status, 401)
 
         res, st = self.request("POST", "/api/qbo/disconnect", {}, cookie=cookie)
         self.assertFalse(st["connected"])
         res, data = self.request("POST", "/api/qbo/payments", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
 
+    def test_the_callback_finishes_only_for_the_owner_who_pressed_connect(self):
+        # An attacker's Connect link, approved by someone else, must not link their QuickBooks to the attacker's company.
+        attacker, attacker_cid = self.company("qbo-attacker@example.com")
+        victim, _ = self.company("qbo-victim@example.com")
+        state = self.connect(attacker)
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=victim)
+        self.assertEqual(res.status, 400, page)
+        self.assertIn("Sign in", page)
+        self.assertIsNone(qbo.connection(attacker_cid))
+        state = self.connect(attacker)
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}")
+        self.assertEqual(res.status, 400, "no session")
+        self.assertIsNone(qbo.connection(attacker_cid))
+        state = self.connect(attacker)
+        res, page = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=attacker)
+        self.assertEqual(res.status, 303, "the owner's own browser finishes it")
+        self.assertIsNotNone(qbo.connection(attacker_cid))
+
+    def test_disconnect_during_a_token_refresh_stays_disconnected(self):
+        cookie, cid = self.company("qbo-refresh@example.com")
+        state = self.connect(cookie)
+        res, _ = self.request("GET", f"/api/qbo/callback?code=good-code&state={state}&realmId={REALM}", cookie=cookie)
+        self.assertEqual(res.status, 303)
+        conns = json.loads((storage.DATA_DIR / "qbo_connections.json").read_text())
+        conns[cid]["access_expires_at"] = "2000-01-01T00:00:00+00:00"
+        storage.write_json(storage.DATA_DIR / "qbo_connections.json", conns)
+        real, pressed = qbo._token_request, []
+
+        def slow_refresh(form):
+            # The owner presses Disconnect while Intuit is answering the refresh.
+            t = threading.Thread(target=qbo.disconnect, args=(cid,))
+            t.start()
+            pressed.append(t)
+            t.join(0.3)
+            return real(form)
+
+        with mock.patch.object(qbo, "_token_request", side_effect=slow_refresh):
+            qbo._access_token(cid)
+        pressed[0].join(5)
+        self.assertIsNone(qbo.connection(cid), "Disconnect wins")
+        self.assertFalse(qbo.status(cid)["connected"])
+        self.assertEqual(FakeIntuit.revoked[-1], FakeIntuit.tokens["refresh"], "the newest refresh token is the one revoked")
+
     def test_refusals(self):
         cookie, cid = self.company("qbo2@example.com")
-        res, page = self.request("GET", "/api/qbo/callback?code=good-code&state=made-up&realmId=1")
+        res, page = self.request("GET", "/api/qbo/callback?code=good-code&state=made-up&realmId=1", cookie=cookie)
         self.assertEqual(res.status, 400)
         self.assertIn("expired", page)
         state = self.connect(cookie)
-        res, page = self.request("GET", f"/api/qbo/callback?error=access_denied&state={state}")
+        res, page = self.request("GET", f"/api/qbo/callback?error=access_denied&state={state}", cookie=cookie)
         self.assertIn("You cancelled it", page)
         state = self.connect(cookie)
-        res, page = self.request("GET", f"/api/qbo/callback?code=bad-code&state={state}&realmId={REALM}")
+        res, page = self.request("GET", f"/api/qbo/callback?code=bad-code&state={state}&realmId={REALM}", cookie=cookie)
         self.assertEqual(res.status, 400, "Intuit refused the code")
         with mock.patch.dict("os.environ", {"QBO_CLIENT_ID": ""}):
             res, data = self.request("POST", "/api/qbo/connect", {}, cookie=cookie)
             self.assertEqual(res.status, 409)
             res, st = self.request("GET", "/api/qbo/status", cookie=cookie)
             self.assertFalse(st["configured"])
+
+
+class SplitPaymentTests(unittest.TestCase):
+    """One QuickBooks payment applied to two pay apps: recorded in two parts, up to its amount."""
+
+    ROW = {"line": None, "date": "2026-10-09", "ref": "4471", "customer": "Northline GC", "amount_cents": 12_470_000,
+           "memo": "PA-TRN-01", "qbo_id": "123", "qbo_total_cents": 12_470_000}
+
+    def test_rest_of_a_split_payment_can_be_recorded_and_reading_again_shows_what_is_left(self):
+        state = seed_state()
+        first = qbo.propose(state, [dict(self.ROW)])[0]
+        self.assertEqual((first["status"], first["split"]["owed_cents"]), ("too much", 11_970_000))
+        domain.match_payment(state, "job-turner", 11_970_000, "4471", qbo_payment_id="123", qbo_total_cents=12_470_000)
+        again = qbo.propose(state, [dict(self.ROW)])[0]
+        self.assertNotEqual(again["status"], "already recorded", "only part of the payment is in Duracash")
+        self.assertEqual((again["amount_cents"], again["ref"], again["qbo_id"]), (500_000, "4471 (rest)", "123"))
+        domain.match_payment(state, "job-brook", 500_000, "4471 (rest)", qbo_payment_id="123", qbo_total_cents=12_470_000)
+        self.assertEqual(qbo.propose(state, [dict(self.ROW)])[0]["status"], "already recorded")
+        with self.assertRaises(domain.GateError):
+            domain.match_payment(state, "job-brook", 100, "4471 (more)", qbo_payment_id="123", qbo_total_cents=12_470_000)
+
+    def test_without_the_total_one_payment_is_recorded_once(self):
+        state = seed_state()
+        domain.match_payment(state, "job-turner", 100_000, "4471", qbo_payment_id="123")
+        with self.assertRaises(domain.GateError):
+            domain.match_payment(state, "job-brook", 100_000, "4471 (rest)", qbo_payment_id="123")
+
+    def test_rows_carry_the_payment_total(self):
+        rows = qbo.payment_rows(PAYMENTS, INVOICES)
+        self.assertEqual([r["qbo_total_cents"] for r in rows], [r["amount_cents"] for r in rows])
+
+
+REAL = Path(__file__).resolve().parents[1] / "testdata" / "quickbooks"
+
+
+class RealShapeTests(unittest.TestCase):  # R5-10: Intuit's real Payment and Invoice JSON, once saved in testdata/quickbooks
+    def entity(self, name, key):
+        path = REAL / name
+        if not path.exists():
+            self.skipTest(f"No {name} in testdata/quickbooks yet (see its README).")
+        reply = json.loads(path.read_text())
+        return ((reply.get("QueryResponse") or {}).get(key) or []) if "QueryResponse" in reply else reply
+
+    def test_real_payments_become_rows_and_real_invoices_reconcile(self):
+        payments = self.entity("payments.json", "Payment")
+        invoices = self.entity("invoices.json", "Invoice")
+        self.assertTrue(payments)
+        rows = qbo.payment_rows(payments, invoices)
+        self.assertTrue(rows, "no payment read from payments.json")
+        for row in rows:
+            self.assertTrue(row["qbo_id"], row)
+            self.assertGreater(row["amount_cents"], 0)
+            self.assertRegex(row["date"] or "", r"^\d{4}-\d{2}-\d{2}$")
+        state = seed_state()
+        self.assertEqual(len(qbo.propose(state, rows)), len(rows))
+        qbo.reconcile(state, invoices)  # reads every field it uses without raising
 
 
 if __name__ == "__main__":

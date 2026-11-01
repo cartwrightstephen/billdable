@@ -49,6 +49,6 @@ def verify(secret: str, code: str, last_counter: int = -1, now: float | None = N
     return None
 
 
-def uri(secret: str, account: str, issuer: str = "Billdable") -> str:
+def uri(secret: str, account: str, issuer: str = "Duracash") -> str:
     """otpauth:// link; phones open it straight in an authenticator app."""
     return f"otpauth://totp/{quote(issuer)}:{quote(account)}?secret={secret}&issuer={quote(issuer)}&digits={DIGITS}&period={STEP}"

@@ -27,6 +27,7 @@ def seed_state() -> dict:
             "cc": [],
             "payapp_invoice_id": inv["id"],
             "status": "not sent: demo account",
+            "sample": True,  # not a real send: Today doesn't list it as an email that didn't go out
         }
         for job in state["jobs"]
         for inv in job["invoices"]
@@ -432,7 +433,7 @@ def _seed() -> dict:
                 "waiver_sent": True,
                 "waiver_sent_at": "2026-06-20T14:00:00+00:00",
                 "waiver_kind": "Conditional waiver on progress",
-                "waiver_standard": "Georgia statutory form; matches Ellison packet requirement",
+                "waiver_standard": "Georgia statutory form; matches Ellison's paperwork requirement",
                 "follow_ups": 1,
                 "retainage_held_cents": 0,
                 "retainage_released_cents": 0,
@@ -468,7 +469,7 @@ def _seed() -> dict:
                 "waiver_sent": True,
                 "waiver_sent_at": "2026-05-18T14:00:00+00:00",
                 "waiver_kind": "Unconditional waiver on final",
-                "waiver_standard": "Matches Ponce closeout packet; Georgia form",
+                "waiver_standard": "Matches Ponce closeout paperwork; Georgia form",
                 "follow_ups": 0,
                 "retainage_held_cents": 0,
                 "retainage_released_cents": 0,
@@ -503,7 +504,7 @@ def _seed() -> dict:
                 "waiver_sent": True,
                 "waiver_sent_at": "2026-04-12T14:00:00+00:00",
                 "waiver_kind": "Conditional waiver on progress",
-                "waiver_standard": "Georgia statutory; Ellison packet",
+                "waiver_standard": "Georgia statutory; Ellison paperwork",
                 "follow_ups": 0,
                 "retainage_held_cents": 0,
                 "retainage_released_cents": 0,
@@ -530,7 +531,7 @@ def _seed() -> dict:
                 "job_id": "job-oak",
                 "actor": "owner",
                 "action": "job_done",
-                "detail": "Owner marked Oak Street kitchen done. Packet check ran the same night.",
+                "detail": "Owner marked Oak Street kitchen done. Paperwork check ran the same night.",
             }
         ],
         "adapters": {

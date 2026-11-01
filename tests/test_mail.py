@@ -5,21 +5,27 @@ import email.policy
 import http.client
 import json
 import os
+import re
 import socketserver
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
+import domain
+from waiver_help import signed_waiver
 import helper
 import importer
 import mailer
+import monthly
 import server
 import storage
 
@@ -92,14 +98,14 @@ def parsed(message):
 
 
 class MailerUnitTests(unittest.TestCase):
-    cfg = {"host": "127.0.0.1", "port": 0, "user": "", "password": "", "security": "none", "from": "billing@billdable.test", "daily_limit": 50}
+    cfg = {"host": "127.0.0.1", "port": 0, "user": "", "password": "", "security": "none", "from": "billing@duracash.test", "daily_limit": 50}
 
     def test_headers_cannot_be_injected(self):
         entry = {"to": "ap@park.example", "subject": "Pay app\r\nBcc: victim@example.com", "body": "Hello"}
         msg, _ = mailer.build_message(entry, "Pine\nCo", "pat@pine.example", [], self.cfg)
         self.assertNotIn("Bcc", msg.keys())
         self.assertEqual(msg["Subject"], "Pay app Bcc: victim@example.com")
-        self.assertIn("Pine Co via Billdable", str(msg["From"]))
+        self.assertIn("Pine Co via Duracash", str(msg["From"]))
         self.assertEqual(msg["Reply-To"], "pat@pine.example")
         with self.assertRaises(ValueError):
             mailer.build_message({"to": "a@b.example, c@d.example", "subject": "x", "body": ""}, "Pine", "", [], self.cfg)
@@ -130,6 +136,12 @@ class MailerUnitTests(unittest.TestCase):
             self.assertIsNone(results[0])
             self.assertIn("refused", results[1])
             self.assertEqual(len(sink.messages), 1)
+            # Only the copy address refused: the email went to the To address, so it was sent.
+            sink.reject.add("typo@park.con")
+            partly, _ = mailer.build_message({"to": "ap@park.example", "cc": ["typo@park.con"], "subject": "s", "body": "b"}, "Pine", "", [], cfg)
+            self.assertEqual(mailer.send([partly], cfg), [None])
+            self.assertEqual(partly.refused, ["typo@park.con (550)"])
+            self.assertEqual(sink.messages[-1]["to"], ["ap@park.example"])
             # Wrong login: nothing is sent and the reason says so.
             sink.refuse_login = True
             results = mailer.send([good], dict(cfg, user="u", password="p"))
@@ -139,6 +151,87 @@ class MailerUnitTests(unittest.TestCase):
             sink.server_close()
         closed = mailer.send([good], dict(self.cfg, port=sink.server_address[1]))
         self.assertIn("could not connect", closed[0])
+
+
+class SubjectAndSignOffTests(unittest.TestCase):
+    """R4-05: what a GC's accounts-payable desk files an email by, and who to call back."""
+
+    def test_subject_carries_amount_and_company_and_body_has_no_approved_by(self):
+        import domain
+        state = {"company": {"name": "Brightwater Tile", "phone": "404-555-0100"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        job = domain.create_job(state, "Pine kitchen", "Jones Family", 1_000_000, address="12 Pine St", approver="Sam Jones",
+                                ap_email="ap@jones.example", retainage_pct=10)
+        domain.record_progress(state, job["id"], 400_000, period_end="")
+        domain.send_pencil(state, job["id"], "Alex Rivera")
+        domain.record_pencil_response(state, job["id"], True)
+        for item in job["invoices"][-1]["packet"]:
+            domain.resolve_packet_item(state, job["id"], item["id"])
+        domain.approve_and_send(state, job["id"], "Alex Rivera")
+        inv = job["invoices"][-1]
+        mail = state["email_log"][-1]
+        self.assertTrue(mail["subject"].startswith(f"Pay application {inv['number']} — Pine kitchen — $3,600.00 — Brightwater Tile"))
+        inv["sent_at"] = "2026-01-02T12:00:00+00:00"
+        domain.record_follow_up(state, job["id"], "Alex Rivera")
+        domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1", invoice_id=inv["id"])
+        signed_waiver(state, job["id"])
+        domain.send_waiver(state, job["id"], "Alex Rivera")
+        for e in state["email_log"]:
+            self.assertNotIn("Approved by", e["body"], e["kind"])
+            self.assertTrue(e["body"].endswith("Alex Rivera\nBrightwater Tile · 404-555-0100"), e["kind"])
+        self.assertEqual([e["kind"] for e in state["email_log"]], ["pencil", "pay_app", "follow_up", "waiver"])
+
+
+class EmailFailureTests(unittest.TestCase):
+    """light_snapshot's pending_email_failures: the Outbox entries Today lists as "Didn't go out"."""
+
+    def state_with(self, *entries):
+        from seed import seed_state
+        import domain
+        state = seed_state()
+        job = next(j for j in state["jobs"] if not j.get("closed") and any(i["status"] in {"sent", "partial"} for i in j["invoices"]))
+        inv = next(i for i in job["invoices"] if i["status"] in {"sent", "partial"})
+        for n, (status, extra) in enumerate(entries):
+            state["email_log"].append({"id": f"eml-t{n}", "at": f"2026-10-2{n}T12:00:00+00:00", "job_id": job["id"], "kind": "pay_app",
+                                       "to": "ap@x.example", "subject": "Pay app", "body": "b", "payapp_invoice_id": inv["id"],
+                                       "status": status, **extra})
+        return domain, state, job, inv
+
+    def test_counts_a_failed_outbox_entry(self):
+        domain, state, _, _ = self.state_with(("failed: recipient refused", {}))
+        snap = domain.light_snapshot(state)
+        self.assertEqual(snap["pending_email_failures"], 1, "the demo's sample rows are not counted")
+        self.assertEqual(snap["email_failures"][0]["id"], "eml-t0")
+
+    def test_a_later_send_of_the_same_item_clears_it(self):
+        domain, state, _, _ = self.state_with((mailer.NOT_SET_UP, {}), ("sent", {}))
+        self.assertEqual(domain.light_snapshot(state)["pending_email_failures"], 0)
+
+    def test_void_pay_app_or_closed_job_is_not_counted(self):
+        domain, state, job, inv = self.state_with(("failed: timeout", {}))
+        inv["status"] = "void"
+        self.assertEqual(domain.light_snapshot(state)["pending_email_failures"], 0)
+        inv["status"] = "paid"
+        self.assertEqual(domain.email_failures(state), [], "the money is in")
+        inv["status"] = "sent"
+        job["closed"] = True
+        self.assertEqual(domain.email_failures(state), [])
+
+    def test_moot_draft_and_signature_requests_are_not_counted(self):
+        domain, state, job, inv = self.state_with()
+        state["email_log"].append({"id": "eml-pencil", "at": "2026-10-20T12:00:00+00:00", "job_id": job["id"], "kind": "pencil",
+                                   "to": "ap@x.example", "subject": "Pencil copy", "body": "b", "payapp_invoice_id": inv["id"],
+                                   "status": "failed: timeout"})
+        self.assertEqual(domain.email_failures(state), [], "the pay app itself has gone out since")
+        job.setdefault("change_orders", []).extend([
+            {"id": "co-a", "number": 91, "status": "pending", "amount_cents": 100, "title": "A"},
+            {"id": "co-b", "number": 92, "status": "approved", "amount_cents": 100, "title": "B"},
+        ])
+        for n in (91, 92):
+            state["email_log"].append({"id": f"eml-co{n}", "at": "2026-10-21T12:00:00+00:00", "job_id": job["id"], "kind": "co_signature",
+                                       "to": "ap@x.example", "subject": f"Please sign change order {n} — {job['name']}", "body": "b",
+                                       "payapp_invoice_id": None, "status": "failed: timeout"})
+        self.assertEqual([e["id"] for e in domain.email_failures(state)], ["eml-co91"],
+                         "each change order counts on its own, and a signed one no longer matters")
 
 
 class MailHttpTests(unittest.TestCase):
@@ -183,7 +276,7 @@ class MailHttpTests(unittest.TestCase):
     def mail_on(self, **extra):
         os.environ.update({
             "SMTP_HOST": "127.0.0.1", "SMTP_PORT": str(self.sink.server_address[1]),
-            "SMTP_SECURITY": "none", "MAIL_FROM": "billing@billdable.test", **extra,
+            "SMTP_SECURITY": "none", "MAIL_FROM": "billing@duracash.test", **extra,
         })
 
     def request(self, method, path, body=None, cookie=None, raw=None, headers=None):
@@ -235,18 +328,133 @@ class MailHttpTests(unittest.TestCase):
         self.assertTrue(entry["delivered_at"])
         self.assertEqual(len(self.sink.messages), 1)
         msg = parsed(self.sink.messages[0])
+        self.assertEqual(entry["message_id"], msg["Message-ID"], "kept, so a bounce can be matched to this email")
         self.assertEqual(self.sink.messages[0]["to"], ["ap@park.example"])
         self.assertEqual(msg["To"], "ap@park.example")
         self.assertEqual(msg["Reply-To"], "mail1@pine.example")
-        self.assertIn("Pine & Sons via Billdable", str(msg["From"]))
-        self.assertIn("billing@billdable.test", str(msg["From"]))
+        self.assertIn("Pine & Sons via Duracash", str(msg["From"]))
+        self.assertIn("billing@duracash.test", str(msg["From"]))
         self.assertIn("Pay application PA-", msg["Subject"])
         self.assertIn("Amount due this application", msg.get_body(("plain",)).get_content())
-        self.assertIn("1 packet document is attached", msg.get_body(("plain",)).get_content())
+        self.assertIn("1 paperwork document is attached", msg.get_body(("plain",)).get_content())
+        self.assertNotIn("packet", msg.get_body(("plain",)).get_content().lower())  # the glossary's word is paperwork
         names = [p.get_filename() for p in msg.iter_attachments()]
         self.assertEqual(names, [f"{state['jobs'][0]['invoices'][-1]['number']}.pdf", "contract.pdf"])
         pdf = next(msg.iter_attachments()).get_content()
         self.assertTrue(pdf.startswith(b"%PDF-1.4") and b"APPLICATION FOR PAYMENT" in pdf)
+
+    def test_daily_email_lists_todays_rows_once_and_nothing_on_an_empty_day(self):  # R4-10
+        cookie, job = self.company("daily1@pine.example")
+        self.ready_to_send(cookie, job)
+        # A company with nothing due gets nothing.
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "daily2@pine.example", "password": PASSWORD,
+                                                              "name": "Ed Empty", "company_name": "Empty Co"})
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))
+        quiet = data["user"]["company_id"]
+        company_id = auth.user_by_email("daily1@pine.example")["company_id"]
+        when = datetime(2026, 10, 28, 13, 0, tzinfo=timezone.utc)
+        state = server.load_company(company_id)
+        rows = [r for r in domain.today_rows(state, when) if r["kind"] != "approved"]
+        self.assertEqual([r["kind"] for r in rows], ["ready"])
+        self.assertIsNone(domain.daily_digest(server.load_company(quiet), "", when))
+        self.sink.messages.clear()
+        with mock.patch.dict(os.environ, {"DURACASH_URL": "https://app.duracash.example"}):
+            self.assertEqual(monthly.send_daily_digests(server.SITE, when.replace(hour=5)), [], "not before the morning hour")
+            lines = monthly.send_daily_digests(server.SITE, when)
+        mine = [m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]]
+        self.assertEqual(len(mine), 1, lines)
+        self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily2@pine.example"]], "nothing on an empty day")
+        msg = parsed(mine[0])
+        self.assertEqual(msg["Subject"], "Due today in Duracash: 1 pay app to send")
+        body = msg.get_body(("plain",)).get_content()
+        for r in rows:
+            self.assertIn(r["text"], body)
+            self.assertIn("https://app.duracash.example" + r["path"], body)
+        # Once a day: the next hour sends nothing more.
+        self.sink.messages.clear()
+        monthly.send_daily_digests(server.SITE, when.replace(hour=14))
+        self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]])
+        # Turned off on Settings, Company: nothing the next day.
+        self.request("POST", "/api/company", {"daily_email": False}, cookie=cookie)
+        monthly.send_daily_digests(server.SITE, when + timedelta(days=1))
+        self.assertFalse([m for m in self.sink.messages if m["to"] == ["daily1@pine.example"]])
+
+    def test_the_sent_message_id_is_kept_for_bounces(self):
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "msgid@pine.example", "password": PASSWORD,
+                                                             "name": "Pat Pine", "company_name": "Pine & Sons"})
+        cookie = res.getheader("Set-Cookie").split(";")[0]
+        auth.verify_email(auth.verify_email_token(data["user"]["id"]))
+        job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+        _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
+        self.ready_to_send(cookie, state["jobs"][0])
+        _, state = self.request("POST", f"/api/jobs/{state['jobs'][0]['id']}/send", {}, cookie=cookie)
+        self.assertEqual(state["email_log"][-1]["status"], "sent")
+        stored = server.load_company(data["user"]["company_id"])["email_log"][-1]
+        self.assertEqual(stored["message_id"], parsed(self.sink.messages[0])["Message-ID"])
+
+    def test_another_persons_change_does_not_deliver_an_email_it_did_not_queue(self):
+        # Owner B's Send saved a queued email; before B's own delivery runs, owner A (email not
+        # confirmed) saves something unrelated. A's request must not judge or send B's email.
+        res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": "owner-b@pine.example", "password": PASSWORD,
+                                                             "name": "Bo B", "company_name": "Pine & Sons"})
+        company_id = data["user"]["company_id"]
+        auth.create_user("owner-a@pine.example", PASSWORD, "Al A", company_id, role="owner")
+        res, sent = self.request("POST", "/api/auth/login", {"email": "owner-a@pine.example", "password": PASSWORD})
+        if sent.get("method") == "email":   # two-step by default (S7): the emailed code
+            found = None
+            for _ in range(50):
+                found = next((m for m in (re.search(rb"sign in to Duracash is (\d{6})", x["data"]) for x in self.sink.messages) if m), None)
+                if found:
+                    break
+                time.sleep(0.05)
+            code = found.group(1).decode()
+            self.sink.messages.clear()
+            res, _ = self.request("POST", "/api/auth/login", {"email": "owner-a@pine.example", "password": PASSWORD, "code": code})
+        cookie_a = res.getheader("Set-Cookie").split(";")[0]
+        with server.company_lock(company_id):
+            st = server.load_company(company_id)
+            domain._record_email(st, "", "pay_app", "ap@park.example", "Pay application PA-1", "Body", "Bo B")
+            server.save_company(company_id, st)
+        job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+        res, state = self.request("POST", "/api/jobs", job, cookie=cookie_a)
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual(server.load_company(company_id)["email_log"][-1]["status"], "queued")
+        self.assertEqual(self.sink.messages, [])
+
+    def test_send_again_refuses_an_email_that_no_longer_applies(self):
+        for key in MAIL_ENV:
+            os.environ.pop(key, None)
+        cookie, job = self.company("mail-moot@pine.example")
+        self.ready_to_send(cookie, job)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/follow-up", {"early": True}, cookie=cookie)
+        emails = {e["kind"]: e for e in state["email_log"]}
+        self.assertTrue(emails["follow_up"]["status"].startswith("not sent"), emails)
+        self.assertNotIn("moot", emails["follow_up"])
+        inv = next(i for i in state["jobs"][-1]["invoices"] if i["status"] == "sent")
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/match-payment", {"amount_cents": inv["amount_cents"], "invoice_id": inv["id"]}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        emails = {e["kind"]: e for e in state["email_log"]}
+        self.assertEqual(emails["follow_up"]["moot"], "Nothing on this job is waiting for payment now.")
+        self.assertIn("is paid", emails["pay_app"]["moot"])
+        self.assertEqual(state["email_failures"], [], "Today doesn't list them either")
+        self.mail_on()
+        for kind in ("follow_up", "pay_app"):
+            res, out = self.request("POST", f"/api/outbox/{emails[kind]['id']}/retry", {}, cookie=cookie)
+            self.assertEqual(res.status, 409, out)
+            self.assertIn("doesn't need to go out any more", out["error"])
+        self.assertEqual(self.sink.messages, [], "nothing was sent")
+        _, page = self.request("GET", "/api/outbox", cookie=cookie)
+        self.assertTrue(all(e.get("moot") for e in page["entries"] if e["kind"] in {"follow_up", "pay_app"}), page)
+
+    def test_a_stuck_email_that_no_longer_applies_says_why(self):
+        # outbox.retry_email refuses a stuck "sending" row once it is moot, so the row carries why.
+        job = {"id": "j1", "invoices": [{"id": "i1", "number": "PA-03", "status": "paid", "sent_at": "2026-10-01T00:00:00+00:00"}]}
+        rows = [{"job_id": "j1", "kind": "pay_app", "payapp_invoice_id": "i1", "status": status} for status in ("sending", "queued", "sent")]
+        marked = domain.mark_moot({"jobs": [job]}, rows)
+        self.assertEqual([r.get("moot", "") for r in marked], ["PA-03 is paid.", "PA-03 is paid.", ""])
 
     def test_not_set_up_then_retry(self):
         for key in MAIL_ENV:
@@ -257,6 +465,10 @@ class MailHttpTests(unittest.TestCase):
         entry = state["email_log"][-1]
         self.assertEqual(entry["status"], mailer.NOT_SET_UP)
         self.assertEqual(self.sink.messages, [])
+        # Today lists it with Send again (R1-11), counted for the badge.
+        self.assertEqual(state["pending_email_failures"], 1)
+        self.assertEqual([e["id"] for e in state["email_failures"]], [entry["id"]])
+        self.assertNotIn("body", state["email_failures"][0])
         _, settings = self.request("GET", "/api/import/settings", cookie=cookie)
         self.assertFalse(settings["mail_configured"])
         self.mail_on()
@@ -264,6 +476,7 @@ class MailHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
         self.assertEqual(state["email_log"][-1]["retried"], 1)
+        self.assertEqual((state["pending_email_failures"], state["email_failures"]), (0, []))
         self.assertEqual(len(self.sink.messages), 1)
         res, _ = self.request("POST", f"/api/outbox/{entry['id']}/retry", {}, cookie=cookie)
         self.assertEqual(res.status, 409)  # already sent
@@ -278,7 +491,7 @@ class MailHttpTests(unittest.TestCase):
         _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
         entry = state["email_log"][-1]
         self.assertTrue(entry["status"].startswith("failed: recipient refused"), entry["status"])
-        self.assertNotIn("packet document", entry["body"])  # no packet files, so the email doesn't claim any
+        self.assertNotIn("paperwork document", entry["body"])  # no paperwork files, so the email doesn't claim any
         self.assertEqual(state["jobs"][0]["invoices"][-1]["status"], "sent")  # the approval stands
         self.sink.reject.clear()
         _, state = self.request("POST", f"/api/outbox/{entry['id']}/retry", {}, cookie=cookie)
@@ -363,7 +576,7 @@ class MailHttpTests(unittest.TestCase):
         self.ready_to_send(cookie, job)
         _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
-        res, _ = self.request("POST", "/api/reset", {"confirm": "Pine & Sons"}, cookie=cookie)
+        res, _ = self.request("POST", "/api/reset", {"confirm": "Pine & Sons", "password": PASSWORD}, cookie=cookie)
         self.assertEqual(res.status, 200)
         job2 = {"name": "After reset", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
                 "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
@@ -396,7 +609,21 @@ class MailHttpTests(unittest.TestCase):
         self.assertEqual(parsed(self.sink.messages[-1])["Cc"], "dana@park.example")
         for odd in ("a(b@x.com", "x@y.z]", "a:b@x.com"):
             with self.assertRaises(ValueError):
-                mailer.build_message({"to": odd, "subject": "s", "body": "b"}, "Pine", "", [], {"from": "billing@billdable.test"})
+                mailer.build_message({"to": odd, "subject": "s", "body": "b"}, "Pine", "", [], {"from": "billing@duracash.test"})
+
+    def test_a_refused_copy_address_does_not_fail_the_email(self):
+        cookie, job = self.company("mail12@pine.example")
+        self.request("POST", f"/api/payers/{job['payer_id']}/update", {"copy": "pm@park.con"}, cookie=cookie)
+        self.sink.reject.add("pm@park.con")
+        self.ready_to_send(cookie, job)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        entry = state["email_log"][-1]
+        self.assertEqual(entry["status"], "sent", "the AP desk got it")
+        self.assertEqual(entry["refused"], ["pm@park.con (550)"])
+        self.assertEqual(self.sink.messages[-1]["to"], ["ap@park.example"])
+        res, _ = self.request("POST", f"/api/outbox/{entry['id']}/retry", {}, cookie=cookie)
+        self.assertEqual(res.status, 409, "Send again would send the pay app to the AP desk twice")
+        self.assertEqual(len(self.sink.messages), 1)
 
     def test_sov_over_http(self):
         cookie, job = self.company("mail6@pine.example")
@@ -414,7 +641,7 @@ class MailHttpTests(unittest.TestCase):
         res, _ = self.request("POST", f"/api/jobs/{job['id']}/sov-progress", {"done": {line_id: {"x": 1}}}, cookie=cookie)
         self.assertEqual(res.status, 409)
         res, _ = self.request("POST", f"/api/jobs/{job['id']}/sov", {"lines": "nope"}, cookie=cookie)
-        self.assertEqual(res.status, 409)
+        self.assertEqual(res.status, 400)  # the app always sends a list (R1-02)
 
 
 if __name__ == "__main__":

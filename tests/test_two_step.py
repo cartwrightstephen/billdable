@@ -1,8 +1,11 @@
 """Two-step sign-in (P2-9): TOTP codes and recovery codes."""
 
 import base64
+import email
+import email.policy
 import http.client
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -12,8 +15,10 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import auth
+import qr
 import server
 import storage
 import totp
@@ -37,7 +42,41 @@ class TotpTests(unittest.TestCase):
         self.assertIsNotNone(totp.verify(secret, totp.code_at(secret, now // 30 - 1), now=now), "30 seconds of clock drift")
         self.assertIsNone(totp.verify(secret, totp.code_at(secret, now // 30 - 3), now=now))
         self.assertIsNone(totp.verify(secret, "12345", now=now))
-        self.assertTrue(totp.uri(secret, "pat@pine.example").startswith("otpauth://totp/Billdable:pat%40pine.example?secret="))
+        self.assertTrue(totp.uri(secret, "pat@pine.example").startswith("otpauth://totp/Duracash:pat%40pine.example?secret="))
+
+
+class QrTests(unittest.TestCase):
+    """The QR code the setup shows (R6-05). Checked by its fixed parts here; when it was written,
+    codes of versions 1 to 15 were also read back with macOS's QR reader (Core Image)."""
+
+    def format_word(self, grid, second=False):
+        size = len(grid)
+        if second:
+            cells = [(size - 1 - i, 8) for i in range(8)] + [(8, size - 15 + i) for i in range(8, 15)]
+        else:
+            cells = [(8, i) for i in range(6)] + [(8, 7), (8, 8), (7, 8)] + [(14 - i, 8) for i in range(9, 15)]
+        return sum(grid[y][x] << i for i, (x, y) in enumerate(cells))
+
+    def test_finders_size_and_format(self):
+        uri = totp.uri(totp.new_secret(), "pat@pine.example")
+        for text, size in (("hi", 21), (uri, None)):
+            grid = qr.matrix(text)
+            size = size or len(grid)
+            self.assertEqual(len(grid), size)
+            self.assertEqual((size - 17) % 4, 0)
+            for x0, y0 in ((0, 0), (size - 7, 0), (0, size - 7)):
+                ring = [grid[y0][x0 + i] for i in range(7)] + [grid[y0 + 6][x0 + i] for i in range(7)]
+                self.assertTrue(all(ring), "finder pattern's dark border")
+                self.assertTrue(grid[y0 + 3][x0 + 3] and not grid[y0 + 1][x0 + 1])
+            word = self.format_word(grid)
+            self.assertEqual(word, self.format_word(grid, second=True), "both copies of the format agree")
+            data = (word ^ 0x5412) >> 10
+            self.assertEqual(data >> 3, 0, "error correction level M")
+            self.assertTrue(grid[size - 8][8], "the dark module")
+        self.assertEqual(qr.matrix(uri), qr.matrix(uri), "the same key draws the same code")
+        self.assertIn("<path", qr.svg("hi"))
+        with self.assertRaises(ValueError):
+            qr.matrix("x" * 3000)
 
 
 class TwoStepHttpTests(unittest.TestCase):
@@ -69,7 +108,7 @@ class TwoStepHttpTests(unittest.TestCase):
         conn.close()
         return res, data
 
-    def test_turn_on_sign_in_with_code_and_recovery_then_turn_off(self):
+    def test_turn_on_sign_in_with_code_and_recovery_and_it_stays_on(self):
         res, data = self.request("/api/auth/signup", {"accept_terms": True, "email": "two@example.com", "password": PASSWORD,
                                                       "name": "Pat", "company_name": "Pine"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
@@ -104,10 +143,43 @@ class TwoStepHttpTests(unittest.TestCase):
         auth._FAILURES.clear()
         res, data = self.request("/api/auth/2fa/disable", {"password": "wrong password", "code": recovery[1]}, cookie)
         self.assertEqual(res.status, 400)
+        # Two-step stays on (S7): with no mail on this server, the app can't be turned off.
         res, data = self.request("/api/auth/2fa/disable", {"password": PASSWORD, "code": recovery[1]}, cookie)
-        self.assertEqual(res.status, 200, data)
+        self.assertEqual(res.status, 400, data)
+        self.assertIn("stays on", data["error"])
         res, data = self.request("/api/auth/login", login)
-        self.assertEqual(res.status, 200, "back to password only")
+        self.assertEqual((res.status, data.get("needs_code")), (401, True), "still asks for the code")
+
+    def test_setup_shows_a_qr_code_of_the_key(self):  # R6-05
+        res, _ = self.request("/api/auth/signup", {"accept_terms": True, "email": "qr@example.com", "password": PASSWORD,
+                                                   "name": "Pat", "company_name": "Pine"})
+        cookie = res.getheader("Set-Cookie").split(";")[0]
+        res, setup = self.request("/api/auth/2fa/begin", {}, cookie)
+        self.assertEqual(res.status, 200)
+        self.assertTrue(setup["qr"].startswith("data:image/svg+xml;base64,"))
+        drawing = base64.b64decode(setup["qr"].split(",", 1)[1]).decode()
+        self.assertEqual(drawing, qr.svg(setup["uri"]))
+
+    def test_reset_link_does_not_skip_the_code(self):  # R6-05
+        auth.create_user("reset2@example.com", PASSWORD, "Pat", "co-rst")
+        uid = auth.user_by_email("reset2@example.com")["id"]
+        secret = auth.totp_begin(uid)["secret"]
+        auth.totp_enable(uid, totp.code_at(secret, int(time.time() // 30)))
+        raw, _ = auth.password_reset_token("reset2@example.com")
+        res, data = self.request("/api/auth/reset", {"token": raw, "password": "a brand new password"})
+        self.assertEqual(res.status, 200, data)
+        self.assertEqual((data["ok"], data["needs_code"]), (True, True))
+        self.assertEqual(data["message"], "Password changed. Sign in with your new password and your authenticator code.")
+        self.assertIsNone(res.getheader("Set-Cookie"), "no session from the emailed link alone")
+        self.assertNotIn("user", data)
+        res, data = self.request("/api/auth/login", {"email": "reset2@example.com", "password": "a brand new password"})
+        self.assertEqual((res.status, data.get("needs_code")), (401, True), "the new password still needs the code")
+        # An account without two-step sign-in is signed in by the link, as before.
+        auth.create_user("reset1@example.com", PASSWORD, "Pat", "co-rs1")
+        raw, _ = auth.password_reset_token("reset1@example.com")
+        res, data = self.request("/api/auth/reset", {"token": raw, "password": "a brand new password"})
+        self.assertEqual(res.status, 200, data)
+        self.assertTrue(res.getheader("Set-Cookie").startswith(server.COOKIE + "="))
 
     def test_wrong_codes_are_throttled(self):
         auth.create_user("thr@example.com", PASSWORD, "Pat", "co-thr")
@@ -117,6 +189,169 @@ class TwoStepHttpTests(unittest.TestCase):
         login = {"email": "thr@example.com", "password": PASSWORD}
         statuses = [self.request("/api/auth/login", {**login, "code": "111111"})[0].status for _ in range(auth.LOGIN_FREE_FAILURES + 1)]
         self.assertEqual(statuses[-1], 429)
+
+
+from test_accounts import ServerCase  # noqa: E402  (a server, a local mail server and helpers)
+
+
+class EmailCodeTests(ServerCase):
+    """Codes by email: S2's password change and S7's sign-in from a new device."""
+
+    def emailed_code(self, before=0):
+        self.wait_for_mail(before + 1)
+        msg = self.sink.messages[-1]
+        text = email.message_from_bytes(msg["data"], policy=email.policy.default).get_body(("plain",)).get_content()
+        return re.search(r"\b(\d{6})\b", text).group(1), msg
+
+    # ----- S2: change password -----
+
+    def test_password_change_needs_the_emailed_code_when_mail_is_on(self):
+        self.mail_on()
+        cookie, data = self.signup("pw@pine.example")
+        self.wait_for_mail(1)
+        self.sink.messages.clear()
+        change = {"current": PASSWORD, "new": "a brand new password"}
+        res, data = self.request("POST", "/api/auth/password", change, cookie=cookie)
+        self.assertEqual(res.status, 400)
+        self.assertIn("6-digit code", data["error"])
+        res, data = self.request("POST", "/api/auth/password/code", {}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        code, msg = self.emailed_code()
+        self.assertEqual(msg["to"], ["pw@pine.example"])
+        wrong = "000000" if code != "000000" else "111111"
+        res, data = self.request("POST", "/api/auth/password", {**change, "code": wrong}, cookie=cookie)
+        self.assertEqual(res.status, 400)
+        res, data = self.request("POST", "/api/auth/password", {**change, "code": code}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        res, data = self.request("POST", "/api/auth/password", {"current": "a brand new password", "new": "and another one!", "code": code}, cookie=cookie)
+        self.assertEqual(res.status, 400, "a code works once")
+        self.assertIsNotNone(auth.verify_login("pw@pine.example", "a brand new password"))
+
+    def test_password_change_without_mail_takes_the_current_password(self):
+        cookie, _ = self.signup("pwnomail@pine.example")
+        res, data = self.request("POST", "/api/auth/password/code", {}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        res, data = self.request("POST", "/api/auth/password", {"current": PASSWORD, "new": "a brand new password"}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        res, me = self.request("GET", "/api/auth/me", cookie=cookie)
+        self.assertIs(me["codes_by_email"], False)
+
+    def test_codes_expire_and_are_limited(self):
+        auth.create_user("lim@pine.example", PASSWORD, "Pat", "co-lim")
+        uid = auth.user_by_email("lim@pine.example")["id"]
+        codes = [auth.issue_code(uid, "pwchange") for _ in range(auth.CODES_MAX_PER_HOUR)]
+        self.assertTrue(all(codes))
+        self.assertIsNone(auth.issue_code(uid, "pwchange"), "five an hour")
+        self.assertIsNotNone(auth.issue_code(uid, "login"), "each kind counts on its own")
+        data = json.loads(auth.AUTH_PATH.read_text())
+        for entry in data["tokens"].values():
+            if entry.get("user_id") == uid:
+                entry["expires_at"] = "2000-01-01T00:00:00+00:00"
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        with self.assertRaises(auth.AuthError):
+            auth.change_password(uid, PASSWORD, "a brand new password", code=codes[-1], need_code=True)
+        self.assertNotIn(codes[-1], auth.AUTH_PATH.read_text(), "only a hash of the code is kept")
+        auth._CODES.clear()
+
+    # ----- S7: two-step sign-in by default -----
+
+    def raw_login(self, body, device=None):
+        return self.request("POST", "/api/auth/login", body, cookie=f"{server.DEVICE_COOKIE}={device}" if device else None)
+
+    def test_a_new_browser_gets_a_code_by_email_and_is_remembered(self):
+        self.mail_on()
+        self.signup("s7@pine.example")
+        self.wait_for_mail(1)
+        self.sink.messages.clear()
+        login = {"email": "s7@pine.example", "password": PASSWORD}
+        res, data = self.raw_login(login)
+        self.assertEqual((res.status, data["needs_code"], data["method"]), (401, True, "email"))
+        self.assertIsNone(res.getheader("Set-Cookie"), "no session from the password alone")
+        code, msg = self.emailed_code()
+        self.assertEqual(msg["to"], ["s7@pine.example"])
+        wrong = "000000" if code != "000000" else "111111"
+        res, data = self.raw_login({**login, "code": wrong})
+        self.assertEqual((res.status, data["method"]), (401, "email"))
+        self.assertEqual(len(self.sink.messages), 1, "a wrong code doesn't send another")
+        res, data = self.raw_login({**login, "code": code})
+        self.assertEqual(res.status, 200, data)
+        self.assertTrue(data["user"]["email_verified"], "the code confirmed the email")
+        cookies = res.msg.get_all("Set-Cookie")
+        self.assertTrue(cookies[0].startswith(server.COOKIE + "="), "the session comes first")
+        device = next(c for c in cookies if c.startswith(server.DEVICE_COOKIE + "=")).split(";")[0].split("=", 1)[1]
+        self.assertIn("Max-Age=2592000", next(c for c in cookies if c.startswith(server.DEVICE_COOKIE)))
+        res, data = self.raw_login({**login, "code": code})
+        self.assertEqual(res.status, 401, "a code works once")
+        res, data = self.raw_login(login, device)
+        self.assertEqual(res.status, 200, "this browser is remembered for 30 days")
+        res, data = self.raw_login(login, "made-up-device")
+        self.assertEqual(res.status, 401)
+        # A password change forgets every remembered browser.
+        uid = data.get("user", {}).get("id") or auth.user_by_email("s7@pine.example")["id"]
+        auth.change_password(uid, PASSWORD, "a brand new password")
+        res, data = self.raw_login({**login, "password": "a brand new password"}, device)
+        self.assertEqual((res.status, data.get("method")), (401, "email"))
+        auth._CODES.clear()
+
+    def test_an_expired_sign_in_code_is_refused(self):
+        self.mail_on()
+        auth.create_user("exp@pine.example", PASSWORD, "Pat", "co-exp")
+        login = {"email": "exp@pine.example", "password": PASSWORD}
+        self.raw_login(login)
+        code, _ = self.emailed_code()
+        data = json.loads(auth.AUTH_PATH.read_text())
+        for entry in data["tokens"].values():
+            if entry.get("kind") == "login":
+                entry["expires_at"] = "2000-01-01T00:00:00+00:00"
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        res, _ = self.raw_login({**login, "code": code})
+        self.assertEqual(res.status, 401)
+        auth._CODES.clear()
+
+    def test_a_code_that_cant_be_sent_gives_no_session(self):  # A1 (Oct 30 review)
+        self.mail_on()
+        auth.create_user("down@pine.example", PASSWORD, "Pat", "co-down")
+        with mock.patch.object(server, "send_system_email", return_value="SMTPServerDisconnected: down"):
+            res, data = self.raw_login({"email": "down@pine.example", "password": PASSWORD})
+        self.assertEqual(res.status, 503, data)
+        self.assertIsNone(res.getheader("Set-Cookie"), "the password alone doesn't sign in where mail is set up")
+        auth._CODES.clear()
+
+    def test_the_demo_keeps_passwordless_entry(self):
+        self.mail_on()
+        res, data = self.request("POST", "/api/auth/demo", {})
+        self.assertEqual(res.status, 200, data)
+        self.assertFalse(data["user"].get("two_step_setup_due"))
+        res, data = self.raw_login({"email": auth.DEMO_EMAIL, "password": auth.DEMO_PASSWORD})
+        self.assertEqual(res.status, 200, "no code for the demo")
+        self.assertEqual(self.sink.messages, [])
+
+    def test_without_mail_the_page_asks_to_set_up_the_app(self):
+        cookie, data = self.signup("due@pine.example")
+        self.assertTrue(data["user"]["two_step_setup_due"])
+        res, me = self.request("GET", "/api/auth/me", cookie=cookie)
+        self.assertTrue(me["user"]["two_step_setup_due"])
+        res, data = self.raw_login({"email": "due@pine.example", "password": PASSWORD})
+        self.assertEqual(res.status, 200, "no mail: the password signs in")
+        self.mail_on()
+        res, me = self.request("GET", "/api/auth/me", cookie=cookie)
+        self.assertFalse(me["user"]["two_step_setup_due"], "with mail, email codes are the second step")
+
+    def test_the_app_gives_way_to_email_codes_only_where_mail_is_on(self):
+        self.mail_on()
+        cookie, _ = self.signup("swap@pine.example")
+        uid = auth.user_by_email("swap@pine.example")["id"]
+        secret = auth.totp_begin(uid)["secret"]
+        auth.totp_enable(uid, totp.code_at(secret, int(time.time() // 30)))
+        later = time.time() + 30
+        with mock.patch.object(totp.time, "time", lambda: later):
+            res, data = self.request("POST", "/api/auth/2fa/disable", {"password": PASSWORD, "code": totp.code_at(secret, int(later // 30))}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        self.assertIn("email", data["message"])
+        self.sink.messages.clear()
+        res, data = self.raw_login({"email": "swap@pine.example", "password": PASSWORD})
+        self.assertEqual((res.status, data["method"]), (401, "email"))
+        auth._CODES.clear()
 
 
 if __name__ == "__main__":

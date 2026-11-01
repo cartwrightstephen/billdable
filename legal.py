@@ -3,7 +3,7 @@
 The text lives in legal/terms.html and legal/privacy.html. Company details come from
 settings so the same text works before and after the company exists:
 
-    LEGAL_ENTITY   the company's legal name, e.g. "Billdable LLC"
+    LEGAL_ENTITY   the company's legal name, e.g. "Duracash LLC"
     LEGAL_ADDRESS  its postal address
     LEGAL_EMAIL    the contact address for privacy and legal questions
     LEGAL_STATE    the state whose law governs the Terms
@@ -31,12 +31,12 @@ def details() -> dict[str, str]:
     cfg = backup.settings()
     days = max(1, (cfg["keep"] * cfg["hours"] + 23) // 24) if cfg["hours"] else 1
     return {
-        "ENTITY": os.environ.get("LEGAL_ENTITY") or f"Billdable {MISSING}",
+        "ENTITY": os.environ.get("LEGAL_ENTITY") or f"Duracash {MISSING}",
         "ADDRESS": os.environ.get("LEGAL_ADDRESS") or f"address {MISSING}",
         "EMAIL": os.environ.get("LEGAL_EMAIL") or f"contact email {MISSING}",
         "STATE": os.environ.get("LEGAL_STATE") or f"state {MISSING}",
         "REGION": os.environ.get("DATA_REGION") or f"the United States {MISSING}",
-        "SITE": (os.environ.get("BILLDABLE_URL") or "the Billdable website").rstrip("/"),
+        "SITE": (os.environ.get("DURACASH_URL") or "the Duracash website").rstrip("/"),
         "EFFECTIVE": os.environ.get("LEGAL_EFFECTIVE") or TERMS_VERSION,
         "VERSION": TERMS_VERSION,
         "BACKUP_DAYS": str(days),
@@ -61,7 +61,7 @@ def page(kind: str) -> str:
     ) if is_draft() else ""
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · Billdable</title>
+<title>{title} · Duracash</title>
 <style>
 body {{ font: 16px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif; color: #1c1915; background: #f6f3ee; margin: 0; }}
 main {{ max-width: 760px; margin: 0 auto; padding: 32px 18px 64px; }}
@@ -71,7 +71,7 @@ h2 {{ font-size: 19px; margin: 28px 0 8px; }} h3 {{ font-size: 16px; margin: 18p
 .draft {{ background: #f8efd8; border-radius: 8px; padding: 10px 12px; }}
 nav {{ display: flex; gap: 16px; font-size: 14px; }} ul {{ padding-left: 22px; }}
 </style></head><body><main>
-<nav><a href="/">Billdable</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a></nav>
+<nav><a href="/">Duracash</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a></nav>
 {notice}
 {body}
 </main></body></html>"""

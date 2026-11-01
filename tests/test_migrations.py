@@ -41,6 +41,23 @@ class MigrationTests(unittest.TestCase):
             migrations.migrate(state)
 
 
+class WriteBackTests(unittest.TestCase):
+    def test_a_version_1_file_is_current_on_disk_after_one_read(self):  # R6-08
+        import tempfile
+        from unittest import mock
+        import server
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(server, "COMPANIES", Path(tmp) / "companies"), \
+                mock.patch.object(server, "_deleted_path", lambda: Path(tmp) / "deleted_companies.json"):
+            server.company_store().save("co-old", version_1_file())
+            self.assertNotIn("schema_version", server.company_store().load("co-old"))
+            state = server.load_company("co-old")
+            self.assertEqual(state["schema_version"], migrations.SCHEMA_VERSION)
+            on_disk = server.company_store().load("co-old")
+            self.assertEqual(on_disk["schema_version"], migrations.SCHEMA_VERSION, "saved without waiting for a change")
+            self.assertTrue(domain.check_audit(on_disk)["ok"])
+            self.assertEqual(on_disk["email_log"], [])
+
+
 class AuditChainTests(unittest.TestCase):
     def state_with_rows(self):
         state = seed_state()

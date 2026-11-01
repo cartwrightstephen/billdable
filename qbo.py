@@ -1,6 +1,6 @@
 """QuickBooks Online, read-only (P2-1, the API half; qbo_csv.py is the CSV fallback).
 
-An owner connects the company's QuickBooks once (OAuth 2). After that Billdable reads, and
+An owner connects the company's QuickBooks once (OAuth 2). After that Duracash reads, and
 never writes:
 
 - payments received, proposed against open pay apps with the same matcher as the CSV import;
@@ -10,7 +10,7 @@ never writes:
   and pay apps paid on one side but open on the other.
 
 Settings: QBO_CLIENT_ID and QBO_CLIENT_SECRET from the Intuit Developer app, QBO_ENV
-(sandbox, the default, or production) and BILLDABLE_URL, whose /api/qbo/callback must be
+(sandbox, the default, or production) and DURACASH_URL, whose /api/qbo/callback must be
 listed as a redirect URI in the Intuit app. QBO_TOKEN_URL, QBO_REVOKE_URL and QBO_API_BASE
 override Intuit's addresses (tests use a local stand-in).
 
@@ -25,6 +25,8 @@ restore onto a new disk an owner connects again.
 from __future__ import annotations
 
 import base64
+import csv
+import io
 import json
 import os
 import secrets
@@ -52,7 +54,7 @@ STATE_MINUTES = 10
 
 LOCK = threading.Lock()
 _REFRESH_LOCK = threading.Lock()   # one refresh at a time: Intuit retires a refresh token once used
-_PENDING: dict[str, dict[str, Any]] = {}   # OAuth state -> {company_id, user, until}
+_PENDING: dict[str, dict[str, Any]] = {}   # OAuth state -> {company_id, user, user_id, until}
 
 
 class QboError(Exception):
@@ -115,17 +117,24 @@ def status(company_id: str) -> dict[str, Any]:
 
 # ----- connecting -----
 
-def authorize_url(company_id: str, user_name: str, redirect_uri: str) -> str:
+def redirect_ok(redirect_uri: str) -> bool:
+    """Intuit sends people back to an https address (or this machine, for trying it out)."""
+    return redirect_uri.startswith(("https://", "http://localhost", "http://127.0.0.1"))
+
+
+def authorize_url(company_id: str, user_name: str, redirect_uri: str, user_id: str = "") -> str:
     if not configured():
         raise QboError("The QuickBooks connection isn't set up on this server (QBO_CLIENT_ID and QBO_CLIENT_SECRET).")
-    if not redirect_uri.startswith(("https://", "http://localhost", "http://127.0.0.1")):
-        raise QboError("Set BILLDABLE_URL to the site's https address first; QuickBooks sends people back to it.")
+    if not redirect_ok(redirect_uri):
+        # The owner reads plain words; the server logs that DURACASH_URL is missing (Oct 23 note 17).
+        raise QboError("Connecting QuickBooks isn't available on this server yet. Contact Duracash support. "
+                       "Until then, use the CSV import on Payments.")
     state = secrets.token_urlsafe(24)
     now = time.time()
     with LOCK:
         for key in [k for k, v in _PENDING.items() if v["until"] < now]:
             _PENDING.pop(key, None)
-        _PENDING[state] = {"company_id": company_id, "user": user_name, "until": now + STATE_MINUTES * 60}
+        _PENDING[state] = {"company_id": company_id, "user": user_name, "user_id": user_id, "until": now + STATE_MINUTES * 60}
     query = parse.urlencode({"client_id": settings()["client_id"], "response_type": "code", "scope": SCOPE,
                              "redirect_uri": redirect_uri, "state": state})
     return f"{AUTHORIZE_URL}?{query}"
@@ -160,12 +169,16 @@ def _tokens(reply: dict[str, Any], old: dict[str, Any] | None = None) -> dict[st
     return conn
 
 
-def finish(state: str, code: str, realm_id: str, redirect_uri: str) -> str:
-    """The callback: check the state, swap the code for tokens, save them. Returns the company id."""
+def finish(state: str, code: str, realm_id: str, redirect_uri: str, user_id: str = "") -> str:
+    """The callback: check the state, and that the browser finishing it is signed in as the person
+    who pressed Connect (`user_id`), so someone else's Connect link can't link your QuickBooks to
+    their company; then swap the code for tokens and save them. Returns the company id."""
     with LOCK:
         pending = _PENDING.pop(state or "", None)
     if not pending or pending["until"] < time.time():
         raise QboError("That QuickBooks link has expired. Press Connect QuickBooks again.")
+    if not user_id or pending.get("user_id") != user_id:
+        raise QboError("Sign in to Duracash as the owner who pressed Connect QuickBooks, then press it again.")
     if not code or not realm_id or not realm_id.isdigit():
         raise QboError("QuickBooks didn't say which company was connected. Connect again.")
     reply = _token_request({"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri})
@@ -176,8 +189,10 @@ def finish(state: str, code: str, realm_id: str, redirect_uri: str) -> str:
 
 
 def disconnect(company_id: str) -> None:
-    conn = connection(company_id)
-    _store(company_id, None)
+    # After any refresh in flight, so it can't put the connection back; its newer token is the one revoked.
+    with _REFRESH_LOCK:
+        conn = connection(company_id)
+        _store(company_id, None)
     if conn and configured():
         try:  # best effort: the tokens are gone from here either way
             s = settings()
@@ -253,26 +268,47 @@ def payment_rows(payments: list[dict[str, Any]], invoices: list[dict[str, Any]])
             "line": None,
             "date": str(p.get("TxnDate") or "")[:10] or None,
             "ref": str(p.get("PaymentRefNum") or f"QBO {p.get('Id')}")[:60],
+            # No number in QuickBooks: "QBO <id>" is made up, so a payment recorded here with no
+            # number is found by its customer, amount and day instead (qbo_csv.propose).
+            "no_number": not p.get("PaymentRefNum"),
             "customer": str((p.get("CustomerRef") or {}).get("name") or "")[:120],
             "amount_cents": amount,
             "memo": " ".join([str(p.get("PrivateNote") or ""), *[n for n in linked if n]])[:200],
             "qbo_id": str(p.get("Id") or ""),
+            "qbo_total_cents": amount,   # the whole payment, kept when it is split over pay apps
         })
     return rows
 
 
-def recorded_ids(state: dict[str, Any]) -> set:
-    return {p["qbo_payment_id"] for j in state.get("jobs", []) for p in j.get("payments", []) if p.get("qbo_payment_id")}
+def recorded_parts(state: dict[str, Any]) -> dict[str, list[int]]:
+    """QuickBooks payment id -> the amounts recorded under it (more than one when it was split)."""
+    parts: dict[str, list[int]] = {}
+    for j in state.get("jobs", []):
+        for p in j.get("payments", []):
+            if p.get("qbo_payment_id"):
+                parts.setdefault(p["qbo_payment_id"], []).append(p["amount_cents"])
+    return parts
 
 
 def propose(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The CSV matcher, plus the QuickBooks id check that makes reading again harmless."""
-    done = recorded_ids(state)
+    """The CSV matcher, plus the QuickBooks id check that makes reading again harmless. A payment
+    recorded in part (split over pay apps) comes back as its rest, with "(rest)" after the
+    reference as the split gave it."""
+    parts = recorded_parts(state)
+    left = []   # (row as proposed, cents of it already recorded, whether that is all of it)
+    for row in rows:
+        got = parts.get(row.get("qbo_id") or "", [])
+        whole = bool(got) and sum(got) >= row["amount_cents"]
+        if got and not whole:
+            row = {**row, "amount_cents": row["amount_cents"] - sum(got), "ref": (row["ref"] + " (rest)" * len(got))[:60]}
+        left.append((row, sum(got), whole))
     out = []
-    for row, result in zip(rows, qbo_csv.propose(state, rows)):
-        if row.get("qbo_id") and row["qbo_id"] in done:
-            result.update(status="already recorded", reason="This QuickBooks payment is already in Billdable.",
+    for (row, recorded, whole), result in zip(left, qbo_csv.propose(state, [r for r, _, _ in left])):
+        if whole:
+            result.update(status="already recorded", reason="This QuickBooks payment is already in Duracash.",
                           job_id=None, invoice_id=None, number=None)
+        elif recorded and result["status"] != "already recorded":
+            result["reason"] = f"The rest of this payment: {domain.money(recorded)} of it is already recorded. {result['reason']}"
         out.append(result)
     return out
 
@@ -286,7 +322,7 @@ def read_payments(company_id: str, state: dict[str, Any], days: int = 90) -> dic
 
 
 def reconcile(state: dict[str, Any], invoices: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Where Billdable and QuickBooks disagree about sent pay apps. Changes nothing."""
+    """Where Duracash and QuickBooks disagree about sent pay apps. Changes nothing."""
     payers = {p["id"]: p for p in state.get("payers", [])}
     by_number = {str(inv.get("DocNumber") or ""): inv for inv in invoices if inv.get("DocNumber")}
     unused = list(invoices)
@@ -296,11 +332,11 @@ def reconcile(state: dict[str, Any], invoices: list[dict[str, Any]]) -> list[dic
         for inv in job.get("invoices", []):
             if inv.get("status") not in {"sent", "approved", "partial", "paid"}:
                 continue
-            row = {"job_id": job["id"], "job": job["name"], "number": inv["number"]}
+            row = {"job_id": job["id"], "job": job["name"], "number": inv["number"], "invoice_id": inv["id"]}
             hit = by_number.get(inv["number"])
             if not hit:  # no number in common: the same customer and amount, once
                 same = [q for q in unused if _cents(q.get("TotalAmt")) == inv["amount_cents"]
-                        and payer and payer in qbo_csv._norm(str((q.get("CustomerRef") or {}).get("name") or ""))]
+                        and payer and f" {payer} " in f" {qbo_csv._norm(str((q.get('CustomerRef') or {}).get('name') or ''))} "]
                 hit = same[0] if len(same) == 1 else None
             if not hit:
                 out.append({**row, "kind": "missing", "detail": f"{inv['number']} ({domain.money(inv['amount_cents'])}) isn't in QuickBooks."})
@@ -316,3 +352,59 @@ def reconcile(state: dict[str, Any], invoices: list[dict[str, Any]]) -> list[dic
             elif balance and balance > 0 and inv["status"] == "paid":
                 out.append({**row, "kind": "open_in_qbo", "detail": f"{inv['number']} is paid here; {label} still shows {domain.money(balance)} owed."})
     return out
+
+
+# ----- the pay app as a QuickBooks invoice (R4-11) -----
+
+# QuickBooks Online's invoice import (Sales > Invoices > Import): one row per line, the invoice's
+# own fields repeated on each. Dates as MM/DD/YYYY, the US company default. Writing to QuickBooks
+# stays with the person: Duracash only hands over the file.
+INVOICE_COLUMNS = ["InvoiceNo", "Customer", "InvoiceDate", "DueDate", "Item", "ItemDescription", "ItemAmount"]
+EXPORTABLE = {"sent", "approved", "partial", "paid"}
+
+
+def _qb_date(iso: Any) -> str:
+    try:
+        return date.fromisoformat(str(iso or "")[:10]).strftime("%m/%d/%Y")
+    except ValueError:
+        return ""
+
+
+def _cell(text: Any) -> str:
+    """A text cell a spreadsheet won't run as a formula."""
+    text = " ".join(str(text or "").split())
+    return "'" + text if text[:1] in ("=", "+", "-", "@") else text
+
+
+def _item(line: dict[str, Any]) -> str:
+    if line.get("co_id"):
+        return "Change order"
+    if line["amount_cents"] < 0 and line["label"].startswith("Less retainage"):
+        return "Retainage"
+    if line["label"].startswith("Overhead and profit"):
+        return "Overhead and profit"
+    return "Contract work"
+
+
+def invoice_rows(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, str]]:
+    """The pay app's lines in INVOICE_COLUMNS: retainage is its own negative line, so the
+    amounts add up to what the customer owes on the pay app."""
+    if invoice.get("status") == "void":
+        raise domain.GateError(f"{invoice['number']} was deleted or pulled back, so there is nothing to put in QuickBooks.")
+    if invoice.get("status") not in EXPORTABLE:
+        raise domain.GateError(f"{invoice['number']} hasn't gone to the client, so it isn't ready for QuickBooks. Send it first.")
+    payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
+    issued = _qb_date(invoice.get("sent_at") or invoice.get("created_at"))
+    head = {"InvoiceNo": _cell(invoice["number"]), "Customer": _cell(payer.get("name", "")),
+            "InvoiceDate": issued, "DueDate": _qb_date(invoice.get("due_on")) or issued}
+    lines = invoice.get("lines") or [{"label": "Pay app " + invoice["number"], "amount_cents": invoice["amount_cents"]}]
+    return [{**head, "Item": _item(line), "ItemDescription": _cell(f"{job['name']}: {line['label']}"),
+             "ItemAmount": f"{line['amount_cents'] / 100:.2f}"} for line in lines]
+
+
+def invoice_csv(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=INVOICE_COLUMNS, lineterminator="\r\n")
+    writer.writeheader()
+    writer.writerows(invoice_rows(state, job, invoice))
+    return out.getvalue()

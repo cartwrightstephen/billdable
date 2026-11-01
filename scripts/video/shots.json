@@ -1,0 +1,73 @@
+{
+ "base": "http://127.0.0.1:8765",
+ "steps": [
+  {"login": ["owner@hartline.example", "demo"]},
+  {"reset": true},
+
+  {"go": "/today"},
+  {"js": "document.querySelector('.demo-tip, .tip')?.remove(); [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '×')?.click();"},
+  {"wait": 0.6},
+  {"clip": "01_today"},
+  {"wait": 1.2},
+  {"scroll": 560, "seconds": 1.8},
+  {"wait": 1.4},
+  {"end": true},
+
+  {"go": "/money/packet/job-inman"},
+  {"clip": "02_paperwork"},
+  {"wait": 0.8},
+  {"tap": "I have this", "then": 0.6},
+  {"type": ["where is it", "Signed waiver received by email"]},
+  {"wait": 0.3},
+  {"tap": "Save", "then": 1.4},
+  {"end": true},
+
+  {"go": "/jobs/job-inman"},
+  {"clip": "03_payapp"},
+  {"wait": 0.8},
+  {"tap": "Draft pay app", "then": 1.3},
+  {"tap": "Review & send", "then": 1.4},
+  {"scroll": 380, "seconds": 1.2},
+  {"wait": 0.6},
+  {"tap": "Approve & send", "then": 1.6},
+  {"end": true},
+
+  {"go": "/money/collections"},
+  {"clip": "04_followup"},
+  {"wait": 0.8},
+  {"tap": "Send follow-up", "then": 0.9},
+  {"tap": "Send follow-up", "then": 1.4},
+  {"end": true},
+
+  {"go": "/jobs/job-inman"},
+  {"clip": "05_paid"},
+  {"wait": 0.8},
+  {"tap": "Record a payment", "then": 0.8},
+  {"type": ["CHK", "CHK 4410"]},
+  {"wait": 0.3},
+  {"tap": "Record", "then": 1.6},
+  {"end": true},
+
+  {"go": "/jobs/job-inman"},
+  {"clip": "06_waiver"},
+  {"wait": 0.7},
+  {"tap": "Choose waiver and send", "then": 1.3},
+  {"tap": "Approve & send", "then": 1.6},
+  {"end": true},
+
+  {"go": "/jobs/job-inman"},
+  {"clip": "07_finish"},
+  {"wait": 0.7},
+  {"tap": "Finish job", "then": 0.9},
+  {"tap": "Finish job", "then": 1.6},
+  {"end": true},
+
+  {"go": "/settings/playbook"},
+  {"clip": "08_customers"},
+  {"wait": 0.9},
+  {"tap": "Ponce Property Co.", "then": 0.8},
+  {"scroll": 240, "seconds": 1.0},
+  {"wait": 1.8},
+  {"end": true}
+ ]
+}

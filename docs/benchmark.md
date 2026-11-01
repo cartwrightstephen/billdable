@@ -20,7 +20,7 @@ milliseconds.
 | 100 | 65 KB | 5.6 ms | 10.0 ms |
 | 200 | 113 KB | 9.3 ms | 17.2 ms |
 | 400 | 208 KB | 17.4 ms | 32.4 ms |
-| Now, JSON files (`BILLDABLE_STORAGE=json`) | | | |
+| Now, JSON files (`DURACASH_STORAGE=json`) | | | |
 | 100 | 65 KB | 4.4 ms | 12.9 ms |
 | 200 | 113 KB | 7.6 ms | 23.1 ms |
 | 400 | 208 KB | 14.2 ms | 43.0 ms |
@@ -42,7 +42,7 @@ milliseconds.
 | SQLite | 241 | 0 |
 | JSON files | 367 | 0 |
 
-Each company has its own lock (P2-5), so companies don't wait for each other in Billdable. SQLite
+Each company has its own lock (P2-5), so companies don't wait for each other in Duracash. SQLite
 still allows one writer at a time across the database and waits for the disk on every commit
 (`synchronous=FULL`, chosen because this is a money record), so many small companies write
 faster as separate JSON files. Before P2-5, one lock serialized every company's writes; the plan

@@ -2,8 +2,8 @@
 
 - Subscribe: a Stripe Checkout page for the one plan (STRIPE_PRICE_ID). While the free trial
   runs (trial.py), the subscription starts with Stripe's trial ending on the trial's last day.
-- The business plan ends the trial when the first pay app sent through Billdable is paid, which
-  is an event, not a date: when that happens, Billdable moves Stripe's trial end to the next
+- The business plan ends the trial when the first pay app sent through Duracash is paid, which
+  is an event, not a date: when that happens, Duracash moves Stripe's trial end to the next
   billing day.
 - Charges land on BILLING_DAY (the 5th by default), after the contractor's own 1st-of-the-month
   pay app is out, not on the signup date: a trial ends on a billing day, and a subscription
@@ -11,8 +11,9 @@
 - Design partners (up to 3, the business plan's $99 a month) pay STRIPE_PARTNER_PRICE_ID; a
   founder marks a company with "admin.py partner COMPANY_ID on".
 - Manage billing: Stripe's Customer Portal (card, invoices, cancel).
-- Stripe tells Billdable what happened through a signed webhook (STRIPE_WEBHOOK_SECRET); the
-  subscription's status is kept on the company.
+- Stripe tells Duracash what happened through a signed webhook (STRIPE_WEBHOOK_SECRET); the
+  status of each of the company's subscriptions is kept, and the company stands on its best
+  one (two checkouts in a row make two subscriptions; cancelling one leaves the other).
 - Enforcement is read-only, never deletion, and only with BILLING_ENFORCE=1: an unpaid or
   cancelled subscription, or a trial over BILLING_GRACE_DAYS (14) past its end with no
   subscription, makes the company read-only (server.read_only_reason). "Past due" (Stripe still
@@ -43,7 +44,21 @@ MIN_TRIAL_SECONDS = 2 * 24 * 3600  # Checkout refuses a trial_end less than 48 h
 HOLD_STATUSES = {"unpaid", "canceled", "incomplete_expired"}
 WARN_STATUSES = {"past_due", "incomplete"}
 GOOD_STATUSES = {"trialing", "active"}
+# Where a status comes in a subscription's life, for two events stamped in the same second.
+_STAGE = {"incomplete": 0, "canceled": 2, "incomplete_expired": 2}
 EVENTS_KEPT = 50
+
+
+def _rank(status: str) -> int:
+    """Which of a company's subscriptions it stands on: a live one, then one Stripe is still
+    retrying, then anything else, then an unpaid one, and one that has ended last."""
+    if status in GOOD_STATUSES:
+        return 4
+    if status in WARN_STATUSES:
+        return 3
+    if status in {"canceled", "incomplete_expired"}:
+        return 0
+    return 1 if status in HOLD_STATUSES else 2
 
 
 class BillingError(Exception):
@@ -141,8 +156,8 @@ def checkout_url(state: dict[str, Any], company_id: str, email: str, base_url: s
     data: dict[str, Any] = {
         "mode": "subscription",
         "line_items": [{"price": price_for(state), "quantity": 1}],
-        "success_url": f"{base_url}/settings?billing=done",
-        "cancel_url": f"{base_url}/settings",
+        "success_url": f"{base_url}/settings/billing?billing=done",
+        "cancel_url": f"{base_url}/settings/billing",
         "client_reference_id": company_id,
         "subscription_data": {"metadata": {"company_id": company_id}},
     }
@@ -169,7 +184,7 @@ def portal_url(state: dict[str, Any], base_url: str) -> str:
     customer = record(state).get("customer_id")
     if not customer:
         raise BillingError("There is no subscription to manage yet. Subscribe first.")
-    session = _post("/v1/billing_portal/sessions", {"customer": customer, "return_url": f"{base_url}/settings"})
+    session = _post("/v1/billing_portal/sessions", {"customer": customer, "return_url": f"{base_url}/settings/billing"})
     if not str(session.get("url", "")).startswith("https://"):
         raise BillingError("Stripe didn't return the billing page.")
     return session["url"]
@@ -181,17 +196,31 @@ def end_trial(subscription_id: str, now: datetime | None = None) -> None:
     _post(f"/v1/subscriptions/{parse.quote(subscription_id)}", {"trial_end": int(billing_moment(now + timedelta(hours=1)).timestamp())})
 
 
+TRIAL_END_TRIES = 5
+
+
 def trial_end_due(state: dict[str, Any], now: datetime | None = None) -> str | None:
     """The subscription whose Stripe trial should end now, because the first pay app was paid.
-    Marks it so the request is sent once; returns the subscription id, or None."""
+    Marks it so the request is sent once (until trial_end_failed unmarks it, at most
+    TRIAL_END_TRIES times); returns the subscription id, or None."""
     b = record(state)
-    if b.get("status") != "trialing" or not b.get("subscription_id") or b.get("trial_end_requested_at"):
+    tries = int(b.get("trial_end_tries") or 0)
+    if b.get("status") != "trialing" or not b.get("subscription_id") or b.get("trial_end_requested_at") or tries >= TRIAL_END_TRIES:
         return None
     t = trial.status(state, now)
     if t.get("state") != "ended" or t.get("reason") != "paid":
         return None
     b["trial_end_requested_at"] = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    b["trial_end_tries"] = tries + 1
     return b["subscription_id"]
+
+
+def trial_end_failed(state: dict[str, Any]) -> int:
+    """Stripe refused or couldn't be reached: unmark the request so the company's next change
+    sends it again (R6-06). Returns how many tries were made."""
+    b = record(state)
+    b.pop("trial_end_requested_at", None)
+    return int(b.get("trial_end_tries") or 0)
 
 
 # ----- what Stripe tells us -----
@@ -251,16 +280,32 @@ def apply(state: dict[str, Any], event: dict[str, Any]) -> str:
     del seen[:-EVENTS_KEPT]
     kind, obj, created = event.get("type", ""), event["data"]["object"], int(event.get("created") or 0)
     if kind == "checkout.session.completed":
-        b.update(customer_id=obj.get("customer") or b.get("customer_id"), subscription_id=obj.get("subscription") or b.get("subscription_id"))
+        if b.get("status") not in GOOD_STATUSES | WARN_STATUSES:  # a second checkout never hides the live subscription
+            b.update(customer_id=obj.get("customer") or b.get("customer_id"), subscription_id=obj.get("subscription") or b.get("subscription_id"))
         return "Subscribed through Stripe Checkout."
     if kind.startswith("customer.subscription."):
-        if created < int(b.get("status_at") or 0):
-            return ""  # Stripe doesn't promise order; an older status never overwrites a newer one
         status = "canceled" if kind == "customer.subscription.deleted" else str(obj.get("status") or "")
         before = b.get("status")
-        b.update(customer_id=obj.get("customer") or b.get("customer_id"), subscription_id=obj.get("id") or b.get("subscription_id"),
-                 status=status, status_at=created, period_end=_period_end(obj))
-        return f"Subscription {before or 'none'} → {status}." if status != before else ""
+        # Each subscription is kept on its own (two checkouts in a row make two), and the
+        # company stands on its best one: cancelling a duplicate leaves the live one in force.
+        subs = b.setdefault("subscriptions", {})
+        if not subs and b.get("subscription_id") and before:  # a record from before this list
+            subs[b["subscription_id"]] = {"status": before, "at": int(b.get("status_at") or 0),
+                                          "customer": b.get("customer_id"), "period_end": b.get("period_end")}
+        sub_id = str(obj.get("id") or b.get("subscription_id") or "")
+        mine = subs.get(sub_id) or {}
+        at = int(mine.get("at") or 0)
+        if created < at:
+            return ""  # Stripe doesn't promise order; an older status never overwrites a newer one
+        if created == at and _STAGE.get(status, 1) < _STAGE.get(mine.get("status") or "", 1):
+            return ""  # the same second: a subscription only moves on (incomplete first, cancelled last)
+        subs[sub_id] = {"status": status, "at": created, "customer": obj.get("customer") or mine.get("customer") or b.get("customer_id"),
+                        "period_end": _period_end(obj)}
+        best_id = max(subs, key=lambda k: (_rank(subs[k]["status"]), subs[k]["at"]))
+        best = subs[best_id]
+        b.update(customer_id=best.get("customer") or b.get("customer_id"), subscription_id=best_id or b.get("subscription_id"),
+                 status=best["status"], status_at=best["at"], period_end=best.get("period_end"))
+        return f"Subscription {before or 'none'} → {best['status']}." if best["status"] != before else ""
     if kind == "invoice.payment_failed":
         b["last_failed_at"] = created
         return "Stripe couldn't charge the card for the subscription."

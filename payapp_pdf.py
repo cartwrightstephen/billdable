@@ -1,7 +1,7 @@
 """The pay app as a PDF: an application-for-payment summary and a continuation sheet.
 
 The layout follows the familiar G702/G703 pattern (summary lines 1-9, then a
-line-by-line sheet), but it is Billdable's own document, not an AIA form, and
+line-by-line sheet), but it is Duracash's own document, not an AIA form, and
 it says so on every page. Waiver documents are not generated: lien waiver
 forms are set by state law, so the contractor supplies their own.
 
@@ -11,6 +11,9 @@ Helvetica and Courier fonts (no embedding), landscape US Letter.
 
 from __future__ import annotations
 
+import re
+import textwrap
+from datetime import datetime, timezone
 from typing import Any
 
 import sov
@@ -94,18 +97,57 @@ def _build(pages: list[_Page]) -> bytes:
     return bytes(out)
 
 
+def contract_terms(job: dict[str, Any], at: str | None = None) -> dict[str, Any]:
+    """The contract a pay app is figured against: lines 1 and 2, the change orders still unsigned,
+    retainage released and the overhead-and-profit row. Kept on a pay app when it is sent
+    (invoice["contract_at_send"]), so a change order approved or retainage released later goes
+    on the next pay app and never changes one already sent. `at` (a sent_at) works it out from
+    the dates for a pay app sent before that was kept; without it, as things stand now."""
+    def by_then(when: Any) -> bool:
+        return at is None or not when or str(when) <= at
+
+    approved, pending = 0, []
+    for co in job.get("change_orders", []):
+        status = co.get("status")
+        if status == "approved" and by_then(co.get("approved_at")):
+            approved += co["amount_cents"]
+        elif status in {"pending", "approved"} or (status == "withdrawn" and not by_then(co.get("withdrawn_at"))):
+            pending.append({"id": co["id"], "number": co.get("number", ""), "amount_cents": co["amount_cents"]})
+    payments = job.get("retainage_payments") or []
+    released = (sum(int(p.get("amount_cents") or 0) for p in payments if by_then(p.get("at")))
+                if at is not None and payments else int(job.get("retainage_released_cents") or 0))
+    bp = sov.op_bp(job)
+    return {
+        "original_cents": job["contract_cents"],
+        "approved_co_cents": approved,
+        "pending_cos": pending,
+        "released_cents": released,
+        "op_bp": bp,
+        "op_scheduled_cents": sov.markup(sum(l["scheduled_cents"] for l in sov.lines(job) if not l.get("co_id")), bp) if bp else 0,
+    }
+
+
+def terms_for(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, Any]:
+    """As it was sent; a deleted draft, as things stood when it was deleted; an open draft, as
+    things stand now."""
+    at = invoice.get("sent_at") or (invoice.get("voided_at") if invoice.get("status") == "void" else None)
+    return invoice.get("contract_at_send") or contract_terms(job, at)
+
+
 def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
     """Lines 1-9 of the application, from the pay apps up to and including this one, in the order
-    they were made. A voided pay app keeps its own position, so its figures read as they were."""
+    they were made. A voided pay app keeps its own position, so its figures read as they were.
+    The contract is the one it was sent against (terms_for)."""
     order = job.get("invoices", [])
     position = next((i for i, inv in enumerate(order) if inv is invoice or inv.get("id") == invoice.get("id")), len(order))
     up_to = [inv for inv in order[:position] if inv.get("status") in LIVE] + [invoice]
     earlier = up_to[:-1]
-    original = job["contract_cents"]
-    net_co = sum(co["amount_cents"] for co in job.get("change_orders", []) if co.get("status") == "approved")
+    terms = terms_for(job, invoice)
+    original = terms["original_cents"]
+    net_co = terms["approved_co_cents"]
     # Change orders billed while still unsigned are in the work completed, so they are shown in the
     # contract sum too, as their own line, rather than leaving the balance short.
-    pending_ids = {co["id"] for co in job.get("change_orders", []) if co.get("status") == "pending"}
+    pending_ids = {co["id"] for co in terms["pending_cos"]}
     unsigned = {}
     for inv in up_to:
         for line in inv.get("lines", []):
@@ -127,7 +169,7 @@ def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
         "contract_to_date": contract_to_date,
         "completed": completed,
         "retainage": retained,
-        "released": int(job.get("retainage_released_cents") or 0),
+        "released": terms["released_cents"],
         "earned": earned,
         "previous": previous,
         "due": invoice["amount_cents"],
@@ -149,7 +191,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
 
     def footer(page: _Page, n: int, total: int) -> None:
         page.line(MARGIN, 40, PAGE_W - MARGIN, 40)
-        page.text(MARGIN, 28, "Prepared with Billdable from the contractor's records. This is not an AIA document.", "F1", 7.5)
+        page.text(MARGIN, 28, "Prepared with Duracash from the contractor's records. This is not an AIA document.", "F1", 7.5)
         page.right(PAGE_W - MARGIN, 28, f"Page {n} of {total}", 7.5)
 
     # Page 1: the application summary.
@@ -161,12 +203,23 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
     if mark:
         p.text(MARGIN, y, mark, "F2", 11)
     p.right(PAGE_W - MARGIN, y, f"Date {date}", 10)
-    y -= 26
+    # The period it covers, when payment is due and whether it is the last one (R4-04).
+    if invoice.get("final") and status != "void":
+        p.text(MARGIN, y - 14, "FINAL APPLICATION", "F2", 11)
+    if invoice.get("period_to"):
+        y -= 14
+        p.right(PAGE_W - MARGIN, y, f"Period to {invoice['period_to']}", 10)
+    if invoice.get("due_on"):
+        y -= 14
+        p.right(PAGE_W - MARGIN, y, f"Payment due {invoice['due_on']}", 10)
+    elif invoice.get("final") and status != "void" and not invoice.get("period_to"):
+        y -= 14
+    y -= 20
     blocks = [
         ("TO", [payer.get("name", ""), payer.get("approver", ""), payer.get("ap_email", "")]),
         ("FROM", [company_name, company.get("address", ""),
                   " · ".join(x for x in [company.get("phone", ""), f"Lic. {company['license']}" if company.get("license") else ""] if x)
-                  or (f"Approved by {invoice['approved_by']}" if invoice.get("approved_by") else "")]),
+                  or (f"Sent by {invoice['approved_by']}" if invoice.get("approved_by") else "")]),
         ("PROJECT", [job.get("name", ""), job.get("address", ""), f"Contract {job['contract_number']}" if job.get("contract_number") else ""]),
     ]
     col = (PAGE_W - 2 * MARGIN) / 3
@@ -219,12 +272,35 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         page.right(PAGE_W - MARGIN, header_y, f"{invoice['number']} - {_fit(job.get('name', ''), 40)}", 9)
         return page, header_y - 28
 
+    def notes_on(page: _Page, y: float) -> tuple[_Page, float]:
+        """What the contractor wrote with the progress, under the lines (R4-12)."""
+        notes = str(invoice.get("progress_notes") or "").strip()
+        if not notes:
+            return page, y
+        wrapped = [w for para in notes.splitlines() for w in (textwrap.wrap(para, 120) or [""])]
+        y -= 10
+        if y < 90:
+            pages.append(page)
+            page, y = new_sheet_page("NOTES")
+        else:
+            page.text(MARGIN, y, "Notes", "F2", 10)
+            y -= 15
+        for line in wrapped:
+            if y < 60:
+                pages.append(page)
+                page, y = new_sheet_page("NOTES (continued)")
+            page.text(MARGIN, y, line, "F1", 9.5)
+            y -= 13
+        return page, y
+
     if sheet:
         # G703 columns: C scheduled, D previous work, E work this period, F materials stored,
-        # G completed and stored to date, G/C, H balance, I retainage at the job's percent.
-        widths = [5, 24, 13, 13, 13, 12, 13, 4, 13, 12]
-        heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "To date", "%", "Balance", "Retainage"]
-        pct_ret = int(job.get("retainage_pct") or 0)
+        # the quantity completed to date (Stephen's Oct 29 review, M2), G completed and stored to
+        # date, G/C, H balance, I retainage at the job's percent. 141 Courier characters at 8 pt
+        # fit the 720 pt between the margins.
+        widths = [5, 20, 13, 13, 13, 12, 12, 13, 4, 13, 12]
+        heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "Qty to date", "To date", "%", "Balance", "Retainage"]
+        pct_ret = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)   # as held on this pay app (R4-07)
         size = 8
 
         def row_text(cells: list[str]) -> str:
@@ -246,35 +322,56 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
                 y -= 16
             c = sov.sheet_columns(e, pct_ret)
             page.text(MARGIN, y, row_text([
-                _fit(e.get("item", ""), 5), _fit(e["description"], 24),
-                *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored", "to_date")),
+                _fit(e.get("item", ""), 5), _fit(e["description"], 20),
+                *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored")),
+                _fit(sov.qty_to_date(e), 12), f"{c['to_date'] / 100:,.2f}",
                 f"{c['pct']}%", f"{c['balance'] / 100:,.2f}", f"{c['retainage'] / 100:,.2f}",
             ]), "F3", size)
             for i, k in enumerate(("scheduled", "previous", "this_period", "stored", "to_date", "retainage")):
                 totals[i] += c[k]
             y -= 13
-        bp = sov.op_bp(job)
+        terms = terms_for(job, invoice)
+        bp = terms["op_bp"]
         if bp:
             # Overhead and profit as its own row, as of this pay app, so the totals match line 4.
             live = [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE]
             earlier = live[: live.index(invoice)] if invoice in live else live
             op_prev = sum(inv.get("op_cents", 0) for inv in earlier)
             op_this = invoice.get("op_cents", 0)
-            op_sched = sov.markup(sum(l["scheduled_cents"] for l in sov.lines(job) if not l.get("co_id")), bp)
+            op_sched = terms["op_scheduled_cents"]
             op_to = op_prev + op_this
             op_ret = sov.retainage_on(op_to, pct_ret)
-            page.text(MARGIN, y, row_text(["", _fit(f"Overhead and profit {bp / 100:g}%", 24), f"{op_sched / 100:,.2f}", f"{op_prev / 100:,.2f}",
-                                           f"{op_this / 100:,.2f}", "0.00", f"{op_to / 100:,.2f}",
+            page.text(MARGIN, y, row_text(["", _fit(f"Overhead and profit {bp / 100:g}%", 20), f"{op_sched / 100:,.2f}", f"{op_prev / 100:,.2f}",
+                                           f"{op_this / 100:,.2f}", "0.00", "", f"{op_to / 100:,.2f}",
                                            f"{(100 * op_to) // op_sched if op_sched else 0}%", f"{(op_sched - op_to) / 100:,.2f}",
                                            f"{op_ret / 100:,.2f}"]), "F3", size)
             for i, v in enumerate((op_sched, op_prev, op_this, 0, op_to, op_ret)):
                 totals[i] += v
             y -= 13
+        # Change orders billed while unsigned are not schedule lines yet; each gets its own row,
+        # so the totals match line 4 (which counts them, as line 2a does).
+        pending = {co["id"]: co for co in terms["pending_cos"]}
+        live = [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE]
+        earlier = live[: live.index(invoice)] if invoice in live else live
+        for co_id, co in pending.items():
+            prev = sum(l["amount_cents"] for inv in earlier for l in inv.get("lines", []) if l.get("co_id") == co_id)
+            this = sum(l["amount_cents"] for l in invoice.get("lines", []) if l.get("co_id") == co_id)
+            if not prev and not this:
+                continue
+            sched, to = co["amount_cents"], prev + this
+            ret = sov.retainage_on(to, pct_ret)
+            page.text(MARGIN, y, row_text(["", _fit(f"CO {co.get('number', '')} (unsigned)", 20), f"{sched / 100:,.2f}", f"{prev / 100:,.2f}",
+                                           f"{this / 100:,.2f}", "0.00", "", f"{to / 100:,.2f}",
+                                           f"{(100 * to) // sched if sched else 0}%", f"{(sched - to) / 100:,.2f}", f"{ret / 100:,.2f}"]), "F3", size)
+            for i, v in enumerate((sched, prev, this, 0, to, ret)):
+                totals[i] += v
+            y -= 13
         page.line(MARGIN, y + 8, PAGE_W - MARGIN, y + 8)
-        page.text(MARGIN, y - 4, row_text(["", "Totals", *(f"{t / 100:,.2f}" for t in totals[:5]), "",
+        page.text(MARGIN, y - 4, row_text(["", "Totals", *(f"{t / 100:,.2f}" for t in totals[:4]), "", f"{totals[4] / 100:,.2f}", "",
                                            f"{(totals[0] - totals[4]) / 100:,.2f}", f"{totals[5] / 100:,.2f}"]), "F3", size)
         if pct_ret:
             page.text(MARGIN, y - 18, f"Retainage column: {pct_ret}% of the total to date on each line, for reference. Line 5 on page 1 is the retainage actually held to date.", "F1", 8)
+        page, y = notes_on(page, y - 30)
         pages.append(page)
     else:
         page, y = new_sheet_page("PAY APP LINES")
@@ -288,12 +385,13 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         page.line(MARGIN, y + 8, PAGE_W - MARGIN, y + 8)
         page.text(MARGIN, y - 6, "Amount due this pay app", "F2", 10)
         page.right(PAGE_W - MARGIN, y - 6, _money(invoice["amount_cents"]), 10)
+        page, y = notes_on(page, y - 24)
         pages.append(page)
 
     packet = [item for item in invoice.get("packet") or [] if item.get("required")]
     if packet:
-        # Packet checklist on its own page so it never collides with the sheet.
-        page, y = new_sheet_page("PACKET CHECKLIST")
+        # Paperwork checklist on its own page so it never collides with the sheet.
+        page, y = new_sheet_page("PAPERWORK CHECKLIST")
         for item in packet:
             page.text(MARGIN, y, ("[x] " if item.get("present") else "[  ] ") + _fit(item["label"], 110), "F1", 10)
             y -= 15
@@ -304,3 +402,14 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
     for n, page in enumerate(pages, start=1):
         footer(page, n, len(pages))
     return _build(pages)
+
+
+def for_invoice(state: dict[str, Any], job_id: str, invoice_id: str) -> tuple:
+    """(PDF bytes, file name) of one pay app in a company's state, or (None, None) when it is gone."""
+    job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
+    invoice = next((i for i in (job or {}).get("invoices", []) if i["id"] == invoice_id), None)
+    if not invoice:
+        return None, None
+    payer = next((p for p in state.get("payers", []) if p["id"] == job["payer_id"]), {})
+    name = re.sub(r"[^A-Za-z0-9._-]", "-", invoice["number"]) + ".pdf"
+    return render(state.get("company", {}), job, payer, invoice), name

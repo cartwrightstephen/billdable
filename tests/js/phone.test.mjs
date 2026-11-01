@@ -1,0 +1,105 @@
+// Phone layout helpers (R6-02, R6-03, R6-04): node --test tests/js
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { isZeroMoney, KEEP_ZERO } from "../../static/js/dom.js";
+import { worstKind, webcalUrl } from "../../static/js/calendar.js";
+import { inBatches } from "../../static/js/net.js";
+import { doneLabel, sovProgressHtml, continuationHtml } from "../../static/js/sov.js";
+
+const css = readFileSync(new URL("../../static/styles.css", import.meta.url), "utf8");
+// The page's own code: app.js and the views it imports from js/views/ (R1-03).
+const staticDir = new URL("../../static/", import.meta.url);
+const viewFiles = readdirSync(new URL("js/views/", staticDir)).filter(f => f.endsWith(".js")).map(f => `js/views/${f}`);
+const app = ["app.js", ...viewFiles].map(f => readFileSync(new URL(f, staticDir), "utf8")).join("\n");
+const inboxView = readFileSync(new URL("js/views/inbox.js", staticDir), "utf8");
+
+test("a $0.00 money cell is hidden on a phone, except the contract total and the next step", () => {
+  assert.equal(isZeroMoney("$0.00"), true);
+  assert.equal(isZeroMoney(" -$0.00 "), true);
+  assert.equal(isZeroMoney("$10.00"), false);
+  assert.equal(isZeroMoney("$0.00 of $5.00"), false);
+  assert.equal(isZeroMoney("0%"), false);
+  assert.ok(KEEP_ZERO.has("Contract total") && KEEP_ZERO.has("Next"));
+  assert.match(css, /table\.stack td\.zero \{ display: none; \}/);
+});
+
+test("tables stay inside the screen; a schedule of values scrolls in its own box, then becomes cards", () => {
+  assert.match(css, /\.table-wrap:not\(\.sov-wrap\) \{ overflow: visible; \}/);
+  assert.doesNotMatch(css, /^\s*\.table-wrap \{ overflow: visible; \}/m);
+  assert.match(css, /@media \(max-width: 600px\) \{\s*table\.sov-table/);
+  // Every schedule-of-values table sits in a sov-wrap.
+  const j = { id: "j1", sov_view: { lines: [{ id: "l1", item: "1", description: "Tile", lump_sum: false, qty_milli: 5000, unit: "SF", done_milli: 1000, stored_cents: 0, billed_qty_milli: 0 }] } };
+  assert.match(sovProgressHtml(j), /class="table-wrap sov-wrap"><table class="sov-table">/);
+  assert.match(continuationHtml({ sov_lines: [{ item: "1", description: "Tile", scheduled_cents: 100, to_date_cents: 0, amount_cents: 0, unit: "SF" }] }, {}), /table-wrap sov-wrap/);
+  assert.equal((app.match(/<table class="sov-table/g) || []).length, (app.match(/table-wrap sov-wrap"><table class="sov-table/g) || []).length);
+});
+
+test("a progress line's box says what goes in it", () => {
+  assert.equal(doneLabel({ lump_sum: true, unit: "LS" }), "% done");
+  assert.equal(doneLabel({ lump_sum: false, unit: "SF" }), "Qty done (SF)");
+  const j = { id: "j1", sov_view: { lines: [{ id: "l1", item: "1", description: "Tile", lump_sum: true, qty_milli: 1000, unit: "LS", done_milli: 0, stored_cents: 0, billed_qty_milli: 0 }] } };
+  assert.match(sovProgressHtml(j), /data-label="% done"/);
+});
+
+test("a calendar day's dot takes its most pressing kind", () => {
+  assert.equal(worstKind([]), "");
+  assert.equal(worstKind([{ kind: "paid" }]), "paid");
+  assert.equal(worstKind([{ kind: "paid" }, { kind: "" }]), "other");
+  assert.equal(worstKind([{ kind: "" }, { kind: "waiver" }, { kind: "paid" }]), "waiver");
+  assert.equal(worstKind([{ kind: "waiver" }, { kind: "overdue" }]), "overdue");
+  assert.match(css, /\.cal-dot\.overdue/);
+});
+
+test("the calendar feed opens in a phone's calendar as webcal://", () => {
+  assert.equal(webcalUrl("https://app.duracash.com/api/calendar/abc.ics"), "webcal://app.duracash.com/api/calendar/abc.ics");
+  assert.equal(webcalUrl("http://127.0.0.1:8765/api/calendar/abc.ics"), "webcal://127.0.0.1:8765/api/calendar/abc.ics");
+  assert.equal(webcalUrl("javascript:alert(1)"), "");
+  assert.equal(webcalUrl(""), "");
+});
+
+test("uploads go two or three at a time, in order, counting as they finish", async () => {
+  let running = 0, most = 0;
+  const seen = [];
+  const out = await inBatches([5, 1, 3, 2, 4], 3, async (n) => {
+    running++; most = Math.max(most, running);
+    await new Promise((r) => setTimeout(r, n * 3));
+    running--;
+    return n * 10;
+  }, (done, total) => seen.push(`${done}/${total}`));
+  assert.deepEqual(out, [50, 10, 30, 20, 40]);
+  assert.equal(most, 3);
+  assert.deepEqual(seen, ["1/5", "2/5", "3/5", "4/5", "5/5"]);
+  assert.deepEqual(await inBatches([], 3, async () => 1), []);
+});
+
+test("a link-like button grows its touch area without changing the line's height", () => {
+  assert.match(css, /\.linkish::after \{ content: ""; position: absolute;/);
+  assert.doesNotMatch(css, /\.linkish, \.tab/);
+});
+
+test("Money has five tabs and Settings is split into Company, Team, My account and Billing", () => {
+  const money = /key: "money", label: "Money", views: (\[.*?\]) \},/.exec(app)[1];
+  assert.deepEqual(JSON.parse(money).map(([, label]) => label), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout"]);
+  const settings = /key: "settings", label: "Settings", views: (\[.*?\]) \},/.exec(app)[1];
+  assert.deepEqual(JSON.parse(settings).slice(0, 4).map(([v]) => v), ["company", "team", "account", "billing"]);
+  assert.match(css, /\.tabs\.more-right \{/);
+});
+
+test("the Inbox opens on Waiting; Import's file box has Take a photo before Choose files", () => {
+  const start = inboxView.indexOf("  inbox() {");
+  assert.ok(start > 0, "the Inbox view is in js/views/inbox.js");
+  const inbox = inboxView.slice(start, inboxView.indexOf("\n  },\n", start));
+  assert.ok(inbox.indexOf("Waiting (${items.length})") < inbox.indexOf("receivedHtml()"), "Waiting comes first");
+  const box = inboxView.slice(inboxView.indexOf("export function dropzoneHtml("));
+  assert.ok(box.indexOf(">Take a photo<") < box.indexOf(">Choose files<"));
+  assert.match(css, /@media \(pointer: coarse\), \(max-width: 600px\) \{\s*\.touch-only/);
+});
+
+test("seven sections on a computer; on a phone five, with Import/Export and Automations under More", () => {  // Oct 29 review
+  const sections = [...app.matchAll(/\{ key: "([\w-]+)", label: "([^"]+)"(, more: true)?, views:/g)].map(m => [m[2], !!m[3]]);
+  assert.deepEqual(sections.map(([l]) => l), ["Dashboard", "Jobs", "Communications", "Import/Export", "Money", "Automations", "Settings"]);
+  assert.deepEqual(sections.filter(([, more]) => more).map(([l]) => l), ["Import/Export", "Automations"]);
+  assert.match(css, /\.nav-more \{ display: none; \}/);
+  assert.match(css, /@media \(max-width: 800px\) \{\s*\.nav > \.nav-more-item \{ display: none; \}\s*\.nav-more \{ display: block; \}/);
+});

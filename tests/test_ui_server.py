@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
 import domain
+from waiver_help import signed_waiver
 import importer
 import server
 import storage
@@ -77,22 +78,55 @@ class UiServerTests(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
         return cookie, state["jobs"][-1]
 
+    # ----- idle sign-out (G2) -----
+
+    def test_idle_session_answers_401_with_the_reason_and_ping_keeps_it(self):
+        cookie, _ = self.company("idle@pine.example")
+        res, data = self.post("/api/auth/ping", {}, cookie)
+        self.assertEqual((res.status, data["idle_minutes"]), (200, 60))
+        res, body = self.get("/api/auth/me", {"Cookie": cookie})
+        self.assertEqual(json.loads(body)["idle_minutes"], 60)
+        token = cookie.split("=", 1)[1]
+        data = json.loads(auth.AUTH_PATH.read_text())
+        data["sessions"][auth._digest(token)]["last_seen_at"] = auth._iso(auth._utcnow() - auth.timedelta(minutes=61))
+        auth.AUTH_PATH.write_text(json.dumps(data))
+        res, body = self.get("/api/state", {"Cookie": cookie})
+        self.assertEqual(res.status, 401)
+        self.assertEqual(json.loads(body), {"error": "Signed out after an hour without use.", "idle": True})
+        res, body = self.get("/api/auth/me", {"Cookie": cookie})
+        self.assertEqual(res.status, 401)
+        self.assertNotIn("idle", json.loads(body), "the session is gone now, not idle again")
+
     # ----- page addresses, caching, 404 -----
 
     def test_app_pages_serve_the_app(self):
-        for path in ["/", "/today", "/today/calendar", "/jobs", "/jobs/job-abc123", "/money/pay-app/job-abc/inv-1",
-                     "/settings/helper-answers", "/inbox"]:
+        for path in ["/", "/dashboard", "/dashboard/calendar", "/jobs", "/jobs/daily", "/jobs/clients", "/jobs/job-abc123",
+                     "/communications", "/communications/outbox", "/data/import", "/data/export", "/automations",
+                     "/money/pay-app/job-abc/inv-1", "/settings/helper-answers",
+                     # the old addresses, which the page opens at their new ones
+                     "/today", "/today/calendar", "/today/daily", "/inbox", "/money/outbox", "/settings/playbook", "/settings/help"]:
             res, body = self.get(path)
             self.assertEqual(res.status, 200, path)
             self.assertIn(b'<div id="app">', body, path)
             self.assertEqual(res.getheader("Cache-Control"), "no-cache", path)
+
+    def test_the_summary_email_route_is_gone(self):  # T5: nothing in the app calls it
+        self.assertFalse(any("summary-email" in r.pattern for r in server.ROUTES))
+        self.assertFalse(hasattr(server.Handler, "_p_summary_email"))
+
+    def test_every_page_address_has_its_section(self):
+        # Each first part of a page address in static/js/routes.js (old ones included) serves the app.
+        import re
+        routes = (Path(__file__).resolve().parents[1] / "static" / "js" / "routes.js").read_text(encoding="utf-8")
+        firsts = {m.group(1) for m in re.finditer(r'"/([a-z]+)[^"]*"', routes)}
+        self.assertEqual(firsts - server.APP_SECTIONS, set())
 
     def test_unknown_pages_get_an_html_404_and_api_a_json_one(self):
         for path in ["/nope", "/today/../../server.py", "/jobs/a/b/c/d/e", "/static/app.js"]:
             res, body = self.get(path)
             self.assertEqual(res.status, 404, path)
             self.assertTrue(res.getheader("Content-Type").startswith("text/html"), path)
-            self.assertIn(b"Go to Billdable", body)
+            self.assertIn(b"Go to Duracash", body)
         res, body = self.get("/api/nope")
         self.assertEqual(res.status, 404)
         self.assertEqual(json.loads(body), {"error": "Not found"})
@@ -126,8 +160,25 @@ class UiServerTests(unittest.TestCase):
         _, page = self.get("/")
         self.assertIn(b'rel="manifest"', page)
 
+    def test_manifest_shortcuts_and_share_types(self):  # R6-04
+        _, body = self.get("/manifest.webmanifest")
+        manifest = json.loads(body)
+        names = [s["name"] for s in manifest["shortcuts"]]
+        self.assertEqual(names, ["Take a photo", "Daily record", "New job"])
+        for shortcut in manifest["shortcuts"]:
+            self.assertTrue(shortcut["url"].startswith("/"), shortcut)
+            res, page = self.get(shortcut["url"])
+            self.assertEqual(res.status, 200, shortcut["url"])
+            self.assertIn(b'<div id="app">', page, "each shortcut opens the app")
+            for icon in shortcut.get("icons", []):
+                self.assertEqual(self.get(icon["src"])[0].status, 200)
+        accept = manifest["share_target"]["params"]["files"][0]["accept"]
+        for ext in (".xls", ".doc", ".txt", ".xlsx", ".docx", ".pdf", ".eml", ".csv"):
+            self.assertIn(ext, accept)
+            self.assertIn(ext, importer.ALLOWED_FILES, "a shared file of this type is kept")
+
     def share(self, cookie=None):
-        boundary = "----billdable"
+        boundary = "----duracash"
         parts = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nOak tickets\r\n"
                  f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"ticket.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n").encode()
         body = parts + b"\xff\xd8fakejpeg" + f"\r\n--{boundary}--\r\n".encode()
@@ -143,7 +194,7 @@ class UiServerTests(unittest.TestCase):
 
     def test_share_from_the_phone_lands_in_the_inbox(self):  # P3: share target
         res = self.share()
-        self.assertEqual((res.status, res.getheader("Location")), (303, "/inbox"), "signed out: sent to sign in, nothing stored")
+        self.assertEqual((res.status, res.getheader("Location")), (303, "/communications"), "signed out: sent to sign in, held for this browser (R6-10)")
         cookie, _ = self.company("share@example.com")
         res = self.share(cookie)
         self.assertEqual(res.status, 303)
@@ -174,6 +225,15 @@ class UiServerTests(unittest.TestCase):
         self.assertIn("change order", " ".join(body["blockers"]))
         res, state = self.post(f"/api/jobs/{job['id']}/edit", {"name": "Oak kitchen, phase 1"}, cookie)
         self.assertEqual(res.status, 200)
+        # Retainage can change after the first pay app (R4-07): the open draft is drafted again at it.
+        res, state = self.post(f"/api/jobs/{job['id']}/edit", {"retainage_pct": 10}, cookie)
+        self.assertEqual(res.status, 200, state)
+        self.assertEqual(state["jobs"][-1]["invoices"][-1]["retainage_cents"], 40_000)
+        res, body = self.post(f"/api/jobs/{job['id']}/note-contact", {"text": "Pays Friday"}, cookie)
+        self.assertEqual((res.status, body["error"]), (409, "No sent pay app is waiting for payment."))
+        res, body = self.post(f"/api/jobs/{job['id']}/retainage", {"amount_cents": "lots"}, cookie)
+        self.assertEqual(res.status, 409)
+        self.assertIn("amount_cents", body["fields"])
 
     def test_delete_job_only_without_pay_apps(self):
         cookie, job = self.company("delete@example.com")
@@ -185,11 +245,17 @@ class UiServerTests(unittest.TestCase):
         self.post(f"/api/jobs/{job2['id']}/progress", {"completed_cents": 400_000}, cookie2)
         res, body = self.post(f"/api/jobs/{job2['id']}/delete", {}, cookie2)
         self.assertEqual(res.status, 409)
-        self.assertIn("Close it for the record", body["error"])
+        self.assertIn("Finish it instead", body["error"])
+        # A deleted draft is nothing billed (R3-09): the job can go.
+        res, state = self.post(f"/api/jobs/{job2['id']}/void-draft", {}, cookie2)
+        self.assertTrue(next(j for j in state["jobs"] if j["id"] == job2["id"])["can_delete"])
+        res, state = self.post(f"/api/jobs/{job2['id']}/delete", {}, cookie2)
+        self.assertEqual(res.status, 200, state)
+        self.assertFalse(any(j["id"] == job2["id"] for j in state["jobs"]))
 
     def test_change_order_description_is_kept(self):
         cookie, job = self.company("co@example.com")
-        res, state = self.post(f"/api/jobs/{job['id']}/add-co", {"title": "Two outlets", "amount_cents": 45_000,
+        res, state = self.post(f"/api/jobs/{job['id']}/add-co", {"title": "Two outlets", "amount_cents": 45_000, "reason": "owner_request",
                                                                  "description": "Island outlets per owner"}, cookie)
         self.assertEqual(res.status, 200)
         self.assertEqual(state["jobs"][-1]["change_orders"][-1]["description"], "Island outlets per owner")
@@ -208,6 +274,7 @@ class WaiverKindTests(unittest.TestCase):
 
     def test_kind_is_recorded_on_the_pay_app_and_in_the_email(self):
         state, job, inv = self.paid_job()
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"], kind="conditional_final")
         self.assertEqual(inv["waiver_kind"], "conditional_final")
         self.assertEqual(job["waiver_kind"], "Conditional waiver on final payment")
@@ -219,6 +286,7 @@ class WaiverKindTests(unittest.TestCase):
         with self.assertRaises(domain.GateError):
             domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"], kind="made_up")
         self.assertFalse(inv["waiver_sent"], "a refused kind sends nothing")
+        signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"])
         self.assertEqual(inv["waiver_kind"], domain.suggested_waiver_kind(job))
 

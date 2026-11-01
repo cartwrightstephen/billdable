@@ -29,6 +29,7 @@ WHSEC = "whsec_test_secret"
 
 class FakeStripe(BaseHTTPRequestHandler):
     calls = []
+    fail_next = 0   # answer this many requests with a 500, as Stripe on a bad day
 
     def log_message(self, *a):
         pass
@@ -36,6 +37,15 @@ class FakeStripe(BaseHTTPRequestHandler):
     def do_POST(self):
         form = parse_qs(self.rfile.read(int(self.headers["Content-Length"])).decode())
         FakeStripe.calls.append((self.path, {k: v[0] for k, v in form.items()}, self.headers.get("Authorization")))
+        if FakeStripe.fail_next:
+            FakeStripe.fail_next -= 1
+            body = json.dumps({"error": {"message": "Try again later."}}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         reply = {"/v1/checkout/sessions": {"id": "cs_1", "url": "https://checkout.stripe.com/c/pay/cs_1"},
                  "/v1/billing_portal/sessions": {"id": "bps_1", "url": "https://billing.stripe.com/p/session/bps_1"}}.get(self.path, {"id": "sub_1"})
         body = json.dumps(reply).encode()
@@ -86,6 +96,55 @@ class BillingUnitTests(unittest.TestCase):
         billing.apply(state, event("customer.subscription.deleted", {"id": "sub_1", "status": "active"}, 300, "e3"))
         self.assertEqual(state["company"]["billing"]["status"], "canceled")
 
+    def test_same_second_events_never_go_back_to_incomplete(self):
+        # Stripe stamps created and updated in the same second and may deliver updated first.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_1", "customer": "cus_1", "status": "active"}, 300, "e2"))
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_1", "customer": "cus_1", "status": "incomplete"}, 300, "e1"))
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+        # A cancellation in the same second as an update stays cancelled whichever arrives last.
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_1", "status": "active"}, 400, "e4"))
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_1", "status": "active"}, 400, "e3"))
+        self.assertEqual(state["company"]["billing"]["status"], "canceled")
+        # In order, the same second still moves forward.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_1", "status": "incomplete"}, 500, "f1"))
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_1", "status": "active"}, 500, "f2"))
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+
+    def test_cancelling_a_second_subscription_keeps_the_live_one(self):
+        # Two Checkouts before the first webhook landed: two customers, two subscriptions.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_A", "customer": "cus_A", "status": "active"}, 100, "a1"))
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_B", "customer": "cus_B", "status": "active"}, 110, "b1"))
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_B", "customer": "cus_B", "status": "active"}, 200, "b2"))
+        b = state["company"]["billing"]
+        self.assertEqual((b["status"], b["subscription_id"], b["customer_id"]), ("active", "sub_A", "cus_A"))
+        # Cancelling the other one instead also leaves the company subscribed.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_A", "customer": "cus_A", "status": "active"}, 100, "a1"))
+        billing.apply(state, event("customer.subscription.created", {"id": "sub_B", "customer": "cus_B", "status": "active"}, 110, "b1"))
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_A", "customer": "cus_A", "status": "active"}, 200, "a2"))
+        b = state["company"]["billing"]
+        self.assertEqual((b["status"], b["subscription_id"], b["customer_id"]), ("active", "sub_B", "cus_B"))
+        # Both gone: cancelled.
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_B", "customer": "cus_B", "status": "active"}, 300, "b2"))
+        self.assertEqual(state["company"]["billing"]["status"], "canceled")
+        # A late, older event about one subscription doesn't hide a newer one about the other.
+        state = {"company": {}}
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_A", "customer": "cus_A", "status": "active"}, 300, "a1"))
+        billing.apply(state, event("customer.subscription.updated", {"id": "sub_B", "customer": "cus_B", "status": "unpaid"}, 200, "b1"))
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_A", "customer": "cus_A"}, 400, "a2"))
+        self.assertEqual(state["company"]["billing"]["status"], "unpaid")
+
+    def test_a_record_from_before_the_list_of_subscriptions_is_kept(self):
+        state = {"company": {"billing": {"customer_id": "cus_A", "subscription_id": "sub_A", "status": "active", "status_at": 100}}}
+        billing.apply(state, event("customer.subscription.deleted", {"id": "sub_B", "customer": "cus_B"}, 200, "b2"))
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+        self.assertEqual(billing.apply(state, event("customer.subscription.updated", {"id": "sub_A", "status": "past_due"}, 50, "a0")), "")
+        self.assertEqual(state["company"]["billing"]["status"], "active")
+
     def test_standing_holds_only_when_enforced_and_never_for_past_due(self):
         now = datetime.now(timezone.utc)
         env = {"STRIPE_SECRET_KEY": "sk_test", "STRIPE_PRICE_ID": "price_1", "BILLING_ENFORCE": "1"}
@@ -115,7 +174,7 @@ class BillingHttpTests(unittest.TestCase):
         threading.Thread(target=cls.stripe.serve_forever, daemon=True).start()
         cls.env = mock.patch.dict("os.environ", {"STRIPE_SECRET_KEY": "sk_test_1", "STRIPE_PRICE_ID": "price_1", "STRIPE_WEBHOOK_SECRET": WHSEC,
                                                  "STRIPE_API_BASE": f"http://127.0.0.1:{cls.stripe.server_address[1]}",
-                                                 "BILLING_ENFORCE": "1", "BILLDABLE_URL": "https://billdable.example"})
+                                                 "BILLING_ENFORCE": "1", "DURACASH_URL": "https://duracash.example"})
         cls.env.start()
         cls.httpd = server.Server(("127.0.0.1", 0), server.Handler)
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
@@ -214,6 +273,51 @@ class BillingHttpTests(unittest.TestCase):
         self.assertEqual((ends.day, ends.hour), (5, 12), "the first charge lands on the billing day (the 5th), not at once")
         self.assertTrue(now < ends <= now + timedelta(days=32))
         self.assertTrue(server.load_company(cid)["company"]["billing"]["trial_end_requested_at"], "sent once")
+
+    def paid_pay_app(self, email, sub):
+        cookie, cid = self.signup(email)
+        now = datetime.now(timezone.utc)
+        state = seed_state()
+        state["company"]["trial"] = {"started_at": (now - timedelta(days=2)).isoformat(timespec="seconds")}
+        state["company"]["billing"] = {"status": "trialing", "subscription_id": sub, "customer_id": "cus_" + sub}
+        job = next(j for j in state["jobs"] if j["code"] == "BRK")
+        inv = next(i for i in job["invoices"] if i["status"] == "sent")
+        inv["sent_at"] = (now - timedelta(days=1)).isoformat(timespec="seconds")
+        server.save_company(cid, state)
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/match-payment", {"amount_cents": inv["amount_cents"], "reference": "4471",
+                                                                                  "invoice_id": inv["id"]}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        return cookie, cid
+
+    def wait_for(self, test):
+        for _ in range(100):
+            if test():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_a_failed_trial_end_is_tried_again_on_the_next_change(self):  # R6-06
+        FakeStripe.fail_next = 1
+        path = "/v1/subscriptions/sub_retry"
+        cookie, cid = self.paid_pay_app("bill4@example.com", "sub_retry")
+        record = lambda: server.load_company(cid)["company"]["billing"]
+        # The stand-in refuses the first request: the mark is cleared, so it isn't stuck "sent".
+        self.assertTrue(self.wait_for(lambda: sum(c[0] == path for c in FakeStripe.calls) == 1 and not record().get("trial_end_requested_at")))
+        self.assertEqual(record()["trial_end_tries"], 1)
+        res, _ = self.request("POST", "/api/payers", {"name": "Next Change GC"}, cookie=cookie)
+        self.assertEqual(res.status, 200)
+        self.assertTrue(self.wait_for(lambda: sum(c[0] == path for c in FakeStripe.calls) == 2), "the next change asks again")
+        self.assertTrue(self.wait_for(lambda: record().get("trial_end_requested_at")))
+        self.assertEqual(record()["trial_end_tries"], 2)
+
+    def test_trial_end_stops_after_five_tries(self):  # R6-06
+        state = {"company": {"billing": {"status": "trialing", "subscription_id": "sub_9", "trial_end_tries": billing.TRIAL_END_TRIES}}}
+        with mock.patch.object(billing.trial, "status", lambda st, now=None: {"state": "ended", "reason": "paid"}):
+            self.assertIsNone(billing.trial_end_due(state))
+            state["company"]["billing"]["trial_end_tries"] = billing.TRIAL_END_TRIES - 1
+            self.assertEqual(billing.trial_end_due(state), "sub_9")
+            self.assertEqual(billing.trial_end_failed(state), billing.TRIAL_END_TRIES)
+            self.assertIsNone(billing.trial_end_due(state), "the fifth failure was the last")
 
 
 if __name__ == "__main__":

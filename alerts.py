@@ -60,8 +60,8 @@ def notify(key: str, text: str, send: Callable[[str, str], None] | None = None) 
     target = url()
     if not target or not _allowed(key, time.monotonic()):
         return False
-    env = (os.environ.get("BILLDABLE_ENV") or "development").strip()
-    message = f"Billdable ({env}): {text}"
+    env = (os.environ.get("DURACASH_ENV") or "development").strip()
+    message = f"Duracash ({env}): {text}"
     if send:
         send(target, message)
     else:

@@ -5,19 +5,31 @@ from the repository folder, or on Render from the service's **Shell** tab (it op
 with the service's settings). Nothing here was run against the live service; the Render steps
 follow `render.yaml` and should be checked the first time through.
 
+The server runs as the `duracash` user, not root (R6-09); the Shell tab may open as root. A
+`backup.py` or `admin.py` command run as root writes files the server can't change until its
+next restart (the start script hands the data folder back then), so start each with
+`setpriv --reuid=duracash --regid=duracash --init-groups`, for example
+`setpriv --reuid=duracash --regid=duracash --init-groups python3 admin.py companies`, or restart
+the service after.
+
 ## 1. Deploy
 
 1. Open a pull request into `dev`. GitHub Actions runs the tests; merge only when it is green.
-2. Merging into `dev` deploys **billdable-staging** (free, throwaway data, no email). Click
+2. Merging into `dev` deploys **duracash-staging** (free, throwaway data, no email). Click
    through the change there: sign up, create a job, draft a pay app, open the PDF.
-3. Open a pull request from `dev` into `main` and merge it. Render deploys **billdable**.
+3. Open a pull request from `dev` into `main` and merge it. Render deploys **duracash**.
 4. Check `https://<site>/healthz`: `ok` is true, `env` is `production`, `last_backup` is the
    same time as before the deploy (a new one appears within `BACKUP_HOURS`).
 5. Sign in. If the deploy went wrong, Render's **Rollback** on the previous deploy puts the old
    code back; the data on the disk is not touched by a rollback.
 
 The first production deploy with the disk: deploy twice and repeat step 4 both times. Only then
-set `BILLDABLE_DATA_PERSISTENT=1`.
+set `DURACASH_DATA_PERSISTENT=1`.
+
+The first deploy that runs as the `duracash` user (R6-09): at step 4 also check that `ok` is
+true and `disk_free_mb` is shown, then make one change (add a note to a job) and reload, so a
+write to the disk is seen to work. If the log says "Permission denied" under the data folder,
+roll back and check the disk's mount path matches `DURACASH_DATA_DIR`.
 
 ## 2. Restore from a backup
 
@@ -29,15 +41,19 @@ python3 backup.py list
 
 1. In Render, **Suspend** the service so nothing writes during the restore.
 2. In the Shell tab: `python3 backup.py restore /var/data/backups/<file>.tar.gz`. The current
-   data is moved to `/var/data/pre-restore-<time>/`, never deleted.
+   data is moved to `/var/data/pre-restore-<time>/`, never deleted. That includes the list of
+   deleted companies, the QuickBooks connections and the monthly and daily job records: the
+   backup's copies come back with the companies, so a company deleted after the backup is back
+   and can be changed. A backup made with `BACKUP_UPLOADS=0` leaves the uploads on the disk as
+   they are; to restore them too, use the off-site copy.
 3. **Resume** the service and sign in.
 
 From the off-site copy (disk lost, or the local backups are bad):
 
-1. Download the newest `billdable-….tar.gz.age` from the B2 bucket.
+1. Download the newest `duracash-….tar.gz.age` from the B2 bucket.
 2. On a laptop with the age private key: `age -d -i key.txt FILE.age > backup.tar.gz`
 3. Copy `backup.tar.gz` to the server (or restore on a laptop to inspect it first with
-   `BILLDABLE_DATA_DIR=/tmp/check python3 backup.py restore backup.tar.gz`), then follow the
+   `DURACASH_DATA_DIR=/tmp/check python3 backup.py restore backup.tar.gz`), then follow the
    local steps above.
 
 **Monthly drill.** A backup nobody has restored is a guess. Once a month, in the Shell tab
@@ -74,7 +90,7 @@ A customer's inbound email, text or calendar address that leaked: the owner uses
 
 ## 4. Delete a company on request
 
-The owner can do it in the app: **Settings → Team & account → Delete the company**. When they
+The owner can do it in the app: **Settings → Company → Your data, reset and delete → Delete the company**. When they
 can't (they lost access, or asked by email):
 
 1. Confirm the request comes from the account's owner (reply to the email on the account).
@@ -116,8 +132,8 @@ Something is down, data looks wrong, or a leak is suspected.
 
 Once the Intuit Developer app exists (setup doc, section 1):
 
-1. In the Intuit app's settings, add the redirect URI `<BILLDABLE_URL>/api/qbo/callback`, for
-   example `https://billdable.onrender.com/api/qbo/callback`, for both Development and Production.
+1. In the Intuit app's settings, add the redirect URI `<DURACASH_URL>/api/qbo/callback`, for
+   example `https://duracash.onrender.com/api/qbo/callback`, for both Development and Production.
 2. On Render, set `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET` (the Development keys first) and keep
    `QBO_ENV` unset: that is the sandbox.
 3. An owner opens **Money → Payments → Connect QuickBooks**, signs in to Intuit and picks the
@@ -128,9 +144,10 @@ Once the Intuit Developer app exists (setup doc, section 1):
    `qbo.py` were written from Intuit's documentation and tested only against a stand-in.
 5. For real companies: Intuit's production keys (after their app review), `QBO_ENV=production`.
 
-Tokens are in `qbo_connections.json` in the data directory and are not in the backups: after a restore onto a new disk,
-or when a connection expires (Intuit's refresh tokens last about 100 days unused), an
-owner presses Connect QuickBooks again. Disconnect revokes the token at Intuit.
+Tokens are in `qbo_connections.json` in the data directory, and the backups hold it (R6-06): a
+restore keeps the connection. When a connection expires (Intuit's refresh tokens last about 100
+days unused), or one was made after the backup that was restored, an owner presses Connect
+QuickBooks again. Disconnect revokes the token at Intuit.
 
 ## 7. Billing with Stripe
 
@@ -138,7 +155,7 @@ Needs the company's Stripe account (after the entity exists).
 
 1. In Stripe (test mode first): create the product and its monthly price; copy the price id
    (`price_…`) and the secret key (`sk_test_…`).
-2. **Developers → Webhooks → Add endpoint**: `<BILLDABLE_URL>/api/stripe/webhook`, with the
+2. **Developers → Webhooks → Add endpoint**: `<DURACASH_URL>/api/stripe/webhook`, with the
    events `checkout.session.completed`, `customer.subscription.created`,
    `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` and
    `invoice.payment_failed`. Copy its signing secret (`whsec_…`).
@@ -150,7 +167,7 @@ Needs the company's Stripe account (after the entity exists).
    subscription unpaid and check the company shows the read-only banner once `BILLING_ENFORCE=1`.
 
 The free trial carries over: a company that subscribes during it starts with Stripe's trial
-ending on its last day, and when its first pay app is paid Billdable ends Stripe's trial, so
+ending on its last day, and when its first pay app is paid Duracash ends Stripe's trial, so
 the first charge follows the business plan. Charges land on the 5th (`BILLING_DAY`), after the
 contractor's own pay apps are out: a trial ends on the next 5th, and a subscription started after
 the trial is anchored to the 5th with the first part-month prorated. A company that bills

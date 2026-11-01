@@ -78,6 +78,47 @@ class RouteEdgeTests(unittest.TestCase):
         self.assertIn(res.status, {400, 409})
 
 
+    def test_the_team_routes_need_manage_the_team(self):  # R6-08, S6
+        team = {r.handler: r for r in server.ROUTES if r.method == "POST" and r.pattern.startswith(("/api/team", "/api/account"))}
+        self.assertEqual(set(team), {"_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
+                                     "_p_profile_save", "_p_profile_delete", "_p_admin_hand_over"})
+        self.assertTrue(all(r.access == "body" for r in team.values()))
+        # Handing over and deleting are the Company Admin's, checked in their handlers (S8).
+        self.assertTrue(all(r.perm == "team" for h, r in team.items() if h not in {"_p_account_delete", "_p_admin_hand_over"}))
+        # Only owners add, change or delete profiles (A4, Oct 30 review).
+        self.assertTrue(all(r.owner for h, r in team.items() if h in {"_p_profile_save", "_p_profile_delete"}))
+        owner, me = self.signup("team-routes@example.com")
+        res, out = self.request("POST", "/api/team/invite", {"email": "team-member@example.com", "role": "member"}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": out["invite_path"].split("#invite=")[1],
+                                                                       "name": "Mo Member", "password": "member password 1"})
+        self.assertEqual(res.status, 200, joined)
+        member = res.getheader("Set-Cookie").split(";")[0]
+        res, out = self.request("POST", "/api/team/invite", {"email": "late@example.com"}, cookie=owner)
+        invite_id = self.request("GET", "/api/team", cookie=owner)[1]["invites"][0]["id"]
+        for path, body in (("/api/team/invite", {"email": "x@example.com"}), (f"/api/team/invites/{invite_id}/revoke", {}),
+                           (f"/api/team/{me['id']}/role", {"role": "member"}), (f"/api/team/{me['id']}/remove", {}),
+                           ("/api/account/delete", {"password": "member password 1", "confirm": "Pine Builders"})):
+            res, data = self.request("POST", path, body, cookie=member)
+            self.assertEqual(res.status, 403, path)
+            self.assertIn(data.get("error"), (server.NO_PERMISSION, "Only the Company Admin can delete the company."), path)
+        # Profiles are an owner's: the refusal says so, not to ask someone who manages the team.
+        for path in ("/api/team/profiles", "/api/team/profiles/prof-x", "/api/team/profiles/prof-x/delete"):
+            res, data = self.request("POST", path, {"name": "Site lead", "permissions": []}, cookie=member)
+            self.assertEqual(res.status, 403, path)
+            self.assertEqual(data.get("error"), "Only an owner can add, change or delete permission profiles.", path)
+        res, data = self.request("POST", f"/api/team/invites/{invite_id}/revoke", {}, cookie=owner)
+        self.assertEqual((res.status, data["invites"]), (200, []))
+        res, data = self.request("POST", f"/api/team/{joined['user']['id']}/role", {"role": "owner"}, cookie=owner)
+        self.assertEqual(res.status, 200)
+        self.assertEqual(next(u for u in data["users"] if u["id"] == joined["user"]["id"])["role"], "owner")
+        res, data = self.request("POST", f"/api/team/{joined['user']['id']}/remove", {}, cookie=owner)
+        self.assertEqual((res.status, data["rotated"]), (200, True))
+        res, _ = self.request("POST", f"/api/team/{me['id']}/nope", {}, cookie=owner)
+        self.assertEqual(res.status, 404, "an unknown team action is not found")
+        _, page = self.request("GET", "/api/audit", cookie=owner)
+        self.assertTrue(any("revoked an invite" in e["detail"] for e in page["entries"] if e["action"] == "team"))
+
     def test_per_view_endpoints(self):
         cookie, _ = self.signup("views@example.com")
         job = {"name": "Ash", "customer": "Ash GC", "contract_cents": 100000, "address": "1 Ash St", "approver": "Al Ash", "ap_email": "ap@ashgc.com"}
@@ -121,8 +162,9 @@ class RouteEdgeTests(unittest.TestCase):
                 for block in re.findall(rb"<style>(.*?)</style>", body, re.S):
                     self.assertIn(base64.b64encode(hashlib.sha256(block).digest()).decode(), csp, path)
                 self.assertNotIn(b'style="', body, path)
-        app = (Path(server.__file__).parent / "static" / "app.js").read_text()
-        self.assertNotIn('style="', app, "style attributes are blocked by the CSP; use a class")
+        static = Path(server.__file__).parent / "static"
+        for page in [static / "app.js", *sorted((static / "js" / "views").glob("*.js"))]:
+            self.assertNotIn('style="', page.read_text(), f"{page.name}: style attributes are blocked by the CSP; use a class")
 
 
     def test_app_is_a_module_and_its_imports_are_served(self):
@@ -133,10 +175,18 @@ class RouteEdgeTests(unittest.TestCase):
         conn.close()
         self.assertIn('<script type="module" src="/app.js?v=', page)
         static = Path(server.__file__).parent / "static"
-        imports = set(re.findall(r'from "\./(js/[a-z]+\.js)"', (static / "app.js").read_text()))
-        for module in sorted((static / "js").glob("*.js")):
-            imports |= {"js/" + m for m in re.findall(r'from "\./([a-z]+\.js)"', module.read_text())}
-        self.assertGreaterEqual(len(imports), 6)
+        # Every module the page loads, followed from app.js through each import (js/views/ too).
+        imports, todo = set(), [static / "app.js"]
+        while todo:
+            module = todo.pop()
+            for rel in re.findall(r'^import [^;]*? from "(\.{1,2}/[a-z/-]+\.js)";$', module.read_text(), re.M):
+                target = (module.parent / rel).resolve()
+                name = target.relative_to(static.resolve()).as_posix()
+                if name not in imports:
+                    imports.add(name)
+                    todo.append(target)
+        self.assertGreaterEqual(len(imports), 20)
+        self.assertTrue({"js/app-core.js", "js/views/job.js", "js/views/money.js"} <= imports)
         for rel in sorted(imports):
             conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
             conn.request("GET", "/" + rel)

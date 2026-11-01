@@ -178,6 +178,14 @@ def sheet_columns(entry: dict[str, Any], retainage_pct: int = 0) -> dict[str, in
     }
 
 
+def qty_to_date(entry: dict[str, Any]) -> str:
+    """The quantity completed to date on a sheet entry, with its unit (Stephen's Oct 29 review,
+    M2), or "" for a lump sum and for entries from before quantities were kept."""
+    if str(entry.get("unit", "")).upper() == "LS" or entry.get("qty_milli_to_date") is None:
+        return ""
+    return f"{fmt_qty(entry['qty_milli_to_date'])} {entry.get('unit', '')}".strip()
+
+
 def totals(job: dict[str, Any]) -> dict[str, int]:
     base = [l for l in lines(job) if not l.get("co_id")]
     cos = [l for l in lines(job) if l.get("co_id")]
@@ -215,8 +223,10 @@ def billed(job: dict[str, Any]) -> dict[str, Any]:
     for inv in live_invoices(job):
         for entry in inv.get("sov_lines", []):
             by_line[entry["line_id"]] = by_line.get(entry["line_id"], 0) + entry["amount_cents"]
-            qty_by_line[entry["line_id"]] = max(qty_by_line.get(entry["line_id"], 0), entry["qty_milli_to_date"])
+        # Quantities come from the whole continuation sheet: a line can move on a $0 period
+        # (stored materials installed) and still be on the pay app at its new quantity.
         for entry in inv.get("sov_sheet") or inv.get("sov_lines", []):
+            qty_by_line[entry["line_id"]] = max(qty_by_line.get(entry["line_id"], 0), entry.get("qty_milli_to_date", 0))
             work = entry.get("work_to_date_cents", entry["to_date_cents"])
             work_by_line[entry["line_id"]] = max(work_by_line.get(entry["line_id"], 0), work)
         op += inv.get("op_cents", 0)
@@ -235,6 +245,7 @@ def this_period(job: dict[str, Any]) -> dict[str, Any]:
     for line in lines(job):
         to_date = line_to_date(line)
         amount = to_date - already["by_line"].get(line["id"], 0)
+        credit = line["scheduled_cents"] < 0 and amount < 0
         previous_qty = already["qty_by_line"].get(line["id"], 0)
         completed = line_completed(line)
         prev_work = min(already["work_by_line"].get(line["id"], 0), completed)
@@ -248,7 +259,8 @@ def this_period(job: dict[str, Any]) -> dict[str, Any]:
             "qty_milli_this": max(0, line["done_milli"] - previous_qty),
             "qty_milli_to_date": line["done_milli"],
             "qty_milli": line["qty_milli"],
-            "amount_cents": max(0, amount),
+            # A credit change order's line (R3-06) bills negative, coming off this pay app.
+            "amount_cents": amount if credit else max(0, amount),
             "to_date_cents": to_date,
             "work_to_date_cents": completed,
             "prev_work_cents": prev_work,
@@ -257,7 +269,7 @@ def this_period(job: dict[str, Any]) -> dict[str, Any]:
         }
         # The continuation sheet lists every line, like a G703; only lines with new work are billed.
         sheet.append(entry)
-        if amount > 0:
+        if amount > 0 or credit:
             out.append(entry)
     op_this = max(0, totals(job)["op_to_date_cents"] - already["op_cents"])
     return {"lines": out, "sheet": sheet, "op_cents": op_this, "total_cents": sum(l["amount_cents"] for l in out) + op_this}
@@ -283,14 +295,16 @@ def continuation_sheet(job: dict[str, Any], invoice: dict[str, Any]) -> str:
     entries = invoice.get("sov_sheet") or invoice.get("sov_lines") or []
     if not entries:
         return ""
-    pct_ret = int(job.get("retainage_pct") or 0)
-    rows = [("Item", "Description", "Scheduled", "Previous", "This period", "Stored", "To date", "%", "Balance", "Retainage")]
+    pct_ret = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)  # as held on this pay app (R4-07)
+    rows = [("Item", "Description", "Scheduled", "Previous", "This period", "Stored", "Qty to date", "To date", "%", "Balance", "Retainage")]
     for e in entries:
         c = sheet_columns(e, pct_ret)
         rows.append((
             e.get("item", ""),
             e["description"][:40],
-            *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored", "to_date")),
+            *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored")),
+            qty_to_date(e),
+            f"{c['to_date'] / 100:,.2f}",
             f"{c['pct']}%",
             f"{c['balance'] / 100:,.2f}",
             f"{c['retainage'] / 100:,.2f}",
@@ -327,7 +341,11 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
             if not description:
                 raise SovError("needs a description")
             unit = str(raw.get("unit") or "").strip()[:12]
-            qty = to_milli(raw.get("quantity", 1) if raw.get("quantity") not in (None, "") else 1, "quantity")
+            # A blank quantity (spaces too, as the editor reads it) is one: a lump sum.
+            quantity = raw.get("quantity")
+            qty = to_milli(1 if quantity is None or str(quantity).strip() == "" else quantity, "quantity")
+            if str(raw.get("rate") if raw.get("rate") is not None else "").strip() == "":
+                raise SovError("needs a price (unit rate)")
             rate = to_cents(raw.get("rate"), "rate")
             if qty <= 0:
                 raise SovError("quantity must be more than zero")
@@ -348,7 +366,7 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
         while line_id in used or (not prior and line_id in old):
             line_id = new_id()
         used.add(line_id)
-        out.append({
+        entry = {
             "id": line_id,
             "item": str(raw.get("item") or "").strip()[:12] or str(n),
             "description": description,
@@ -357,8 +375,12 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
             "rate_cents": rate,
             "scheduled_cents": scheduled,
             "done_milli": min(prior["done_milli"], qty) if prior else 0,
+            "stored_cents": 0,
             "co_id": None,
-        })
+        }
+        if prior:  # materials stored on the line stay, within what the edited line has left
+            entry["stored_cents"] = max(0, min(int(prior.get("stored_cents") or 0), scheduled - line_completed(entry)))
+        out.append(entry)
     if errors:
         raise SovError(" ".join(errors[:10]) + (f" And {len(errors) - 10} more." if len(errors) > 10 else ""))
     return out
@@ -376,37 +398,162 @@ HEADER_WORDS = {
 }
 NUMBER_RE = re.compile(r"^\(?-?\$?(?:\d[\d,]{0,20})?(?:\.\d{1,6})?\)?%?$")
 QTY_UNIT_RE = re.compile(r"^(\d[\d,]*(?:\.\d+)?)\s+([A-Za-z]{1,6}\.?)$")
+# "Tile 1200 SF @ 8.50", "1,200 sf at $8.50/sf" or "300 LF x 4.25" in one cell: a description (optional),
+# a quantity, a unit (optional) and a rate.
+AT_RATE_RE = re.compile(
+    r"^(?:(?P<desc>[^@]*?[A-Za-z][^@]*?)\s+)?(?P<qty>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>[A-Za-z]{1,6}\.?)?"
+    r"\s*(?P<sep>@|\bat\b|\bx\b)\s*(?P<dollar>\$)?(?P<rate>\d[\d,]*(?:\.\d{1,2})?)\s*(?:/\s*[A-Za-z]{1,6}\.?|\bper\s+[A-Za-z]{1,6}\.?)?$",
+    re.I,
+)
+# The one-cell patterns (AT_RATE_RE, DESC_QTY_UNIT_RE, DESC_AMOUNT_RE) slow down with the square of
+# a line's length when run whole. `_tail_match` reads them the same way in linear time: the part after
+# the description (quantity, unit, rate, amount) is matched where it can start, a whitespace run
+# within the last TAIL characters, and the description before it is checked once.
+TAIL = 80
+# What follows the description in each pattern, anchored at the end as in the whole pattern.
+AT_RATE_TAIL_RE = re.compile(AT_RATE_RE.pattern.split(r"\s+)?", 1)[1], re.I)
+_LETTER_I_RE = re.compile(r"[A-Za-z]", re.I)
+_LETTER_RE = re.compile(r"[A-Za-z]")
+_SPACE_THEN_TEXT_RE = re.compile(r"\s(?=\S)")
+
+
+def _tail_match(text: str, tail_re: "re.Pattern[str]", desc_ok, desc_optional: bool = False) -> "dict[str, Any] | None":
+    """A description, a space and `tail_re`, read as the whole one-cell pattern reads it (the
+    shortest description that fits), with `desc_ok` saying whether a description fits, as
+    {group: text}. With `desc_optional`, a line that is the tail alone matches too, desc None."""
+    start = max(0, len(text) - TAIL)
+    for m in _SPACE_THEN_TEXT_RE.finditer(text, max(0, start - 1)):
+        q = m.end()
+        t = tail_re.match(text, q)
+        if t:
+            desc = text[:q].rstrip()
+            if desc and desc_ok(desc):
+                return {**t.groupdict(), "desc": desc}
+    if desc_optional and len(text) <= TAIL and (t := tail_re.match(text)):
+        return {**t.groupdict(), "desc": None}
+    return None
+
+
+def _desc_amount(line: str) -> "dict[str, Any] | None":
+    """DESC_AMOUNT_RE.match(line.strip())."""
+    return _tail_match(line.strip(), DESC_AMOUNT_TAIL_RE,
+                       lambda d: "," not in d and '"' not in d and _LETTER_RE.search(d) is not None)
+
+
+def _at_rate(cell: str) -> "dict[str, Any] | None":
+    """AT_RATE_RE, except that "x" between two plain numbers is a size ("Ceiling grid 2 x 2", "Tile
+    12 x 24"), not a rate: "x" counts only with a unit word before it or a $ on the rate."""
+    m = _tail_match(cell.strip(), AT_RATE_TAIL_RE, lambda d: "@" not in d and _LETTER_I_RE.search(d) is not None, True)
+    if m and m["sep"].lower() == "x" and not m["dollar"] and (m["unit"] or "").lower().rstrip(".") not in UNIT_WORDS:
+        return None
+    return m
+
+
 ITEM_RE = re.compile(r"^[A-Za-z]?\d+(\.\d+)*[A-Za-z]?$")
+# Words that say "how many", not "how much": a lone number followed by one of these is a quantity
+# with no price ("Site cleanup, 3 loads"), never a lump sum of $3. LS and "lot" are left out on purpose.
+UNIT_WORDS = frozenset("""
+    ea each pc pcs piece pieces unit units set sets
+    load loads trip trips truck trucks
+    hr hrs hour hours day days wk wks week weeks mo mos month months
+    lf ft feet foot sf sqft sy cy cf yd yds m m2 m3 lm
+    ton tons lb lbs gal gals bag bags roll rolls sheet sheets box boxes pallet pallets
+    crew crews man men visit visits
+""".split())
+# "Concrete 2,400 SF" or "Haul 3 loads" in one cell: a description, a quantity and a unit word.
+DESC_QTY_UNIT_RE = re.compile(r"^(?P<desc>.*?[A-Za-z].*?)\s+(?P<qty>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>[A-Za-z]{1,6}\.?)$")
+DESC_QTY_UNIT_TAIL_RE = re.compile(DESC_QTY_UNIT_RE.pattern.split(r"\s+", 1)[1])
+
+
+def _desc_qty_unit(cell: str) -> "dict[str, Any] | None":
+    m = _tail_match(cell.strip(), DESC_QTY_UNIT_TAIL_RE, lambda d: "\n" not in d and _LETTER_RE.search(d) is not None)
+    return m if m and m["unit"].lower().rstrip(".") in UNIT_WORDS else None
+
+
+# "Mobilization 12,500" or "Demo $3,500" on its own line: a description and a lump sum.
+DESC_AMOUNT_RE = re.compile(r"^(?P<desc>[^,\"]*?[A-Za-z][^,\"]*?)\s+(?P<amount>\$?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)$")
+DESC_AMOUNT_TAIL_RE = re.compile(DESC_AMOUNT_RE.pattern.split(r"\s+", 1)[1])
 TOTAL_RE = re.compile(r"^(sub\s*-?\s*total|grand\s+total|total|totals|overhead|o\s*&\s*p|profit|markup|retainage)\b", re.I)
 
 
 def _split_rows(text: str) -> list[list[str]]:
     # Bounded before any pattern runs: 2,000 lines of 2,000 characters, 30 cells of 200.
-    lines_in = [line[:2000] for line in text.splitlines()[:2000]]
+    # A NUL byte (pasted from a binary file) would stop csv on older Pythons; it never means anything here.
+    lines_in = [line[:2000].replace("\x00", "") for line in text.splitlines()[:2000]]
     rows = []
     if any("\t" in line for line in lines_in):
         # Copied from Excel or Google Sheets.
         rows = list(csv.reader(lines_in, delimiter="\t"))
     else:
+        # A saved CSV file: some other line (a header, say) splits its cells with a comma and no space.
+        # Then "Building 2,750" is two cells too, "Building 2" and 750, not a lump sum of 2,750.
+        saved_csv = any(_saved_csv_row(line) for line in lines_in)
         for line in lines_in:
             if re.search(r"\S {2,}\S", line.strip()):
                 # Columns separated by runs of spaces (copied from a PDF); commas are thousands separators.
                 rows.append(re.split(r" {2,}", line.strip()))
+            elif ((r := _at_rate(line) or _desc_qty_unit(line)) and "," in line
+                  and "," not in (r["desc"] or "")):
+                # "Floor tile 1,200 sf at $8.50/sf" or "Concrete 2,400 SF": the comma is a thousands
+                # separator, not a column.
+                rows.append([line.strip()])
+            elif not saved_csv and (d := _desc_amount(line)):
+                # "Mobilization 12,500": the comma is a thousands separator, not a column.
+                rows.append([d["desc"], d["amount"]])
             else:
-                rows.extend(_join_dollars(row) for row in csv.reader([line]))
+                # Typed when a cell starts with a space (", " between cells); a ", " inside a quoted
+                # cell ("Doors, solid") doesn't count.
+                rows.extend(_join_thousands(row, any(c[:1].isspace() for c in row[1:])) for row in csv.reader([line]))
     rows = [[c.strip()[:200] for c in row[:MAX_CELLS]] for row in rows]
     return [r for r in rows if any(c for c in r)]
 
 
-def _join_dollars(row: list[str]) -> list[str]:
-    """In a typed comma row, "$12,500.00" splits into "$12" and "500.00"; put it back together."""
+def _saved_csv_row(line: str) -> bool:
+    """A line with cells split by a comma and no space ("Description,Amount"), and none of the shapes
+    where that comma is a thousands separator ("Mobilization 12,500", "Concrete 2,400 SF")."""
+    line = line.strip()
+    if "," not in line or re.search(r"\S {2,}\S", line) or _desc_amount(line):
+        return False
+    if (r := _at_rate(line) or _desc_qty_unit(line)) and "," not in (r["desc"] or ""):
+        return False
+    cells = next(csv.reader([line]), [])
+    return len(cells) > 1 and not any(c[:1].isspace() for c in cells[1:])
+
+
+def _join_thousands(row: list[str], spaced: bool) -> list[str]:
+    """In a typed comma row, "$12,500.00" splits into "$12" and "500.00"; put it back together.
+    Without a $ sign, "Demo, 3,500" is joined too when the row puts a space after its other commas
+    (`spaced`): the comma with no space is then a thousands separator. A row with no ", " at all is
+    a saved CSV file, where "Demo,3,500" means quantity 3 at $500, so it stays split. The joined part may
+    run on into a unit and a rate ("Tile, 1,200 SF @ 8.50", "6 mo at 2,500/mo"). The number may also end
+    a text cell ("6 mo at 2" then "500/mo"); a description that then ends in a plain amount
+    ("Mobilization 12" then "500") gives the amount its own cell, so the row keeps its cell count."""
+    groups = r"\$\d{1,3}(,\d{3})*" if not spaced else r"\$?\d{1,3}(,\d{3})*"
     out: list[str] = []
     for cell in row:
-        if out and re.match(r"^\s*\$\d{1,3}(,\d{3})*$", out[-1]) and re.match(r"^\d{3}(\.\d{1,2})?$", cell):
-            out[-1] = out[-1] + "," + cell
+        m = out and re.match(r"^(?P<head>(?:.*\s)?)(?P<num>" + groups + r")$", out[-1])
+        if m and re.match(r"^\d{3}(\.\d{1,2})?(?=$|\s+\D|\s*/)", cell):
+            joined = out[-1] + "," + cell
+            if (re.search(r"[A-Za-z]", m["head"]) and re.match(r"^\d{3}(\.\d{1,2})?$", cell)
+                    and not (_at_rate(joined) or _desc_qty_unit(joined))):
+                out[-1:] = [m["head"].rstrip(), m["num"] + "," + cell]
+            else:
+                out[-1] = joined
         else:
             out.append(cell)
     return out
+
+
+def _counts_units(row: list[str], at: int, description_at: int) -> str:
+    """The unit word next to the number at row[at] ("3 loads", "12 hrs", or "loads, 3" from a sheet with
+    Unit before Qty), so it counts things rather than dollars; "" when there is none. The description
+    cell is never the unit. A number with a $ sign is always money."""
+    if "$" in row[at]:
+        return ""
+    for i in (at + 1, at - 1):
+        if 0 <= i < len(row) and i != description_at and row[i].lower().rstrip(".") in UNIT_WORDS:
+            return row[i]
+    return ""
 
 
 def _is_number(cell: str) -> bool:
@@ -430,39 +577,73 @@ def _header_map(row: list[str]) -> dict[str, int] | None:
 def parse_rows(text: str) -> dict[str, Any]:
     """Read schedule-of-values rows pasted from Excel, Google Sheets, a CSV or a PDF.
 
-    With a header row, columns are taken by name. Without one: the first text
+    With a header row (one of the first 5), columns are taken by name. Without one: the first text
     cell is the description, a short text cell is the unit, and the numbers are
     quantity and rate (two numbers), quantity, rate and amount (three), or a
-    lump-sum amount (one). Total and markup rows are skipped and reported.
+    lump-sum amount (one). One number next to a unit word ("3 loads", or
+    "loads, 3" when Unit comes before Qty) is a quantity with no price: the line
+    comes back with a blank rate and needs_price set, and a warning says to enter
+    the rate. Under a header, a quantity with the rate and amount blank comes back
+    the same way. Total and markup rows are skipped and reported.
     """
     rows = _split_rows(text or "")
     lines_out: list[dict[str, str]] = []
     warnings: list[str] = []
-    header = _header_map(rows[0]) if rows else None
-    body = rows[1:] if header else rows
+    # The header can sit under a title line or two (a company name, "Schedule of values"):
+    # look for it in the first 5 rows, the way qbo_csv looks in its first 20.
+    header, at = None, 0
+    for i, row in enumerate(rows[:5]):
+        header = _header_map(row)
+        if header:
+            at = i
+            break
+    for i, row in enumerate(rows[:at]):
+        title = next((c for c in row if c), "")[:80]
+        warnings.append(f"Row {i + 1} ({title}) skipped: text above the header.")
+    body = rows[at + 1:] if header else rows
     op_hint = ""
-    for n, row in enumerate(body, start=2 if header else 1):
+    for n, row in enumerate(body, start=at + 2 if header else 1):
         if header:
             cell = lambda f: row[header[f]].strip() if f in header and header[f] < len(row) else ""
             description, unit, item = cell("description"), cell("unit"), cell("item")
             qty, rate, amount = cell("quantity"), cell("rate"), cell("amount")
         else:
-            # "1,200 lf" in one cell is a quantity and a unit.
+            # "1,200 lf" in one cell is a quantity and a unit; "Tile 1200 SF @ 8.50" is a description,
+            # a quantity, a unit and a rate; "Haul 3 loads" a description, a quantity and a unit.
+            # A description is split only when it is the only cell on the row: next to other cells,
+            # "General conditions 16 wks" or "Ceiling grid 2 x 2" is a name, and its numbers stay in it.
+            alone = sum(1 for c in row if c) == 1
             split_row: list[str] = []
             for c in row:
                 m = QTY_UNIT_RE.match(c)
-                split_row.extend([m.group(1), m.group(2)] if m else [c])
+                r = None if m else _at_rate(c)
+                if r and r["desc"] and not alone:
+                    r = None
+                d = None if m or r or not alone else _desc_qty_unit(c)
+                if m:
+                    split_row.extend([m.group(1), m.group(2)])
+                elif r:
+                    split_row.extend(x for x in (r["desc"], r["qty"], r["unit"], r["rate"]) if x)
+                elif d:
+                    split_row.extend([d["desc"], d["qty"], d["unit"]])
+                else:
+                    split_row.append(c)
             row = split_row
             texts = [(i, c) for i, c in enumerate(row) if c and not _is_number(c)]
-            numbers = [c for c in row if _is_number(c)]
+            at_numbers = [i for i, c in enumerate(row) if _is_number(c)]
             item = ""
             if row and ITEM_RE.match(row[0]) and len(texts) >= 1 and texts[0][0] > 0:
                 item = row[0]
-                numbers = [c for c in row[1:] if _is_number(c)]
+                at_numbers = [i for i in at_numbers if i > 0]
+            numbers = [row[i] for i in at_numbers]
             description = texts[0][1] if texts else ""
             unit = next((c for _, c in texts[1:] if len(c) <= 8), "")
             qty = rate = amount = ""
-            if len(numbers) == 1:
+            count_unit = _counts_units(row, at_numbers[0], texts[0][0] if texts else -1) if len(numbers) == 1 else ""
+            if count_unit:
+                # "Site cleanup, 3 loads": how many, not how much. No price is made up.
+                qty, unit = numbers[0], count_unit
+            elif len(numbers) == 1:
                 amount = numbers[0]
             elif len(numbers) == 2:
                 qty, rate = numbers
@@ -502,7 +683,24 @@ def parse_rows(text: str) -> dict[str, Any]:
                 if qty:
                     warnings.append(f"Row {n} ({description}): amount doesn't divide evenly by the quantity, so it was read as a lump sum.")
             elif qty:
-                warnings.append(f"Row {n} ({description}) has a quantity but no rate or amount; skipped.")
+                # A quantity with no rate or amount, under a header or as "3 loads": the line comes in
+                # with the rate blank and needs_price, never skipped and never priced.
+                q, r = to_milli(qty, "quantity"), 0
+                if q <= 0:
+                    warnings.append(f"Row {n} ({description}) has a zero or negative number; skipped.")
+                    continue
+                warnings.append(f"Row {n} ({description}): {(fmt_qty(q) + ' ' + unit).strip()} has no price. Enter the unit rate before you save.")
+                lines_out.append({
+                    "item": item[:12],
+                    "description": description[:200],
+                    "unit": unit[:12],
+                    "quantity": fmt_qty(q).replace(",", ""),
+                    "rate": "",
+                    "needs_price": True,
+                })
+                if len(lines_out) >= MAX_LINES:
+                    warnings.append(f"Stopped at {MAX_LINES} lines.")
+                    break
                 continue
             else:
                 warnings.append(f"Row {n} ({description}) has no numbers; skipped.")
