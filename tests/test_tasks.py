@@ -32,7 +32,7 @@ class LocalDayTests(unittest.TestCase):
 
     def test_an_undated_row_is_not_dated_with_the_utc_day(self):
         state = server.empty_state("Pine Builders")
-        domain.create_job(state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St")
+        domain.create_job(state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St", approver="Porch rebuild", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         evening = datetime(2026, 10, 30, 0, 30, tzinfo=timezone.utc)  # Oct 29, 8:30 pm in New York
         self.assertEqual([r["due"] for r in domain.today_rows(state, evening)], [""])
 
@@ -47,9 +47,9 @@ class LocalDayTests(unittest.TestCase):
         state = server.empty_state("Pine Builders")
         utc = datetime.now(timezone.utc).date()
         yesterday = (utc - timedelta(days=1)).isoformat()
-        job = domain.create_job(state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St", today=yesterday)
+        job = domain.create_job(state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St", today=yesterday, approver="Porch rebuild", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertEqual(job["started_on"], yesterday)
-        other = domain.create_job(state, "Deck", "Dana Lee", 1_000_000, address="2 Elm St")
+        other = domain.create_job(state, "Deck", "Dana Lee", 1_000_000, address="2 Elm St", approver="Deck", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertEqual(other["started_on"], utc.isoformat())
         domain.add_daily_record(state, job["id"], "Framing", "Ana", details={"today": yesterday})
         self.assertEqual(job["records"][-1]["label"], f"Daily record {yesterday}")
@@ -61,7 +61,7 @@ class RowTests(unittest.TestCase):
     def setUp(self):
         self.state = server.empty_state("Pine Builders")
         self.job = domain.create_job(self.state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St",
-                                     approver="Dana", ap_email="dana@example.com")
+                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner")
         self.payer = self.state["payers"][0]
 
     def rows(self, now=NOW):
@@ -159,7 +159,7 @@ class HandTaskTests(unittest.TestCase):
     def setUp(self):
         self.state = server.empty_state("Pine Builders")
         self.job = domain.create_job(self.state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St",
-                                     approver="Dana", ap_email="dana@example.com")
+                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner")
 
     def test_add_edit_and_tick_off_with_every_change_audited(self):
         t = domain.add_task(self.state, {"title": "  Order  the tile ", "job_id": self.job["id"], "assignee_id": "u-mo", "due": "2026-11-03"},
@@ -289,7 +289,7 @@ class TaskHttpTests(ServerCase):
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))
         member, mo = self.member_of(owner, "mo@tasks.example")
         res, out = self.request("POST", "/api/jobs", {"name": "Porch", "customer": "Dana Lee", "contract_cents": 1_000_000, "address": "1 Elm St",
-                                                      "approver": "Dana", "ap_email": "dana@example.com"}, cookie=owner)
+                                                      "approver": "Dana", "ap_email": "dana@example.com", "phone": "(404) 555-0100", "role": "Owner"}, cookie=owner)
         self.assertEqual(res.status, 200, out)
         # A member adds a task for the owner; someone from another company can't be assigned.
         res, state = self.request("POST", "/api/tasks", {"title": "Order tile", "assignee_id": data["user"]["id"], "due": "2026-11-03"}, cookie=member)
@@ -330,7 +330,7 @@ class TaskHttpTests(ServerCase):
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))
         member, mo = self.member_of(owner, "mo@digest.example")
         self.request("POST", "/api/jobs", {"name": "Porch", "customer": "Dana Lee", "contract_cents": 1_000_000, "address": "1 Elm St",
-                                           "approver": "Dana", "ap_email": "dana@example.com"}, cookie=owner)
+                                           "approver": "Dana", "ap_email": "dana@example.com", "phone": "(404) 555-0100", "role": "Owner"}, cookie=owner)
         _, state = self.request("GET", "/api/state", cookie=owner)
         self.request("POST", "/api/tasks/assign", {"key": state["today_rows"][0]["key"], "assignee_id": mo["id"]}, cookie=owner)
         self.request("POST", "/api/tasks", {"title": "Sign the contract", "assignee_id": data["user"]["id"]}, cookie=owner)

@@ -114,16 +114,39 @@ test("New job: the four address boxes, Client type only for a new client, the st
   const forms = await import("../../static/js/forms.js");
   try {
     let html = reg.views.jobs();
-    for (const box of ["nj-street", "nj-city", "nj-state", "nj-zip", "nj-start"]) assert.match(html, new RegExp(`id="${box}"`));
+    assert.doesNotMatch(html, /id="nj-customer"|id="nj-client"/, "the choice comes first");
+    assert.match(html, /data-action="nj-client-mode" data-mode="existing"/);
+    assert.match(html, /data-action="nj-client-mode" data-mode="new"/);
+    assert.match(html, /<div data-payer-slot="phone" hidden>/);
+    forms.formDraft.newjob = { client_mode: "new" };
+    html = reg.views.jobs();
+    for (const box of ["nj-street", "nj-city", "nj-state", "nj-zip", "nj-start", "nj-end", "nj-customer"]) assert.match(html, new RegExp(`id="${box}"`));
     assert.match(html, /<div data-payer-slot="client_type">/);
+    assert.match(html, /<div data-payer-slot="phone">/);
     assert.match(html, /Import contract/);
     const today = new Date();
     const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     assert.match(html, new RegExp(`id="nj-start"[^>]*value="${iso}"`));
-    forms.formDraft.newjob = { customer: "ellison" };
+    forms.formDraft.newjob = { client_mode: "existing", customer: "Ellison" };
     html = reg.views.jobs();
+    assert.match(html, /id="nj-client"/);
     assert.match(html, /<div data-payer-slot="client_type" hidden>/, "a saved client keeps its own type");
     assert.match(html, /General contractor\. Pay apps go to/);
+    // Only what it is missing is asked, right there.
+    for (const box of ["approver", "ap_email", "phone"]) assert.match(html, new RegExp(`<div data-payer-slot="${box}">`));
+    core.setState({ ...company(), jobs: [], payers: [{ ...saved, approver: "Sam", ap_email: "a@b.example" }] });
+    html = reg.views.jobs();
+    assert.match(html, /<div data-payer-slot="approver" hidden>/);
+    assert.match(html, /<div data-payer-slot="ap_email" hidden>/);
+    assert.match(html, /<div data-payer-slot="phone">/);
+    assert.match(html, /no phone yet/);
+    // The server's list decides: a signer that only defaulted is asked to be confirmed, a type never picked is asked.
+    core.setState({ ...company(), jobs: [], payers: [{ ...saved, name: "Ellison", approver: "Ellison", ap_email: "a@b.example", phone: "1", playbook_missing: ["client_type", "approver"] }] });
+    html = reg.views.jobs();
+    assert.match(html, /<div data-payer-slot="client_type">/);
+    assert.match(html, /<div data-payer-slot="approver">/);
+    assert.match(html, /id="nj-approver"[^>]*value="Ellison"/);
+    assert.match(html, /<div data-payer-slot="phone" hidden>/);
   } finally { page.formOpen.newjob = false; delete forms.formDraft.newjob; }
 });
 
@@ -205,4 +228,29 @@ test("Client playbook: the paperwork as checkboxes and Other, the client type, a
     assert.doesNotMatch(html, /name="packet"/, "no free-text paperwork box");
     assert.match(html, /<h2>Add client<\/h2>\s*<div class="contract-import" data-contract-import="addpayer">/);
   } finally { page.formOpen.addpayer = false; }
+});
+
+test("the job page says what the client's playbook is missing, with the way to fix it (Decisions 3 and 4)", async () => {
+  const { playbookMissingHtml } = await import("../../static/js/views/job-paperwork.js");
+  const j = { payer: { id: "p-1", name: "Ellison" }, playbook_missing: ["phone", "ap_email"], playbook_blocks: true };
+  const html = playbookMissingHtml(j);
+  assert.match(html, /missing phone, email for pay apps/);
+  assert.match(html, /can't start or go out/);
+  assert.match(html, /data-action="open-client-card" data-id="p-1"/);
+  assert.equal(playbookMissingHtml({ ...j, playbook_blocks: false }), "", "an older job isn't held up, and says nothing");
+  assert.equal(playbookMissingHtml({ ...j, playbook_missing: [] }), "");
+});
+
+test("Paperwork for this job: the client's list until it is changed, and the way back (per job)", async () => {
+  const { jobPaperworkHtml } = await import("../../static/js/views/job-paperwork.js");
+  const j = { id: "j-1", payer: { name: "Ellison" }, paperwork_view: { own: false, labels: ["Signed contract"], none: false, legacy: false } };
+  let html = jobPaperworkHtml(j);
+  assert.match(html, /Signed contract/);
+  assert.match(html, /Ellison's list/);
+  assert.doesNotMatch(html, /use-client-paperwork/);
+  html = jobPaperworkHtml({ ...j, paperwork_view: { own: true, labels: [], none: true, legacy: false } });
+  assert.match(html, /Nothing needed\./);
+  assert.match(html, /Changed for this job/);
+  assert.match(html, /data-action="use-client-paperwork" data-id="j-1"/);
+  assert.equal(jobPaperworkHtml({ ...j, paperwork_view: { ...j.paperwork_view, legacy: true } }), "");
 });

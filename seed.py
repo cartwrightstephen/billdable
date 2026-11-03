@@ -51,6 +51,7 @@ def _seed() -> dict:
             {
                 "id": "payer-ellison",
                 "name": "Ellison Residential",
+                "client_type": "owner",
                 "role": "Owner",
                 "approver": "Mara Ellison",
                 "ap_email": "ap@ellisonresidential.example",
@@ -64,6 +65,7 @@ def _seed() -> dict:
             {
                 "id": "payer-north",
                 "name": "Northline GC",
+                "client_type": "gc",
                 "role": "GC",
                 "approver": "Dev Patel",
                 "ap_email": "dpatel@northlinegc.example",
@@ -77,6 +79,7 @@ def _seed() -> dict:
             {
                 "id": "payer-ponce",
                 "name": "Ponce Property Co.",
+                "client_type": "owner",
                 "role": "Owner",
                 "approver": "Accounts payable",
                 "ap_email": "payables@ponceproperty.example",

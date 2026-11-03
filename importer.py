@@ -75,6 +75,8 @@ KINDS = {
     "insurance": "Insurance certificate",
     "inspection": "Inspection",
     "stored": "Stored materials document",
+    "payroll": "Certified payroll",
+    "notarized": "Notarized pay application",
     "punch": "Punch list sign-off",
     "completion": "Completion certificate",
     "asbuilt": "As-builts",
@@ -87,9 +89,11 @@ KINDS = {
 }
 
 _KIND_RULES = [
+    ("notarized", r"\bnotari[sz]ed (?:pay app|pay application|application for payment|g702)\b"),
     ("change_order", r"\bchange order\b|\bc\.?o\.?\s*#?\s*\d+|\bextra work\b|\bfield (?:order|directive)\b"),
     ("waiver", r"\bwaiver\b|\blien release\b"),
     ("pay_app", r"\bpay app\b|\bpay application\b|\bapplication for payment\b|\bg70[23]\b|\brequisition\b|\bpencil\b"),
+    ("payroll", r"\bcertified payroll\b|\bpayroll certification\b|\bwh-?347\b"),
     ("insurance", r"\bcertificate of (?:liability )?insurance\b|\binsurance certificate\b|\bcoi\b"),
     ("punch", r"\bpunch ?list\b"),
     ("completion", r"\bcertificate of (?:substantial )?completion\b|\bcompletion certificate\b"),

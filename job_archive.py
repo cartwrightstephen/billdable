@@ -22,7 +22,7 @@ RECORD_WORDS = {
     "note": "Notes", "daily": "Daily records", "photo": "Photos", "contract": "Contract", "change_order": "Change orders",
     "waiver": "Lien waivers", "pay_app": "Pay app backup", "ticket": "Tickets and time sheets",
     "supplier_invoice": "Supplier invoices", "insurance": "Insurance", "inspection": "Inspections", "stored": "Stored materials",
-    "punch": "Punch list", "completion": "Completion certificate", "asbuilt": "As-builts", "warranty": "Warranties", "other": "Other",
+    "payroll": "Certified payroll", "notarized": "Notarized pay applications", "punch": "Punch list", "completion": "Completion certificate", "asbuilt": "As-builts", "warranty": "Warranties", "other": "Other",
 }
 
 
@@ -44,6 +44,7 @@ def summary_text(state: dict[str, Any], job: dict[str, Any]) -> str:
         f"Client: {payer.get('name', '')}",
         f"Contract number: {job.get('contract_number') or '-'}",
         f"Started: {_day(domain.job_started_on(state, job))}",
+        f"Anticipated end: {_day(job.get('anticipated_end_on'))}",
         f"Marked done: {_day(job.get('completed_at'))}",
         f"Finished: {_day(job.get('closed_at'))}",
         "",

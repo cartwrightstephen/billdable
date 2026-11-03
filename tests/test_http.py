@@ -98,7 +98,7 @@ class HttpTests(unittest.TestCase):
 
     def test_bad_request_says_nothing_about_python(self):
         cookie, _ = self.signup("not-understood@example.com")
-        job = {"name": "Ash deck", "customer": "Ash GC", "address": "1 Ash", "approver": "Kim", "ap_email": "ap@ash.example", "contract_cents": 500_000}
+        job = {"name": "Ash deck", "customer": "Ash GC", "address": "1 Ash", "approver": "Kim", "ap_email": "ap@ash.example", "contract_cents": 500_000, "phone": "(404) 555-0100", "role": "Owner"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         jid = state["jobs"][0]["id"]
         res, data = self.request("POST", f"/api/jobs/{jid}/sov", {"lines": "x"}, cookie=cookie)
@@ -110,11 +110,11 @@ class HttpTests(unittest.TestCase):
     def test_refusals_name_the_field(self):
         cookie, _ = self.signup("fields@example.com")
         res, data = self.request("POST", "/api/jobs", {"name": "Oak", "customer": "Oak GC", "address": "1 Oak", "approver": "Kim",
-                                                       "ap_email": "not an email", "contract_cents": 100_000}, cookie=cookie)
+                                                       "ap_email": "not an email", "contract_cents": 100_000, "phone": "(404) 555-0100", "role": "Owner"}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertEqual(list(data["fields"]), ["ap_email"])
         self.assertEqual(data["error"], data["fields"]["ap_email"], "one bad field: the message is that field's")
-        res, data = self.request("POST", "/api/jobs", {"name": "", "customer": "", "contract_cents": "lots"}, cookie=cookie)
+        res, data = self.request("POST", "/api/jobs", {"name": "", "customer": "", "contract_cents": "lots", "approver": "", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertEqual(data["fields"], {"contract_cents": "Enter the contract amount as a number."})
 
@@ -247,7 +247,7 @@ class HttpTests(unittest.TestCase):
 
     def test_actor_comes_from_session_and_reset_needs_confirmation(self):
         cookie, user = self.signup("actor@example.com", company="Actor Co")
-        job = {"name": "Oak deck", "customer": "Lee", "address": "1 Oak St", "approver": "Lee", "ap_email": "ap@lee.example", "contract_cents": 500000, "actor": "The CEO"}
+        job = {"name": "Oak deck", "customer": "Lee", "address": "1 Oak St", "approver": "Lee", "ap_email": "ap@lee.example", "contract_cents": 500000, "actor": "The CEO", "phone": "(404) 555-0100", "role": "Owner"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.assertEqual(res.status, 200, state)
         _, page = self.request("GET", "/api/audit?limit=1", cookie=cookie)
@@ -294,7 +294,7 @@ class HttpTests(unittest.TestCase):
     def test_full_loop_over_http(self):
         cookie, _ = self.signup("loop@example.com")
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC", "note": "Site contact: Kim, gate code 1234."}
+               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC", "note": "Site contact: Kim, gate code 1234.", "phone": "(404) 555-0100"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         jid = state["jobs"][0]["id"]
         self.assertEqual([r["label"] for r in state["jobs"][0]["records"]], ["Job notes"])

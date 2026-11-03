@@ -55,14 +55,14 @@ def _status(job: dict[str, Any]) -> str:
 def jobs_rows(state: dict[str, Any]) -> list[list[str]]:
     style = (state.get("company") or {}).get("billing_style", "pay_apps")
     rows = [["Job", "Code", "Client", "Address", "Contract", "Signed change orders", "Contract total", "Billed", "Received",
-             "Outstanding", "Retainage held", "Retainage still owed", "Status", "Where it stands", "Started", "Done", "Finished"]]
+             "Outstanding", "Retainage held", "Retainage still owed", "Status", "Where it stands", "Started", "Anticipated end", "Done", "Finished"]]
     for job in state.get("jobs", []):
         m = domain.job_money(job)
         rows.append([text(job.get("name")), text(job.get("code")), text(_client(state, job)), text(job.get("address")),
                      dollars(m["contract_cents"]), dollars(m["approved_co_cents"]), dollars(m["contract_total_cents"]),
                      dollars(m["billed_cents"]), dollars(m["collected_cents"]), dollars(m["outstanding_cents"]),
                      dollars(m["retainage_held_cents"]), dollars(m["retainage_open_cents"]), _status(job),
-                     text(domain.status_label(job, style)), _day(job_started_on(state, job)),
+                     text(domain.status_label(job, style)), _day(job_started_on(state, job)), _day(job.get("anticipated_end_on")),
                      _day(job.get("completed_at")) if job.get("work_status") == "complete" else "", _day(job.get("closed_at"))])
     return rows
 

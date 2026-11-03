@@ -22,7 +22,7 @@ def new_state():
 
 def new_job(state, contract=1_000_000, retainage=0, packet=None):
     job = domain.create_job(state, "Pine kitchen", "Jones Family", contract, address="12 Pine St, Atlanta, GA 30307",
-                            approver="Sam", ap_email="ap@jones.example", retainage_pct=retainage)
+                            approver="Sam", ap_email="ap@jones.example", retainage_pct=retainage, phone="(404) 555-0100", role="Owner")
     if packet is not None:
         domain.update_payer(state, job["payer_id"], {"packet": packet})
     return job
@@ -486,7 +486,7 @@ class StoredDataTests(unittest.TestCase):  # migrations._review_oct30_money_waiv
         s["payers"][0]["waiver_not_needed"] = {"by": "Owner", "at": "2026-10-01T12:00:00+00:00", "reason": "Homeowner"}
         other = new_job(s, retainage=10, packet="Progress photos, Unconditional waiver for previous payment")
         other["payer_id"] = domain.add_payer(s, {"name": "Ellison GC", "role": "GC", "approver": "Kim", "ap_email": "ap@ellison.example",
-                                                 "packet": "Progress photos, Unconditional waiver for previous payment"})["id"]
+                                                 "packet": "Progress photos, Unconditional waiver for previous payment", "phone": "(404) 555-0100"})["id"]
         domain.record_progress(s, other["id"], 300_000)
         d = draft(other)
         # As an older version stored it: no type on the unconditional item and no conditional one.

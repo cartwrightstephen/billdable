@@ -491,5 +491,5 @@ export const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export const moreDetails = {};
 export function moreOpen(key) {
   const errs = formErrors[key] || {};
-  return !!moreDetails[key] || ["contract_number", "retainage_pct", "phone", "approver", "ap_email", "note"].some(k => errs[k]);
+  return !!moreDetails[key] || ["contract_number", "retainage_pct", "payapp_due_day", "payment_terms_days", "note"].some(k => errs[k]);
 }

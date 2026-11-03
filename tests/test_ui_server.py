@@ -74,7 +74,7 @@ class UiServerTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         res, state = self.post("/api/jobs", {"name": "Oak kitchen", "address": "1 Oak St", "customer": "Ellison",
                                              "approver": "Mara", "ap_email": "ap@ellison.example", "contract_cents": 1_000_000,
-                                             "retainage_pct": 10}, cookie)
+                                             "retainage_pct": 10, "phone": "(404) 555-0100", "role": "Owner"}, cookie)
         self.assertEqual(res.status, 200, state)
         return cookie, state["jobs"][-1]
 

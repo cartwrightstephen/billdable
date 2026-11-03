@@ -64,7 +64,7 @@ class JobActionTests(unittest.TestCase):
     def new_job(self, name):
         res, data = self.request("POST", "/api/jobs", {
             "name": name, "address": "1 Main St", "customer": "Ada Owner", "approver": "Ada Owner",
-            "ap_email": "ada@example.com", "role": "Owner", "contract_cents": 1000000, "retainage_pct": 0,
+            "ap_email": "ada@example.com", "role": "Owner", "contract_cents": 1000000, "retainage_pct": 0, "phone": "(404) 555-0100"
         }, self.cookie)
         self.assertEqual(res.status, 200, data)
         return next(j["id"] for j in data["jobs"] if j["name"] == name)

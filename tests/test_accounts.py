@@ -245,7 +245,7 @@ class AccountHttpTests(ServerCase):
         self.assertTrue(me["mail_ready"])
         # Unverified: sending is refused with the reason, not held in the Outbox without a word (R1-07).
         job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+               "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         job_id = state["jobs"][0]["id"]
         self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 500_000}, cookie=cookie)
@@ -353,7 +353,7 @@ class AccountHttpTests(ServerCase):
         res, _ = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
         member = res.getheader("Set-Cookie").split(";")[0]
         job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 1_000_000, "role": "Owner"}
+               "contract_cents": 1_000_000, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=owner)
         job_id = state["jobs"][0]["id"]
         res, out = self.request("POST", f"/api/jobs/{job_id}/reopen", {"reason": "Late check"}, cookie=member)
@@ -369,7 +369,7 @@ class AccountHttpTests(ServerCase):
         res, _ = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
         member = res.getheader("Set-Cookie").split(";")[0]
         job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+               "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=owner)
         job_id = state["jobs"][0]["id"]
         # A member drafts and gets the paperwork ready.
@@ -518,7 +518,7 @@ class AccountHttpTests(ServerCase):
     def test_pay_app_pdf_download(self):
         cookie, _ = self.signup("pdf@pine.example")
         job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 1_000_000, "retainage_pct": 10, "role": "Owner"}
+               "contract_cents": 1_000_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         job_id = state["jobs"][0]["id"]
         _, state = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 400_000}, cookie=cookie)
@@ -718,7 +718,7 @@ class ReviewFourTests(ServerCase):
     def test_voided_pay_app_is_not_emailed(self):  # L1
         cookie, data = self.signup("l1@team.example")
         job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+               "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         job_id = state["jobs"][0]["id"]
         self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 500_000}, cookie=cookie)
@@ -753,7 +753,7 @@ class ReviewFourTests(ServerCase):
         res, body = self.request("GET", "/api/state", cookie=cookie)
         self.assertEqual(res.status, 503)
         self.assertEqual(body["error"], "Your company's data isn't available right now. Nothing was changed; we've been alerted.")
-        job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example", "contract_cents": 100_000}
+        job = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example", "contract_cents": 100_000, "phone": "(404) 555-0100", "role": "Owner"}
         res, body = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.assertEqual(res.status, 503)
         self.assertEqual(self.request("GET", "/api/auth/me", cookie=cookie)[0].status, 503)

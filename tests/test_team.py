@@ -16,7 +16,7 @@ from test_accounts import PASSWORD, ServerCase
 from seed import seed_state
 
 JOB = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
-       "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+       "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
 
 
 class ProfileRulesTests(unittest.TestCase):

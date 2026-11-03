@@ -328,7 +328,7 @@
         "new",
         "how work"
       ],
-      "answer": "Duracash makes sure finished work gets billed with everything the client needs, then follows the money until it's paid.\n- Jobs, New job: job name, address, client, who pays you and the contract amount. The rest can wait under More details (optional).\n- Put the contract, photos and tickets on the job record (Take a photo or Add a file), or bring emails and texts in through the Inbox.\n- Progress pay app: enter this draw, the total done so far or a percent, then Draft progress pay app. Duracash holds back retainage and lists the paperwork the client needs.\n- Add each missing document, then Review & send. It can go once nothing is missing.\n- Record a payment when it arrives, send the waiver, ask for retainage at the end, then Finish job.\nThe Dashboard shows what needs you next.",
+      "answer": "Duracash makes sure finished work gets billed with everything the client needs, then follows the money until it's paid.\n- Jobs, New job: job name, address, contract amount and the client, saved or new, with who signs off, its email and its phone. The rest can wait under More details (optional).\n- Put the contract, photos and tickets on the job record (Take a photo or Add a file), or bring emails and texts in through the Inbox.\n- Progress pay app: enter this draw, the total done so far or a percent, then Draft progress pay app. Duracash holds back retainage and lists the paperwork the client needs.\n- Add each missing document, then Review & send. It can go once nothing is missing.\n- Record a payment when it arrives, send the waiver, ask for retainage at the end, then Finish job.\nThe Dashboard shows what needs you next.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -360,7 +360,7 @@
         "import contract",
         "address"
       ],
-      "answer": "Go to Jobs and tap New job. Fill in Job name, the address (Street address, then City, State and ZIP), Client and Contract amount ($), then tap Save job. A new client also gets its Client type. Have the contract as a Word file, a PDF or text? Tap Import contract first: it fills the boxes it finds, each marked From the contract, and the contract goes on the job record when you save. More details (optional) holds Contract number, Retainage % (if the contract holds money back), Start date (today unless you change it), Phone, Who signs off on your bills, Email for pay apps and Notes (kept on the job record); all of them can wait. A client you have saved before keeps its details; change them in Jobs, Client playbook.",
+      "answer": "Go to Jobs and tap New job. Fill in Job name, the address (Street address, then City, State and ZIP) and Contract amount ($). Start date is today unless you change it; Anticipated end date is optional. Then tap Existing client and pick one, or New client and fill in Client name, Client type, Who signs off on your bills, Email for pay apps and Phone. A job needs all of these on its client. A saved client missing any of these shows those boxes right there, and what you type is saved to its Client playbook. If Who signs off on your bills only reads as the client's own name from an older save, it asks you to confirm it once. Tap Save job. Have the contract as a Word file, a PDF or text? Tap Import contract first: it fills the boxes it finds, each marked From the contract, the contract's completion date goes in Anticipated end date, and the contract goes on the job record when you save. More details (optional) holds Contract number, Retainage % (if the contract holds money back) and Notes (kept on the job record). A client you have saved before keeps its details; change them in Jobs, Client playbook.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -390,7 +390,7 @@
         "new client",
         "add a client"
       ],
-      "answer": "Go to Jobs, Client playbook and tap Add client. Fill in Client name and Client type, then Who signs off on your bills, Email for pay apps, Phone, Pay apps due by (day of the month), Payment terms, days and the Paperwork needed with each pay app, and tap Add client. Have the contract? Tap Import a contract first: it fills the boxes it finds. A client can also be added with a job: type a new name in Client on New job.",
+      "answer": "Go to Jobs, Client playbook and tap Add client. Fill in Client name, Client type, Who signs off on your bills, Email for pay apps and Phone: all of these are needed. Pay apps due by (day of the month), Payment terms, days and the Paperwork needed with each pay app are yours to set or leave at the usual. Tap Add client. Have the contract? Tap Import a contract first: it fills the boxes it finds. A client can also be added with a job: tap New client on New job.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -421,7 +421,7 @@
         "rename",
         "change contract"
       ],
-      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, the address (Street address, City, State and ZIP; a job saved with a one-line address shows it all in Street until you split it), contract number, Start date and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; after that, use a change order. The job code stays the same. Tap Save changes. Who signs off, the email for pay apps and the paperwork list are in Jobs, Client playbook. In the Edit job form an owner also sees Delete job. It shows while the job has no payments and no pay app other than a deleted draft, so tap Delete draft first if one is open. If a pay app was sent or a payment came in, finish the job instead.",
+      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, the address (Street address, City, State and ZIP; a job saved with a one-line address shows it all in Street until you split it), contract number, Start date, Anticipated end date (never before the start date; blank clears it) and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; after that, use a change order. The job code stays the same. Tap Save changes. Who signs off and the email for pay apps are in Jobs, Client playbook. In the Edit job form an owner also sees Delete job. It shows while the job has no payments and no pay app other than a deleted draft, so tap Delete draft first if one is open. If a pay app was sent or a payment came in, finish the job instead.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -783,6 +783,57 @@
       "follow_ups": []
     },
     {
+      "id": "job-paperwork",
+      "category": "Paperwork",
+      "questions": [
+        "How do I change the paperwork for one job?",
+        "This job needs different paperwork",
+        "Public job paperwork",
+        "Certified payroll",
+        "Notarized pay application"
+      ],
+      "keywords": [
+        "job paperwork",
+        "certified payroll",
+        "notarized"
+      ],
+      "answer": "Open the job and find Paperwork for this job. It starts as the client's list. Tap Change for this job, tick or untick items, add others under Other, and tap Save paperwork; Use the client's list goes back to it. The change applies from the next pay app and to a draft that hasn't been sent; a sent pay app stays as it went. The client's own list doesn't change, and the conditional waiver is still asked for. Certified payroll and Notarized pay application are on the list for public jobs: each fills from a job record of that kind, so file them as Certified payroll or Notarized pay application.",
+      "handler": "",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "What is paperwork?"
+      ]
+    },
+    {
+      "id": "playbook-missing",
+      "category": "Paperwork",
+      "questions": [
+        "Why can't I start a pay app?",
+        "Why was my new job refused?",
+        "Client playbook is missing a phone",
+        "What does a client need before a job?"
+      ],
+      "keywords": [
+        "missing phone",
+        "missing email",
+        "playbook missing"
+      ],
+      "answer": "A new job needs a complete Client playbook: Client name, Client type, Who signs off on your bills, Email for pay apps and Phone. New job says which is missing under its box. A pay app on a job made under this rule waits the same way: the job page says what is missing, with Open Client playbook to add it. A job made before this rule keeps going as it is; its client is asked for what is missing the next time it gets a new job.",
+      "handler": "",
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "playbook",
+          "label": "Open Client playbook"
+        }
+      ],
+      "follow_ups": [
+        "How do I add a client?"
+      ]
+    },
+    {
       "id": "what-packet",
       "category": "Paperwork",
       "questions": [
@@ -794,7 +845,7 @@
       "keywords": [
         "packet"
       ],
-      "answer": "Paperwork is everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate. Duracash lists the items from the client's settings (Paperwork needed with each pay app) and won't send the pay app until each one is in. Every pay app also asks for a conditional lien waiver unless the client was marked as not taking one. See it in the Paperwork column of Money, Pay apps, or tap Open paperwork on the job.",
+      "answer": "Paperwork is everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate. Duracash lists the items from the job's list (Paperwork for this job on the job page), which starts as the client's (Paperwork needed with each pay app), and won't send the pay app until each one is in. Every pay app also asks for a conditional lien waiver unless the client was marked as not taking one. See it in the Paperwork column of Money, Pay apps, or tap Open paperwork on the job.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -864,7 +915,7 @@
         "my clients",
         "my client"
       ],
-      "answer": "Jobs, Client playbook keeps each client's rules. Open a client to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Client type, Paperwork needed with each pay app (tick each item, add the rest under Other, or tick Nothing needed), They send pay apps back when, Also email (CC) and more, then tap Save client. New pay apps use the paperwork list. When a client sends a pay app back, add the reason to They send pay apps back when and tap Save client. While something is blocking send on a job, you can also note it there under Client sent a pay app back? Note why. Each client also lists its open and finished jobs, with a link to each job's contract and Add contract. Add client takes the same details, and Import a contract fills them from the contract.",
+      "answer": "Jobs, Client playbook keeps each client's rules. Open a client to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Client type, Paperwork needed with each pay app (tick each item, add the rest under Other, or tick Nothing needed), They send pay apps back when, Also email (CC) and more, then tap Save client. New pay apps use the paperwork list, unless a job has changed its own. Once saved, Who signs off, Email for pay apps and Phone can be changed but not removed. When a client sends a pay app back, add the reason to They send pay apps back when and tap Save client. While something is blocking send on a job, you can also note it there under Client sent a pay app back? Note why. Each client also lists its open and finished jobs, with a link to each job's contract and Add contract. Add client takes the same details, and Import a contract fills them from the contract.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1489,7 +1540,7 @@
         "calendar",
         "dates"
       ],
-      "answer": "Dashboard, Calendar starts with Tasks: your To Do items and the calendar's dates for This week, Next week, This month or a Custom range, each opening its day, with Add task. Below it the month shows work complete, pay apps sent, follow-ups due, expected approvals, payments, waivers and pay app due dates for the open jobs. Pick a job in the Job filter to see only that job. A finished job leaves the calendar; its dates stay in its job file. Tap a day for its events. These are your billing dates, not legal deadlines.",
+      "answer": "Dashboard, Calendar starts with Tasks: your To Do items and the calendar's dates for This week, Next week, This month or a Custom range, each opening its day, with Add task. Below it the month shows anticipated end dates, work complete, pay apps sent, follow-ups due, expected approvals, payments, waivers and pay app due dates for the open jobs. Pick a job in the Job filter to see only that job. A finished job leaves the calendar; its dates stay in its job file. Tap a day for its events. These are your billing dates, not legal deadlines.",
       "handler": null,
       "needs_job": false,
       "actions": [

@@ -75,7 +75,7 @@ class ReadOnlyHttpTests(unittest.TestCase):
 
     def test_a_held_company_keeps_its_data_but_takes_no_changes(self):
         cookie, user = self.signup("hold@example.com")
-        job = {"name": "Ash", "customer": "Ash GC", "contract_cents": 100000, "address": "1 Ash St", "approver": "Al Ash", "ap_email": "ap@ashgc.com"}
+        job = {"name": "Ash", "customer": "Ash GC", "contract_cents": 100000, "address": "1 Ash St", "approver": "Al Ash", "ap_email": "ap@ashgc.com", "phone": "(404) 555-0100", "role": "Owner"}
         res, _ = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.assertEqual(res.status, 200)
         with mock.patch("builtins.print"):
