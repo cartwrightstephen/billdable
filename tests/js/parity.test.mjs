@@ -25,17 +25,17 @@ test("a noted check-again date is due from midnight UTC, as on the server, and s
   assert.equal(f.due.toISOString(), "2026-11-05T00:00:00.000Z");
   assert.match(waitingText(j, new Date("2026-11-04T12:00:00Z")), /check again Nov 5, 2026\.$/);
   const before = jobActions(j, { now: new Date("2026-11-04T12:00:00Z") });
-  assert.ok(before.more.some(a => a.key === "follow" && a.why === "Before the follow-up date, Nov 5, 2026."));
+  assert.ok(before.more.some(a => a.key === "follow" && a.label === "Follow Up Now"));
   // 8 pm Nov 4 in New York is midnight UTC Nov 5: Today's row is up, and so is the job page's button.
   const evening = jobActions(j, { now: new Date("2026-11-05T01:00:00Z") });
-  assert.equal(evening.primary.label, "Send follow-up");
+  assert.equal(evening.primary.label, "Send Follow-Up");
 });
 
 test("a promised date shows the day after it", () => {
   const j = job({ invoices: [{ id: "a", number: "PA-1", status: "approved", sent_at: "2026-10-01T12:00:00+00:00", expected_payment_on: "2026-11-20" }] });
   const f = followUpDue(j);
   assert.equal(f.due.toISOString(), "2026-11-21T00:00:00.000Z");
-  assert.ok(jobActions(j, { now: new Date("2026-11-01T12:00:00Z") }).more.some(a => a.why === "Before the follow-up date, Nov 21, 2026."));
+  assert.ok(jobActions(j, { now: new Date("2026-11-01T12:00:00Z") }).more.some(a => a.label === "Follow Up Now"));
 });
 
 test("the Calendar's follow-up is the date Today raises it", () => {
@@ -71,7 +71,7 @@ test("an older job's closeout items come from the server, so Ask for retainage w
   assert.ok(!keys(jobActions(j)).includes("retainage"));
   assert.equal(retainageNote(j), "Closeout paperwork: 1 item missing.");
   const labels = closeBlockerActions(j, { kind: "retainage" }).map(a => a.label);
-  assert.deepEqual(labels, ["Record retainage paid", "Open closeout paperwork"]);
+  assert.deepEqual(labels, ["Record Retainage Paid", "Open Closeout Documents"]);
   assert.doesNotMatch(closeBlockerActions(j, { kind: "retainage" })[1].attrs, /data-inv="closeout"/, "no closeout packet to open");
   assert.equal(jobActions(job({ ...j, closeout_missing: [] })).primary.key, "retainage");
 });

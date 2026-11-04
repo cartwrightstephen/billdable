@@ -356,7 +356,7 @@ if __name__ == "__main__":
 
 class FollowUpEscalationTests(unittest.TestCase):
     """R4-06: one follow-up names every unpaid pay app, counts per pay app, gets firmer, copies
-    the escalation email from the third; "Spoke to them" holds the next one until its date."""
+    the escalation email from the third; a logged conversation holds the next one until its date."""
 
     def setUp(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -401,6 +401,29 @@ class FollowUpEscalationTests(unittest.TestCase):
         self.assertTrue(third["subject"].startswith("Third follow-up:"))
         self.assertEqual(third["cc"], ["owner@jones.example"])
 
+    def test_a_conversation_filed_any_other_way_counts_as_a_follow_up_too(self):
+        payer = domain._payer(self.state, self.job["payer_id"])
+        self.assertLess(domain.follow_up_due(self.job, payer), datetime.now(UTC))
+        domain.add_job_record(self.state, self.job["id"], "Call with AP", "conversation", "Paying Friday", "Owner")
+        self.assertGreater(domain.follow_up_due(self.job, payer), datetime.now(UTC) + timedelta(days=6))
+        self.assertIn(("call", "Paying Friday"), [(r["kind"], r["text"].split(": ")[-1]) for r in domain.contact_log(self.state, self.job["id"], limit=None)[0]])
+
+    def test_a_note_doesnt_count_as_a_follow_up(self):
+        payer = domain._payer(self.state, self.job["payer_id"])
+        domain.add_job_record(self.state, self.job["id"], "Gate code", "note", "4411", "Owner")
+        self.assertLess(domain.follow_up_due(self.job, payer), datetime.now(UTC))
+
+    def test_a_contact_note_from_before_conversations_still_holds_the_follow_up(self):
+        payer = domain._payer(self.state, self.job["payer_id"])
+        next_on = (datetime.now(UTC) + timedelta(days=3)).date()
+        self.job["invoices"][0]["last_follow_up_at"] = domain.utcnow()
+        self.job.update({"contact_noted_at": domain.utcnow(), "expected_payment_on": next_on.isoformat()})
+        self.job.setdefault("records", []).append({"id": "rec-old", "kind": "note", "label": "Spoke to Sam Jones", "note": "Friday", "added_at": domain.utcnow(), "added_by": "Owner"})
+        domain.audit(self.state, self.job["id"], "contact_noted", "Spoke to Sam Jones: Friday (Owner)", "Owner")
+        self.assertEqual(domain.follow_up_due(self.job, payer).date(), next_on)
+        row = next(r for r in domain.contact_log(self.state, self.job["id"], limit=None)[0] if r["kind"] == "call")
+        self.assertEqual((row["label"], row["text"]), ("Conversation", "Spoke to Sam Jones: Friday"))
+
     def test_note_contact_holds_the_follow_up_until_the_date(self):
         payer = domain._payer(self.state, self.job["payer_id"])
         self.assertLess(domain.follow_up_due(self.job, payer), datetime.now(UTC), "due before the call")
@@ -411,8 +434,9 @@ class FollowUpEscalationTests(unittest.TestCase):
         domain.note_contact(self.state, self.job["id"], "Check goes out Friday", next_on.isoformat(), "Owner")
         self.assertEqual(domain.follow_up_due(self.job, payer).date(), next_on)
         self.assertEqual(self.job["expected_payment_on"], next_on.isoformat())
-        self.assertEqual(self.job["records"][-1]["label"], "Spoke to Sam Jones")
-        self.assertIn("Spoke to Sam Jones: Check goes out Friday", self.state["audit"][-1]["detail"])
+        self.assertEqual(self.job["records"][-1]["kind"], "conversation")
+        self.assertEqual(self.job["records"][-1]["label"], "Conversation with Sam Jones")
+        self.assertIn("Conversation with Sam Jones: Check goes out Friday", self.state["audit"][-1]["detail"])
         with self.assertRaises(domain.GateError) as raised:
             domain.record_follow_up(self.state, self.job["id"], "Owner")
         self.assertIn(f"not due until {next_on.isoformat()}", str(raised.exception))

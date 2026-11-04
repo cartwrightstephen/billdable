@@ -2,7 +2,7 @@
 // text, and the forwarding addresses for email, texts and the calendar. The Inbox page shows
 // what is waiting and everything received (C1); the file and paste boxes are on Import (data.js).
 import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
-import { RECORD_KINDS, SOURCE_LABELS, defaultJobId, jobFilterOptions } from "../jobs.js";
+import { RECORD_KINDS, SOURCE_LABELS, defaultJobId, jobFilterOptions, finalPayAppConfirm } from "../jobs.js";
 import { readJson, setNetBanner, inBatches } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { webcalUrl } from "../calendar.js";
@@ -521,7 +521,10 @@ export const actions = {
   "inbox-mark-done": async (el) => {
     const it = (state.inbox || []).find(x => x.id === el.dataset.item);
     const j = it && state.jobs.find(x => x.id === it.says_done_job_id);
-    const answer = await askConfirm(`Mark ${unesc(j ? j.name : "the job")} done? ${termText("This bills the rest of the contract on a final pay app.")}`, "Mark done and draft", false, "Just file the message");
+    const res = j ? await fetch(`/api/jobs/${encodeURIComponent(j.id)}/final-preview`).catch(() => null) : null;
+    const words = res && res.ok ? finalPayAppConfirm(j, await res.json())
+      : { text: `Record ${unesc(j ? j.name : "the job")} as finished? ${termText("This bills the rest of the contract on a final pay app.")}`, button: termText("Final Pay App") };
+    const answer = await askConfirm(words.text, words.button, false, "Just file the message");
     if (!answer) return;
     if (answer === "alt") { if (it) await post(`/api/inbox/${it.id}/file`, { job_id: it.says_done_job_id, kind: it.kind }); return; }
     const r = await post(`/api/inbox/${el.dataset.item}/mark-done`);

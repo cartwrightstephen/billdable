@@ -1135,6 +1135,17 @@ class Handler(BaseHTTPRequestHandler):
             view = domain.job_view(state, job)
         self._json(200, {"job": view})
 
+    def _g_final_preview(self, m, user) -> None:
+        """What Final Pay App would draft, for its confirm box. Changes nothing."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+            try:
+                preview = domain.final_pay_app_preview(state, m.group(1))
+            except domain.GateError as err:
+                self._json(409, {"error": str(err)})
+                return
+        self._json(200, preview)
+
     def _g_waiver_forms(self, m, user) -> None:
         """The lien waiver forms each state sets (M22), for the waiver page's state picker."""
         self._json(200, domain.waiver_forms())
@@ -2853,6 +2864,7 @@ ROUTES = [
     Route("GET", r"/api/auth/demo-available", "_g_demo_available"),
     Route("GET", r"/api/state", "_g_state", "user"),
     Route("GET", r"/api/jobs", "_g_jobs", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/final-preview", "_g_final_preview", "user"),
     Route("GET", r"/api/jobs/([^/]+)", "_g_job", "user"),
     Route("GET", r"/api/(outbox|audit)", "_g_log_page", "user"),
     Route("GET", r"/api/timeline", "_g_timeline", "user"),

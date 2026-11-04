@@ -32,7 +32,7 @@ export function localToday() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 // Record kinds that can back up a change order: quotes, supplier invoices, T&M sheets, photos.
-const BACKUP_KINDS = new Set(["note", "photo", "contract", "change_order", "ticket", "supplier_invoice", "stored", "other"]);
+const BACKUP_KINDS = new Set(["note", "conversation", "photo", "contract", "change_order", "ticket", "supplier_invoice", "stored", "other"]);
 
 // The amber pill when work began before the client signed (M9); it stays once signed, as a record.
 export function workStartedPill(co) {
@@ -77,7 +77,7 @@ export function newCoCardHtml(j) {
     <p class="sub">${made.amount_cents < 0 ? `A credit of ${money(-made.amount_cents)}` : money(made.amount_cents)}${made.schedule_days ? ` · ${made.schedule_days > 0 ? "+" : ""}${made.schedule_days} days on the schedule` : ""}. ${made.status === "pending" ? "Saved. Now get it signed." : "Signed."}</p>
     ${made.status === "pending" ? coSignControls(j, made) : coSignature(made)}
     <div class="form-inline"><button class="btn small secondary" data-action="new-co-done">Done</button></div></div>`;
-  return `<div class="card form-card" data-form-key="newco"><h2>New change order</h2>${formErrorLine("newco")}
+  return `<div class="card form-card" data-form-key="newco"><h2>New Change Order</h2>${formErrorLine("newco")}
       ${coFormFields(j)}
       <div class="form-inline">
         <button class="btn small" data-action="add-co-here" data-id="${j.id}">Create change order</button>

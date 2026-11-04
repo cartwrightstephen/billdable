@@ -52,8 +52,8 @@ class TodayRowsTests(unittest.TestCase):
 
     def test_new_job(self):
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("new_job", 5, "Not billed yet", "copper", "Bill progress"))
-        self.assertEqual(r["text"], "Porch rebuild has no pay app yet. Bill the work done so far, or mark it done.")
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("new_job", 5, "Not billed yet", "copper", "Progress Pay App"))
+        self.assertEqual(r["text"], "Porch rebuild has no pay app yet. Bill the work done so far with Progress Pay App, or use Final Pay App.")
         self.assertEqual((r["job_id"], r["job"], r["payer"], r["path"]), (self.job["id"], "Porch rebuild", "Dana Lee", f"/jobs/{self.job['id']}"))
 
     def test_blocked_by_paperwork(self):
@@ -97,7 +97,7 @@ class TodayRowsTests(unittest.TestCase):
     def test_cutoff_due_soon(self):
         self.payer["payapp_due_day"] = 31
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("due_soon", 1.5, "Due soon", "amber", "Bill progress"))
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("due_soon", 1.5, "Due soon", "amber", "Progress Pay App"))
         self.assertEqual(r["text"], "Record this month's progress and draft the pay app. Pay app due to Dana Lee by Oct 31, 2026.")
         # A cutoff also lifts a blocked job's row, and says so.
         self.draft()
@@ -144,7 +144,7 @@ class TodayRowsTests(unittest.TestCase):
         self.state["inbox"] = [{"id": "in-1", "status": "new", "source": "sms", "from": "+15555550123",
                                 "text": "Porch is done\nall cleaned up", "says_done_job_id": self.job["id"]}]
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["button"], r["item_id"]), ("says_done", 0, "Job's done?", "Mark done and draft", "in-1"))
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["button"], r["item_id"]), ("says_done", 0, "Job's done?", "Final Pay App", "in-1"))
         self.assertEqual(r["text"], "Text message from +15555550123: Porch is done")
 
     def test_inbox_item_for_a_job(self):
@@ -226,7 +226,7 @@ class TodayRowsTests(unittest.TestCase):
     def test_draws_leave_names_as_typed(self):
         self.state["company"]["billing_style"] = "draws"
         self.job["name"] = "Pay app test house"
-        self.assertEqual(self.only()["text"], "Pay app test house has no draw yet. Bill the work done so far, or mark it done.")
+        self.assertEqual(self.only()["text"], "Pay app test house has no draw yet. Bill the work done so far with Progress Pay App, or use Final Pay App.")
         self.assertEqual(domain.term_text("Pay apps and a pay app", "draws"), "Draws and a draw")
         self.assertEqual(domain.term_text("Pay apps and a pay app", "pay_apps"), "Pay apps and a pay app")
         self.assertEqual(domain.term_text("Send pay app to Pay app Co", "draws", ("Pay app Co",)), "Send draw to Pay app Co")

@@ -202,7 +202,7 @@ function onboardingHtml() {
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
     { text: "Set up a schedule of values to bill line by line (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present),
       label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.editable) || j.sov_view.present, "#sov-card"), needsJob: true },
-    { text: termText("Record progress, or mark the job done. Duracash drafts the pay app and lists the paperwork the client needs."), done: invoices.length > 0,
+    { text: termText("Use Progress Pay App or Final Pay App. Duracash drafts the pay app and lists the paperwork the client needs."), done: invoices.length > 0,
       label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
     { text: "Add the missing paperwork, then Approve & send.", done: invoices.some(i => i.sent_at),
       label: draft ? "Review & send" : "Open the job",

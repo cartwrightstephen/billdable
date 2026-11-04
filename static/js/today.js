@@ -46,14 +46,14 @@ export function inboxKindSelect(r) {
   return `<label class="row-kind">as <select id="inb-kind-${r.item_id}" aria-label="File as">${options}</select></label>`;
 }
 
-// One row's buttons: the main one, a phone call for a follow-up (R4-06), and Open unless the
+// One row's buttons: the main one, a conversation for a follow-up (R4-06), and Open unless the
 // main button already opens the job. A pay app the client approved (R4-08) has no main button.
 export function rowButtons(r) {
   const attrs = ACTIONS[r.kind];
   const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` + (r.kind === "inbox" ? inboxKindSelect(r) : "") : "";
-  const spoke = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="spoke" data-id="${r.job_id}">Spoke to them…</button>` : "";
+  const talked = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="log-conversation" data-id="${r.job_id}">Log a conversation</button>` : "";
   const open = OPENS_JOB.includes(r.kind) ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${r.job_id}">Open</button>`;
-  return main + spoke + open;
+  return main + talked + open;
 }
 
 // One To Do row's buttons: a row the jobs make keeps its own (rowButtons); a task added by hand

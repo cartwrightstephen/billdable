@@ -8,7 +8,7 @@ import { state } from "../state.js";
 
 export function moneyCardHtml(j) {
   const m = j.money;
-  return `<details class="card money-file"${window.innerWidth >= 800 ? " open" : ""}>
+  return `<details class="card money-file" open>
           <summary><h2>Money</h2><span class="sub">${money(m.contract_total_cents)} contract · ${money(m.billed_cents)} billed · ${money(m.collected_cents)} received · ${money(m.outstanding_cents)} owed</span></summary>
           <div class="money-row"><span class="label">Contract</span><span>${money(m.contract_cents)}</span></div>
           <div class="money-row"><span class="label">Signed change orders</span><span>${money(m.approved_co_cents)}</span></div>

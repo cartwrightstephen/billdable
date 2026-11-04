@@ -53,18 +53,23 @@ test("draws: next steps, job buttons and the Dashboard", () => {
     setBillingStyle("draws");
     assert.equal(billingStyle(), "draws");
     assert.equal(term("Many"), "Draws");
-    assert.equal(nextStep(job), "Draft a draw for the work done and not billed.");
+    assert.match(nextStep(job), /isn't billed\. Draft Draw\.$/);
     const { primary } = jobActions(job);
-    assert.equal(primary.label, "Draft draw");
-    assert.match(primary.why, /^A draw for/);
-    assert.deepEqual(closeBlockerActions(job, { kind: "unbilled" }).map(a => a.label), ["Draft draw"]);
+    assert.equal(primary.label, "Draft Draw");
+    assert.deepEqual(closeBlockerActions(job, { kind: "unbilled" }).map(a => a.label), ["Draft Draw"]);
+    // The job page's title-case labels read the company's word too (R6-01).
+    const running = { ...job, work_status: "in_progress" };
+    const labels = [jobActions(running).primary.label, ...jobActions(running).more.map(a => a.label)];
+    assert.ok(labels.includes("Progress Draw") && labels.includes("Final Draw"), labels.join());
+    assert.equal(labels.filter(l => /pay app/i.test(l)).length, 0);
+    assert.match(nextStep(running), /Progress Draw.*Final Draw/);
     assert.match(todoHtml([], {}), /when a draw is ready to send/);
     assert.equal(actionWords("approve_send"), "Draw sent");
   } finally {
     setBillingStyle("pay_apps");
   }
-  assert.equal(nextStep(job), "Draft a pay app for the work done and not billed.");
-  assert.equal(jobActions(job).primary.label, "Draft pay app");
+  assert.match(nextStep(job), /isn't billed\. Draft Pay App\.$/);
+  assert.equal(jobActions(job).primary.label, "Draft Pay App");
   // Title case too, as the Results card titles write it (T8).
   assert.equal(termText("Days from Pay App Sent to Paid", "draws"), "Days from Draw Sent to Paid");
   setBillingStyle("monthly");

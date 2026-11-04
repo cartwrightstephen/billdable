@@ -51,7 +51,7 @@ OLD = {
     r"\baudit\b": "Activity log",
     r"\bblockers?\b": "Fix N things before sending / Before you can finish this job",
     r"\bchase retainage\b": "Ask for retainage",
-    r"\bteach (the )?playbook\b": "Client sent a pay app back? Note why.",
+    r"\bteach (the )?playbook\b": "Client Sent Pay App Back",
     r"\bleft rail\b": "Settings, Company",
     r"(?-i:\bChange Orders\b)": "Change orders",
     r"(?-i:\bDaily [Rr]ecord\b)(?=,| and| saved| page| tab)|\bsave to job record\b|\badd a note to the record\b|\battach files\b": "New job record (Nov 3 overhaul)",

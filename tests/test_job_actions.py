@@ -76,7 +76,7 @@ class JobActionTests(unittest.TestCase):
         self.assertTrue(called, "the pattern found no calls: has the URL style changed?")
         # Links to pages the server serves (the pay-app PDF) are GET routes, not actions.
         served = {r.method + " " + r.pattern for r in server.ROUTES}
-        links = {w for w in called if any(p.startswith(f"GET /api/jobs/([^/]+)/{w}/") for p in served)}
+        links = {w for w in called if any(p.startswith(f"GET /api/jobs/([^/]+)/{w}/") or p == f"GET /api/jobs/([^/]+)/{w}" for p in served)}
         self.assertEqual(sorted(called - links - set(server.JOB_ACTIONS)), [], "the page calls job actions the server does not have")
 
     def test_an_empty_request_is_refused_plainly_never_a_server_error(self):

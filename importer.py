@@ -85,6 +85,7 @@ KINDS = {
     "contract": "Contract",
     "daily": "Diary entry",
     "note": "Note",
+    "conversation": "Conversation",
     "other": "Other",
 }
 

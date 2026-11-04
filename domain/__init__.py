@@ -195,7 +195,7 @@ def close_blocker_items(job: dict[str, Any]) -> list[dict[str, Any]]:
     m = job_money(job)
     out: list[dict[str, Any]] = []
     if job.get("work_status") != "complete":
-        out.append({"kind": "not_done", "text": "Work is not marked done."})
+        out.append({"kind": "not_done", "text": "The work isn't finished. Use Final Pay App."})
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft:
         out.append({"kind": "draft", "text": f"{open_draft['number']} is still a draft.",
@@ -412,7 +412,7 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     if _with_client(open_draft):
         raise GateError(
             f"{open_draft['number']} is with the client for their review. Record their answer or delete the draft, "
-            "then mark the job done so the final pay app covers the rest."
+            "then use Final Pay App so it covers the rest."
         )
     if not open_draft:
         _need_playbook(state, job)
@@ -453,13 +453,30 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
 
 
+def final_pay_app_preview(state: dict[str, Any], job_id: str) -> dict[str, Any]:
+    """What Final Pay App (mark_done) would draft, worked out on a copy so nothing changes: its
+    amount, whether it is the final one (is_final), and what is left pending if it isn't.
+    Refuses as mark_done would."""
+    trial_state = deepcopy(state)
+    job = mark_done(trial_state, job_id, "preview")
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    pending = [{"number": co["number"], "amount_cents": co["amount_cents"]}
+               for co in job["change_orders"] if co["status"] == "pending" and not co.get("included_in_billing")]
+    if not draft:
+        return {"drafted": False, "final": is_final(job), "pending_cos": pending}
+    replaced = next((inv for inv in job["invoices"] if inv["id"] == draft.get("replaces")), None)
+    return {"drafted": True, "final": bool(draft.get("final")) and is_final(job), "number": draft["number"], "amount_cents": draft["amount_cents"],
+            "gross_cents": draft["gross_cents"], "retainage_cents": draft["retainage_cents"],
+            "replaces": replaced["number"] if replaced else "", "pending_cos": pending}
+
+
 def draft_invoice(
     state: dict[str, Any], job_id: str, actor: str = "duracash", strict: bool = False, replaces: dict[str, Any] | None = None,
     period_end: str = "", notes: str = "",
 ) -> dict[str, Any]:
     """Draft a pay app for unbilled completed work, withholding retainage.
 
-    strict=True is for the explicit "Draft pay app" button: a no-op raises
+    strict=True is for the explicit "Draft Pay App" button: a no-op raises
     instead of being logged silently, so the user is told why nothing happened.
     replaces is a draft just voided by a progress correction: the new one keeps its number
     (unless the customer saw it) and its paperwork.
@@ -877,7 +894,7 @@ def _aware(iso: str) -> datetime:
 
 def follow_up_due(job: dict[str, Any], payer: dict[str, Any]) -> datetime | None:
     """When the next follow-up is due (R4-06): the customer's days between follow-ups after the
-    last contact on the oldest unpaid pay app, or the date noted after a call (note_contact) when
+    last contact on the oldest unpaid pay app, or the date noted after a conversation (note_contact) when
     no follow-up has gone out since. None when nothing is out for payment."""
     unpaid = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
     if not unpaid:
@@ -986,13 +1003,30 @@ def record_follow_up(
     return job
 
 
+def _log_conversation(state: dict[str, Any], job: dict[str, Any], text: str, day: date | None, actor: str, now: str) -> None:
+    """What makes a conversation with the client more than a note (R4-06): while a pay app waits
+    for payment it counts as a follow-up for the timing, and with a date the next follow-up waits
+    until then. It is in the Activity log and in Recent contact either way."""
+    waiting = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
+    for inv in waiting:
+        inv["last_follow_up_at"] = now
+    if waiting:
+        job["contact_noted_at"] = now
+        if day:
+            job["expected_payment_on"] = day.isoformat()
+        else:
+            job.pop("expected_payment_on", None)
+    payer = _payer(state, job["payer_id"])
+    who = payer.get("approver") or payer["name"]
+    job["last_contact"] = {"at": now, "by": actor, "text": text, "next_on": day.isoformat() if day else ""}
+    audit(state, job["id"], "contact_noted", f"Conversation with {who}: {text}" + (f" Next check {day.isoformat()}." if day else "") + f" ({actor})", actor)
+
+
 def note_contact(state: dict[str, Any], job_id: str, text: str, next_on: Any = "", actor: str = "owner") -> dict[str, Any]:
-    """"Spoke to them" (R4-06): what the customer said on the phone, kept on the job record and in
-    the Activity log. It counts as a follow-up for the timing, and with a date the next follow-up
-    waits until then."""
+    """Log a conversation (R4-06): what the client said, kept on the job's records as a record of
+    kind "conversation". Older ones are notes labelled "Spoke to ..."; they stay as they are.
+    A date to check again needs a pay app waiting for payment: that is the follow-up it holds."""
     job = _open_job(state, job_id)
-    if not any(inv["status"] in OPEN_FOR_PAYMENT for inv in job["invoices"]):
-        raise GateError("No sent pay app is waiting for payment.")
     text = " ".join(str(text or "").split())[:500]
     problems = {}
     if not text:
@@ -1000,24 +1034,16 @@ def note_contact(state: dict[str, Any], job_id: str, text: str, next_on: Any = "
     day = _day(next_on, "next_on", "Enter the date to check again, like 2026-11-07.")
     if day and day < datetime.now(timezone.utc).date() - timedelta(days=1):
         problems["next_on"] = "Enter today or a later date to check again."
+    elif day and not any(inv["status"] in OPEN_FOR_PAYMENT for inv in job["invoices"]):
+        problems["next_on"] = "No sent pay app is waiting for payment, so there is no follow-up to hold."
     _refuse("Nothing was saved.", problems)
     payer = _payer(state, job["payer_id"])
-    who = payer.get("approver") or payer["name"]
     now = utcnow()
-    for inv in job["invoices"]:
-        if inv["status"] in OPEN_FOR_PAYMENT:
-            inv["last_follow_up_at"] = now
-    job["contact_noted_at"] = now
-    if day:
-        job["expected_payment_on"] = day.isoformat()
-    else:
-        job.pop("expected_payment_on", None)
-    job["last_contact"] = {"at": now, "by": actor, "text": text, "next_on": day.isoformat() if day else ""}
     job.setdefault("records", []).append({
-        "id": "rec-" + secrets.token_hex(3), "kind": "note", "label": f"Spoke to {who}",
+        "id": "rec-" + secrets.token_hex(3), "kind": "conversation", "label": f"Conversation with {payer.get('approver') or payer['name']}",
         "note": text + (f" Check again {day.isoformat()}." if day else ""), "added_at": now, "added_by": actor,
     })
-    audit(state, job_id, "contact_noted", f"Spoke to {who}: {text}" + (f" Next check {day.isoformat()}." if day else "") + f" ({actor})", actor)
+    _log_conversation(state, job, text, day, actor, now)
     return job
 
 
@@ -1561,7 +1587,7 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
     if open_retainage <= 0:
         raise GateError("No open retainage.")
     if job.get("work_status") != "complete":
-        raise GateError("Retainage is asked for once the job is marked done. Mark the job done first.")
+        raise GateError("Retainage is asked for once the work is finished. Use Final Pay App first.")
     if amount_cents is not None:
         if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
             _refuse("", {"amount_cents": "Enter the retainage to ask for, more than $0."})
@@ -2093,7 +2119,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             source = SOURCE_LABELS.get(item.get("source", ""), item.get("source", ""))
             first = (item.get("text") or item.get("subject") or "").split("\n")[0][:120]
             add(0, "says_done", job, "Job's done?", "copper", f"{source}{' from ' + item['from'] if item.get('from') else ''}: {first}",
-                "Mark done and draft", "/dashboard", item_id=item.get("id", ""))
+                term_text("Final Pay App", style), "/dashboard", item_id=item.get("id", ""))
     for job in jobs.values():
         payer = payers.get(job.get("payer_id"), {})
         invoices = job.get("invoices", [])
@@ -2131,11 +2157,11 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             add(5, "not_billed", job, "Not billed", "copper",
                 f"{money(m['unbilled_completed_cents'])} of finished work has no pay app yet. Drafting sends nothing.", "Draft pay app", due=cutoff_day)
         elif due_soon:
-            add(2.5, "due_soon", job, "Due soon", "amber", "Record this month's progress and draft the pay app.", "Bill progress", due=cutoff_day)
+            add(2.5, "due_soon", job, "Due soon", "amber", "Record this month's progress and draft the pay app.", "Progress Pay App", due=cutoff_day)
         # A new job (R2-04): nothing billed on it yet, so Today says what comes next instead of nothing.
         elif not any(i["status"] not in {"void", "replaced"} for i in invoices):
-            add(5, "new_job", job, "Not billed yet", "copper", f"{job['name']} has no pay app yet. Bill the work done so far, or mark it done.",
-                "Bill progress", due=cutoff_day)
+            add(5, "new_job", job, "Not billed yet", "copper", f"{job['name']} has no pay app yet. Bill the work done so far with Progress Pay App, or use Final Pay App.",
+                "Progress Pay App", due=cutoff_day)
         # A cutoff makes the job's row more urgent, and says so.
         if due_soon and len(out) > before:
             row = out[-1]
@@ -2144,7 +2170,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
                 row["text"] += f" {cutoff} {payer.get('name', '')} by {_day_words(due[0].isoformat())}."
             row["rank"] = min(row["rank"], 1.5)
         # A pay app sent and unpaid past the payer's follow-up window is its own row. One follow-up
-        # names every unpaid pay app; after a call ("Spoke to them…") the row waits for the date
+        # names every unpaid pay app; after a logged conversation the row waits for the date
         # noted (R4-06).
         follow = follow_up_due(job, payer)
         if follow:
@@ -3313,7 +3339,7 @@ def can_undo_done(job: dict[str, Any]) -> bool:
 
 
 def undo_mark_done(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
-    """Mark done tapped by mistake: delete the final draft and put the job back in progress, with
+    """Final Pay App tapped by mistake: delete the final draft and put the job back in progress, with
     the total done so far at what is billed (on a schedule, each line back to its billed quantity)."""
     job = _open_job(state, job_id)
     if job.get("work_status") != "complete":
@@ -4016,7 +4042,7 @@ def _packet_item(job_id: str, kind: str, label: str, blocker: str, required: boo
 # importer.KINDS: what a record on the job can be.
 # The job record's kinds; static/js/jobs.js RECORD_KINDS and importer.KINDS have the same keys
 # with their words. supplier_invoice is never a bare "invoice", so it isn't read as a pay app.
-RECORD_KINDS = ("note", "daily", "photo", "contract", "change_order", "waiver", "pay_app", "ticket",
+RECORD_KINDS = ("note", "conversation", "daily", "photo", "contract", "change_order", "waiver", "pay_app", "ticket",
                 "supplier_invoice", "insurance", "inspection", "stored", "payroll", "notarized", "punch", "completion", "asbuilt", "warranty", "other")
 
 
@@ -4064,7 +4090,10 @@ def add_job_record(
         "added_by": actor,
     }
     job.setdefault("records", []).append(rec)
-    audit(state, job_id, "add_record", f"{actor} added {kind} to the job's records: {label}.", actor)
+    if rec["kind"] == "conversation":   # however it was added, it does what Log a conversation does
+        _log_conversation(state, job, rec["note"] or label, None, actor, rec["added_at"])
+    else:
+        audit(state, job_id, "add_record", f"{actor} added {kind} to the job's records: {label}.", actor)
     if not job.get("closed"):
         _refresh_draft_gate(job, state)
     return job

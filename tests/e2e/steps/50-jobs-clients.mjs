@@ -151,7 +151,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const card = page.locator(".next-card");
     await card.waitFor();
     assert.equal(await page.locator(".blockers-card").count(), 0);
-    if (await card.locator(".blocker-list li").count()) assert.match(await card.locator("strong").first().innerText(), /^(Before it can go:|Attach the paperwork, then send\.)$/);
+    if (await card.locator(".blocker-list li").count()) assert.match(await card.locator("strong").first().innerText(), / before it can go:$/);
     await page.getByRole("heading", { name: "Activity" }).waitFor();
   });
 
