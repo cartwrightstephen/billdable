@@ -26,7 +26,7 @@ export async function loadReminders() {
     const reply = res.ok ? await readJson(res) : null;
     if (reply && me === asked) {
       // Only when it shows: a redraw on another page for nothing new is wasted.
-      const changed = !data || data.unread !== reply.unread;
+      const changed = (data ? data.unread : 0) !== reply.unread;
       data = reply;
       if (changed || currentView === "automations") render();
     }
