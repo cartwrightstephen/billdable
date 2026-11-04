@@ -74,3 +74,14 @@ export function askConfirm(message, okLabel = "Yes", danger = false, altLabel = 
     cancel.focus();  // the safe choice has the focus
   });
 }
+
+// Put the cursor in a box once the page has drawn, unless the person has already gone to another
+// box by then: the frame can come late, and the focus would take what they are typing elsewhere.
+export function focusAfterDraw(find) {
+  const before = document.activeElement;
+  requestAnimationFrame(() => {
+    const now = document.activeElement;
+    if (now && now !== before && now !== document.body && now.isConnected) return;
+    find()?.focus();
+  });
+}

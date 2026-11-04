@@ -5,7 +5,7 @@ import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDat
 import { isBlocked, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, finalPayAppConfirm, retainageNote, closeoutMissing as closeoutMissingCount, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
 import { sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
-import { moreButton, askConfirm } from "../dom.js";
+import { moreButton, askConfirm, focusAfterDraw } from "../dom.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, draftValue, clearForm } from "../forms.js";
 import { termText, actionWords } from "../terms.js";
 import { state, me, currentJobId, formOpen } from "../state.js";
@@ -398,7 +398,7 @@ export const actions = {
     nav("job", id);
     formOpen.conversation = true;
     render();
-    requestAnimationFrame(() => document.getElementById("conversation-text")?.focus());
+    focusAfterDraw(() => document.getElementById("conversation-text"));
   },
   "retainage-paid": async (el, id) => {
     const v = formValues("retpay");

@@ -238,6 +238,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.goto(BASE + "/data/import", { waitUntil: "networkidle" });   // its QuickBooks and import settings have loaded
     await p.selectOption("#upload-job", ids["Cedar bath"]);
     assert.equal(await p.inputValue("#upload-job"), ids["Cedar bath"]);
+    await p.reload({ waitUntil: "networkidle" });
+    assert.equal(await p.inputValue("#upload-job"), "", "a pick isn't kept for next time: it starts on Not sure");
+    await p.selectOption("#upload-job", ids["Cedar bath"]);
     const chooser = p.waitForEvent("filechooser");
     await p.locator('.dropzone .pointer-only [data-action="pick-files"]').click();  // desktop: the "choose files" link (R6-04)
     await (await chooser).setFiles({ name: "IMG_0412.jpg", mimeType: "image/jpeg", buffer: Buffer.from("not really a jpeg") });
@@ -344,7 +347,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       } else if (label === "Review & Send") {
         // Every send passes "Before you send" (R1-06): Today's button opens the pay app there.
         await page.goto(BASE + "/dashboard");
-        await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & send" }).click();
+        await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & Send" }).click();
         await page.locator(".send-check").waitFor({ state: "visible" });
         assert.match(new URL(page.url()).pathname, /^\/money\/pay-app\//);
         await page.click('.send-check [data-action="send"]');
@@ -352,7 +355,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         // The demo never emails, so Today lists the pay app's email as one that didn't go out (R1-11).
         await page.goto(BASE + "/dashboard");
         await page.locator(".action-item", { hasText: "Inman Park bath" }).filter({ hasText: "Didn't go out" })
-          .getByRole("button", { name: "Send again" }).waitFor();
+          .getByRole("button", { name: "Send Again" }).waitFor();
         await page.goto(BASE + "/jobs/job-inman");
       } else if (label === "Choose Waiver and Send") {
         await main.click();
@@ -447,7 +450,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       await page.locator(".queue-more").waitFor({ state: "detached" });
       assert.ok(await rows.count() > 3);
     }
-    const follow = () => page.locator(".action-item", { hasText: "Turner office TI" }).getByRole("button", { name: "Send follow-up" });
+    const follow = () => page.locator(".action-item", { hasText: "Turner office TI" }).getByRole("button", { name: "Send Follow-Up" });
     if (await follow().count()) {
       await follow().click();
       await confirmDialog(page).waitFor();

@@ -116,7 +116,13 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await card.locator(".record-group", { hasText: "Delivery tickets" }).waitFor();
     assert.equal(await card.getByText("Add a note to the record").count(), 0);
     assert.equal(await card.getByText("Paste an email").count(), 0);
-    // Its Import link starts on this job, and the paste box files onto the job picked.
+    // Import on its own starts on Not sure, even with one open job: nothing skips the Inbox unasked.
+    await p.goto(BASE + "/data/import");
+    await p.locator("#paste-text").waitFor();
+    assert.equal(await p.inputValue("#upload-job"), "");
+    await p.locator("#paste-add", { hasText: "Add to Inbox" }).waitFor();
+    // A job's Import link starts on that job, and the paste box files onto the job picked.
+    await p.goto(`${BASE}/jobs/${jobId}`);
     await card.getByRole("link", { name: "Import" }).click();
     await p.locator("#paste-text").waitFor();
     assert.equal(new URL(p.url()).pathname, "/data/import");

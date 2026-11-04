@@ -105,12 +105,23 @@ class Items(unittest.TestCase):
     def test_anticipated_end_date_when_a_job_has_one(self):
         state = company()
         self.assertFalse(any("end date" in i["text"] for i in reminders.build(state, NOW)), "absent is fine")
-        state["jobs"][0]["anticipated_end_date"] = "not a date"
+        state["jobs"][0]["anticipated_end_on"] = "not a date"
         self.assertFalse(any("end date" in i["text"] for i in reminders.build(state, NOW)))
-        state["jobs"][0]["anticipated_end_date"] = "2026-11-06"
+        state["jobs"][0]["anticipated_end_on"] = "2026-11-06"
         self.assertTrue(any("Anticipated end date, Nov 6" in i["text"] for i in reminders.build(state, NOW)))
         state["jobs"][0]["work_status"] = "complete"
         self.assertFalse(any("end date" in i["text"] for i in reminders.build(state, NOW)))
+
+    def test_a_job_made_with_an_end_date_next_week_gets_a_reminder(self):  # the field New job saves
+        state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
+        end = (NOW.date() + timedelta(days=5)).isoformat()
+        made = domain.create_job(state, "Pine deck", "Northline GC", 2_000_000, address="5 Birch Rd", approver="Nia", ap_email="ap@northline.example",
+                                 phone="(404) 555-0177", role="GC", anticipated_end_on=end, today=NOW.date().isoformat())
+        self.assertEqual(made["anticipated_end_on"], end)
+        dates = [i for i in reminders.build(state, NOW) if i["kind"] == "dates"]
+        self.assertTrue(any(i["job_id"] == made["id"] and "Anticipated end date" in i["text"] for i in dates), dates)
+        made["anticipated_end_on"] = (NOW.date() + timedelta(days=8)).isoformat()
+        self.assertFalse(any("Anticipated end date" in i["text"] for i in reminders.build(state, NOW)), "past the next 7 days")
 
     def test_a_follow_up_stays_until_dealt_with_and_a_past_due_day_does_not(self):
         state = company()

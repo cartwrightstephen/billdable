@@ -1,0 +1,434 @@
+{
+"audit": [
+{
+"action": "create_job",
+"actor": "owner",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "owner created Old dollar job for Old Client ($100,000.00). The paperwork list comes with the first pay app.",
+"hash": "052a255bffd131865a4062f87b83dc8375364c72ff5debfc6a2f5d78f893d1b0",
+"id": "aud-1",
+"job_id": "job-81bcce",
+"prev": ""
+},
+{
+"action": "record_progress",
+"actor": "owner",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "owner recorded completed-to-date $20,000.00.",
+"hash": "266ce508b97384193481f962580a0d2b17ecd11b920a1dd0f5fa8d6a8cb41b77",
+"id": "aud-2",
+"job_id": "job-81bcce",
+"prev": "052a255bffd131865a4062f87b83dc8375364c72ff5debfc6a2f5d78f893d1b0"
+},
+{
+"action": "draft_invoice",
+"actor": "duracash",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "Drafted PA-OLDD-01 for $18,000.00 ($20,000.00 less $2,000.00 retainage), with 3 paperwork items. 3 to fix before it can go.",
+"hash": "d91be97bd6156193b76ac65be3a30e1c8742c75148f32c8313dbb11ad2fb5b78",
+"id": "aud-3",
+"job_id": "job-81bcce",
+"prev": "266ce508b97384193481f962580a0d2b17ecd11b920a1dd0f5fa8d6a8cb41b77"
+},
+{
+"action": "packet_resolved",
+"actor": "owner",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "owner marked Conditional waiver as in hand: in the office.",
+"hash": "eb51212822ee273ee837bbcbed0616e283fc3e5039ae9f163288266b4905f80f",
+"id": "aud-4",
+"job_id": "job-81bcce",
+"prev": "d91be97bd6156193b76ac65be3a30e1c8742c75148f32c8313dbb11ad2fb5b78"
+},
+{
+"action": "packet_resolved",
+"actor": "owner",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "owner marked Insurance certificate as in hand: in the office.",
+"hash": "50d3321992fad17ba7508191423a93447a347aa7abf212870c3994147991d378",
+"id": "aud-5",
+"job_id": "job-81bcce",
+"prev": "eb51212822ee273ee837bbcbed0616e283fc3e5039ae9f163288266b4905f80f"
+},
+{
+"action": "packet_resolved",
+"actor": "owner",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "owner marked Daily tickets and time sheets as in hand: in the office.",
+"hash": "861ed15bf4a4e95f9e9d55f2074769bef4348515e76ccb73407b2ba7373279a3",
+"id": "aud-6",
+"job_id": "job-81bcce",
+"prev": "50d3321992fad17ba7508191423a93447a347aa7abf212870c3994147991d378"
+},
+{
+"action": "approve_send",
+"actor": "Olive",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "Olive approved and sent PA-OLDD-01 for $18,000.00 to ap@old.example.",
+"hash": "456714d15917aa4024b0e308cb85500be5d400578c209901557661d0078fd853",
+"id": "aud-7",
+"job_id": "job-81bcce",
+"prev": "861ed15bf4a4e95f9e9d55f2074769bef4348515e76ccb73407b2ba7373279a3"
+},
+{
+"action": "record_progress",
+"actor": "owner",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "owner recorded completed-to-date $50,000.00.",
+"hash": "87e5a629a87487a4b702c573b12a7994ca865863a97826cf946611d94de3034d",
+"id": "aud-8",
+"job_id": "job-81bcce",
+"prev": "456714d15917aa4024b0e308cb85500be5d400578c209901557661d0078fd853"
+},
+{
+"action": "draft_invoice",
+"actor": "duracash",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "Drafted PA-OLDD-02 for $27,000.00 ($30,000.00 less $3,000.00 retainage), with 3 paperwork items. 3 to fix before it can go.",
+"hash": "51736c977b0bb47b88ae750da1e6620fe67aedd259a2e3c9a219b63ac6f8e905",
+"id": "aud-9",
+"job_id": "job-81bcce",
+"prev": "87e5a629a87487a4b702c573b12a7994ca865863a97826cf946611d94de3034d"
+},
+{
+"action": "packet_attachment",
+"actor": "Olive",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "Olive attached Name only waiver to Conditional waiver.",
+"hash": "b9759ab05f1a2408b2938a40f510079961b2f6caa4ac714913f4811476a0e757",
+"id": "aud-10",
+"job_id": "job-81bcce",
+"prev": "51736c977b0bb47b88ae750da1e6620fe67aedd259a2e3c9a219b63ac6f8e905"
+},
+{
+"action": "packet_resolved",
+"actor": "owner",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "owner marked Insurance certificate as in hand.",
+"hash": "0e6775d2551a927c3a4bb4c37f5dca5ce497e1d01732c981c60c5536fb73122d",
+"id": "aud-11",
+"job_id": "job-81bcce",
+"prev": "b9759ab05f1a2408b2938a40f510079961b2f6caa4ac714913f4811476a0e757"
+},
+{
+"action": "create_job",
+"actor": "owner",
+"at": "2026-11-04T08:14:08+00:00",
+"detail": "owner created Old idle job for Bare Client ($5,000.00). The paperwork list comes with the first pay app.",
+"hash": "aa218b877bffb306ef1634e2fca1c7bde37c2f692d264c5f991dd91284ddd461",
+"id": "aud-12",
+"job_id": "job-f88df3",
+"prev": "0e6775d2551a927c3a4bb4c37f5dca5ce497e1d01732c981c60c5536fb73122d"
+}
+],
+"company": {
+"books": "",
+"city": "",
+"crew": 0,
+"name": "Old Builders",
+"revenue_band": ""
+},
+"email_log": [
+{
+"approved_by": "Olive",
+"at": "2026-11-04T08:14:08+00:00",
+"attachments": [],
+"audit_seq": 6,
+"body": "Olive,\n\nPlease find pay application PA-OLDD-01 for Old dollar job attached as a PDF. Every item of paperwork is accounted for.\n\nPA-OLDD-01 \u2014 Old dollar job\n1 Old St\nPeriod to 2026-11-04\n\n  Completed contract work not yet billed: $20,000.00\n  Less retainage 10%: -$2,000.00\n  Amount due this application: $18,000.00\n\nPaperwork:\n  [x] Conditional waiver\n  [x] Insurance certificate\n  [x] Daily tickets and time sheets\n\nOlive\nOld Builders",
+"cc": [],
+"id": "eml-30438ab546",
+"job_id": "job-81bcce",
+"kind": "pay_app",
+"payapp_invoice_id": "inv-job-81bcce-1",
+"status": "queued",
+"subject": "Pay application PA-OLDD-01 \u2014 Old dollar job \u2014 $18,000.00 \u2014 Old Builders \u2014 period to 2026-11-04",
+"to": "ap@old.example"
+}
+],
+"jobs": [
+{
+"address": "1 Old St",
+"change_orders": [],
+"closed": false,
+"closeout_packet": [
+{
+"attachments": [],
+"blocker": "Punch list sign-off is missing.",
+"id": "pkt-81bcce-punch",
+"kind": "punch",
+"label": "Punch list sign-off",
+"present": false,
+"required": true
+},
+{
+"attachments": [],
+"blocker": "Completion certificate is missing.",
+"id": "pkt-81bcce-completion",
+"kind": "completion",
+"label": "Completion certificate",
+"present": false,
+"required": true
+},
+{
+"attachments": [],
+"blocker": "Final lien waivers is missing.",
+"id": "pkt-81bcce-final_waiver",
+"kind": "final_waiver",
+"label": "Final lien waivers",
+"present": false,
+"required": true,
+"waiver_kind": "conditional_final"
+},
+{
+"attachments": [],
+"blocker": "As-builts is missing.",
+"id": "pkt-81bcce-asbuilt",
+"kind": "asbuilt",
+"label": "As-builts",
+"present": false,
+"required": true
+},
+{
+"attachments": [],
+"blocker": "Warranties is missing.",
+"id": "pkt-81bcce-warranty",
+"kind": "warranty",
+"label": "Warranties",
+"present": false,
+"required": true
+}
+],
+"code": "OLDD",
+"completed_at": null,
+"completed_value_cents": 5000000,
+"contract_cents": 10000000,
+"contract_number": "",
+"done_notes": "",
+"evidence": [],
+"external_status": "Submitted to Old Client, awaiting Olive",
+"follow_ups": 0,
+"id": "job-81bcce",
+"invoices": [
+{
+"amount_cents": 1800000,
+"approved_by": "Olive",
+"conditional_waiver_kind": "conditional_progress",
+"contract_at_send": {
+"approved_co_cents": 0,
+"op_bp": 0,
+"op_scheduled_cents": 0,
+"original_cents": 10000000,
+"pending_cos": [],
+"released_cents": 0
+},
+"created_at": "2026-11-04T08:14:08+00:00",
+"final": false,
+"gross_cents": 2000000,
+"id": "inv-job-81bcce-1",
+"lines": [
+{
+"amount_cents": 2000000,
+"label": "Completed contract work not yet billed"
+},
+{
+"amount_cents": -200000,
+"label": "Less retainage 10%"
+}
+],
+"number": "PA-OLDD-01",
+"op_cents": 0,
+"packet": [
+{
+"attachments": [],
+"blocker": "Conditional waiver is missing.",
+"id": "pkt-bcce-1-conditional-waiver",
+"kind": "conditional-waiver",
+"label": "Conditional waiver",
+"marked_in_hand": true,
+"present": true,
+"present_reason": "in the office",
+"required": true,
+"resolved_at": "2026-11-04T08:14:08+00:00",
+"waiver_kind": "conditional_progress"
+},
+{
+"attachments": [],
+"blocker": "Insurance certificate is missing.",
+"id": "pkt-bcce-1-insurance-certificate",
+"kind": "insurance-certificate",
+"label": "Insurance certificate",
+"marked_in_hand": true,
+"present": true,
+"present_reason": "in the office",
+"required": true,
+"resolved_at": "2026-11-04T08:14:08+00:00"
+},
+{
+"attachments": [],
+"blocker": "Daily tickets and time sheets is missing.",
+"id": "pkt-bcce-1-daily-tickets-and-time-s",
+"kind": "daily-tickets-and-time-s",
+"label": "Daily tickets and time sheets",
+"marked_in_hand": true,
+"present": true,
+"present_reason": "in the office",
+"required": true,
+"resolved_at": "2026-11-04T08:14:08+00:00"
+}
+],
+"packet_id": "inv-job-81bcce-1",
+"period_to": "2026-11-04",
+"progress_notes": "",
+"retainage_cents": 200000,
+"retainage_pct": 10,
+"sent_at": "2026-11-04T08:14:08+00:00",
+"sov_lines": [],
+"sov_sheet": [],
+"status": "sent"
+},
+{
+"amount_cents": 2700000,
+"approved_by": null,
+"created_at": "2026-11-04T08:14:08+00:00",
+"final": false,
+"gross_cents": 3000000,
+"id": "inv-job-81bcce-2",
+"lines": [
+{
+"amount_cents": 3000000,
+"label": "Completed contract work not yet billed"
+},
+{
+"amount_cents": -300000,
+"label": "Less retainage 10%"
+}
+],
+"number": "PA-OLDD-02",
+"op_cents": 0,
+"packet": [
+{
+"attachments": [
+{
+"added_at": "2026-11-04T08:14:08+00:00",
+"added_by": "Olive",
+"name": "Name only waiver"
+}
+],
+"blocker": "Conditional waiver is missing.",
+"id": "pkt-bcce-2-conditional-waiver",
+"kind": "conditional-waiver",
+"label": "Conditional waiver",
+"present": true,
+"required": true,
+"waiver_kind": "conditional_progress"
+},
+{
+"attachments": [],
+"blocker": "Insurance certificate is missing.",
+"id": "pkt-bcce-2-insurance-certificate",
+"kind": "insurance-certificate",
+"label": "Insurance certificate",
+"marked_in_hand": true,
+"present": true,
+"required": true,
+"resolved_at": "2026-11-04T08:14:08+00:00"
+},
+{
+"attachments": [],
+"blocker": "Daily tickets and time sheets is missing.",
+"id": "pkt-bcce-2-daily-tickets-and-time-s",
+"kind": "daily-tickets-and-time-s",
+"label": "Daily tickets and time sheets",
+"present": false,
+"required": true
+}
+],
+"packet_id": "inv-job-81bcce-2",
+"period_to": "2026-11-04",
+"progress_notes": "",
+"retainage_cents": 300000,
+"retainage_pct": 10,
+"sent_at": null,
+"sov_lines": [],
+"sov_sheet": [],
+"status": "draft"
+}
+],
+"name": "Old dollar job",
+"packet": [],
+"payer_id": "payer-6bf7b4",
+"payer_role": "GC",
+"payments": [],
+"records": [],
+"retainage_chases": 0,
+"retainage_held_cents": 0,
+"retainage_pct": 10,
+"retainage_released_cents": 0,
+"started_on": "2026-11-04",
+"waiver_due": false,
+"waiver_sent": false,
+"work_status": "in_progress"
+},
+{
+"address": "2 Old St",
+"change_orders": [],
+"closed": false,
+"code": "OLDI",
+"completed_at": null,
+"completed_value_cents": 0,
+"contract_cents": 500000,
+"contract_number": "",
+"done_notes": "",
+"evidence": [],
+"external_status": null,
+"follow_ups": 0,
+"id": "job-f88df3",
+"invoices": [],
+"name": "Old idle job",
+"packet": [],
+"payer_id": "payer-abbb31",
+"payer_role": "Owner",
+"payments": [],
+"records": [],
+"retainage_chases": 0,
+"retainage_held_cents": 0,
+"retainage_pct": 0,
+"retainage_released_cents": 0,
+"started_on": "2026-11-04",
+"waiver_due": false,
+"waiver_sent": false,
+"work_status": "in_progress"
+}
+],
+"payers": [
+{
+"ap_email": "ap@old.example",
+"approver": "Olive",
+"client_type": "gc",
+"copy": "",
+"follow_up_days": 5,
+"id": "payer-6bf7b4",
+"name": "Old Client",
+"packet": "Conditional waiver, Insurance certificate, Daily tickets and time sheets",
+"phone": "",
+"rejects_when": "Missing required paperwork.",
+"role": "GC",
+"usual_approval_days": 21
+},
+{
+"ap_email": "",
+"approver": "Bare Client",
+"client_type": "owner",
+"copy": "",
+"follow_up_days": 7,
+"id": "payer-abbb31",
+"name": "Bare Client",
+"packet": "Signed contract, Conditional waiver, Progress photos, Pay app backup",
+"phone": "",
+"rejects_when": "Missing required paperwork.",
+"role": "Owner",
+"usual_approval_days": 14
+}
+],
+"schema_version": 13
+}

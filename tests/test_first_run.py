@@ -162,7 +162,7 @@ class FirstRunTests(unittest.TestCase):
         res, data = self.request("POST", f"/api/jobs/{job_id}/done", {"notes": "Punch list walked with Dana"}, cookie)
         self.assertEqual(res.status, 200, data)
         job = self.job(data, job_id)
-        self.assertIn({"kind": "note", "label": "Notes when marked done", "note": "Punch list walked with Dana"},
+        self.assertIn({"kind": "note", "label": "Notes at Final Pay App", "note": "Punch list walked with Dana"},
                       [{k: r[k] for k in ("kind", "label", "note")} for r in job["records"]])
         res, timeline = self.request("GET", f"/api/timeline?job={job_id}", cookie=cookie)
         self.assertEqual(res.status, 200, timeline)

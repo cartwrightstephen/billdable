@@ -200,12 +200,12 @@ function onboardingHtml() {
       label: "New job", attrs: `data-action="onb-newjob"`, always: true },
     { text: "Put the contract and supporting documents on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
-    { text: "Set up a schedule of values to bill line by line (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present),
-      label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.editable) || j.sov_view.present, "#sov-card"), needsJob: true },
+    { text: "Bill line by line: replace the job's one lump-sum line with your schedule of values (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present && !j.sov_view.auto),
+      label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.present && j.sov_view.auto && j.sov_view.editable), "#sov-card"), needsJob: true },
     { text: termText("Use Progress Pay App or Final Pay App. Duracash drafts the pay app and lists the supporting documents the client needs."), done: invoices.length > 0,
       label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
-    { text: "Add the missing supporting documents, then Approve & send.", done: invoices.some(i => i.sent_at),
-      label: draft ? "Review & send" : "Open the job",
+    { text: "Add the missing supporting documents, then Review & Send.", done: invoices.some(i => i.sent_at),
+      label: draft ? "Review & Send" : "Open the job",
       attrs: draft ? `data-action="open-payapp" data-job="${draftJob.id}" data-inv="${draft.id}" data-focus=".send-check"` : goJob(billed, ".next-card"), needsJob: true },
     { text: "Already been paid on some jobs? Import the payments from QuickBooks.", optional: true, done: jobs.some(j => (j.payments || []).length),
       label: "Import payments", attrs: `data-action="onb-go" data-view="import" data-focus="#qbo-csv"`, needsJob: true },
@@ -276,7 +276,7 @@ export const views = {
       ${isDemo && !helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
-          <strong>Try the demo:</strong> open a job, add its missing supporting documents, Review & send, record the payment, send the waiver, then finish the job.
+          <strong>Try the demo:</strong> open a job, add its missing supporting documents, Review & Send, record the payment, send the waiver, then finish the job.
         </div>` : ""}
       ${state.jobs.length || (state.tasks || []).length ? todoCardHtml() : ""}
       <div class="metrics">

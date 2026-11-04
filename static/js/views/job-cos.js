@@ -1,4 +1,5 @@
 // The job page's change orders: the sign controls, the New change order card and its form.
+import { focusAfterDraw } from "../dom.js";
 import { money, centsFrom, fmtDate, unesc } from "../format.js";
 import { coSignature, RECORD_KINDS } from "../jobs.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
@@ -162,13 +163,13 @@ export async function addChangeOrder(jobId) {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
   "include-co": (el, id) => post(`/api/jobs/${id}/include-co/${el.dataset.co}`),
-  "new-co": () => { newCoMade = null; coItemRows = 0; coBackup = new Set(); toggleForm("newco"); requestAnimationFrame(() => document.getElementById("co-title")?.focus()); },
+  "new-co": () => { newCoMade = null; coItemRows = 0; coBackup = new Set(); toggleForm("newco"); focusAfterDraw(() => document.getElementById("co-title")); },
   "new-co-done": () => { newCoMade = null; coItemRows = 0; coBackup = new Set(); formOpen.newco = false; clearForm("newco"); render(); },
   "co-add-item": () => {
     readBackup();
     coItemRows = Math.min(MAX_CO_ITEMS, coItemRows + 1);
     render();
-    requestAnimationFrame(() => document.getElementById(`co-item-label-${coItemRows - 1}`)?.focus());
+    focusAfterDraw(() => document.getElementById(`co-item-label-${coItemRows - 1}`));
   },
   "add-co-here": async (el, id) => {
     const r = await addChangeOrder(id);

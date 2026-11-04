@@ -346,7 +346,7 @@ class DailyRecordNeverLostTests(unittest.TestCase):  # B5 (r2_daily_blocked.py, 
         domain.mark_done(self.s, self.job["id"])
         domain.add_daily_record(self.s, self.job["id"], "Cleanup", details={"sections": {"quantities": [{"line_id": self.ids[0], "qty": "5"}]}})
         rec = self.saved()[-1]
-        self.assertIn("marked done", rec["quantities_not_applied"])
+        self.assertIn("work is finished", rec["quantities_not_applied"])
 
     def test_a_lump_sum_past_100_percent_is_saved_and_worded_in_percent(self):
         domain.add_daily_record(self.s, self.job["id"], "Panel set", details={"sections": {"quantities": [{"line_id": self.ids[1], "qty": "60"}]}})

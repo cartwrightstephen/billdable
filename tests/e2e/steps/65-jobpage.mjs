@@ -43,11 +43,44 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     await p.context().close();
   });
 
+  await step("Log a Conversation from New job record: the same form, with its check-again date, for the job picked", async () => {  // criterion 59
+    const p = await signedInPage({ width: 375, height: 800 });
+    const id = await waitingJob(p);
+    await p.goto(`${BASE}/jobs/${id}`);
+    await p.locator(".job-actions").waitFor();
+    await p.locator('.job-actions [data-action="daily-for-job"], .next-card [data-action="daily-for-job"], [data-action="daily-for-job"]').first().click();
+    await p.getByRole("heading", { name: "New job record" }).waitFor();
+    await p.fill("#daily-notes", "Typed before the call");
+    await p.getByRole("button", { name: "Log a Conversation" }).click();
+    await p.fill("#conversation-text", "Check goes out Friday");
+    const next = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    await p.fill("#conversation-next", next);
+    await p.click('[data-action="save-conversation"]');
+    await p.locator("#conversation-text").waitFor({ state: "detached" });
+    assert.equal(await p.inputValue("#daily-notes"), "Typed before the call", "the record being written stays");
+    const job = await p.evaluate(async (jid) => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === jid), id);
+    assert.equal(job.expected_payment_on, next);
+    assert.ok(job.records.some((r) => r.kind === "conversation" && /Check goes out Friday/.test(`${r.label} ${r.note}`)));
+    await p.context().close();
+  });
+
+  await step("A job from before schedules has the dollar form: where it stands and what the pay app comes to (R3-01)", async () => {
+    const p = await signedInPage({ width: 1280, height: 900 });
+    const id = await p.evaluate(async () => (await (await fetch("/api/state")).json()).jobs.find((j) => !j.closed && !j.sov_view.present && j.work_status !== "complete" && !j.invoices.some((i) => ["draft", "awaiting_approval"].includes(i.status)))?.id);
+    assert.ok(id, "the demo has a job with no schedule");
+    await p.goto(`${BASE}/jobs/${id}`);
+    await p.locator('.job-actions [data-form="progress"], .next-card [data-form="progress"]').first().click();
+    await p.locator(".progress-context", { hasText: "Billed so far" }).waitFor();
+    await p.fill("#progress-draw", "3,000");
+    assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $3,000.00.");
+    await p.context().close();
+  });
+
   await step("Final Pay App confirms first: the amount and what it does, and Cancel changes nothing", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     const id = await p.evaluate(async () => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const st = await (await post("/api/jobs", { name: "Final check", address: "9 Elm St", customer: "Rae Final", role: "Owner", ap_email: "rae@example.com", contract_cents: 1000000 })).json();
+      const st = await (await post("/api/jobs", { name: "Final check", address: "9 Elm St", customer: "Rae Final", role: "Owner", approver: "Rae", phone: "(404) 555-0100", ap_email: "rae@example.com", contract_cents: 1000000 })).json();
       return st.jobs.find((j) => j.name === "Final check").id;
     });
     await p.goto(`${BASE}/jobs/${id}`);

@@ -14,19 +14,9 @@ import { load, toast, renderLanding, render, clearJobDetails, post, setState, DE
 import { moreButton } from "../dom.js";
 import { printSheet } from "./communications.js";
 
-// Files added on Import go with the job last picked under "Which job?" on this device (R5-07).
-// "" is "Not sure, file later". Kept in memory too, for a private window.
-const UPLOAD_JOB_KEY = "duracash-upload-job";
-let uploadJob = null;
-// null until a pick is made on this device; "" after "Not sure, file later" was picked.
-function lastUploadJob() {
-  if (uploadJob !== null) return uploadJob;
-  try { return localStorage.getItem(UPLOAD_JOB_KEY); } catch (_) { return null; }
-}
-export function rememberUploadJob(id) {
-  uploadJob = unesc(id);
-  try { localStorage.setItem(UPLOAD_JOB_KEY, uploadJob); } catch (_) { /* private window: remembered until reload */ }
-}
+// Which job? on Import starts on "Not sure, file later", so nothing skips the Inbox without someone
+// choosing a job here. The one other start is a job's own Import link (import-for-job).
+let linkedJob = "";
 const FILE_ACCEPT = document.getElementById("file-input")?.getAttribute("accept") || "";
 let importSettings = null;
 // The addresses changed on the server (a team member removed): ask for them again when shown.
@@ -147,19 +137,16 @@ export function newAddressButton(kind) {
   return can("company") ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
 }
 
-// Import's "Which job?" for files added there: the last one picked, or the only open job.
-function uploadJobPick(openJobs) {
+// Import's "Which job?": what the box on screen shows (a redraw keeps a pick), else the job whose
+// Import link was followed, else Not sure.
+function uploadJobPick() {
   const onScreen = document.getElementById("upload-job");
-  const last = onScreen && onScreen.value ? onScreen.value : lastUploadJob();
-  return last === "" ? "" : defaultJobId(openJobs, last || "");
+  return onScreen ? onScreen.value : linkedJob;
 }
 
 function uploadJobOptions() {
   const openJobs = state.jobs.filter(j => !j.closed);
-  // "Not sure" stays picked once chosen, even with one open job.
-  // A redraw keeps what the box on screen shows (a pick made while the page was loading), then
-  // what was last picked on this device.
-  const pick = uploadJobPick(openJobs);
+  const pick = uploadJobPick();
   return `<option value="">Not sure, file later</option>` + openJobs.map(j => `<option value="${j.id}"${pick === j.id ? " selected" : ""}>${j.name} (${j.code})</option>`).join("");
 }
 
@@ -207,7 +194,7 @@ export function pasteBoxHtml(jobId = "") {
         </div>
         <textarea id="paste-text" data-field="text" rows="6" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in">${esc(text)}</textarea>
         <p id="paste-hint" class="sub paste-hint" role="status"></p>
-        <div class="form-inline"><button class="btn" id="paste-add" data-action="import-text"${jobId ? ` data-job="${jobId}"` : ""}>${jobId || uploadJobPick((state.jobs || []).filter(j => !j.closed)) ? "Add to job" : "Add to Inbox"}</button></div></div>`;
+        <div class="form-inline"><button class="btn" id="paste-add" data-action="import-text"${jobId ? ` data-job="${jobId}"` : ""}>${jobId || uploadJobPick() ? "Add to job" : "Add to Inbox"}</button></div></div>`;
 }
 
 // Typing or pasting in the box: pick what it looks like, unless the person already chose.
@@ -478,7 +465,7 @@ export const actions = {
     }
   },
   // Import from a job's Job records card: Which job? starts on that job.
-  "import-for-job": (el, id) => { rememberUploadJob(id); nav("import"); },
+  "import-for-job": (el, id) => { linkedJob = unesc(id); nav("import"); linkedJob = ""; },
   "import-text": async (el) => {
     const text = document.querySelector("#paste-text")?.value || "";
     const source = document.querySelector("#paste-source")?.value || "paste";

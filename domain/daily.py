@@ -469,7 +469,7 @@ def quantities_blocked(job: dict[str, Any]) -> str:
     if not sov.has_sov(job):
         return "This job has no schedule of values to add quantities to."
     if job.get("work_status") == "complete":
-        return "The job is marked done, so every line is already counted as done."
+        return "The work is finished, so every line is already counted as done."
     return ""
 
 

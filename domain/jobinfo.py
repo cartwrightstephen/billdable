@@ -186,7 +186,7 @@ def job_key_dates(state: dict[str, Any], job: dict[str, Any], payer: dict[str, A
     add("payment_due", "Payment due", due[0] if due else "")
     follow = follow_up_due(job, payer) if unpaid and not job.get("closed") else None
     add("follow_up", "Next follow-up", follow.date().isoformat() if follow else "")
-    add("done", "Marked done", job.get("completed_at"))
+    add("done", "Work finished", job.get("completed_at"))
     asked = job.get("last_retainage_chase_at")
     add("retainage_asked", "Retainage asked", asked)
     if asked and not job.get("closed") and job_money(job)["retainage_open_cents"] > 0:

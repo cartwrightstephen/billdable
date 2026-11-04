@@ -29,8 +29,11 @@ const ACTIONS = {
   new_job: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
   follow_up: (r) => `data-action="follow-up" data-id="${r.job_id}"`,
   inbox: (r) => `data-action="inbox-file-suggested" data-item="${r.item_id}" data-job="${r.job_id}"`,
+  closeout: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
+  retainage: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
+  finish: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
 };
-const OPENS_JOB = ["ready", "waiver", "due_soon", "new_job"];
+const OPENS_JOB = ["ready", "waiver", "due_soon", "new_job", "closeout", "retainage", "finish"];
 
 // The server's rows (already HTML-escaped on arrival, like the rest of state), most urgent first.
 export function todayQueue(state) {
@@ -51,7 +54,7 @@ export function inboxKindSelect(r) {
 export function rowButtons(r) {
   const attrs = ACTIONS[r.kind];
   const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` + (r.kind === "inbox" ? inboxKindSelect(r) : "") : "";
-  const talked = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="log-conversation" data-id="${r.job_id}">Log a conversation</button>` : "";
+  const talked = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="log-conversation" data-id="${r.job_id}">Log a Conversation</button>` : "";
   const open = OPENS_JOB.includes(r.kind) ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${r.job_id}">Open</button>`;
   return main + talked + open;
 }

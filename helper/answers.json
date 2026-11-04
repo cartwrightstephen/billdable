@@ -622,7 +622,7 @@
         "start payapp",
         "create payapp"
       ],
-      "answer": "Two places, one way of drafting. On a job, tap Progress Pay App while the work goes on, or Draft Pay App once the job is marked done. Or on Money, Pay apps tap New pay app: with more than one job that has something to bill, pick it under Which job? and tap Continue. It opens that job's Progress Pay App form, or drafts it the way Draft Pay App does for a job marked done. A job isn't listed when it already has a draft open, including one waiting for the client's approval (open that draft with Review & Send), when its contract is billed in full, or, once marked done, when it has no work left to bill.",
+      "answer": "Two places, one way of drafting. On a job, tap Progress Pay App while the work goes on, or Draft Pay App after Final Pay App. Or on Money, Pay apps tap New pay app: with more than one job that has something to bill, pick it under Which job? and tap Continue. It opens that job's Progress Pay App form, or drafts it the way Draft Pay App does for a job marked done. A job isn't listed when it already has a draft open, including one waiting for the client's approval (open that draft with Review & Send), when its contract is billed in full, or, once marked done, when it has no work left to bill.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1215,7 +1215,7 @@
         "spoke",
         "phone call"
       ],
-      "answer": "Open the job and tap Log a Conversation, or Log a conversation on a Follow up row on the Dashboard. Enter what they said and tap Save. It goes on the job's records under Conversations. While a pay app is waiting for payment it counts as a follow-up, so the next one waits the client's usual days. Enter Check again on and the next follow-up waits until that date instead.",
+      "answer": "Open the job and tap Log a Conversation, or tap it on New job record, or on a Follow up row on the Dashboard. Enter what they said and tap Save. It goes on the job's records under Conversations. While a pay app is waiting for payment it counts as a follow-up, so the next one waits the client's usual days. Enter Check again on and the next follow-up waits until that date instead.",
       "handler": null,
       "needs_job": false,
       "actions": [],

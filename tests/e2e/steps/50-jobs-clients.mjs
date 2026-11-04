@@ -73,7 +73,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(added.fields.phone, "Enter the client's phone number.", "the server refuses, per field");
     assert.ok(added.fields.approver && added.fields.ap_email && added.fields.client_type);
     await p.goto(BASE + "/jobs");
-    await p.getByRole("button", { name: "New job" }).click();
+    await p.getByRole("button", { name: "New job", exact: true }).click();
     const form = p.locator('[data-form-key="newjob"]');
     await form.locator("#nj-name").fill("Rule porch");
     await form.locator("#nj-street").fill("1 Rule St");

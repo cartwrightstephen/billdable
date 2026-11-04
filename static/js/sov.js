@@ -84,7 +84,7 @@ export function sovFixedNote(j, canDelete) {
   if (v.present) {
     return v.sent
       ? `<p class="sub sov-lock">Fixed since ${v.sent} was sent. Scope changes go through change orders, which add their own lines when approved.</p>`
-      : `<p class="sub sov-lock">Fixed because the work is marked done.</p>`;
+      : `<p class="sub sov-lock">Fixed because the work is finished.</p>`;
   }
   return v.sent
     ? `<p class="sub sov-lock">This job bills in dollars: ${v.sent} was sent without a schedule of values, and a schedule can only be set before the first pay app is sent.</p>`

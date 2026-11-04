@@ -64,7 +64,7 @@ test("what the card says when a schedule can't be set or changed: never nothing 
   assert.match(note({ present: false, sent: "PA-1" }), /This job bills in dollars: PA-1 was sent without a schedule of values, and a schedule can only be set before the first pay app is sent\./);
   assert.match(note({ present: false, sent: "" }), /This job bills in dollars\./);
   assert.match(note({ present: true, sent: "PA-1" }), /Fixed since PA-1 was sent\. Scope changes go through change orders/);
-  assert.match(note({ present: true, sent: "" }), /marked done/);
+  assert.match(note({ present: true, sent: "" }), /work is finished/);
 });
 
 const periodLine = (extra) => ({ line_id: "l1", item: "1", description: "Rough-in", unit: "ea", lump_sum: false, qty_this_milli: 20000, from_records_milli: 12500,

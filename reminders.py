@@ -100,7 +100,7 @@ def _date_items(state: dict[str, Any], today: date, jobs: dict[str, dict[str, An
             out.append(_item("dates", job, event["uid"], f"{event['title']}, {event['date']:%b} {event['date'].day}."))
     for job in jobs.values():
         try:
-            end = date.fromisoformat(str(job.get("anticipated_end_date") or "")[:10])
+            end = date.fromisoformat(str(job.get("anticipated_end_on") or "")[:10])
         except ValueError:
             continue
         if today <= end <= last and job.get("work_status") != "complete":

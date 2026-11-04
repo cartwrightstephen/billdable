@@ -123,7 +123,7 @@ export function waiverChecklistHtml(j, kind, inv = null, amount = null) {
 
 // Who put an attachment on an item, and when.
 function attachedLine(a) {
-  return `${a.auto ? (a.unconfirmed ? "found on the job record" : "attached automatically") : "added by " + a.added_by}${a.added_at ? ", " + fmtDate(a.added_at) : ""}`;
+  return `${a.auto ? (a.unconfirmed ? "found in the job records" : "attached automatically") : "added by " + a.added_by}${a.added_at ? ", " + fmtDate(a.added_at) : ""}`;
 }
 
 function attachmentRow(a, records, files) {
@@ -323,7 +323,7 @@ function packetItemsHtml(j, inv, packet, isCloseout) {
         ${skipped ? skippedHtml(p, isCloseout) : ""}
         ${p.present && made ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
         ${p.present && p.override ? `<div class="override-note">${overrideText(p)}</div>` : ""}
-        ${p.present && !p.override && p.present_reason && !made ? `<div class="sub">Marked as in hand: ${p.present_reason}</div>` : ""}
+        ${p.present && !p.override && (p.present_reason || p.marked_in_hand) && !made ? `<div class="sub">Marked as in hand${p.present_reason ? `: ${p.present_reason}` : ""}</div>` : ""}
         ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}
         ${p.files_left_out && !p.present ? `<div class="sub">Its files are left out of the email.</div>` : ""}
         ${(p.attachments || []).map(a => attachmentRow(a, records, files)).join("")}

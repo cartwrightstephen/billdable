@@ -72,6 +72,9 @@ test("each kind of row has its one main button, with the ids it needs", () => {
     [row({ kind: "due_soon", button: "Progress Pay App" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Progress Pay App</, false],
     [row({ kind: "follow_up", button: "Send follow-up" }), /data-action="follow-up" data-id="j1">Send follow-up</, true],
     [row({ kind: "inbox", button: "Add to this job", item_id: "x2" }), /data-action="inbox-file-suggested" data-item="x2" data-job="j1">Add to this job</, true],
+    [row({ kind: "closeout", button: "Open Closeout Documents" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Open Closeout Documents</, false],
+    [row({ kind: "retainage", button: "Ask for Retainage" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Ask for Retainage</, false],
+    [row({ kind: "finish", button: "Finish Job" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Finish Job</, false],
   ];
   for (const [r, pattern, open] of cases) {
     const html = rowButtons(r);
@@ -81,9 +84,9 @@ test("each kind of row has its one main button, with the ids it needs", () => {
   }
 });
 
-test("a follow-up offers Log a conversation as a second button", () => {  // R4-06
+test("a follow-up offers Log a Conversation as a second button", () => {  // R4-06
   const html = rowButtons(row({ kind: "follow_up", button: "Send follow-up" }));
-  assert.match(html, /<button class="btn small secondary" data-action="log-conversation" data-id="j1">Log a conversation<\/button>/);
+  assert.match(html, /<button class="btn small secondary" data-action="log-conversation" data-id="j1">Log a Conversation<\/button>/);
 });
 
 test("a pay app the customer approved has no main button, only Open", () => {  // R4-08

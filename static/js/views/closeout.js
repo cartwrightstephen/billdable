@@ -16,7 +16,7 @@ import { waiverChecklistHtml, waiverFormHtml } from "./paperwork.js";
 // for all of it.
 function retainageAskHtml(j) {
   const key = `retask-${j.id}`;
-  if (j.work_status !== "complete") return `<span class="sub">Once the job is marked done.</span>`;
+  if (j.work_status !== "complete") return `<span class="sub">After Final Pay App.</span>`;
   if (!may("retainage")) return `<span class="sub">An owner asks for it.</span>`;
   // chase_retainage waits the client's days between contacts after the last request.
   const asked = retainageAskWaits(j);

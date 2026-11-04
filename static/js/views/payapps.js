@@ -5,7 +5,7 @@
 import { unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
 import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn, payAppStarts, defaultJobId } from "../jobs.js";
 import { pathFor } from "../routes.js";
-import { askConfirm } from "../dom.js";
+import { askConfirm, focusAfterDraw } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
@@ -201,7 +201,7 @@ export async function startPayApp(jobId, step) {
   if (step === "draft") return post(`/api/jobs/${jobId}/draft`);
   formOpen.progress = true;
   render();
-  requestAnimationFrame(() => document.querySelector('[data-form-key="progress"] input, [data-form-key="sovprogress"] input:not([disabled])')?.focus());
+  focusAfterDraw(() => document.querySelector('[data-form-key="progress"] input, [data-form-key="sovprogress"] input:not([disabled])'));
   return null;
 }
 
@@ -213,7 +213,7 @@ export const actions = {
     if (starts.length === 1) return startPayApp(starts[0].job.id, starts[0].step);
     formOpen.papick = !formOpen.papick;
     render();
-    requestAnimationFrame(() => document.getElementById("new-payapp-job")?.focus());
+    focusAfterDraw(() => document.getElementById("new-payapp-job"));
     return null;
   },
   "payapp-new-open": () => {

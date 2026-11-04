@@ -45,7 +45,7 @@ def summary_text(state: dict[str, Any], job: dict[str, Any]) -> str:
         f"Contract number: {job.get('contract_number') or '-'}",
         f"Started: {_day(domain.job_started_on(state, job))}",
         f"Anticipated end: {_day(job.get('anticipated_end_on'))}",
-        f"Marked done: {_day(job.get('completed_at'))}",
+        f"Work finished: {_day(job.get('completed_at'))}",
         f"Finished: {_day(job.get('closed_at'))}",
         "",
         f"Contract: {money(m['contract_cents'])}",

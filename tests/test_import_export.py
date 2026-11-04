@@ -102,7 +102,7 @@ class QuantityPreviewTests(unittest.TestCase):
     def test_a_job_that_cant_take_quantities_says_why(self):
         domain.mark_done(self.state, self.job["id"])
         p = self.preview(LOG)
-        self.assertEqual(p["blocked"], "The job is marked done, so every line is already counted as done.")
+        self.assertEqual(p["blocked"], "The work is finished, so every line is already counted as done.")
         self.assertEqual(p["can_add"], 0)
         plain = new_job(self.state, name="No schedule")
         self.assertIn("no schedule of values", qty_import.preview(self.state, plain, qty_import.parse(LOG))["blocked"])

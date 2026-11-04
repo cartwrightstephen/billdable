@@ -10,10 +10,11 @@ import { fmtQty } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { localDay } from "../tasks.js";
 import { recordFiles } from "./job-record.js";
+import { conversationFormHtml } from "./job.js";
 import { readJson, setNetBanner } from "../net.js";
 import { draftValue, clearForm, field, moneyField, formValues, formErrors, refuseForm } from "../forms.js";
 import { termText } from "../terms.js";
-import { state, onSessionEnd, currentView } from "../state.js";
+import { state, onSessionEnd, currentView, formOpen } from "../state.js";
 import { post, toast, render, emptyState, nav, setState } from "../app-core.js";
 
 // The New job record form starts on the job last used on this device (R2-07).
@@ -194,6 +195,7 @@ export const views = {
         ${RECORD_SECTIONS.map(recordSectionHtml).join("")}
         <button class="btn" data-action="daily-save">Save job record</button>` : emptyState("No open jobs", "", `<button class="btn" data-action="onb-newjob">New job</button>`)}
       </div>
+      ${j ? formOpen.conversation ? conversationFormHtml(j) : `<p class="daily-conversation"><button class="btn secondary" data-action="toggle-form" data-form="conversation">Log a Conversation</button></p>` : ""}
       <div class="card">
         <h2>Recent diary entries</h2>
         ${records.length ? records.slice().reverse().map(r => {

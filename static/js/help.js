@@ -45,7 +45,7 @@ export const FIELD_HELP = {
   "held back": "Retainage still held on this job.",
   "holding it up": "Closeout items that must be done before you can ask for retainage.",
   "finished": "Date the job was finished.",
-  "notes": "What was noted when the job was marked done, or where it stands.",
+  "notes": "What was noted when the work was finished, or where it stands.",
   "when": "When it happened.",
   "to": "Who it was addressed to: the client's email for pay apps, from the Client playbook.",
   "subject": "Subject line of the logged message.",

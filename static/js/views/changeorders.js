@@ -4,7 +4,7 @@
 import { esc, unesc, money, fmtDate, fmtDateTime } from "../format.js";
 import { coSignature, coStatusWords, defaultJobId, openJobs as jobsOpen, RECORD_KINDS } from "../jobs.js";
 import { pathFor } from "../routes.js";
-import { askConfirm } from "../dom.js";
+import { askConfirm, focusAfterDraw } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
@@ -170,7 +170,7 @@ function openCoForm(jobId) {
   nav("job", jobId);
   formOpen.newco = true;
   render();
-  requestAnimationFrame(() => document.getElementById("co-title")?.focus());
+  focusAfterDraw(() => document.getElementById("co-title"));
 }
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
@@ -187,7 +187,7 @@ export const actions = {
     if (open.length === 1) { openCoForm(open[0].id); return; }
     formOpen.copick = !formOpen.copick;
     render();
-    requestAnimationFrame(() => document.getElementById("new-co-job")?.focus());
+    focusAfterDraw(() => document.getElementById("new-co-job"));
   },
   "co-new-open": () => {
     const jobId = formValues("copick").job;

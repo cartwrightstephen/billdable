@@ -34,9 +34,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const made = await p.evaluate(async () => {
       const call = async (path, body) => (await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })).json();
       let st = await call("/api/jobs", { name: "Smoke blank waiver", customer: "Smoke Blank Client", contract_cents: 1000000, address: "6 Test St, Atlanta, GA 30307",
-        approver: "Dee", ap_email: "dee@blank.example", role: "Owner", new_customer: true });
-      const id = st.jobs.find((j) => j.name === "Smoke blank waiver").id;
-      st = await call(`/api/jobs/${id}/progress`, { completed_cents: 400000 });
+        approver: "Dee", phone: "(404) 555-0100", ap_email: "dee@blank.example", role: "Owner", new_customer: true });
+      const blank = st.jobs.find((j) => j.name === "Smoke blank waiver");
+      const id = blank.id;
+      st = await call(`/api/jobs/${id}/sov-progress`, { done: { [blank.sov.lines[0].id]: "0.4" } });
       const inv = st.jobs.find((j) => j.id === id).invoices.at(-1);
       const waiver = inv.packet.find((i) => i.waiver_kind);
       const other = inv.packet.find((i) => i !== waiver && !i.present);

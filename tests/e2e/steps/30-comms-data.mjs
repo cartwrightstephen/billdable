@@ -177,6 +177,12 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
 
   await step("Reminders start off, a person turns one on, and it shows in the app with a count", async () => {
     const { ctx, p } = await newCompany("reminders");
+    // A new job's client is complete: what is missing here is the draft's supporting documents.
+    await p.evaluate(async () => {
+      const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const j = (await (await fetch("/api/state")).json()).jobs[0];
+      await post(`/api/jobs/${j.id}/sov-progress`, { done: { [j.sov.lines[0].id]: "0.5" } });
+    });
     await p.goto(BASE + "/automations");
     await p.getByRole("heading", { name: "Reminders" }).waitFor();
     assert.equal(await p.locator("input[data-reminder]:checked").count(), 0);
@@ -189,7 +195,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await box("missing", "text").uncheck();
     await box("missing", "app").check();
     await p.getByRole("button", { name: "Save" }).click();
-    const note = p.locator("#reminder-items .money-row", { hasText: "Northline GC has no phone on file" });
+    const note = p.locator("#reminder-items .money-row", { hasText: "The pay app needs:" });
     await note.waitFor();
     const count = p.locator('.nav button[data-section="automations"] .count').first();
     assert.equal(await count.innerText(), "1");

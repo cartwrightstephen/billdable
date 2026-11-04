@@ -64,7 +64,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const made = await p.evaluate(async (email) => {
       const post = async (path, body) => { const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, data: await r.json() }; };
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Sal Schedule", company_name: "Schedule Builders" });
-      const job = { name: "Conduit run", address: "7 Line St", customer: "Sam Client", role: "Owner", ap_email: "sam@example.com", contract_cents: 1000000 };
+      const job = { name: "Conduit run", address: "7 Line St", customer: "Sam Client", role: "Owner", approver: "Sam", phone: "(404) 555-0100", ap_email: "sam@example.com", contract_cents: 1000000 };
       const lines = [{ description: "Conduit", quantity: "100", unit: "LF", rate: "50" }, { description: "Fixtures", quantity: "10", unit: "EA", rate: "400" }];
       const refused = await post("/api/jobs", { ...job, sov_lines: lines });
       const before = (await (await fetch("/api/state")).json()).jobs.length;

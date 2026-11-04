@@ -20,7 +20,7 @@ import { sovDraft, updateSovTotals } from "./js/views/job-sov.js";
 import { qboStatus, loadQboStatus, paymentImport } from "./js/views/payments.js";
 import { setOutboxJobFilter } from "./js/views/communications.js";
 import { reminderCount, loadReminders } from "./js/views/automations.js";
-import { newInboxCount, loadImportSettings, guessPasteSource, rememberUploadJob } from "./js/views/inbox.js";
+import { newInboxCount, loadImportSettings, guessPasteSource } from "./js/views/inbox.js";
 import { loadHelperReview, loadAdminCompanies, companySwitch, setAuditJobFilter } from "./js/views/settings.js";
 import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml } from "./js/views/auth.js";
 import { setAiVisible, updateAiContext } from "./js/views/helper.js";
@@ -59,7 +59,7 @@ function pageName(e) {
   const j = e.jobId && state.jobs.find(x => x.id === e.jobId);
   if (e.view === "job") return j ? j.name : "Job";
   if (e.view === "payapp-detail") { const i = j && j.invoices.find(x => x.id === e.detailId); return i ? i.number : termText("Pay app"); }
-  if (e.view === "packet-detail") return e.detailId === "closeout" ? "Closeout paperwork" : "Paperwork";
+  if (e.view === "packet-detail") return e.detailId === "closeout" ? "Closeout documents" : "Supporting documents";
   if (e.view === "co-detail") { const co = j && j.change_orders.find(x => x.id === e.detailId); return co ? `CO ${co.number}` : "Change order"; }
   if (e.view === "waiver-detail") return j ? `Closeout: ${j.name}` : "Closeout";   // as its heading and tab title
   if (e.view === "dashboard") return "Dashboard";
@@ -67,7 +67,7 @@ function pageName(e) {
 }
 
 // The tab's title: the page's own name, not its section's (D9). Pages without a tab of their own
-// take their heading, or the tab they are drawn on (Paperwork on Pay apps, Retainage on Closeout).
+// take their heading, or the tab they are drawn on (Supporting documents on Pay apps, Retainage on Closeout).
 const OWN_TITLE = { password: "Change password", "delete-company": "Delete the company" };
 function pageTitle() {
   if (!state) return "Duracash";
@@ -274,7 +274,6 @@ function listenForActions() {
   });
   app.addEventListener("focusout", (e) => { if (e.target.id === "nj-customer") prefillApprover(); });
   app.addEventListener("change", (e) => {
-    if (e.target.id === "upload-job") rememberUploadJob(e.target.value);
     if (e.target.id === "paste-source") { e.target.dataset.touched = "1"; const hint = document.getElementById("paste-hint"); if (hint) hint.textContent = ""; }
     if (e.target.id === "nj-role" || e.target.id === "nj-customer" || e.target.id === "nj-client") prefillRetainage();
     if (e.target.id === "match-inv") prefillPaymentAmount(e.target.value);
