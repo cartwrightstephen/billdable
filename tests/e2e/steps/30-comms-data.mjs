@@ -173,4 +173,73 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.match(files["change-orders"][1], /^Number,Job,Title,Reason,Amount,Status,Signed on,On a pay app$/);
     await ctx.close();
   });
+
+  await step("Reminders start off, a person turns one on, and it shows in the app with a count", async () => {
+    const { ctx, p } = await newCompany("reminders");
+    await p.goto(BASE + "/automations");
+    await p.getByRole("heading", { name: "Reminders" }).waitFor();
+    assert.equal(await p.locator("input[data-reminder]:checked").count(), 0);
+    assert.equal(await p.locator("#reminder-items").count(), 0);
+    // No phone yet: Text is refused under its box, and nothing is saved.
+    const box = (kind, channel) => p.locator(`input[data-reminder="${kind}"][value="${channel}"]`);
+    await box("missing", "text").check();
+    await p.getByRole("button", { name: "Save" }).click();
+    await p.locator("#reminder-missing-err").getByText("My account").waitFor();
+    await box("missing", "text").uncheck();
+    await box("missing", "app").check();
+    await p.getByRole("button", { name: "Save" }).click();
+    const note = p.locator("#reminder-items .money-row", { hasText: "Northline GC has no phone on file" });
+    await note.waitFor();
+    const count = p.locator('.nav button[data-section="automations"] .count').first();
+    assert.equal(await count.innerText(), "1");
+    await note.getByRole("button", { name: "Mark read" }).click();
+    await count.waitFor({ state: "detached" });
+    await ctx.close();
+  });
+
+  await step("My account: a mobile number and the agreement to texts, then Text can be picked", async () => {
+    const { ctx, p } = await newCompany("texts");
+    await p.goto(BASE + "/settings/account");
+    await p.locator("#my-sms-opt-in").check();
+    await p.locator("#my-phone").fill("555-01");
+    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
+    await p.locator("#my-phone-err").filter({ hasText: /\S/ }).waitFor();
+    await p.locator("#my-phone").fill("(404) 555-0142");
+    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
+    await p.getByText("Saved", { exact: true }).first().waitFor();
+    await p.reload();
+    assert.equal(await p.locator("#my-phone").inputValue(), "(404) 555-0142");
+    assert.equal(await p.locator("#my-sms-opt-in").isChecked(), true);
+    await p.goto(BASE + "/automations");
+    await p.locator('input[data-reminder="dates"][value="text"]').check();
+    await p.getByRole("button", { name: "Save" }).click();
+    await p.getByText("Saved", { exact: true }).first().waitFor();
+    await ctx.close();
+  });
+
+  await step("A text to Duracash waits in the Inbox saying who sent it, and is filed to a job with a chosen kind", async () => {
+    const { ctx, p } = await newCompany("textin");
+    await p.goto(BASE + "/");
+    await p.evaluate(async () => {
+      const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      await post("/api/auth/sms", { phone: "(404) 555-0143", sms_opt_in: false });
+      const settings = await (await fetch("/api/import/settings")).json();
+      const path = "/api/inbound/sms/" + settings.sms_webhook.split("/").pop();
+      const send = (From, Body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ From, Body }) });
+      await send("+14045550143", "Footings poured, tickets to follow");
+      await send("+14045550144", "Who is this for");
+      await send("+14045550143", "STOP");
+    });
+    await p.goto(BASE + "/communications");
+    const item = p.locator(".inbox-item", { hasText: "Footings poured" });
+    await item.getByText("from Cora Comms (+14045550143)").waitFor();
+    await p.locator(".inbox-item", { hasText: "Who is this for" }).getByText("from Unknown sender (+14045550144)").waitFor();
+    assert.equal(await p.locator(".inbox-item", { hasText: "STOP" }).count(), 0, "STOP isn't a message to file");
+    const id = await item.getAttribute("data-item");
+    await p.locator(`#inb-kind-${id}`).selectOption("ticket");
+    await item.getByRole("button", { name: "Add to job" }).click();
+    await item.waitFor({ state: "detached" });
+    await ctx.close();
+  });
 }

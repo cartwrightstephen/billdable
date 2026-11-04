@@ -18,7 +18,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     }
     await page.goto(BASE + "/automations");
     await page.getByRole("heading", { name: "Automations" }).waitFor();
-    await page.getByText("Under construction").waitFor();
+    await page.getByRole("heading", { name: "Reminders" }).waitFor();
   });
 
   await step("old addresses still open their page, at its new address", async () => {

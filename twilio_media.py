@@ -6,10 +6,16 @@ Twilio and nobody else can make the server fetch an address of their choosing), 
 https://api.twilio.com, following redirects only to Twilio's storage hosts. The account
 login (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN) is sent only when api.twilio.com asks for
 it, never to the storage host a redirect points at.
+
+signature() is Twilio's request signature: the address Twilio was given, then each posted
+name and value in name order, HMAC-SHA1 with the auth token, in base64.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import os
 import urllib.error
 import urllib.request
@@ -20,6 +26,16 @@ TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/
          "image/heic": ".heic", "application/pdf": ".pdf"}
 STORAGE_HOSTS = (".twilio.com", ".twiliocdn.com", ".amazonaws.com")
 MAX_FILES = 10
+
+
+def signature(url: str, params: dict[str, str], token: str) -> str:
+    signed = url + "".join(k + params[k] for k in sorted(params))
+    return base64.b64encode(hmac.new(token.encode(), signed.encode(), hashlib.sha1).digest()).decode()
+
+
+def signature_ok(url: str, params: dict[str, str], given: str | None, token: str) -> bool:
+    # As bytes: compare_digest raises on text that isn't ASCII, and the header is the caller's.
+    return hmac.compare_digest(signature(url, params, token).encode(), (given or "").encode("utf-8", "replace"))
 
 
 def allowed_start(url: str) -> bool:
@@ -64,7 +80,9 @@ def download(media: list[dict[str, str]], limit: int, get: Callable[[str, int], 
             problems.append(f"Attachment {n} is not on api.twilio.com; kept as a link.")
             continue
         try:
-            files.append({"filename": f"Text photo {n}{ext}", "data": get(m["url"], limit), "url": m["url"]})
+            # "photo" in a PDF's name would make the Inbox guess it is a photo.
+            word = "file" if ext == ".pdf" else "photo"
+            files.append({"filename": f"Text {word} {n}{ext}", "data": get(m["url"], limit), "url": m["url"]})
         except Exception as exc:  # one bad download keeps the others and the text
             problems.append(f"Attachment {n} couldn't be downloaded ({exc.__class__.__name__}); kept as a link.")
     return files, problems

@@ -14,9 +14,11 @@ Settings: QBO_CLIENT_ID and QBO_CLIENT_SECRET from the Intuit Developer app, QBO
 listed as a redirect URI in the Intuit app. QBO_TOKEN_URL, QBO_REVOKE_URL and QBO_API_BASE
 override Intuit's addresses (tests use a local stand-in).
 
-Intuit's endpoints, scope, field names and minor version below are from memory of their
-documentation, not checked against a live sandbox yet. The first sandbox connection is the
-test; the stand-in in tests/test_qbo.py shows the shapes this code expects.
+Intuit's endpoints, scope, field names and minor version below were checked on Nov 3 2026 against
+Intuit's discovery documents and developer pages (sources in docs/setup-integrations.md). Minor
+version 75 is the floor: Intuit answers anything lower, or nothing, as 75. No live sandbox has been
+connected yet; the first one is the last test (the checklist in that doc), and the stand-in in
+tests/test_qbo.py shows the shapes this code expects.
 
 Tokens are kept in <data dir>/qbo_connections.json, outside the backups on purpose: after a
 restore onto a new disk an owner connects again.
@@ -235,6 +237,9 @@ def query(company_id: str, entity: str, where: str = "") -> list[dict[str, Any]]
         except error.HTTPError as exc:
             if exc.code == 401:
                 raise QboError("QuickBooks no longer accepts this connection. An owner needs to connect it again.") from None
+            if exc.code == 403:
+                # Sandbox keys against a live company, or the reverse, answer this way (Intuit's error 7001 family).
+                raise QboError("QuickBooks refused access (403). Check that QBO_ENV matches the keys and the company connected.") from None
             raise QboError(f"QuickBooks answered {exc.code} when reading {entity.lower()}s.") from None
         except (error.URLError, TimeoutError, ValueError) as exc:
             raise QboError(f"Couldn't reach QuickBooks: {exc}") from None

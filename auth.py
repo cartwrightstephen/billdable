@@ -239,7 +239,93 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "two_step": bool(user.get("totp_enabled")),
         "onboarding_dismissed": bool(user.get("onboarding_dismissed")),
         "appearance": _appearance(user.get("appearance")),
+        # Only ever shown to the person: team() and all_users() leave these out.
+        "phone": user.get("phone", ""),
+        "sms_opt_in": bool(user.get("sms_opt_in")),
+        "sms_stopped": bool(user.get("sms_opt_out_at")) and not user.get("sms_opt_in"),
+        "reminders": dict(user.get("reminders") or {}),
     }
+
+
+_OWN_ONLY = ("phone", "sms_opt_in", "sms_stopped", "reminders")
+
+
+def _listed(user: dict[str, Any]) -> dict[str, Any]:
+    """A person as others see them in a list."""
+    return {k: v for k, v in _public(user).items() if k not in _OWN_ONLY}
+
+
+# ---------- texts and reminders: each person's own choice (Decision 7) ----------
+
+def set_sms(user_id: str, phone: str, opt_in: bool) -> dict[str, Any]:
+    """Keep this person's mobile number (already checked: sms.e164) and whether they agreed to
+    texts. No number means no texts; when they agree, the time is kept as the record of it."""
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        agreed = bool(opt_in and phone)
+        if agreed and not (user.get("sms_opt_in") and user.get("phone") == phone):
+            user["sms_opt_in_at"] = _iso(_utcnow())
+            user.pop("sms_opt_out_at", None)
+        user["phone"], user["sms_opt_in"] = phone, agreed
+        _save(data)
+        return _public(user)
+
+
+def sms_contact(company_id: str, user_id: str) -> dict[str, Any] | None:
+    """{phone, opted_in} of a person in this company; None for anyone else."""
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
+        return {"phone": user.get("phone", ""), "opted_in": bool(user.get("sms_opt_in"))} if user else None
+
+
+def sms_stop(phone: str) -> int:
+    """STOP from this number: texts off for every account that has it, since the Duracash number
+    is shared and Twilio's block covers them all. Returns how many changed."""
+    if not phone:
+        return 0
+    with LOCK:
+        data = _load()
+        people = [u for u in data["users"] if u.get("phone") == phone and u.get("sms_opt_in")]
+        for user in people:
+            user["sms_opt_in"] = False
+            user["sms_opt_out_at"] = _iso(_utcnow())
+        if people:
+            _save(data)
+        return len(people)
+
+
+def member_by_phone(company_id: str, phone: str) -> dict[str, Any] | None:
+    """The team member with this number, to say who a text came from."""
+    if not phone:
+        return None
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["company_id"] == company_id and u.get("phone") == phone), None)
+        return _listed(user) if user else None
+
+
+def session_public(user_id: str) -> dict[str, Any] | None:
+    """This person as they see themselves, read fresh."""
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["id"] == user_id), None)
+        return _public(user) if user else None
+
+
+def set_reminders(user_id: str, prefs: dict[str, list[str]]) -> dict[str, Any]:
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        user["reminders"] = {**(user.get("reminders") or {}), **prefs}
+        _save(data)
+        return _public(user)
+
+
+def reminder_people(company_id: str) -> list[dict[str, Any]]:
+    """The people in this company who turned on at least one reminder."""
+    with LOCK:
+        users = [u for u in _load()["users"] if u["company_id"] == company_id
+                 and any((u.get("reminders") or {}).values())]
+        return [_public(u) for u in users]
 
 
 # ---------- appearance (G9): each person's theme and accent ----------
@@ -771,7 +857,7 @@ def team(company_id: str) -> dict[str, Any]:
         _prune_tokens(data)
         admin = _admin(data, company_id)
         users = [
-            {**_public(u), "company_admin": bool(admin and admin["id"] == u["id"]), "created_at": u.get("created_at", "")}
+            {**_listed(u), "company_admin": bool(admin and admin["id"] == u["id"]), "created_at": u.get("created_at", "")}
             for u in data["users"] if u["company_id"] == company_id
         ]
         invites = [
@@ -1014,7 +1100,7 @@ def delete_company_users(company_id: str) -> int:
 
 def all_users() -> list[dict[str, Any]]:
     with LOCK:
-        return [{**_public(u), "created_at": u.get("created_at", "")} for u in _load()["users"]]
+        return [{**_listed(u), "created_at": u.get("created_at", ""), "sms_opt_in": bool(u.get("sms_opt_in"))} for u in _load()["users"]]
 
 
 def owner_emails(company_id: str) -> list[str]:

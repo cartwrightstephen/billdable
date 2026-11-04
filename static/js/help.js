@@ -100,7 +100,7 @@ export const NAV_HELP = {
   communications: "The Inbox for photos, PDFs, emails, texts and notes, and the Outbox of what was sent.",
   data: "Imports and exports of your data.",
   money: "Pay apps and their paperwork, change orders, what is unpaid, payments and closeout.",
-  automations: "Under construction.",
+  automations: "Choose which reminders you get, and how: in the app, by email or by text.",
   settings: "Your company, team, account and billing, and the activity log.",
   dashboard: "What needs attention and the money across open jobs.",
   daily: "A dated diary of what happened on site, saved on the job record.",
