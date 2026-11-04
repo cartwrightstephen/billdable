@@ -282,6 +282,7 @@ function myAccountView() {
       <h2>You</h2>
       ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-grid">${field({ form: "account", name: "name", id: "my-name", label: "Name", value: unesc(me.name), autocomplete: "name", rule: "name", required: true })}</div>`}
       <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
+      ${isDemo ? "" : textsHtml()}
       <div class="money-row"><span class="label">Profile</span><span>${me.profile_name || words(me.role)}${me.company_admin ? ` <span class="pill copper">Company Admin</span>` : ""}</span></div>
       ${isDemo ? "" : `<div class="money-row"><span class="label">Password</span><span><button class="btn small secondary" data-action="nav" data-view="password">Change password</button></span></div>`}
     </div>
@@ -291,6 +292,17 @@ function myAccountView() {
     <p class="sub">Your account id: <code>${me.id}</code></p>
     <div class="save-bar"><button class="btn" data-action="save-account">Save</button></div>
   `;
+}
+
+// The mobile number and the agreement to texts (Decision 7). Texts are this person's own reminders.
+const shownPhone = (e164) => { const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(unesc(e164 || "")); return m ? `(${m[1]}) ${m[2]}-${m[3]}` : ""; };
+function textsHtml() {
+  // A redraw while the box is open (a background load) keeps what was ticked.
+  const box = globalThis.document?.getElementById("my-sms-opt-in");
+  const ticked = box ? box.checked : me.sms_opt_in;
+  return `<div class="form-grid">${field({ form: "account", name: "phone", id: "my-phone", label: "Mobile phone", value: shownPhone(me.phone), autocomplete: "tel", inputmode: "tel", rule: "phone" })}</div>
+      <label class="terms-check"><input type="checkbox" id="my-sms-opt-in"${ticked ? " checked" : ""}> Text me Duracash work reminders at this number: important dates and missing information, up to one message a day per company. Message and data rates may apply. Reply STOP to stop, HELP for help. Agreeing is not a condition of using Duracash.</label>
+      ${me.sms_stopped ? `<p class="sub">You replied STOP, so texts are off. To turn them back on, tick the box and save, then text START to the Duracash number.</p>` : ""}`;
 }
 
 // Appearance (G9): the theme and accent, kept on this person's account, saved with the page.
@@ -699,6 +711,12 @@ export const actions = {
     if ("name" in v && refuseForm("account", checkFields(v, { name: "name" }, ["name"]))) return;
     if ("name" in v && v.name !== unesc(me.name)) {
       const r = await postJson("/api/auth/name", { name: v.name });
+      if (!r.ok) { refuseForm("account", r.data.fields || { _form: r.data.error || "Not saved." }); return; }
+      setMe(escDeep(r.data.user));
+    }
+    const optIn = document.getElementById("my-sms-opt-in");
+    if (optIn && (("phone" in v && v.phone !== shownPhone(me.phone)) || optIn.checked !== !!me.sms_opt_in)) {
+      const r = await postJson("/api/auth/sms", { phone: v.phone || "", sms_opt_in: optIn.checked });
       if (!r.ok) { refuseForm("account", r.data.fields || { _form: r.data.error || "Not saved." }); return; }
       setMe(escDeep(r.data.user));
     }

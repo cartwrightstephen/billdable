@@ -1259,19 +1259,45 @@
         "automations",
         "automatic"
       ],
-      "answer": "Automations is under construction. For now the Dashboard's To Do shows each follow-up when it is due, and you send it with one tap.",
+      "answer": "Automations is where you choose your own reminders: important dates, missing information, and change order work on a job record that lacks what it needs. Tick In the app, Email or Text for each, then Save. All are off until you turn them on. Each comes round every 3 days until it is dealt with, and email and text go out at most once a day. Notifications in the app are listed there with an unread count. Reminders go to you and your team, never to clients. The Dashboard's To Do still shows each follow-up when it is due.",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
-          "view": "dashboard",
-          "label": "Open Dashboard"
+          "view": "automations",
+          "label": "Open Automations"
         }
       ],
       "follow_ups": [
         "How do follow-up windows work?"
       ]
+    },
+    {
+      "id": "text-clients",
+      "category": "Integrations",
+      "questions": [
+        "Can Duracash text my clients?",
+        "Can I text a client?",
+        "Does Duracash send texts?",
+        "How do I get text reminders?"
+      ],
+      "keywords": [
+        "sms",
+        "texting",
+        "opt"
+      ],
+      "answer": "No, Duracash never texts clients. Clients hear from you by email. Texts are only for your own team: add your mobile number and agree to texts on Settings, My account, then tick Text for a reminder on Automations. Reply STOP to any text to turn them off.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "automations",
+          "label": "Open Automations"
+        }
+      ],
+      "follow_ups": []
     },
     {
       "id": "collections",
@@ -1482,7 +1508,7 @@
         "gmail",
         "outlook"
       ],
-      "answer": "Automatic email needs an email service that posts incoming mail to a web address (SendGrid, Mailgun or Postmark); automatic texts need a Twilio number. An owner opens Bring emails and texts in automatically in the Inbox for the private addresses to paste into those services. Until they're connected, save emails as .eml or paste them, and paste or screenshot texts.",
+      "answer": "Automatic email needs an email service that posts incoming mail to a web address (SendGrid, Mailgun or Postmark); automatic texts need a Twilio number. An owner opens Bring emails and texts in automatically in the Inbox for the private addresses to paste into those services. Until they're connected, save emails as .eml or paste them, and paste or screenshot texts. Once texts are connected, a text with photos or PDFs waits in the Inbox, saying who sent it when the number is on a team member's My account, until an owner, or someone allowed to edit company details, files it to a job. A number nobody on the team has shows as Unknown sender.",
       "handler": null,
       "needs_job": false,
       "actions": [

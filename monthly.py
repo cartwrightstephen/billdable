@@ -1,5 +1,5 @@
-"""The server's background jobs: the hourly loop, the daily "due today" email, and once a month
-the restore drill and last month's summary to each owner.
+"""The server's background jobs: the hourly loop, the daily "due today" email, each person's
+reminders (reminders.py), and once a month the restore drill and last month's summary to each owner.
 
 Moved out of server.py (R6-08). The server hands in `site`, looked up when called:
 company_ids(), read(company_id) (the company's state under its lock, or None when it is missing),
@@ -24,6 +24,7 @@ import backup
 import domain
 import mailer
 import metrics
+import reminders
 import storage
 
 DAILY_PATH_NAME = "daily_jobs.json"
@@ -160,7 +161,8 @@ def run_once(site, now: datetime | None = None) -> None:
     """One turn of the hourly loop: the monthly jobs, then the daily emails, each line logged.
     A failure is logged and alerted; the loop keeps going, and a failure in the monthly jobs
     doesn't stop the daily emails."""
-    for key, what, job in (("monthly-jobs", "monthly jobs", run_monthly_jobs), ("daily-emails", "daily emails", send_daily_digests)):
+    for key, what, job in (("monthly-jobs", "monthly jobs", run_monthly_jobs), ("daily-emails", "daily emails", send_daily_digests),
+                           ("reminders", "reminders", reminders.run)):
         try:
             for line in job(site, now):
                 site.log("info", msg=line)

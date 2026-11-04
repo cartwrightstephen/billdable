@@ -19,6 +19,7 @@ import { updateProgressPreview, prefillPaymentAmount } from "./js/views/job.js";
 import { sovDraft, updateSovTotals } from "./js/views/job-sov.js";
 import { qboStatus, loadQboStatus, paymentImport } from "./js/views/payments.js";
 import { setOutboxJobFilter } from "./js/views/communications.js";
+import { reminderCount, loadReminders } from "./js/views/automations.js";
 import { newInboxCount, loadImportSettings, guessPasteSource, rememberUploadJob } from "./js/views/inbox.js";
 import { loadHelperReview, loadAdminCompanies, companySwitch, setAuditJobFilter } from "./js/views/settings.js";
 import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml } from "./js/views/auth.js";
@@ -40,7 +41,7 @@ const SECTIONS = [
 function sectionButton(s, section, counts) {
   const on = s.key === section.key;
   const badge = (n, label) => n ? ` <span class="count" aria-label="${label}">${n}</span>` : "";
-  return `<button class="${on ? "active" : ""}${s.more ? " nav-more-item" : ""}" data-action="section" data-section="${s.key}" ${on ? 'aria-current="page"' : ""}>${s.label}${s.key === "communications" ? badge(counts.inbox, `${counts.inbox} new`) : ""}${s.key === "today" ? badge(counts.failed, `${counts.failed} email${counts.failed === 1 ? "" : "s"} didn't go out`) : ""}</button>`;
+  return `<button class="${on ? "active" : ""}${s.more ? " nav-more-item" : ""}" data-action="section" data-section="${s.key}" ${on ? 'aria-current="page"' : ""}>${s.label}${s.key === "communications" ? badge(counts.inbox, `${counts.inbox} new`) : ""}${s.key === "automations" ? badge(counts.reminders, `${counts.reminders} unread`) : ""}${s.key === "today" ? badge(counts.failed, `${counts.failed} email${counts.failed === 1 ? "" : "s"} didn't go out`) : ""}</button>`;
 }
 
 function sectionOf(view) {
@@ -161,9 +162,9 @@ function render() {
         <div class="brand">Duracash</div>
         <div class="company"><strong>${company.name}</strong>${companyLine(company) ? `<br>${companyLine(company)}` : ""}</div>
         <nav class="nav" aria-label="Main">
-          ${SECTIONS.map(s => sectionButton(s, section, { inbox: inboxCount, failed: failedEmails })).join("")}
-          <details class="nav-more"${section.more ? " open" : ""}><summary>More</summary>
-            ${SECTIONS.filter(s => s.more).map(s => sectionButton(s, section, {})).join("")}
+          ${SECTIONS.map(s => sectionButton(s, section, { inbox: inboxCount, failed: failedEmails, reminders: reminderCount() })).join("")}
+          <details class="nav-more"${section.more ? " open" : ""}><summary>More${reminderCount() ? ` <span class="count" aria-label="${reminderCount()} unread">${reminderCount()}</span>` : ""}</summary>
+            ${SECTIONS.filter(s => s.more).map(s => sectionButton(s, section, { reminders: reminderCount() })).join("")}
           </details>
         </nav>
         <div class="user-meta">
@@ -205,6 +206,7 @@ function render() {
     document.querySelector('.dropzone [data-capture="1"]')?.focus();
   }
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
+  loadReminders();
   if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
   if (["payments", "company"].includes(currentView) && !qboStatus) loadQboStatus();
   if (sovDraft) updateSovTotals();

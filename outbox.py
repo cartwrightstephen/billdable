@@ -46,6 +46,11 @@ def deliver_queued(site, company_id: str, user: dict, only: set | None = None, r
                 e["status"] = reason
             site.save(company_id, state)
             return domain.light_snapshot(state)
+        # Off the allow-list (Decision 8): stays here, marked, and takes no room in the daily limit.
+        for e in queued:
+            if not mailer.allowed(e.get("to", "")):
+                e["status"] = mailer.NOT_ALLOWED
+        queued = [e for e in queued if e["status"] == "queued"]
         # Only recent "sending" entries are in flight; an older one died mid-send and can be retried.
         in_flight = sum(1 for e in log if e.get("status") == "sending" and (e.get("sending_at") or "") >= stale)
         room = max(0, cfg["daily_limit"] - mailer.sent_in_last_day(company_id) - in_flight)

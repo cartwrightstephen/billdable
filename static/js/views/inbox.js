@@ -297,6 +297,11 @@ function receivedHtml() {
 }
 
 function inboxItemCard(i) {
+  // Texted to the company's number: only the permission the server asks for sorts these.
+  if (i.by_text && !can("company")) return `<div class="inbox-item" data-item="${i.id}">
+    <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${(i.text || "").split("\n")[0].slice(0, 80) || "Text message"}</strong>
+      <span class="sub">${i.from ? "from " + i.from + " · " : ""}${fmtDate(i.sent_at || i.received_at)}</span></div>
+    <p class="sub">An owner, or someone allowed to edit company details, files this to a job.</p></div>`;
   const openJobs = state.jobs.filter(j => !j.closed);
   const files = (i.file_ids || []).map(fid => (state.files || []).find(x => x.id === fid)).filter(Boolean);
   const title = i.subject || (files[0] && files[0].name) || (i.text || "").split("\n")[0].slice(0, 80) || "Untitled";
@@ -495,7 +500,7 @@ export const actions = {
   "inbox-file-all": async () => {
     // Every card's picks are read before the first save: each save redraws the cards, which
     // would show the suggested job and kind again.
-    const picks = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id).map(i => {
+    const picks = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id && (!i.by_text || can("company"))).map(i => {
       const select = document.querySelector(`#inb-job-${i.id}`);
       const jobId = select ? select.value : i.suggested_job_id;   // a row set back to "Pick a job" is skipped
       return { id: i.id, jobId, kind: document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind };

@@ -59,6 +59,8 @@ import qbo_csv
 import qty_import
 import qr
 import payer_page
+import reminders
+import sms
 import sov
 import storage
 import store
@@ -206,7 +208,7 @@ def demo_enabled() -> bool:
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
 DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_contract_read", "_p_ping", "_p_qty_preview"}
-COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_password_code", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_helper_admin",
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_password_code", "_p_two_step", "_p_my_name", "_p_my_sms", "_p_reminder_prefs", "_p_reminder_read", "_p_resend_verify", "_p_helper_admin",
                                              "_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal",
                                              "_p_appearance", "_p_profile_save", "_p_profile_delete", "_p_admin_hand_over"}
@@ -416,6 +418,9 @@ def send_system_email(to: str, subject: str, body: str, company_id: str = "", ri
     (auth.issue_code) instead, so a flood of reset requests can't stop people signing in (A1)."""
     if not mailer.configured():
         return "email delivery is not set up on this server"
+    if not mailer.allowed(to):
+        log_json("info", msg="system email held: not on the allow-list", rid=rid, company=company_id)
+        return mailer.NOT_ALLOWED
     # However many companies or reset requests there are, the server sends at most 300 of
     # these an hour, so a flood of sign-ups or reset requests can't burn the mail account (R6-05).
     if shared_limit and not _within_limit("system-email", 300, 3600):
@@ -465,6 +470,8 @@ def delete_company_data(company_id: str) -> int:
     importer.forget_company(company_id)
     helper.forget_company(company_id)
     mailer.forget_company(company_id)
+    sms.forget_company(company_id)
+    reminders.forget_company(company_id)
     return removed
 
 
@@ -1539,6 +1546,10 @@ class Handler(BaseHTTPRequestHandler):
         everyone but the demo, unless this browser is remembered."""
         if user["company_id"] == auth.DEMO_COMPANY_ID or not mailer.configured():
             return False
+        # A tester the allow-list can't reach would never get the code, and so could never sign
+        # in to staging. Production always asks.
+        if not production() and not mailer.allowed(user.get("email", "")):
+            return False
         return not auth.device_known(user["id"], self._token(DEVICE_COOKIE))
 
     def _send_login_code(self, user: dict) -> str | None:
@@ -1906,6 +1917,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _m_inbox(self, state: dict, m, ctx: "Ctx") -> None:
         item_id, verb, body, actor = m.group(1), m.group(2), ctx.body, ctx.actor
+        # No manager role exists: what is texted to the company's number is sorted by those who
+        # hold "Edit company details, client settings and connections" (owners, and any profile given it).
+        item = next((i for i in state.get("inbox", []) if i["id"] == item_id), None)
+        if item and item.get("by_text") and not has_perm(ctx.user, "company", state):
+            raise domain.GateError("Filing a text needs the permission to edit company details, client settings and connections. Ask an owner.")
         if verb == "file":
             importer.file_item(state, item_id, _text(body, "job_id"), _text(body, "kind"), actor)
         elif verb == "dismiss":
@@ -2630,15 +2646,28 @@ class Handler(BaseHTTPRequestHandler):
         if demo_locked(company_id):
             self._json(200, {"ok": True, "ignored": "the demo is read-only"})
             return
+        secret = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
+        if production() and not secret:
+            # Without the token nobody can tell a text from Twilio from a stranger's post.
+            log_json("error", msg="inbound text refused: TWILIO_AUTH_TOKEN is not set", company=company_id, rid=self._rid)
+            self._json(403, {"error": "Texts aren't set up on this server."})
+            return
         params = dict(parse_qsl(data.decode("utf-8", "replace"), keep_blank_values=True))
-        secret = os.environ.get("TWILIO_AUTH_TOKEN")
         if secret:
-            url = self._base_url() + self.path
-            signed = url + "".join(k + params[k] for k in sorted(params))
-            expected = base64.b64encode(hmac.new(secret.encode(), signed.encode(), hashlib.sha1).digest()).decode()
-            if not hmac.compare_digest(expected, self.headers.get("X-Twilio-Signature", "")):
+            # _base_url: DURACASH_URL, else the address Render's proxy says was asked for. It must
+            # match what is registered at Twilio exactly (docs/setup-integrations.md).
+            if not twilio_media.signature_ok(self._base_url() + self.path, params, self.headers.get("X-Twilio-Signature"), secret):
                 self._json(403, {"error": "Signature check failed."})
                 return
+        empty = b'<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+        # Twilio answers these words itself. STOP also turns texts off here; none is a message to file.
+        if sms.is_stop(params.get("Body", "")) or params.get("OptOutType", "").upper() == "STOP":
+            sms.opt_out(params.get("From", ""))
+            self._send(200, empty, "text/xml; charset=utf-8")
+            return
+        if sms.is_keyword(params.get("Body", "")):
+            self._send(200, empty, "text/xml; charset=utf-8")
+            return
         media = []
         try:
             count = int(params.get("NumMedia", "0") or 0)
@@ -2656,15 +2685,19 @@ class Handler(BaseHTTPRequestHandler):
         if links:
             text += "\n\n" + "\n".join(f"Photo or file sent by text (not downloaded): {m['url']}" for m in links)
         notes = problems + skipped
+        sender = params.get("From", "")
+        member = auth.member_by_phone(company_id, sms.e164(sender))
 
         def add(state: dict) -> None:
             for meta in stored:
                 importer.register_file(state, meta)
-            extra = {"media": media} if media else {}
+            extra = {"by_text": True, "unknown_sender": not member, **({"media": media} if media else {})}
             if notes:
                 extra["skipped_attachments"] = notes
-            importer.add_item(state, "sms", text=text, sender=params.get("From", ""), file_ids=[m["id"] for m in stored],
-                              extra=extra or None)
+            item = importer.add_item(state, "sms", text=text, sender=sender, file_ids=[m["id"] for m in stored], extra=extra)
+            # After the job match, which reads the number and not the name. It only ever suggests:
+            # a person files every text, whoever sent it.
+            item["from"] = f"{member['name'] if member else 'Unknown sender'} ({sender})"[:200]
 
         status, _ = self._mutate(company_id, add)
         if status != 200:
@@ -2766,6 +2799,55 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, {"error": str(exc), "fields": {"name": str(exc)}})
             return
         self._json(200, {"user": self._me_user(user)})
+
+    def _p_my_sms(self, m, ctx: "Ctx") -> None:
+        """My account: this person's mobile number and whether they agreed to texts (Decision 7)."""
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The demo account can't save a phone number.", "fields": {"phone": "The demo account can't save a phone number."}})
+            return
+        typed = _text(ctx.body, "phone").strip()
+        phone = sms.e164(typed)
+        agreed = ctx.body.get("sms_opt_in") is True
+        wrong = ""
+        if typed and not phone:
+            wrong = "Enter a US mobile number, like (404) 555-0123."
+        elif agreed and not phone:
+            wrong = "Enter your mobile number to get texts."
+        elif phone and phone in sms.client_numbers(company_state(ctx.company_id)):
+            wrong = "That number belongs to a client. Texts only go to your own team."
+        if wrong:
+            self._json(409, {"error": wrong, "fields": {"phone": wrong}})
+            return
+        self._json(200, {"user": self._me_user(auth.set_sms(ctx.user["id"], phone, agreed))})
+
+    def _reminders_reply(self, user: dict, state: dict) -> dict:
+        return reminders.page(state, user, datetime.now(timezone.utc))
+
+    def _g_reminders(self, m, user) -> None:
+        self._json(200, self._reminders_reply(auth.session_public(user["id"]) or user, company_state(user["company_id"])))
+
+    def _p_reminder_prefs(self, m, ctx: "Ctx") -> None:
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The demo account can't turn reminders on."})
+            return
+        raw = ctx.body.get("prefs")
+        try:
+            prefs = reminders.clean_prefs(raw if isinstance(raw, dict) else {})
+        except ValueError as exc:
+            self._json(409, {"error": str(exc)})
+            return
+        person = auth.session_public(ctx.user["id"]) or ctx.user
+        if not person.get("sms_opt_in"):
+            fields = {k: "Add your mobile number and agree to texts on My account first." for k, c in prefs.items() if "text" in c}
+            if fields:
+                self._json(409, {"error": next(iter(fields.values())), "fields": fields})
+                return
+        user = auth.set_reminders(ctx.user["id"], prefs)
+        self._json(200, self._reminders_reply(user, company_state(ctx.company_id)))
+
+    def _p_reminder_read(self, m, ctx: "Ctx") -> None:
+        reminders.mark_read(ctx.company_id, ctx.user["id"], _text(ctx.body, "id"))
+        self._json(200, self._reminders_reply(auth.session_public(ctx.user["id"]) or ctx.user, company_state(ctx.company_id)))
 
     def _m_payer_update(self, state: dict, m, ctx: "Ctx") -> None:
         domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
@@ -2942,6 +3024,10 @@ ROUTES = [
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_m_inbox", "mutate"),
     Route("POST", r"/api/company", "_m_company_update", "mutate", perm="company"),
     Route("POST", r"/api/auth/name", "_p_my_name", "body"),
+    Route("POST", r"/api/auth/sms", "_p_my_sms", "body"),
+    Route("GET", r"/api/reminders", "_g_reminders", "user"),
+    Route("POST", r"/api/reminders/prefs", "_p_reminder_prefs", "body"),
+    Route("POST", r"/api/reminders/read", "_p_reminder_read", "body"),
 ]
 
 
@@ -3009,7 +3095,7 @@ def _sends(what: str, run):
 
 def _import_qbo(h, st, j, i, c):
     if c.company_id != auth.DEMO_COMPANY_ID:
-        raise domain.GateError("QuickBooks import is not built yet. The sample import only runs on the demo account.")
+        raise domain.GateError("The sample import only runs on the demo account. Connect QuickBooks on Payments to read your payments.")
     domain.import_sample_qbo_payment(st, j, c.actor)
 
 

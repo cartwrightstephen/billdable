@@ -14,6 +14,9 @@ Settings (environment):
     MAIL_FROM         sender address on a domain the provider has verified,
                       e.g. billing@duracash.com; required with SMTP_HOST
     MAIL_DAILY_LIMIT  emails per company per 24 hours, default 50
+    MAIL_ALLOWLIST    comma-separated addresses and @domains. When set, mail to anyone
+                      else isn't sent: an Outbox email stays there marked why. A server
+                      with DURACASH_ENV=staging and no list sends to nobody.
 
 The From name is "<company> via Duracash" and Reply-To is the signed-in user,
 so the payer's answer goes to the contractor, not to us. When the company has an
@@ -45,6 +48,7 @@ TIMEOUT_SECONDS = 20
 NOT_SET_UP = "not sent: email delivery is not set up"
 DEMO = "not sent: demo account"
 UNVERIFIED = "not sent: verify your email address first (Settings, My account), then Send again"
+NOT_ALLOWED = "not sent: this address isn't on this server's allow-list"
 
 
 def settings() -> dict[str, Any]:
@@ -72,6 +76,23 @@ def settings() -> dict[str, Any]:
 def configured() -> bool:
     cfg = settings()
     return bool(cfg["host"] and EMAIL_RE.match(cfg["from"]))
+
+
+def list_in_force() -> bool:
+    """Whether this server holds mail to anyone not named (Decision 8). Staging always does, so
+    a forgotten list can't email a client from test data."""
+    return bool((os.environ.get("MAIL_ALLOWLIST") or "").strip()) or (os.environ.get("DURACASH_ENV") or "").strip().lower() == "staging"
+
+
+def allowed(address: str) -> bool:
+    """May mail go to this address? An entry is a whole address or an exact @domain, in any case.
+    A list with nothing usable in it lets nobody through."""
+    if not list_in_force():
+        return True
+    entries = {e.strip().lower() for e in (os.environ.get("MAIL_ALLOWLIST") or "").split(",")}
+    address = str(address or "").strip().lower()
+    _, at, domain = address.rpartition("@")
+    return bool(at) and (address in entries or f"@{domain}" in entries)
 
 
 def _clean_header(value: str, limit: int = 300) -> str:
@@ -140,6 +161,8 @@ def build_message(
         msg["Reply-To"] = ", ".join(dict.fromkeys(replies))
     cc = [_clean_header(a, 254) for a in entry.get("cc") or []]
     cc = [a for a in cc if EMAIL_RE.match(a) and a.lower() != to.lower()][:5]
+    held = [a for a in cc if not allowed(a)]
+    cc = [a for a in cc if a not in held]
     if cc:
         msg["Cc"] = ", ".join(cc)
     msg["Subject"] = _clean_header(entry.get("subject", ""), 250)
@@ -169,6 +192,7 @@ def build_message(
         msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=_clean_header(name, 120))
     # The envelope recipients are given explicitly, never re-read from the headers.
     msg.recipients = [to] + cc  # type: ignore[attr-defined]
+    msg.held_copies = [f"{a} (not on this server's allow-list)" for a in held]  # type: ignore[attr-defined]
     return msg, left_off
 
 
@@ -224,6 +248,12 @@ def send(messages: list[EmailMessage], cfg: dict[str, Any], connect: Callable[..
     results: list[str | None] = [pending] * len(messages)
     if not messages:
         return results
+    # The last check before anything leaves, whichever path built the message.
+    for i, msg in enumerate(messages):
+        if not all(allowed(a) for a in (getattr(msg, "recipients", None) or [str(msg["To"])])):
+            results[i] = NOT_ALLOWED
+    if pending not in results:
+        return results
     try:
         if cfg["security"] == "ssl":
             server = (connect or smtplib.SMTP_SSL)(cfg["host"], cfg["port"], timeout=TIMEOUT_SECONDS, context=ssl.create_default_context())
@@ -239,6 +269,8 @@ def send(messages: list[EmailMessage], cfg: dict[str, Any], connect: Callable[..
         if cfg["user"]:
             server.login(cfg["user"], cfg["password"])
         for i, msg in enumerate(messages):
+            if results[i] != pending:
+                continue
             try:
                 refused = server.send_message(msg, to_addrs=getattr(msg, "recipients", None))
                 # smtplib returns the refused addresses only when another one was accepted. If
@@ -248,7 +280,7 @@ def send(messages: list[EmailMessage], cfg: dict[str, Any], connect: Callable[..
                 to = (getattr(msg, "recipients", None) or [str(msg["To"])])[0]
                 to_refused = any(str(k).lower() == to.lower() for k in refused)
                 results[i] = ("refused: " + ", ".join(words)) if to_refused else None
-                msg.refused = [] if to_refused else words  # type: ignore[attr-defined]
+                msg.refused = [] if to_refused else words + list(getattr(msg, "held_copies", []))  # type: ignore[attr-defined]
             except smtplib.SMTPRecipientsRefused as exc:
                 results[i] = "recipient refused: " + ", ".join(exc.recipients.keys())
             except Exception as exc:  # one bad message must not stop the rest
