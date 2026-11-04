@@ -5,9 +5,9 @@
 // The glossary's plain terms, as the page writes them.
 export const NEW = [
   "Paperwork", "Open paperwork", "Paperwork for ", "Needs paperwork", "Get CO ", "I have this…", "Marked as in hand",
-  "Send draft for their review", "Client agreed to the draft", "Client wants changes", "Client playbook",
-  "Save to the client playbook", "Client sent a pay app back? Note why.", "Client type", "Who signs off on your bills",
-  "Email for pay apps", "Record a payment", "Payments received", "Finish job", "Ready to finish the job.", "<h2>Money</h2>",
+  "Send Draft for Their Review", "Client Agreed to the Draft", "Client Wants Changes", "Client playbook",
+  "Save to the client playbook", "Client Sent Pay App Back", "Client type", "Who signs off on your bills",
+  "Email for pay apps", "Record a payment", "Payments received", "Finish Job", "Ready to finish the job.", "<h2>Money</h2>",
   "Signed change orders", "Unsigned change orders", "Bill now (send waits for signature)", "Held back, still owed",
   "Delete draft", "Activity log", "Unpaid", "Closeout", "Waiting (", "Also email (CC)", "Paperwork needed with each pay app",
   "They send pay apps back when", "Days they usually take to pay", "Days between follow-ups", "Total done so far $",

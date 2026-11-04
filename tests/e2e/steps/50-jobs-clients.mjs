@@ -11,7 +11,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("New job: Import contract fills the four address boxes and the rest; Save files the contract (J1, G4, S12)", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     await p.goto(BASE + "/jobs");
-    await p.getByRole("button", { name: "New job" }).click();
+    await p.getByRole("button", { name: "New job", exact: true }).click();
     const form = p.locator('[data-form-key="newjob"]');
     // A ZIP that isn't one is marked when the box is left (G1).
     await form.locator("#nj-zip").fill("3030");
@@ -41,7 +41,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("New job: changing the amount and clicking Save job straight away takes the first click (the line under the schedule redraws in place)", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     await p.goto(BASE + "/jobs");
-    await p.getByRole("button", { name: "New job" }).click();
+    await p.getByRole("button", { name: "New job", exact: true }).click();
     const form = p.locator('[data-form-key="newjob"]');
     const chooser = p.waitForEvent("filechooser");
     await form.getByRole("button", { name: "Import contract" }).click();
@@ -79,7 +79,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const card = page.locator(".next-card");
     await card.waitFor();
     assert.equal(await page.locator(".blockers-card").count(), 0);
-    if (await card.locator(".blocker-list li").count()) assert.match(await card.locator("strong").first().innerText(), /^(Before it can go:|Attach the paperwork, then send\.)$/);
+    if (await card.locator(".blocker-list li").count()) assert.match(await card.locator("strong").first().innerText(), / before it can go:$/);
     await page.getByRole("heading", { name: "Activity" }).waitFor();
   });
 

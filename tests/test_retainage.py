@@ -38,7 +38,7 @@ class AskTests(unittest.TestCase):
         domain.approve_and_send(state, job["id"], "Owner")
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"], "Owner", amount_cents=10_000)
-        self.assertIn("Mark the job done first", str(raised.exception))
+        self.assertIn("Use Final Pay App first", str(raised.exception))
 
     def test_part_after_done_and_times_asked(self):  # M24, M25
         state = new_state()

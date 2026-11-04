@@ -19,7 +19,7 @@ import domain
 import payapp_pdf
 
 RECORD_WORDS = {
-    "note": "Notes", "daily": "Daily records", "photo": "Photos", "contract": "Contract", "change_order": "Change orders",
+    "note": "Notes", "conversation": "Conversations", "daily": "Daily records", "photo": "Photos", "contract": "Contract", "change_order": "Change orders",
     "waiver": "Lien waivers", "pay_app": "Pay app backup", "ticket": "Tickets and time sheets",
     "supplier_invoice": "Supplier invoices", "insurance": "Insurance", "inspection": "Inspections", "stored": "Stored materials",
     "punch": "Punch list", "completion": "Completion certificate", "asbuilt": "As-builts", "warranty": "Warranties", "other": "Other",

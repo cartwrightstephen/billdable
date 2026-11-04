@@ -65,7 +65,7 @@ test("the job page: where it stands, and one Next step card that lists every blo
   assert.match(html, /Pay app due by<\/dt><dd>Nov 25, 2026/);
   assert.match(html, /Homeowner/, "the client's type beside its name");
   assert.equal((html.match(/class="next-card/g) || []).length, 1);
-  assert.match(html, /<strong>Before it can go:<\/strong>\s*<ul class="blocker-list"><li>Signed contract<\/li><li>Daily tickets<\/li><\/ul>/);
+  assert.match(html, /<strong>Fix this before it can go:<\/strong>\s*<ul class="blocker-list"><li>Signed contract<\/li><li>Daily tickets<\/li><\/ul>/);
   assert.doesNotMatch(html, /blockers-card/);
   assert.match(html, /<h2>Activity<\/h2>/);
 });

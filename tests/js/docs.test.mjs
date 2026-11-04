@@ -42,15 +42,15 @@ test("no wireframe uses an old word from the glossary", () => {
 test("the redrawn wireframes use the plain words the screens use, and the app has each of them", () => {
   const want = {
     Job: ["Held back, still owed", "Signed change orders", "Unsigned change orders", "Received", "Done, not billed",
-      "Client sent a pay app back? Note why.", "Save to the client playbook", "Before you can finish this job", "Record a payment",
-      "Bill now (send waits for signature)", "Total done so far $", "Signed on paper…", "Take a photo", "More ("],
-    PhoneJob: ["Client sent a pay app back? Note why.", "Before you can finish this job", "Take a photo", "Add a file", "Signed on paper…"],
+      "Save to the client playbook", "Before you can finish this job", "Record a payment",
+      "Bill now (send waits for signature)", "Total done so far $", "Signed on paper…", "Take a photo"],
+    PhoneJob: ["Before you can finish this job", "Take a photo", "Add a file", "Signed on paper…"],
     Money: ["Paperwork", "Unpaid", "Closeout", "Not chosen yet", "Which type?", "Held back, still owed", "Open closeout paperwork"],
     PaymentsImport: ["Record the ticked payments", "Pick a pay app…", "Download for QuickBooks", "Read payments from QuickBooks"],
     Inbox: ["Waiting (", "Other job", "Change type (", "Add to job", "Read as payments (", "Everything received", "Came in by", "Filed automatically to "],
     Settings: ["Activity log", "Use an authenticator app instead", "Sending and email", "Permission profiles", "Delete everything", "Appearance"],
     PayerPage: ["Approve for payment", "Payment expected by", "Something not right?", "Send a question", "Mark as received"],
-    Today: ["To Do", "Needs paperwork", "Spoke to them…", "Done, not billed", "Held back, still owed",
+    Today: ["To Do", "Needs paperwork", "Done, not billed", "Held back, still owed",
       "Can't send yet", "Open and recent"],
     PhoneToday: ["To Do", "Done, not billed", "Held back, still owed"],
     Packet: ["Paperwork for ", "Required items", "Take a photo", "Choose file", "I have this…", "Not needed for this client", "Also blocking send"],
@@ -73,7 +73,7 @@ test("the redrawn wireframes use the plain words the screens use, and the app ha
 
 test("the Job board uses every glossary term its screen shows", () => {
   const job = shown("Job");
-  const onJobPage = ["Client sent a pay app back? Note why.", "Save to the client playbook", "Record a payment", "Signed change orders",
+  const onJobPage = ["Save to the client playbook", "Record a payment", "Signed change orders",
     "Unsigned change orders", "Held back, still owed", "Total done so far $", "Anything to note? (optional)", "Bill now (send waits for signature)", "sent by "];
   assert.deepEqual(onJobPage.filter(t => !NEW.includes(t)), [], "each is a glossary term");
   assert.deepEqual(onJobPage.filter(t => !job.includes(t)), []);

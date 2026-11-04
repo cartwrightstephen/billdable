@@ -361,14 +361,11 @@ td.num, .num { font-variant-numeric: tabular-nums; }
 .next-text .sub { margin: 2px 0 0; font-size: 13px; }
 .next-card .btn { white-space: nowrap; padding: 10px 18px; font-weight: 600; }
 .more-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
-/* Job page (R3-04): the main button and two more in the Next step card, the rest under "More" */
+/* Job page (R3-04): the main button in the Next step card, the rest shown below it in groups */
 .next-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; justify-content: flex-end; }
-.btn.two-line { display: inline-grid; gap: 2px; text-align: left; white-space: normal; max-width: 240px; padding: 8px 12px; font-weight: 600; }
-.btn.two-line .sub { font-weight: 400; font-size: 12px; color: var(--muted); margin: 0; }
-.more-actions-rest { margin: 0 0 16px; }
-.more-actions-rest > summary { cursor: pointer; color: var(--copper); font-size: 14px; margin-bottom: 8px; }
-.more-group h3 { font-size: 13px; margin: 8px 0 6px; color: var(--muted); font-weight: 600; }
-.more-group .more-actions { margin-bottom: 8px; }
+.job-actions { margin: 0 0 16px; }
+.action-group h3 { font-size: 13px; margin: 8px 0 6px; color: var(--muted); font-weight: 600; }
+.action-group .more-actions { margin-bottom: 8px; align-items: center; }
 .retainage-note { margin: 4px 0 0; }
 .also-blocking { border-color: var(--red); }
 .form-card h2 { font-size: 16px; }
@@ -417,7 +414,7 @@ textarea { font: inherit; }
   .next-card { flex-direction: column; align-items: stretch; }
   .next-card .btn { width: 100%; }
   .next-actions { flex-direction: column; }
-  .btn.two-line { max-width: none; }
+  .job-actions .btn:not(.small) { flex: 1 1 100%; }
   .job-head { flex-direction: column; }
   .action-item { align-items: stretch; flex-direction: column; }
   .tabs { margin: -4px -16px 16px; padding: 0 8px; }
@@ -674,8 +671,6 @@ span.due-item { cursor: default; }
 /* The Next step card holds the blockers (J6). */
 .next-card.is-blocked { border-left-color: var(--red); flex-wrap: wrap; }
 .next-card .blocker-list { margin: 4px 0 2px; padding-left: 20px; font-size: 14px; }
-.next-card .sent-back { flex-basis: 100%; }
-.next-card .sent-back summary { cursor: pointer; font-size: 13px; color: var(--copper); }
 /* Where this job stands (J7). */
 .stage-line { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .stage-step { font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }

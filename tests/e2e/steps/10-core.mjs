@@ -35,7 +35,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const primary = page.locator(".next-card .primary-action");
     assert.equal(await primary.count(), 1);
     // Tabs and job-page buttons carry no tooltips; each button says why on its second line (R3-04).
-    assert.equal(await page.locator(".tabs .tab[title], .next-card .btn[title], .more-actions-rest .btn[title]").count(), 0);
+    assert.equal(await page.locator(".tabs .tab[title], .next-card .btn[title], .job-actions .btn[title]").count(), 0);
     assert.match(await primary.innerText(), /Fix 3 things before sending/);  // paperwork and a CO: R6-01 wording
     await page.goBack();
     await page.getByRole("heading", { name: "Overview" }).waitFor();
@@ -44,7 +44,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
 
   await step("New job: a wrong field is marked in place and nothing typed is lost", async () => {
     await page.goto(BASE + "/jobs");
-    await page.getByRole("button", { name: "New job" }).first().click();
+    await page.getByRole("button", { name: "New job", exact: true }).first().click();
     await page.fill("#nj-name", "Smoke test porch");
     await page.fill("#nj-street", "1 Porch Lane");
     await page.fill("#nj-city", "Decatur");
@@ -125,10 +125,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.goto(BASE + "/dashboard");
     const row = p.locator(".action-item", { hasText: "First porch" });
     await row.locator(".pill", { hasText: "Not billed yet" }).waitFor();
-    await row.getByRole("button", { name: "Bill progress" }).click();
+    await row.getByRole("button", { name: "Progress Pay App" }).click();
     await p.getByRole("heading", { name: "First porch" }).waitFor();
     // The progress form says where the job stands and what the pay app comes to (R3-01).
-    await p.locator(".next-card .primary-action", { hasText: "Progress pay app" }).click();
+    await p.locator(".next-card .primary-action", { hasText: "Progress Pay App" }).click();
     await p.locator(".progress-context", { hasText: "Billed so far $0.00 of $12,000.00 contract (0%)" }).waitFor();
     await p.fill("#progress-draw", "3,000");
     assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $3,000.00.");
@@ -170,7 +170,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("a job with a draft: three buttons, the rest under More, a change order and a photo for the paperwork", async () => {  // R3-04, R3-05, R3-06
+  await step("a job with a draft: every action showing in its group, a change order and a photo for the paperwork", async () => {  // R3-04, R3-05, R3-06
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const p = await ctx.newPage();
     p.on("pageerror", (e) => errors.push(e.message));
@@ -187,11 +187,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     }, `draft-${Date.now()}@example.com`);
     await p.goto(`${BASE}/jobs/${jobId}`);
     await p.locator(".next-card .primary-action").waitFor();
-    assert.equal(await p.locator(".next-card .next-actions .btn").count(), 3, "one main button and two beside it");
-    assert.match(await p.locator(".more-actions-rest > summary").innerText(), /^More \(\d+\)$/);
+    assert.equal(await p.locator(".next-card .next-actions .btn").count(), 1, "one main button");
+    assert.deepEqual(await p.locator(".job-actions .action-group h3").allInnerTexts(), ["Bill", "Get paid", "Close out"]);
+    assert.equal(await p.locator(".job-actions details, .more-actions-rest").count(), 0, "nothing folded away");
     // A change order from the job page; once saved, Request signature is right there.
-    await p.locator(".more-actions-rest > summary").click();
-    await p.locator('.more-actions-rest [data-action="new-co"]').click();
+    await p.locator('.job-actions [data-action="new-co"]').click();
     await p.fill("#co-title", "Owner buys the railing");
     await p.selectOption("#co-reason", "value_engineering");
     await p.fill("#co-amt", "-500");
@@ -298,9 +298,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("heading", { name: "Turner office TI" }).waitFor();
     await page.getByRole("heading", { name: "Before you can finish this job" }).waitFor();
     assert.equal(await page.locator(".close-blocker-list li").count(), 2);
-    await page.locator('.close-blocker-list li[data-blocker="outstanding"]').getByRole("button", { name: "Record a payment" }).waitFor();
-    await page.locator('.close-blocker-list li[data-blocker="retainage"]').getByRole("button", { name: "Record retainage paid" }).waitFor();
-    assert.equal(await page.locator(".next-card .btn", { hasText: "Finish job" }).count(), 0, "no Finish job while unsettled");
+    await page.locator('.close-blocker-list li[data-blocker="outstanding"]').getByRole("button", { name: "Record a Payment" }).waitFor();
+    await page.locator('.close-blocker-list li[data-blocker="retainage"]').getByRole("button", { name: "Record Retainage Paid" }).waitFor();
+    assert.equal(await page.locator(".next-card .btn", { hasText: "Finish Job" }).count(), 0, "no Finish Job while unsettled");
   });
 
   await step("a sent pay app with nothing paid can be pulled back, with a reason first", async () => {
@@ -324,13 +324,12 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     for (let n = 0; n < 12; n++) {
       await page.getByRole("heading", { name: "Inman Park bath" }).waitFor();
       if (await page.locator(".job-head .pill", { hasText: "Closed" }).count()) break;
-      // While the customer has the pay app and no follow-up is due there is no main button (R3-04):
-      // record the payment from the button beside it.
+      // While the customer has the pay app and no follow-up is due, Record a Payment is the main button.
       await page.locator(".next-card").waitFor();
-      const hasMain = (await page.locator(".next-card .primary-action").count()) > 0;
-      const main = hasMain ? page.locator(".next-card .primary-action") : page.locator(".next-card .btn.secondary", { hasText: "Record a payment" });
-      const label = hasMain ? (await main.innerText()).trim() : "Record a payment";
-      seen.push(hasMain ? label : "(waiting) Record a payment");
+      const main = page.locator(".next-card .primary-action");
+      const label = (await main.innerText()).trim();
+      seen.push(label);
+      assert.ok((await page.locator(".next-card strong").first().innerText()).includes(label), `the next step names ${label}`);
       // Paperwork alone reads "Add N missing documents" (R1-08); with an unsigned CO too, "Fix N things before sending" (R6-01).
       if (/^(Fix \d+ things? before sending|Add \d+ missing document)/.test(label)) {
         await main.click();
@@ -344,7 +343,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
           await page.locator(`#resolve-reason-${item}`).waitFor({ state: "detached" });
         }
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Review & send") {
+      } else if (label === "Review & Send") {
         // Every send passes "Before you send" (R1-06): Today's button opens the pay app there.
         await page.goto(BASE + "/dashboard");
         await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & send" }).click();
@@ -357,7 +356,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.locator(".action-item", { hasText: "Inman Park bath" }).filter({ hasText: "Didn't go out" })
           .getByRole("button", { name: "Send again" }).waitFor();
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Choose waiver and send") {
+      } else if (label === "Choose Waiver and Send") {
         await main.click();
         await page.getByRole("heading", { name: /^Closeout: / }).waitFor();
         const sendWaiver = page.locator('[data-action="waiver"]');
@@ -374,7 +373,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await confirmIfAsked(page);
         for (let t = 0; t < 100 && (await sendWaiver.count()) >= before; t++) await new Promise((r) => setTimeout(r, 100));
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Record a payment") {
+      } else if (label === "Record a Payment") {
         await main.click();
         const option = await page.locator("#match-inv option").first().innerText();
         // The amount starts at what is still owed on the pay app, and the date at today (R3-02).
@@ -383,7 +382,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.fill("#match-ref", "CHK-2201");
         await page.click('[data-action="match"]');
         await page.locator("#match-inv").waitFor({ state: "detached" });
-      } else if (label === "Finish job" && triedRefusal && !triedCancel) {
+      } else if (label === "Finish Job" && triedRefusal && !triedCancel) {
         // Finishing asks first; Cancel changes nothing (R3-03).
         triedCancel = true;
         await main.click();
@@ -393,7 +392,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await confirmDialog(page).waitFor({ state: "detached" });
         const inman = await page.evaluate(async () => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === "job-inman"));
         assert.ok(inman && !inman.closed, "Cancel left the job open");
-      } else if (label === "Finish job" && !triedRefusal) {
+      } else if (label === "Finish Job" && !triedRefusal) {
         // A refusal shows under the button that was tapped: an unsigned change order added
         // behind the page's back makes Close fail, and the card says why.
         triedRefusal = true;
@@ -422,7 +421,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         }
       }
     }
-    for (const want of ["Review & send", "(waiting) Record a payment", "Choose waiver and send", "Finish job"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
+    for (const want of ["Review & Send", "Record a Payment", "Choose Waiver and Send", "Finish Job"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
     await page.locator(".job-head .pill", { hasText: "Closed" }).waitFor();
   });
 

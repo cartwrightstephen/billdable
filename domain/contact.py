@@ -1,5 +1,5 @@
 """Recent contact with a job's client (Stephen's Oct 29 review, M11, the payapps-cos stream): the
-emails that went to them, the calls noted, what they did on the client page and the emails from
+emails that went to them, the conversations logged, what they did on the client page and the emails from
 them filed to the job, newest first. Money > Unpaid shows the last few under each job.
 
 Imported at the bottom of domain/__init__.py (from .contact import *). Helpers from domain
@@ -60,9 +60,10 @@ def contact_log(state: dict[str, Any], job_id: str, limit: int | None = RECENT_C
             continue
         action = row.get("action")
         if action == "contact_noted":
-            # "Spoke to Sam: Check goes out Friday Next check 2026-11-07. (Pat)"
+            # "Conversation with Sam: Check goes out Friday Next check 2026-11-07. (Pat)", or
+            # "Spoke to Sam: ..." on the ones logged before conversations were records.
             text = _ACTOR_TAIL.sub("", str(row.get("detail", "")))
-            out.append({"at": row.get("at", ""), "kind": "call", "label": "Call", "text": text, "by": row.get("actor", ""), "status": ""})
+            out.append({"at": row.get("at", ""), "kind": "call", "label": "Conversation", "text": text, "by": row.get("actor", ""), "status": ""})
         elif action in CONTACT_PAGE_WORDS:
             out.append({"at": row.get("at", ""), "kind": "client_page", "label": CONTACT_PAGE_WORDS[action],
                         "text": term_text(_PAGE_WORDS.sub("", str(row.get("detail", ""))), style), "by": "", "status": ""})

@@ -106,7 +106,7 @@ export function renderLanding() {
       <section class="land-how">
         <h2>How it works</h2>
         <div class="land-steps">
-          <div class="card"><span class="step">1</span><h3>Mark the job done</h3><p>Notes and photos land on the job record. Money already knows the contract.</p></div>
+          <div class="card"><span class="step">1</span><h3>Record the work as finished</h3><p>Notes and photos land on the job record. Money already knows the contract.</p></div>
           <div class="card"><span class="step">2</span><h3>Add the paperwork</h3><p>Duracash names what is missing — a waiver, a signed change order, photos — before anything is sent.</p></div>
           <div class="card"><span class="step">3</span><h3>Approve and collect</h3><p>You approve the send. Payments are recorded. Money held back and closeout stay on the calendar.</p></div>
         </div>

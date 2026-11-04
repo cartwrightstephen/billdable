@@ -2,6 +2,7 @@
 
 import sys
 import unittest
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -389,7 +390,7 @@ class ReviewFindingTests(unittest.TestCase):
         send_open(state, job)
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"])
-        self.assertIn("marked done", str(raised.exception))
+        self.assertIn("Final Pay App", str(raised.exception))
         self.assertFalse([e for e in state["email_log"] if e["kind"] == "retainage"])
 
     def test_co_after_done_billable_on_stale_legacy_record(self):
@@ -721,6 +722,37 @@ def job_route_item(state, job, action, item, body):
     return server.JOB_ACTIONS[action][1](None, state, job["id"], item, ctx)
 
 
+class FinalPayAppPreviewTests(unittest.TestCase):
+    """Final Pay App's confirm box: the amount and whether it is the final one, with nothing changed."""
+
+    def setUp(self):
+        self.state = new_state()
+        self.job = new_job(self.state, contract=10_000_000, retainage=10)
+        domain.record_progress(self.state, self.job["id"], 5_000_000, "", "Owner")
+
+    def test_it_changes_nothing_and_matches_what_is_drafted(self):
+        before = deepcopy(self.state)
+        preview = domain.final_pay_app_preview(self.state, self.job["id"])
+        self.assertEqual(self.state, before)
+        self.assertTrue(preview["final"])
+        self.assertEqual(preview["replaces"], self.job["invoices"][-1]["number"])
+        domain.mark_done(self.state, self.job["id"], "Owner")
+        made = self.job["invoices"][-1]
+        self.assertEqual((preview["number"], preview["amount_cents"], preview["gross_cents"], preview["retainage_cents"]),
+                         (made["number"], made["amount_cents"], made["gross_cents"], made["retainage_cents"]))
+
+    def test_it_says_when_it_isnt_final(self):
+        domain.add_change_order(self.state, self.job["id"], "Extra", 1_000_000, "Owner", reason="owner_request")
+        preview = domain.final_pay_app_preview(self.state, self.job["id"])
+        self.assertFalse(preview["final"])
+        self.assertEqual(preview["pending_cos"][0]["amount_cents"], 1_000_000)
+
+    def test_it_refuses_as_the_real_thing_does(self):
+        domain.mark_done(self.state, self.job["id"], "Owner")
+        with self.assertRaises(domain.GateError):
+            domain.final_pay_app_preview(self.state, self.job["id"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -765,7 +797,7 @@ class RetainageChangeTests(unittest.TestCase):
         for amount in (None, 500_000):
             with self.assertRaises(domain.GateError) as raised:
                 domain.chase_retainage(state, job["id"], amount_cents=amount)
-            self.assertIn("Mark the job done first", str(raised.exception))
+            self.assertIn("Use Final Pay App first", str(raised.exception))
         domain.mark_done(state, job["id"])
         for item in job["closeout_packet"]:
             domain.resolve_packet_item(state, job["id"], item["id"], reason="In the binder")

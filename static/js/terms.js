@@ -36,7 +36,7 @@ export const ACTION_WORDS = {
   approve_send: "Pay app sent", draft_invoice: "Pay app drafted", record_progress: "Progress recorded",
   draft_replaced: "Draft replaced", draft_skipped: "Draft replaced", void_draft: "Draft deleted", void_sent: "Pay app pulled back",
   match_payment: "Payment recorded", short_pay: "Short pay accepted", retainage_paid: "Held-back money received",
-  chase_retainage: "Asked for held-back money", follow_up: "Follow-up sent", contact_noted: "Spoke to the client",
+  chase_retainage: "Asked for held-back money", follow_up: "Follow-up sent", contact_noted: "Conversation logged",
   send_waiver: "Waiver sent", job_done: "Job marked done", undo_done: "Back to in progress", close_job: "Job finished",
   reopen_job: "Job reopened", create_job: "Job added", edit_job: "Job changed", delete_job: "Job deleted",
   contract_changed: "Contract changed", add_co: "Change order added", approve_co: "Change order signed",

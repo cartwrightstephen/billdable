@@ -89,7 +89,7 @@ export const views = {
     // A job without change orders: they are made on the job's page (G10).
     if (!co) {
       return backButton("cos", "Change orders") + emptyState(`No change orders on ${j.name}`, "",
-        j.closed ? "" : `<button class="btn" data-action="co-open-form" data-id="${j.id}">New change order</button>`);
+        j.closed ? "" : `<button class="btn" data-action="co-open-form" data-id="${j.id}">New Change Order</button>`);
     }
     const items = co.items || [];
     const records = j.records || [];
@@ -138,7 +138,7 @@ export const views = {
     const picking = formOpen.copick && openJobs.length > 1;
     return `
       <div class="job-head"><h1>Change orders</h1>
-        ${openJobs.length ? `<button class="btn small" data-action="co-new" aria-expanded="${!!picking}">New change order</button>` : ""}
+        ${openJobs.length ? `<button class="btn small" data-action="co-new" aria-expanded="${!!picking}">New Change Order</button>` : ""}
       </div>
       ${picking ? `<div class="card" data-form-key="copick">
         ${formErrorLine("copick")}
