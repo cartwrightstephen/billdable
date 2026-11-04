@@ -301,13 +301,17 @@ class Http(unittest.TestCase):
         self.assertEqual({k["key"] for k in data["kinds"]}, {"dates", "missing", "co_records"})
         self.assertTrue(all(v == [] for v in data["prefs"].values()))
         self.assertEqual((data["notifications"], data["unread"]), ([], 0))
-        self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC",
-                                          "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
+        # A new job's client is complete, so what is missing here is the pay app's supporting documents.
+        _, saved = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "4045550177",
+                                                      "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
+        made = saved["jobs"][-1]
+        res, data = self.request("POST", f"/api/jobs/{made['id']}/sov-progress", {"done": {made["sov"]["lines"][0]["id"]: "0.5"}}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
         res, data = self.request("POST", "/api/reminders/prefs", {"prefs": {"missing": ["app"]}}, cookie=cookie)
         self.assertEqual(res.status, 200)
         self.assertEqual(data["prefs"]["missing"], ["app"])
         self.assertEqual(data["unread"], 1)
-        note = next(n for n in data["notifications"] if "Northline" in n["text"])
+        note = next(n for n in data["notifications"] if "pay app needs" in n["text"])
         res, data = self.request("POST", "/api/reminders/read", {"id": note["id"]}, cookie=cookie)
         self.assertEqual((res.status, data["unread"]), (200, 0))
 
@@ -330,7 +334,7 @@ class Http(unittest.TestCase):
         self.assertIn("phone", data["fields"])
         res, data = self.request("POST", "/api/auth/sms", {"phone": "", "sms_opt_in": True}, cookie=cookie)
         self.assertEqual(res.status, 409)
-        self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "phone": "(404) 555-0188",
+        self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "(404) 555-0188",
                                           "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
         res, data = self.request("POST", "/api/auth/sms", {"phone": "404-555-0188", "sms_opt_in": True}, cookie=cookie)
         self.assertEqual(res.status, 409)

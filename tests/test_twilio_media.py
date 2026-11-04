@@ -159,7 +159,7 @@ class InboundSmsMediaTests(unittest.TestCase):
     def test_whole_path_photo_and_pdf_to_a_filed_job_record(self):
         """Stephen's idea: a text with attachments waits in the Inbox, says who sent it, and a manager files it."""
         cookie, path = self.signup("whole-path@example.com")
-        res, raw = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC",
+        res, raw = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "4045550177",
                                                      "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
         self.assertEqual(res.status, 200, raw)
         job_id = json.loads(raw)["jobs"][-1]["id"]
@@ -207,7 +207,7 @@ class InboundSmsMediaTests(unittest.TestCase):
 
     def test_a_text_naming_a_job_and_a_waiver_still_waits_for_a_person(self):
         cookie, path = self.signup("no-auto@example.com")
-        self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC",
+        self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "4045550177",
                                            "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
         form = {"From": "+15555550126", "Body": "Birch deck conditional waiver", "NumMedia": "1", "MediaUrl0": GOOD, "MediaContentType0": "application/pdf"}
         with mock.patch.dict(os.environ, {"TWILIO_AUTH_TOKEN": "secret"}), mock.patch.object(twilio_media, "fetch", lambda url, limit: b"%PDF-1.4"):
@@ -221,7 +221,7 @@ class InboundSmsMediaTests(unittest.TestCase):
 
     def test_filing_a_text_needs_the_company_permission(self):
         cookie, path = self.signup("perm-owner@example.com")
-        res, raw = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC",
+        res, raw = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "4045550177",
                                                      "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
         job_id = json.loads(raw)["jobs"][-1]["id"]
         with mock.patch.dict(os.environ, {"TWILIO_AUTH_TOKEN": "secret"}):
@@ -251,7 +251,7 @@ class InboundSmsMediaTests(unittest.TestCase):
 
     def test_sample_quickbooks_import_never_runs_for_a_real_company(self):
         cookie, _ = self.signup("sample-qbo@example.com")
-        res, raw = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC",
+        res, raw = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "4045550177",
                                                      "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
         job_id = json.loads(raw)["jobs"][-1]["id"]
         res, raw = self.request("POST", f"/api/jobs/{job_id}/import-qbo", {}, cookie=cookie)
