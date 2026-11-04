@@ -548,13 +548,13 @@ export const actions = {
     if (refuseForm("newjob", errors)) return;
     const before = new Set(state.jobs.map(j => j.id));
     const r = await post("/api/jobs", {
+      sov_lines: newJobSovLines(v),
       name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer: v.customer, approver,
       ap_email: apEmail, phone: v.phone, client_type: known ? "" : (v.client_type || "gc"),
       contract_number: v.contract_number, note: v.note, started_on: v.started_on || "", today: localDay(new Date()),
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
       contract_cents: amount.cents, retainage_pct: ret.value, ...days,
       new_customer: !known && keptNames.newjob === v.customer,
-      sov_lines: newJobSovLines(v),
     }, { formKey: "newjob", close: "newjob" });
     if (r && !r.ok) showSameCustomer("newjob", "nj", r.data);
     const sovError = r && !r.ok && r.data && r.data.fields && r.data.fields.sov;

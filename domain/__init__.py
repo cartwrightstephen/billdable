@@ -470,11 +470,11 @@ def draft_invoice(
             raise GateError(f"{open_draft['number']} is already an open draft. Send it before drafting another.")
         audit(state, job_id, "draft_skipped", "Open draft already exists.", actor)
         return job
+    money_file = job_money(job)
+    work = money_file["unbilled_completed_cents"]
     if strict:  # the person asked for it: everything recorded in the field goes on
         for line in sov.lines(job):
             line["done_milli"] = max(line["done_milli"], sov.field_total(line))
-    money_file = job_money(job)
-    work = money_file["unbilled_completed_cents"]
     # A draft set aside by a new schedule until it has quantities (save_sov) is what this one replaces.
     waiting = job.get("sov_replaced_draft")
     if waiting and not replaces:
@@ -3695,8 +3695,10 @@ AUTO_NOTE = "Attached from the job record"
 
 
 def _made_here(label: str, job: dict[str, Any]) -> bool:
+    if sov.is_auto(job) and "backup" in label.lower():
+        return False  # one lump-sum line backs nothing up
     if "backup" in label.lower():
-        return sov.has_sov(job) and not sov.is_auto(job)  # one lump-sum line backs nothing up
+        return sov.has_sov(job)
     return bool(MADE_HERE_RE.search(label))
 
 
