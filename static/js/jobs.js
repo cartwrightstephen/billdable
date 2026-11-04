@@ -8,7 +8,7 @@ export const RECORD_KINDS = {
   note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
   waiver: "Lien waiver", pay_app: "Backup for the pay app", ticket: "Daily ticket or time sheet",
   supplier_invoice: "Supplier invoice or receipt", insurance: "Insurance certificate", inspection: "Inspection",
-  stored: "Stored materials document", punch: "Punch list sign-off", completion: "Completion certificate",
+  stored: "Stored materials document", payroll: "Certified payroll", notarized: "Notarized pay application", punch: "Punch list sign-off", completion: "Completion certificate",
   asbuilt: "As-builts", warranty: "Warranty", other: "Other",
 };
 
@@ -530,7 +530,7 @@ export const RECORD_GROUPS = [
   ["photo", "Photos", ["photo"]],
   ["tickets", "Tickets, time sheets and supplier invoices", ["ticket", "supplier_invoice", "stored"]],
   ["waiver", "Lien waivers", ["waiver"]],
-  ["insurance", "Insurance and certificates", ["insurance"]],
+  ["insurance", "Insurance and certificates", ["insurance", "payroll", "notarized"]],
   ["closeout", "Inspections and closeout", ["inspection", "punch", "completion", "asbuilt", "warranty"]],
   ["pay_app", "Pay app backup", ["pay_app"]],
   ["other", "Notes and other", ["note", "other"]],

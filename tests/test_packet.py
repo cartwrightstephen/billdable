@@ -19,7 +19,7 @@ def new_state():
 
 def new_job(state, contract=1_000_000, retainage=0, packet=None):
     job = domain.create_job(state, "Pine kitchen", "Jones Family", contract, address="12 Pine St, Atlanta, GA 30307",
-                            approver="Sam", ap_email="ap@jones.example", retainage_pct=retainage)
+                            approver="Sam", ap_email="ap@jones.example", retainage_pct=retainage, phone="(404) 555-0100", role="Owner")
     if packet is not None:
         domain.update_payer(state, job["payer_id"], {"packet": packet})
     return job

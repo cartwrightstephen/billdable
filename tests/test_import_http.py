@@ -108,7 +108,7 @@ class ImportHttpTests(unittest.TestCase):
         res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": email, "password": PASSWORD, "name": "Pat Pine", "company_name": "Pine Co"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC"}
+               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC", "phone": "(404) 555-0100"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         return cookie, state["jobs"][0]
 
@@ -220,7 +220,7 @@ class ImportHttpTests(unittest.TestCase):
     def test_a_tie_comes_with_candidates_and_a_forward_keeps_its_sender(self):  # R5-05, R5-06
         cookie, job = self.company("tie@example.com")
         second = {"name": "Birch garage", "customer": "Park GC", "address": "4 Birch Road", "approver": "Kim", "ap_email": "ap@park.example",
-                  "contract_cents": 5_000_000, "retainage_pct": 10, "role": "GC"}
+                  "contract_cents": 5_000_000, "retainage_pct": 10, "role": "GC", "phone": "(404) 555-0100"}
         res, state = self.request("POST", "/api/jobs", second, cookie=cookie)
         self.assertEqual(res.status, 200, state)
         self.assertEqual(len({j["payer_id"] for j in state["jobs"]}), 1, "both jobs are Park GC's")

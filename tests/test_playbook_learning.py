@@ -80,23 +80,23 @@ class CustomerFixTests(unittest.TestCase):
 
     def test_add_customer(self):
         state = seed_state()
-        payer = domain.add_payer(state, {"name": "Ruiz Residence", "ap_email": "ruiz@example.com"}, "owner")
+        payer = domain.add_payer(state, {"name": "Ruiz Residence", "ap_email": "ruiz@example.com", "approver": "Ruiz Residence", "phone": "(404) 555-0100", "role": "Owner"}, "owner")
         self.assertEqual((payer["role"], payer["approver"], payer["ap_email"]), ("Owner", "Ruiz Residence", "ruiz@example.com"))
         with self.assertRaises(domain.GateError) as raised:
-            domain.add_payer(state, {"name": "ruiz residence"}, "owner")
+            domain.add_payer(state, {"name": "ruiz residence", "approver": "ruiz residence", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "owner")
         self.assertIn("already called", raised.exception.fields["name"])
         with self.assertRaises(domain.GateError):
-            domain.add_payer(state, {"name": "Lee", "ap_email": "nope"}, "owner")
-        job = domain.create_job(state, "Ruiz porch", "RUIZ RESIDENCE", 500_000, address="9 Elm St")
+            domain.add_payer(state, {"name": "Lee", "ap_email": "nope", "approver": "Lee", "phone": "(404) 555-0100", "role": "Owner"}, "owner")
+        job = domain.create_job(state, "Ruiz porch", "RUIZ RESIDENCE", 500_000, address="9 Elm St", approver="Ruiz porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertEqual(job["payer_id"], payer["id"], "a new job finds the customer added first")
 
     def test_merge_moves_two_jobs_and_keeps_one_playbook(self):
         state = seed_state()
-        target = domain.add_payer(state, {"name": "Ironleaf GC", "role": "GC", "ap_email": "ap@ironleaf.example"}, "owner")
+        target = domain.add_payer(state, {"name": "Ironleaf GC", "role": "GC", "ap_email": "ap@ironleaf.example", "approver": "Ironleaf GC", "phone": "(404) 555-0100"}, "owner")
         domain.update_payer(state, target["id"], {"packet": "Lien waiver", "follow_up_days": 5})
-        typo = domain.add_payer(state, {"name": "Ironleaf", "ap_email": "wrong@ironleaf.example"}, "owner")
-        a = domain.create_job(state, "Ironleaf A", "Ironleaf", 100_000, address="1 A St")
-        b = domain.create_job(state, "Ironleaf B", "Ironleaf", 200_000, address="2 B St")
+        typo = domain.add_payer(state, {"name": "Ironleaf", "ap_email": "wrong@ironleaf.example", "approver": "Ironleaf", "phone": "(404) 555-0100", "role": "Owner"}, "owner")
+        a = domain.create_job(state, "Ironleaf A", "Ironleaf", 100_000, address="1 A St", approver="Ironleaf A", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
+        b = domain.create_job(state, "Ironleaf B", "Ironleaf", 200_000, address="2 B St", approver="Ironleaf B", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.merge_payer(state, typo["id"], target["id"], "owner")
         self.assertEqual({a["payer_id"], b["payer_id"]}, {target["id"]})
         self.assertEqual((a["payer_role"], b["payer_role"]), ("GC", "GC"))

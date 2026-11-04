@@ -44,6 +44,8 @@ export function jobFields(form, prefix, j = {}) {
     // J8: the day the job started; New job starts at today, an older job with none stays blank.
     started_on: f({ name: "started_on", id: `${prefix}-start`, label: "Start date", type: "date", value: unesc(j.started_on || (j.id ? "" : limits.today)),
       ...mark("started_on"), attrs: `min="${limits.min}" max="${limits.max}"${contractMark(form, "started_on").attrs ? " data-from-contract" : ""}` }),
+    // Blank until it is known; never before the start date (domain.parse_end_date).
+    anticipated_end_on: f({ name: "anticipated_end_on", id: `${prefix}-end`, label: "Anticipated end date", type: "date", value: unesc(j.anticipated_end_on || ""), ...mark("anticipated_end_on") }),
   };
 }
 
@@ -58,6 +60,7 @@ const ADDRESS_RULES = { street: "street", city: "city", state: "state", zip: "zi
 export function jobFieldErrors(v, saved = null) {
   const errors = checkFields(v, { ...ADDRESS_RULES, name: "name", contract_number: "contract_number" }, ["street", "city", "state", "zip"]);
   if (!v.name) errors.name = "Enter the job name.";
+  if (v.anticipated_end_on && v.started_on && v.anticipated_end_on < v.started_on) errors.anticipated_end_on = `Enter an anticipated end date on or after the start date, ${v.started_on}.`;
   if (saved) {
     const same = (k) => String(v[k] ?? "").trim() === String(saved[k] ?? "").trim();
     // The address's four boxes go together: checked only when one of them changed.
@@ -103,8 +106,29 @@ function knownPayer(name) {
   return key ? (state.payers || []).find(p => unesc(p.name).trim().toLowerCase() === key) || null : null;
 }
 
+// What a saved client still has to answer here (domain.playbook_missing): a blank box, a type
+// never picked, or a signer that only defaulted to the client's name.
+function payerMissing(p) {
+  return (p.playbook_missing || ["approver", "ap_email", "phone"].filter(k => !p[k])).map(unesc);
+}
+
 function knownPayerText(p) {
-  return p ? `${clientTypeLabel(p)}. Pay apps go to ${p.approver || p.name} · ${p.ap_email || "no email yet"}` : "";
+  if (!p) return "";
+  return `${clientTypeLabel(p)}. Pay apps go to ${p.approver || p.name} · ${p.ap_email || "no email yet"} · ${p.phone || "no phone yet"}${payerMissing(p).length ? ". Fill in or confirm the boxes below; they are saved to this client's playbook" : ""}`;
+}
+
+// New job asks which client it is for: a saved one or a new one (Decisions 3 and 4). With no
+// clients saved yet there is nothing to pick. The choice is kept with what was typed.
+function clientMode() {
+  if (!(state.payers || []).length) return "new";
+  return draftValue("newjob", "client_mode", "");
+}
+
+// Whether a client box stays out of the way: none before the choice; a saved client's boxes only
+// for what it is missing, since what it has is changed in the Client playbook, never by a new job.
+function payerSlotHidden(slot, known, mode) {
+  if (known) return !payerMissing(known).includes(slot);
+  return mode !== "new";
 }
 
 // "Same as ABC Builders?" (Oct 23 note 5): a new client name that nearly matches a saved one
@@ -154,7 +178,8 @@ export function deletePayerHtml(p, { owner = false, jobs = [], canMerge = false 
   return `<div class="form-inline delete-payer"><button type="button" class="btn small danger" data-action="delete-payer" data-id="${p.id}" data-name="${p.name}">Delete client</button><span class="sub">No job uses ${p.name}.</span></div>`;
 }
 
-// As the Client box is typed in: a saved client's type and contact are shown instead of asked.
+// As the Client box is typed in or picked: a saved client's type and contact are shown instead
+// of asked, with boxes only for what it is missing.
 export function syncNewJobCustomer() {
   const form = document.querySelector('[data-form-key="newjob"]');
   if (!form) return;
@@ -162,15 +187,12 @@ export function syncNewJobCustomer() {
   const p = knownPayer(form.querySelector('[data-field="customer"]')?.value);
   const note = form.querySelector("[data-known-payer]");
   if (note) { note.hidden = !p; note.querySelector("[data-known-payer-text]").innerHTML = knownPayerText(p); }
-  const type = form.querySelector('[data-payer-slot="client_type"]');
-  const approver = form.querySelector('[data-payer-slot="approver"]'), email = form.querySelector('[data-payer-slot="ap_email"]');
-  if (type) type.hidden = !!p;
-  for (const slot of ["payapp_due_day", "payment_terms_days"]) {
-    const box = form.querySelector(`[data-payer-slot="${slot}"]`);
-    if (box) box.hidden = !!p;
+  form.querySelectorAll("[data-payer-slot]").forEach(box => { box.hidden = payerSlotHidden(box.dataset.payerSlot, p, clientMode()); });
+  // What it has so far starts in the boxes it is asked to confirm.
+  for (const k of ["client_type", "approver"]) {
+    const box = p && form.querySelector(`[data-field="${k}"]`);
+    if (box && !payerSlotHidden(k, p, clientMode()) && (k === "client_type" || !box.value.trim())) box.value = unesc(p[k] || "");
   }
-  if (approver) approver.hidden = !!p;
-  if (email) email.hidden = !!(p && p.ap_email);
 }
 
 // Leaving the Client box fills "Who signs off" with the client when it is still empty: a
@@ -209,9 +231,11 @@ export function prefillRetainage() {
 // What the last contract read for a form found: { form, name, file, text, found, notes, sov, error }.
 // The file (or pasted text) is filed on the new job's record as its contract once the job is saved.
 let contractRead = null;
-onSessionEnd(() => { contractRead = null; });
+// New job as it stood when the person went to the Client playbook, back when they return to Jobs.
+let parkedNewJob = null;
+onSessionEnd(() => { contractRead = null; parkedNewJob = null; });
 
-const MORE_FIELDS = ["contract_number", "retainage_pct", "started_on", "phone", "ap_email", "payapp_due_day", "payment_terms_days"];
+const MORE_FIELDS = ["contract_number", "retainage_pct", "payapp_due_day", "payment_terms_days"];
 
 // A form closed (saved or cancelled) forgets what its contract filled.
 export function forgetClosedContract() {
@@ -271,12 +295,22 @@ export function updateSovChoice(r = contractRead) {
 }
 
 // What a read found, put in the form's boxes (as typed text, so the boxes show it).
-function fillFromContract(form, fields) {
+function fillFromContract(form, read) {
   const d = (formDraft[form] ||= {});
+  // The contract's completion date is the job's anticipated end date.
+  const { completion_on: end, ...fields } = read;
+  if (end) fields.anticipated_end_on = end;
   const put = (box, value) => { if (value !== undefined && value !== null && value !== "") d[box] = String(value); };
   if (form === "newjob") {
-    for (const k of ["name", "street", "city", "state", "zip", "customer", "client_type", "contract_number", "started_on", "phone", "ap_email",
+    for (const k of ["name", "street", "city", "state", "zip", "customer", "client_type", "contract_number", "started_on", "anticipated_end_on", "phone", "ap_email",
       "payapp_due_day", "payment_terms_days"]) put(k, fields[k]);
+    // The client it names: a saved one is picked, any other is a new one.
+    if (fields.customer) {
+      const saved = knownPayer(fields.customer);
+      d.client_mode = saved ? "existing" : "new";
+      if (saved) d.customer = unesc(saved.name);
+      else if (!d.approver) d.approver = fields.customer;  // a homeowner signs off on their own bills
+    }
     if (Number.isInteger(fields.contract_cents)) put("contract_cents", dollarsText(fields.contract_cents));
     if (Number.isInteger(fields.retainage_pct)) { put("retainage_pct", fields.retainage_pct); d.retainage_touched = true; }
     if (MORE_FIELDS.some(k => k in fields)) moreDetails.newjob = true;
@@ -377,13 +411,21 @@ function pickedJob() {
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   jobs() {
+    if (parkedNewJob) {
+      formDraft.newjob = parkedNewJob.draft;
+      formOpen.newjob = true;
+      contractRead = parkedNewJob.read;
+      parkedNewJob = null;
+    }
     forgetClosedContract();
     const open = openJobs(state.jobs);
     const closed = state.closed_jobs_total || 0;
     const f = (o) => field({ form: "newjob", ...o });
     const known = knownPayer(draftValue("newjob", "customer"));
+    const mode = clientMode();
     const jf = jobFields("newjob", "nj", { retainage_pct: 0 });
     const mark = (name) => contractMark("newjob", name);
+    const slot = (name, html) => `<div data-payer-slot="${name}"${payerSlotHidden(name, known, mode) ? " hidden" : ""}>${html}</div>`;
     return `
       <div class="top">
         <h1>Open jobs</h1>
@@ -402,26 +444,30 @@ export const views = {
           <div class="form-grid">
             ${jf.name}
             ${jf.address}
-            ${f({ name: "customer", id: "nj-customer", label: "Client", required: true, autocomplete: "off", rule: "name", ...mark("customer"), attrs: `list="nj-customers"${mark("customer").attrs ? " data-from-contract" : ""}` })}
-            <datalist id="nj-customers">${(state.payers || []).map(p => `<option value="${p.name}"></option>`).join("")}</datalist>
-            ${sameCustomerBox("newjob")}
-            <div data-payer-slot="client_type"${known ? " hidden" : ""}>${f({ name: "client_type", id: "nj-client-type", label: "Client type", helpKey: "role", options: CLIENT_TYPES, value: "gc", ...mark("client_type") })}</div>
             ${jf.contract_cents}
+            ${jf.started_on}
+            ${jf.anticipated_end_on}
+            ${(state.payers || []).length ? `<div class="span-2 form-inline client-choice" role="group" aria-label="Client">
+              ${[["existing", "Existing client"], ["new", "New client"]].map(([key, label]) => `<button type="button" class="${mode === key ? "btn" : "btn secondary"} small" data-action="nj-client-mode" data-mode="${key}" aria-pressed="${mode === key}">${label}</button>`).join("")}
+            </div>` : ""}
+            ${mode === "existing" ? f({ name: "customer", id: "nj-client", label: "Client", required: true, ...mark("customer"), options: [["", "Pick a client…"], ...(state.payers || []).map(p => [unesc(p.name), unesc(p.name)])] }) : ""}
+            ${mode === "new" ? f({ name: "customer", id: "nj-customer", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off", rule: "name", ...mark("customer") }) : ""}
+            ${sameCustomerBox("newjob")}
+            ${slot("client_type", f({ name: "client_type", id: "nj-client-type", label: "Client type", helpKey: "role", options: CLIENT_TYPES, value: known ? unesc(known.client_type || "gc") : "gc", required: true, ...mark("client_type") }))}
+            ${slot("approver", f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", required: true, placeholder: "Sam Jones", value: known ? unesc(known.approver || "") : "" }))}
+            ${slot("ap_email", f({ name: "ap_email", id: "nj-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", required: true, autocomplete: "off", rule: "email", placeholder: "name@example.com", ...mark("ap_email") }))}
+            ${slot("phone", f({ name: "phone", id: "nj-phone", label: "Phone", helpKey: "customer_phone", type: "tel", required: true, autocomplete: "off", rule: "phone", ...mark("phone") }))}
             <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
-              <button class="linkish" data-action="nav" data-view="playbook">Change in the Client playbook</button></p>
+              <button type="button" class="linkish" data-action="nj-to-playbook">Change in the Client playbook</button></p>
           </div>
           <details class="more-details" data-more="newjob"${moreOpen("newjob") ? " open" : ""}>
             <summary>More details (optional)</summary>
             <div class="form-grid">
               ${jf.contract_number}
               ${jf.retainage_pct}
-              ${jf.started_on}
               ${assigneeField("newjob", "nj")}
-              ${f({ name: "phone", id: "nj-phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off", rule: "phone", ...mark("phone") })}
-              <div data-payer-slot="approver"${known ? " hidden" : ""}>${f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The client, unless you say otherwise" })}</div>
-              <div data-payer-slot="payapp_due_day"${known ? " hidden" : ""}>${f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") })}</div>
-              <div data-payer-slot="payment_terms_days"${known ? " hidden" : ""}>${f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") })}</div>
-              <div data-payer-slot="ap_email"${known && known.ap_email ? " hidden" : ""}>${f({ name: "ap_email", id: "nj-email", label: "Email for pay apps (can add later)", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com", ...mark("ap_email") })}</div>
+              ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") }))}
+              ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") }))}
               ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
             </div>
           </details>
@@ -481,14 +527,23 @@ export const actions = {
   "create-job": async () => {
     const v = formValues("newjob");
     const errors = jobFieldErrors(v);
-    // A saved client keeps its type and contact (shown instead of the boxes); a new one may leave
-    // both contact boxes blank: who signs off defaults to the client, the email is asked for before sending.
-    const known = knownPayer(v.customer);
-    const approver = known ? "" : v.approver;
-    const apEmail = known && known.ap_email ? "" : v.ap_email;
-    Object.assign(errors, checkFields({ customer: v.customer, phone: v.phone }, { customer: "name", phone: "phone" }));
-    if (!v.customer) errors.customer = "Enter the client: who pays for this job.";
-    if (apEmail && checkFields({ ap_email: apEmail }, { ap_email: "email" }).ap_email) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now.";
+    // A saved client keeps what it has (shown instead of the boxes) and takes only what it is
+    // missing from here; a new one needs all of it, as the server does (domain.create_job).
+    const mode = clientMode();
+    const customer = v.customer || "";
+    const known = knownPayer(customer);
+    const asked = (k) => !known || payerMissing(known).includes(k);
+    const approver = asked("approver") ? v.approver : "";
+    const apEmail = asked("ap_email") ? v.ap_email : "";
+    const phone = asked("phone") ? v.phone : "";
+    Object.assign(errors, checkFields({ customer, phone }, { customer: "name", phone: "phone" }));
+    if (!mode) errors._form = "Pick an existing client, or tap New client.";
+    else if (!customer) errors.customer = mode === "existing" ? "Pick the client." : "Enter the client: who pays for this job.";
+    if (mode) {
+      if (asked("approver") && !approver) errors.approver = "Enter who signs off on your bills.";
+      if (asked("phone") && !phone) errors.phone = "Enter the client's phone number.";
+      if (asked("ap_email") && (!apEmail || checkFields({ ap_email: apEmail }, { ap_email: "email" }).ap_email)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
+    }
     const amount = centsFrom(v.contract_cents);
     if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
     const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
@@ -514,12 +569,12 @@ export const actions = {
     if (refuseForm("newjob", errors)) return;
     const before = new Set(state.jobs.map(j => j.id));
     const r = await post("/api/jobs", {
-      name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer: v.customer, approver,
-      ap_email: apEmail, phone: v.phone, client_type: known ? "" : (v.client_type || "gc"),
-      contract_number: v.contract_number, note: v.note, started_on: v.started_on || "", today: localDay(new Date()),
+      name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer, approver,
+      ap_email: apEmail, phone, client_type: asked("client_type") ? (v.client_type || "gc") : "",
+      contract_number: v.contract_number, note: v.note, started_on: v.started_on || "", anticipated_end_on: v.anticipated_end_on || "", today: localDay(new Date()),
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
       contract_cents: amount.cents, retainage_pct: ret.value, ...days,
-      new_customer: !known && keptNames.newjob === v.customer,
+      new_customer: !known && keptNames.newjob === customer,
     }, { formKey: "newjob", close: "newjob" });
     if (r && !r.ok) showSameCustomer("newjob", "nj", r.data);
     if (!r || !r.ok) return;
@@ -532,13 +587,26 @@ export const actions = {
       nav("job", made.id);
     }
   },
-  // "Same as ABC Builders?": put the saved name in the Client box and save the job with it.
+  // To the Client playbook and back: nothing typed on New job is lost.
+  "nj-to-playbook": () => {
+    parkedNewJob = { draft: { ...formDraft.newjob }, read: contractRead };
+    nav("playbook");
+  },
+  // Which client: a saved one or a new one. Changing it starts the Client box over.
+  "nj-client-mode": (el) => {
+    const d = (formDraft.newjob ||= {});
+    if (d.client_mode !== el.dataset.mode) d.customer = "";
+    d.client_mode = el.dataset.mode;
+    delete keptNames.newjob;
+    render();
+    document.getElementById(el.dataset.mode === "existing" ? "nj-client" : "nj-customer")?.focus();
+  },
+  // "Same as ABC Builders?": pick the saved client and save the job with it.
   "nj-same-use": (el) => {
-    const box = document.querySelector('[data-form-key="newjob"] [data-field="customer"]');
-    if (!box) return;
-    box.value = el.dataset.name || "";
-    (formDraft.newjob ||= {}).customer = box.value;
-    syncNewJobCustomer();
+    const d = (formDraft.newjob ||= {});
+    d.customer = el.dataset.name || "";
+    d.client_mode = "existing";
+    render();
     prefillApprover();
     return actions["create-job"]();
   },

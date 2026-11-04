@@ -29,7 +29,7 @@ def _clear(job):
 
 def _two_sent(state):
     """PA-01 $10,000 and PA-02 $5,000, both sent."""
-    job = domain.create_job(state, "Pine", "Jones GC", 10000000, address="12 Pine", approver="Sam", ap_email="ap@j.example")
+    job = domain.create_job(state, "Pine", "Jones GC", 10000000, address="12 Pine", approver="Sam", ap_email="ap@j.example", phone="(404) 555-0100", role="Owner")
     domain.record_progress(state, job["id"], 1000000, "a")
     _clear(job)
     domain.approve_and_send(state, job["id"])
@@ -81,7 +81,7 @@ class StatusLabelTests(unittest.TestCase):
 class CalendarFeedTests(unittest.TestCase):
     def _sent(self):
         state = _state()
-        job = domain.create_job(state, "Pine", "Jones GC", 10000000, address="12 Pine", approver="Sam", ap_email="ap@j.example")
+        job = domain.create_job(state, "Pine", "Jones GC", 10000000, address="12 Pine", approver="Sam", ap_email="ap@j.example", phone="(404) 555-0100", role="Owner")
         domain.record_progress(state, job["id"], 1000000, "a")
         _clear(job)
         domain.approve_and_send(state, job["id"])
@@ -123,7 +123,7 @@ class DrawsWordTests(unittest.TestCase):
     def _draws(self):
         state = _state()
         state["company"]["billing_style"] = "draws"
-        job = domain.create_job(state, "Pay app house", "Jones GC", 10000000, address="12 Pine", approver="Sam", ap_email="ap@j.example")
+        job = domain.create_job(state, "Pay app house", "Jones GC", 10000000, address="12 Pine", approver="Sam", ap_email="ap@j.example", phone="(404) 555-0100", role="Owner")
         return state, job
 
     def test_status_line(self):
@@ -174,7 +174,7 @@ class CloseoutMissingTests(unittest.TestCase):
     def test_closeout_packet_when_there_is_one(self):
         state = _state()
         job = domain.create_job(state, "Pine", "Jones GC", 4500000, address="12 Pine", approver="Sam",
-                                ap_email="ap@j.example", retainage_pct=10)
+                                ap_email="ap@j.example", retainage_pct=10, phone="(404) 555-0100", role="Owner")
         domain.mark_done(state, job["id"], notes="Done")
         view = domain.job_view(state, job)
         self.assertEqual(view["closeout_missing"],

@@ -21,7 +21,7 @@ def new_job(state, contract=10_000_000, retainage=0, customer="Jones Family", **
     return domain.create_job(
         state, kw.pop("name", "Pine kitchen"), customer, contract,
         address="12 Pine St", approver=kw.pop("approver", "Sam Jones"),
-        ap_email=kw.pop("ap_email", "ap@jones.example"), retainage_pct=retainage, **kw,
+        ap_email=kw.pop("ap_email", "ap@jones.example"), retainage_pct=retainage, phone=kw.pop("phone", "(404) 555-0100"), role=kw.pop("role", "" if "client_type" in kw else "Owner"), **kw,
     )
 
 
@@ -133,11 +133,12 @@ class DraftTests(unittest.TestCase):
         self.assertEqual((rec["kind"], rec["label"], rec["note"]), ("note", "Job notes", "Gate code 1234, call before 8am"))
         self.assertEqual(plain["records"], [])
 
-    def test_approver_and_email_optional_until_send(self):  # R1-05
+    def test_an_older_job_is_asked_for_the_email_at_send(self):  # R1-05, Decision 3
         state = new_state()
-        job = new_job(state, approver="", ap_email="", customer="Dana Homeowner")
+        job = new_job(state, customer="Dana Homeowner")
+        job.pop("playbook_required")  # made before a new job needed a complete playbook
         payer = state["payers"][-1]
-        self.assertEqual((payer["approver"], payer["ap_email"]), ("Dana Homeowner", ""))
+        payer["ap_email"] = ""
         domain.mark_done(state, job["id"])
         clear_packet(state, job)
         with self.assertRaises(domain.GateError) as raised:
@@ -158,7 +159,8 @@ class DraftTests(unittest.TestCase):
         self.assertEqual((payer["approver"], payer["ap_email"]), ("Kim", "ap@park.example"))
         self.assertTrue(any(a["action"] == "payer_kept" for a in state["audit"]))
         # A blank email on the saved customer is filled in by the next job that has one.
-        new_job(state, name="Third", customer="Ada Owner", ap_email="")
+        new_job(state, name="Third", customer="Ada Owner")
+        state["payers"][-1]["ap_email"] = ""
         new_job(state, name="Fourth", customer="Ada Owner", ap_email="ada@example.com")
         self.assertEqual(state["payers"][-1]["ap_email"], "ada@example.com")
 

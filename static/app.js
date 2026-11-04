@@ -265,7 +265,7 @@ function listenForActions() {
   });
   app.addEventListener("input", (e) => {
     if (e.target.closest && e.target.closest('[data-form-key="progress"]')) updateProgressPreview();
-    if (e.target.id === "nj-customer") syncNewJobCustomer();
+    if (e.target.id === "nj-customer" || e.target.id === "nj-client") syncNewJobCustomer();
     if (e.target.id === "ap-name") hideSameCustomer("addpayer");
     if (e.target.id === "paste-text") guessPasteSource();
     if (e.target.id === "nj-retainage") (formDraft.newjob ||= {}).retainage_touched = true;
@@ -274,7 +274,7 @@ function listenForActions() {
   app.addEventListener("change", (e) => {
     if (e.target.id === "upload-job") rememberUploadJob(e.target.value);
     if (e.target.id === "paste-source") { e.target.dataset.touched = "1"; const hint = document.getElementById("paste-hint"); if (hint) hint.textContent = ""; }
-    if (e.target.id === "nj-role" || e.target.id === "nj-customer") prefillRetainage();
+    if (e.target.id === "nj-role" || e.target.id === "nj-customer" || e.target.id === "nj-client") prefillRetainage();
     if (e.target.id === "match-inv") prefillPaymentAmount(e.target.value);
     // The line under the waiver type follows the type picked (R6-10).
     if (e.target.id && e.target.id.startsWith("waiver-kind-")) {

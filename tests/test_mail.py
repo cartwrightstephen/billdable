@@ -160,7 +160,7 @@ class SubjectAndSignOffTests(unittest.TestCase):
         import domain
         state = {"company": {"name": "Brightwater Tile", "phone": "404-555-0100"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = domain.create_job(state, "Pine kitchen", "Jones Family", 1_000_000, address="12 Pine St", approver="Sam Jones",
-                                ap_email="ap@jones.example", retainage_pct=10)
+                                ap_email="ap@jones.example", retainage_pct=10, phone="(404) 555-0100", role="Owner")
         domain.record_progress(state, job["id"], 400_000, period_end="")
         domain.send_pencil(state, job["id"], "Alex Rivera")
         domain.record_pencil_response(state, job["id"], True)
@@ -299,7 +299,7 @@ class MailHttpTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))  # sending needs a verified address
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": ap,
-               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         return cookie, state["jobs"][0]
 
@@ -385,7 +385,7 @@ class MailHttpTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.ready_to_send(cookie, state["jobs"][0])
         _, state = self.request("POST", f"/api/jobs/{state['jobs'][0]['id']}/send", {}, cookie=cookie)
@@ -417,7 +417,7 @@ class MailHttpTests(unittest.TestCase):
             domain._record_email(st, "", "pay_app", "ap@park.example", "Pay application PA-1", "Body", "Bo B")
             server.save_company(company_id, st)
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie_a)
         self.assertEqual(res.status, 200, state)
         self.assertEqual(server.load_company(company_id)["email_log"][-1]["status"], "queued")
@@ -501,7 +501,7 @@ class MailHttpTests(unittest.TestCase):
         res, _ = self.request("POST", "/api/auth/login", {"email": auth.DEMO_EMAIL, "password": auth.DEMO_PASSWORD})
         cookie = res.getheader("Set-Cookie").split(";")[0]
         job = {"name": "Demo mail check", "customer": "Park GC", "address": "1 Demo St", "approver": "Kim",
-               "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+               "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         job_id = next(j["id"] for j in state["jobs"] if j["name"] == "Demo mail check")
         self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 500_000}, cookie=cookie)
@@ -579,7 +579,7 @@ class MailHttpTests(unittest.TestCase):
         res, _ = self.request("POST", "/api/reset", {"confirm": "Pine & Sons", "password": PASSWORD}, cookie=cookie)
         self.assertEqual(res.status, 200)
         job2 = {"name": "After reset", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
-                "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+                "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job2, cookie=cookie)
         new_job = state["jobs"][0]
         self.ready_to_send(cookie, new_job)
@@ -592,7 +592,7 @@ class MailHttpTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))
         job = {"name": "Elm\u2028addition\x85x", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim",
-               "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+               "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.ready_to_send(cookie, state["jobs"][0])
         _, state = self.request("POST", f"/api/jobs/{state['jobs'][0]['id']}/send", {}, cookie=cookie)

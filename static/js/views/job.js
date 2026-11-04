@@ -15,6 +15,7 @@ import { coSignControls, newCoCardHtml } from "./job-cos.js";
 import { sovCardHtml } from "./job-sov.js";
 import { recordCardHtml } from "./job-record.js";
 import { moneyCardHtml } from "./job-money.js";
+import { playbookMissingHtml, jobPaperworkHtml } from "./job-paperwork.js";
 
 // Notes typed with progress or Mark done go on that pay app and its PDF (R4-12).
 const NOTES_HELP = "Printed under the lines on this pay app and its PDF, so the client sees it.";
@@ -272,6 +273,7 @@ export const views = {
             ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : ejf.contract_cents}
             ${ejf.retainage_pct}
             ${ejf.started_on}
+            ${ejf.anticipated_end_on}
             ${assigneeField("editjob", "ej", j.assignee_id)}
           </div>
           <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The client's type and where pay apps go: <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
@@ -280,6 +282,7 @@ export const views = {
             ${j.can_delete && may("delete") ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
           </div>
         </div>` : ""}
+      ${playbookMissingHtml(j)}
       ${standingCardHtml(j)}
       <section class="next-card${blocked ? " is-blocked" : ""}" aria-label="Next step">
         <div class="next-text"><span class="eyebrow">Next step</span><strong>${nextLine}</strong>
@@ -351,6 +354,7 @@ export const views = {
             </div>`).join("") : `<p class="sub">None.</p>`}
         </div>
       </div>
+      ${jobPaperworkHtml(j)}
       ${recordCardHtml(j)}
       ${sovCardHtml(j)}
       ${jobHistoryHtml(j)}
@@ -464,6 +468,7 @@ export const actions = {
     // The address goes as its four boxes (J1); the server builds the one line from them.
     const body = { name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, contract_number: v.contract_number };
     if (v.started_on) body.started_on = v.started_on;
+    if ("anticipated_end_on" in v) body.anticipated_end_on = v.anticipated_end_on;
     if ("assignee_id" in v) body.assignee_id = v.assignee_id;
     const errors = jobFieldErrors(v, savedJobFields(state.jobs.find(x => x.id === id)));
     if ("contract_cents" in v) {

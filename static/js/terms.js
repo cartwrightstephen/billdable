@@ -33,6 +33,7 @@ export function termText(text, s = style) {
 // The History pill for each action in the activity log: a short sentence, not the code
 // ("Approve send" read like an order). Codes not listed fall back to their words.
 export const ACTION_WORDS = {
+  job_paperwork: "Paperwork changed",
   approve_send: "Pay app sent", draft_invoice: "Pay app drafted", record_progress: "Progress recorded",
   draft_replaced: "Draft replaced", draft_skipped: "Draft replaced", void_draft: "Draft deleted", void_sent: "Pay app pulled back",
   match_payment: "Payment recorded", short_pay: "Short pay accepted", retainage_paid: "Held-back money received",

@@ -51,13 +51,13 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.selectOption("#nj-state", "GA");
     await page.fill("#nj-zip", "30030");
     await page.fill("#nj-amount", "48,500");
+    await page.getByRole("button", { name: "New client" }).click();
     await page.fill("#nj-customer", "Smoke Homeowner");
-    // The job, its address in parts (J1), the client and the amount up front (R2-01); the rest
-    // wait under "More details (optional)".
+    // The job, its address in parts (J1), the amount, its dates and a complete client up front
+    // (R2-01, Decision 4); the rest wait under "More details (optional)".
     const upFront = await page.locator('[data-form-key="newjob"] > .form-grid [data-field]:visible').evaluateAll(els => els.map(e => e.id));
-    for (const id of ["nj-name", "nj-street", "nj-city", "nj-state", "nj-zip", "nj-customer", "nj-amount"]) assert.ok(upFront.includes(id), `${id} up front: ${upFront}`);
-    assert.equal(await page.locator("#nj-email").isVisible(), false, "More details starts folded");
-    await page.getByText("More details (optional)").click();
+    for (const id of ["nj-name", "nj-street", "nj-city", "nj-state", "nj-zip", "nj-customer", "nj-amount", "nj-start", "nj-end", "nj-client-type", "nj-approver", "nj-email", "nj-phone"]) assert.ok(upFront.includes(id), `${id} up front: ${upFront}`);
+    assert.equal(await page.locator("#nj-retainage").isVisible(), false, "More details starts folded");
     await page.fill("#nj-approver", "Sam Smoke");
     await page.fill("#nj-email", "not an email");
     await page.click('[data-action="create-job"]');
@@ -117,7 +117,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const jobId = await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Ann First", company_name: "First Builders" });
-      const st = await (await post("/api/jobs", { name: "First porch", address: "2 Elm St", customer: "Lee Homeowner", role: "Owner",
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver: "Lee Homeowner", name: "First porch", address: "2 Elm St", customer: "Lee Homeowner", role: "Owner",
         ap_email: "lee@example.com", contract_cents: 1200000 })).json();
       return st.jobs[0].id;
     }, `first-${Date.now()}@example.com`);
@@ -178,7 +178,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const jobId = await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Dee Draft", company_name: "Draft Builders" });
-      const st = await (await post("/api/jobs", { name: "Draft deck", address: "4 Oak St", customer: "Rae Homeowner", role: "Owner",
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver: "Rae Homeowner", name: "Draft deck", address: "4 Oak St", customer: "Rae Homeowner", role: "Owner",
         ap_email: "rae@example.com", contract_cents: 2000000 })).json();
       const id = st.jobs[0].id;
       await post(`/api/jobs/${id}/add-record`, { label: "Deck notes", kind: "note", note: "Joists in" });
@@ -220,8 +220,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const ids = await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Ina Box", company_name: "Inbox Builders" });
-      await post("/api/jobs", { name: "Maple porch", address: "8 Maple Ave", customer: "Ray Homeowner", role: "Owner", ap_email: "ray@example.com", contract_cents: 900000 });
-      const st = await (await post("/api/jobs", { name: "Cedar bath", address: "3 Cedar Ln", customer: "Sue Homeowner", role: "Owner",
+      await post("/api/jobs", { phone: "(404) 555-0100", approver: "Ray Homeowner", name: "Maple porch", address: "8 Maple Ave", customer: "Ray Homeowner", role: "Owner", ap_email: "ray@example.com", contract_cents: 900000 });
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver: "Sue Homeowner", name: "Cedar bath", address: "3 Cedar Ln", customer: "Sue Homeowner", role: "Owner",
         ap_email: "sue@example.com", contract_cents: 1500000 })).json();
       await post("/api/import/text", { text: "Railing posts set on the Maple porch today.", source: "paste" });
       return Object.fromEntries(st.jobs.map((j) => [j.name, j.id]));
@@ -538,7 +538,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const jobId = await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Pia Phone", company_name: "Phone Builders" });
-      const st = await (await post("/api/jobs", { name: "Long schedule job", address: "4 Line St", customer: "Gail General", role: "GC",
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver: "Gail General", name: "Long schedule job", address: "4 Line St", customer: "Gail General", role: "GC",
         ap_email: "ap@gail.example", contract_cents: 3150000 })).json();
       const id = st.jobs.find((j) => j.name === "Long schedule job").id;
       await post(`/api/jobs/${id}/sov`, { op_pct: "5", update_contract: true, lines: [
@@ -588,7 +588,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Dee Draws", company_name: "Draw Builders" });
       await post("/api/company", { billing_style: "draws" });
-      await post("/api/jobs", { name: "Hill house", address: "9 Hill Rd", customer: "Pat Homeowner", role: "Owner", ap_email: "pat@example.com", contract_cents: 9000000 });
+      await post("/api/jobs", { phone: "(404) 555-0100", approver: "Pat Homeowner", name: "Hill house", address: "9 Hill Rd", customer: "Pat Homeowner", role: "Owner", ap_email: "pat@example.com", contract_cents: 9000000 });
     }, `draws-${Date.now()}@example.com`);
     await p.goto(BASE + "/money");
     await p.locator(".tabs .tab", { hasText: "Draws" }).waitFor();

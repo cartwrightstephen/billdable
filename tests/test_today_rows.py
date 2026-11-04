@@ -23,7 +23,7 @@ class TodayRowsTests(unittest.TestCase):
     def setUp(self):
         self.state = server.empty_state("Pine Builders")
         self.job = domain.create_job(self.state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St",
-                                     approver="Dana", ap_email="dana@example.com")
+                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner")
         self.payer = self.state["payers"][0]
 
     def rows(self, now=NOW):
@@ -167,14 +167,14 @@ class TodayRowsTests(unittest.TestCase):
     # ---------- one rule set: the page, the email and the job ----------
 
     def test_most_urgent_first(self):
-        other = domain.create_job(self.state, "Bath", "Dana Lee", 500_000, address="2 Elm St")
+        other = domain.create_job(self.state, "Bath", "Dana Lee", 500_000, address="2 Elm St", approver="Bath", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.record_progress(self.state, other["id"], 100_000)
         self.clear_packet(other["invoices"][-1])
         self.assertEqual([r["kind"] for r in self.rows()], ["ready", "new_job"])
 
     def test_snapshot_sends_the_rows_the_email_lists(self):
         inv = self.sent()
-        other = domain.create_job(self.state, "Bath", "Dana Lee", 500_000, address="2 Elm St")
+        other = domain.create_job(self.state, "Bath", "Dana Lee", 500_000, address="2 Elm St", approver="Bath", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.record_progress(self.state, other["id"], 100_000)
         self.state["inbox"] = [{"id": "in-2", "status": "new", "source": "email", "subject": "Signed CO 3", "suggested_job_id": self.job["id"]}]
         rows = self.rows()

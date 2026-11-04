@@ -116,7 +116,7 @@ class DailyRecordHttpTests(ServerCase):
     def test_a_photo_uploaded_first_is_linked_to_the_daily_record(self):
         owner, _ = self.signup("daily@site.example", "Site Co")
         _, state = self.request("POST", "/api/jobs", {"name": "Porch", "customer": "Dana Lee", "contract_cents": 1_000_000, "address": "1 Elm St",
-                                                      "approver": "Dana", "ap_email": "dana@example.com"}, cookie=owner)
+                                                      "approver": "Dana", "ap_email": "dana@example.com", "phone": "(404) 555-0100", "role": "Owner"}, cookie=owner)
         job = state["jobs"][0]
         res, state = self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=photo", raw=b"\xff\xd8\xff\xe0 photo", cookie=owner,
                                   headers={"Content-Type": "image/jpeg", "X-Filename": quote("east wall.jpg")})

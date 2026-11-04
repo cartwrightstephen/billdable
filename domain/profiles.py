@@ -65,7 +65,7 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     "reopen": "close_jobs",
     # Drafting, records, paperwork and follow-ups: everyone on the team.
     "done": None, "undo-done": None, "progress": None, "sov": None, "sov-progress": None, "draft": None,
-    "resolve": None, "packet-skip": None, "follow-up": None, "note-contact": None, "edit": None,
+    "resolve": None, "packet-skip": None, "follow-up": None, "note-contact": None, "edit": None, "paperwork": None,
     "add-co": None, "approve-co": None, "request-co-signature": None, "include-co": None, "withdraw-co": None,
     "attach": None, "detach": None, "add-evidence": None, "add-record": None, "attach-record": None,
     "edit-record": None, "daily-record": None, "pencil": None, "pencil-response": None,

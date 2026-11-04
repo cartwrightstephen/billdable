@@ -2704,7 +2704,7 @@ class Handler(BaseHTTPRequestHandler):
         domain.create_job(
             state, _text(body, "name"), _text(body, "customer"), _number(body, "contract_cents", "the contract amount", 0),
             address=_text(body, "address"), approver=_text(body, "approver"), ap_email=_text(body, "ap_email"),
-            phone=_text(body, "phone"), role=_text(body, "role", "Owner"),
+            phone=_text(body, "phone"), role=_text(body, "role"),
             retainage_pct=_number(body, "retainage_pct", "the retainage percent", 0),
             # "packet_notes" is what pages from before R1-04 send; it is a note on the job record now.
             note=_text(body, "note") or _text(body, "packet_notes"),
@@ -2713,7 +2713,8 @@ class Handler(BaseHTTPRequestHandler):
             new_customer=body.get("new_customer") is True,
             # J1: the address in four parts; a page that sends only "address" still works.
             address_parts=_address_parts(body), client_type=_text(body, "client_type"),
-            started_on=_text(body, "started_on"), assignee_id=assignee_id, assignee_name=assignee_name,
+            started_on=_text(body, "started_on"), anticipated_end_on=_text(body, "anticipated_end_on"),
+            assignee_id=assignee_id, assignee_name=assignee_name,
             # S12: what an imported contract said about the client's pay app day and terms.
             payer_days={k: body.get(k) for k in ("payapp_due_day", "payment_terms_days") if k in body},
             # The page's own date: the start date when none was typed (review C3).
@@ -3057,7 +3058,7 @@ def _assignee(c: Ctx, user_id: str) -> tuple:
 
 def _edit_job(h, st, j, i, c):
     body = c.body
-    updates = {k: _text(body, k) for k in ("name", "address", "contract_number", "started_on") if k in body}
+    updates = {k: _text(body, k) for k in ("name", "address", "contract_number", "started_on", "anticipated_end_on") if k in body}
     updates.update(_address_parts(body) or {})
     if "assignee_id" in body:
         updates["assignee_id"], updates["assignee_name"] = _assignee(c, _text(body, "assignee_id"))
@@ -3144,6 +3145,7 @@ JOB_ACTIONS = {
     "accept-short-pay": (True, lambda h, st, j, i, c: domain.settle_short_pay(st, j, i, _text(c.body, "reason"), c.actor)),
     "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
     "edit": (False, _edit_job),
+    "paperwork": (False, lambda h, st, j, i, c: domain.set_job_paperwork(st, j, c.body, c.actor)),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     # The Diary, and crew, weather, materials, deliveries, ticked sections and files (T11, T12, M1).
     "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter the diary entry."), c.actor, details=c.body)),

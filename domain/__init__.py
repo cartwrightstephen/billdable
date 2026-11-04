@@ -343,6 +343,8 @@ def record_progress(
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft and open_draft.get("pencil_status") == "sent":
         raise GateError(f"{open_draft['number']} is with the client as a draft. Void it or record their answer first.")
+    if not open_draft:
+        _need_playbook(state, job)
     contract_total = job["contract_cents"] + sum(
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
@@ -411,6 +413,8 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
             f"{open_draft['number']} is with the client for their review. Record their answer or delete the draft, "
             "then mark the job done so the final pay app covers the rest."
         )
+    if not open_draft:
+        _need_playbook(state, job)
     runs_to = period_to(job, period_end)
     # A draft only here becomes the final pay app (B6 of the Oct 30 review): same number and paperwork.
     replaced = open_draft
@@ -465,6 +469,8 @@ def draft_invoice(
             raise GateError(f"{open_draft['number']} is already an open draft. Send it before drafting another.")
         audit(state, job_id, "draft_skipped", "Open draft already exists.", actor)
         return job
+    if not replaces:
+        _need_playbook(state, job)
     money_file = job_money(job)
     work = money_file["unbilled_completed_cents"]
     period = sov.this_period(job) if sov.has_sov(job) else None
@@ -590,6 +596,7 @@ def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dic
     draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if not draft:
         raise GateError("Draft a pay app first. The draft is what goes for their review.")
+    _need_playbook(state, job)
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
     subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
@@ -685,6 +692,7 @@ def approve_and_send(
     invoice = next((inv for inv in reversed(job["invoices"]) if inv["status"] in {"draft", "awaiting_approval"}), None)
     if not invoice:
         raise GateError("No draft pay app to send.")
+    _need_playbook(state, job)
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
     unconditional = unconditional_waivers_attached(job, invoice)
@@ -1587,6 +1595,9 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out.setdefault("done_notes", "")
     out["sov_view"] = _sov_view(job)
     _paperwork_view(state, job, out)
+    out["playbook_missing"] = playbook_missing(out["payer"])
+    out["playbook_blocks"] = bool(job.get("playbook_required") and out["playbook_missing"])
+    out["paperwork_view"] = _job_paperwork_view(state, job)
     # Where the job stands and the dates that matter (J7), worked out here so the page doesn't.
     out["started_on"] = job_started_on(state, job)
     out["stage"] = job_stage(job, out["money"])
@@ -2261,14 +2272,17 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
                 continue
             clean[k] = v
             clean["role"] = client_type_role(v)
-    if "ap_email" in clean and not EMAIL_RE.match(clean["ap_email"]):
+    if clean.get("ap_email") and not EMAIL_RE.match(clean["ap_email"]):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com."
+    # A complete playbook stays complete (Decision 4): what is saved can be changed, not removed.
+    # A client saved before the rule may stay without one until its next new job (Decision 3).
+    for k in PLAYBOOK_FIELDS:
+        if k in clean and not clean[k] and str(payer.get(k) or "").strip():
+            errors[k] = PLAYBOOK_FIELDS[k]
     if clean.get("escalation_email") and not EMAIL_RE.match(clean["escalation_email"]):
         errors["escalation_email"] = "Enter one email to copy from the third follow-up, like owner@builder.com, or leave it blank."
-    if "approver" in clean and not clean["approver"]:
-        errors["approver"] = "Enter who signs off on your bills."
     if clean.get("phone"):
-        # G1: a US phone, saved as (404) 555-0123. Blank clears it.
+        # G1: a US phone, saved as (404) 555-0123.
         phone = normalize_phone(clean["phone"])
         if phone:
             clean["phone"] = phone
@@ -2297,6 +2311,8 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
         else:
             payer[k] = v
         changed.append(k)
+    if clean.get("approver"):
+        payer["approver_confirmed"] = True  # seen and saved on the client's card
     if clean.get("packet"):
         payer.pop("no_paperwork", None)  # a list typed in again replaces "nothing needed"
     elif clean.get("packet") == "":
@@ -2309,6 +2325,39 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     renamed = f" (was {was})" if "name" in clean else ""
     audit(state, "", "playbook_update", f"{actor} updated {payer['name']}{renamed}: {', '.join(changed) or 'no change'}.", actor)
     return payer
+
+
+# A complete Client playbook (Decision 4): its name and client type, and these. Box -> the reason.
+PLAYBOOK_FIELDS = {"approver": "Enter who signs off on your bills.", "ap_email": "Enter the email pay apps go to, like ap@builder.com.",
+                   "phone": "Enter the client's phone number."}
+PLAYBOOK_WORDS = {"client_type": "the client type", "approver": "who signs off", "ap_email": "email for pay apps", "phone": "phone"}
+
+
+def signer_defaulted(payer: dict[str, Any]) -> bool:
+    """Who signs off still reads as the client's own name, as a blank box used to be saved, and no
+    one has said so since: asked at the client's next new job. Saying it once settles it."""
+    signer = str(payer.get("approver") or "").strip().lower()
+    return bool(signer) and signer == str(payer.get("name") or "").strip().lower() and not payer.get("approver_confirmed")
+
+
+def playbook_missing(payer: dict[str, Any]) -> list[str]:
+    """The boxes a saved client still has to answer: a blank one, a client type never picked (one
+    read from an older role isn't an answer) or a signer that only defaulted to the client."""
+    out = [] if payer.get("client_type") in CLIENT_TYPES else ["client_type"]
+    return out + [k for k in PLAYBOOK_FIELDS if not str(payer.get(k) or "").strip() or (k == "approver" and signer_defaulted(payer))]
+
+
+def _need_playbook(state: dict[str, Any], job: dict[str, Any]) -> None:
+    """A pay app doesn't start or go out while the client's playbook is incomplete. A job from
+    before the rule isn't held up (Decision 3): sending still needs the email (_send_to)."""
+    if not job.get("playbook_required"):
+        return
+    payer = _payer(state, job["payer_id"])
+    missing = playbook_missing(payer)
+    if missing:
+        raise GateError(f"{payer['name']}'s Client playbook isn't complete.",
+                        [f"Add {PLAYBOOK_WORDS[k]} in the Client playbook." for k in missing],
+                        extra={"playbook_missing": missing}, action={"label": "Open Client playbook", "view": "playbook"})
 
 
 def _payer_named(state: dict[str, Any], name: str, other_than: str = "") -> dict[str, Any] | None:
@@ -2375,16 +2424,17 @@ def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_em
         "usual_approval_days": 21 if role == "GC" else 14,
         "rejects_when": "Missing required paperwork.",
         "copy": "",
+        "approver_confirmed": True,  # typed by the person: both callers refuse a blank one
     }
     state["payers"].append(payer)
     return payer
 
 
 def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
-    """A customer added from Customer settings, before any job (R3-07). Only the name is needed;
-    who signs off defaults to the customer, and the email can wait until the first send. The
-    client type (J2) sets the role's defaults; a paperwork list (S11, S13) and the day fields a
-    contract import found (S12) may come too."""
+    """A customer added from Customer settings, before any job (R3-07), with a complete playbook
+    (Decision 4). The client type (J2) sets the role's defaults; a paperwork list (S11, S13) and
+    the day fields a contract import found (S12) may come too. A name nearly matching a saved one
+    is asked about before the rest."""
     def text(key: str) -> str:
         v = body.get(key)
         return str(v).strip() if isinstance(v, (str, int, float)) and not isinstance(v, bool) else ""
@@ -2398,13 +2448,19 @@ def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner")
         errors["name"] = rule_message("name")
     elif _payer_named(state, name):
         errors["name"] = f"Another client is already called {_payer_named(state, name)['name']}."
+    near = None if body.get("new_customer") is True or errors else payer_near(state, name)
     if client_type and not client_type_role(client_type):
         errors["client_type"] = "Pick the client type."
+    elif not near and not client_type and text("role") not in {"Owner", "GC"}:
+        errors["client_type"] = "Pick the client type."
     if ap_email and not EMAIL_RE.match(ap_email):
-        errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
+        errors["ap_email"] = PLAYBOOK_FIELDS["ap_email"]
     if phone:
         phone = normalize_phone(phone) or phone
         errors.update(check_field("phone", phone))
+    if not near:
+        typed = {"approver": approver, "ap_email": ap_email, "phone": phone}
+        errors.update({k: PLAYBOOK_FIELDS[k] for k in PLAYBOOK_FIELDS if not typed[k]})
     days: dict[str, Any] = {}
     for k in (*PAYER_DAY_FIELDS, "payapp_due_day"):
         if body.get(k) not in (None, ""):
@@ -2414,10 +2470,9 @@ def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner")
             else:
                 days[k] = value
     _refuse("Client not added.", errors)
-    near = None if body.get("new_customer") is True else payer_near(state, name)
     if near:
         raise _same_customer_question("name", name, near)
-    payer = _new_payer(state, name, role, approver or name, ap_email, phone, client_type)
+    payer = _new_payer(state, name, role, approver, ap_email, phone, client_type)
     payer.update(days)
     if body.get("no_paperwork") is True:
         payer["packet"], payer["no_paperwork"] = "", True
@@ -3381,7 +3436,8 @@ def _ensure_closeout_packet(state: dict[str, Any], job: dict[str, Any]) -> None:
     if any(item.get("kind") == "closeout" for item in job.get("packet") or []):
         return  # older record: closeout already lives in the job packet
     payer = next((p for p in state["payers"] if p["id"] == job["payer_id"]), {})
-    labels = [l for l in parse_packet_text(payer.get("packet", "")) if _is_closeout(l)]
+    own = job.get("paperwork_labels")
+    labels = [l for l in (own if own is not None else parse_packet_text(payer.get("packet", ""))) if _is_closeout(l)]
     prefix = f"closeout-{job['id']}"
     if labels:
         job["closeout_packet"] = _items_from_labels(prefix, labels)
@@ -3408,15 +3464,17 @@ def _packet_for_pay_app(state: dict[str, Any], job: dict[str, Any], invoice_id: 
 
 
 def _new_packet(state: dict[str, Any], job: dict[str, Any], invoice_id: str) -> list[dict[str, Any]]:
-    """A new pay app's paperwork: the client's list, else the default one. Either way it has a
-    conditional waiver (M16): the first stage of the two-stage waiver gate, so Approve & send
-    waits for it unless the client was marked as not taking one (skip_packet_item, audited)."""
+    """A new pay app's paperwork: the job's own list when it has one (set_job_paperwork), else
+    the client's, else the default one. Either way it has a conditional waiver (M16): the first
+    stage of the two-stage waiver gate, so Approve & send waits for it unless the client was
+    marked as not taking one (skip_packet_item, audited)."""
     payer = next((p for p in state["payers"] if p["id"] == job["payer_id"]), {})
-    labels = [l for l in parse_packet_text(payer.get("packet", "")) if not _is_closeout(l)]
+    own = job.get("paperwork_labels")
+    labels = [l for l in (own if own is not None else parse_packet_text(payer.get("packet", ""))) if not _is_closeout(l)]
     if labels:
         items = _items_from_labels(invoice_id, labels)
-    elif payer.get("no_paperwork"):
-        items = []  # every item was marked not needed for this customer
+    elif own is not None or payer.get("no_paperwork"):
+        items = []  # nothing needed on this job, or every item was marked not needed for this customer
     else:
         items = [
             _packet_item(invoice_id, "contract", "Signed contract", "Signed contract is missing."),
@@ -3444,6 +3502,72 @@ def _new_packet(state: dict[str, Any], job: dict[str, Any], invoice_id: str) -> 
             item.update(required=False, skipped_reason=skipped.get("reason") or "Not needed for this client", skipped_at=utcnow())
         items.insert(1 if items and items[0]["kind"] == "contract" else 0, item)
     return items
+
+
+def _job_paperwork_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    """The list a job's next pay app reads, for its card: {own, labels, none}. own: the job has its
+    own list instead of the client's. A list that also has closeout items names them too."""
+    payer = _payer(state, job["payer_id"])
+    own = job.get("paperwork_labels")
+    if own is not None:
+        return {"own": True, "labels": list(own), "none": not own, "legacy": bool(job.get("packet"))}
+    none = bool(payer.get("no_paperwork"))
+    labels = [] if none else parse_packet_text(payer.get("packet", "")) or list(DEFAULT_PAPERWORK["GC" if payer.get("role") == "GC" else "Owner"])
+    return {"own": False, "labels": labels, "none": none, "legacy": bool(job.get("packet"))}
+
+
+def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+    """Change the paperwork this job needs: {packet: the list, no_paperwork: true for nothing, or
+    use_client: true for the client's list again}. It applies from the next pay app and to a draft
+    that hasn't been sent; a sent pay app stays as it went (B9). Audited."""
+    job = _open_job(state, job_id)
+    if job.get("packet"):
+        raise GateError("This job's paperwork was set up on an older pay app, so it can't have its own list.")
+    before = _job_paperwork_view(state, job)
+    if body.get("use_client") is True:
+        job.pop("paperwork_labels", None)
+    else:
+        text = body.get("packet") if isinstance(body.get("packet"), str) else ""
+        labels = [] if body.get("no_paperwork") is True else parse_packet_text(text)
+        if not labels and body.get("no_paperwork") is not True:
+            _refuse("Paperwork not saved.", {"packet": "Tick what this job needs with each pay app, or Nothing needed."})
+        job["paperwork_labels"] = labels
+    after = _job_paperwork_view(state, job)
+    if before["own"] == after["own"] and before["labels"] == after["labels"]:
+        return job
+    was = {l.lower() for l in before["labels"]}
+    now = {l.lower() for l in after["labels"]}
+    parts = [f"added {', '.join(l for l in after['labels'] if l.lower() not in was)}" if now - was else "",
+             f"took off {', '.join(l for l in before['labels'] if l.lower() not in now)}" if was - now else ""]
+    change = "; ".join(p for p in parts if p)
+    audit(state, job_id, "job_paperwork",
+          f"{actor} set {job['name']}'s paperwork back to the client's list" + (f": {change}." if change else ".") if not after["own"]
+          else f"{actor} changed the paperwork for {job['name']}: {change or 'nothing needed'}.", actor)
+    for invoice in job["invoices"]:
+        if invoice["status"] in DRAFT_STATUSES and invoice.get("packet_id") != "job-packet":
+            _draft_follows_list(state, job, invoice)
+    _refresh_draft_gate(job, state)
+    return job
+
+
+def _draft_follows_list(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> None:
+    """A draft takes on the job's list: an item still listed keeps what is attached to it, a new
+    one is added, and one taken off goes (its records stay on the job record). The conditional
+    waiver (M16) and the tickets for work billed by ticket (M6) stay, whatever the list says."""
+    packet = invoice["packet"]
+    def same(old: dict[str, Any], new: dict[str, Any]) -> bool:
+        if str(new.get("waiver_kind", "")).startswith("conditional"):
+            return str(old.get("waiver_kind", "")).startswith("conditional")
+        return old["label"].lower() == new["label"].lower()
+    kept: list[dict[str, Any]] = []
+    for new in _new_packet(state, job, invoice["id"]):
+        old = next((o for o in packet if same(o, new) and not any(o is k for k in kept)), None)
+        if not old and _made_here(new["label"], job):
+            new.update(present=True, present_reason=MADE_HERE_REASON, resolved_at=utcnow())
+        kept.append(old or new)
+    kept += [o for o in packet if o.get("covers") and not any(o is k for k in kept)]
+    packet[:] = kept
+    _name_conditional_waiver(job, invoice)
 
 
 def _work_billed_by_ticket(job: dict[str, Any], invoice: dict[str, Any]) -> list[str]:
@@ -3508,6 +3632,8 @@ def _name_conditional_waiver(job: dict[str, Any], invoice: dict[str, Any]) -> No
 # of values or continuation sheet. Backup counts only when the job bills from a schedule (the
 # continuation sheet is the backup); otherwise it is tickets and invoices from the job record.
 MADE_HERE_RE = re.compile(r"pay[\s-]*app(?:lication)?s?\b|schedule of values|continuation sheet", re.I)
+# A notarized pay application comes back from a notary, so it is not made here; a notarized waiver is a waiver.
+NOTARIZED_RE = re.compile(r"notari[sz]ed\s+(?:pay[\s-]*app|application)", re.I)
 MADE_HERE_REASON = "Produced by Duracash"
 
 # The standard paperwork (M6), for each pay app and for closeout: key (the item's kind), label,
@@ -3532,6 +3658,11 @@ PAPERWORK_ITEMS = (
     {"key": "stored", "label": "Stored materials documents", "accepts_kinds": ("stored",),
      "words": re.compile(r"stored material", re.I), "per_pay_app": True, "closeout": False},
     {"key": "backup", "label": "Pay app backup", "accepts_kinds": ("pay_app",), "words": re.compile(r"backup", re.I),
+     "per_pay_app": True, "closeout": False},
+    # Public jobs: each has its own record kind, since a time sheet or the app's backup isn't one.
+    {"key": "payroll", "label": "Certified payroll", "accepts_kinds": ("payroll",), "words": re.compile(r"payroll", re.I),
+     "per_pay_app": True, "closeout": False},
+    {"key": "notarized", "label": "Notarized pay application", "accepts_kinds": ("notarized",), "words": NOTARIZED_RE,
      "per_pay_app": True, "closeout": False},
     {"key": "punch", "label": "Punch list sign-off", "accepts_kinds": ("punch",), "words": re.compile(r"punch", re.I),
      "per_pay_app": False, "closeout": True},
@@ -3558,6 +3689,8 @@ PAPERWORK_CATALOG = [{k: e[k] for k in ("key", "label", "per_pay_app", "closeout
 # "Contractor's insurance certificate" is insurance, not the contract. Items whose kind is a
 # catalog key take the catalog's kinds; this table is the fallback for typed labels.
 RECORD_FOR_ITEM = (
+    ("notarized", ("notarized",), NOTARIZED_RE),
+    ("payroll", ("payroll",), re.compile(r"payroll", re.I)),
     ("backup", ("pay_app",), re.compile(r"backup", re.I)),
     ("insurance", ("insurance",), re.compile(r"insurance|\bcoi\b", re.I)),
     ("co", ("change_order",), re.compile(r"change order", re.I)),
@@ -3576,14 +3709,14 @@ RECORD_FOR_ITEM = (
 )
 # Records that belong to one pay app (this period's waiver, photos, backup) are not reused on the
 # next one; a signed contract or an insurance certificate is.
-PER_PAY_APP = {"backup", "co", "waiver", "photo", "ticket", "supplier_invoice", "stored", "inspection"}
+PER_PAY_APP = {"backup", "co", "waiver", "photo", "ticket", "supplier_invoice", "stored", "inspection", "payroll", "notarized"}
 AUTO_NOTE = "Attached from the job record"
 
 
 def _made_here(label: str, job: dict[str, Any]) -> bool:
     if "backup" in label.lower():
         return sov.has_sov(job)
-    return bool(MADE_HERE_RE.search(label))
+    return bool(MADE_HERE_RE.search(label)) and not re.search(r"notar", label, re.I)
 
 
 def _record_kinds_for(item: dict[str, Any]) -> tuple[str, tuple[str, ...]] | None:
@@ -3716,11 +3849,16 @@ def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: s
         payer["tickets_not_needed"] = {"by": actor, "at": utcnow(), "reason": item["skipped_reason"]}
     # A closeout item (M6: five by default) is not needed on this job only; the client's list stays.
     closeout = any(x is item for x in job.get("closeout_packet") or [])
-    labels = [] if closeout else parse_packet_text(payer.get("packet", ""))
-    if not labels and _invoice:
+    own = job.get("paperwork_labels")
+    labels = [] if closeout or own is not None else parse_packet_text(payer.get("packet", ""))
+    if not labels and _invoice and own is None:
         # No list saved: this pay app used the default one, so save what it asked for, less this.
         labels = [p["label"] for p in _invoice.get("packet") or [] if p is item or not p.get("skipped_reason")]
     kept = [l for l in labels if l.lower() != item["label"].lower()]
+    if own is not None and not closeout and item["label"].lower() in {l.lower() for l in own}:
+        # The job has its own list: it comes off that one, and the client's stays.
+        job["paperwork_labels"] = [l for l in own if l.lower() != item["label"].lower()]
+        audit(state, job_id, "job_paperwork", f"{actor} took \"{item['label']}\" off the paperwork for {job['name']}.", actor)
     if len(kept) != len(labels):
         payer["packet"] = _packet_text(kept)
         if kept:
@@ -3763,7 +3901,7 @@ def _packet_item(job_id: str, kind: str, label: str, blocker: str, required: boo
 # The job record's kinds; static/js/jobs.js RECORD_KINDS and importer.KINDS have the same keys
 # with their words. supplier_invoice is never a bare "invoice", so it isn't read as a pay app.
 RECORD_KINDS = ("note", "daily", "photo", "contract", "change_order", "waiver", "pay_app", "ticket",
-                "supplier_invoice", "insurance", "inspection", "stored", "punch", "completion", "asbuilt", "warranty", "other")
+                "supplier_invoice", "insurance", "inspection", "stored", "payroll", "notarized", "punch", "completion", "asbuilt", "warranty", "other")
 
 
 def edit_record(state: dict[str, Any], job_id: str, record_id: str, label: str, kind: str, actor: str = "owner") -> dict[str, Any]:
@@ -3860,7 +3998,7 @@ def create_job(
     approver: str = "",
     ap_email: str = "",
     phone: str = "",
-    role: str = "Owner",
+    role: str = "",
     retainage_pct: int = 0,
     note: str = "",
     contract_number: str = "",
@@ -3873,12 +4011,15 @@ def create_job(
     assignee_name: str = "",
     payer_days: dict[str, Any] | None = None,
     today: Any = "",
+    anticipated_end_on: Any = None,
 ) -> dict[str, Any]:
     """Add a job and its record. The packet is created later, with a pay app, from the payer's
     paperwork list (Customer settings); `note` is kept on the job record and never becomes it.
-    Who signs off and the email are optional: the email is asked for before the first send.
-    A customer name that nearly matches a saved one ("ABC Builders Inc" for "ABC Builders") is
-    asked about first, unless new_customer says to keep it as a new customer.
+    The client's playbook has to be complete (Decisions 3 and 4): a new client comes with its
+    type, who signs off, email and phone; a saved client missing one takes it from here, and
+    anything still missing is refused under its box. A customer name that nearly matches a saved
+    one ("ABC Builders Inc" for "ABC Builders") is asked about first, unless new_customer says to
+    keep it as a new customer.
 
     The address comes in four parts (J1: street, city, state, ZIP), each checked, and is kept
     whole as address too ("Street, City, ST 12345") for the pay app PDF, the client's page and
@@ -3894,7 +4035,7 @@ def create_job(
     approver = (approver or "").strip()
     ap_email = (ap_email or "").strip()
     phone = (phone or "").strip()
-    role = client_type_role(client_type) or (role if role in {"Owner", "GC"} else "Owner")
+    role = client_type_role(client_type) or (role if role in {"Owner", "GC"} else "")
     note = (note or "").strip()
     contract_number = (contract_number or "").strip()
 
@@ -3921,14 +4062,31 @@ def create_job(
         phone = normalize_phone(phone) or phone
         errors.update(check_field("phone", phone))
     errors.update(check_field("contract_number", contract_number))
+    payer = _payer_named(state, customer_name) if customer_name else None
+    near = payer_near(state, customer_name) if customer_name and not payer and not new_customer else None
+    if not near:
+        # What this client still needs: everything when new, only its empty boxes when saved.
+        typed = {"approver": approver, "ap_email": ap_email, "phone": phone}
+        wanted = playbook_missing(payer) if payer else ["client_type", *PLAYBOOK_FIELDS]
+        errors.update({k: PLAYBOOK_FIELDS[k] for k in wanted if k in typed and not typed[k]})
+        if payer and "approver" in errors and signer_defaulted(payer):
+            errors["approver"] = "Confirm who signs off on your bills. It is set to the client's own name."
+        if "client_type" in wanted and not role and "client_type" not in errors:
+            errors["client_type"] = "Pick the client type."
     start = ""
     if started_on not in (None, ""):
         try:
             start = parse_start_date(started_on)
         except GateError as exc:
             errors.update(exc.fields)
+    end = ""
+    if anticipated_end_on not in (None, ""):
+        try:
+            end = parse_end_date(anticipated_end_on, start or local_today(today))
+        except GateError as exc:
+            errors.update(exc.fields)
     if ap_email and not EMAIL_RE.match(ap_email):
-        errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
+        errors["ap_email"] = PLAYBOOK_FIELDS["ap_email"]
     days: dict[str, Any] = {}
     for k in ("payapp_due_day", "payment_terms_days"):
         if (payer_days or {}).get(k) not in (None, ""):
@@ -3944,24 +4102,30 @@ def create_job(
     if not isinstance(retainage_pct, int) or isinstance(retainage_pct, bool) or not 0 <= retainage_pct <= 20:
         errors["retainage_pct"] = "Enter a retainage from 0 to 20 percent."
     _refuse("Job not saved.", errors)
-    approver = approver or customer_name  # a homeowner signs off on their own bills
 
-    payer = _payer_named(state, customer_name)
-    near = None if payer or new_customer else payer_near(state, customer_name)
     if near:
         raise _same_customer_question("customer", customer_name, near)
     if not payer:
         payer = _new_payer(state, customer_name, role, approver, ap_email, phone, client_type)
         payer.update(days)
     else:
+        missing = playbook_missing(payer)
+        if "client_type" in missing:
+            # A type never picked is answered here (checked above); after that it is the client's.
+            payer["client_type"] = client_type if client_type_role(client_type) else ("gc" if role == "GC" else "owner")
+            payer["role"] = role
+            audit(state, "", "playbook_update", f"{actor} set the client type of {payer['name']}: {payer['client_type']}.", actor)
         # A saved client keeps its type: the job follows it (the form doesn't ask, J2).
         role = payer.get("role") if payer.get("role") in {"Owner", "GC"} else role
         # Keep the payer's existing contact. A new job must not silently redirect
         # where every other job's pay apps go; changes belong in Customer settings.
         # A blank one is filled in, since nothing goes anywhere yet.
-        if ap_email and not str(payer.get("ap_email") or "").strip():
-            payer["ap_email"] = ap_email
-            audit(state, "", "playbook_update", f"{actor} added the email for pay apps to {payer['name']}: {ap_email}.", actor)
+        for k, value in (("approver", approver), ("ap_email", ap_email), ("phone", phone)):
+            if value and k in missing:
+                payer[k] = value
+                audit(state, "", "playbook_update", f"{actor} added {PLAYBOOK_WORDS[k]} to {payer['name']}: {value}.", actor)
+        if "approver" in missing:
+            payer["approver_confirmed"] = True
         differs = [
             label
             for label, new, old in (
@@ -4030,7 +4194,10 @@ def create_job(
         "closed": False,
         "evidence": [],
         "done_notes": "",
+        "playbook_required": True,  # made under the rule, so a pay app waits for a complete playbook
     }
+    if end:
+        job["anticipated_end_on"] = end
     if parts is not None:
         job["address_parts"] = parts
     if assignee_id:
@@ -4110,6 +4277,25 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
             if start != was:
                 changes.append(f"start date from {was or 'none'} to {start}")
                 job["started_on"] = start
+
+    start_now = job_started_on(state, job)
+    if "anticipated_end_on" in updates:
+        typed = str(updates["anticipated_end_on"] or "").strip()
+        was = job.get("anticipated_end_on") or ""
+        try:
+            end = parse_end_date(typed, start_now, "The job was not changed.") if typed else ""
+        except GateError as exc:
+            problems.update(exc.fields)
+        else:
+            if end != was:
+                changes.append(f"anticipated end date from {was or 'none'} to {end or 'none'}")
+                if end:
+                    job["anticipated_end_on"] = end
+                else:
+                    job.pop("anticipated_end_on", None)
+    # A start date moved past an end date left as it was.
+    if "started_on" in updates and "anticipated_end_on" not in problems and start_now > (job.get("anticipated_end_on") or start_now):
+        problems["started_on"] = f"Enter a start date on or before the anticipated end date, {job['anticipated_end_on']}."
 
     if "assignee_id" in updates and (updates["assignee_id"] or "") != job.get("assignee_id", ""):
         who = str(updates.get("assignee_name") or "").strip() or "no one"
@@ -4318,6 +4504,8 @@ def record_sov_progress(
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft and open_draft.get("pencil_status") == "sent":
         raise GateError(f"{open_draft['number']} is with the client as a draft. Void it or record their answer first.")
+    if not open_draft:
+        _need_playbook(state, job)
     runs_to = period_to(job, period_end)
     done = done if isinstance(done, dict) else {}
     stored = stored if isinstance(stored, dict) else {}

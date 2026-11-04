@@ -49,7 +49,7 @@ class NoSiteAddressTests(ServerCase):
     def test_request_signature_is_refused_in_plain_words(self):
         cookie, _ = self.signup("plain-co@pine.example", "Plain Signs")
         res, data = self.request("POST", "/api/jobs", {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim",
-                                                       "ap_email": "ap@park.example", "contract_cents": 1_000_000}, cookie)
+                                                       "ap_email": "ap@park.example", "contract_cents": 1_000_000, "phone": "(404) 555-0100", "role": "Owner"}, cookie)
         job = data["jobs"][-1]
         res, data = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Two outlets", "amount_cents": 45_000, "reason": "owner_request"}, cookie)
         co = data["jobs"][-1]["change_orders"][-1]

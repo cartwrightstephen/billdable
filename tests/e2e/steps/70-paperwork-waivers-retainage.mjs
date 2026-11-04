@@ -33,7 +33,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const p = await signedInPage({ width: 1280, height: 900 });
     const job = await p.evaluate(async () => {
       const call = async (path, body) => (await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })).json();
-      let st = await call("/api/jobs", { name: "Smoke waiver porch", customer: "Smoke Waiver Client", contract_cents: 1000000, address: "5 Test St, Atlanta, GA 30307",
+      let st = await call("/api/jobs", { phone: "(404) 555-0100", name: "Smoke waiver porch", customer: "Smoke Waiver Client", contract_cents: 1000000, address: "5 Test St, Atlanta, GA 30307",
         approver: "Dee", ap_email: "dee@smoke.example", role: "Owner", new_customer: true });
       const id = st.jobs.find((j) => j.name === "Smoke waiver porch").id;
       st = await call(`/api/jobs/${id}/progress`, { completed_cents: 400000 });
