@@ -19,6 +19,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("Import: notes pasted there wait in the Inbox, and Everything received lists them with a filter", async () => {  // C1, I1
     const { ctx, p } = await newCompany("received");
     await p.goto(BASE + "/data/import");
+    await p.selectOption("#upload-job", "");   // Not sure, file later: it waits in the Inbox
     await p.locator("#paste-text").fill("Railing posts set on the Birch deck today.");
     await p.getByRole("button", { name: "Add to Inbox" }).click();
     await p.getByText("Added to the Inbox.").waitFor();

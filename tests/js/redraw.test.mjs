@@ -20,7 +20,7 @@ const company = (jobs = [job()]) => ({ company: { name: "Pine" }, jobs, payers: 
   inbox: [], daily_records: [], files: [], email_log: [], email_log_total: 0 });
 const ok = (path) => (p) => (p === path ? { status: 200, body: company() } : undefined);
 
-test("Daily record: the note typed stays through a redraw and goes once saved", async () => {
+test("New job record: the note typed stays through a redraw and goes once saved", async () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   page.setLocation("daily");
   core.setState(company());
@@ -36,7 +36,7 @@ test("Daily record: the note typed stays through a redraw and goes once saved", 
   delete dom.bySelector["#daily-notes"]; delete dom.bySelector["#daily-job"];
 });
 
-test("Daily record: crew, weather and the ticked sections stay through a redraw; the body sends them", async () => {  // T11, T12
+test("New job record: crew, weather and the ticked sections stay through a redraw; the body sends them", async () => {  // T11, T12
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   const sovJob = job({ sov_view: { present: true, lines: [
     { id: "l1", item: "1", description: "Rough-in wiring", unit: "LF", qty_milli: 400000, done_milli: 100000 },
@@ -68,7 +68,7 @@ test("Daily record: crew, weather and the ticked sections stay through a redraw;
   forms.clearForm("daily");
 });
 
-test("Daily record: Recent records show the crew, the sections and links to the files attached", async () => {  // T11, T12
+test("New job record: Recent diary entries show the crew, the sections and links to the files attached", async () => {  // T11, T12
   const daily = await import("../../static/js/views/daily.js");
   const sovJob = job({ sov_view: { present: true, lines: [
     { id: "l1", item: "1", description: "Rough-in wiring", unit: "LF", qty_milli: 400000, done_milli: 220000 },
@@ -90,6 +90,72 @@ test("Daily record: Recent records show the crew, the sections and links to the 
   assert.match(meta, /Files: <a href="\/api\/files\/f1"[^>]*>deck.jpg<\/a>/);  const kept = daily.recordMeta({ sections: { quantities: [{ line_id: "l2", qty_milli: 1000 }] },
     quantities_not_applied: "2. Panel: 125% done is more than 100%. Extra scope is a change order. They are kept on this daily record." }, sovJob);
   assert.match(kept, /Quantities: 100% Panel[\s\S]*Not added to the schedule of values: 2\. Panel: 125% done is more than 100%/, "B5: saved, and why not added");
+});
+
+test("New job record: a section for each document, none behind a dropdown, every kind still offered", async () => {
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  core.setState(company());
+  page.setLocation("daily");
+  const html = reg.views.daily();
+  assert.match(html, /<h1>New job record<\/h1>/);
+  assert.match(html, /id="daily-date"[^>]*type="date"/);
+  for (const title of ["Delivery tickets", "Progress photos", "Time sheets", "Invoices", "Inspections", "Other documents and notes"]) assert.ok(html.includes(`<h3>${title}</h3>`), title);
+  assert.doesNotMatch(html, /<details/);
+  for (const key of ["delivery_0", "photos_0", "time_sheets_0", "invoices_0", "inspections_0", "other_0"]) {
+    assert.match(html, new RegExp(`data-record-files="${key}" accept="image/\\*" capture="environment"`), `${key}: the phone camera`);
+    assert.match(html, new RegExp(`data-record-files="${key}" multiple`), `${key}: choose files`);
+  }
+  const { RECORD_KINDS } = await import("../../static/js/jobs.js");
+  const other = html.split('id="daily-other-kind-0"')[1].split("</select>")[0];
+  for (const kind of Object.keys(RECORD_KINDS).filter(k => k !== "daily")) assert.ok(other.includes(`value="${kind}"`), kind);
+  assert.ok(!other.includes('value="daily"'));
+});
+
+test("New job record: rows become entries with their files; a Kind alone is nothing", async () => {
+  const daily = await import("../../static/js/views/daily.js");
+  const v = { notes: "x", delivery_supplier_0: "ABC", delivery_number_0: "", delivery_what_0: "", photos_note_0: "", time_sheets_who_1: "Ana", time_sheets_hours_1: "8", other_kind_0: "insurance", other_label_0: "", other_note_0: "", invoices_amount_0: "" };
+  const entries = daily.recordEntries(v, [{ key: "photos_0", name: "a.jpg", record_id: "r1" }, { key: "photos_0", name: "b.jpg", record_id: "r2" }]);
+  assert.deepEqual(entries, [
+    { section: "delivery", row: 0, supplier: "ABC" },
+    { section: "photos", row: 0, attachments: ["r1", "r2"] },
+    { section: "time_sheets", row: 1, who: "Ana", hours: "8" },
+  ]);
+  assert.equal(daily.savedWords("x", entries), "1 diary entry, 1 delivery ticket, 2 progress photos, 1 time sheet");
+  assert.deepEqual(daily.recordEntries({ other_kind_0: "insurance" }), []);
+});
+
+test("New job record: a failed upload keeps what was typed and the files; the retry doesn't send twice", async () => {
+  const daily = await import("../../static/js/views/daily.js");
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  core.setState(company());
+  page.setLocation("daily");
+  forms.formDraft.daily = { notes: "Tile day", delivery_supplier_0: "ABC" };
+  daily.daily.files.delivery_0 = [{ name: "t.jpg", size: 10, type: "image/jpeg", toString: () => "null" }];
+  dom.bySelector["#daily-notes"] = { value: "Tile day" };
+  dom.bySelector["#daily-job"] = { value: "j1" };
+  dom.requests.length = 0;
+  dom.answers = [(p) => (String(p).startsWith("/api/import/file") ? { status: 500, body: { error: "Upload failed." } } : undefined)];
+  await reg.actions["daily-save"]();
+  assert.ok(dom.requests.some(r => String(r.path).includes("kind=ticket")), "goes up as a ticket");
+  assert.ok(!dom.requests.some(r => String(r.path).endsWith("/daily-record")), "nothing saved yet");
+  assert.equal(forms.formDraft.daily.delivery_supplier_0, "ABC");
+  assert.equal(daily.daily.files.delivery_0.length, 1);
+  assert.match(reg.views.daily(), /t\.jpg/);
+  delete dom.bySelector["#daily-notes"]; delete dom.bySelector["#daily-job"];
+  daily.daily.files = {};
+  forms.clearForm("daily");
+});
+
+test("the Job records card: the list, New job record and a link to Import; the old note and paste boxes are gone", async () => {
+  const { recordCardHtml } = await import("../../static/js/views/job-record.js");
+  const html = recordCardHtml(job());
+  assert.match(html, /<h2>Job records<\/h2>/);
+  assert.match(html, /data-action="daily-for-job" data-id="j1">New job record</);
+  assert.match(html, /href="\/data\/import" data-action="import-for-job" data-id="j1">Import</);
+  assert.match(html, /Rough-in passed/);
+  assert.doesNotMatch(html, /Add a note to the record|Paste an email|paste-text/);
+  const closed = recordCardHtml(job({ closed: true }));
+  assert.doesNotMatch(closed, /New job record/);
 });
 
 test("Paste box: the pasted text, and what it looks like, stay through a redraw and go once added", async () => {

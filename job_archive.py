@@ -19,7 +19,7 @@ import domain
 import payapp_pdf
 
 RECORD_WORDS = {
-    "note": "Notes", "daily": "Daily records", "photo": "Photos", "contract": "Contract", "change_order": "Change orders",
+    "note": "Notes", "daily": "Diary entries", "photo": "Photos", "contract": "Contract", "change_order": "Change orders",
     "waiver": "Lien waivers", "pay_app": "Pay app backup", "ticket": "Tickets and time sheets",
     "supplier_invoice": "Supplier invoices", "insurance": "Insurance", "inspection": "Inspections", "stored": "Stored materials",
     "payroll": "Certified payroll", "notarized": "Notarized pay applications", "punch": "Punch list", "completion": "Completion certificate", "asbuilt": "As-builts", "warranty": "Warranties", "other": "Other",
@@ -71,7 +71,7 @@ def summary_text(state: dict[str, Any], job: dict[str, Any]) -> str:
     waivers = [e for e in state.get("email_log", []) if e.get("job_id") == job["id"] and e.get("kind") == "waiver"]
     lines += ["", "Waivers sent:"]
     lines += [f"  {_day(e.get('at'))}  {e.get('subject', '')}" for e in waivers] or ["  None"]
-    lines += ["", "Job record:"]
+    lines += ["", "Records:"]
     lines += [f"  {_day(r.get('added_at'))}  {RECORD_WORDS.get(r.get('kind'), r.get('kind', ''))}: {r.get('label', '')}"
               for r in job.get("records", [])] or ["  None"]
     return "\n".join(lines) + "\n"

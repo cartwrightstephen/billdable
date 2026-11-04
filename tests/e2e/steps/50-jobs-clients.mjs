@@ -1,5 +1,5 @@
 // Browser steps for the jobs-clients stream (Stephen's Oct 29 review): New job with the address in
-// four boxes and Import contract, Add to a job record from the Jobs page, the Next step card with
+// four boxes and Import contract, New job record from the Jobs page, the Next step card with
 // its blockers, a finished job's file, and the Client playbook's jobs and paperwork checkboxes.
 // Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
@@ -11,7 +11,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("New job: Import contract fills the four address boxes and the rest; Save files the contract (J1, G4, S12)", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     await p.goto(BASE + "/jobs");
-    await p.getByRole("button", { name: "New job" }).click();
+    await p.getByRole("button", { name: "New job", exact: true }).click();
     const form = p.locator('[data-form-key="newjob"]');
     // A ZIP that isn't one is marked when the box is left (G1).
     await form.locator("#nj-zip").fill("3030");
@@ -46,7 +46,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("New job: changing the amount and clicking Save job straight away takes the first click (the line under the schedule redraws in place)", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     await p.goto(BASE + "/jobs");
-    await p.getByRole("button", { name: "New job" }).click();
+    await p.getByRole("button", { name: "New job", exact: true }).click();
     const form = p.locator('[data-form-key="newjob"]');
     const chooser = p.waitForEvent("filechooser");
     await form.getByRole("button", { name: "Import contract" }).click();
@@ -130,20 +130,19 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.context().close();
   });
 
-  await step("Add to a job record from the Jobs page, with the row's job picked (J4)", async () => {
+  await step("New job record from the Jobs page, with the row's job picked, and a typed ticket goes on as a ticket (J4)", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     await p.goto(BASE + "/jobs");
-    await p.locator('[data-action="jr-open"][data-id="job-oak"]').click();
-    const card = p.locator(".add-to-record");
-    assert.equal(await card.locator("#jr-job").inputValue(), "job-oak");
-    await card.locator("summary", { hasText: "Add a note to the record" }).click();
-    await card.locator("#jr-label").fill("Tile delivered to site");
-    await card.locator("#jr-kind").selectOption("ticket");
-    await card.getByRole("button", { name: "Add to record" }).click();
-    await p.locator(".toast", { hasText: "Added to the job record" }).waitFor();
+    await p.locator('[data-action="daily-for-job"][data-id="job-oak"]').click();
+    await p.getByRole("heading", { name: "New job record" }).waitFor();
+    assert.equal(await p.inputValue("#daily-job"), "job-oak");
+    await p.fill("#daily-delivery-supplier-0", "Tile delivered to site");
+    await p.locator('[data-action="daily-save"]').click();
+    await p.locator(".saved-result", { hasText: "1 delivery ticket" }).waitFor();
     const rec = await p.evaluate(async () => (await (await fetch("/api/jobs/job-oak")).json()));
     const records = (rec.job || rec).records || [];
-    assert.ok(records.some(r => r.label === "Tile delivered to site" && r.kind === "ticket"));
+    assert.ok(records.some(r => r.label === "Delivery ticket: Tile delivered to site" && r.kind === "ticket" && r.ticket_type === "delivery"));
+    assert.equal(await p.inputValue("#daily-job"), "job-oak", "stays on the job");
     await p.context().close();
   });
 

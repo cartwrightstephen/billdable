@@ -63,7 +63,7 @@ test("the waiver page asks for the signed form before it sends, and says what th
   const view = reg.views["waiver-detail"];
   page.setLocation("waiver-detail", "j1");
   const html = view();
-  assert.match(html, /Add the signed unconditional waiver to the job record, then send\./);
+  assert.match(html, /Add the signed unconditional waiver to the job records, then send\./);
   assert.match(html, /data-waiver-kind="unconditional_progress"/);
   assert.match(html, /data-action="waiver" data-id="j1" data-inv="i2" disabled>/);
   for (const want of ["Pine Builders LLC", "Amount covered: $4,500.00", "Not released: the $600.00 retainage held to date on this job", "O.C.G.A. § 44-14-366",
@@ -89,7 +89,7 @@ test("a signed waiver not said to be for a pay app asks which; one not needed sh
     ["Retainage released Oct 22, 2026", true, "", true]]);
   page.setLocation("waiver-detail", "j1");
   const html = reg.views["waiver-detail"]();
-  assert.match(html, /Lien waiver signed is on the job record\. More than one waiver is due/);
+  assert.match(html, /Lien waiver signed is in the job records\. More than one waiver is due/);
   // Each row has its own picker, with its own row chosen (the same waiver shows on both rows).
   assert.match(html, /<select id="wfor-rec-9-i2"[^>]*><option value="i2" selected>PA-2<\/option><option value="rw-1">Retainage released/);
   assert.match(html, /<select id="wfor-rec-9-rw-1"[^>]*><option value="i2">PA-2<\/option><option value="rw-1" selected>Retainage released/);

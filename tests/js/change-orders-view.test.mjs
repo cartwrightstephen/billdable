@@ -36,7 +36,7 @@ test("the New change order form asks the reason, pricing, cost lines and the day
   const html = cos.coFormFields(job("ja", "A job", { records: [{ id: "rec-1", kind: "supplier_invoice", label: "Tile quote" }, { id: "rec-2", kind: "daily", label: "Monday" }] }));
   assert.match(html, /<select id="co-reason"[^>]*><option value="" selected>Pick why the scope changed…<\/option><option value="owner_request">Owner request<\/option>/);
   for (const s of ["Unforeseen condition", "Design issue", "Value engineering", "Description (required for Other)", "Contract section or original scope it changes",
-    "Time and materials", "Add a cost line", "Work started on (optional)", "Backup from the job record"]) assert.ok(html.includes(s), s);
+    "Time and materials", "Add a cost line", "Work started on (optional)", "Backup from the job records"]) assert.ok(html.includes(s), s);
   assert.match(html, /data-co-backup="rec-1"/);
   assert.doesNotMatch(html, /data-co-backup="rec-2"/, "a daily record isn't backup");
   assert.doesNotMatch(html, /style=|onclick=/);

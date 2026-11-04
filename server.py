@@ -3147,8 +3147,8 @@ JOB_ACTIONS = {
     "edit": (False, _edit_job),
     "paperwork": (False, lambda h, st, j, i, c: domain.set_job_paperwork(st, j, c.body, c.actor)),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
-    # The Diary, and crew, weather, materials, deliveries, ticked sections and files (T11, T12, M1).
-    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter the diary entry."), c.actor, details=c.body)),
+    # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
+    "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name", "attachment"), c.actor)),
 }
 

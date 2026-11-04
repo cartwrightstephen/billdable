@@ -1265,7 +1265,7 @@ def send_waiver(
         kind = kind or release["kind"]
     found = waiver_on_file(state, job, kind, invoice["id"] if invoice else "", release["id"] if release else "", legacy=legacy)
     if not found:
-        message = f"Add the signed {WAIVER_TYPE_WORDS[kind]} waiver to the job record first."
+        message = f"Add the signed {WAIVER_TYPE_WORDS[kind]} waiver to the job records first."
         raise GateError(message, extra={"waiver_kind": kind})
     record, files = found["record"], found["file_ids"]
     if found["ambiguous"]:
@@ -2994,7 +2994,7 @@ def mark_co_signed(
     errors: dict[str, str] = {}
     record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
     if not record:
-        raise GateError("Pick the job record that holds the signed change order, or request an online signature.")
+        raise GateError("Pick the record that holds the signed change order, or request an online signature.")
     signer = None if signer_name is None else " ".join(str(signer_name or "").split())[:120]
     if signer is not None and len(signer) < 2:
         errors["signer_name"] = "Enter the name of the person who signed it."
@@ -3710,7 +3710,7 @@ RECORD_FOR_ITEM = (
 # Records that belong to one pay app (this period's waiver, photos, backup) are not reused on the
 # next one; a signed contract or an insurance certificate is.
 PER_PAY_APP = {"backup", "co", "waiver", "photo", "ticket", "supplier_invoice", "stored", "inspection", "payroll", "notarized"}
-AUTO_NOTE = "Attached from the job record"
+AUTO_NOTE = "Attached from the job records"
 
 
 def _made_here(label: str, job: dict[str, Any]) -> bool:
@@ -3762,7 +3762,7 @@ def _attach_from_record(state: dict[str, Any], job: dict[str, Any], packet: list
         })
         item["present"] = True
         item["resolved_at"] = utcnow()
-        audit(state, job["id"], "attach_record", f"{record['label']} attached automatically from the job record to {item['label']} on {where}.", "duracash")
+        audit(state, job["id"], "attach_record", f"{record['label']} attached automatically from the job's records to {item['label']} on {where}.", "duracash")
 
 
 def _fits_waiver_item(record: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None) -> bool:
@@ -3918,6 +3918,8 @@ def edit_record(state: dict[str, Any], job_id: str, record_id: str, label: str, 
         raise GateError("Pick what kind of record this is.", fields={"kind": "Pick a kind."})
     before = (rec["label"], rec["kind"])
     rec["label"], rec["kind"] = label, kind
+    if kind != "ticket":
+        rec.pop("ticket_type", None)  # only a ticket is a delivery ticket or a time sheet (domain/daily.py)
     if before != (label, kind):
         audit(state, job_id, "edit_record", f"{actor} changed the record '{before[0]}' ({before[1]}) to '{label}' ({kind}).", actor)
     if not job.get("closed"):
@@ -3946,7 +3948,7 @@ def add_job_record(
         "added_by": actor,
     }
     job.setdefault("records", []).append(rec)
-    audit(state, job_id, "add_record", f"{actor} added {kind} to the job record: {label}.", actor)
+    audit(state, job_id, "add_record", f"{actor} added {kind} to the job's records: {label}.", actor)
     if not job.get("closed"):
         _refresh_draft_gate(job, state)
     return job

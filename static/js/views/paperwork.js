@@ -127,7 +127,7 @@ function attachedLine(a) {
 
 function attachmentRow(a, records, files) {
   const rec = records[a.record_id];
-  if (!rec) return `<div class="sub">${a.auto ? "Attached from the job record" : "Attached"}: ${a.name}</div>`;
+  if (!rec) return `<div class="sub">${a.auto ? "Attached from the job records" : "Attached"}: ${a.name}</div>`;
   const links = recordFileLinks(rec, files);
   return `<div class="attached-record"><span class="pill">${RECORD_KINDS[unesc(rec.kind)] || words(rec.kind)}</span> ${links || rec.label}${links && !links.includes(`>${rec.label}</a>`) ? ` <span class="sub">${rec.label}</span>` : ""} <span class="sub">· ${attachedLine(a)}</span></div>`;
 }
@@ -145,7 +145,7 @@ function periodRecords(j, inv) {
   return records.filter(r => { const d = unesc(r.added_at || "").slice(0, 10); return d > from && d <= to; });
 }
 
-const GROUPS = [["Photos", ["photo"]], ["Daily records", ["daily"]], ["Tickets and time sheets", ["ticket"]],
+const GROUPS = [["Photos", ["photo"]], ["Diary entries", ["daily"]], ["Tickets and time sheets", ["ticket"]],
   ["Change orders", ["change_order"]], ["Waivers", ["waiver"]]];
 
 function groupOf(kind) {
@@ -199,7 +199,7 @@ function periodHtml(j, inv, packet, editable, isCloseout) {
   for (const r of [...recs].reverse()) (groups[groupOf(unesc(r.kind))] ||= []).push(r);
   const order = [...GROUPS.map(g => g[0]), "Other"].filter(g => groups[g]);
   return `<div class="card period-records">
-    <h2>${isCloseout ? "From the job record" : "From the job record this period"}</h2>
+    <h2>${isCloseout ? "From the job records" : "From the job records this period"}</h2>
     ${order.length ? order.map(g => `<h3>${g}</h3>${groups[g].map(r => periodRowHtml(j, r, packet, inv, editable, files)).join("")}`).join("")
       : `<p class="sub">Nothing added this period.</p>`}
   </div>`;
@@ -243,7 +243,7 @@ export function beforeYouSendHtml(j, inv) {
         <li>${termText("Pay app PDF")}${inv.sov_sheet && inv.sov_sheet.length ? " with continuation sheet" : ""} and the paperwork checklist</li>
         ${going.map(fileRow).join("")}
       </ul>
-      ${editable && addable.length ? `<div class="form-inline"><select id="payapp-add-${inv.id}" aria-label="Add from the job record"><option value="">Add from the job record…</option>${addable.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select>
+      ${editable && addable.length ? `<div class="form-inline"><select id="payapp-add-${inv.id}" aria-label="Add from the job records"><option value="">Add from the job records…</option>${addable.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select>
         <button class="btn small secondary" data-action="payapp-add" data-id="${j.id}" data-inv="${inv.id}">Add</button></div>` : ""}
       ${stages.conditional && stages.conditional.status ? `<div class="money-row"><span class="label">Conditional waiver</span><span>${waiverStageText(stages.conditional)}</span></div>` : ""}
     </div>

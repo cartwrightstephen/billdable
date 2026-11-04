@@ -44,7 +44,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
 
   await step("New job: a wrong field is marked in place and nothing typed is lost", async () => {
     await page.goto(BASE + "/jobs");
-    await page.getByRole("button", { name: "New job" }).first().click();
+    await page.getByRole("button", { name: "New job", exact: true }).first().click();
     await page.fill("#nj-name", "Smoke test porch");
     await page.fill("#nj-street", "1 Porch Lane");
     await page.fill("#nj-city", "Decatur");
@@ -109,7 +109,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("a first job: Today, the Daily record and the company address", async () => {  // R2-04, R2-05, R2-07
+  await step("a first job: Today, New job record and the company address", async () => {  // R2-04, R2-05, R2-07
     const ctx = await browser.newContext();
     const p = await ctx.newPage();
     p.on("pageerror", (e) => errors.push(e.message));
@@ -135,7 +135,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator('[data-action="progress-mode"][data-mode="percent"]').click();
     await p.fill("#progress-pct", "50");
     assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $6,000.00.");
-    // The only open job is picked on the Daily record.
+    // The only open job is picked on New job record.
     await p.goto(BASE + "/jobs/daily");
     await p.locator("#daily-job").waitFor();
     assert.equal(await p.inputValue("#daily-job"), jobId);

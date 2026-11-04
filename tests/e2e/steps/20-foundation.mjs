@@ -9,7 +9,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("heading", { name: "Overview" }).waitFor();
     assert.deepEqual(await page.locator(".nav > button[data-section]").allInnerTexts().then(l => l.map(s => s.split("\n")[0].trim())),
       ["Dashboard", "Jobs", "Communications", "Import/Export", "Money", "Automations", "Settings"]);
-    for (const [path, tabs] of [["/jobs", ["Open jobs", "Daily record", "Job history", "Client playbook"]], ["/communications", ["Inbox", "Outbox"]],
+    for (const [path, tabs] of [["/jobs", ["Open jobs", "New job record", "Job history", "Client playbook"]], ["/communications", ["Inbox", "Outbox"]],
       ["/data/import", ["Import", "Export"]], ["/dashboard", ["Overview", "Results", "Calendar"]]]) {
       await page.goto(BASE + path);
       await page.locator(".tabs .tab", { hasText: tabs[tabs.length - 1] }).waitFor();
@@ -100,10 +100,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     }
   });
 
-  await step("the Daily record has a Diary, and a job page opens it with that job picked (T9, T10)", async () => {
+  await step("New job record has a Diary, and a job page opens it with that job picked (T9, T10)", async () => {
     await page.goto(BASE + "/jobs/job-oak");
-    await page.getByRole("button", { name: "New daily record" }).click();
-    await page.getByRole("heading", { name: "Daily record" }).waitFor();
+    await page.locator(".job-records").getByRole("button", { name: "New job record" }).click();
+    await page.getByRole("heading", { name: "New job record" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/jobs/daily");
     assert.equal(await page.inputValue("#daily-job"), "job-oak");
     await page.locator("label", { hasText: "Diary" }).waitFor();

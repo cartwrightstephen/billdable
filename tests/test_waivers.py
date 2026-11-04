@@ -84,7 +84,7 @@ class SecondStageTests(unittest.TestCase):  # M18, M19, M21
         self.assertEqual(domain.status_label(job), "Payment received, waiver not sent")
         with self.assertRaises(domain.GateError) as raised:
             domain.send_waiver(state, job["id"], "Owner")
-        self.assertEqual(str(raised.exception), "Add the signed unconditional waiver to the job record first.")
+        self.assertEqual(str(raised.exception), "Add the signed unconditional waiver to the job records first.")
         with self.assertRaises(domain.GateError) as raised:
             domain.close_job(state, job["id"])
         self.assertIn("A lien waiver is still due.", raised.exception.blockers)

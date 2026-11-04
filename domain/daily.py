@@ -1,5 +1,6 @@
-"""The Daily record: what happened on site, with crew, weather, materials and deliveries (the
-tasks-daily stream: T11, T12 and the daily side of M1).
+"""The New job record form: what happened on site, with crew, weather, materials and deliveries
+(the tasks-daily stream: T11, T12 and the daily side of M1), and the day's documents, each a job
+record of its own kind (save_job_record, the Nov 3 overhaul). Stored names keep the word "daily".
 
 A daily record is state["daily_records"] = [{id, job_id, notes, at, actor, for_history, crew_count,
 crew_names, weather, weather_note, materials, deliveries, sections, attachments, quantities}],
@@ -17,11 +18,13 @@ are imported inside each function, so the two modules never import each other at
 from __future__ import annotations
 
 import secrets
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
 __all__ = [
-    "WEATHER", "DAILY_SECTIONS", "INSPECTION_TYPES", "CREW_MAX", "add_daily_record", "clean_daily_details", "daily_record_note",
+    "WEATHER", "DAILY_SECTIONS", "INSPECTION_TYPES", "CREW_MAX", "RECORD_SECTIONS", "add_daily_record", "clean_daily_details",
+    "clean_record_entries", "daily_record_note", "save_job_record",
 ]
 
 WEATHER = ("Clear", "Cloudy", "Rain", "Snow", "Wind", "Heat", "Cold")
@@ -34,6 +37,18 @@ DAILY_SECTIONS = {
     "punch": "New punchlist items",
 }
 INSPECTION_TYPES = {"inspection": "Inspection", "discussion": "Discussion"}
+# The form's document sections (static/js/views/daily.js RECORD_SECTIONS): the record kind each
+# makes and the word its label starts with. Delivery tickets and time sheets share the kind
+# "ticket", which the paperwork rules read (_record_kinds_for, _add_ticket_item); ticket_type
+# tells them apart on the page. "other" takes its kind from the row.
+RECORD_SECTIONS = {
+    "delivery": {"kind": "ticket", "ticket_type": "delivery", "word": "Delivery ticket"},
+    "photos": {"kind": "photo", "word": "Progress photo"},
+    "time_sheets": {"kind": "ticket", "ticket_type": "time_sheet", "word": "Time sheet"},
+    "invoices": {"kind": "supplier_invoice", "word": "Invoice"},
+    "inspections": {"kind": "inspection", "word": "Inspection"},
+    "other": {"kind": "", "word": ""},
+}
 CREW_MAX = 500
 _LIST_MAX = 50          # rows in any one list (crew names, punch items, inspections...)
 _ATTACH_MAX = 30
@@ -115,7 +130,7 @@ def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[s
         _refuse("", {"sections": "The ticked sections weren't understood."})
     unknown = [k for k in raw if k not in DAILY_SECTIONS]
     if unknown:
-        _refuse("", {"sections": f"{str(unknown[0])[:30]} isn't a section of the daily record."})
+        _refuse("", {"sections": f"{str(unknown[0])[:30]} isn't a section of this form."})
     sections: dict[str, Any] = {}
     if "photos" in raw:
         photos = raw["photos"] if isinstance(raw["photos"], dict) else {}
@@ -284,17 +299,161 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
         rec["quantities_not_applied"] = not_applied
     state.setdefault("daily_records", []).append(rec)
     job.setdefault("daily_records", []).append(rec["id"])
-    label = f"Daily record {day}"
+    label = f"Diary entry {day}"
     if quantities:
         label += f": {_qty_words(job, quantities)}"[:160]
     add_job_record(state, job_id, label[:200], "daily", daily_record_note(job, rec), actor)
     for record in job.get("records", []):
         if record["id"] in rec.get("attachments", []):
             record["daily_record_id"] = rec["id"]
-    audit(state, job_id, "daily_record", f"{actor} added a daily record to the job record.", actor)
+    audit(state, job_id, "daily_record", f"{actor} added a diary entry.", actor)
     if not_applied:
         audit(state, job_id, "daily_quantities_not_applied",
-              f"The quantities on the daily record of {day} were kept on it and not added to the schedule of values: {not_applied}", "duracash")
+              f"The quantities on the diary entry of {day} were kept on it and not added to the schedule of values: {not_applied}", "duracash")
+    return job
+
+
+def _joined(name: str, number: str) -> str:
+    """"ABC Supply #1042"."""
+    return " ".join(x for x in (name, f"#{number}" if number else "") if x)
+
+
+def clean_record_entries(job: dict[str, Any], raw: Any) -> list[dict[str, Any]]:
+    """The form's document sections, checked: one entry per filled row, each with what its records
+    will hold. Errors land under the row's own box (invoices_amount_0). Changes nothing."""
+    from domain import RECORD_KINDS, _refuse
+    import sov
+    records = {r["id"]: r for r in job.get("records", [])}
+    out = []
+    for entry in _list(raw, "entries", "Sections"):
+        entry = entry if isinstance(entry, dict) else {}
+        section = str(entry.get("section") or "")
+        if section not in RECORD_SECTIONS:
+            _refuse("", {"entries": "A section of the form wasn't understood."})
+        row = entry.get("row") if isinstance(entry.get("row"), int) and not isinstance(entry.get("row"), bool) else 0
+        name = lambda box: f"{section}_{box}_{row}"
+        text = lambda box, label, limit=_SHORT_MAX: _text(entry.get(box), limit, name(box), label)
+        attachments: list[str] = []
+        for rid in _list(entry.get("attachments"), "attachments", "Files"):
+            rid = str(rid or "")
+            if rid not in records or not records[rid].get("file_ids"):
+                _refuse("", {"attachments": "A file isn't on this job. Add it again."})
+            if rid not in attachments:
+                attachments.append(rid)
+        spec = RECORD_SECTIONS[section]
+        clean = {"kind": spec["kind"], "ticket_type": spec.get("ticket_type", ""), "word": spec["word"],
+                 "title": "", "note": "", "extra": {}, "attachments": attachments}
+        if section == "delivery":
+            clean["title"] = _joined(text("supplier", "The supplier"), text("number", "The ticket number"))
+            clean["note"] = text("what", "What arrived", _TEXT_MAX)
+        elif section == "photos":
+            clean["title"] = text("note", "What they show")
+        elif section == "time_sheets":
+            clean["title"] = text("who", "Who")
+            if entry.get("hours") not in (None, ""):
+                hours = _amount(entry.get("hours"), name("hours"), "Hours")
+                clean["extra"]["hours_milli"] = hours
+                clean["note"] = f"Hours: {sov.fmt_qty(hours)}"
+        elif section == "invoices":
+            clean["title"] = _joined(text("supplier", "The supplier"), text("number", "The invoice number"))
+            if entry.get("amount") not in (None, ""):
+                try:
+                    cents = sov.to_cents(entry.get("amount"), "The amount")
+                except sov.SovError as exc:
+                    _refuse("", {name("amount"): str(exc)})
+                if cents < 0:
+                    _refuse("", {name("amount"): "The amount can't be negative."})
+                clean["extra"]["amount_cents"] = cents
+                clean["note"] = f"Amount: ${cents / 100:,.2f}"
+        elif section == "inspections":
+            clean["title"] = text("who", "Who inspected")
+            clean["note"] = text("outcome", "The result", 500)
+        else:
+            clean["kind"] = str(entry.get("kind") or "note")
+            if clean["kind"] not in RECORD_KINDS or clean["kind"] == "daily":
+                _refuse("", {name("kind"): "Pick what kind of document this is."})
+            clean["title"] = text("label", "What it is", 120)
+            clean["note"] = text("note", "The note", _TEXT_MAX)
+            if not clean["title"] and not attachments:
+                if not clean["note"]:
+                    continue
+                _refuse("", {name("label"): "Enter what this is, like \"Rough-in inspection passed\"."})
+        if clean["title"] or clean["note"] or attachments:
+            out.append(clean)
+    return out
+
+
+def _record_day(body: dict[str, Any]) -> str:
+    """The day the form says, YYYY-MM-DD: today where the person is, or a day gone by."""
+    from domain import START_BACK_DAYS, _refuse, local_today
+    today = local_today(body.get("today"))
+    raw = _text(body.get("date"), 10, "date", "The date")
+    if not raw:
+        return today
+    try:
+        day = date.fromisoformat(raw)
+    except ValueError:
+        _refuse("", {"date": "Enter the date as a day, month and year."})
+    if raw > today:
+        _refuse("", {"date": "The date can't be in the future."})
+    if day < date.fromisoformat(today) - timedelta(days=START_BACK_DAYS):
+        _refuse("", {"date": "That date is too long ago."})
+    return raw
+
+
+def _apply_entry(state: dict[str, Any], job: dict[str, Any], entry: dict[str, Any], day: str, actor: str, daily_id: str) -> None:
+    """Make one section's records: its fields on each file it uploaded, one record per file, or
+    one record of what was typed when no file came with it."""
+    from domain import add_job_record
+    head = lambda rest: f"{entry['word']}: {rest}" if entry["word"] else rest
+    files = [next(r for r in job["records"] if r["id"] == rid) for rid in entry["attachments"]]
+    if files:
+        for n, rec in enumerate(files, 1):
+            if entry["title"]:
+                many = f" ({n} of {len(files)})" if len(files) > 1 else ""
+                rec["label"] = head(entry["title"])[:190] + many
+            else:
+                rec["label"] = head(rec["label"])[:200]
+            rec["kind"] = entry["kind"]
+            if entry["note"]:
+                rec["note"] = entry["note"]
+    else:
+        add_job_record(state, job["id"], head(entry["title"] or entry["note"][:_NAME_MAX])[:200], entry["kind"], entry["note"], actor)
+        files = [job["records"][-1]]
+    for rec in files:
+        rec["on_date"] = day
+        rec.update(entry["extra"])
+        if entry["ticket_type"]:
+            rec["ticket_type"] = entry["ticket_type"]
+        if daily_id:
+            rec["daily_record_id"] = daily_id
+
+
+def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, body: dict[str, Any]) -> dict[str, Any]:
+    """What the New job record form saves: the Diary and the day's details as a daily record, when
+    there are any, and one job record per file or filled section. A document alone needs no Diary;
+    the day's details do. Nothing is written if any of it is refused."""
+    from domain import _job, _refresh_draft_gate, _refuse, local_today
+    job = _job(state, job_id)
+    notes = (notes or "").strip()
+    entries = clean_record_entries(job, body.get("entries"))
+    day = _record_day(body)
+    details = {k: v for k, v in body.items() if k != "entries"}
+    has_day = any(body.get(k) not in (None, "", [], {}) for k in
+                  ("crew_count", "crew_names", "weather", "weather_note", "materials", "deliveries", "sections", "attachments"))
+    if not notes and (has_day or not entries):
+        message = "Enter the diary entry." if has_day else "Enter the diary entry, or add a document below."
+        _refuse("", {"notes": message})
+    daily_id = ""
+    if notes:
+        details["attachments"] = list(body.get("attachments") or []) + [rid for e in entries for rid in e["attachments"]]
+        at = None if day == local_today(body.get("today")) else f"{day}T12:00:00+00:00"
+        add_daily_record(state, job_id, notes, actor, at=at, details=details)
+        daily_id = state["daily_records"][-1]["id"]
+    for entry in entries:
+        _apply_entry(state, job, entry, day, actor, daily_id)
+    if entries and not job.get("closed"):
+        _refresh_draft_gate(job, state)
     return job
 
 
@@ -323,7 +482,7 @@ def _apply_quantities(state: dict[str, Any], job: dict[str, Any], rows: list[dic
     the record, its note and the page. Blank when they were added."""
     from domain import GateError, over_schedule_text, record_sov_progress
     import sov
-    keep = " They are kept on this daily record."
+    keep = " They are kept on this diary entry."
     blocked = quantities_blocked(job)
     if blocked:
         return blocked + keep

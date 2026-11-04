@@ -30,7 +30,7 @@ function attachmentNames(e, files, links) {
   }
   for (const fid of e.attachments || []) {
     const f = byId.get(fid);
-    out.push(!f ? "A file no longer on the job record" : links ? `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>` : f.name);
+    out.push(!f ? "A file no longer in the job records" : links ? `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>` : f.name);
   }
   return out;
 }

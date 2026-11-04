@@ -1,15 +1,13 @@
-// Jobs: the open jobs with New job and Add to a job record, and Job history. The job's own fields
+// Jobs: the open jobs with New job and New job record, and Job history. The job's own fields
 // are shared with Edit job; Import contract fills New job and Add client.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, fmtDate } from "../format.js";
-import { nextStep, statusPill, CLIENT_TYPES, clientTypeLabel, openJobs, RECORD_KINDS, startDateLimits } from "../jobs.js";
+import { nextStep, statusPill, CLIENT_TYPES, clientTypeLabel, openJobs, startDateLimits } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { moreButton } from "../dom.js";
-import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, formErrors, draftValue, clearForm } from "../forms.js";
+import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, formErrors, draftValue } from "../forms.js";
 import { checkFields, US_STATES } from "../validate.js";
 import { readJson, sendFile } from "../net.js";
-import { pasteGuess } from "../inbox.js";
 import { localDay } from "../tasks.js";
-import { termText } from "../terms.js";
 import { state, me, formOpen, teamData, setTeamData, onSessionEnd } from "../state.js";
 import { nav, moreOpen, emptyState, listPage, post, moreDetails, toast, render, load, clearJobDetails } from "../app-core.js";
 
@@ -366,48 +364,6 @@ async function fileContract(jobId, r) {
   await load();
 }
 
-// ---------- Add to a job record (J4) ----------
-
-function addRecordCardHtml() {
-  const jobs = openJobs(state.jobs);
-  // A job picked before it was finished (or deleted) is no longer offered.
-  const wanted = draftValue("jobrecord", "job", "");
-  const picked = jobs.some(j => unesc(j.id) === wanted) ? wanted : "";
-  const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => [k, termText(v)]);
-  return `<div class="card add-to-record" data-form-key="jobrecord">
-      <h2>Add to a job record</h2>
-      ${formErrorLine("jobrecord")}
-      <div class="form-grid">
-        ${field({ form: "jobrecord", name: "job", id: "jr-job", label: "Job", required: true, options: [["", "Pick a job…"], ...jobs.map(j => [unesc(j.id), `${unesc(j.name)} (${unesc(j.code)})`])], value: picked })}
-      </div>
-      <div class="dropzone small">
-        <div class="capture-buttons">
-          <button class="btn small" data-action="${picked ? "pick-files" : "jr-pick"}" data-job="${esc(picked)}" data-capture="1">Take a photo</button>
-          <button class="btn small secondary" data-action="${picked ? "pick-files" : "jr-pick"}" data-job="${esc(picked)}">Add a file</button>
-        </div>
-      </div>
-      <details class="paste-job"><summary>Paste an email, a text thread, or notes</summary>
-        <textarea id="jr-paste" data-field="text" rows="5" aria-label="What to add">${esc(draftValue("jobrecord", "text"))}</textarea>
-        <div class="form-inline"><button class="btn small" data-action="jr-paste">Add to job</button></div>
-      </details>
-      <details class="add-record"${formOpen.jobrecordnote ? " open" : ""}><summary>Add a note to the record</summary>
-        <div class="form-row">
-          ${field({ form: "jobrecord", name: "label", id: "jr-label", label: "What it is", placeholder: "Rough-in inspection passed" })}
-          ${field({ form: "jobrecord", name: "note", id: "jr-note", label: "Note (optional)" })}
-          ${field({ form: "jobrecord", name: "kind", id: "jr-kind", label: "Kind", options: kinds })}
-          <button class="btn small" data-action="jr-add-note">Add to record</button>
-        </div>
-      </details>
-    </div>`;
-}
-
-// The job picked on the card, or a refusal under the picker.
-function pickedJob() {
-  const id = document.getElementById("jr-job")?.value || draftValue("jobrecord", "job", "");
-  if (!id) { refuseForm("jobrecord", { job: "Pick the job to add to." }); return ""; }
-  return id;
-}
-
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   jobs() {
@@ -430,11 +386,10 @@ export const views = {
       <div class="top">
         <h1>Open jobs</h1>
         <div class="form-inline">
-          ${open.length ? `<button class="btn secondary" data-action="toggle-form" data-form="addrecord">${formOpen.addrecord ? "Cancel" : "Add to a job record"}</button>` : ""}
+          ${open.length ? `<button class="btn secondary" data-action="daily-for-job">New job record</button>` : ""}
           <button class="btn" data-action="toggle-form" data-form="newjob">${formOpen.newjob ? "Cancel" : "New job"}</button>
         </div>
       </div>
-      ${formOpen.addrecord && open.length ? addRecordCardHtml() : ""}
       ${formOpen.newjob ? `
         <div class="card" data-form-key="newjob">
           <h2>New job</h2>
@@ -468,7 +423,7 @@ export const views = {
               ${assigneeField("newjob", "nj")}
               ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") }))}
               ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") }))}
-              ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
+              ${f({ name: "note", id: "nj-note", label: "Notes (kept in the job records)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
             </div>
           </details>
           <button class="btn" data-action="create-job">Save job</button>
@@ -479,7 +434,7 @@ export const views = {
           ${open.map(j => `
             <tr>
               <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a><div class="sub row-sub">${j.status_label}</div>
-                <button class="linkish row-record" data-action="jr-open" data-id="${j.id}" aria-label="Add to the record of ${j.name}">Add to record</button></td>
+                <button class="linkish row-record" data-action="daily-for-job" data-id="${j.id}" aria-label="New job record for ${j.name}">New job record</button></td>
               <td>${j.code}</td>
               <td>${j.payer ? j.payer.name : (((state.payers || []).find(p => p.id === j.payer_id) || {}).name || "—")}</td>
               <td>${statusPill(j)}</td>
@@ -634,33 +589,6 @@ export const actions = {
     if (!text) { toast("Paste the contract's text first."); return; }
     return readContract(form, text, "pasted text.txt", { text });
   },
-  // Add to a job record from the Jobs page (J4): the card opens with the row's job picked.
-  "jr-open": (el, id) => {
-    formOpen.addrecord = true;
-    (formDraft.jobrecord ||= {}).job = unesc(id || "");
-    render();
-    requestAnimationFrame(() => document.querySelector(".add-to-record")?.scrollIntoView({ block: "start", behavior: "smooth" }));
-  },
-  // Take a photo or Add a file before a job is picked: the picker says so. With a job picked,
-  // the buttons are the job page's own (pick-files, with the job).
-  "jr-pick": () => { pickedJob(); },
-  "jr-paste": async () => {
-    const job = pickedJob();
-    const text = (document.getElementById("jr-paste")?.value || "").trim();
-    if (!job) return;
-    if (!text) { toast("Paste what to add first."); document.getElementById("jr-paste")?.focus(); return; }
-    const r = await post("/api/import/text?file=1", { text, source: pasteGuess(text).source, job_id: job }, { quiet: true });
-    if (r && r.ok) { clearForm("jobrecord"); (formDraft.jobrecord ||= {}).job = job; toast("Added to the job record."); render(); }
-  },
-  "jr-add-note": async () => {
-    const job = pickedJob();
-    if (!job) return;
-    const v = formValues("jobrecord");
-    if (refuseForm("jobrecord", v.label ? {} : { label: "Enter what this is, like \"Rough-in inspection passed\"." })) return;
-    formOpen.jobrecordnote = true;
-    const r = await post(`/api/jobs/${job}/add-record`, { label: v.label, note: v.note, kind: v.kind || "note" }, { formKey: "jobrecord", quiet: true });
-    if (r && r.ok) { (formDraft.jobrecord ||= {}).job = job; toast("Added to the job record."); render(); }
-  },
 };
 
 // The SOV choice is kept across a redraw of the form.
@@ -671,7 +599,5 @@ if (typeof document !== "undefined" && document.addEventListener) {
     // A changed contract amount redraws the schedule's difference line (C6), in place: a whole
     // redraw on leaving the box would replace Save job under the click that left it.
     if (e.target && e.target.id === "nj-amount" && contractRead && contractRead.sov) updateSovChoice();
-    // The job picked on Add to a job record: its buttons now add to that job.
-    if (e.target && e.target.id === "jr-job" && state) { (formDraft.jobrecord ||= {}).job = e.target.value; render(); }
   });
 }

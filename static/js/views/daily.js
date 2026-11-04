@@ -1,19 +1,22 @@
-// Jobs, Daily record: what happened on site, saved on the job record. The Diary, crew, weather,
-// materials and deliveries (T12); boxes for typical items, each opening its own fields, and files
-// (T11); quantities put in place today, which add to the schedule of values and the draft pay
-// app (M1). The server checks every field (domain/daily.py).
+// Jobs, New job record: one form for what happened on site and the day's documents. The Diary,
+// crew, weather and materials (T12); ticked boxes for quantities put in place today, which add to
+// the job's totals for the period (M1), change order work and punchlist items (T11);
+// then a section each for delivery tickets, progress photos, time sheets, invoices, inspections
+// and other documents, each making job records of its own kind. The server checks every field
+// (domain/daily.py). The stored kind, the route and the ids keep the word "daily".
 import { esc, unesc, fmtDate } from "../format.js";
-import { defaultJobId } from "../jobs.js";
+import { defaultJobId, RECORD_KINDS } from "../jobs.js";
 import { fmtQty } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { localDay } from "../tasks.js";
 import { recordFiles } from "./job-record.js";
 import { readJson, setNetBanner } from "../net.js";
-import { draftValue, clearForm, field, formValues, formErrors } from "../forms.js";
+import { draftValue, clearForm, field, moneyField, formValues, formErrors, refuseForm } from "../forms.js";
+import { termText } from "../terms.js";
 import { state, onSessionEnd, currentView } from "../state.js";
 import { post, toast, render, emptyState, nav, setState } from "../app-core.js";
 
-// The Daily record starts on the job last used on this device (R2-07).
+// The New job record form starts on the job last used on this device (R2-07).
 const DAILY_JOB_KEY = "duracash-daily-job";
 function lastDailyJob() {
   try { return localStorage.getItem(DAILY_JOB_KEY) || ""; } catch (_) { return ""; }
@@ -23,20 +26,42 @@ export function rememberDailyJob(id) {
 }
 
 export const WEATHER = ["Clear", "Cloudy", "Rain", "Snow", "Wind", "Heat", "Cold"];   // domain.daily.WEATHER
-export const SECTIONS = [["photos", "Progress photos"], ["quantities", "Quantities"], ["co_work", "Change order work"],
-  ["inspections", "Inspections or major discussions"], ["punch", "New punchlist items"]];   // domain.daily.DAILY_SECTIONS
+export const SECTIONS = [["quantities", "Quantities"], ["co_work", "Change order work"], ["punch", "New punchlist items"]];   // in domain.daily.DAILY_SECTIONS
 const MAX_UPLOAD_MB = 15;
 
+// The document sections, always shown, as domain.daily.RECORD_SECTIONS has them: the record kind
+// each makes (other's comes from its row) and only the boxes it needs. A section with more has
+// Add another. Every row has its own files; each file is one record.
+const OTHER_KINDS = () => Object.entries(RECORD_KINDS).filter(([k]) => k !== "daily").map(([k, v]) => [k, termText(v)]);
+export const RECORD_SECTIONS = [
+  { key: "delivery", title: "Delivery tickets", kind: "ticket", one: "delivery ticket", many: "delivery tickets", more: true, fields: [
+    { name: "supplier", label: "Supplier" }, { name: "number", label: "Ticket number" },
+    { name: "what", label: "What arrived", wide: true }] },
+  { key: "photos", title: "Progress photos", kind: "photo", one: "progress photo", many: "progress photos", imagesOnly: true, fields: [
+    { name: "note", label: "What they show", wide: true }] },
+  { key: "time_sheets", title: "Time sheets", kind: "ticket", one: "time sheet", many: "time sheets", more: true, fields: [
+    { name: "who", label: "Who or which crew" }, { name: "hours", label: "Hours", inputmode: "decimal" }] },
+  { key: "invoices", title: "Invoices", kind: "supplier_invoice", one: "invoice", many: "invoices", more: true, fields: [
+    { name: "supplier", label: "Supplier" }, { name: "number", label: "Invoice number" }, { name: "amount", label: "Amount ($)", money: true }] },
+  { key: "inspections", title: "Inspections", kind: "inspection", one: "inspection", many: "inspections", more: true, fields: [
+    { name: "who", label: "Who inspected", placeholder: "City electrical inspector" }, { name: "outcome", label: "Result", placeholder: "Passed rough-in" }] },
+  { key: "other", title: "Other documents and notes", one: "other document or note", many: "other documents and notes", more: true, fields: [
+    { name: "kind", label: "Kind", options: OTHER_KINDS }, { name: "label", label: "What it is", placeholder: "COI Brightwater 2026-27" },
+    { name: "note", label: "Note", wide: true }] },
+];
+
 // What the form holds beyond its typed boxes (those are kept by forms.js): the ticked boxes, how
-// many change order and inspection rows, and the files picked. A file picker can't be refilled
-// after a redraw, so the files are kept here and listed; once uploaded, a file is a record on the
-// job and only its record id is kept, so a second Save doesn't upload it again.
-export const daily = { checked: new Set(), rows: { co: 1, insp: 1 }, files: { photos: [], files: [] }, uploaded: [] };
+// many rows each section has, and the files picked, by row ("delivery_0"). A file picker can't be
+// refilled after a redraw, so the files are kept here and listed; once uploaded, a file is a
+// record on the job and only its record id is kept, so a second Save doesn't upload it again.
+// saved says what the last Save did, until the next one.
+export const daily = { checked: new Set(), rows: { co: 1 }, files: {}, uploaded: [], saved: null };
 function resetDaily() {
   daily.checked = new Set();
-  daily.rows = { co: 1, insp: 1 };
-  daily.files = { photos: [], files: [] };
+  daily.rows = { co: 1 };
+  daily.files = {};
   daily.uploaded = [];
+  daily.saved = null;
 }
 onSessionEnd(resetDaily);
 
@@ -45,25 +70,42 @@ const errorOf = (name) => esc((formErrors.daily || {})[name] || "");
 const errSpan = (id, name) => `<span class="field-error" id="${id}-err">${errorOf(name)}</span>`;
 const lumpSum = (l) => l.lump_sum || (String(l.unit).toUpperCase() === "LS" && l.qty_milli === 1000);
 
-// The chosen files of one picker, each with a Remove button.
-function fileList(kind) {
-  const list = daily.files[kind];
-  const done = daily.uploaded.filter(u => u.kind === kind);
+// The chosen files of one row, each with a Remove button.
+function fileList(key) {
+  const list = daily.files[key] || [];
+  const done = daily.uploaded.filter(u => u.key === key);
   if (!list.length && !done.length) return "";
   return `<ul class="daily-files">${done.map(u => `<li>✓ ${esc(u.name)}</li>`).join("")}${list.map((f, n) => `<li>${esc(f.name)}
-    <button class="linkish" data-action="daily-file-remove" data-kind="${kind}" data-n="${n}" aria-label="Remove ${esc(f.name)}">Remove</button></li>`).join("")}</ul>`;
+    <button class="linkish" data-action="daily-file-remove" data-kind="${key}" data-n="${n}" aria-label="Remove ${esc(f.name)}">Remove</button></li>`).join("")}</ul>`;
+}
+
+// Take a photo opens the phone's rear camera; Choose files offers every source.
+function filePickers(s, key) {
+  const what = s.title.toLowerCase();
+  return `<div class="record-files">
+      <label class="btn small secondary file-pick">Take a photo<input type="file" class="visually-hidden" id="daily-${key}-camera" data-record-files="${key}" accept="image/*" capture="environment" aria-label="Take a photo: ${what}"></label>
+      <label class="btn small secondary file-pick">Choose files<input type="file" class="visually-hidden" id="daily-${key}-files" data-record-files="${key}" multiple${s.imagesOnly ? ' accept="image/*"' : ""} aria-label="Choose files: ${what}"></label>
+    </div>${fileList(key)}`;
+}
+
+function recordSectionHtml(s) {
+  const rows = Array.from({ length: daily.rows[s.key] || 1 }, (_, n) => {
+    const boxes = s.fields.map(f => {
+      const opts = { form: "daily", name: `${s.key}_${f.name}_${n}`, id: `daily-${s.key}-${f.name}-${n}`, label: f.label, wide: f.wide, placeholder: f.placeholder || "", inputmode: f.inputmode || "" };
+      if (f.money) return moneyField(opts);
+      return field(f.options ? { ...opts, options: f.options() } : opts);
+    }).join("");
+    return `<div class="record-row"><div class="form-grid">${boxes}</div>${filePickers(s, `${s.key}_${n}`)}</div>`;
+  }).join("");
+  return `<section class="daily-section" data-record-section="${s.key}"><h3>${s.title}</h3>${rows}
+    ${s.more ? `<button class="btn small secondary" data-action="daily-more" data-kind="${s.key}">Add another</button>` : ""}</section>`;
 }
 
 function sectionHtml(key, j) {
-  if (key === "photos") return `<div class="daily-section"><h3>Progress photos</h3>
-      <input type="file" id="daily-photos" accept="image/*" capture="environment" multiple aria-label="Add progress photos">
-      ${fileList("photos")}
-      <div class="form-grid">${field({ form: "daily", name: "photos_note", id: "daily-photos-note", label: "What they show (optional)", wide: true })}</div>
-    </div>`;
   if (key === "quantities") {
     const lines = ((j.sov_view && j.sov_view.lines) || []).filter(l => l.done_milli < l.qty_milli);
     return `<div class="daily-section"><h3>Quantities put in place today</h3>
-      <p class="sub">They add to each line's quantity done and update this period's draft pay app.</p>
+      <p class="sub">They add to the job's totals for the period.</p>
       ${lines.length ? `<div class="table-wrap sov-wrap"><table class="sov-table">
         <tr><th>Item</th><th>Description</th><th>Done so far</th><th>Today</th></tr>
         ${lines.map(l => `<tr><td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
@@ -83,15 +125,6 @@ function sectionHtml(key, j) {
       </div>`).join("");
     return `<div class="daily-section"><h3>Change order work</h3>${rows}
       <button class="btn small secondary" data-action="daily-more" data-kind="co">Add another</button></div>`;
-  }
-  if (key === "inspections") {
-    const rows = Array.from({ length: daily.rows.insp }, (_, n) => `<div class="form-grid">
-        ${field({ form: "daily", name: `insp_type_${n}`, id: `daily-insp-type-${n}`, label: "Kind", options: [["inspection", "Inspection"], ["discussion", "Discussion"]] })}
-        ${field({ form: "daily", name: `insp_who_${n}`, id: `daily-insp-who-${n}`, label: "With whom", placeholder: "City electrical inspector" })}
-        ${field({ form: "daily", name: `insp_outcome_${n}`, id: `daily-insp-outcome-${n}`, label: "Outcome", wide: true, placeholder: "Passed rough-in" })}
-      </div>`).join("");
-    return `<div class="daily-section"><h3>Inspections or major discussions</h3>${rows}
-      <button class="btn small secondary" data-action="daily-more" data-kind="insp">Add another</button></div>`;
   }
   if (key === "punch") return `<div class="daily-section"><h3>New punchlist items</h3>
       <div class="form-grid">${field({ form: "daily", name: "punch", id: "daily-punch", label: "One item per line", multiline: true, wide: true })}</div></div>`;
@@ -143,29 +176,26 @@ export const views = {
     const box = (key, label) => key === "quantities" && !hasSov ? ""
       : `<label><input type="checkbox" data-daily-section="${key}"${daily.checked.has(key) ? " checked" : ""}> ${label}</label>`;
     return `
-      <h1>Daily record</h1>
+      <h1>New job record</h1>
+      ${daily.saved ? `<p class="saved-result" role="status">Saved to <a href="${pathFor("job", daily.saved.jobId)}" data-action="open-job" data-id="${daily.saved.jobId}">${daily.saved.jobName}</a>: ${esc(daily.saved.words)}.${esc(daily.saved.added || "")}</p>` : ""}
       <div class="card" data-form-key="daily">
-        <h2>New record</h2>
         ${openJobs.length ? `<div class="form-grid">
-          <div><label>Job</label><select id="daily-job"><option value="">Pick a job…</option>${openJobs.map(o => `<option value="${o.id}"${o.id === pick ? " selected" : ""}>${o.name}</option>`).join("")}</select></div>
+          <div><label for="daily-job">Job</label><select id="daily-job"><option value="">Pick a job…</option>${openJobs.map(o => `<option value="${o.id}"${o.id === pick ? " selected" : ""}>${o.name}</option>`).join("")}</select></div>
+          ${field({ form: "daily", name: "date", id: "daily-date", label: "Date", type: "date", value: localDay(new Date()), attrs: `max="${localDay(new Date())}"` })}
+          <div class="span-2"><label for="daily-notes">Diary</label><textarea id="daily-notes" data-field="notes" rows="3" placeholder="Framing done on the east wall, inspector booked for Thursday">${esc(draftValue("daily", "notes"))}</textarea><span class="field-error" id="daily-notes-err">${errorOf("notes")}</span></div>
           ${field({ form: "daily", name: "crew_count", id: "daily-crew", label: "Crew members", type: "number", inputmode: "numeric", attrs: 'min="0" max="500"' })}
           ${field({ form: "daily", name: "crew_names", id: "daily-crew-names", label: "Names (optional)", placeholder: "Ana, Ben, Cruz" })}
           ${field({ form: "daily", name: "weather", id: "daily-weather", label: "Weather", options: [["", "Not noted"], ...WEATHER.map(w => [w, w])] })}
           ${field({ form: "daily", name: "weather_note", id: "daily-weather-note", label: "Weather note (optional)", placeholder: "Rain until 10" })}
           ${field({ form: "daily", name: "materials", id: "daily-materials", label: "Materials used or installed", multiline: true, wide: true })}
-          ${field({ form: "daily", name: "deliveries", id: "daily-deliveries", label: "Deliveries: what arrived, from whom", multiline: true, wide: true })}
-          <div class="span-2"><label>Diary</label><textarea id="daily-notes" data-field="notes" rows="3" placeholder="Framing done on the east wall, inspector booked for Thursday">${esc(draftValue("daily", "notes"))}</textarea><span class="field-error" id="daily-notes-err">${errorOf("notes")}</span></div>
         </div>
         <div class="daily-checks" role="group" aria-label="Also on this record">${SECTIONS.map(([k, label]) => box(k, label)).join("")}</div>
         ${j ? SECTIONS.filter(([k]) => daily.checked.has(k) && (k !== "quantities" || hasSov)).map(([k]) => sectionHtml(k, j)).join("") : ""}
-        <div class="daily-section"><h3>Attach files</h3>
-          <input type="file" id="daily-files" multiple aria-label="Attach files: photos, PDFs, documents">
-          ${fileList("files")}
-        </div>
-        <button class="btn" data-action="daily-save">Save to job record</button>` : emptyState("No open jobs", "", `<button class="btn" data-action="onb-newjob">New job</button>`)}
+        ${RECORD_SECTIONS.map(recordSectionHtml).join("")}
+        <button class="btn" data-action="daily-save">Save job record</button>` : emptyState("No open jobs", "", `<button class="btn" data-action="onb-newjob">New job</button>`)}
       </div>
       <div class="card">
-        <h2>Recent records</h2>
+        <h2>Recent diary entries</h2>
         ${records.length ? records.slice().reverse().map(r => {
           const rj = state.jobs.find(x => x.id === r.job_id);
           return `<div class="list-item"><strong>${fmtDate(r.at)}</strong> · ${rj ? `<a href="${pathFor("job", rj.id)}" data-action="open-job" data-id="${rj.id}">${rj.name}</a>` : "Deleted job"}<div>${r.notes}</div>${recordMeta(r, rj)}</div>`;
@@ -180,39 +210,75 @@ export function dailyBody(v, j, checked) {
   const body = { notes: v.notes || "" };
   for (const k of ["crew_count", "crew_names", "weather", "weather_note", "materials", "deliveries"]) if (v[k]) body[k] = v[k];
   const sections = {};
-  if (checked.has("photos")) sections.photos = { note: v.photos_note || "" };
   if (checked.has("quantities") && j && j.sov_view && j.sov_view.present) {
     sections.quantities = (j.sov_view.lines || []).filter(l => (v[`qty_${l.id}`] || "").trim()).map(l => ({ line_id: unesc(l.id), qty: v[`qty_${l.id}`].trim() }));
   }
   if (checked.has("co_work")) sections.co_work = Object.keys(v).filter(k => /^co_desc_\d+$/.test(k)).map(k => k.slice(8))
     .map(n => ({ co_id: v[`co_${n}`] || "", description: v[`co_desc_${n}`] || "", hours: v[`co_hours_${n}`] || "" }));
-  if (checked.has("inspections")) sections.inspections = Object.keys(v).filter(k => /^insp_who_\d+$/.test(k)).map(k => k.slice(9))
-    .map(n => ({ type: v[`insp_type_${n}`] || "inspection", who: v[`insp_who_${n}`] || "", outcome: v[`insp_outcome_${n}`] || "" }));
   if (checked.has("punch")) sections.punch = v.punch || "";
   if (Object.keys(sections).length) body.sections = sections;
   return body;
 }
 
-// Upload the picked files to the job record one at a time (the importer's ?job=&file=1&kind=),
-// keeping each new record's id. Returns false if one didn't go up (the rest stay picked).
-async function uploadDailyFiles(jobId) {
-  for (const kind of ["photos", "files"]) {
-    while (daily.files[kind].length) {
-      const f = daily.files[kind][0];
-      if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { toast(`${f.name}: larger than ${MAX_UPLOAD_MB} MB.`); return false; }
+// The document sections' rows that have something in them, for the request: what was typed and
+// the records of the files already uploaded. A row's Kind alone is not something in it.
+export function recordEntries(v, uploaded = []) {
+  const out = [];
+  for (const s of RECORD_SECTIONS) {
+    const rows = new Set(uploaded.filter(u => u.key.startsWith(`${s.key}_`)).map(u => +u.key.slice(s.key.length + 1)));
+    for (const name of Object.keys(v)) {
+      const hit = name.startsWith(`${s.key}_`) && /_(\d+)$/.exec(name);
+      if (hit && s.fields.some(f => name === `${s.key}_${f.name}_${hit[1]}`)) rows.add(+hit[1]);
+    }
+    for (const n of [...rows].sort((a, b) => a - b)) {
+      const entry = { section: s.key, row: n };
+      for (const f of s.fields) if (v[`${s.key}_${f.name}_${n}`]) entry[f.name] = v[`${s.key}_${f.name}_${n}`];
+      const attachments = uploaded.filter(u => u.key === `${s.key}_${n}`).map(u => u.record_id);
+      if (attachments.length) entry.attachments = attachments;
+      if (Object.keys(entry).some(k => !["section", "row", "kind"].includes(k))) out.push(entry);
+    }
+  }
+  return out;
+}
+
+// What a Save made, in words: "a diary entry, 2 delivery tickets, 1 invoice".
+export function savedWords(notes, entries) {
+  const parts = notes ? ["1 diary entry"] : [];
+  for (const s of RECORD_SECTIONS) {
+    const n = entries.filter(e => e.section === s.key).reduce((sum, e) => sum + ((e.attachments || []).length || 1), 0);
+    if (n) parts.push(`${n} ${n === 1 ? s.one : s.many}`);
+  }
+  return parts.join(", ");
+}
+
+// The kind a row's files go up as; the Save puts the row's fields on them.
+function uploadKind(key, v) {
+  const at = key.lastIndexOf("_");
+  const s = RECORD_SECTIONS.find(x => x.key === key.slice(0, at));
+  return (s && s.kind) || v[`other_kind_${key.slice(at + 1)}`] || "note";
+}
+
+// Upload the picked files to the job one at a time (the importer's ?job=&file=1&kind=), keeping
+// each new record's id. Returns false if one didn't go up: it and the rest stay picked, what is
+// typed stays, and those already up aren't sent again.
+async function uploadDailyFiles(jobId, v) {
+  for (const key of Object.keys(daily.files)) {
+    while (daily.files[key].length) {
+      const f = daily.files[key][0];
+      if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { toast(`Not saved: ${f.name} is larger than ${MAX_UPLOAD_MB} MB. What you typed is still here. Remove it or pick a smaller one, then save again.`); return false; }
       const before = new Set(((state.jobs.find(x => x.id === jobId) || {}).records || []).map(r => unesc(r.id)));
       let res, data;
       try {
-        res = await fetch(`/api/import/file?job=${encodeURIComponent(unesc(jobId))}&file=1${kind === "photos" ? "&kind=photo" : ""}`, {
+        res = await fetch(`/api/import/file?job=${encodeURIComponent(unesc(jobId))}&file=1&kind=${encodeURIComponent(uploadKind(key, v))}`, {
           method: "POST", headers: { "Content-Type": f.type || "application/octet-stream", "X-Filename": encodeURIComponent(f.name || "upload") }, body: f,
         });
         data = await readJson(res);
-      } catch (_) { setNetBanner(true); toast(`${f.name}: can't reach Duracash.`); return false; }
-      if (!res.ok) { toast(data.error || `${f.name}: upload failed.`); return false; }
+      } catch (_) { setNetBanner(true); toast(`Not saved: can't reach Duracash. What you typed and your files are still here. Save again when you're back online.`); return false; }
+      if (!res.ok) { toast(`Not saved: ${data.error || `${f.name} didn't upload.`} What you typed and your files are still here. Save again to retry.`); return false; }
       const job = (data.jobs || []).find(x => x.id === unesc(jobId));
       const added = ((job && job.records) || []).filter(r => !before.has(r.id) && (r.file_ids || []).length).map(r => r.id);
-      added.forEach(id => daily.uploaded.push({ kind, name: f.name, record_id: id }));
-      daily.files[kind].shift();
+      added.forEach(id => daily.uploaded.push({ key, name: f.name, record_id: id }));
+      daily.files[key].shift();
       setNetBanner(false);
       if (Array.isArray(data.jobs)) setState(data);
     }
@@ -227,39 +293,61 @@ document.addEventListener("change", (e) => {
   if (el.dataset && el.dataset.dailySection) {
     if (el.checked) daily.checked.add(el.dataset.dailySection); else daily.checked.delete(el.dataset.dailySection);
     render();
-  } else if (el.id === "daily-photos" || el.id === "daily-files") {
-    daily.files[el.id === "daily-photos" ? "photos" : "files"].push(...(el.files || []));
+  } else if (el.dataset && el.dataset.recordFiles) {
+    (daily.files[el.dataset.recordFiles] ||= []).push(...(el.files || []));
     render();
   } else if (el.id === "daily-job" && currentView === "daily") {
+    // Files already up are on the job they went to; they can't come along to another.
+    if (daily.uploaded.length) { daily.uploaded = []; toast("The files already uploaded stay on the job they went to."); }
     rememberDailyJob(el.value);
     render();
   }
 });
 
+// A second tap while a save is going makes nothing more.
+let saving = false;
+
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
-  // "New daily record" on a job page (T9): the Daily record with that job picked.
-  "daily-for-job": (el, id) => { rememberDailyJob(id); nav("daily"); },
+  // "New job record" on a job page or a row of Open jobs (T9): the form with that job picked.
+  "daily-for-job": (el, id) => { if (id) rememberDailyJob(id); nav("daily"); },
   "daily-more": (el) => { daily.rows[el.dataset.kind] = Math.min(10, (daily.rows[el.dataset.kind] || 1) + 1); render(); },
   "daily-file-remove": (el) => { daily.files[el.dataset.kind].splice(+el.dataset.n, 1); render(); },
   "daily-save": async () => {
+    if (saving) return;
+    saving = true;
+    try { await saveRecord(); } finally { saving = false; }
+  },
+};
+
+async function saveRecord() {
     const notes = document.querySelector("#daily-notes")?.value || "";
     const job = document.querySelector("#daily-job")?.value;
     if (!job) { toast("Pick a job."); document.querySelector("#daily-job")?.focus(); return; }
-    if (!notes.trim()) { toast("Write the diary entry."); document.querySelector("#daily-notes")?.focus(); return; }
+    const v = { ...formValues("daily"), notes };
+    const picked = daily.uploaded.length || Object.values(daily.files).some(list => list.length);
+    if (!notes.trim() && !picked && !recordEntries(v).length) { toast("Write the diary entry, or add a document."); refuseForm("daily", { notes: "Write the diary entry, or add a document." }); return; }
     // Remembered before saving: the save redraws the page, which picks the job last used.
     rememberDailyJob(job);
-    if (!(await uploadDailyFiles(job))) { render(); return; }
+    if (!(await uploadDailyFiles(job, v))) { render(); return; }
     const j = state.jobs.find(x => x.id === job);
-    const body = dailyBody({ ...formValues("daily"), notes }, j, daily.checked);
-    if (daily.uploaded.length) body.attachments = daily.uploaded.map(u => u.record_id);
+    const body = dailyBody(v, j, daily.checked);
+    const entries = recordEntries(v, daily.uploaded);
+    if (entries.length) body.entries = entries;
+    if (v.date) body.date = v.date;
     body.today = localDay(new Date());   // the record's day is the person's own date, not the server's UTC one
-    const r = await post(`/api/jobs/${job}/daily-record`, body, { formKey: "daily" });
+    const r = await post(`/api/jobs/${job}/daily-record`, body, { formKey: "daily", quiet: true });
     if (r && r.ok) {
-      resetDaily(); clearForm("daily"); render();   // saved: the form is empty for the next one
+      resetDaily(); clearForm("daily");   // saved: the form is empty for the next one, on the same job
+      const words = savedWords(notes.trim(), entries);
+      const name = j ? j.name : "";
+      const last = (state.daily_records || []).filter(x => x.job_id === job).slice(-1)[0];
+      const blocked = notes.trim() && last && last.quantities_not_applied;
+      const added = (body.sections || {}).quantities && !blocked ? " Quantities added to the job's totals for the period." : "";
+      daily.saved = { jobId: job, jobName: name, words, added };
+      render();
       // The record is kept even when its quantities couldn't be added (B5): say so plainly.
-      const saved = (state.daily_records || []).filter(x => x.job_id === job).slice(-1)[0];
-      if (saved && saved.quantities_not_applied) toast(`Saved. The quantities were not added to the schedule of values: ${unesc(saved.quantities_not_applied)}`);
+      if (blocked) toast(`Saved. The quantities were not added to the schedule of values: ${unesc(last.quantities_not_applied)}`);
+      else toast(`Job record saved to ${unesc(name)}.${added}`);
     }
-  },
-};
+}

@@ -11,9 +11,9 @@ export const NEW = [
   "Signed change orders", "Unsigned change orders", "Bill now (send waits for signature)", "Held back, still owed",
   "Delete draft", "Activity log", "Unpaid", "Closeout", "Waiting (", "Also email (CC)", "Paperwork needed with each pay app",
   "They send pay apps back when", "Days they usually take to pay", "Days between follow-ups", "Total done so far $",
-  "Anything to note? (optional)", "sent by ", "Notes (kept on the job record)", "Use an authenticator app instead",
+  "Anything to note? (optional)", "sent by ", "Notes (kept in the job records)", "Use an authenticator app instead",
   "Homeowner: their email. GC: their accounts-payable address.", "Backup for the pay app",
-  "Where this job stands", "Add more work", "Add to a job record", "Import contract", "Download job file",
+  "Where this job stands", "Add more work", "New job record", "Job records", "Import contract", "Download job file",
 ];
 
 // The words they replace. Each is a label, button, heading or sentence the page must not show
