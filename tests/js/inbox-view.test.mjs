@@ -139,6 +139,6 @@ test("Import's Schedule of values lists only jobs whose schedule can still be se
   assert.doesNotMatch(imp, /<option value="elm">/);
   core.setState({ ...company(), jobs: [j("elm", false)] });
   const none = data.views.import();
-  assert.doesNotMatch(none, /id="sov-import-job"/);
-  assert.match(none, /Every open job has a pay app out or its work done/);
+  assert.doesNotMatch(none, /id="sov-import"/, "nothing it can do: the card goes");
+  assert.doesNotMatch(none, /Every open job has a pay app out/);
 });

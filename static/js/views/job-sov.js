@@ -1,13 +1,13 @@
 // The job page's schedule of values: the card, the editor, pasted rows, and line-by-line progress.
 import { esc, unesc, money, fmtDate } from "../format.js";
 import { mayTake } from "../jobs.js";
-import { sovMilli, lumpDone, sovCents, sovBp, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovDraftLockHtml } from "../sov.js";
+import { sovMilli, lumpDone, sovCents, sovBp, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovFixedNote, sovPeriodHtml } from "../sov.js";
 import { readJson, setNetBanner } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { field, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, formOpen, onSessionEnd } from "../state.js";
-import { perms, post, toast, render } from "../app-core.js";
+import { perms, post, toast, render, nav } from "../app-core.js";
 
 
 export let sovDraft = null; // schedule-of-values editor: { jobId, lines: [{id,item,description,quantity,unit,rate}], op_pct, warnings } (raw text, not escaped)
@@ -16,7 +16,8 @@ onSessionEnd(() => { sovDraft = null; });
 
 function sovStartEdit(j) {
   const v = j.sov_view || {};
-  const base = (v.lines || []).filter(l => !l.co_id);
+  // The one automatic lump-sum line isn't something to edit: real lines replace it.
+  const base = v.auto ? [] : (v.lines || []).filter(l => !l.co_id);
   sovDraft = {
     jobId: j.id,
     lines: base.length
@@ -88,6 +89,8 @@ function sovEditorHtml(j) {
     </tr>`).join("");
   return `
     <p class="sub">Each line is a quantity at a unit rate; a lump sum is quantity 1 (unit LS) at its amount. Overhead and profit goes on top of the base lines. Approved change orders add their own lines.</p>
+    ${(j.sov_view || {}).auto ? `<p class="sub">Leave this blank to keep one lump-sum line for the contract amount.</p>` : ""}
+    ${(j.sov_view || {}).open_draft ? `<p class="sub">Saving updates ${j.sov_view.open_draft.number}. Quantities done on lines you replace start again at zero.</p>` : ""}
     <div class="sov-paste">
       <textarea id="sov-paste" rows="3" placeholder="Paste rows from Excel, Google Sheets, a CSV or a PDF: description, quantity, unit, unit rate, or a lump-sum amount. A header row is optional; total rows are skipped."></textarea>
       <button class="btn small" data-action="sov-read">Read pasted rows</button>
@@ -120,21 +123,16 @@ export function sovCardHtml(j) {
   if (sovDraft && sovDraft.jobId === j.id) {
     return `<div class="card" id="sov-card"><h2>Schedule of values</h2>${sovEditorHtml(j)}</div>`;
   }
+  // The card is on every job (Nov 3 Decision 2): what it can't do, it says.
+  const fixedNote = sovFixedNote(j, mayTake("void-draft", perms()));
   if (!v.present) {
-    // No schedule and a pay app already exists. While that pay app is only a draft, one quiet line
-    // says how to set a schedule up (Oct 23 note 8); otherwise the card stays hidden.
-    if (!v.editable) {
-      const note = sovDraftLockHtml(j, mayTake("void-draft", perms()));
-      return note ? `<div class="card" id="sov-card"><h2>Schedule of values</h2>${note}</div>` : "";
-    }
+    if (!v.editable) return `<div class="card" id="sov-card"><h2>Schedule of values</h2>${fixedNote}</div>`;
     return `<div class="card" id="sov-card">
       <h2>Schedule of values</h2>
-      <p class="sub">Bill line by line, the way subs bill: quantity × unit rate plus overhead and profit. ${termText("Each pay app then shows what was done on each line this period. Optional; without it, progress is entered in dollars. Set it before the first pay app.")}</p>
+      <p class="sub">Bill line by line, the way subs bill: quantity × unit rate plus overhead and profit. ${termText("Each pay app then shows what was done on each line this period. Without it, progress is entered in dollars. It can be set until the first pay app is sent.")}${v.open_draft ? ` Setting it updates ${v.open_draft.number}.` : ""}</p>
       <button class="btn secondary" data-action="sov-start" data-id="${j.id}">Set up schedule of values</button>
     </div>`;
   }
-  // Fixed only because of an unsent draft: say so and offer Delete draft (Oct 23 note 8).
-  const lockNote = v.editable ? "" : sovDraftLockHtml(j, mayTake("void-draft", perms()));
   const t = v.totals;
   const rows = v.lines.map(l => `
     <tr>
@@ -156,9 +154,9 @@ export function sovCardHtml(j) {
       ${v.op_bp ? `<tr><td></td><td class="sov-desc-cell">Overhead and profit ${v.op_bp / 100}%</td><td></td><td></td><td class="num">${money(t.op_scheduled_cents)}</td><td></td><td class="num">${money(t.op_to_date_cents)}</td><td class="num">${money(v.op_billed_cents)}</td><td class="num">${money(t.op_scheduled_cents - t.op_to_date_cents)}</td></tr>` : ""}
       <tr class="sov-total"><td></td><td class="sov-desc-cell">Total</td><td></td><td></td><td class="num">${money(t.scheduled_cents)}</td><td></td><td class="num">${money(t.to_date_cents)}</td><td class="num">${money(v.lines.reduce((a, l) => a + l.billed_cents, 0) + v.op_billed_cents)}</td><td class="num">${money(t.scheduled_cents - t.to_date_cents)}</td></tr>
     </table></div>
-    ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">Edit schedule</button>`
-      : lockNote ? lockNote
-      : `<p class="sub">Fixed once the first pay app exists. Scope changes go through change orders, which add their own lines when approved.</p>`}
+    ${v.auto && v.editable ? `<p class="sub">One lump-sum line for the contract amount. Replace it with your own lines any time before the first pay app is sent.</p>` : ""}
+    ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">${v.auto ? "Enter schedule lines" : "Edit schedule"}</button>` : fixedNote}
+    ${sovPeriodHtml(j, true)}
   </div>`;
 }
 
@@ -188,8 +186,46 @@ async function sovSave(jobId, updateContract) {
   const j = state.jobs.find(x => x.id === jobId);
   if (updateContract && !(await askConfirm(`Change the contract amount from ${money(j.contract_cents)} to ${money(t.total)} to match the schedule?`, "Change the contract"))) return;
   const lines = sovFilledLines().map(l => ({ id: l.id || undefined, item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate }));
+  const draftBefore = (j.sov_view || {}).open_draft;
   const r = await post(`/api/jobs/${jobId}/sov`, { lines, op_pct: sovDraft.op_pct, update_contract: !!updateContract });
-  if (r && r.ok) { sovDraft = null; render(); }
+  if (r && r.ok) {
+    sovDraft = null;
+    render();
+    const saved = state.jobs.find(x => x.id === jobId);
+    if (draftBefore && saved && !(saved.sov_view || {}).open_draft) toast(`${draftBefore.number} comes back when you enter quantities on the new lines.`);
+  }
+}
+
+// The amounts changed on the draft: only the boxes that differ from what the draft bills, a cleared
+// box going back to the suggested amount. On the pay app's page, the redrafted one opens.
+async function sovSaveAmounts(jobId, amounts) {
+  const onDetail = !!document.querySelector(".send-check");
+  const r = await post(`/api/jobs/${jobId}/sov-amounts`, { amounts }, { formKey: "sovamounts" });
+  if (!r || !r.ok || !onDetail) return;
+  const draft = (state.jobs.find(x => x.id === jobId)?.sov_view?.period || {}).draft;
+  if (draft) nav("payapp-detail", jobId, draft.id);
+}
+
+function sovAmounts(jobId) {
+  const period = state.jobs.find(j => j.id === jobId)?.sov_view?.period;
+  if (!period) return;
+  const amounts = {};
+  document.querySelectorAll("[data-sova]").forEach(el => {
+    const line = period.lines.find(l => l.line_id === el.dataset.sova);
+    if (!line) return;
+    const raw = el.value.trim();
+    if (!raw) { if (line.changed) amounts[el.dataset.sova] = ""; return; }
+    if (sovCents(raw) !== line.final_cents) amounts[el.dataset.sova] = raw;
+  });
+  if (!Object.keys(amounts).length) { toast("Change an amount first."); return; }
+  return sovSaveAmounts(jobId, amounts);
+}
+
+function sovAmountsReset(jobId) {
+  const period = state.jobs.find(j => j.id === jobId)?.sov_view?.period;
+  if (!period) return;
+  const amounts = Object.fromEntries(period.lines.filter(l => l.changed).map(l => [l.line_id, ""]));
+  return sovSaveAmounts(jobId, amounts);
 }
 
 async function sovProgress(jobId) {
@@ -240,4 +276,6 @@ export const actions = {
   "sov-save": (el, id) => sovSave(id, false),
   "sov-save-contract": (el, id) => sovSave(id, true),
   "sov-progress": (el, id) => sovProgress(id),
+  "sov-amounts": (el, id) => sovAmounts(id),
+  "sov-amounts-reset": (el, id) => sovAmountsReset(id),
 };

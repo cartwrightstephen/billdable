@@ -18,8 +18,10 @@ from domain import profiles
 from test_accounts import ServerCase, PASSWORD
 import test_team
 from test_team import JOB
+from dollar_jobs import dollar_jobs
 
 
+@dollar_jobs
 class ReviewAuthTests(ServerCase):
     join = test_team.TeamHttpTests.join
 

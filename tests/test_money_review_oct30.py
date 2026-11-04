@@ -301,6 +301,8 @@ class DailyRecordKeepsSendChoicesTests(unittest.TestCase):  # B4 (r1_attach_lost
         domain.change_payapp_attachments(s, job["id"], inv["id"], "exclude_file", photo["file_ids"][1])
         before = domain._packet_file_ids(s, job, inv)
         domain.add_daily_record(s, job["id"], "Pulled wire", details={"sections": {"quantities": [{"line_id": ids[0], "qty": "50"}]}})
+        self.assertIs(draft(job), inv, "a job record doesn't touch the draft")
+        domain.record_sov_progress(s, job["id"], {})
         inv2 = draft(job)
         self.assertIsNot(inv2, inv)
         self.assertEqual(inv2["number"], inv["number"])
@@ -329,12 +331,10 @@ class DailyRecordNeverLostTests(unittest.TestCase):  # B5 (r2_daily_blocked.py, 
         rec = self.saved()[-1]
         self.assertEqual((rec["notes"], rec["crew_count"], rec["weather"]), ("Pulled wire, 3 crew, rain at noon", 3, "Rain"))
         self.assertEqual(rec["sections"]["quantities"], [{"line_id": self.ids[0], "qty_milli": 50_000}])
-        self.assertIn("with the client for their review", rec["quantities_not_applied"])
-        self.assertNotIn("pencil", rec["quantities_not_applied"].lower())
-        self.assertEqual(sov.lines(self.job)[0]["done_milli"], before, "the quantities were not added")
-        note = self.job["records"][-1]["note"]
-        self.assertIn("Not added to the schedule of values", note)
-        self.assertTrue(any(a["action"] == "daily_quantities_not_applied" for a in self.s["audit"]))
+        # The draft stays as the client saw it; the field total keeps recording (Nov 3).
+        self.assertNotIn("quantities_not_applied", rec)
+        self.assertEqual(sov.lines(self.job)[0]["done_milli"], before, "the draft's basis didn't move")
+        self.assertEqual(sov.field_total(sov.lines(self.job)[0]), before + 50_000)
 
     def test_saved_after_mark_done(self):
         domain.mark_done(self.s, self.job["id"])
@@ -349,10 +349,10 @@ class DailyRecordNeverLostTests(unittest.TestCase):  # B5 (r2_daily_blocked.py, 
                                 details={"crew_count": 2, "sections": {"quantities": [{"line_id": self.ids[1], "qty": "60"}]}})
         self.assertEqual(len(self.saved()), 2)
         reason = self.saved()[-1]["quantities_not_applied"]
-        self.assertIn("120%", reason)
-        self.assertIn("100%", reason)
+        self.assertIn("20% is over 100%", reason)
         self.assertNotIn("LS", reason)
-        self.assertEqual(sov.lines(self.job)[1]["done_milli"], 600)
+        # What fits goes on: the line stops at 100%.
+        self.assertEqual(sov.field_total(sov.lines(self.job)[1]), 1000)
 
     def test_the_job_page_words_a_lump_sum_in_percent_too(self):
         line = sov.lines(self.job)[1]
@@ -365,6 +365,7 @@ class LiveDraftRedraftsTests(unittest.TestCase):  # B6 (r7_include_co.py)
         self.job = sov_job(self.s)
         ids = [l["id"] for l in sov.lines(self.job)]
         domain.add_daily_record(self.s, self.job["id"], "Day 1", details={"sections": {"quantities": [{"line_id": ids[0], "qty": "50"}]}})
+        domain.record_sov_progress(self.s, self.job["id"], {})
         self.first = draft(self.job)
         domain.add_change_order(self.s, self.job["id"], "Extra outlets", 120_000, reason=next(iter(domain.CO_REASONS)))
         self.co = self.job["change_orders"][-1]

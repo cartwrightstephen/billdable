@@ -117,7 +117,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("Import: quantities from a CSV file show row by row, then go onto the job's schedule of values and its draft", async () => {  // M1
+  await step("Import: quantities from a CSV file show row by row, then go onto the job's schedule of values", async () => {  // M1
     const { ctx, p } = await newCompany("qty");
     const jobId = await p.evaluate(async () => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -144,12 +144,12 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const before = await p.evaluate(async (id) => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === id).invoices.length, jobId);
     assert.equal(before, 0, "the preview changes nothing");
     await card.getByRole("button", { name: "Add 2 to the schedule of values" }).click();
-    await card.getByText(/2 lines added to PA-/).waitFor();
+    await card.getByText(/2 lines added\./).waitFor();
     await card.locator(".qty-result").getByText(/Row 4 \(Gutters\)/).waitFor();
     const job = await p.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()), jobId);
     const j = job.job || job;
-    assert.deepEqual(j.sov.lines.map((l) => l.done_milli), [30000, 250]);
-    assert.equal(j.invoices.filter((i) => i.status === "draft").length, 1, "the living draft");
+    assert.deepEqual(j.sov.lines.map((l) => l.field_milli), [30000, 250]);
+    assert.equal(j.invoices.length, 0, "only Progress pay app makes a draft");
     await ctx.close();
   });
 

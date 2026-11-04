@@ -19,10 +19,12 @@ import importer
 import server
 import storage
 from seed import seed_state
+from dollar_jobs import dollar_jobs
 
 PASSWORD = "correct horse battery"
 
 
+@dollar_jobs
 class UiServerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -2719,6 +2719,8 @@ class Handler(BaseHTTPRequestHandler):
             payer_days={k: body.get(k) for k in ("payapp_due_day", "payment_terms_days") if k in body},
             # The page's own date: the start date when none was typed (review C3).
             today=_text(body, "today"),
+            # Every new job has a schedule of values: one lump-sum line until the person sets one.
+            auto_schedule=True, schedule_lines=body.get("sov_lines"), schedule_op=body.get("sov_op_pct"),
         )
 
     def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:
@@ -3099,6 +3101,7 @@ JOB_ACTIONS = {
     "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), c.body.get("update_contract") is True, c.actor)),
     "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
                                                                                         period_end=_text(c.body, "period_to"))),
+    "sov-amounts": (False, lambda h, st, j, i, c: domain.set_payapp_amounts(st, j, c.body.get("amounts"), c.actor)),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, _sends("the pay app", _send_payapp)),

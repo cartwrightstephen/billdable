@@ -16,6 +16,7 @@ import re
 import secrets
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -422,6 +423,9 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         replaced["status"] = "void"
         replaced["voided_at"] = utcnow()
         replaced["replaced"] = True
+        # The final pay app bills everything left: amounts changed on the draft start over.
+        if replaced.pop("sov_overrides", None):
+            audit(state, job_id, "payapp_amount_changed", f"The amounts changed by hand on {replaced['number']} went back to the suggested ones: the final pay app bills all the work left.", "duracash")
     job["work_status"] = "complete"
     job["completed_at"] = job.get("completed_at") or utcnow()
     job["done_at_invoice"] = len(job["invoices"])   # pay apps from here on are the final one(s)
@@ -439,6 +443,7 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
     for line in sov.lines(job):
+        line.setdefault("field_milli", line["done_milli"])   # what the field recorded stays, for undo
         line["done_milli"] = line["qty_milli"]
     audit(state, job_id, "job_done", f"{actor} marked {job['name']} done. Notes: {notes or 'none'}.", actor)
     _ensure_closeout_packet(state, job)
@@ -473,11 +478,27 @@ def draft_invoice(
         _need_playbook(state, job)
     money_file = job_money(job)
     work = money_file["unbilled_completed_cents"]
+    if strict:  # the person asked for it: everything recorded in the field goes on
+        for line in sov.lines(job):
+            line["done_milli"] = max(line["done_milli"], sov.field_total(line))
+    # A draft set aside by a new schedule until it has quantities (save_sov) is what this one replaces.
+    waiting = job.get("sov_replaced_draft")
+    if waiting and not replaces:
+        replaces = next((inv for inv in job["invoices"] if inv["id"] == waiting), None)
     period = sov.this_period(job) if sov.has_sov(job) else None
+    pending_included = unsigned_cos_in_billing(job)
+    pending_cents = sum(co["amount_cents"] for co in pending_included)
+    # Amounts changed by hand on the draft this replaces stay: the person decides the pay app.
+    chosen = (replaces or {}).get("sov_overrides") or {}
+    if period and chosen:
+        adjusted = sov.with_amounts(job, sov.this_period(job), chosen)
+        if adjusted["total_cents"] + pending_cents > 0:
+            period = adjusted
+        else:
+            audit(state, job_id, "payapp_amount_changed", f"The amounts changed by hand on {replaces['number']} would leave nothing to bill, so it went back to the suggested amounts.", "duracash")
     if period:
         work = period["total_cents"]
-    pending_included = unsigned_cos_in_billing(job)
-    gross = work + sum(co["amount_cents"] for co in pending_included)
+    gross = work + pending_cents
     if gross <= 0:
         if strict:
             raise GateError("Nothing to draft: there is no unbilled completed work on this job.")
@@ -539,6 +560,10 @@ def draft_invoice(
     if replaces:
         invoice["replaces"] = replaces["id"]
         _carry_send_choices(state, job, replaces, invoice)
+    job.pop("sov_replaced_draft", None)
+    if period and period.get("kept"):
+        invoice["sov_overrides"] = period["kept"]
+        _audit_kept_amounts(state, job, invoice, replaces, period)
     job["invoices"].append(invoice)
     invoice["final"] = is_final(job)
     if invoice["packet_id"] != "job-packet":
@@ -557,6 +582,95 @@ def draft_invoice(
         actor,
     )
     return job
+
+
+def _audit_kept_amounts(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], old: dict[str, Any] | None,
+                        period: dict[str, Any]) -> None:
+    """A redraft that keeps amounts changed by hand says so when the suggested amount moved under
+    one (new quantities came in) or the line's balance cut one down."""
+    was = {e["line_id"]: e.get("suggested_cents", e["amount_cents"]) for e in (old or {}).get("sov_sheet") or []}
+    for entry in period["sheet"]:
+        if entry.get("suggested_cents") is None:
+            continue
+        name = sov_line_name(entry)
+        if any(entry is c for c in period["cut"]):
+            audit(state, job["id"], "payapp_amount_changed", f"{invoice['number']}, {name}: the amount changed by hand was more than the line's balance, so it is now {money(entry['amount_cents'])}.", "duracash")
+        elif entry["line_id"] in was and was[entry["line_id"]] != entry["suggested_cents"]:
+            audit(state, job["id"], "payapp_amount_changed", f"{invoice['number']}, {name}: suggested {money(entry['suggested_cents'])}, final stays {money(entry['amount_cents'])} as changed by hand.", "duracash")
+
+
+def set_payapp_amounts(state: dict[str, Any], job_id: str, amounts: Any, actor: str = "owner") -> dict[str, Any]:
+    """Change what the open draft bills on its schedule lines. amounts maps line id -> dollars; a
+    blank goes back to the suggested amount. The draft is drafted again with them, keeping its
+    number, paperwork and notes, and each change goes in the audit trail with the suggested and
+    final amounts. An amount can be anything from $0 to what is left on the line."""
+    job = _open_job(state, job_id)
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if not draft:
+        raise GateError("There is no draft pay app to change. Draft one first.")
+    if _with_client(draft):
+        raise GateError(f"{draft['number']} is with the client as a draft. Void it or record their answer first.")
+    if not sov.has_sov(job):
+        raise GateError("This job has no schedule of values. Enter the progress in dollars instead.")
+    if not isinstance(amounts, dict) or not amounts:
+        raise GateError("Enter an amount on at least one line.")
+    drafted = {e["line_id"]: e["amount_cents"] for e in draft.get("sov_sheet") or []}
+    # What the person sees as suggested: everything recorded and not yet billed.
+    entries = {e["line_id"]: e for e in sov.this_period(job, skip=draft, field=True)["sheet"]}
+    already = sov.billed(job, skip=draft)
+    by_id = {line["id"]: line for line in sov.lines(job)}
+    chosen = dict(draft.get("sov_overrides") or {})
+    errors, changes, to_suggested = [], [], []
+    for line_id, raw in amounts.items():
+        line = by_id.get(line_id)
+        if not line:
+            errors.append(f"Line {str(line_id)[:20]} is not on this job's schedule.")
+            continue
+        name = sov_line_name(line)
+        if line["scheduled_cents"] < 0:
+            errors.append(f"{name}: a credit comes off the pay app as it is. Its amount can't be changed.")
+            continue
+        suggested = entries[line_id]["amount_cents"]
+        was = drafted.get(line_id, 0)
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            cents = suggested
+        else:
+            try:
+                cents = sov.to_cents(raw, name)
+            except sov.SovError as exc:
+                errors.append(str(exc))
+                continue
+        room = sov.line_room(line, already["by_line"].get(line_id, 0))
+        if cents < 0:
+            errors.append(f"{name}: the amount can't be negative.")
+        elif cents > room:
+            errors.append(f"{name}: {money(cents)} is more than the {money(room)} left on the line. Extra scope is a change order.")
+        elif cents != was:
+            changes.append((name, suggested, cents))
+            if cents == suggested:
+                chosen.pop(line_id, None)
+                to_suggested.append(line)
+            else:
+                chosen[line_id] = cents
+        elif line_id in chosen and cents == suggested:
+            chosen.pop(line_id, None)
+    if errors:
+        raise GateError("Amounts not changed.", errors)
+    if not changes:
+        raise GateError("Nothing changed. Enter an amount that differs from the one on the draft.")
+    # A line back at the suggested amount bills all that is recorded on it.
+    moved = {line["id"]: line["done_milli"] for line in to_suggested}
+    for line in to_suggested:
+        line["done_milli"] = max(sov.field_total(line), already["qty_by_line"].get(line["id"], 0))
+    trial = sov.with_amounts(job, sov.this_period(job, skip=draft), chosen, skip=draft)
+    if trial["total_cents"] + sum(co["amount_cents"] for co in unsigned_cos_in_billing(job)) <= 0:
+        for line in to_suggested:
+            line["done_milli"] = moved[line["id"]]
+        raise GateError(f"That leaves nothing to bill. Leave an amount on a line, or delete {draft['number']}.")
+    for name, suggested, cents in changes:
+        audit(state, job_id, "payapp_amount_changed", f"{actor} changed {draft['number']}, {name}: suggested {money(suggested)}, final {money(cents)}.", actor)
+    draft["sov_overrides"] = chosen
+    return _redraft(state, job, draft, "with the amounts changed by hand")
 
 
 def _carry_send_choices(state: dict[str, Any], job: dict[str, Any], old: dict[str, Any], new: dict[str, Any]) -> None:
@@ -1593,7 +1707,7 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out.setdefault("closeout_packet", [])
     out.setdefault("evidence", [])
     out.setdefault("done_notes", "")
-    out["sov_view"] = _sov_view(job)
+    out["sov_view"] = _sov_view(job, state)
     _paperwork_view(state, job, out)
     out["playbook_missing"] = playbook_missing(out["payer"])
     out["playbook_blocks"] = bool(job.get("playbook_required") and out["playbook_missing"])
@@ -3714,6 +3828,8 @@ AUTO_NOTE = "Attached from the job records"
 
 
 def _made_here(label: str, job: dict[str, Any]) -> bool:
+    if sov.is_auto(job) and "backup" in label.lower():
+        return False  # one lump-sum line backs nothing up
     if "backup" in label.lower():
         return sov.has_sov(job)
     return bool(MADE_HERE_RE.search(label)) and not re.search(r"notar", label, re.I)
@@ -4012,6 +4128,9 @@ def create_job(
     assignee_id: str = "",
     assignee_name: str = "",
     payer_days: dict[str, Any] | None = None,
+    auto_schedule: bool = False,
+    schedule_lines: Any = None,
+    schedule_op: Any = "",
     today: Any = "",
     anticipated_end_on: Any = None,
 ) -> dict[str, Any]:
@@ -4030,7 +4149,10 @@ def create_job(
     start date (J8, today when blank: `today`, the page's own date, through local_today);
     assignee_id is the team member the job's tasks go to.
     payer_days (the pay app due day and payment terms an imported contract found, S12) are saved
-    on a new client only: a saved client's are changed in the Client playbook."""
+    on a new client only: a saved client's are changed in the Client playbook.
+    auto_schedule (what the New job route asks for) gives every new job a schedule of values: the
+    schedule_lines the form sent, which must add up to the contract amount or nothing is saved
+    (field "sov"), or else one lump-sum line for the contract amount."""
     name = (name or "").strip()
     customer_name = (customer_name or "").strip()
     address = (address or "").strip()
@@ -4103,6 +4225,13 @@ def create_job(
         errors["contract_cents"] = f"Enter a contract amount up to {money(MAX_AMOUNT_CENTS)}."
     if not isinstance(retainage_pct, int) or isinstance(retainage_pct, bool) or not 0 <= retainage_pct <= 20:
         errors["retainage_pct"] = "Enter a retainage from 0 to 20 percent."
+    # ---- schedule of values at New job (Nov 3 Decision 1) ----
+    schedule = None
+    if auto_schedule and schedule_lines:
+        schedule, why = _new_job_schedule(schedule_lines, schedule_op, contract_cents)
+        if why:
+            errors["sov"] = why
+    # ---- end schedule of values ----
     _refuse("Job not saved.", errors)
 
     if near:
@@ -4204,6 +4333,11 @@ def create_job(
         job["address_parts"] = parts
     if assignee_id:
         job["assignee_id"], job["assignee_name"] = assignee_id, (assignee_name or "").strip()
+    # ---- schedule of values: every new job has one (Nov 3 Decision 1) ----
+    if auto_schedule:
+        job["schedule_required"] = True
+        job["sov"] = schedule or {"op_bp": 0, "lines": [sov.auto_line(job["contract_cents"], "sov-" + secrets.token_hex(8))]}
+    # ---- end schedule of values ----
     state["jobs"].append(job)
     audit(
         state,
@@ -4216,10 +4350,28 @@ def create_job(
 
 
 
+def _new_job_schedule(raw_lines: Any, op_pct: Any, contract_cents: Any) -> tuple[dict[str, Any] | None, str]:
+    """The lines typed at New job as a schedule, or why they can't be saved."""
+    try:
+        lines = sov.clean_lines(raw_lines, [], lambda: "sov-" + secrets.token_hex(8))
+        schedule = {"op_bp": sov.to_bp(op_pct), "lines": lines}
+    except sov.SovError as exc:
+        return None, str(exc)
+    if not lines:
+        return None, ""
+    total = sov.totals({"sov": schedule})["contract_cents"]
+    if isinstance(contract_cents, int) and total != contract_cents:
+        diff = abs(total - contract_cents)
+        return None, (f"The schedule adds up to {money(total)}, {money(diff)} {'more' if total > contract_cents else 'less'} than the "
+                      f"{money(contract_cents)} contract. Change a line or the contract amount.")
+    return schedule, ""
+
+
 def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
     """Fix a job's name, address or contract number at any time. The contract amount can change
     only before the first pay app, and only without a schedule of values (change that schedule
-    instead). Retainage can change any time and applies from the next pay app (R4-07): pay apps
+    instead); a job on its one automatic lump-sum line can change it until a pay app is sent, and
+    the line and any open draft follow. Retainage can change any time and applies from the next pay app (R4-07): pay apps
     already sent keep what they held, and an open draft is drafted again at the new percent. The job code never changes: emails
     and texts are filed by it. Payer contacts are edited in the Payer Playbook.
 
@@ -4308,11 +4460,13 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
             job.pop("assignee_id", None)
             job.pop("assignee_name", None)
 
+    redraft = None
     if "contract_cents" in updates and updates["contract_cents"] != job["contract_cents"]:
         cents = updates["contract_cents"]
-        if has_pay_apps:
+        follows = _contract_follows(job)
+        if has_pay_apps and not follows:
             problems["contract_cents"] = "Use a change order: the contract amount is fixed once a pay app exists."
-        elif sov.has_sov(job):
+        elif sov.has_sov(job) and not follows:
             problems["contract_cents"] = "Change the contract from the schedule of values: this job bills from it."
         elif not isinstance(cents, int) or isinstance(cents, bool) or cents <= 0:
             problems["contract_cents"] = "Enter the contract amount, more than $0."
@@ -4326,8 +4480,11 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
                 job["completed_value_cents"] = cents + sum(
                     co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
                 )
+            if follows:
+                sov.follow_contract(job, cents)
+                job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
+                redraft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
 
-    redraft = None
     if "retainage_pct" in updates and updates["retainage_pct"] != job.get("retainage_pct", 0):
         pct = updates["retainage_pct"]
         open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
@@ -4347,7 +4504,8 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
         redraft["status"] = "void"
         redraft["voided_at"] = utcnow()
         redraft["replaced"] = True
-        changes.append(f"{redraft['number']} drafted again at {job['retainage_pct']}%")
+        changes.append(f"{redraft['number']} drafted again at {job['retainage_pct']}%"
+                       + (f" and the new contract amount" if "contract_cents" in updates and sov.is_auto(job) else ""))
         draft_invoice(state, job_id, actor="duracash", replaces=redraft, period_end=redraft.get("period_to") or "")
     if changes:
         audit(state, job_id, "edit_job", f"{actor} changed {job['name']}: " + "; ".join(changes) + ".", actor)
@@ -4408,17 +4566,19 @@ def save_sov(
     update_contract: bool = False,
     actor: str = "owner",
 ) -> dict[str, Any]:
-    """Set the job's schedule of values. Allowed until the first pay app is drafted."""
+    """Set the job's schedule of values. Allowed until the first pay app is sent (Nov 3 Decision
+    2): an open draft doesn't lock it, it is drafted again from the new schedule. A draft that is
+    with the client for review has to be answered or deleted first."""
     job = _open_job(state, job_id)
-    live = sov.live_invoices(job)
-    if live:
-        draft = _sov_draft_lock(job)
-        if draft:
-            raise GateError(f"The schedule is fixed while {draft['number']} is a draft. Delete the draft to change it.")
+    sent = [inv for inv in sov.live_invoices(job) if inv["status"] not in DRAFT_STATUSES]
+    if sent:
         raise GateError(
-            f"The schedule of values is fixed once a pay app exists ({live[0]['number']}). "
+            f"The schedule of values is fixed once a pay app has been sent ({sent[0]['number']}). "
             "Scope changes go through change orders, which add their own lines."
         )
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if _with_client(draft):
+        raise GateError(f"The schedule is fixed while {draft['number']} is with the client for review. Record their answer or delete the draft to change it.")
     if job.get("work_status") == "complete":
         raise GateError("The job is marked done. A schedule of values is set before billing starts.")
     try:
@@ -4426,11 +4586,15 @@ def save_sov(
         bp = sov.to_bp(op_pct)
     except sov.SovError as exc:
         raise GateError("Schedule of values not saved.", [str(exc)])
+    if not new_lines and job.get("schedule_required"):
+        # A new job always has a schedule: taking every line off leaves the one lump-sum line.
+        new_lines, bp = [sov.auto_line(job["contract_cents"], "sov-" + secrets.token_hex(8))], 0
     if not new_lines:
         if job.get("sov"):
             job.pop("sov", None)
             job["completed_value_cents"] = 0
             audit(state, job_id, "sov_removed", f"{actor} removed the schedule of values; progress is entered in dollars again.", actor)
+            _draft_follows_schedule(state, job, draft)
         return job
     candidate = {"op_bp": bp, "lines": new_lines}
     figures = sov.totals({"sov": candidate})
@@ -4476,7 +4640,24 @@ def save_sov(
         + (f" The earlier completed-to-date of {money(earlier)} is replaced by quantities." if earlier and not job["completed_value_cents"] else ""),
         actor,
     )
+    _draft_follows_schedule(state, job, draft)
     return job
+
+
+def _draft_follows_schedule(state: dict[str, Any], job: dict[str, Any], draft: dict[str, Any] | None) -> None:
+    """A schedule was saved on a job with an open draft: the draft is drafted again from it, keeping
+    its number and paperwork. With nothing done on the new lines yet there is nothing to bill, so
+    the draft comes off and the next one picks up its number and paperwork (draft_invoice)."""
+    if not draft:
+        return
+    draft["status"] = "void"
+    draft["voided_at"] = utcnow()
+    draft["replaced"] = True
+    audit(state, job["id"], "draft_replaced", f"{draft['number']} ({money(draft['amount_cents'])}) replaced from the new schedule of values.", "duracash")
+    draft_invoice(state, job["id"], actor="duracash", replaces=draft, period_end=draft.get("period_to") or "")
+    if not any(inv["status"] in DRAFT_STATUSES for inv in job["invoices"]):
+        job["sov_replaced_draft"] = draft["id"]
+        audit(state, job["id"], "draft_replaced", f"The new schedule has no quantities done yet, so {draft['number']} comes back when they are entered, with its number and paperwork.", "duracash")
 
 
 def record_sov_progress(
@@ -4487,7 +4668,6 @@ def record_sov_progress(
     actor: str = "owner",
     stored: Any = None,
     period_end: Any = "",
-    from_daily: str = "",
 ) -> dict[str, Any]:
     """Record quantities completed to date, and materials stored, on schedule lines; draft the
     progress pay app. `done` maps line id -> quantity to date; `stored` maps line id -> dollars of
@@ -4495,9 +4675,9 @@ def record_sov_progress(
     The period's pay app is one draft that keeps up (M1): while it is only here, new progress
     replaces it, keeping its number, paperwork and notes, the way record_progress does for dollar
     jobs. Once it is with the client for review it has to be answered or voided first.
-    from_daily is the day of the daily record the quantities came from (YYYY-MM-DD): the lines it
-    moved carry it as from_daily_on, which the schedule card shows; progress typed on the job page
-    clears it from the lines it changes."""
+    This is the only way job records reach a draft (Nov 3): a line not in `done` comes up to its
+    field total, and a figure typed that differs from the field total is the person's own, audited
+    with the suggested and final figures. It leaves the field total as it was."""
     job = _open_job(state, job_id)
     if not sov.has_sov(job):
         raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
@@ -4511,6 +4691,8 @@ def record_sov_progress(
     runs_to = period_to(job, period_end)
     done = done if isinstance(done, dict) else {}
     stored = stored if isinstance(stored, dict) else {}
+    done = {**{line["id"]: str(Decimal(sov.field_total(line)) / 1000) for line in sov.lines(job)
+               if sov.field_total(line) > line["done_milli"] and line["id"] not in done}, **done}
     # The open draft is about to be replaced: it doesn't count as billed while the new figures
     # are checked. Put back if they are refused.
     draft_status = open_draft["status"] if open_draft else ""
@@ -4528,9 +4710,12 @@ def record_sov_progress(
         if store != int(line.get("stored_cents") or 0):
             part += f", stored {money(int(line.get('stored_cents') or 0))} → {money(store)}"
         summary.append(part)
-        if from_daily and qty != line["done_milli"]:
-            line["from_daily_on"] = from_daily
-        elif qty != line["done_milli"]:
+        if "field_milli" in line and qty != line["field_milli"]:
+            audit(state, job_id, "payapp_amount_changed", f"{actor} changed the pay app quantity, {sov_line_name(line)}: "
+                  f"suggested {sov.fmt_qty(line['field_milli'])} {line['unit']} ({money(sov.extend(line['field_milli'], line['rate_cents']))}), "
+                  f"final {sov.fmt_qty(qty)} {line['unit']} ({money(sov.extend(qty, line['rate_cents']))}).", actor)
+            line.pop("from_daily_on", None)
+        elif "field_milli" not in line and qty != line["done_milli"]:
             line.pop("from_daily_on", None)
         line["done_milli"] = qty
         line["stored_cents"] = store
@@ -4540,7 +4725,7 @@ def record_sov_progress(
         state,
         job_id,
         "record_progress",
-        (f"{actor} recorded progress to date{' from the daily record' if from_daily else ''}: {'; '.join(summary)}." if summary
+        (f"{actor} recorded progress to date: {'; '.join(summary)}." if summary
          else f"{actor} billed the work recorded before, unchanged.")
         + f" Completed and stored to date {money(job['completed_value_cents'])}."
         + (f" {notes}" if notes else ""),
@@ -4593,7 +4778,7 @@ def _check_sov_progress(job: dict[str, Any], done: dict[str, Any], stored: dict[
             errors.append(f"{name}: {sov.fmt_qty(billed_qty[line_id])} {line['unit']} is already billed; the quantity to date can't go below that.")
         elif sov.line_completed(trial_line) + store > line["scheduled_cents"]:
             errors.append(f"{name}: work done plus {money(store)} stored is more than the line's {money(line['scheduled_cents'])}. Lower the stored materials as they are installed.")
-        elif sov.line_to_date(trial_line) < already["by_line"].get(line_id, 0):
+        elif sov.line_to_date(trial_line) < min(already["by_line"].get(line_id, 0), sov.line_to_date(line)):
             errors.append(f"{name}: {money(already['by_line'][line_id])} is already billed on this line; work done plus stored materials can't go below that.")
         elif qty != line["done_milli"] or store != int(line.get("stored_cents") or 0):
             changes.append((line, qty, store))
@@ -4619,6 +4804,13 @@ def over_schedule_text(line: dict[str, Any], qty: int) -> str:
         return f"{sov_line_name(line)}: {sov.fmt_qty(qty * 100)}% done is more than 100%. Extra scope is a change order."
     return (f"{sov_line_name(line)}: {sov.fmt_qty(qty)} is more than the scheduled {sov.fmt_qty(line['qty_milli'])} {line['unit']}. "
             "Extra scope is a change order.")
+
+
+def over_schedule_note(line: dict[str, Any], extra: int) -> str:
+    """What didn't fit on a line, for a job record: the part past the scheduled quantity."""
+    if str(line.get("unit", "")).upper() == "LS" and line.get("qty_milli") == 1000:
+        return f"{sov_line_name(line)}: {sov.fmt_qty(extra * 100)}% is over 100% and wasn't added. Extra scope is a change order."
+    return f"{sov_line_name(line)}: {sov.fmt_qty(extra)} {line['unit']} is over the schedule and wasn't added. Extra scope is a change order."
 
 
 def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:
@@ -4751,28 +4943,118 @@ def link_record_to_work(state: dict[str, Any], job_id: str, record_id: str, co_i
 
 
 def _sov_draft_lock(job: dict[str, Any]) -> dict[str, Any] | None:
-    """The unsent draft pay app that is the only thing keeping the schedule fixed, if there is one.
-    Wording only: the rule (no edits while any pay app exists) is the same either way."""
-    live = sov.live_invoices(job)
-    if job.get("closed") or job.get("work_status") == "complete" or not live:
+    """The draft that is with the client for review, if that is the only thing keeping the schedule
+    fixed: recording their answer or deleting it opens the schedule again."""
+    if job.get("closed") or job.get("work_status") == "complete":
         return None
+    live = sov.live_invoices(job)
     if any(inv.get("status") not in DRAFT_STATUSES for inv in live):
         return None
-    return live[0]
+    return next((inv for inv in live if _with_client(inv)), None)
 
 
-def _sov_view(job: dict[str, Any]) -> dict[str, Any]:
-    """What the job page shows for the schedule of values: per-line figures and whether it can be edited.
-    draft_lock names the draft pay app when deleting it would make the schedule editable again."""
-    editable = not job.get("closed") and job.get("work_status") != "complete" and not sov.live_invoices(job)
+def _contract_follows(job: dict[str, Any]) -> bool:
+    """The contract amount can still change and take the automatic lump-sum line with it."""
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    return (sov.is_auto(job) and not job.get("closed") and not _with_client(draft)
+            and not any(inv.get("status") not in DRAFT_STATUSES for inv in sov.live_invoices(job)))
+
+
+def _quantities_from_records(state: dict[str, Any], job: dict[str, Any], since: str) -> dict[str, dict[str, int]]:
+    """What the job records since the last sent pay app put on each line, {line id: {milli, count}}:
+    daily records' quantities that were added (those kept on the record only don't count) and
+    imported files'."""
+    found: dict[str, dict[str, int]] = {}
+    ids = set(job.get("daily_records") or [])
+    daily = [r for r in state.get("daily_records", []) if r.get("id") in ids] if ids else []
+    # Records from before quantities_added: all of a record's quantities went on, or none did.
+    rows = [(r.get("at") or "", r.get("quantities_added", [] if r.get("quantities_not_applied") else (r.get("sections") or {}).get("quantities") or []))
+            for r in daily]
+    rows += [(r.get("added_at") or "", r["quantities"]) for r in job.get("records", []) if r.get("quantities")]
+    for at, quantities in rows:
+        if at > since:
+            for row in quantities:
+                entry = found.setdefault(row["line_id"], {"milli": 0, "count": 0})
+                entry["milli"] += row["qty_milli"]
+                entry["count"] += 1
+    return found
+
+
+def _sov_period(state: dict[str, Any] | None, job: dict[str, Any]) -> dict[str, Any]:
+    """The current billing period on the job's card and progress form: everything recorded and not
+    yet billed on a sent pay app, late records included. Per line, the quantity done this period
+    (field total less what sent pay apps billed), how much of it job records added since the last
+    pay app was drafted, what it adds up to, and the suggested amount; then the open draft's own
+    figures beside them, which a later job record doesn't change. `from` and `to` are the period
+    dates the pay apps carry (period_to, the person's local day)."""
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    suggested = sov.this_period(job, skip=draft, field=True)
+    drafted = {e["line_id"]: e["amount_cents"] for e in (draft or {}).get("sov_sheet") or []}
+    chosen = (draft or {}).get("sov_overrides") or {}
+    already = sov.billed(job, skip=draft)
+    sent = [inv for inv in sov.live_invoices(job) if inv.get("status") not in DRAFT_STATUSES]
+    since = max((inv.get("created_at") or "" for inv in sent), default="")
+    records = _quantities_from_records(state, job, since) if state else {}
+    by_id = {line["id"]: line for line in sov.lines(job)}
+    rows = []
+    for entry in suggested["sheet"]:
+        line = by_id[entry["line_id"]]
+        found = records.get(entry["line_id"]) or {}
+        rows.append({
+            "line_id": entry["line_id"], "item": entry["item"], "description": entry["description"], "unit": entry["unit"],
+            "lump_sum": entry["unit"].upper() == "LS" and entry["qty_milli"] == 1000,
+            "qty_this_milli": entry["qty_milli_this"],
+            "from_records_milli": found.get("milli", 0), "record_count": found.get("count", 0),
+            "adds_up_cents": entry["work_this_cents"],
+            "suggested_cents": entry["amount_cents"], "final_cents": drafted.get(entry["line_id"], 0),
+            "changed": entry["line_id"] in chosen,
+            "credit": line["scheduled_cents"] < 0,
+            "room_cents": sov.line_room(line, already["by_line"].get(line["id"], 0)),
+        })
+    unsigned = sum(co["amount_cents"] for co in unsigned_cos_in_billing(job))
+    pct = int((draft or {}).get("retainage_pct", job.get("retainage_pct")) or 0)
+    gross = suggested["total_cents"] + unsigned
+    held = (gross * pct + 50) // 100 if pct and gross > 0 else 0
+    return {
+        "from": max((inv.get("period_to") or "" for inv in sent), default=""),
+        "to": (draft or {}).get("period_to") or "",
+        "draft": {"id": draft["id"], "number": draft["number"], "with_client": _with_client(draft)} if draft else None,
+        "lines": rows,
+        "op_suggested_cents": suggested["op_cents"], "op_final_cents": (draft or {}).get("op_cents", 0),
+        "unsigned_cents": unsigned, "retainage_pct": pct,
+        "suggested_gross_cents": gross, "suggested_retainage_cents": held, "suggested_net_cents": gross - held,
+        "final_gross_cents": (draft or {}).get("gross_cents", 0), "final_retainage_cents": (draft or {}).get("retainage_cents", 0),
+        "final_net_cents": (draft or {}).get("amount_cents", 0),
+        "changed": bool(chosen),
+    }
+
+
+def _sov_view(job: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any]:
+    """What the job page shows for the schedule of values: per-line figures, the current period and
+    whether it can be edited (until the first pay app is sent, Nov 3 Decision 2). draft_lock names
+    a draft that is with the client when answering or deleting it would open the schedule again;
+    open_draft is a draft that saving the schedule would draft again; sent names the first pay app
+    that went out; contract_follows says the Edit job form can still change the contract amount."""
+    live = sov.live_invoices(job)
+    first_sent = next((inv for inv in live if inv.get("status") not in DRAFT_STATUSES), None)
     draft = _sov_draft_lock(job)
-    draft_lock = {"id": draft["id"], "number": draft["number"]} if draft else None
+    open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    editable = not job.get("closed") and job.get("work_status") != "complete" and not first_sent and not _with_client(open_draft)
+    view = {
+        "editable": editable,
+        "draft_lock": {"id": draft["id"], "number": draft["number"]} if draft else None,
+        "open_draft": {"id": open_draft["id"], "number": open_draft["number"], "amount_cents": open_draft["amount_cents"]} if open_draft and editable else None,
+        "sent": first_sent["number"] if first_sent else "",
+        "done": job.get("work_status") == "complete" or bool(job.get("closed")),
+    }
     if not sov.has_sov(job):
-        return {"present": False, "editable": editable, "draft_lock": draft_lock}
-    figures = sov.totals(job)
+        return {"present": False, **view}
+    # The card reads the field: quantities recorded count as done whether or not they are billed yet.
+    field_lines = [sov.anticipated(job, line) for line in sov.lines(job)]
+    figures = sov.totals({"sov": {"op_bp": sov.op_bp(job), "lines": field_lines}})
     already = sov.billed(job)
     rows = []
-    for line in sov.lines(job):
+    for line in field_lines:
         to_date = sov.line_to_date(line)
         rows.append({
             **line,
@@ -4784,12 +5066,14 @@ def _sov_view(job: dict[str, Any]) -> dict[str, Any]:
         })
     return {
         "present": True,
-        "editable": editable,
-        "draft_lock": draft_lock,
+        **view,
+        "auto": sov.is_auto(job),
+        "contract_follows": _contract_follows(job),
         "op_bp": sov.op_bp(job),
         "op_billed_cents": already["op_cents"],
         "totals": figures,
         "lines": rows,
+        "period": None if job.get("closed") else _sov_period(state, job),
     }
 
 

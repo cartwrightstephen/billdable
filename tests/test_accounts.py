@@ -33,6 +33,7 @@ import server
 import storage
 import trial
 from test_mail import Sink
+from dollar_jobs import dollar_jobs
 
 PASSWORD = "correct horse battery"
 ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "DURACASH_URL", "HELPER_ADMIN_USER_IDS", "BACKUP_KEEP")
@@ -133,6 +134,7 @@ class ServerCase(unittest.TestCase):
             time.sleep(0.05)
 
 
+@dollar_jobs
 class AccountHttpTests(ServerCase):
     # ----- password reset -----
 
@@ -630,6 +632,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
+@dollar_jobs
 class ReviewFourTests(ServerCase):
     """Regressions for the fourth independent review."""
 

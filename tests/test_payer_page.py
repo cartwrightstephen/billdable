@@ -20,11 +20,13 @@ import domain
 import importer
 import server
 import storage
+from dollar_jobs import dollar_jobs
 
 PASSWORD = "correct horse battery"
 SITE = "https://app.duracash.example"
 
 
+@dollar_jobs
 class PayerPageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -518,7 +518,9 @@ export function draftFromDailyOn(j, inv) {
   const lines = (j.sov_view && j.sov_view.lines) || [];
   const days = (inv.sov_lines || []).filter(e => (e.qty_milli_this || 0) > 0)
     .map(e => (lines.find(l => l.id === e.line_id) || {}).from_daily_on).filter(Boolean);
-  return days.sort().pop() || "";
+  // Quantities recorded after the draft was made aren't on it.
+  const made = String(inv.created_at || "9999").slice(0, 10);
+  return days.filter(d => d <= made).sort().pop() || "";
 }
 
 // A job filter on a page of records (Activity log, Outbox, Everything received, Sent pay apps):

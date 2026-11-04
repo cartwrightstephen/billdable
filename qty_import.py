@@ -7,7 +7,7 @@ quantities put in place this period. Each row is matched to a line of the job's 
 item number, else its description (case and punctuation don't matter), and read the way a daily
 record's quantities are: added to the line's quantity done, a lump sum as the % done this period.
 `preview` says what each row would do and changes nothing; `apply` adds the rows that can be
-added, through record_sov_progress like a daily record (domain/daily.py), and says plainly which
+added to the field totals like a daily record (domain/daily.py), and says plainly which
 couldn't and why. Nothing typed elsewhere is lost: the import is kept on the job record.
 """
 
@@ -266,16 +266,11 @@ def basis(job: dict[str, Any], text: str, rows: list[dict[str, Any]]) -> str:
     as they were, and the line and amount each row was read as. Apply refuses another basis, so a
     preview tapped twice, or one the schedule moved on from (a daily record, another import, lines
     renumbered or renamed), never adds what the person didn't see."""
-    lines = [(line["id"], line["done_milli"], line["qty_milli"], int(line.get("stored_cents") or 0)) for line in sov.lines(job)]
+    lines = [(line["id"], sov.field_total(line), line["qty_milli"], int(line.get("stored_cents") or 0)) for line in sov.lines(job)]
     pays = [(inv["id"], inv["status"], inv.get("amount_cents")) for inv in job.get("invoices", [])]
     shown = [(r["n"], r["line_id"], r["add_milli"]) for r in rows]
     raw = json.dumps([job["id"], text, lines, pays, job.get("work_status"), bool(job.get("closed")), shown], sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
-
-
-def _done_text(line: dict[str, Any], milli: int) -> str:
-    """The line's quantity to date after adding `milli`, as record_sov_progress takes it."""
-    return str(Decimal(line["done_milli"] + milli) / 1000)
 
 
 def preview(state: dict[str, Any], job: dict[str, Any], parsed: dict[str, Any], text: str = "") -> dict[str, Any]:
@@ -283,7 +278,7 @@ def preview(state: dict[str, Any], job: dict[str, Any], parsed: dict[str, Any], 
     {rows: [{n, item, description, qty, line_id, line, done, add, new_total, scheduled, add_milli, problem}],
      warnings, blocked (why nothing can be added to this job now, or ""), can_add (rows that can)}."""
     from domain.daily import quantities_blocked
-    from domain import GateError, _check_sov_progress
+    from domain import over_schedule_text
     lines = sov.lines(job)
     prepared = _prepare(lines)
     seen: dict[str, int] = {}
@@ -293,19 +288,18 @@ def preview(state: dict[str, Any], job: dict[str, Any], parsed: dict[str, Any], 
                "line_id": "", "line": "", "done": "", "add": "", "new_total": "", "scheduled": "", "add_milli": 0, "problem": ""}
         line, why = _match(lines, raw["item"], raw["description"], prepared)
         if line:
-            out.update(line_id=line["id"], line=_name(line), done=qty_text(line, line["done_milli"]), scheduled=qty_text(line, line["qty_milli"]))
+            out.update(line_id=line["id"], line=_name(line), done=qty_text(line, sov.field_total(line)), scheduled=qty_text(line, line["qty_milli"]))
             milli, why = _amount(line, raw["qty"])
             if not why and line["id"] in seen:
                 why = f"{_name(line)} is also on row {seen[line['id']]}; only that row is added."
             if not why:
                 seen[line["id"]] = raw["n"]
-                total = line["done_milli"] + milli
+                total = sov.field_total(line) + milli
                 out.update(add=qty_text(line, milli), new_total=qty_text(line, total), add_milli=milli)
-                try:
-                    # The checks apply makes, line by line: the scheduled quantity, stored materials, what is billed.
-                    _check_sov_progress(job, {line["id"]: _done_text(line, milli)}, {})
-                except GateError as exc:
-                    why = " ".join(exc.blockers) or str(exc)
+                if total > line["qty_milli"]:
+                    why = over_schedule_text(line, total)
+                elif sov.line_completed({**line, "done_milli": total}) + int(line.get("stored_cents") or 0) > line["scheduled_cents"]:
+                    why = f"{_name(line)}: work done plus the materials stored is more than the line's scheduled value. Lower the stored materials as they are installed."
         out["problem"] = why
         if why:
             out["add_milli"] = 0
@@ -316,12 +310,13 @@ def preview(state: dict[str, Any], job: dict[str, Any], parsed: dict[str, Any], 
 
 
 def apply(state: dict[str, Any], job_id: str, text: str, actor: str, source: str = "", seen: str | None = None) -> dict[str, Any]:
-    """Add the rows that can be added to the job's schedule lines and refresh the draft pay app,
-    as a daily record's quantities are (record_sov_progress). The rows that can't are named with
+    """Add the rows that can be added to the lines' field totals, as a daily record's quantities
+    are (add_field_quantities): no draft is made or changed. The rows that can't are named with
     why, in the answer, the activity log and the job record's note; refused outright (GateError)
     when nothing can be added, and when `seen` (the preview's basis) isn't what the job and file
     give now. Returns {added: [...], not_added: [...], number}."""
-    from domain import GateError, _job, add_job_record, audit, record_sov_progress
+    from domain import GateError, _job, add_job_record, audit
+    from domain.daily import add_field_quantities
     job = _job(state, job_id)
     result = preview(state, job, parse(text), text)
     if seen is not None and seen != result["basis"]:
@@ -333,9 +328,7 @@ def apply(state: dict[str, Any], job_id: str, text: str, actor: str, source: str
     if not good:
         raise GateError("Nothing was added: no row of the file can go on this job's schedule of values.",
                         [f"Row {r['n']}: {r['problem']}" for r in bad[:20]] or ["The file has no rows with a quantity."])
-    by_id = {line["id"]: line for line in sov.lines(job)}
-    done = {r["line_id"]: _done_text(by_id[r["line_id"]], r["add_milli"]) for r in good}
-    record_sov_progress(state, job_id, done, actor=actor)
+    add_field_quantities(job, [{"line_id": r["line_id"], "qty_milli": r["add_milli"]} for r in good])
     name = (source or "a file").strip()[:120]
     added = [f"{r['line']}: +{r['add']} (now {r['new_total']})" for r in good]
     not_added = [f"Row {r['n']} ({(r['description'] or r['item'])[:60]}): {r['problem']}" for r in bad]
@@ -343,11 +336,11 @@ def apply(state: dict[str, Any], job_id: str, text: str, actor: str, source: str
     if not_added:
         note += "\n\nNot added:\n" + "\n".join(not_added)
     add_job_record(state, job_id, f"Quantities imported from {name}"[:200], "note", note, actor)
+    # On the record too, so the period's total can say how much came from it (domain._sov_period).
+    job["records"][-1]["quantities"] = [{"line_id": r["line_id"], "qty_milli": r["add_milli"]} for r in good]
     audit(state, job_id, "quantities_imported",
           f"{actor} imported quantities from {name}: {'; '.join(added)}."
           + (f" Not added: {'; '.join(not_added)}" if not_added else ""), actor)
-    draft = next((i for i in job["invoices"] if i["status"] in ("draft", "awaiting_approval")), None)
-    number = draft["number"] if draft else ""
     return {"added": [{"n": r["n"], "line": r["line"], "add": r["add"], "new_total": r["new_total"]} for r in good],
             "not_added": [{"n": r["n"], "what": (r["description"] or r["item"])[:80], "problem": r["problem"]} for r in bad],
-            "number": number}
+            "number": ""}

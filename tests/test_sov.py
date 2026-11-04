@@ -312,43 +312,44 @@ class SaveTests(unittest.TestCase):
             self.assertEqual(ctx.exception.blockers, ["Line 1 (Site cleanup): needs a price (unit rate)."])
         self.assertNotIn("sov", job)
 
-    def test_a_draft_alone_says_delete_the_draft(self):  # Oct 23 note 8: wording only, the lock is unchanged
+    def test_only_a_draft_with_the_client_or_a_sent_pay_app_fixes_the_schedule(self):  # Nov 3 Decision 2
         state = new_state()
         job = sov_job(state)
-        self.assertEqual(domain._sov_view(job)["draft_lock"], None)
         domain.record_sov_progress(state, job["id"], {line(job, "1")["id"]: "100"})
         draft = job["invoices"][-1]
+        view = domain._sov_view(job)
+        self.assertTrue(view["editable"], "an unsent draft doesn't lock it")
+        self.assertEqual(view["draft_lock"], None)
+        self.assertEqual(view["open_draft"]["number"], draft["number"])
+        # With the client for review: answer or delete first, and the card says which draft.
+        domain.send_pencil(state, job["id"])
         view = domain._sov_view(job)
         self.assertFalse(view["editable"])
         self.assertEqual(view["draft_lock"], {"id": draft["id"], "number": draft["number"]})
         with self.assertRaises(domain.GateError) as ctx:
             domain.save_sov(state, job["id"], LINES, "15")
-        self.assertEqual(str(ctx.exception), f"The schedule is fixed while {draft['number']} is a draft. Delete the draft to change it.")
-        # Deleting the draft opens it again, as before.
-        domain.void_draft(state, job["id"])
+        self.assertEqual(str(ctx.exception), f"The schedule is fixed while {draft['number']} is with the client for review. Record their answer or delete the draft to change it.")
+        domain.record_pencil_response(state, job["id"], True)
         self.assertTrue(domain._sov_view(job)["editable"])
-        domain.save_sov(state, job["id"], LINES, "15")
-        # Once a pay app is sent, the draft hint goes and the old message stays.
-        domain.record_sov_progress(state, job["id"], {line(job, "1")["id"]: "100"})
+        # Once a pay app is sent it stays fixed, even with another draft open.
         send_open(state, job)
-        self.assertEqual(domain._sov_view(job)["draft_lock"], None)
+        self.assertEqual(domain._sov_view(job)["sent"], job["invoices"][-1]["number"])
         domain.record_sov_progress(state, job["id"], {line(job, "1")["id"]: "200"})
-        self.assertEqual(domain._sov_view(job)["draft_lock"], None, "a sent pay app keeps it fixed even with a draft")
+        view = domain._sov_view(job)
+        self.assertEqual((view["editable"], view["draft_lock"]), (False, None))
         with self.assertRaises(domain.GateError) as ctx:
             domain.save_sov(state, job["id"], LINES, "15")
-        self.assertIn("fixed once a pay app exists", str(ctx.exception))
+        self.assertIn("fixed once a pay app has been sent", str(ctx.exception))
 
-    def test_a_draft_on_a_job_without_a_schedule_says_so(self):  # Oct 23 note 8
+    def test_a_job_without_a_schedule_says_why_once_a_pay_app_is_sent(self):  # Nov 3 Decision 2
         state = new_state()
         job = new_job(state, contract=3_450_000)
         domain.record_progress(state, job["id"], 100_000)
         view = domain._sov_view(job)
-        self.assertEqual((view["present"], view["editable"]), (False, False))
-        self.assertEqual(view["draft_lock"]["number"], job["invoices"][-1]["number"])
-        # The server refuses what the card holds back, with the same reason.
-        with self.assertRaises(domain.GateError) as ctx:
-            domain.save_sov(state, job["id"], LINES, "15")
-        self.assertEqual(str(ctx.exception), f"The schedule is fixed while {view['draft_lock']['number']} is a draft. Delete the draft to change it.")
+        self.assertEqual((view["present"], view["editable"]), (False, True), "a draft doesn't lock it")
+        send_open(state, job)
+        view = domain._sov_view(job)
+        self.assertEqual((view["present"], view["editable"], view["sent"]), (False, False, job["invoices"][-1]["number"]))
 
     def test_dollar_progress_refused_and_removal_restores_it(self):
         state = new_state()
@@ -457,11 +458,12 @@ class BillingTests(unittest.TestCase):
         state = new_state()
         job = sov_job(state)
         domain.record_sov_progress(state, job["id"], {line(job, "1")["id"]: "10"})
+        sent = send_open(state, job)
         with self.assertRaises(domain.GateError) as ctx:
-            domain.save_sov(state, job["id"], LINES, "10")
+            domain.save_sov(state, job["id"], LINES, "15")
         self.assertIn("fixed", str(ctx.exception))
-        # Voiding the only pay app makes it editable again.
-        domain.void_draft(state, job["id"])
+        # Pulling back the only pay app makes it editable again.
+        domain.void_sent_pay_app(state, job["id"], sent["id"], "Wrong quantity")
         domain.save_sov(state, job["id"], LINES, "15")
 
     def test_void_returns_quantities_to_unbilled(self):
@@ -528,8 +530,10 @@ class BillingTests(unittest.TestCase):
         self.assertTrue(view["lines"][1]["lump_sum"])
         domain.record_sov_progress(state, job["id"], {line(job, "1")["id"]: "100"})
         view = domain.snapshot(state)["jobs"][0]["sov_view"]
-        self.assertFalse(view["editable"])
+        self.assertTrue(view["editable"], "a draft doesn't lock it")
         self.assertEqual(view["lines"][0]["billed_cents"], 450_000)
+        send_open(state, job)
+        self.assertFalse(domain.snapshot(state)["jobs"][0]["sov_view"]["editable"])
 
 
 if __name__ == "__main__":
@@ -777,42 +781,52 @@ class LivingDraftTests(unittest.TestCase):  # M1: the period's pay app is one dr
             domain.record_sov_progress(self.state, self.job["id"], {self.rough: "150"})
         self.assertIn("with the client as a draft", str(ctx.exception))
 
-    def test_a_daily_quantity_adds_to_the_line_and_raises_the_draft(self):
+    def test_a_daily_quantity_adds_to_the_field_total_and_leaves_the_draft(self):  # Nov 3
         domain.record_sov_progress(self.state, self.job["id"], {self.rough: "100"})
-        number = self.draft()["number"]
+        first = self.draft()
         domain.add_daily_record(self.state, self.job["id"], "Rough-in east wing", "Ana", at="2026-10-30T15:00:00+00:00",
                                 details={"sections": {"quantities": [{"line_id": self.rough, "qty": "120"}, {"line_id": self.panel, "qty": "25"}]}})
-        self.assertEqual(line(self.job, "1")["done_milli"], 220_000)
-        self.assertEqual(line(self.job, "2")["done_milli"], 250, "25% of a lump sum")
+        self.assertEqual(sov.field_total(line(self.job, "1")), 220_000)
+        self.assertEqual(sov.field_total(line(self.job, "2")), 250, "25% of a lump sum")
+        self.assertEqual(line(self.job, "1")["done_milli"], 100_000, "the draft's basis stays")
         self.assertEqual(line(self.job, "1")["from_daily_on"], "2026-10-30")
-        draft = self.draft()
-        self.assertEqual(draft["number"], number)
-        # 220 x $45 = $9,900 + 25% of $12,000 = $3,000; base $12,900 + 15% = $14,835.
-        self.assertEqual(draft["gross_cents"], 1_483_500)
+        self.assertIs(self.draft(), first)
         rec = self.job["records"][-1]
         self.assertEqual(rec["label"], "Diary entry 2026-10-30: 120 ea Rough-in wiring, 25% Panel and feeders")
-        # Typed on the job page later, the line no longer says it came from a daily record.
+        # Progress Pay App brings it in, the same number.
+        domain.record_sov_progress(self.state, self.job["id"], {})
+        draft = self.draft()
+        self.assertEqual(draft["number"], first["number"])
+        # 220 x $45 = $9,900 + 25% of $12,000 = $3,000; base $12,900 + 15% = $14,835.
+        self.assertEqual(draft["gross_cents"], 1_483_500)
+        # A different figure typed on the form: the line no longer says it came from a diary entry.
         domain.record_sov_progress(self.state, self.job["id"], {self.rough: "230"})
         self.assertNotIn("from_daily_on", line(self.job, "1"))
         self.assertEqual(line(self.job, "2")["from_daily_on"], "2026-10-30")
+        self.assertEqual(sov.field_total(line(self.job, "1")), 220_000, "the field total stays what the field recorded")
 
-    def test_a_daily_quantity_creates_the_draft_when_there_is_none(self):
+    def test_a_daily_quantity_makes_no_draft(self):  # Nov 3
         domain.add_daily_record(self.state, self.job["id"], "Started", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "10"}]}})
+        self.assertEqual(self.job["invoices"], [])
+        domain.record_sov_progress(self.state, self.job["id"], {})
         self.assertEqual(self.draft()["gross_cents"], 51_750)  # 10 x $45 + 15%
 
-    def test_a_daily_quantity_over_the_schedule_is_kept_on_the_record_not_added(self):
-        # The daily record is never lost (B5 of the Oct 30 review): saved, its quantities not added, and why.
-        domain.record_sov_progress(self.state, self.job["id"], {self.rough: "390"})
+    def test_a_daily_quantity_over_the_schedule_stops_at_it_and_says_so(self):  # Nov 3
         records = len(self.job["records"])
-        domain.add_daily_record(self.state, self.job["id"], "Too much", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "11"}]}})
+        domain.add_daily_record(self.state, self.job["id"], "Lots", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "390"}]}})
+        domain.add_daily_record(self.state, self.job["id"], "Too much", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "11"}, {"line_id": self.panel, "qty": "5"}]}})
         saved = self.state["daily_records"][-1]
-        self.assertIn("1. Rough-in wiring: 401 is more than the scheduled 400 ea. Extra scope is a change order.", saved["quantities_not_applied"])
-        self.assertEqual(line(self.job, "1")["done_milli"], 390_000)
-        self.assertEqual(len(self.job["records"]), records + 1)
+        self.assertIn("1. Rough-in wiring: 1 ea is over the schedule and wasn't added.", saved["quantities_not_applied"])
+        self.assertEqual(sov.field_total(line(self.job, "1")), 400_000)
+        self.assertEqual(sov.field_total(line(self.job, "2")), 50, "the other line still goes on")
+        self.assertEqual(len(self.job["records"]), records + 2)
 
-    def test_daily_quantities_wait_for_a_draft_with_the_client(self):
+    def test_daily_quantities_keep_coming_while_a_draft_is_with_the_client(self):  # Nov 3, Decision 5
         domain.record_sov_progress(self.state, self.job["id"], {self.rough: "100"})
         domain.send_pencil(self.state, self.job["id"])
+        draft = self.draft()
         domain.add_daily_record(self.state, self.job["id"], "More", details={"sections": {"quantities": [{"line_id": self.rough, "qty": "5"}]}})
-        self.assertIn("with the client for their review", self.state["daily_records"][-1]["quantities_not_applied"])
-        self.assertEqual(line(self.job, "1")["done_milli"], 100_000)
+        self.assertNotIn("quantities_not_applied", self.state["daily_records"][-1])
+        self.assertEqual(sov.field_total(line(self.job, "1")), 105_000)
+        self.assertIs(self.draft(), draft)
+        self.assertEqual(draft["sov_lines"][0]["qty_milli_to_date"], 100_000)

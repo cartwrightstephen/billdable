@@ -45,12 +45,21 @@ export function qtyJobs(jobs) {
 // row by row, and Add to the schedule of values for the rows that can go on.
 export function qtyImportHtml() {
   const jobs = qtyJobs(state.jobs);
-  if (!jobs.length) return emptyState("No job has a schedule of values", "", `<button class="btn" data-action="nav" data-view="jobs">Go to Jobs</button>`);
+  // Quantities go on schedule lines. Without any, the card says why and opens a job (views.import
+  // leaves the card off with no open job at all).
+  if (!jobs.length) {
+    const ready = sovReadyJobs(state.jobs);
+    const first = ready[0] || openJobs(state.jobs)[0];
+    return `<p class="sub">${ready.length
+      ? "Quantities go on a job's schedule of values, and none of your open jobs has one yet. Set one up on the job, then come back with the quantities."
+      : "Quantities go on a job's schedule of values. Your open jobs bill in dollars: a pay app was sent on each before it had a schedule."}</p>
+      <button class="btn secondary small" data-action="open-job" data-id="${first.id}" data-focus="#sov-card">Open ${first.name}</button>`;
+  }
   const done = qtyResult ? `<div class="qty-result">
       <p><strong>${qtyResult.added.length} line${qtyResult.added.length === 1 ? "" : "s"} added${qtyResult.number ? ` to ${qtyResult.number}` : ""}.</strong></p>
       ${qtyResult.added.map(a => `<div class="list-item">${a.line}: +${a.add} (now ${a.new_total})</div>`).join("")}
       ${qtyResult.not_added.length ? `<h3>Not added</h3>${qtyResult.not_added.map(r => `<div class="list-item">Row ${r.n} (${r.what}): ${r.problem}</div>`).join("")}` : ""}
-      ${qtyResult.job_id ? `<div class="form-inline"><button class="btn small secondary" data-action="open-job" data-id="${qtyResult.job_id}">Open the job</button></div>` : ""}
+      ${qtyResult.job_id ? `<div class="form-inline"><button class="btn small secondary" data-action="open-job" data-id="${qtyResult.job_id}" data-focus="#sov-card">Open the job</button></div>` : ""}
     </div>` : "";
   if (qtyPreview) {
     const p = qtyPreview;
@@ -92,14 +101,16 @@ function qtyJobPicked() {
 
 const MAX_QTY_XLSX = 700 * 1024;   // base64 of it has to fit in a 1 MB request, as on Payments
 
+// The open jobs whose schedule can still be set; with none, Import leaves its card off.
+function sovReadyJobs(jobs) {
+  return jobs.filter(j => !j.closed && j.sov_view && j.sov_view.editable);
+}
+
 function sovPickerHtml() {
-  const open = state.jobs.filter(j => !j.closed);
-  if (!open.length) return `<p class="sub">Add a job first; its schedule of values is pasted on the job page.</p>`;
-  // Only a job whose schedule can still be set (no pay app yet, work not done): picking another
+  // Only a job whose schedule can still be set (no pay app sent, work not done): picking another
   // would open a schedule that can't change (D4, sov_view.editable from domain._sov_view).
-  const ready = open.filter(j => j.sov_view && j.sov_view.editable);
-  if (!ready.length) return `<p class="sub">Every open job has a pay app out or its work done, so its schedule of values is set.</p>`;
-  return `<p class="sub">Paste the lines from your estimate, a spreadsheet or a PDF onto a job's schedule. Set it before the job's first pay app.</p>
+  const ready = sovReadyJobs(state.jobs);
+  return `<p class="sub">Paste the lines from your estimate, a spreadsheet or a PDF onto a job's schedule. A schedule can be changed until the job's first pay app is sent.</p>
       <div class="form-inline">
         <label for="sov-import-job" class="inline-label">Job</label>
         <select id="sov-import-job">${ready.map(j => `<option value="${j.id}">${j.name} (${j.code})</option>`).join("")}</select>
@@ -130,14 +141,14 @@ export const views = {
       </div>
       ${qboCardHtml(true)}
       ${paymentsImportHtml()}
-      <div class="card" id="qty-import">
+      ${openJobs(state.jobs).length ? `<div class="card" id="qty-import">
         <h2>Quantities done</h2>
         ${qtyImportHtml()}
-      </div>
-      <div class="card" id="sov-import">
+      </div>` : ""}
+      ${sovReadyJobs(state.jobs).length ? `<div class="card" id="sov-import">
         <h2>Schedule of values</h2>
         ${sovPickerHtml()}
-      </div>
+      </div>` : ""}
       <p class="sub">Emails and texts forwarded to Duracash arrive in the <a href="/communications" data-action="nav" data-view="inbox">Inbox</a>.</p>
     `;
   },

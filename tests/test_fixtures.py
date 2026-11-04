@@ -27,10 +27,12 @@ import load_test_contractor as loader
 import server
 import sov
 import storage
+from dollar_jobs import dollar_jobs
 
 IMPORT, BAD = loader.IMPORT, loader.BAD
 
 
+@dollar_jobs
 class FixtureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

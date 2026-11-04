@@ -9,7 +9,7 @@ import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
 import { may, perms, render, post, backButton, emptyState, nav, EMAIL_PATTERN } from "../app-core.js";
-import { continuationHtml } from "../sov.js";
+import { continuationHtml, sovPeriodHtml } from "../sov.js";
 import { companyGapsHtml } from "../setup.js";
 import { QBO_READY, qboCsvLink, OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
 import { shortPayCardHtml, owedText, emailFailed, sendsTo } from "./job.js";
@@ -125,6 +125,7 @@ export const views = {
         ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
         ${inv.progress_notes ? `<p class="payapp-notes"><span class="label">Notes</span> ${inv.progress_notes}</p>` : ""}
       </div>
+      ${draft && j.sov_view && j.sov_view.period && j.sov_view.period.draft && j.sov_view.period.draft.id === inv.id ? `<div class="card">${sovPeriodHtml(j, true)}</div>` : ""}
       ${continuationHtml(inv, j)}
       <div class="card">
         <h2>Paperwork</h2>

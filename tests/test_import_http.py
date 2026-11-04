@@ -22,6 +22,7 @@ import helper
 import importer
 import server
 import storage
+from dollar_jobs import dollar_jobs
 
 PASSWORD = "correct horse battery"
 EML = (b"From: Kim Park <ap@park.example>\r\nTo: jobs@example.com\r\nSubject: CO 2 signed for Elm addition\r\n"
@@ -59,6 +60,7 @@ def xlsx_bytes(rows):
     return buf.getvalue()
 
 
+@dollar_jobs
 class ImportHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

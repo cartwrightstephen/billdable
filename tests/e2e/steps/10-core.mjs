@@ -127,14 +127,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await row.locator(".pill", { hasText: "Not billed yet" }).waitFor();
     await row.getByRole("button", { name: "Bill progress" }).click();
     await p.getByRole("heading", { name: "First porch" }).waitFor();
-    // The progress form says where the job stands and what the pay app comes to (R3-01).
     await p.locator(".next-card .primary-action", { hasText: "Progress pay app" }).click();
-    await p.locator(".progress-context", { hasText: "Billed so far $0.00 of $12,000.00 contract (0%)" }).waitFor();
-    await p.fill("#progress-draw", "3,000");
-    assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $3,000.00.");
-    await p.locator('[data-action="progress-mode"][data-mode="percent"]').click();
-    await p.fill("#progress-pct", "50");
-    assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $6,000.00.");
+    // A new job's one lump-sum line: % done, with the period's total above it.
+    await p.locator('[data-form-key="sovprogress"]').waitFor();
+    await p.locator(".sov-progress .sov-period", { hasText: "This billing period" }).waitFor();
+    assert.equal(await p.locator('[data-sovp][data-lump="1"]').count(), 1);
     // The only open job is picked on New job record.
     await p.goto(BASE + "/jobs/daily");
     await p.locator("#daily-job").waitFor();
@@ -182,7 +179,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         ap_email: "rae@example.com", contract_cents: 2000000 })).json();
       const id = st.jobs[0].id;
       await post(`/api/jobs/${id}/add-record`, { label: "Deck notes", kind: "note", note: "Joists in" });
-      await post(`/api/jobs/${id}/progress`, { period_cents: 500000 });
+      const line = st.jobs[0].sov.lines[0].id;
+      await post(`/api/jobs/${id}/sov-progress`, { done: { [line]: "0.25" } });
       return id;
     }, `draft-${Date.now()}@example.com`);
     await p.goto(`${BASE}/jobs/${jobId}`);
