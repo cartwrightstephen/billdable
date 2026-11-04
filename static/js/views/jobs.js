@@ -332,6 +332,38 @@ async function fileContract(jobId, r) {
   await load();
 }
 
+// ---------- New job: the schedule of values ----------
+// Asked here (Nov 3 Decision 1). Left blank, the server gives the job one lump-sum line for the
+// contract amount (domain.create_job). Lines that don't add up to the contract are refused with
+// nothing saved (field "sov"). A contract read that found a schedule has its own box above.
+let njSovRows = 3;
+onSessionEnd(() => { njSovRows = 3; });
+
+function newJobSovHtml() {
+  const r = contractRead && contractRead.form === "newjob" ? contractRead : null;
+  if (r && r.sov && r.useSov !== false) return "";
+  const box = (i, name, label, cls, extra = "") => `<td data-label="${label}"><input id="nj-sov-${name}-${i}" class="sov-in ${cls}" data-field="sov_${name}_${i}" value="${esc(draftValue("newjob", `sov_${name}_${i}`))}" aria-label="Line ${i + 1}: ${label}"${extra}></td>`;
+  const rows = Array.from({ length: njSovRows }, (_, i) => `<tr>
+      <td class="sov-desc-cell"><input id="nj-sov-desc-${i}" class="sov-in sov-desc" data-field="sov_desc_${i}" value="${esc(draftValue("newjob", `sov_desc_${i}`))}" placeholder="Conduit" aria-label="Line ${i + 1}: description"></td>
+      ${box(i, "qty", "Qty", "sov-num", ' inputmode="decimal" placeholder="1"')}${box(i, "unit", "Unit", "sov-unit", ' placeholder="LS"')}${box(i, "rate", "Unit rate $", "sov-num", ' inputmode="decimal" placeholder="0.00"')}
+    </tr>`).join("");
+  return `<div class="nj-sov"><h3>Schedule of values</h3>
+    <p class="sub">Enter the lines, or leave them blank for one lump-sum line for the contract amount. You can change the schedule on the job page until the first pay app is sent.</p>
+    <p class="form-error" id="nj-sov-err" role="alert" hidden></p>
+    <div class="table-wrap sov-wrap"><table class="sov-table sov-edit"><tr class="head-row"><th>Description</th><th>Qty</th><th>Unit</th><th>Unit rate $</th></tr>${rows}</table></div>
+    <button class="btn small secondary" data-action="nj-sov-add">Add line</button></div>`;
+}
+
+// The lines typed on the form, as POST /api/jobs takes them.
+function newJobSovLines(v) {
+  const lines = [];
+  for (let i = 0; i < njSovRows; i++) {
+    const line = { description: v[`sov_desc_${i}`] || "", quantity: v[`sov_qty_${i}`] || "", unit: v[`sov_unit_${i}`] || "", rate: v[`sov_rate_${i}`] || "" };
+    if (line.description || line.quantity || line.rate) lines.push(line);
+  }
+  return lines;
+}
+
 // ---------- Add to a job record (J4) ----------
 
 function addRecordCardHtml() {
@@ -425,6 +457,7 @@ export const views = {
               ${f({ name: "note", id: "nj-note", label: "Notes (kept on the job record)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
             </div>
           </details>
+          ${newJobSovHtml()}
           <button class="btn" data-action="create-job">Save job</button>
         </div>` : ""}
       ${open.length ? `<div class="table-wrap">
@@ -478,6 +511,7 @@ export const views = {
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in app.js.
 export const actions = {
+  "nj-sov-add": () => { njSovRows = Math.min(njSovRows + 1, 50); render(); document.getElementById(`nj-sov-desc-${njSovRows - 1}`)?.focus(); },
   "create-job": async () => {
     const v = formValues("newjob");
     const errors = jobFieldErrors(v);
@@ -520,11 +554,16 @@ export const actions = {
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
       contract_cents: amount.cents, retainage_pct: ret.value, ...days,
       new_customer: !known && keptNames.newjob === v.customer,
+      sov_lines: newJobSovLines(v),
     }, { formKey: "newjob", close: "newjob" });
     if (r && !r.ok) showSameCustomer("newjob", "nj", r.data);
+    const sovError = r && !r.ok && r.data && r.data.fields && r.data.fields.sov;
+    const sovLine = document.getElementById("nj-sov-err");
+    if (sovLine) { sovLine.textContent = sovError || ""; sovLine.hidden = !sovError; if (sovError) sovLine.scrollIntoView?.({ block: "center" }); }
     if (!r || !r.ok) return;
     delete keptNames.newjob;
     delete moreDetails.newjob;
+    njSovRows = 3;
     toast("Job saved");
     const made = state.jobs.find(j => !before.has(j.id));
     if (made) {

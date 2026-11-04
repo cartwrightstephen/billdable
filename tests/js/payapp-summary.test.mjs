@@ -39,5 +39,5 @@ test("a draft whose quantities came from daily records says so, as the schedule 
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState({ company: { name: "Pine" }, jobs: [j], payers: [{ id: "p1", name: "Ridge" }], inbox: [], email_log: [], email_log_total: 0 });
   page.setLocation("payapp-detail", "ja", "i2");
-  assert.match(reg.views.payappDetail(), /<p class="sov-daily payapp-daily">Updated from daily records on Oct 30, 2026<\/p>/);
+  assert.match(reg.views.payappDetail(), /<p class="sov-daily payapp-daily">Updated from job records on Oct 30, 2026<\/p>/);
 });

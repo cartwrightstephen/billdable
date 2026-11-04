@@ -116,23 +116,21 @@ class QuantityApplyTests(unittest.TestCase):
     def test_apply_adds_like_a_daily_record_and_keeps_what_it_couldnt(self):
         out = qty_import.apply(self.state, self.job["id"], LOG, "Pat", "foreman-log.csv")
         lines = domain.sov.lines(self.job)
-        self.assertEqual((lines[0]["done_milli"], lines[1]["done_milli"]), (30_000, 250))
-        draft = self.job["invoices"][-1]
-        self.assertEqual((draft["status"], out["number"]), ("draft", draft["number"]))
+        self.assertEqual((domain.sov.field_total(lines[0]), domain.sov.field_total(lines[1])), (30_000, 250))
+        self.assertEqual((self.job["invoices"], out["number"]), ([], ""), "only Progress Pay App makes a draft")
         self.assertEqual([a["line"] for a in out["added"]], ["1. Rough-in wiring", "2. Panel and feeders"])
         self.assertEqual(out["not_added"][0]["what"], "Gutters")
         record = self.job["records"][-1]
         self.assertEqual(record["label"], "Quantities imported from foreman-log.csv")
         self.assertIn("Not added:\nRow 4 (Gutters): No line", record["note"])
         self.assertIn("quantities_imported", [a["action"] for a in self.state["audit"]])
-        # A second file adds to the done-to-date and keeps the same draft number (the living draft).
+        # A second file adds to the field total.
         qty_import.apply(self.state, self.job["id"], "Item,Qty\n1,10\n", "Pat", "day2.csv")
-        self.assertEqual(domain.sov.lines(self.job)[0]["done_milli"], 40_000)
-        live = [i for i in self.job["invoices"] if i["status"] in domain.DRAFT_STATUSES]
-        self.assertEqual([i["number"] for i in live], [draft["number"]])
+        self.assertEqual(domain.sov.field_total(domain.sov.lines(self.job)[0]), 40_000)
 
     def test_amounts_follow_the_schedule_in_whole_cents(self):
         qty_import.apply(self.state, self.job["id"], "Item,Qty\n1,30\n", "Pat")
+        domain.record_sov_progress(self.state, self.job["id"], {})
         draft = self.job["invoices"][-1]
         gross = 30 * 4500 + domain.sov.markup(30 * 4500, 1500)
         self.assertEqual(draft["amount_cents"] + draft["retainage_cents"], gross)
@@ -155,15 +153,18 @@ class QuantityApplyTests(unittest.TestCase):
         self.assertIn("changed since this file was read", str(ctx.exception))
         p = qty_import.preview(self.state, self.job, qty_import.parse(LOG), LOG)
         qty_import.apply(self.state, self.job["id"], LOG, "Pat", seen=p["basis"])
-        self.assertEqual(domain.sov.lines(self.job)[0]["done_milli"], 35_000)
+        self.assertEqual(domain.sov.field_total(domain.sov.lines(self.job)[0]), 35_000)
 
     def test_a_draft_with_the_client_for_review_is_left_alone(self):
+        # Its figures stay as the client saw them; the field keeps recording (Nov 3).
         qty_import.apply(self.state, self.job["id"], "Item,Qty\n1,30\n", "Pat")
-        self.job["invoices"][-1]["pencil_status"] = "sent"
-        with self.assertRaises(domain.GateError) as ctx:
-            qty_import.apply(self.state, self.job["id"], "Item,Qty\n1,10\n", "Pat")
-        self.assertIn("with the client for their review", str(ctx.exception))
-        self.assertEqual(domain.sov.lines(self.job)[0]["done_milli"], 30_000)
+        domain.record_sov_progress(self.state, self.job["id"], {})
+        domain.send_pencil(self.state, self.job["id"])
+        draft = self.job["invoices"][-1]
+        gross = draft["gross_cents"]
+        qty_import.apply(self.state, self.job["id"], "Item,Qty\n1,10\n", "Pat")
+        self.assertEqual(domain.sov.field_total(domain.sov.lines(self.job)[0]), 40_000)
+        self.assertEqual((self.job["invoices"][-1]["id"], draft["gross_cents"]), (draft["id"], gross))
 
 
 class QuantityHuntTests(unittest.TestCase):
@@ -255,7 +256,7 @@ class QuantityHuntTests(unittest.TestCase):
         out = qty_import.apply(self.state, self.job["id"], text, "Pat", seen=p["basis"])
         self.assertEqual([a["line"] for a in out["added"]], ["2. Panel and feeders"])
         self.assertEqual([n["n"] for n in out["not_added"]], [2])
-        self.assertEqual([l["done_milli"] for l in domain.sov.lines(self.job)], [0, 100])
+        self.assertEqual([domain.sov.field_total(l) for l in domain.sov.lines(self.job)], [0, 100])
 
     def test_a_quoted_cell_with_a_line_break_is_one_row(self):
         text = 'Item,Description,Qty\n1,"Rough-in\nwiring",30\n2,Panel and feeders,10\n'
@@ -361,7 +362,7 @@ class ImportExportHttpTests(ServerCase):
         self.assertEqual(res.status, 409, "the same preview can't be added twice")
         self.assertIn("Read the file again", out["error"])
         res, st = self.request("GET", "/api/state", cookie=cookie)
-        self.assertEqual([l["done_milli"] for l in st["jobs"][0]["sov"]["lines"]], [30_000, 250])
+        self.assertEqual([l["field_milli"] for l in st["jobs"][0]["sov"]["lines"]], [30_000, 250])
         data = xlsx_bytes([["Item", "Qty"], ["1", 10]])
         res, p = self.request("POST", "/api/import/quantities/preview", {"job_id": job_id, "xlsx": base64.b64encode(data).decode()}, cookie=cookie)
         self.assertEqual((res.status, p["rows"][0]["new_total"]), (200, "40 ea"), p)

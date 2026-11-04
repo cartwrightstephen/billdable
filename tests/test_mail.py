@@ -28,6 +28,7 @@ import mailer
 import monthly
 import server
 import storage
+from dollar_jobs import dollar_jobs
 
 PASSWORD = "correct horse battery"
 MAIL_ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USER", "SMTP_PASSWORD", "MAIL_FROM", "MAIL_DAILY_LIMIT")
@@ -234,6 +235,7 @@ class EmailFailureTests(unittest.TestCase):
                          "each change order counts on its own, and a signed one no longer matters")
 
 
+@dollar_jobs
 class MailHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

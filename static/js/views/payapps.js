@@ -9,7 +9,7 @@ import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
 import { may, perms, render, post, backButton, emptyState, nav, EMAIL_PATTERN } from "../app-core.js";
-import { continuationHtml } from "../sov.js";
+import { continuationHtml, sovPeriodHtml } from "../sov.js";
 import { companyGapsHtml } from "../setup.js";
 import { QBO_READY, qboCsvLink, OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
 import { shortPayCardHtml, owedText, emailFailed, sendsTo } from "./job.js";
@@ -94,7 +94,7 @@ export const views = {
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
       <p class="sub">${invoicePill(inv)} <a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(inv.amount_cents)}</p>
-      ${fromDaily ? `<p class="sov-daily payapp-daily">Updated from daily records on ${fmtDate(fromDaily)}</p>` : ""}
+      ${fromDaily ? `<p class="sov-daily payapp-daily">Updated from job records on ${fmtDate(fromDaily)}</p>` : ""}
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a></p>
       ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
@@ -125,6 +125,7 @@ export const views = {
         ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
         ${inv.progress_notes ? `<p class="payapp-notes"><span class="label">Notes</span> ${inv.progress_notes}</p>` : ""}
       </div>
+      ${draft && j.sov_view && j.sov_view.period && j.sov_view.period.draft && j.sov_view.period.draft.id === inv.id ? `<div class="card">${sovPeriodHtml(j, true)}</div>` : ""}
       ${continuationHtml(inv, j)}
       <div class="card">
         <h2>Paperwork</h2>

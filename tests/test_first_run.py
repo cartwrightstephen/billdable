@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import auth
 import server
 from test_accounts import ServerCase
+from dollar_jobs import dollar_jobs
 
 PASSWORD = "correct horse battery"
 
@@ -35,6 +36,7 @@ def new_job_body(**over):
     return body
 
 
+@dollar_jobs
 class FirstRunTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

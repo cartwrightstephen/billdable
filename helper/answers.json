@@ -421,7 +421,7 @@
         "rename",
         "change contract"
       ],
-      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, the address (Street address, City, State and ZIP; a job saved with a one-line address shows it all in Street until you split it), contract number, Start date and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; after that, use a change order. The job code stays the same. Tap Save changes. Who signs off, the email for pay apps and the paperwork list are in Jobs, Client playbook. In the Edit job form an owner also sees Delete job. It shows while the job has no payments and no pay app other than a deleted draft, so tap Delete draft first if one is open. If a pay app was sent or a payment came in, finish the job instead.",
+      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, the address (Street address, City, State and ZIP; a job saved with a one-line address shows it all in Street until you split it), contract number, Start date and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; a new job still on its one lump-sum line can change it until the first pay app is sent, and the line follows. After that, use a change order. The job code stays the same. Tap Save changes. Who signs off, the email for pay apps and the paperwork list are in Jobs, Client playbook. In the Edit job form an owner also sees Delete job. It shows while the job has no payments and no pay app other than a deleted draft, so tap Delete draft first if one is open. If a pay app was sent or a payment came in, finish the job instead.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -593,7 +593,7 @@
         "completed to date",
         "monthly"
       ],
-      "answer": "Open the job and tap Progress pay app. Without a schedule of values, pick This draw $ (the work since the last pay app), Total done so far $ or % complete, and enter it; the line below shows what the pay app comes to. With a schedule of values, enter how much of each line is done to date. Tap Draft progress pay app. Duracash holds back retainage and lists the paperwork from the client's settings. The job stays in progress.",
+      "answer": "Open the job and tap Progress pay app. Each schedule of values line is filled in with the total recorded to date, so what job records added up to is already there; change a figure to bill a different quantity. A lump-sum line is a % done. A job from before schedules were required with no schedule asks for This draw $, Total done so far $ or % complete instead. Tap Draft progress pay app. Duracash holds back retainage and lists the paperwork from the client's settings. On the draft you can still change the dollars on any line. The job stays in progress.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -770,7 +770,7 @@
         "g703",
         "continuation"
       ],
-      "answer": "A schedule of values breaks the contract into lines: a quantity at a unit rate (or a lump sum), with overhead and profit on top. Before the first pay app, open the job and tap Set up schedule of values. Paste rows straight from Excel, Google Sheets, a CSV or your estimate PDF and tap Read pasted rows, or type them; then tap Save schedule. A row with a count but no price, like 3 loads, comes in with the unit rate blank and says it needs a price: enter it before you save. The total has to equal the contract. Once a pay app is drafted the schedule is fixed; if that pay app is still a draft, the schedule card says so and an owner can tap Delete draft there to change it or to set one up. Each progress pay app then asks how much of each line is done to date and bills the difference line by line, like an AIA G703 continuation sheet. Signed change orders add their own lines.",
+      "answer": "A schedule of values breaks the contract into lines: a quantity at a unit rate (or a lump sum), with overhead and profit on top. Every new job has one: enter the lines on New job, or leave them blank and the job gets one lump-sum line for the contract amount. To change it, open the job and tap Enter schedule lines or Edit schedule on the Schedule of values card. Paste rows straight from Excel, Google Sheets, a CSV or your estimate PDF and tap Read pasted rows, or type them; then tap Save schedule. A row with a count but no price, like 3 loads, comes in with the unit rate blank and says it needs a price: enter it before you save. The total has to equal the contract. A schedule can be changed until the first pay app is sent, and a draft is updated from it. While a draft is with the client for their review the lines and rates are fixed, but quantities keep coming in. An older job with no schedule can add one until its first pay app is sent; after that it keeps billing in dollars, and the card says so. Quantities from job records add up on the card, under This billing period, to a suggested pay app value. Signed change orders add their own lines.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -780,6 +780,29 @@
           "label": "Go to Jobs"
         }
       ],
+      "follow_ups": []
+    },
+    {
+      "id": "sov-suggested",
+      "category": "Pay apps",
+      "questions": [
+        "How is the suggested pay app value worked out?",
+        "Can I change the suggested pay app amount?",
+        "Change the amount on a pay app line",
+        "What is the billing period?"
+      ],
+      "keywords": [
+        "suggested",
+        "billing period",
+        "override",
+        "change amount",
+        "anticipated",
+        "suggested value"
+      ],
+      "answer": "The Schedule of values card on the job shows This billing period: everything recorded and not yet billed, including late records. For each line it shows the quantity done, how much came from job records, what it adds up to and the suggested amount, then overhead and profit, retainage and the suggested amount due. You decide what is billed. On the Progress pay app form, change a line's quantity. On a draft, type a different amount in dollars in the line's box on the job's card or the pay app's page and tap Save amounts; clear the box or tap Back to the suggested amounts to undo it. An amount can be anything from $0 to what is left on the line. Your amount stays when more job records come in, with the new suggestion beside it, and the Activity log keeps the suggested and final amounts. A line billed short is suggested again on the next pay app. A final pay app bills all that is left.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
       "follow_ups": []
     },
     {
@@ -1436,7 +1459,7 @@
         "daily",
         "log"
       ],
-      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app, which then says Updated from daily records on that day. When they can't be added (the draft is with the client for their review, the job is marked done, or a line would go past what is scheduled, a lump sum past 100%), the daily record is still saved with them on it, and it says why under Quantities. Or paste many days of notes at once on Import/Export, Import; they wait in the Inbox to be added to the job. Records live on the job record and can be attached to a pay app's paperwork as backup.",
+      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line's total and move the suggested pay app value on the job's Schedule of values card; a lump-sum line takes the % done today. They don't change a draft: Progress pay app brings them in. The part of a quantity past what is scheduled, or a lump sum past 100%, isn't added, and neither are quantities on a job marked done. The daily record is still saved with them on it, and it says why under Quantities. Or paste many days of notes at once on Import/Export, Import; they wait in the Inbox to be added to the job. Records live on the job record and can be attached to a pay app's paperwork as backup.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1463,7 +1486,7 @@
         "takeoff",
         "qty"
       ],
-      "answer": "On Import/Export, Import, under Quantities done, pick the Job (only jobs with a schedule of values are listed), then tap Choose the file for a CSV or Excel file, or paste the rows and tap Read quantities. Each row needs the item number or description of a schedule line and the quantity done this period; a lump sum line takes the % done this period. The table shows each row: the line, Done to date, Add, New total and Scheduled, and why a row can't be added (no line matches, the item number and description name different lines, the quantity is in another unit or is a % on a line that isn't a lump sum, it would go past the scheduled quantity or, with stored materials, past the line's value, the line is twice in the file). Nothing changes until you tap Add to the schedule of values: then the rows that can go on add to each line's quantity done and update the draft pay app, the same as a daily record's quantities. What couldn't be added is listed, and the import is kept on the job record.",
+      "answer": "On Import/Export, Import, under Quantities done, pick the Job (only jobs with a schedule of values are listed), then tap Choose the file for a CSV or Excel file, or paste the rows and tap Read quantities. Each row needs the item number or description of a schedule line and the quantity done this period; a lump sum line takes the % done this period. The table shows each row: the line, Done to date, Add, New total and Scheduled, and why a row can't be added (no line matches, the item number and description name different lines, the quantity is in another unit or is a % on a line that isn't a lump sum, it would go past the scheduled quantity or, with stored materials, past the line's value, the line is twice in the file). Nothing changes until you tap Add to the schedule of values: then the rows that can go on add to each line's total and move the suggested pay app value, the same as a daily record's quantities. Progress pay app bills them. What couldn't be added is listed, and the import is kept on the job record.",
       "handler": null,
       "needs_job": false,
       "actions": [

@@ -36,7 +36,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       let st = await call("/api/jobs", { name: "Smoke waiver porch", customer: "Smoke Waiver Client", contract_cents: 1000000, address: "5 Test St, Atlanta, GA 30307",
         approver: "Dee", ap_email: "dee@smoke.example", role: "Owner", new_customer: true });
       const id = st.jobs.find((j) => j.name === "Smoke waiver porch").id;
-      st = await call(`/api/jobs/${id}/progress`, { completed_cents: 400000 });
+      const line = st.jobs.find((j) => j.id === id).sov.lines[0].id;
+      st = await call(`/api/jobs/${id}/sov-progress`, { done: { [line]: "0.4" } });
       const inv = st.jobs.find((j) => j.id === id).invoices.at(-1);
       const waiver = inv.packet.find((i) => i.waiver_kind);
       for (const item of inv.packet) if (item !== waiver && !item.present) await call(`/api/jobs/${id}/resolve/${item.id}`, { reason: "smoke" });

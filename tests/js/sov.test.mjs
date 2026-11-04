@@ -1,7 +1,7 @@
 // Schedule of values arithmetic, the same as sov.py: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sovMilli, sovCents, lumpDone, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, qtyToDate, sovLineProblem, sovDraftLockHtml, sovProgressHtml } from "../../static/js/sov.js";
+import { sovMilli, sovCents, lumpDone, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, qtyToDate, sovLineProblem, sovDraftLockHtml, sovFixedNote, sovPeriodHtml, sovProgressHtml } from "../../static/js/sov.js";
 import { formDraft, clearForm } from "../../static/js/forms.js";
 
 test("quantities in thousandths and money in cents, from what people type", () => {
@@ -45,28 +45,69 @@ test("an editor line with no price says so, as the server refuses it (Oct 23 not
   assert.equal(sovLineProblem({ description: "X", quantity: "2", rate: "0" }), "fix");
 });
 
-test("a schedule fixed only by a draft says so and offers Delete draft (Oct 23 note 8)", () => {
+test("a schedule fixed by a draft with the client says so and offers Delete draft", () => {
   const job = (present, lock) => ({ id: "job-1", sov_view: { present, editable: false, draft_lock: lock } });
-  assert.equal(sovDraftLockHtml(job(true, null), true), "", "a sent pay app: no hint");
+  assert.equal(sovDraftLockHtml(job(true, null), true), "", "no such draft: no hint");
   const html = sovDraftLockHtml(job(true, { id: "inv-1", number: "PA-2" }), true);
-  assert.match(html, /The schedule is fixed while PA-2 is a draft\. Delete the draft to change it\./);
+  assert.match(html, /The schedule is fixed while PA-2 is with the client for review\. Record their answer or delete the draft to change it\./);
   assert.match(html, /<button class="btn small secondary" data-action="void-draft" data-id="job-1">Delete draft<\/button>/);
   assert.doesNotMatch(html, /style=|onclick=/);
   const member = sovDraftLockHtml(job(true, { id: "inv-1", number: "PA-2" }), false);
-  assert.match(member, /The schedule is fixed while PA-2 is a draft\. An owner can delete the draft to change it\./);
+  assert.match(member, /Record their answer, or ask an owner to delete the draft, to change it\./);
   assert.doesNotMatch(member, /<button/, "only someone who may delete the draft gets the button");
+  assert.match(sovDraftLockHtml(job(false, { id: "inv-1", number: "PA-1" }), true), /A schedule can't be set while PA-1 is with the client/);
 });
 
-test("a job with no schedule and only a draft says how to set one up (Oct 23 note 8)", () => {
-  const job = (lock) => ({ id: "job-1", sov_view: { present: false, editable: false, draft_lock: lock } });
-  assert.equal(sovDraftLockHtml(job(null), true), "", "a sent pay app: the card stays hidden");
-  const owner = sovDraftLockHtml(job({ id: "inv-1", number: "PA-1" }), true);
-  assert.match(owner, /To bill line by line, delete draft PA-1 first, then set up a schedule of values\./);
-  assert.match(owner, /data-action="void-draft" data-id="job-1">Delete draft<\/button>/);
-  assert.doesNotMatch(owner, /style=|onclick=/);
-  const member = sovDraftLockHtml(job({ id: "inv-1", number: "PA-1" }), false);
-  assert.match(member, /an owner has to delete draft PA-1 first\. Then you can set up a schedule of values\./);
-  assert.doesNotMatch(member, /<button/);
+test("what the card says when a schedule can't be set or changed: never nothing (Nov 3 Decision 2)", () => {
+  const note = (v) => sovFixedNote({ id: "j", sov_view: { editable: false, ...v } }, true);
+  assert.equal(sovFixedNote({ id: "j", sov_view: { editable: true } }, true), "", "it can be changed");
+  assert.match(note({ present: false, sent: "PA-1" }), /This job bills in dollars: PA-1 was sent without a schedule of values, and a schedule can only be set before the first pay app is sent\./);
+  assert.match(note({ present: false, sent: "" }), /This job bills in dollars\./);
+  assert.match(note({ present: true, sent: "PA-1" }), /Fixed since PA-1 was sent\. Scope changes go through change orders/);
+  assert.match(note({ present: true, sent: "" }), /marked done/);
+});
+
+const periodLine = (extra) => ({ line_id: "l1", item: "1", description: "Rough-in", unit: "ea", lump_sum: false, qty_this_milli: 20000, from_records_milli: 12500,
+  record_count: 2, adds_up_cents: 90000, suggested_cents: 90000, final_cents: 90000, changed: false, credit: false, room_cents: 1800000, ...extra });
+const periodJob = (period) => ({ id: "j1", sov_view: { present: true, op_bp: 1500, period: { from: "", to: "", draft: null, lines: [], op_suggested_cents: 0, op_final_cents: 0,
+  unsigned_cents: 0, retainage_pct: 10, suggested_gross_cents: 0, suggested_retainage_cents: 0, suggested_net_cents: 0, final_gross_cents: 0, final_retainage_cents: 0, final_net_cents: 0, changed: false, ...period } } });
+
+test("the billing period shows each line's quantity, what it adds up to and the suggested value", () => {
+  const html = sovPeriodHtml(periodJob({ from: "2026-10-31", lines: [periodLine({}), periodLine({ line_id: "l2", description: "Idle", qty_this_milli: 0, from_records_milli: 0, record_count: 0, suggested_cents: 0, adds_up_cents: 0 })],
+    op_suggested_cents: 13500, suggested_gross_cents: 103500, suggested_retainage_cents: 10350, suggested_net_cents: 93150 }));
+  assert.match(html, /Since Oct 31/);
+  assert.match(html, /20 ea<div class="sub">12\.5 ea from 2 job records<\/div>/);
+  assert.match(html, /\$900\.00/);
+  assert.match(html, /Overhead and profit 15%/);
+  assert.match(html, /Suggested pay app value<\/span><span>\$1,035\.00/);
+  assert.match(html, /Less retainage 10%/);
+  assert.match(html, /Suggested amount due<\/span><span>\$931\.50/);
+  assert.doesNotMatch(html, /Idle/, "a line with nothing this period is left out until there is a draft to change");
+  assert.doesNotMatch(html, /data-sova|style=|onclick=/);
+  assert.match(sovPeriodHtml(periodJob({})), /No quantities recorded yet/);
+  assert.equal(sovPeriodHtml({ sov_view: { present: false } }), "");
+});
+
+test("a lump sum's quantity is a percent", () => {
+  const html = sovPeriodHtml(periodJob({ lines: [periodLine({ unit: "LS", lump_sum: true, qty_this_milli: 355, from_records_milli: 125, record_count: 1 })] }));
+  assert.match(html, /35\.5%<div class="sub">12\.5% from 1 job record<\/div>/);
+});
+
+test("on a draft each line has a box for the amount, with the suggestion beside it", () => {
+  const draft = { id: "inv-1", number: "PA-1", with_client: false };
+  const period = { draft, lines: [periodLine({ final_cents: 75055, changed: true })], suggested_gross_cents: 90000, final_gross_cents: 75055, changed: true };
+  const html = sovPeriodHtml(periodJob(period), true);
+  assert.match(html, /data-form-key="sovamounts"/);
+  assert.match(html, /<input id="sova-l1"[^>]* data-sova="l1"[^>]* value="750\.55"/);
+  assert.match(html, /data-action="sov-amounts" data-id="j1">Save amounts</);
+  assert.match(html, /data-action="sov-amounts-reset" data-id="j1">Back to the suggested amounts</);
+  assert.match(html, /On PA-1<\/span><span>\$750\.55/);
+  assert.match(html, /Suggested pay app value<\/span><span>\$900\.00/);
+  // The progress form reads it only, and so does a draft with the client.
+  assert.doesNotMatch(sovPeriodHtml(periodJob(period)), /data-sova/);
+  assert.doesNotMatch(sovPeriodHtml(periodJob({ ...period, draft: { ...draft, with_client: true } }), true), /data-sova/);
+  // A credit comes off as it is.
+  assert.doesNotMatch(sovPeriodHtml(periodJob({ draft, lines: [periodLine({ credit: true })] }), true), /data-sova/);
 });
 
 // What was typed in the line-by-line progress form survives a redraw (the phone menu, another

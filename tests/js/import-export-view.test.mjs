@@ -16,7 +16,7 @@ const company = (jobs) => ({ company: { name: "Pine" }, jobs, payers: [], inbox:
 const job = (id, name, present, extra = {}) => ({ id, name, code: id.toUpperCase(), closed: false, invoices: [], payments: [], change_orders: [],
   sov_view: { present, editable: false }, ...extra });
 
-test("Quantities done lists only open jobs with a schedule of values; with none it is a title and a button", () => {
+test("Quantities done lists only open jobs with a schedule of values; with none it says what to do, or goes", () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState(company([job("ja", "Elm wiring", true), job("jb", "Oak deck", false), job("jc", "Old wiring", true, { closed: true })]));
   const card = data.views.import().split('id="qty-import"')[1];
@@ -25,9 +25,22 @@ test("Quantities done lists only open jobs with a schedule of values; with none 
   assert.doesNotMatch(card, /Oak deck|Old wiring/);
   assert.match(card, /data-action="qty-read"/);
   assert.match(card, /data-action="qty-choose-file"/);
+  // No schedule yet, but one can be set: the card says so, and the card below does it.
+  core.setState(company([job("jb", "Oak deck", false, { sov_view: { present: false, editable: true } })]));
+  const page2 = data.views.import();
+  assert.match(page2.split('id="qty-import"')[1], /none of your open jobs has one yet\. Set one up on the job/);
+  assert.match(page2.split('id="sov-import"')[1], /<option value="jb">Oak deck/);
+  assert.doesNotMatch(page2, /No job has a schedule of values/);
+  assert.match(page2.split('id="qty-import"')[1], /data-action="open-job" data-id="jb" data-focus="#sov-card">Open Oak deck</);
+  // Every job's first pay app went out in dollars: it says why, opens one, and the schedule card goes.
   core.setState(company([job("jb", "Oak deck", false)]));
-  const none = data.views.import().split('id="qty-import"')[1];
-  assert.match(none, /<div class="empty-state"><strong>No job has a schedule of values<\/strong><button class="btn" data-action="nav" data-view="jobs">Go to Jobs<\/button><\/div>/);
+  const none = data.views.import();
+  assert.match(none.split('id="qty-import"')[1], /Your open jobs bill in dollars/);
+  assert.match(none.split('id="qty-import"')[1], /data-id="jb" data-focus="#sov-card"/);
+  assert.doesNotMatch(none, /id="sov-import"/);
+  // No open job: nothing to say.
+  core.setState(company([]));
+  assert.doesNotMatch(data.views.import(), /id="qty-import"|id="sov-import"/);
 });
 
 test("Read needs a job and rows; the preview escapes what the file said, and Add sends the same sheet", async () => {
@@ -66,7 +79,7 @@ test("Read needs a job and rows; the preview escapes what the file said, and Add
   const done = data.views.import();
   assert.match(done, /1 line added to PA-JA-01\./);
   assert.match(done, /<h3>Not added<\/h3><div class="list-item">Row 3 \(Gutters\): No line matches\.<\/div>/);
-  assert.match(done, /data-action="open-job" data-id="ja">Open the job</);
+  assert.match(done, /data-action="open-job" data-id="ja" data-focus="#sov-card">Open the job</);
   delete dom.all['[data-form-key="qtyimport"] [data-field]'];
   dom.answers = [];
 });

@@ -269,12 +269,12 @@ export const views = {
             ${ejf.name}
             ${ejf.address}
             ${ejf.contract_number}
-            ${hasPayApps || (j.sov_view && j.sov_view.present) ? "" : ejf.contract_cents}
+            ${(hasPayApps || (j.sov_view && j.sov_view.present)) && !(j.sov_view && j.sov_view.contract_follows) ? "" : ejf.contract_cents}
             ${ejf.retainage_pct}
             ${ejf.started_on}
             ${assigneeField("editjob", "ej", j.assignee_id)}
           </div>
-          <p class="sub">${hasPayApps ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The client's type and where pay apps go: <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
+          <p class="sub">${hasPayApps && !(j.sov_view && j.sov_view.contract_follows) ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The client's type and where pay apps go: <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
           <div class="form-inline">
             <button class="btn" data-action="save-job" data-id="${j.id}">Save changes</button>
             ${j.can_delete && may("delete") ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
@@ -351,8 +351,8 @@ export const views = {
             </div>`).join("") : `<p class="sub">None.</p>`}
         </div>
       </div>
-      ${recordCardHtml(j)}
       ${sovCardHtml(j)}
+      ${recordCardHtml(j)}
       ${jobHistoryHtml(j)}
     `;
   },

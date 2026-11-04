@@ -6,9 +6,10 @@ crew_names, weather, weather_note, materials, deliveries, sections, attachments,
 with its id on job["daily_records"], and one "daily" job record whose note reads it out, so
 paperwork and History show it. Everything but the Diary (notes) is optional and checked here:
 known section keys only, schedule lines and change orders of this job only, numbers 0 or more,
-text capped. Quantities put in place today add to each line's quantity done (M1, capped at the
-scheduled quantity) and refresh the period's draft pay app through record_sov_progress. When
-they can't be added the record is still saved, with quantities_not_applied saying why.
+text capped. Quantities put in place today add to each line's field total, up to the scheduled
+quantity, and move the suggested pay app value (Nov 3). A record never creates or changes a draft:
+only Progress Pay App does. What can't be added stays on the record, with quantities_not_applied
+saying why.
 
 Imported at the bottom of domain/__init__.py (from .daily import *). Helpers from domain
 are imported inside each function, so the two modules never import each other at load time.
@@ -17,7 +18,6 @@ are imported inside each function, so the two modules never import each other at
 from __future__ import annotations
 
 import secrets
-from decimal import Decimal
 from typing import Any
 
 __all__ = [
@@ -262,15 +262,15 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
     ticked sections and files already on the job record (details, the request's body). `at` lets
     an import keep the day the note was written; otherwise the day is the page's own date
     (details["today"], through local_today; review C3). Quantities put in place today add to the
-    schedule lines and refresh the draft pay app (M1) before the record is saved; when they
-    can't, the record is saved anyway with quantities_not_applied saying why (_apply_quantities)."""
+    lines' field totals before the record is saved; when they can't, the record is saved anyway
+    with quantities_not_applied saying why (_apply_quantities)."""
     from domain import _job, add_job_record, audit, utcnow, local_today
     job = _job(state, job_id)
     extra = clean_daily_details(state, job, details or {}) if details is not None else {}
     when = at or utcnow()
     day = when[:10] if at else local_today((details or {}).get("today"))
     quantities = (extra.get("sections") or {}).get("quantities") or []
-    not_applied = _apply_quantities(state, job, quantities, actor, day) if quantities else ""
+    added, not_applied = _apply_quantities(job, quantities, day) if quantities else ([], "")
     rec = {
         "id": "dr-" + secrets.token_hex(4),
         "job_id": job_id,
@@ -280,6 +280,8 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
         "for_history": bool(job.get("closed")),
         **extra,
     }
+    if quantities:
+        rec["quantities_added"] = added
     if not_applied:
         rec["quantities_not_applied"] = not_applied
     state.setdefault("daily_records", []).append(rec)
@@ -300,8 +302,8 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
 
 def quantities_blocked(job: dict[str, Any]) -> str:
     """Why quantities can't be added to this job's schedule of values right now, in plain words
-    (a daily record's and an imported file's alike); blank when they can."""
-    from domain import DRAFT_STATUSES
+    (a daily record's and an imported file's alike); blank when they can. A draft with the client
+    doesn't stop them: its lines and rates are fixed, but the field keeps recording (Nov 3)."""
     import sov
     if job.get("closed"):
         return "The job is finished, so the schedule of values doesn't change."
@@ -309,36 +311,40 @@ def quantities_blocked(job: dict[str, Any]) -> str:
         return "This job has no schedule of values to add quantities to."
     if job.get("work_status") == "complete":
         return "The job is marked done, so every line is already counted as done."
-    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
-    if draft and draft.get("pencil_status") == "sent":
-        return (f"{draft['number']} is with the client for their review. Record their answer or delete the draft, "
-                "then enter these quantities on the job page.")
     return ""
 
 
-def _apply_quantities(state: dict[str, Any], job: dict[str, Any], rows: list[dict[str, Any]], actor: str, day: str) -> str:
-    """Add the quantities put in place today to the schedule lines and refresh the draft pay app
-    (M1). A daily record is never lost because they can't be added (B5 of the Oct 30 review): it
-    is saved anyway with them on it, and this returns why they weren't added, in plain words, for
-    the record, its note and the page. Blank when they were added."""
-    from domain import GateError, over_schedule_text, record_sov_progress
+def add_field_quantities(job: dict[str, Any], rows: list[dict[str, Any]], day: str = "") -> tuple[list[dict[str, Any]], list[str]]:
+    """Add quantities to the lines' field totals, each up to its scheduled quantity. Pay apps and
+    drafts aren't touched: the card's suggested value moves, and Progress Pay App bills it. Returns
+    the rows as added, and what wasn't added on each line, in words."""
+    from domain import over_schedule_note
     import sov
-    keep = " They are kept on this daily record."
-    blocked = quantities_blocked(job)
-    if blocked:
-        return blocked + keep
     by_id = {line["id"]: line for line in sov.lines(job)}
-    done, errors = {}, []
+    added, over = [], []
     for row in rows:
         line = by_id[row["line_id"]]
-        total = line["done_milli"] + row["qty_milli"]
-        if total > line["qty_milli"]:
-            errors.append(over_schedule_text(line, total))
-        done[line["id"]] = str(Decimal(total) / 1000)
-    if errors:
-        return " ".join(errors) + keep
-    try:
-        record_sov_progress(state, job["id"], done, actor=actor, from_daily=day)
-    except GateError as exc:
-        return " ".join(dict.fromkeys(exc.blockers or [str(exc)])) + keep
-    return ""
+        total = sov.field_total(line)
+        fits = min(row["qty_milli"], max(0, line["qty_milli"] - total))
+        if fits < row["qty_milli"]:
+            over.append(over_schedule_note(line, row["qty_milli"] - fits))
+        if fits:
+            line["field_milli"] = total + fits
+            if day:
+                line["from_daily_on"] = day
+            added.append({"line_id": line["id"], "qty_milli": fits})
+    if added:
+        job["completed_value_cents"] = sov.totals({"sov": {"op_bp": sov.op_bp(job), "lines": [sov.anticipated(job, l) for l in sov.lines(job)]}})["to_date_cents"]
+    return added, over
+
+
+def _apply_quantities(job: dict[str, Any], rows: list[dict[str, Any]], day: str) -> tuple[list[dict[str, Any]], str]:
+    """Add the quantities put in place today to the field totals (add_field_quantities). A daily
+    record is never lost because they can't be added (B5 of the Oct 30 review): it is saved anyway
+    with them on it. Returns the rows added and why any weren't, in plain words, for the record,
+    its note and the page; blank when all were."""
+    blocked = quantities_blocked(job)
+    if blocked:
+        return [], blocked + " They are kept on this daily record."
+    added, over = add_field_quantities(job, rows, day)
+    return added, " ".join(over) + (" The rest is kept on this daily record." if over else "")
