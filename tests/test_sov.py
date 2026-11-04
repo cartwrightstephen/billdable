@@ -758,7 +758,7 @@ class LivingDraftTests(unittest.TestCase):  # M1: the period's pay app is one dr
         self.assertEqual((first["status"], first.get("replaced")), ("void", True))
         self.assertEqual(second["number"], first["number"])
         self.assertEqual(second["replaces"], first["id"])
-        self.assertTrue(second["packet"][0]["present"], "paperwork carried over")
+        self.assertTrue(second["packet"][0]["present"], "supporting documents carried over")
         self.assertEqual(second["progress_notes"], "East wing rough-in")
         # 150 ea x $45 = $6,750 + 15% = $7,762.50 gross, less 10%.
         self.assertEqual(second["gross_cents"], 776_250)

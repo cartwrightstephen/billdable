@@ -202,7 +202,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     // On a phone, a missing paperwork item offers Take a photo.
     await p.setViewportSize({ width: 375, height: 812 });
     await p.locator(".next-card .primary-action").click();
-    await p.getByRole("heading", { name: /^Paperwork for/ }).waitFor();
+    await p.getByRole("heading", { name: "Supporting documents" }).waitFor();
     const missing = p.locator(".packet-item.absent").first();
     await missing.getByRole("button", { name: "Take a photo" }).waitFor({ state: "visible" });
     assert.equal(await missing.locator('[data-action="pick-files"][data-capture="1"][data-attach]').count(), 1);
@@ -331,7 +331,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       // Paperwork alone reads "Add N missing documents" (R1-08); with an unsigned CO too, "Fix N things before sending" (R6-01).
       if (/^(Fix \d+ things? before sending|Add \d+ missing document)/.test(label)) {
         await main.click();
-        await page.getByRole("heading", { name: /^Paperwork( for |$)/ }).waitFor();  // "Paperwork" alone when no pay app is drafted yet
+        await page.getByRole("heading", { name: /^Supporting documents/ }).waitFor();  // on the pay app; alone when no pay app is drafted yet
         while (await page.locator('[data-form^="resolve-"]').count()) {
           const btn = page.locator('[data-form^="resolve-"]').first();
           const item = (await btn.getAttribute("data-form")).slice("resolve-".length);
@@ -516,7 +516,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.goto(BASE + "/money");
     await page.locator(".tabs .tab", { hasText: "Closeout" }).waitFor();  // allInnerTexts doesn't wait for the page to draw
     assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout"]);
-    await page.locator("table th", { hasText: "Paperwork" }).waitFor();
+    await page.locator("table th", { hasText: "Supporting documents" }).waitFor();
     await page.goto(BASE + "/money/packets");  // the old Paperwork tab's address opens Pay apps
     await page.getByRole("heading", { name: "Pay apps" }).waitFor();
     await page.goto(BASE + "/settings/company");

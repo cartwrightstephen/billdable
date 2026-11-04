@@ -27,7 +27,7 @@ export const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email"
 export function jobStatus(j) {
   const inv = j.invoices || [];
   if (j.closed) return ["Closed", "green"];
-  if (isBlocked(j)) return needsPaperwork(j) ? ["Needs paperwork", "amber"] : ["Blocked", "red"];
+  if (isBlocked(j)) return needsPaperwork(j) ? ["Needs supporting documents", "amber"] : ["Blocked", "red"];
   if (inv.some(i => ["draft", "awaiting_approval"].includes(i.status))) return ["Ready to send", "copper"];
   if (j.waiver_due && !j.waiver_sent) return ["Waiver due", "amber"];
   if (inv.some(i => i.status === "partial")) return ["Partly paid", "amber"];
@@ -353,7 +353,7 @@ export function retainageNote(j, now = new Date()) {
   const asked = retainageAskWaits(j, now);
   if (j.work_status !== "complete") return termText("Asked for after Final Pay App.");
   const n = closeoutMissing(j);
-  if (n) return `Closeout paperwork: ${n} item${n === 1 ? "" : "s"} missing.`;
+  if (n) return `Closeout documents: ${n} item${n === 1 ? "" : "s"} missing.`;
   return asked ? `Asked for it ${fmtDate(asked.last)}; ask again from ${fmtDate(asked.due)}.` : "";
 }
 
@@ -431,7 +431,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   if (canClose) add("close", "Finish Job", `data-action="close" data-id="${j.id}"`, "close");
   // Final Pay App by mistake (R4-02): while the final pay app has not gone out.
   if (j.can_undo_done) add("undo", "Undo Done", `data-action="undo-done" data-id="${j.id}"`, "close", { minor: true });
-  // Asking for retainage only once the work is done and the closeout paperwork is in, and not again
+  // Asking for retainage only once the work is done and the closeout documents are in, and not again
   // before the client's days between contacts (chase_retainage); the Money card says why.
   if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0 && !retainageAskWaits(j, now)) add("retainage", "Ask for Retainage", `data-action="retainage" data-id="${j.id}"`, "paid");
   if (draft && !pencilOut) add("pencil", "Send Draft for Their Review", `data-action="pencil" data-id="${j.id}"`, "bill");

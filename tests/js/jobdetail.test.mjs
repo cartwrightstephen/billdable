@@ -225,7 +225,7 @@ test("Client playbook: the paperwork as checkboxes and Other, the client type, a
     assert.match(html, /data-packet-choice="Conditional waiver"[^>]*> Conditional waiver<\/label><span class="sub check-note">Asked for with every pay app, ticked or not\. If this client doesn't take one, tap Not needed for this client on it\.<\/span>/);
     assert.match(html, /Nothing needed still asks for the conditional waiver/);
     assert.match(html, /<h4>At closeout<\/h4><label[^>]*><input type="checkbox"[^>]*data-packet-choice="Punch list sign-off"/, "the catalog's closeout items, from the server");
-    assert.doesNotMatch(html, /name="packet"/, "no free-text paperwork box");
+    assert.doesNotMatch(html, /name="packet"/, "no free-text supporting documents box");
     assert.match(html, /<h2>Add client<\/h2>\s*<div class="contract-import" data-contract-import="addpayer">/);
   } finally { page.formOpen.addpayer = false; }
 });
@@ -241,7 +241,7 @@ test("the job page says what the client's playbook is missing, with the way to f
   assert.equal(playbookMissingHtml({ ...j, playbook_missing: [] }), "");
 });
 
-test("Paperwork for this job: the client's list until it is changed, and the way back (per job)", async () => {
+test("Supporting documents for this job: the client's list until it is changed, and the way back (per job)", async () => {
   const { jobPaperworkHtml } = await import("../../static/js/views/job-paperwork.js");
   const j = { id: "j-1", payer: { name: "Ellison" }, paperwork_view: { own: false, labels: ["Signed contract"], none: false, legacy: false } };
   let html = jobPaperworkHtml(j);

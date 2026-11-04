@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import domain
 import server
 from test_packet import new_state, new_job, record, draft
-from waiver_help import signed_waiver
+from waiver_help import confirm_suggested, signed_waiver
 
 
 def sent_pay_app(state, job, cents=400_000):
@@ -22,6 +22,7 @@ def sent_pay_app(state, job, cents=400_000):
             domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
     if any(not p["present"] and p["required"] for p in inv["packet"]):
         record(state, job, "waiver", f"Signed conditional waiver {inv['number']}")
+        confirm_suggested(state, job)
     domain.approve_and_send(state, job["id"], "Owner")
     return inv
 
@@ -32,7 +33,7 @@ class UnconditionalWithPayAppTests(unittest.TestCase):  # M14
         self.job = new_job(self.state, packet="Invoice.")
         domain.record_progress(self.state, self.job["id"], 400_000)
         self.inv = draft(self.job)
-        domain.resolve_packet_item(self.state, self.job["id"], next(p for p in self.inv["packet"] if p["label"] == "Invoice")["id"])
+        domain.resolve_packet_item(self.state, self.job["id"], next(p for p in self.inv["packet"] if p["label"] == "Invoice")["id"], reason="test")
         self.rec = signed_waiver(self.state, self.job["id"], "unconditional_progress", "Unconditional waiver PA-1")
         waiver = next(p for p in self.inv["packet"] if p["kind"] == "waiver")
         self.assertFalse(waiver["present"], "an unconditional waiver never fills the conditional item by itself")
@@ -144,7 +145,7 @@ class SuggestedTypeTests(unittest.TestCase):  # M17
         inv = draft(job)
         for item in inv["packet"]:
             if not item["present"]:
-                domain.resolve_packet_item(state, job["id"], item["id"])
+                domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
         domain.approve_and_send(state, job["id"], "Owner")
         domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1")
         self.assertTrue(inv["final"])
@@ -207,7 +208,7 @@ class OnFileTests(unittest.TestCase):  # M18
         final = next(p for p in job["closeout_packet"] if p["kind"] == "final_waiver")
         self.assertFalse(final["present"], "neither the waiver sent with PA-1 nor a progress one is the final waiver")
         rec = signed_waiver(state, job["id"], "conditional_final", "Conditional final waiver")
-        domain._attach_from_record(state, job, job["closeout_packet"], "the closeout paperwork")
+        domain._attach_from_record(state, job, job["closeout_packet"], "the closeout documents")
         self.assertEqual([a["record_id"] for a in final["attachments"]], [rec["id"]])
 
 

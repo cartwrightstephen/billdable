@@ -112,7 +112,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.context().close();
   });
 
-  await step("Paperwork for this job: starts from the client's list, changes for the job only and follows into a draft", async () => {
+  await step("Supporting documents for this job: starts from the client's list, changes for the job only and follows into a draft", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     await p.goto(BASE + "/jobs");
     await p.locator("a", { hasText: "Rule porch" }).click();
@@ -120,7 +120,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.match(await card.innerText(), /Rule Client's list/);
     await card.getByRole("button", { name: "Change for this job" }).click();
     await card.getByLabel("Certified payroll").check();
-    await card.getByRole("button", { name: "Save paperwork" }).click();
+    await card.getByRole("button", { name: "Save supporting documents" }).click();
     await card.locator("p", { hasText: "Changed for this job" }).waitFor();
     assert.match(await card.innerText(), /Certified payroll/);
     const after = await p.evaluate(async () => (await (await fetch("/api/state")).json()).payers.find(x => x.name === "Rule Client"));

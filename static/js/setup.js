@@ -24,7 +24,7 @@ export function companyGapsText(gaps) {
   return `Your company ${listWords(gaps.map(g => g.words))} ${gaps.length === 1 ? "is" : "are"} blank on this PDF.`;
 }
 
-// "Before you send": the warning, with Company details opening the first blank box. The
+// "Review & send": the warning, with Company details opening the first blank box. The
 // no-address class stays while the address is one of them (tests/e2e/smoke.mjs looks for it).
 export function companyGapsHtml(company) {
   const gaps = companyGaps(company);

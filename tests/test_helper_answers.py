@@ -22,7 +22,8 @@ ROUTES = ROOT / "static" / "js" / "routes.js"
 
 # Old word -> what the app says now. Case-insensitive unless the pattern sets (?-i).
 OLD = {
-    r"\bpackets?\b": "Paperwork / Open paperwork",
+    r"\bpackets?\b": "Supporting documents",
+    r"\bpaperwork\b": "Supporting documents",
     r"\bpayers?\b": "client",
     r"\bcustomers?('s)?\b": "client (Oct 29 review: Clients pay the Users)",
     r"\bcustomer settings\b": "Client playbook",
@@ -94,8 +95,8 @@ class HelperAnswersWordingTests(unittest.TestCase):
         cls.answers = json.loads(ANSWERS.read_text(encoding="utf-8"))["answers"]
 
     def test_the_old_word_check_works(self):
-        self.assertEqual(old_words("Open the packet and click Match payment."), [("packet", "Paperwork / Open paperwork"), ("Match payment", "Record a payment / Payments received")])
-        self.assertEqual(old_words("Paperwork (packet) and a draft for their review (pencil copy)."), [])
+        self.assertEqual(old_words("Open the packet and click Match payment."), [("packet", "Supporting documents"), ("Match payment", "Record a payment / Payments received")])
+        self.assertEqual(old_words("Supporting documents (packet) and a draft for their review (pencil copy)."), [])
         self.assertTrue(old_words("Void draft"))
         self.assertTrue(old_words("Open Change Orders"))
         self.assertFalse(old_words("Open Change orders"))

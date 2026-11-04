@@ -40,8 +40,7 @@ export function pathFor(view, jobId, detailId) {
   return VIEW_PATHS[view] || "/dashboard";
 }
 
-// A refusal's way out (the server's GateError `action`, like Undo's "Open the paperwork for
-// PA-OAK-3"): a link to a detail page, or null for anything else.
+// A refusal's way out (the server's GateError `action`, like Undo's "Open PA-OAK-3"): a link to a detail page, or null for anything else.
 export function refusalLink(action) {
   if (!action || typeof action !== "object" || !DETAIL_PATHS[action.view] || !action.job_id || !action.label) return null;
   const detailId = action.detail ? String(action.detail) : null;

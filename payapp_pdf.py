@@ -391,9 +391,10 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
     packet = [item for item in invoice.get("packet") or [] if item.get("required")]
     if packet:
         # Paperwork checklist on its own page so it never collides with the sheet.
-        page, y = new_sheet_page("PAPERWORK CHECKLIST")
+        page, y = new_sheet_page("SUPPORTING DOCUMENTS")
         for item in packet:
-            page.text(MARGIN, y, ("[x] " if item.get("present") else "[  ] ") + _fit(item["label"], 110), "F1", 10)
+            mark = "Not attached: " if item.get("override") else "[x] " if item.get("present") else "[  ] "
+            page.text(MARGIN, y, mark + _fit(item["label"], 110), "F1", 10)
             y -= 15
             if y < 60:
                 break

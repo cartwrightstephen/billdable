@@ -22,6 +22,15 @@ def new_state():
 FULL = {"approver": "Sam Jones", "ap_email": "ap@jones.example", "phone": "404-555-0100", "client_type": "homeowner"}
 
 
+def filed(state, job, label, kind):
+    """A record with a stored file, as an upload leaves it."""
+    fid = f"file-{len(state.setdefault('files', [])) + 1}"
+    state["files"].append({"id": fid, "name": f"{label}.pdf", "ext": ".pdf", "size": 10})
+    domain.add_job_record(state, job["id"], label, kind)
+    job["records"][-1]["file_ids"] = [fid]
+    return job["records"][-1]
+
+
 def new_job(state, name="Pine kitchen", client="Jones Family", contract=1_000_000, **over):
     kwargs = {"address": "12 Pine St, Atlanta, GA 30307", **FULL, **over}
     return domain.create_job(state, name, client, contract, **kwargs)
@@ -431,7 +440,7 @@ class JobPaperworkTests(unittest.TestCase):
         domain.update_payer(state, job["payer_id"], {"packet": "Signed contract, Progress photos"})
         domain.record_progress(state, job["id"], 0, period_cents=100_000)
         contract = next(i for i in draft_of(job)["packet"] if i["label"] == "Signed contract")
-        domain.add_job_record(state, job["id"], "Signed contract", "contract")
+        filed(state, job, "Signed contract", "contract")
         domain.attach_record_to_packet(state, job["id"], contract["id"], job["records"][-1]["id"])
         domain.set_job_paperwork(state, job["id"], {"packet": "Signed contract, Insurance certificate"}, "Pat")
         labels = self.labels(draft_of(job))
@@ -554,22 +563,29 @@ class PublicJobItemTests(unittest.TestCase):
         self.assertFalse(self.item("Certified payroll")["present"], "a time sheet isn't certified payroll")
         self.assertFalse(self.item("Notarized pay application")["present"], "backup isn't a notarized application")
         domain.void_draft(self.state, self.job["id"])
-        domain.add_job_record(self.state, self.job["id"], "WH-347 week 12", "payroll")
-        domain.add_job_record(self.state, self.job["id"], "Notarized G702", "notarized")
+        filed(self.state, self.job, "WH-347 week 12", "payroll")
+        filed(self.state, self.job, "Notarized G702", "notarized")
         domain.record_progress(self.state, self.job["id"], 0, period_cents=50_000)
-        self.assertTrue(self.item("Certified payroll")["present"])
-        self.assertTrue(self.item("Notarized pay application")["present"])
+        for label in ("Certified payroll", "Notarized pay application"):
+            self.assertFalse(self.item(label)["present"], "suggested, not cleared")
+            self.assertTrue(self.item(label)["attachments"][0]["auto"])
+            domain.confirm_packet_item(self.state, self.job["id"], self.item(label)["id"], "Pat")
+            self.assertTrue(self.item(label)["present"])
 
     def test_notarized_isnt_taken_as_made_here(self):
         domain.record_progress(self.state, self.job["id"], 0, period_cents=100_000)
         item = self.item("Notarized pay application")
         self.assertFalse(item["present"])
         self.assertNotEqual(item.get("present_reason"), domain.MADE_HERE_REASON)
+        for label in ("Notarized pay application", "notarized pay app", "Notarized application"):
+            self.assertFalse(domain._made_here(label, self.job), label)
+        self.assertTrue(domain._made_here("Pay application", self.job))
 
     def test_a_record_goes_with_one_pay_app(self):
-        domain.add_job_record(self.state, self.job["id"], "WH-347 week 12", "payroll")
+        filed(self.state, self.job, "WH-347 week 12", "payroll")
         domain.record_progress(self.state, self.job["id"], 0, period_cents=100_000)
         first = draft_of(self.job)
+        domain.confirm_packet_item(self.state, self.job["id"], self.item("Certified payroll")["id"], "Pat")
         self.assertTrue(self.item("Certified payroll")["present"])
         for item in first["packet"]:
             item.update(required=False)

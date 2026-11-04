@@ -3,7 +3,7 @@
 // merges these rows with the tasks people add and filters them by period). The rows come from the server (domain.today_rows, sent in
 // /api/state as today_rows, R4-10), the same rows the daily email lists, so the rules live in one
 // place; this file only draws them. Nothing that emails a pay app or a waiver goes out from here:
-// those open the pay app's "Before you send" card, or the waiver page with its type, which show
+// those open the pay app's "Review & send" card, or the waiver page with its type, which show
 // what leaves and to whom. A follow-up names its recipient on the row, and drafting or filing
 // sends nothing. The page's state comes in as an argument, so node can test it
 // (tests/js/today.test.mjs).
@@ -87,7 +87,7 @@ export function dueInput(i) {
 // you." once a pay app has gone out, and before that what will show up here.
 export function todoHtml(items, { expanded = false, anySent = false, total = items.length, people = [], today = "" } = {}) {
   if (!total) return anySent ? `<p class="sub">Nothing is waiting on you.</p>`
-    : `<p class="sub">${termText("Work shows up here when a pay app is ready to send, paperwork is missing, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.")}</p>`;
+    : `<p class="sub">${termText("Work shows up here when a pay app is ready to send, supporting documents are missing, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.")}</p>`;
   if (!items.length) return `<p class="sub">Nothing due in this period.</p>`;
   const rows = expanded ? items : items.slice(0, QUEUE_SHOWN);
   const more = items.length - rows.length;

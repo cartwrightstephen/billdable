@@ -166,7 +166,7 @@ class SubjectAndSignOffTests(unittest.TestCase):
         domain.send_pencil(state, job["id"], "Alex Rivera")
         domain.record_pencil_response(state, job["id"], True)
         for item in job["invoices"][-1]["packet"]:
-            domain.resolve_packet_item(state, job["id"], item["id"])
+            domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
         domain.approve_and_send(state, job["id"], "Alex Rivera")
         inv = job["invoices"][-1]
         mail = state["email_log"][-1]
@@ -317,6 +317,7 @@ class MailHttpTests(unittest.TestCase):
         for n, item in enumerate(inv["packet"]):
             if attach and n == 0:
                 self.request("POST", f"/api/jobs/{job['id']}/attach-record/{item['id']}", {"record_id": rec_id}, cookie=cookie)
+                self.request("POST", f"/api/jobs/{job['id']}/packet-confirm/{item['id']}", {"looked": True}, cookie=cookie)
             else:
                 self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "on file"}, cookie=cookie)
 
@@ -338,7 +339,7 @@ class MailHttpTests(unittest.TestCase):
         self.assertIn("billing@duracash.test", str(msg["From"]))
         self.assertIn("Pay application PA-", msg["Subject"])
         self.assertIn("Amount due this application", msg.get_body(("plain",)).get_content())
-        self.assertIn("1 paperwork document is attached", msg.get_body(("plain",)).get_content())
+        self.assertIn("1 supporting document is attached", msg.get_body(("plain",)).get_content())
         self.assertNotIn("packet", msg.get_body(("plain",)).get_content().lower())  # the glossary's word is paperwork
         names = [p.get_filename() for p in msg.iter_attachments()]
         self.assertEqual(names, [f"{state['jobs'][0]['invoices'][-1]['number']}.pdf", "contract.pdf"])
@@ -493,7 +494,7 @@ class MailHttpTests(unittest.TestCase):
         _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
         entry = state["email_log"][-1]
         self.assertTrue(entry["status"].startswith("failed: recipient refused"), entry["status"])
-        self.assertNotIn("paperwork document", entry["body"])  # no paperwork files, so the email doesn't claim any
+        self.assertNotIn("supporting documents document", entry["body"])  # no paperwork files, so the email doesn't claim any
         self.assertEqual(state["jobs"][0]["invoices"][-1]["status"], "sent")  # the approval stands
         self.sink.reject.clear()
         _, state = self.request("POST", f"/api/outbox/{entry['id']}/retry", {}, cookie=cookie)

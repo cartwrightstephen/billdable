@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import admin
 import billing
 import domain
+from waiver_help import confirm_suggested
 import metrics
 import monthly
 import server
@@ -297,14 +298,24 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
         domain.record_sov_progress(state, scheduled["id"], {scheduled["sov"]["lines"][0]["id"]: "40"})
         self.assertNotIn("Pay app backup", [p["label"] for p in domain.missing_packet(scheduled)])
 
+    @staticmethod
+    def on_record(state, job, label, kind):
+        """A record with a stored file, as an upload leaves it."""
+        fid = f"file-{len(state.setdefault('files', [])) + 1}"
+        state["files"].append({"id": fid, "name": f"{label}.pdf", "ext": ".pdf", "size": 10})
+        domain.add_job_record(state, job["id"], label, kind)
+        job["records"][-1]["file_ids"] = [fid]
+        domain._refresh_draft_gate(job, state)
+        return job["records"][-1]
+
     def test_new_record_kinds_fill_their_paperwork(self):
         # An insurance certificate, a supplier invoice (for a ticket item) and a stored-materials
         # document on the job record fill the items that name them (J5, M6).
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.update_payer(state, job["payer_id"], {"packet": "Insurance certificate, delivery tickets, stored materials invoice"})
-        domain.add_job_record(state, job["id"], "ACME COI 2026", "insurance")
-        domain.add_job_record(state, job["id"], "ABC Supply invoice 4471", "supplier_invoice")
+        self.on_record(state, job, "ACME COI 2026", "insurance")
+        self.on_record(state, job, "ABC Supply invoice 4471", "supplier_invoice")
         domain.record_progress(state, job["id"], 400_000)
         packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
         self.assertEqual(packet["Insurance certificate"]["attachments"][0]["name"], "ACME COI 2026")
@@ -313,15 +324,16 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
     def test_records_on_the_job_fill_the_paperwork(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", contract_number="C-7", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
-        domain.add_job_record(state, job["id"], "Signed contract PDF", "contract")
+        self.on_record(state, job, "Signed contract PDF", "contract")
         domain.record_progress(state, job["id"], 400_000)
         contract = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Signed contract")
-        self.assertTrue(contract["present"])
+        self.assertFalse(contract["present"], "suggested, not cleared")
         self.assertEqual([(a["name"], a["auto"]) for a in contract["attachments"]], [("Signed contract PDF", True)])
-        self.assertTrue(any("attached automatically from the job's records" in a["detail"] for a in state["audit"]))
-        # A record added after drafting fills its item too.
-        domain.add_job_record(state, job["id"], "Kitchen photos", "photo")
+        self.assertTrue(any("suggested from the job records" in a["detail"] for a in state["audit"]))
+        # A record added after drafting is suggested for its item too.
+        self.on_record(state, job, "Kitchen photos", "photo")
         photos = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Progress photos")
+        confirm_suggested(state, job)
         self.assertTrue(photos["present"])
         # Detach takes it off, and the same record is not attached again.
         domain.detach_packet_item(state, job["id"], photos["id"])
@@ -338,16 +350,17 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
     def test_this_periods_waiver_is_not_reused(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", ap_email="d@example.com", approver="Porch", phone="(404) 555-0100", role="Owner")
-        domain.add_job_record(state, job["id"], "Signed contract", "contract")
-        domain.add_job_record(state, job["id"], "Waiver for PA-01", "waiver")
+        self.on_record(state, job, "Signed contract", "contract")
+        self.on_record(state, job, "Waiver for PA-01", "waiver")
         domain.record_progress(state, job["id"], 400_000)
+        confirm_suggested(state, job)
         for item in domain.missing_packet(job):
             domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
         domain.approve_and_send(state, job["id"], "Owner")
         domain.record_progress(state, job["id"], 600_000)
         packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
-        self.assertTrue(packet["Signed contract"]["present"], "the contract carries over")
-        self.assertFalse(packet["Conditional waiver"]["present"], "last period's waiver does not")
+        self.assertEqual([a["name"] for a in packet["Signed contract"]["attachments"]], ["Signed contract"], "the contract is suggested again")
+        self.assertFalse(packet["Conditional waiver"]["attachments"], "last period's waiver is not")
 
 
 if __name__ == "__main__":

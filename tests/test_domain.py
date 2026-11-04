@@ -187,19 +187,23 @@ class MoneyFileTests(unittest.TestCase):
 
 
 class PaperworkTests(unittest.TestCase):  # R3-05
-    def test_i_have_this_needs_no_reason_and_remove_restores_the_blocker(self):
+    def test_i_have_this_needs_a_reason_and_remove_restores_the_blocker(self):
         state = seed_state()
         domain.draft_invoice(state, "job-oak")
         job = domain._job(state, "job-oak")
         item = next(p for p in domain.active_packet(job) if p["id"] == "pkt-oak-waiver")
-        domain.resolve_packet_item(state, "job-oak", item["id"])
+        with self.assertRaises(domain.GateError) as raised:
+            domain.resolve_packet_item(state, "job-oak", item["id"], "Sam")
+        self.assertIn("reason", raised.exception.fields)
+        self.assertFalse(item["present"])
+        domain.resolve_packet_item(state, "job-oak", item["id"], "Sam", reason="test")
         self.assertTrue(item["present"])
         self.assertNotIn(item["blocker"], domain.blocker_lines(job))
-        self.assertTrue(state["audit"][-1]["detail"].endswith(f"marked {item['label']} as in hand."))
+        self.assertIn(f"Sam overrode {item['label']}", state["audit"][-1]["detail"])
         domain.detach_packet_item(state, "job-oak", item["id"])
         self.assertFalse(item["present"])
         self.assertIn(item["blocker"], domain.blocker_lines(job))
-        # Where it is, when given, is kept and in the activity log.
+        # The reason is kept and in the activity log.
         domain.resolve_packet_item(state, "job-oak", item["id"], reason="Emailed 10/12")
         self.assertEqual(item["present_reason"], "Emailed 10/12")
         self.assertIn("Emailed 10/12", state["audit"][-1]["detail"])
@@ -207,6 +211,8 @@ class PaperworkTests(unittest.TestCase):  # R3-05
         self.assertNotIn("present_reason", item)
         # A record attached by hand comes off too, and nothing on an empty item is refused.
         domain.add_job_record(state, "job-oak", "Waiver scan", "other")
+        state["files"] = state.get("files", []) + [{"id": "f-scan", "name": "scan.pdf", "ext": ".pdf", "size": 10}]
+        job["records"][-1]["file_ids"] = ["f-scan"]
         domain.attach_record_to_packet(state, "job-oak", item["id"], job["records"][-1]["id"])
         domain.detach_packet_item(state, "job-oak", item["id"])
         self.assertEqual((item["present"], item["attachments"]), (False, []))

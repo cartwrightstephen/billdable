@@ -168,7 +168,7 @@ def render(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], 
     # The files the email carried (M4): what was left out is not listed, records added to it are.
     going = set(file_ids(state, job, invoice))
     for item in invoice.get("packet") or []:
-        mark = '<span class="ok">✓</span>' if item.get("present") else '<span class="no">✗</span>'
+        mark = "Not attached:" if item.get("override") else '<span class="ok">✓</span>' if item.get("present") else '<span class="no">✗</span>'
         docs = []
         for att in item.get("attachments", []):
             for fid in (records.get(att.get("record_id")) or {}).get("file_ids", []):
@@ -202,7 +202,7 @@ def render(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], 
             + (f'<h2>Previous applications</h2><div class="card">{previous}</div>' if previous else "")
             + f'<h2>Lines</h2><div class="card">{lines or "<p>No lines.</p>"}</div>'
             + _sheet(job, invoice)
-            + (f'<h2>Paperwork</h2><div class="card">{"".join(packet)}</div>' if packet else "")
+            + (f'<h2>Supporting documents</h2><div class="card">{"".join(packet)}</div>' if packet else "")
             + _question(company, invoice, base, errors if form == "question" else {}, asked)
             + f'<p class="foot">This page is for the people {_e(company)} sent this pay app to. Prepared with Duracash. '
             + "Questions about the amounts go to the contractor; reply to their email.</p></main></body></html>")

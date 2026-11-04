@@ -310,23 +310,28 @@ class ImportHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
         packet = state["jobs"][0]["invoices"][-1]["packet"]
         item = next(p for p in packet if not p["present"])
-        res, state = self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=waiver&attach={item['id']}", raw=b"\x89PNG fake",
+        res, state = self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=waiver&waiver_kind=conditional_progress&attach={item['id']}", raw=b"\x89PNG fake",
                                   cookie=cookie, headers={"Content-Type": "image/png", "X-Filename": "IMG_0002.png"})
         self.assertEqual(res.status, 200, state)
         rec = state["jobs"][0]["records"][-1]
         item = next(p for p in state["jobs"][0]["invoices"][-1]["packet"] if p["id"] == item["id"])
-        self.assertTrue(item["present"])
+        self.assertFalse(item["present"], "a photo of a waiver can't be checked, so it asks for a look")
+        self.assertEqual(item["check"]["status"], "unchecked")
         self.assertEqual([a["record_id"] for a in item["attachments"]], [rec["id"]])
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/packet-confirm/{item['id']}", {"looked": True}, cookie=cookie)
+        self.assertEqual(res.status, 200, state)
+        item = next(p for p in state["jobs"][0]["invoices"][-1]["packet"] if p["id"] == item["id"])
+        self.assertTrue(item["present"])
         # The Inbox's Undo was refused while the paperwork used the record; Remove frees it.
         inbox_id = state["inbox"][-1]["id"]
         res, data = self.request("POST", f"/api/inbox/{inbox_id}/undo", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertIn("Remove", data["error"])
-        # The refusal links to that pay app's Paperwork page, where Remove is (Oct 23 note #13).
+        # The refusal links to that pay app's page, where Remove is (Oct 23 note #13, Decision 9).
         inv_id = state["jobs"][0]["invoices"][-1]["id"]
         self.assertEqual({k: data["action"][k] for k in ("view", "job_id", "detail")},
-                         {"view": "packet-detail", "job_id": job["id"], "detail": inv_id})
-        self.assertTrue(data["action"]["label"].startswith("Open the paperwork for "))
+                         {"view": "payapp-detail", "job_id": job["id"], "detail": inv_id})
+        self.assertTrue(data["action"]["label"].startswith("Open PA-"))
         res, state = self.request("POST", f"/api/jobs/{job['id']}/detach/{item['id']}", {}, cookie=cookie)
         self.assertEqual(res.status, 200, state)
         self.assertIn(item["blocker"], state["jobs"][0]["blockers"])

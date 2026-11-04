@@ -465,7 +465,7 @@ export const actions = {
     if (input) {
       input.dataset.job = el.dataset.job || "";
       input.dataset.kind = el.dataset.kind || "";   // e.g. "waiver" from the waiver page
-      input.dataset.attach = el.dataset.attach || "";   // a paperwork item to attach it to
+      input.dataset.attach = el.dataset.attach || "";   // a supporting document to attach it to
       input.dataset.co = el.dataset.co || "";   // a change order it is the signed copy of
       input.dataset.waiverKind = el.dataset.waiverKind || "";   // the type of a signed lien waiver (M14)
       input.dataset.waiverFor = el.dataset.waiverFor || "";   // the paid pay app or release it is for (B1)

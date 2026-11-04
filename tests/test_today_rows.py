@@ -59,7 +59,7 @@ class TodayRowsTests(unittest.TestCase):
     def test_blocked_by_paperwork(self):
         inv = self.draft()
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"]), ("blocked", 3, "Needs paperwork", "amber"))
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"]), ("blocked", 3, "Needs supporting documents", "amber"))
         self.assertEqual(r["text"], "Signed contract is missing. And 3 more.")
         self.assertEqual(r["button"], "Add 4 missing documents")
         self.assertEqual((r["invoice_id"], r["co_id"]), (inv["id"], ""))
@@ -181,7 +181,7 @@ class TodayRowsTests(unittest.TestCase):
         self.assertEqual(domain.light_snapshot(self.state, NOW)["today_rows"], rows)
         self.assertEqual([r["kind"] for r in rows], ["blocked", "follow_up", "inbox"])
         subject, body = domain.daily_digest(self.state, "https://app.example", NOW)
-        self.assertEqual(subject, "Due today in Duracash: 1 pay app missing paperwork, 1 follow-up, 1 Inbox item")
+        self.assertEqual(subject, "Due today in Duracash: 1 pay app missing supporting documents, 1 follow-up, 1 Inbox item")
         for r in rows:
             self.assertIn(f"- {r['job']}: {r['label']}. {r['text']}\n  https://app.example{r['path']}", body)
         self.assertIn(inv["number"], body)

@@ -163,7 +163,7 @@ class CloseoutMissingTests(unittest.TestCase):
         state = seed_state()
         for jid in ("job-decatur", "job-brook"):
             job = domain._job(state, jid)
-            self.assertFalse(job.get("closeout_packet"), "an older job, its closeout items in the job paperwork")
+            self.assertFalse(job.get("closeout_packet"), "an older job, its closeout items in the job supporting documents")
             self.assertEqual(job.get("work_status"), "complete")
             view = domain.job_view(state, job)
             with self.assertRaises(domain.GateError) as raised:

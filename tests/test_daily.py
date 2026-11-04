@@ -34,6 +34,7 @@ class NewJobRecordTests(unittest.TestCase):
         domain.add_job_record(self.state, self.id, name, kind, "", "Ana")
         rec = self.job["records"][-1]
         rec["file_ids"] = ["f-" + name]
+        self.state.setdefault("files", []).append({"id": "f-" + name, "name": name, "ext": "." + name.rsplit(".", 1)[-1], "size": 10})
         return rec
 
     def refused(self, field, notes="", **body):
@@ -113,9 +114,9 @@ class NewJobRecordTests(unittest.TestCase):
                 self.save("Later", date=bad)
             self.assertIn("date", ctx.exception.fields)
 
-    def test_records_still_fill_paperwork(self):
-        """The packet rules read the kind: a time sheet or a delivery ticket fills the ticket item,
-        an invoice the invoice item, a photo the photo item."""
+    def test_records_are_still_suggested_for_their_items(self):
+        """The packet rules read the kind: a time sheet or a delivery ticket is suggested for the ticket
+        item, an invoice for the invoice item, a photo for the photo item."""
         for label, item_kind, section in (("Daily tickets and time sheets", "ticket", "time_sheets"),
                                           ("Daily tickets and time sheets", "ticket", "delivery"),
                                           ("Supplier invoices and receipts", "supplier_invoice", "invoices"),
@@ -126,8 +127,9 @@ class NewJobRecordTests(unittest.TestCase):
             rec = self.upload("note", f"{section}.jpg")
             self.save(entries=[{"section": section, "row": 0, "attachments": [rec["id"]]}])
             domain._attach_from_record(self.state, self.job, packet, "the test")
-            self.assertTrue(packet[0]["present"], section)
-            self.assertEqual(packet[0]["attachments"][0]["record_id"], rec["id"])
+            self.assertFalse(packet[0].get("present"), "suggested for a person to check, not cleared")
+            self.assertEqual(packet[0]["attachments"][0]["record_id"], rec["id"], section)
+            self.assertTrue(packet[0]["attachments"][0]["unconfirmed"])
 
     def test_the_job_file_says_neither_old_name(self):
         import job_archive

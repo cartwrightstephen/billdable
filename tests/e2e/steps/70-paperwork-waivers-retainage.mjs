@@ -29,6 +29,46 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("heading", { name: "Required items" }).waitFor();
   });
 
+  await step("a blank waiver warns, a look clears it, and an override shows on the pay app", async () => {  // Stephen's Nov 1 notes, Decisions 5, 6
+    const p = await signedInPage({ width: 1280, height: 900 });
+    const made = await p.evaluate(async () => {
+      const call = async (path, body) => (await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })).json();
+      let st = await call("/api/jobs", { name: "Smoke blank waiver", customer: "Smoke Blank Client", contract_cents: 1000000, address: "6 Test St, Atlanta, GA 30307",
+        approver: "Dee", ap_email: "dee@blank.example", role: "Owner", new_customer: true });
+      const id = st.jobs.find((j) => j.name === "Smoke blank waiver").id;
+      st = await call(`/api/jobs/${id}/progress`, { completed_cents: 400000 });
+      const inv = st.jobs.find((j) => j.id === id).invoices.at(-1);
+      const waiver = inv.packet.find((i) => i.waiver_kind);
+      const other = inv.packet.find((i) => i !== waiver && !i.present);
+      const res = await fetch(`/api/import/file?job=${id}&file=1&kind=waiver&waiver_kind=conditional_progress&attach=${waiver.id}`,
+        { method: "POST", headers: { "Content-Type": "application/pdf", "X-Filename": "Signed conditional waiver.pdf" }, body: "%PDF-1.4 smoke" });
+      return { id, inv: inv.id, status: res.status, other: other && other.id, waiver: waiver.id };
+    });
+    assert.equal(made.status, 200);
+    await p.goto(BASE + `/money/pay-app/${made.id}/${made.inv}`);
+    await p.getByRole("heading", { name: "Review & send" }).waitFor();
+    await p.getByRole("heading", { name: "Supporting documents" }).waitFor();
+    const warning = p.locator(".packet-item .doc-warning");
+    await warning.waitFor();
+    assert.match(await warning.innerText(), /looks blank/);
+    assert.equal(await p.locator('.send-check [data-action="send"]').isDisabled(), true);
+    await p.getByRole("button", { name: "I opened it and it's right" }).click();
+    await confirmIfAsked(p);
+    await p.locator(".packet-item", { hasText: "Confirmed by" }).waitFor();
+    await p.locator(".send-confirmed", { hasText: "Confirmed by" }).waitFor();
+    await p.locator(".send-warnings").waitFor();
+    if (made.other) {
+      await p.locator(`[data-form="resolve-${made.other}"]`).click();
+      await p.fill(`#resolve-reason-${made.other}`, "Original at the office");
+      await p.getByRole("button", { name: "Save override" }).click();
+      await p.locator(".send-overrides", { hasText: "Original at the office" }).waitFor();
+      assert.match(await p.locator(".override-note").first().innerText(), /^Overridden by .+ on .+: Original at the office$/);
+    }
+    assert.match(await p.locator(".email-body").innerText(), /Please find pay application/);
+    assert.ok(await p.locator(`.send-attachments a[href$="${made.inv}.pdf"]`).count());
+    await p.context().close();
+  });
+
   await step("an unconditional waiver on a pay app is refused until an owner gives the reason", async () => {  // M14, M16
     const p = await signedInPage({ width: 1280, height: 900 });
     const job = await p.evaluate(async () => {
@@ -43,6 +83,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       for (const item of inv.packet) if (item !== waiver && !item.present) await call(`/api/jobs/${id}/resolve/${item.id}`, { reason: "smoke" });
       const res = await fetch(`/api/import/file?job=${id}&file=1&kind=waiver&waiver_kind=unconditional_progress&attach=${waiver.id}`,
         { method: "POST", headers: { "Content-Type": "application/pdf", "X-Filename": "Unconditional waiver.pdf" }, body: "%PDF-1.4 smoke" });
+      // A blank file: it asks for a look (Decision 6), then a person says it is right.
+      await call(`/api/jobs/${id}/packet-confirm/${waiver.id}`, { looked: true });
       return { id, inv: inv.id, status: res.status };
     });
     assert.equal(job.status, 200);

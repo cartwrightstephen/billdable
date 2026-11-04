@@ -35,7 +35,7 @@ test("missing paperwork alone is amber and says what to attach; an unsigned CO s
   const paper = job({ blockers: ["Signed contract is missing.", "Completion photos are missing."], missing_paperwork: ["Signed contract", "Completion photos"], invoices: [inv("draft")],
     blocked: true, needs_paperwork: true, blocker_button: "Add 2 missing documents" });
   assert.equal(needsPaperwork(paper), true);
-  assert.deepEqual(jobStatus(paper), ["Needs paperwork", "amber"]);
+  assert.deepEqual(jobStatus(paper), ["Needs supporting documents", "amber"]);
   assert.equal(nextStep(paper), "Add 2 missing documents before it can go: Signed contract, Completion photos");
   assert.equal(blockerButton(paper), "Add 2 missing documents");
   const co = job({ blockers: ["Signed contract is missing.", "Change Order 2 is included in the billing amount but has not been signed."], missing_paperwork: ["Signed contract"], invoices: [inv("draft")],
@@ -188,7 +188,7 @@ test("Ask for retainage shows only once the work is done and the closeout paperw
   assert.equal(retainageNote(running), "Asked for after Final Pay App.");  // M24
   const missing = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: false }], closeout_missing: ["Punch-list signoff"] });
   assert.ok(!keys([jobActions(missing).primary, ...jobActions(missing).more].filter(Boolean)).includes("retainage"));
-  assert.equal(retainageNote(missing), "Closeout paperwork: 1 item missing.");
+  assert.equal(retainageNote(missing), "Closeout documents: 1 item missing.");
   const ready = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: true }], closeout_missing: [] });
   assert.equal(jobActions(ready).primary.key, "retainage");
   assert.equal(retainageNote(ready), "");
@@ -226,7 +226,7 @@ test("a done job asked for part of its retainage early still says the closeout p
     payer: { name: "ABC", follow_up_days: 7 }, last_retainage_chase_at: "2026-10-28T15:00:00+00:00" });
   assert.equal(nextStep(asked, now), "Closeout: missing Punch-list signoff. Open Closeout Documents.");
   assert.doesNotMatch(nextStep(asked, now), /Ask again from/);
-  assert.equal(retainageNote(asked, now), "Closeout paperwork: 1 item missing.");
+  assert.equal(retainageNote(asked, now), "Closeout documents: 1 item missing.");
 });
 
 test("only an unsigned change order in the way: Get CO N signed opens it", () => {  // R3-05

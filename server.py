@@ -2263,7 +2263,7 @@ class Handler(BaseHTTPRequestHandler):
                 if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
                     domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for)
                 if attach_to:
-                    domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor)
+                    domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor, read_file=_file_reader(company_id))
                 if signed_co:
                     # Who signed the paper copy and when (M9) come with it; without them it is refused.
                     domain.mark_co_signed(state, job_id, signed_co, filed["record_ids"][0], actor,
@@ -3121,7 +3121,7 @@ def _send_payapp(h, st, j, i, c):
     override = _text(c.body, "unconditional_override").strip()
     if override and c.user.get("role", "owner") != "owner":
         raise domain.GateError("Only an owner can send a pay app with an unconditional waiver attached.")
-    return domain.approve_and_send(st, j, c.actor, unconditional_override=override, **_co_args(c))
+    return domain.approve_and_send(st, j, c.actor, unconditional_override=override, reviewed=_text(c.body, "reviewed"), **_co_args(c))
 
 
 def _received_on(body: dict) -> str | None:
@@ -3193,6 +3193,16 @@ def may_take(user: dict, action: str, state: dict) -> bool:
 
 
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
+def _file_reader(company_id: str):
+    """What the document check reads a stored file with (domain.read_file): None if it is gone."""
+    def read(meta: dict) -> bytes | None:
+        try:
+            return importer.file_path(company_id, meta).read_bytes()
+        except OSError:
+            return None
+    return read
+
+
 JOB_ACTIONS = {
     "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"), period_end=_text(c.body, "period_to"))),
     "progress": (False, _progress),
@@ -3207,7 +3217,7 @@ JOB_ACTIONS = {
     "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor,
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None,
-                                                                                    release_id=_text(c.body, "release_id") or None))),
+                                                                                    release_id=_text(c.body, "release_id") or None, confirm_final=c.body.get("confirm_final") is True))),
     # The type of a signed waiver on the job record, and which paid pay app or release it is for (B1).
     "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"))),
     # No waiver goes out through Duracash for this payment: handed over outside it, or not needed (B2).
@@ -3235,9 +3245,10 @@ JOB_ACTIONS = {
     "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
     "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor)),
-    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor)),
+    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id), looked=c.body.get("looked") is True)),
+    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
-    "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor)),
+    "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor, whole_client=c.body.get("whole_client") is True)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),
     "import-qbo": (False, _import_qbo),
     "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),
@@ -3250,7 +3261,7 @@ JOB_ACTIONS = {
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
     "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body)),
-    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name", "attachment"), c.actor)),
+    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id), looked=c.body.get("looked") is True)),
 }
 
 def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None = None) -> bool:

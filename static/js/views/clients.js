@@ -52,7 +52,7 @@ function clientJobsHtml(p, open) {
 // The paperwork a client needs (S11): a checkbox per typical item, Other for the rest, and
 // Nothing needed. What is ticked and not saved yet stays through a redraw.
 const ticks = new Map();   // form key -> { checked: [labels], none: bool }
-export function paperworkHtml(key, p = null, legend = "Paperwork needed with each pay app") {
+export function paperworkHtml(key, p = null, legend = "Supporting documents needed with each pay app") {
   const catalog = state.paperwork_catalog;
   const saved = p ? packetChoices(p.packet_items || [], catalog) : { checked: [], other: "" };
   const t = ticks.get(key) || { checked: saved.checked, none: !!(p && p.no_paperwork) };
@@ -146,8 +146,8 @@ export const views = {
         <details class="card playbook-card" data-payer-card="${p.id}"${open ? " open" : ""}>
           <summary><strong>${p.name}</strong> <span class="sub">${clientTypeLabel(p)} · ${p.approver || "no one signs off yet"} · ${p.ap_email || "no email yet"} · ${n === 1 ? "1 job" : `${n} jobs`}</span>${(p.packet_suggestions || []).some(x => x.status === "open") ? ` <span class="pill copper">${p.packet_suggestions.filter(x => x.status === "open").length} suggested</span>` : ""}</summary>
           ${(p.packet_suggestions || []).filter(x => x.status === "open").map(x => `<div class="list-item suggestion">
-            <div><strong>Add to the paperwork?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
-            <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to paperwork</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
+            <div><strong>Add to the supporting documents?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
+            <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to supporting documents</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
           </div>`).join("")}
           ${clientJobsHtml(p, open)}
           ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${(n => n === 1 ? "1 day" : `${n} days`)(Math.round(Number(unesc(String(p.paid_days_avg)))))} after a pay app is sent, on average (${p.paid_count} paid). ${(() => {

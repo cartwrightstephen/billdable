@@ -183,8 +183,8 @@ export const views = {
                 <td>${f.doneDays != null ? daysAgoText(f.doneDays) : "Not yet"}</td>
                 <td class="num">${f.asked}</td>
                 <td>${f.last ? `${fmtDate(f.last.toISOString())}<div class="sub row-sub">${daysAgoText(f.askedDays)}</div>` : "—"}</td>
-                <td>${missing.length ? missing.join(", ") : (j.work_status === "complete" ? "Closeout paperwork complete" : "Job still in progress")}</td>
-                <td>${j.work_status === "complete" && missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}" ${j.closeout_packet && j.closeout_packet.length ? `data-inv="closeout"` : ""}>Open closeout paperwork</button>` : retainageAskHtml(j)}</td>
+                <td>${missing.length ? missing.join(", ") : (j.work_status === "complete" ? "Closeout documents complete" : "Job still in progress")}</td>
+                <td>${j.work_status === "complete" && missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}" ${j.closeout_packet && j.closeout_packet.length ? `data-inv="closeout"` : ""}>Open closeout documents</button>` : retainageAskHtml(j)}</td>
                 <td>${j.payer.approver}<div class="sub row-sub"><a href="mailto:${j.payer.ap_email}">${j.payer.ap_email}</a></div></td>
               </tr>`;
             }).join("")}
@@ -208,7 +208,10 @@ export const actions = {
       const what = row ? `${unesc(row.label)}${row.amount != null ? ", " + money(row.amount) : ""}` : j.name;
       if (!(await askConfirm(`Email the signed ${waiverTypeWords(kind || (row && row.kind) || "")} waiver for ${what} to ${sendsTo(j)}?`, "Send the waiver"))) return;
     }
-    await post(`/api/jobs/${id}/waiver`, { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) });
+    const body = { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) };
+    const r = await post(`/api/jobs/${id}/waiver`, body);
+    // A final waiver while a progress one is due warns; a person's confirm sends it (accept. 76).
+    if (r && r.data && r.data.final_waiver_warning && await askConfirm(r.data.error, "Send the final waiver", true)) await post(`/api/jobs/${id}/waiver`, { ...body, confirm_final: true });
   },
   // All of the retainage, or the part typed in the box, once the job is done (M24).
   "retainage": async (el, id) => {

@@ -69,7 +69,7 @@ test("an older job's closeout items come from the server, so Ask for retainage w
   const j = job({ work_status: "complete", money: money_, closeout_packet: [], closeout_missing: ["Punch-list signoff"],
     close_blockers: ["Retainage"] });
   assert.ok(!keys(jobActions(j)).includes("retainage"));
-  assert.equal(retainageNote(j), "Closeout paperwork: 1 item missing.");
+  assert.equal(retainageNote(j), "Closeout documents: 1 item missing.");
   const labels = closeBlockerActions(j, { kind: "retainage" }).map(a => a.label);
   assert.deepEqual(labels, ["Record Retainage Paid", "Open Closeout Documents"]);
   assert.doesNotMatch(closeBlockerActions(j, { kind: "retainage" })[1].attrs, /data-inv="closeout"/, "no closeout packet to open");

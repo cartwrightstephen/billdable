@@ -152,7 +152,7 @@ class FirstRunTests(unittest.TestCase):
         packets = {j["name"]: [p["label"] for p in j["invoices"][-1]["packet"]] for j in data["jobs"] if j["invoices"]}
         res, data = self.request("POST", f"/api/jobs/{data['jobs'][0]['id']}/done", {"notes": ""}, cookie)
         default = [p["label"] for p in data["jobs"][0]["invoices"][-1]["packet"]]
-        self.assertEqual(packets["Porch rebuild"], default, "the notes did not become the paperwork list")
+        self.assertEqual(packets["Porch rebuild"], default, "the notes did not become the supporting documents list")
         self.assertNotIn("Gate code 1234", default)
 
     def test_done_notes_go_on_the_job_record(self):  # R2-05
@@ -243,9 +243,9 @@ class FirstRunTests(unittest.TestCase):
         self.assertEqual(res.status, 200, data)
         job = self.job(data, job_id)
         packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
-        self.assertTrue(packet["Signed contract"]["present"], "the contract on the job record is attached")
-        self.assertNotIn("Signed contract", job["missing_paperwork"])
-        self.assertEqual(len(job["missing_paperwork"]), len(job["blockers"]), "only paperwork blocks it")
+        self.assertFalse(packet["Signed contract"]["present"], "a record with no file is not the contract")
+        self.assertIn("Signed contract", job["missing_paperwork"])
+        self.assertEqual(len(job["missing_paperwork"]), len(job["blockers"]), "only supporting documents blocks it")
 
         # "Not needed for this customer": it stops blocking and the next pay app does not ask.
         photos = packet["Progress photos"]

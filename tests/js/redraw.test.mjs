@@ -230,7 +230,7 @@ test("Schedule progress: an open draft is named as the one it replaces, until it
   const lines = [{ id: "l1", item: "1", description: "Rough-in", unit: "LF", qty_milli: 400000, done_milli: 100000, stored_cents: 0 }];
   const draft = { id: "i1", number: "PA-OAK-3", status: "draft", amount_cents: 450000 };
   const sovJob = (invoices) => job({ invoices, sov_view: { present: true, lines } });
-  assert.match(sovProgressHtml(sovJob([draft])), /This replaces PA-OAK-3 \(\$4,500\.00\)\. Its number and paperwork stay\./);
+  assert.match(sovProgressHtml(sovJob([draft])), /This replaces PA-OAK-3 \(\$4,500\.00\)\. Its number and supporting documents stay\./);
   assert.doesNotMatch(sovProgressHtml(sovJob([{ ...draft, pencil_status: "sent" }])), /This replaces/);
   assert.doesNotMatch(sovProgressHtml(sovJob([{ ...draft, status: "sent" }])), /This replaces/);
 });

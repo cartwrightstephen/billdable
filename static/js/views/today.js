@@ -198,13 +198,13 @@ function onboardingHtml() {
       label: "Company details", attrs: `data-action="onb-go" data-view="company" data-focus="#co-address"`, always: true },
     { text: termText("Create your first job: contract amount, client and where pay apps go."), done: jobs.length > 0,
       label: "New job", attrs: `data-action="onb-newjob"`, always: true },
-    { text: "Put the contract and paperwork on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
+    { text: "Put the contract and supporting documents on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
     { text: "Set up a schedule of values to bill line by line (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present),
       label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.editable) || j.sov_view.present, "#sov-card"), needsJob: true },
-    { text: termText("Use Progress Pay App or Final Pay App. Duracash drafts the pay app and lists the paperwork the client needs."), done: invoices.length > 0,
+    { text: termText("Use Progress Pay App or Final Pay App. Duracash drafts the pay app and lists the supporting documents the client needs."), done: invoices.length > 0,
       label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
-    { text: "Add the missing paperwork, then Approve & send.", done: invoices.some(i => i.sent_at),
+    { text: "Add the missing supporting documents, then Approve & send.", done: invoices.some(i => i.sent_at),
       label: draft ? "Review & send" : "Open the job",
       attrs: draft ? `data-action="open-payapp" data-job="${draftJob.id}" data-inv="${draft.id}" data-focus=".send-check"` : goJob(billed, ".next-card"), needsJob: true },
     { text: "Already been paid on some jobs? Import the payments from QuickBooks.", optional: true, done: jobs.some(j => (j.payments || []).length),
@@ -276,7 +276,7 @@ export const views = {
       ${isDemo && !helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
-          <strong>Try the demo:</strong> open a job, add its missing paperwork, Review & send, record the payment, send the waiver, then finish the job.
+          <strong>Try the demo:</strong> open a job, add its missing supporting documents, Review & send, record the payment, send the waiver, then finish the job.
         </div>` : ""}
       ${state.jobs.length || (state.tasks || []).length ? todoCardHtml() : ""}
       <div class="metrics">
