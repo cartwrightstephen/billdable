@@ -336,7 +336,7 @@ test("a change order's pill reads Signed or Unsigned, never Approved or Pending 
 });
 
 // ---------- jobs-clients (Stephen's Oct 29 review) ----------
-import { clientTypeLabel, CLIENT_TYPES, openJobs, groupRecords, RECORD_GROUPS, RECORD_KINDS, packetChoices, packetText, paperworkChoices, startDateLimits } from "../../static/js/jobs.js";
+import { clientTypeLabel, CLIENT_TYPES, openJobs, groupRecords, recordKindWord, RECORD_GROUPS, RECORD_KINDS, packetChoices, packetText, paperworkChoices, startDateLimits } from "../../static/js/jobs.js";
 
 test("the job page lists the blockers under the Next step line, so the line doesn't repeat the first (J6)", () => {
   const drafted = job({ blockers: ["Signed contract", "Daily tickets"], invoices: [inv("awaiting_approval")], blocked: true });
@@ -359,11 +359,14 @@ test("a finished job leaves the working lists (J9)", () => {
   assert.deepEqual(openJobs(undefined), []);
 });
 
-test("the job record groups by kind with counts, newest first; every kind has a group (J5)", () => {
-  const recs = [{ id: 1, kind: "photo" }, { id: 2, kind: "ticket" }, { id: 3, kind: "photo" }, { id: 4, kind: "mystery" }, { id: 5, kind: "supplier_invoice" }];
+test("the job records group by kind with counts, newest first; every kind has a group (J5)", () => {
+  const recs = [{ id: 1, kind: "photo" }, { id: 2, kind: "ticket" }, { id: 3, kind: "photo" }, { id: 4, kind: "mystery" }, { id: 5, kind: "supplier_invoice" },
+    { id: 6, kind: "ticket", ticket_type: "time_sheet" }, { id: 7, kind: "ticket", ticket_type: "delivery" }, { id: 8, kind: "inspection" }];
   const groups = groupRecords(recs);
-  assert.deepEqual(groups.map(g => [g.key, g.records.length]), [["photo", 2], ["tickets", 2], ["other", 1]]);
-  assert.deepEqual(groups[0].records.map(r => r.id), [3, 1]);
+  assert.deepEqual(groups.map(g => [g.key, g.records.length]), [["delivery", 1], ["photo", 2], ["time_sheets", 1], ["tickets", 1], ["invoices", 1], ["inspections", 1], ["other", 1]]);
+  assert.deepEqual(groups[1].records.map(r => r.id), [3, 1]);
+  assert.equal(recordKindWord({ kind: "ticket", ticket_type: "time_sheet" }), "Time sheet");
+  assert.equal(recordKindWord({ kind: "ticket" }), "Delivery ticket or time sheet");
   const grouped = new Set(RECORD_GROUPS.flatMap(([, , kinds]) => kinds));
   assert.deepEqual(Object.keys(RECORD_KINDS).filter(k => !grouped.has(k)), []);
   assert.deepEqual(groupRecords([]), []);

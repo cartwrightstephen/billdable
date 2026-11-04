@@ -114,7 +114,7 @@ export function coFormFields(j) {
       ${field({ form: "newco", name: "schedule_days", id: "co-days", label: "Schedule change, days (optional)", inputmode: "numeric", placeholder: "3" })}
       ${field({ form: "newco", name: "work_started_on", id: "co-started", label: "Work started on (optional)", type: "date", attrs: `max="${localToday()}"` })}
     </div>
-    ${backup.length ? `<fieldset class="co-backup"><legend>Backup from the job record (optional)</legend>
+    ${backup.length ? `<fieldset class="co-backup"><legend>Backup from the job records (optional)</legend>
       ${backup.map(r => `<label class="co-backup-item"><input type="checkbox" data-co-backup="${r.id}"${coBackup.has(unesc(r.id)) ? " checked" : ""}> <span class="pill">${termText(RECORD_KINDS[unesc(r.kind)] || r.kind)}</span> ${r.label}</label>`).join("")}
     </fieldset>` : ""}`;
 }

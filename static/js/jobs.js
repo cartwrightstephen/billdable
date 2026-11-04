@@ -5,12 +5,20 @@ import { termText } from "./terms.js";
 
 // The job record's kinds, as domain.RECORD_KINDS and importer.KINDS have them.
 export const RECORD_KINDS = {
-  note: "Note", daily: "Daily record", photo: "Photo", contract: "Contract", change_order: "Change order",
-  waiver: "Lien waiver", pay_app: "Backup for the pay app", ticket: "Daily ticket or time sheet",
+  note: "Note", daily: "Diary entry", photo: "Photo", contract: "Contract", change_order: "Change order",
+  waiver: "Lien waiver", pay_app: "Backup for the pay app", ticket: "Delivery ticket or time sheet",
   supplier_invoice: "Supplier invoice or receipt", insurance: "Insurance certificate", inspection: "Inspection",
   stored: "Stored materials document", punch: "Punch list sign-off", completion: "Completion certificate",
   asbuilt: "As-builts", warranty: "Warranty", other: "Other",
 };
+
+// A ticket says which it is, when the New job record form made it (record.ticket_type); one from
+// before, or filed from the Inbox, is just a ticket. The paperwork rules read the kind alone.
+export const TICKET_TYPES = { delivery: "Delivery ticket", time_sheet: "Time sheet" };
+export function recordKindWord(r) {
+  const kind = unesc(r.kind || "");
+  return (kind === "ticket" && TICKET_TYPES[unesc(r.ticket_type || "")]) || RECORD_KINDS[kind] || r.kind;
+}
 
 // domain.SOURCE_LABELS has the same words, for Today's rows.
 export const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email", sms: "Text message", notes: "Notes", payer_page: "Client page" };
@@ -90,7 +98,7 @@ export function coSignature(co) {
   // On paper (M9): who signed it and the date they signed, when recorded; then the copy on the job record.
   const ev = co.signed_evidence;
   if (ev) return `<div class="money-row"><span class="label">Signed</span><span>${ev.signer_name ? `${ev.signer_name}, ${fmtDate(ev.signed_on || ev.at)} (on paper)` : "On paper"}</span></div>
-    <p class="sub">Paper copy on the job record: ${ev.label} (recorded by ${ev.by}, ${fmtDate(ev.at)}).</p>`;
+    <p class="sub">Paper copy in the job records: ${ev.label} (recorded by ${ev.by}, ${fmtDate(ev.at)}).</p>`;
   return "";
 }
 
@@ -371,7 +379,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   }
   // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
   if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "See what goes out and to whom, then send.", "bill");
-  if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver on the job record.", "paid");
+  if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver in the job records.", "paid");
   if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "Money came in. Paid in full opens the waiver step.", "paid");
   if (follow) add("follow", followDue ? "Send follow-up" : "Follow up now", `data-action="follow-up" data-id="${j.id}"${followDue ? "" : ` data-early="1"`}`,
     followDue ? "Email the client a reminder." : `Before the follow-up date, ${fmtDate(follow.day)}.`, "paid");
@@ -522,16 +530,21 @@ export function jobFilterOptions(jobs, selected = "") {
   return openJobs(jobs).map(opt).join("") + (done.length ? `<optgroup label="Finished jobs">${done.map(opt).join("")}</optgroup>` : "");
 }
 
-// The job record in groups (J5), each with its kinds (RECORD_KINDS keys). A kind not listed
-// goes under Notes and other.
+// The job records in groups (J5), each with its kinds (RECORD_KINDS keys, and "ticket:type" for a
+// ticket that says which it is). A kind not listed goes under Notes and other.
 export const RECORD_GROUPS = [
   ["contract", "Contract and change orders", ["contract", "change_order"]],
-  ["daily", "Daily records", ["daily"]],
-  ["photo", "Photos", ["photo"]],
-  ["tickets", "Tickets, time sheets and supplier invoices", ["ticket", "supplier_invoice", "stored"]],
+  ["daily", "Diary entries", ["daily"]],
+  ["delivery", "Delivery tickets", ["ticket:delivery"]],
+  ["photo", "Progress photos", ["photo"]],
+  ["time_sheets", "Time sheets", ["ticket:time_sheet"]],
+  ["tickets", "Tickets", ["ticket"]],
+  ["invoices", "Invoices", ["supplier_invoice"]],
+  ["inspections", "Inspections", ["inspection"]],
+  ["stored", "Stored materials", ["stored"]],
   ["waiver", "Lien waivers", ["waiver"]],
   ["insurance", "Insurance and certificates", ["insurance"]],
-  ["closeout", "Inspections and closeout", ["inspection", "punch", "completion", "asbuilt", "warranty"]],
+  ["closeout", "Closeout", ["punch", "completion", "asbuilt", "warranty"]],
   ["pay_app", "Pay app backup", ["pay_app"]],
   ["other", "Notes and other", ["note", "other"]],
 ];
@@ -539,9 +552,10 @@ export const RECORD_GROUPS = [
 // [{key, label, records}] for the groups that have records, newest first in each.
 export function groupRecords(records) {
   const known = new Set(RECORD_GROUPS.flatMap(([, , kinds]) => kinds));
+  const typed = (r) => { const k = unesc(r.kind || ""), t = unesc(r.ticket_type || ""); return k === "ticket" && TICKET_TYPES[t] ? `ticket:${t}` : k; };
   return RECORD_GROUPS.map(([key, label, kinds]) => ({
     key, label,
-    records: (records || []).filter(r => kinds.includes(unesc(r.kind || "")) || (key === "other" && !known.has(unesc(r.kind || "")))).slice().reverse(),
+    records: (records || []).filter(r => kinds.includes(typed(r)) || (key === "other" && !known.has(typed(r)))).slice().reverse(),
   })).filter(g => g.records.length);
 }
 

@@ -28,7 +28,7 @@ import { setAiVisible, updateAiContext } from "./js/views/helper.js";
 // On a phone the menu shows five; the two marked more go under More (styles.css).
 const SECTIONS = [
   { key: "today", label: "Dashboard", views: [["dashboard", "Overview"], ["results", "Results"], ["calendar", "Calendar"]] },
-  { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["daily", "Daily record"], ["history", "Job history"], ["playbook", "Client playbook"]] },
+  { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["daily", "New job record"], ["history", "Job history"], ["playbook", "Client playbook"]] },
   { key: "communications", label: "Communications", views: [["inbox", "Inbox"], ["outbox", "Outbox"]] },
   { key: "data", label: "Import/Export", more: true, views: [["import", "Import"], ["export", "Export"]] },
   { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["payments", "Payments"], ["waivers", "Closeout"]] },

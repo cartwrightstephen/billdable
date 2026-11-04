@@ -1,4 +1,4 @@
-// Today's Calendar and Daily record pages, drawn from the company's state. node --test tests/js
+// Today's Calendar and New job record pages, drawn from the company's state. node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { installFakeDom } from "./fakedom.mjs";
@@ -36,7 +36,7 @@ test("the calendar's follow-up is the next one due: after the last follow-up, an
   assert.doesNotMatch(dayCard("2026-10-08"), /OAK follow-up/);
 });
 
-test("after a save, the Daily record's job stays on the job just used", async () => {
+test("after a save, the New job record form's job stays on the job just used", async () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   const state = company([job("jB", "BIRCH", []), job("jC", "CEDAR", [])]);
   core.setState(state);

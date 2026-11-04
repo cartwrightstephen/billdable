@@ -164,7 +164,7 @@ class UiServerTests(unittest.TestCase):
         _, body = self.get("/manifest.webmanifest")
         manifest = json.loads(body)
         names = [s["name"] for s in manifest["shortcuts"]]
-        self.assertEqual(names, ["Take a photo", "Daily record", "New job"])
+        self.assertEqual(names, ["Take a photo", "New job record", "New job"])
         for shortcut in manifest["shortcuts"]:
             self.assertTrue(shortcut["url"].startswith("/"), shortcut)
             res, page = self.get(shortcut["url"])

@@ -52,9 +52,9 @@ class LocalDayTests(unittest.TestCase):
         other = domain.create_job(state, "Deck", "Dana Lee", 1_000_000, address="2 Elm St")
         self.assertEqual(other["started_on"], utc.isoformat())
         domain.add_daily_record(state, job["id"], "Framing", "Ana", details={"today": yesterday})
-        self.assertEqual(job["records"][-1]["label"], f"Daily record {yesterday}")
+        self.assertEqual(job["records"][-1]["label"], f"Diary entry {yesterday}")
         domain.add_daily_record(state, job["id"], "Framing", "Ana", details={"today": "1999-01-01"})
-        self.assertEqual(job["records"][-1]["label"], f"Daily record {utc.isoformat()}")
+        self.assertEqual(job["records"][-1]["label"], f"Diary entry {utc.isoformat()}")
 
 
 class RowTests(unittest.TestCase):

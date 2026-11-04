@@ -69,9 +69,9 @@
       ]
     },
     {
-      "name": "Daily record",
-      "short_name": "Daily",
-      "description": "Write today's note for a job.",
+      "name": "New job record",
+      "short_name": "Job record",
+      "description": "Add today's diary, tickets, photos and documents to a job.",
       "url": "/jobs/daily",
       "icons": [
         {

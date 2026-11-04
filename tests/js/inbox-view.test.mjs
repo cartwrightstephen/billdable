@@ -49,7 +49,7 @@ test("each row of Everything received says what became of it", () => {
   assert.equal(inbox.receivedStatus({ status: "auto", job_name: "Oak" }), "Filed automatically to Oak");
   assert.equal(inbox.receivedStatus({ status: "dismissed" }), "Dismissed");
   assert.equal(inbox.receivedFilesHtml({ files: [{ id: "f1", name: "co2.pdf" }], files_gone: 1 }),
-    `<div class="sub">Files: <a href="/api/files/f1" target="_blank" rel="noopener">co2.pdf</a> · 1 file no longer on the job record</div>`);
+    `<div class="sub">Files: <a href="/api/files/f1" target="_blank" rel="noopener">co2.pdf</a> · 1 file no longer in the job records</div>`);
   assert.equal(inbox.receivedFilesHtml({ files: [], files_gone: 0 }), "");
 });
 
@@ -81,7 +81,7 @@ test("the filters and sort go to the server; the default sort is left out", asyn
 test("an Outbox entry links its files, says when one is gone, and links the pay app PDF", () => {
   const e = { job_id: "j1", payapp_invoice_id: "inv-1", attachments: ["f1", "f-gone"], not_attached: [] };
   assert.equal(comms.attachmentsHtml(e, [{ id: "f1", name: "COI.pdf" }]),
-    `<div class="sub email-files">Attached: <a href="/api/jobs/j1/payapp/inv-1.pdf" target="_blank" rel="noopener">Pay app PDF</a> · <a href="/api/files/f1" target="_blank" rel="noopener">COI.pdf</a> · A file no longer on the job record</div>`);
+    `<div class="sub email-files">Attached: <a href="/api/jobs/j1/payapp/inv-1.pdf" target="_blank" rel="noopener">Pay app PDF</a> · <a href="/api/files/f1" target="_blank" rel="noopener">COI.pdf</a> · A file no longer in the job records</div>`);
   assert.equal(comms.attachmentsHtml({ attachments: [] }, []), "");
 });
 

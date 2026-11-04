@@ -80,7 +80,7 @@ function waiverForHtml(j, r, rows) {
   const options = rows.filter(x => x.due && (x.inv || x.release || x.legacy)).map(x =>
     `<option value="${rowId(x)}"${rowId(x) === rowId(r) ? " selected" : ""}>${x.label}</option>`).join("");
   return `<div data-form-key="${key}">${formErrorLine(key)}
-    <p class="blocker">${r.record} is on the job record. More than one waiver is due: say which one it is for, then send.</p>
+    <p class="blocker">${r.record} is in the job records. More than one waiver is due: say which one it is for, then send.</p>
     <div class="form-inline"><select id="${key}" aria-label="Which pay app this signed waiver is for">${options}</select>
     <button class="btn small" data-action="waiver-for" data-id="${j.id}" data-record="${r.recordId}" data-row="${rowId(r)}" data-kind="${r.kind}">This waiver is for it</button></div></div>`;
 }
@@ -122,8 +122,8 @@ export const views = {
         ${rows.length ? rows.map(r => `<div class="list-item waiver-row">
             <div><strong>${r.label}</strong>${r.amount != null ? " · " + money(r.amount) : ""} · ${r.due ? `<span class="pill amber">Due</span>` : r.notNeeded ? `<span class="pill">Not needed</span> ${r.notNeeded}` : `sent ${fmtDate(r.sent_at)}${r.kind ? " · " + waiverKindLabel(r.kind) : ""}`}</div>
             ${r.due && !j.summary && r.which && r.recordId && may("waiver") ? waiverForHtml(j, r, rows) : ""}
-            ${r.due && !j.summary && !r.onFile && !r.which ? `<p class="blocker">Add the signed ${waiverTypeWords(r.kind)} waiver to the job record, then send.</p>${uploadButtons(j, r.kind, rowId(r))}` : ""}
-            ${r.due && r.onFile && r.record ? `<p class="sub">Sends ${r.record} from the job record.</p>` : ""}
+            ${r.due && !j.summary && !r.onFile && !r.which ? `<p class="blocker">Add the signed ${waiverTypeWords(r.kind)} waiver to the job records, then send.</p>${uploadButtons(j, r.kind, rowId(r))}` : ""}
+            ${r.due && r.onFile && r.record ? `<p class="sub">Sends ${r.record} from the job records.</p>` : ""}
             ${r.due ? (may("waiver") ? waiverSendForm(j, r.inv || null, off || !r.onFile, r.release || null) + (j.summary ? "" : waiverNotNeededHtml(j, r)) : OWNER_SENDS) : ""}
           </div>`).join("")
           : `<p class="sub">${termText("No waiver is due yet. One is due after each paid pay app.")}</p>`}

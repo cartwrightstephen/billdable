@@ -790,7 +790,7 @@ class LivingDraftTests(unittest.TestCase):  # M1: the period's pay app is one dr
         # 220 x $45 = $9,900 + 25% of $12,000 = $3,000; base $12,900 + 15% = $14,835.
         self.assertEqual(draft["gross_cents"], 1_483_500)
         rec = self.job["records"][-1]
-        self.assertEqual(rec["label"], "Daily record 2026-10-30: 120 ea Rough-in wiring, 25% Panel and feeders")
+        self.assertEqual(rec["label"], "Diary entry 2026-10-30: 120 ea Rough-in wiring, 25% Panel and feeders")
         # Typed on the job page later, the line no longer says it came from a daily record.
         domain.record_sov_progress(self.state, self.job["id"], {self.rough: "230"})
         self.assertNotIn("from_daily_on", line(self.job, "1"))

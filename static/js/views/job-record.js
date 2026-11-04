@@ -1,11 +1,11 @@
-// The job page's job record: the drop zone, the paste box, the records in groups by kind (J5)
-// with a filter, each record with Edit, and Add a note.
+// The job page's Job records card: New job record, the drop zone, a link to Import, and the
+// records in groups by kind (J5) with a filter, each record with Edit.
 import { esc, unesc, fmtDate } from "../format.js";
-import { RECORD_KINDS, groupRecords } from "../jobs.js";
-import { field, formErrorLine, refuseForm, formValues, formErrors, draftValue, clearForm } from "../forms.js";
+import { RECORD_KINDS, groupRecords, recordKindWord } from "../jobs.js";
+import { draftValue, clearForm } from "../forms.js";
+import { pathFor } from "../routes.js";
 import { termText } from "../terms.js";
 import { state, onSessionEnd } from "../state.js";
-import { pasteBoxHtml } from "./inbox.js";
 import { post, toast, render, nav } from "../app-core.js";
 
 
@@ -28,7 +28,7 @@ function recordRow(j, r) {
       <button class="btn small secondary" data-action="record-edit" data-item="">Cancel</button>
     </div>`;
   }
-  return `<div class="list-item"><span class="pill">${termText(RECORD_KINDS[r.kind] || r.kind)}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${j.closed ? "" : ` <button class="linkish" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.added_at)}</div>` : ""}</div>`;
+  return `<div class="list-item"><span class="pill">${termText(recordKindWord(r))}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${j.closed ? "" : ` <button class="linkish" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.on_date || r.added_at)}</div>` : ""}</div>`;
 }
 
 
@@ -54,10 +54,10 @@ export function recordGroupsHtml(j) {
     </details>`).join("")}`;
 }
 
-// The Job record card on the job page.
+// The Job records card on the job page.
 export function recordCardHtml(j) {
-  return `<div class="card">
-        <h2>Job record</h2>
+  return `<div class="card job-records">
+        <div class="top"><h2>Job records</h2>${j.closed ? "" : `<button class="btn small" data-action="daily-for-job" data-id="${j.id}">New job record</button>`}</div>
         ${j.closed ? "" : `<div class="dropzone small" data-job="${j.id}">
           <div class="capture-buttons">
             <button class="btn small" data-action="pick-files" data-job="${j.id}" data-capture="1">Take a photo</button>
@@ -65,16 +65,8 @@ export function recordCardHtml(j) {
           </div>
           <span class="sub pointer-only">Or drop files here.</span>
         </div>
-        <details class="paste-job"><summary>Paste an email, a text thread, or notes</summary>${pasteBoxHtml(j.id)}</details>`}
+        <p class="sub">Emails, text threads and notes go in on <a href="${pathFor("import")}" data-action="import-for-job" data-id="${j.id}">Import</a>.</p>`}
         ${recordGroupsHtml(j)}
-        <details class="add-record"${(j.records || []).length && !formErrors.record ? "" : " open"}><summary>Add a note to the record</summary>
-          <div data-form-key="record">${formErrorLine("record")}<div class="form-row">
-            ${field({ form: "record", name: "label", id: "rec-label", label: "What it is", placeholder: "Rough-in inspection passed" })}
-            ${field({ form: "record", name: "note", id: "rec-note", label: "Note (optional)" })}
-            ${field({ form: "record", name: "kind", id: "rec-kind", label: "Kind", options: Object.entries(RECORD_KINDS).map(([k, v]) => [k, termText(v)]) })}
-            <button class="btn small" data-action="add-record" data-id="${j.id}">Add to record</button>
-          </div></div>
-        </details>
       </div>
       `;
 }
@@ -84,11 +76,6 @@ export const actions = {
   "add-evidence": async (el, id) => {
     const label = document.querySelector("#ev-label")?.value;
     if (label) await post(`/api/jobs/${id}/add-evidence`, { label, kind: "note" });
-  },
-  "add-record": async (el, id) => {
-    const v = formValues("record");
-    if (refuseForm("record", v.label ? {} : { label: "Enter what this is, like \"Rough-in inspection passed\"." })) return;
-    await post(`/api/jobs/${id}/add-record`, { label: v.label, note: v.note, kind: v.kind || "note" }, { formKey: "record" });
   },
   "record-filter": (el, id) => { recordFilter = { job: id, group: el.dataset.group || "" }; render(); },
   "record-edit": (el) => {

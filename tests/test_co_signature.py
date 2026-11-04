@@ -58,7 +58,7 @@ class DomainTests(unittest.TestCase):
     def test_paper_signature_needs_the_signed_copy_on_record(self):
         state = seed_state()
         job, co = pending(state)
-        with self.assertRaisesRegex(domain.GateError, "job record"):
+        with self.assertRaisesRegex(domain.GateError, "record that holds"):
             domain.mark_co_signed(state, job["id"], co["id"], "", "owner")
         domain.add_job_record(state, job["id"], "Signed CO scan", "change_order", "", "owner")
         rec = job["records"][-1]["id"]

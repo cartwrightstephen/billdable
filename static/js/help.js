@@ -96,14 +96,14 @@ export const FIELD_HELP = {
 
 export const NAV_HELP = {
   today: "What needs you today, the money across open jobs, results and the calendar.",
-  jobs: "Every job, with its money, paperwork and next steps; the daily record, job history and the client playbook.",
+  jobs: "Every job, with its money, paperwork and next steps; new job records, job history and the client playbook.",
   communications: "The Inbox for photos, PDFs, emails, texts and notes, and the Outbox of what was sent.",
   data: "Imports and exports of your data.",
   money: "Pay apps and their paperwork, change orders, what is unpaid, payments and closeout.",
   automations: "Under construction.",
   settings: "Your company, team, account and billing, and the activity log.",
   dashboard: "What needs attention and the money across open jobs.",
-  daily: "A dated diary of what happened on site, saved on the job record.",
+  daily: "A job's diary, delivery tickets, progress photos, time sheets, invoices, inspections and other documents, in one form.",
   calendar: "Follow-ups, expected approvals, payments and closeouts by date. Can be added to Google Calendar.",
   results: "How fast work turns into pay apps and pay apps into money, from your own records.",
   payapps: "Pay applications (pay apps): the bill for work done this period, with the paperwork the client needs in its Paperwork column.",

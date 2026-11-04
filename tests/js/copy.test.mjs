@@ -30,7 +30,7 @@ test("the notes Stephen asked to remove don't come back", () => {
   assert.deepEqual(left, []);
   const server = readFileSync(new URL("../../server.py", import.meta.url), "utf8");
   assert.doesNotMatch(server, /summary-email|_p_summary_email/, "the summary email has no route");
-  assert.match(server, /"Enter the diary entry\."/);
+  assert.match(readFileSync(new URL("../../domain/daily.py", import.meta.url), "utf8"), /"Enter the diary entry\."/);
 });
 
 // "customer" as a word the page shows: not inside a name (nj-customer, new_customer,
@@ -55,7 +55,7 @@ test("the Results cards and the Diary use Stephen's words", () => {
   for (const s of ["Days from Job Completion to Pay App Sent", "Days from Pay App Sent to Paid", "Pay app rejections by Clients", "Jobs completed with outstanding billings"]) {
     assert.ok(today.includes(s), s);
   }
-  assert.match(daily, /<label>Diary<\/label>/);
-  assert.match(daily, /"Write the diary entry\."/);
+  assert.match(daily, /<label for="daily-notes">Diary<\/label>/);
+  assert.match(daily, /"Write the diary entry, or add a document\."/);
   assert.match(text["js/views/clients.js"], /<h1>Client playbook<\/h1>/);
 });

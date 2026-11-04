@@ -43,10 +43,10 @@ export const ACTION_WORDS = {
   withdraw_co: "Change order withdrawn", include_co: "Change order put on the bill", change_order_off_draft: "Change order taken off the draft",
   request_co_signature: "Signature requested", co_work_started: "Change order work started",
   co_signed_after_start: "Change order signed after work started", co_client_logged: "Client logged the change order",
-  add_record: "Added to the job record", edit_record: "Job record changed",
-  add_evidence: "Added to the job record", attach_record: "Paperwork added", packet_attachment: "Paperwork added",
+  add_record: "Added to the job records", edit_record: "Job record changed",
+  add_evidence: "Added to the job records", attach_record: "Paperwork added", packet_attachment: "Paperwork added",
   packet_resolved: "Paperwork in", paperwork_detached: "Paperwork taken off", paperwork_not_needed: "Paperwork not needed",
-  daily_record: "Daily record saved", pencil_sent: "Draft sent for their review", pencil_response: "Client answered the draft",
+  daily_record: "Job record saved", pencil_sent: "Draft sent for their review", pencil_response: "Client answered the draft",
   payer_received: "Client opened it", payer_approved: "Client approved", payer_question: "Client asked a question",
   reply_captured: "Client replied", learn_rejection: "Client's reason saved", playbook_learned: "Client playbook learned",
   playbook_update: "Client playbook changed", payer_add: "Client added", payer_merge: "Clients merged", payer_delete: "Client deleted", payer_kept: "Client kept",
@@ -54,7 +54,7 @@ export const ACTION_WORDS = {
   billing: "Billing changed", company_update: "Company changed", team: "Team changed", team_join: "Joined the team",
   qbo_connected: "QuickBooks connected", qbo_disconnected: "QuickBooks disconnected", read_only: "Read-only changed",
   unconditional_override: "Sent with an unconditional waiver", waiver_type: "Waiver type set", waiver_not_needed: "No waiver through Duracash",
-  daily_quantities_not_applied: "Daily quantities not added", quantities_imported: "Quantities imported",
+  daily_quantities_not_applied: "Quantities not added", quantities_imported: "Quantities imported",
   payapp_attachments: "Email attachments changed", record_work: "Ticket tied to work",
 };
 

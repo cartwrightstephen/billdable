@@ -22,10 +22,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     for (const want of ["Done", "Times asked", "Last asked"]) assert.ok(ret.includes(want), want);
   });
 
-  await step("the paperwork page shows what the client needs and the job record", async () => {  // M3, M5
+  await step("the paperwork page shows what the client needs and the job records", async () => {  // M3, M5
     await page.goto(BASE + "/money/packet/job-grant");
     await page.getByRole("heading", { name: /needs to pay$/ }).waitFor();
-    await page.getByRole("heading", { name: /^From the job record/ }).waitFor();
+    await page.getByRole("heading", { name: /^From the job records/ }).waitFor();
     await page.getByRole("heading", { name: "Required items" }).waitFor();
   });
 

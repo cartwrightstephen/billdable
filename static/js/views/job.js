@@ -242,7 +242,7 @@ export const views = {
           <p class="sub">${statusPill(j)} ${j.code} · ${j.address} · ${j.payer.name} <span class="client-type">${clientTypeLabel(j.payer)}</span></p>
         </div>
         ${j.closed ? (may("reopen") && !formOpen.reopen ? `<button class="btn secondary small" data-action="toggle-form" data-form="reopen" aria-expanded="false">Add more work</button>` : "")
-          : `<div class="form-inline"><button class="btn secondary small" data-action="daily-for-job" data-id="${j.id}">New daily record</button>
+          : `<div class="form-inline"><button class="btn secondary small" data-action="daily-for-job" data-id="${j.id}">New job record</button>
           <button class="btn secondary small" data-action="toggle-form" data-form="editjob" aria-expanded="${!!formOpen.editjob}">${formOpen.editjob ? "Cancel" : "Edit job"}</button></div>`}
       </div>`;
     // A finished job is its job file (J9): what it came to, its papers and its activity. Add more

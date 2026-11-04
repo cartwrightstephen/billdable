@@ -70,7 +70,7 @@ KINDS = {
     "change_order": "Change order",
     "waiver": "Lien waiver",
     "pay_app": "Backup for the pay app",
-    "ticket": "Daily ticket or time sheet",
+    "ticket": "Delivery ticket or time sheet",
     "supplier_invoice": "Supplier invoice or receipt",
     "insurance": "Insurance certificate",
     "inspection": "Inspection",
@@ -81,7 +81,7 @@ KINDS = {
     "warranty": "Warranty",
     "photo": "Photo",
     "contract": "Contract",
-    "daily": "Daily record",
+    "daily": "Diary entry",
     "note": "Note",
     "other": "Other",
 }
@@ -663,7 +663,7 @@ def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor
         rec["file_ids"] = list(item["file_ids"])
         rec["inbox_id"] = item["id"]
     item.update({"status": "filed", "filed_job_id": job_id, "filed_kind": kind, "record_ids": record_ids, "filed_at": utcnow(), "filed_by": actor})
-    domain.audit(state, job_id, "import_filed", f"{actor} filed {KINDS.get(kind, kind).lower()} '{label}' ({source_line}) to the job record.", actor)
+    domain.audit(state, job_id, "import_filed", f"{actor} filed {KINDS.get(kind, kind).lower()} '{label}' ({source_line}) to the job's records.", actor)
     return item
 
 
@@ -719,7 +719,7 @@ def capture_reply(state: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]
         if re.search(r"\b(need|needs|missing|required|require|attach|send us|please send)\b", summary, re.IGNORECASE):
             domain.suggest_packet_item(state, job.get("payer_id", ""), summary, "a reply", job["name"])
         domain.audit(state, job["id"], "reply_captured",
-                     f"A reply from {sender} to {', '.join(sorted(numbers))} was filed to the job record: {summary}", "duracash")
+                     f"A reply from {sender} to {', '.join(sorted(numbers))} was filed to the job's records: {summary}", "duracash")
         return job
     return None
 
@@ -827,7 +827,7 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str, can_pull_back: bo
                 newer["prev_last_reply"] = prev_last
         item["auto_filed"] = False
     item.update({"status": "new", "record_ids": [], "filed_job_id": None})
-    domain.audit(state, job["id"], "import_undone", f"{actor} took an imported item back off the job record.", actor)
+    domain.audit(state, job["id"], "import_undone", f"{actor} took an imported item back out of the job's records.", actor)
     return item
 
 

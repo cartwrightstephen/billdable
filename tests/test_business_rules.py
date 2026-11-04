@@ -318,7 +318,7 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
         contract = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Signed contract")
         self.assertTrue(contract["present"])
         self.assertEqual([(a["name"], a["auto"]) for a in contract["attachments"]], [("Signed contract PDF", True)])
-        self.assertTrue(any("attached automatically from the job record" in a["detail"] for a in state["audit"]))
+        self.assertTrue(any("attached automatically from the job's records" in a["detail"] for a in state["audit"]))
         # A record added after drafting fills its item too.
         domain.add_job_record(state, job["id"], "Kitchen photos", "photo")
         photos = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Progress photos")

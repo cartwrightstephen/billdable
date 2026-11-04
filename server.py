@@ -3145,8 +3145,8 @@ JOB_ACTIONS = {
     "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
     "edit": (False, _edit_job),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
-    # The Diary, and crew, weather, materials, deliveries, ticked sections and files (T11, T12, M1).
-    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter the diary entry."), c.actor, details=c.body)),
+    # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
+    "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name", "attachment"), c.actor)),
 }
 
