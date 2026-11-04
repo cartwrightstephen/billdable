@@ -19,7 +19,7 @@ export const SOURCE_LABELS = { upload: "Upload", paste: "Pasted", email: "Email"
 export function jobStatus(j) {
   const inv = j.invoices || [];
   if (j.closed) return ["Closed", "green"];
-  if (isBlocked(j)) return needsPaperwork(j) ? ["Needs paperwork", "amber"] : ["Blocked", "red"];
+  if (isBlocked(j)) return needsPaperwork(j) ? ["Needs supporting documents", "amber"] : ["Blocked", "red"];
   if (inv.some(i => ["draft", "awaiting_approval"].includes(i.status))) return ["Ready to send", "copper"];
   if (j.waiver_due && !j.waiver_sent) return ["Waiver due", "amber"];
   if (inv.some(i => i.status === "partial")) return ["Partly paid", "amber"];
@@ -69,7 +69,7 @@ export function nextStep(j, now = new Date(), { listed = false } = {}) { return 
 
 function nextStepWords(j, now, listed = false) {
   if (j.closed) return "Finished.";
-  if (needsPaperwork(j)) return listed ? "Attach the paperwork, then send." : "Attach the paperwork, then send: " + j.missing_paperwork.join(", ");
+  if (needsPaperwork(j)) return listed ? "Attach the supporting documents, then send." : "Attach the supporting documents, then send: " + j.missing_paperwork.join(", ");
   if (isBlocked(j)) return listed ? "Before it can go:" : "Before it can go: " + j.blockers[0];
   const draft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   if (draft) return "Pay app is ready. Review it, then Approve & send.";
@@ -79,7 +79,7 @@ function nextStepWords(j, now, listed = false) {
   // The closeout paperwork comes first: domain.chase_retainage refuses before it looks at the wait.
   const asked = !closeoutMissing(j) && retainageAskWaits(j, now);
   if (j.money.retainage_open_cents > 0 && asked) return `Asked for the money held back ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}, or record it when it is paid.`;
-  if (j.money.retainage_open_cents > 0) return "Ask for the money held back once the closeout paperwork is in.";
+  if (j.money.retainage_open_cents > 0) return "Ask for the money held back once the closeout documents are in.";
   if (j.money.outstanding_cents === 0 && j.money.unbilled_completed_cents === 0) return (j.close_blockers || []).length ? "Before you finish: " + j.close_blockers[0] : "Ready to finish the job.";
   return "Draft a pay app for the work done and not billed.";
 }
@@ -307,7 +307,7 @@ export function retainageNote(j, now = new Date()) {
   const asked = retainageAskWaits(j, now);
   if (j.work_status !== "complete") return "Asked for once the job is marked done.";
   const n = closeoutMissing(j);
-  if (n) return `Closeout paperwork: ${n} item${n === 1 ? "" : "s"} missing.`;
+  if (n) return `Closeout documents: ${n} item${n === 1 ? "" : "s"} missing.`;
   return asked ? `Asked for it ${fmtDate(asked.last)}; ask again from ${fmtDate(asked.due)}.` : "";
 }
 
@@ -367,9 +367,9 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   if (isBlocked(j)) {
     const cos = coBlockers(j);
     if (onlyCoBlockers(j)) add("clear", blockerButton(j), `data-action="open-co" data-job="${j.id}" data-co="${cos[0].co_id}"`, "Send waits until the client signs it.", "bill");
-    else add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "Open the paperwork and add what is missing.", "bill");
+    else add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "Add what is missing to the pay app.", "bill");
   }
-  // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
+  // Every send passes "Review & send" (R1-06): the job page opens it instead of sending.
   if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "See what goes out and to whom, then send.", "bill");
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "Pick the waiver type and send the newest signed waiver on the job record.", "paid");
   if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "Money came in. Paid in full opens the waiver step.", "paid");
@@ -391,7 +391,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   if (pencilOut) add("pencil-no", "Client wants changes", `data-action="toggle-form" data-form="pencilchanges"`, "Record what the client wants changed.", "bill");
   if (m.retainage_open_cents > 0) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "Record retainage the client released.", "paid");
   add("co", "New change order", `data-action="new-co"`, "Extra or changed work, or a credit.", "bill");
-  if (draft) add("packet", "Open paperwork", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "Add the documents that go with the pay app.", "bill");
+  if (draft) add("packet", "Supporting documents", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "Add the documents that go with the pay app.", "bill");
   if (draft) add("void", "Delete draft", `data-action="void-draft" data-id="${j.id}"`, "Throw away the open draft. You can draft it again.", "bill");
   if (demo) add("qbo", "Import QuickBooks sample", `data-action="import-qbo" data-id="${j.id}"`, "Sample company only: a stand-in for a QuickBooks payment read.", "paid");
   const order = ["clear", "send", "waiver"];
@@ -430,7 +430,7 @@ function closeBlockerButtons(j, b, now) {
       { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"` },
       ...(retainageAskWaits(j, now) && !closeoutMissing(j) ? [] : [closeoutMissing(j)
         // An older job without a closeout packet keeps those items in the job paperwork (as on Closeout).
-        ? { label: "Open closeout paperwork", attrs: `data-action="open-packet" data-job="${id}"${(j.closeout_packet || []).length ? ` data-inv="closeout"` : ""}` }
+        ? { label: "Closeout documents", attrs: `data-action="open-packet" data-job="${id}"${(j.closeout_packet || []).length ? ` data-inv="closeout"` : ""}` }
         : { label: "Ask for retainage", attrs: `data-action="retainage" data-id="${id}"`, needs: "retainage" }])];
     case "waiver": return [{ label: "Send waiver", attrs: `data-action="open-waiver" data-id="${id}"`, needs: "waiver" }];
     default: return [];

@@ -34,7 +34,7 @@ class AskTests(unittest.TestCase):
         domain.record_progress(state, job["id"], 900_000)
         inv = draft(job)
         for item in inv["packet"]:
-            domain.resolve_packet_item(state, job["id"], item["id"])
+            domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
         domain.approve_and_send(state, job["id"], "Owner")
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"], "Owner", amount_cents=10_000)

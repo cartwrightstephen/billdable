@@ -141,8 +141,8 @@
       "needs_job": false,
       "actions": [],
       "follow_ups": [
-        "How do I add missing paperwork?",
-        "What is paperwork?"
+        "How do I add missing supporting documents?",
+        "What is supporting documents?"
       ]
     },
     {
@@ -328,7 +328,7 @@
         "new",
         "how work"
       ],
-      "answer": "Duracash makes sure finished work gets billed with everything the client needs, then follows the money until it's paid.\n- Jobs, New job: job name, address, client, who pays you and the contract amount. The rest can wait under More details (optional).\n- Put the contract, photos and tickets on the job record (Take a photo or Add a file), or bring emails and texts in through the Inbox.\n- Progress pay app: enter this draw, the total done so far or a percent, then Draft progress pay app. Duracash holds back retainage and lists the paperwork the client needs.\n- Add each missing document, then Review & send. It can go once nothing is missing.\n- Record a payment when it arrives, send the waiver, ask for retainage at the end, then Finish job.\nThe Dashboard shows what needs you next.",
+      "answer": "Duracash makes sure finished work gets billed with everything the client needs, then follows the money until it's paid.\n- Jobs, New job: job name, address, client, who pays you and the contract amount. The rest can wait under More details (optional).\n- Put the contract, photos and tickets on the job record (Take a photo or Add a file), or bring emails and texts in through the Inbox.\n- Progress pay app: enter this draw, the total done so far or a percent, then Draft progress pay app. Duracash holds back retainage and lists the supporting documents the client needs.\n- Add each missing document, then Review & send. It can go once nothing is missing.\n- Record a payment when it arrives, send the waiver, ask for retainage at the end, then Finish job.\nThe Dashboard shows what needs you next.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -390,7 +390,7 @@
         "new client",
         "add a client"
       ],
-      "answer": "Go to Jobs, Client playbook and tap Add client. Fill in Client name and Client type, then Who signs off on your bills, Email for pay apps, Phone, Pay apps due by (day of the month), Payment terms, days and the Paperwork needed with each pay app, and tap Add client. Have the contract? Tap Import a contract first: it fills the boxes it finds. A client can also be added with a job: type a new name in Client on New job.",
+      "answer": "Go to Jobs, Client playbook and tap Add client. Fill in Client name and Client type, then Who signs off on your bills, Email for pay apps, Phone, Pay apps due by (day of the month), Payment terms, days and the Supporting documents needed with each pay app, and tap Add client. Have the contract? Tap Import a contract first: it fills the boxes it finds. A client can also be added with a job: type a new name in Client on New job.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -421,7 +421,7 @@
         "rename",
         "change contract"
       ],
-      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, the address (Street address, City, State and ZIP; a job saved with a one-line address shows it all in Street until you split it), contract number, Start date and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; after that, use a change order. The job code stays the same. Tap Save changes. Who signs off, the email for pay apps and the paperwork list are in Jobs, Client playbook. In the Edit job form an owner also sees Delete job. It shows while the job has no payments and no pay app other than a deleted draft, so tap Delete draft first if one is open. If a pay app was sent or a payment came in, finish the job instead.",
+      "answer": "Open the job and tap Edit job, next to its name. You can change the job name, the address (Street address, City, State and ZIP; a job saved with a one-line address shows it all in Street until you split it), contract number, Start date and Retainage % (a new retainage applies from the next pay app). The contract amount can change only before the first pay app and without a schedule of values; after that, use a change order. The job code stays the same. Tap Save changes. Who signs off, the email for pay apps and the supporting documents list are in Jobs, Client playbook. In the Edit job form an owner also sees Delete job. It shows while the job has no payments and no pay app other than a deleted draft, so tap Delete draft first if one is open. If a pay app was sent or a payment came in, finish the job instead.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -457,7 +457,7 @@
         "public agency",
         "subcontractor"
       ],
-      "answer": "Client type says what kind of client this is: General contractor, Owner or developer, Homeowner, Another subcontractor (you are a lower tier) or Public agency. It sets the paperwork a new client starts with and when to follow up: a general contractor, or a subcontractor you work under, usually needs a lien waiver, an insurance certificate and daily tickets with every pay app; an owner, homeowner or public agency starts with an owner's list. It belongs to the client, so New job asks it only for a new client. Change it in Jobs, Client playbook.",
+      "answer": "Client type says what kind of client this is: General contractor, Owner or developer, Homeowner, Another subcontractor (you are a lower tier) or Public agency. It sets the supporting documents a new client starts with and when to follow up: a general contractor, or a subcontractor you work under, usually needs a lien waiver, an insurance certificate and daily tickets with every pay app; an owner, homeowner or public agency starts with an owner's list. It belongs to the client, so New job asks it only for a new client. Change it in Jobs, Client playbook.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -475,7 +475,7 @@
         "mobile",
         "app"
       ],
-      "answer": "There's no app-store app. Duracash runs in your phone's browser: sign in at the same address, and add it to your home screen from the browser's menu or Share button. On a phone, Take a photo opens the camera, in the Inbox, on a job and on the paperwork page, so you can photograph tickets straight onto a job.",
+      "answer": "There's no app-store app. Duracash runs in your phone's browser: sign in at the same address, and add it to your home screen from the browser's menu or Share button. On a phone, Take a photo opens the camera, in the Inbox, on a job and on a pay app's supporting documents, so you can photograph tickets straight onto a job.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -510,7 +510,7 @@
         "profile",
         "permission"
       ],
-      "answer": "Yes. Someone who manages the team opens Settings, Team, enters Their email, picks a Profile and taps Invite. Invite stays off until your own email is confirmed; the Team page says so, with Send the link again. A profile says what a person can do. Owner can do everything. Member drafts pay apps, records payments and adds paperwork; on Settings, Team, Permission profiles, an owner taps Edit on Member to give it more, such as Send pay apps, or New profile to add your own, like Office manager, with the permissions ticked. Only owners add or change profiles. To change someone's profile, pick another next to their name and tap Change. Everyone can draft, add records and follow up; the server refuses anything a person's profile doesn't allow. Every action is in the Activity log with the person's name. If the invite can't be emailed, you get a link to pass on; it works once, for 7 days.",
+      "answer": "Yes. Someone who manages the team opens Settings, Team, enters Their email, picks a Profile and taps Invite. Invite stays off until your own email is confirmed; the Team page says so, with Send the link again. A profile says what a person can do. Owner can do everything. Member drafts pay apps, records payments and adds supporting documents; on Settings, Team, Permission profiles, an owner taps Edit on Member to give it more, such as Send pay apps, or New profile to add your own, like Office manager, with the permissions ticked. Only owners add or change profiles. To change someone's profile, pick another next to their name and tap Change. Everyone can draft, add records and follow up; the server refuses anything a person's profile doesn't allow. Every action is in the Activity log with the person's name. If the invite can't be emailed, you get a link to pass on; it works once, for 7 days.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -570,12 +570,12 @@
         "pdf",
         "download"
       ],
-      "answer": "A pay app (pay application) is the bill for work done this period. It lists what was completed, line by line if the job has a schedule of values, adds signed change orders, and holds back retainage. Many contracts also need paperwork with it. Open any pay app and tap Open the PDF; the same PDF goes with the email when you send it.",
+      "answer": "A pay app (pay application) is the bill for work done this period. It lists what was completed, line by line if the job has a schedule of values, adds signed change orders, and holds back retainage. Many contracts also need supporting documents with it. Open any pay app and tap Open the PDF; the same PDF goes with the email when you send it.",
       "handler": null,
       "needs_job": false,
       "actions": [],
       "follow_ups": [
-        "What is paperwork?",
+        "What is supporting documents?",
         "What is retainage?"
       ]
     },
@@ -593,7 +593,7 @@
         "completed to date",
         "monthly"
       ],
-      "answer": "Open the job and tap Progress pay app. Without a schedule of values, pick This draw $ (the work since the last pay app), Total done so far $ or % complete, and enter it; the line below shows what the pay app comes to. With a schedule of values, enter how much of each line is done to date. Tap Draft progress pay app. Duracash holds back retainage and lists the paperwork from the client's settings. The job stays in progress.",
+      "answer": "Open the job and tap Progress pay app. Without a schedule of values, pick This draw $ (the work since the last pay app), Total done so far $ or % complete, and enter it; the line below shows what the pay app comes to. With a schedule of values, enter how much of each line is done to date. Tap Draft progress pay app. Duracash holds back retainage and lists the supporting documents from the client's settings. The job stays in progress.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -604,7 +604,7 @@
         }
       ],
       "follow_ups": [
-        "What is paperwork?",
+        "What is supporting documents?",
         "What is a draft for their review?"
       ]
     },
@@ -651,7 +651,7 @@
         "final",
         "complete"
       ],
-      "answer": "Open the job and tap Mark done (under More if you don't see it). Fill in Anything to note? (optional) and Period to, tap Confirm done, then confirm. Duracash drafts the final pay app for everything not billed yet. A draft that is still only here becomes the final pay app, keeping its number and paperwork; one with the client for their review needs their answer (or Delete draft) first, and the message names it. Every job also gets its closeout paperwork: the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties. Marked done by mistake? Undo done works until the final pay app goes out.",
+      "answer": "Open the job and tap Mark done (under More if you don't see it). Fill in Anything to note? (optional) and Period to, tap Confirm done, then confirm. Duracash drafts the final pay app for everything not billed yet. A draft that is still only here becomes the final pay app, keeping its number and supporting documents; one with the client for their review needs their answer (or Delete draft) first, and the message names it. Every job also gets its closeout documents: the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties. Marked done by mistake? Undo done works until the final pay app goes out.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -673,12 +673,12 @@
         "send",
         "approve"
       ],
-      "answer": "Open the job and tap Review & send. The pay app page shows Before you send: who it goes to, Also email (CC), the amount, the subject and every file the email carries, each with Leave out or Put back, and Add from the job record for an extra photo or receipt; Open the PDF to check it. If your company address, phone or licence number is blank, it says so there with a Company details button; you can still send. Then tap Approve & send to. While paperwork is missing or an unsigned change order is on the pay app, the job shows Fix N things before sending (or Add N missing documents, or Get CO N signed) instead. It goes to the client's Email for pay apps with the PDF and paperwork attached, from your company name, and replies come back to you. A signed unconditional waiver attached to a pay app gives up your lien rights before you are paid, so sending is refused until you take it off or an owner types why and taps Send anyway. Only owners send, unless an owner turns on Members can send in Settings, Company. Communications, Outbox shows whether it was delivered.",
+      "answer": "Open the job and tap Review & send. The pay app page shows what the client will get: who it goes to, Also email (CC), the amount, the subject, the PDF to open, every file the email carries with a link to open it and Leave out or Put back, Add from the job record for an extra photo or receipt, the email's text, and any overrides and warnings. If your company address, phone or licence number is blank, it says so there with a Company details button; you can still send. Then tap Approve & send to. While supporting documents are missing or an unsigned change order is on the pay app, the job shows Fix N things before sending (or Add N missing documents, or Get CO N signed) instead. It goes to the client's Email for pay apps with the PDF and supporting documents attached, from your company name, and replies come back to you. A signed unconditional waiver attached to a pay app gives up your lien rights before you are paid, so sending is refused until you take it off or an owner types why and taps Send anyway. Only owners send, unless an owner turns on Members can send in Settings, Company. Communications, Outbox shows whether it was delivered.",
       "handler": "blockers",
       "needs_job": false,
       "actions": [],
       "follow_ups": [
-        "What is paperwork?",
+        "What is supporting documents?",
         "Did the client get my pay app?"
       ]
     },
@@ -786,6 +786,7 @@
       "id": "what-packet",
       "category": "Paperwork",
       "questions": [
+        "What is supporting documents?",
         "What is paperwork?",
         "What is a packet?",
         "What goes in the packet?",
@@ -794,7 +795,7 @@
       "keywords": [
         "packet"
       ],
-      "answer": "Paperwork is everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate. Duracash lists the items from the client's settings (Paperwork needed with each pay app) and won't send the pay app until each one is in. Every pay app also asks for a conditional lien waiver unless the client was marked as not taking one. See it in the Paperwork column of Money, Pay apps, or tap Open paperwork on the job.",
+      "answer": "Supporting documents are everything the contract says must go with a pay app: lien waivers, delivery tickets, photos, signed change orders, schedule of values, insurance certificate. Duracash lists the items from the client's settings (Supporting documents needed with each pay app) and won't send the pay app until each one is in. Every pay app also asks for a conditional lien waiver unless the client was marked as not taking one. It is part of the pay app: see it under Supporting documents on the pay app's page, from the Supporting documents column of Money, Pay apps or Supporting documents on the job.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -805,7 +806,7 @@
         }
       ],
       "follow_ups": [
-        "How do I add missing paperwork?",
+        "How do I add missing supporting documents?",
         "How do I change what a client needs?"
       ]
     },
@@ -813,6 +814,7 @@
       "id": "clear-packet",
       "category": "Paperwork",
       "questions": [
+        "How do I add missing supporting documents?",
         "How do I add missing paperwork?",
         "How do I clear a packet item?",
         "How do I mark something present?",
@@ -825,7 +827,7 @@
         "attach",
         "clear"
       ],
-      "answer": "On the job, tap Add N missing documents (or Fix N things before sending, or Open paperwork). For each missing item:\n- Take a photo or Choose file: it goes on the job record and is attached in one step.\n- Under From the job record this period, pick Attach to… on a record, then Attach.\n- I have this…: say where it is (optional, for example \"emailed to the GC on 10/12\"), then Save.\n- Not needed for this client, if they never need it.\nRemove takes an item back off while the pay app is a draft. The Activity log shows how each item was handled.",
+      "answer": "On the job, tap Add N missing documents (or Fix N things before sending, or Supporting documents): it opens the pay app at Supporting documents. An item clears when a real file is on it and a person has checked it; the title doesn't matter. For each missing item:\n- Take a photo or Choose file: it goes on the job record, and attaching it records that you checked it.\n- Under From the job record this period, pick Attach to… on a record, then Attach.\n- A file Duracash found on the job record: open it and tap I checked this file.\n- If a warning names what didn't match (the job name, the amount, the conditional wording), or says a scan couldn't be checked or a file looks blank, open the document and tap I opened it and it's right, or Remove it.\n- I have this…: an override. Enter the reason, for example \"emailed to the GC on 10/12\", then Save override. The pay app and Review & send show who overrode it, when and why; the client sees only the tick.\n- Not needed for this client, if they never need it.\nRemove takes an item back off while the pay app is a draft. The Activity log shows how each item was handled.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -864,7 +866,7 @@
         "my clients",
         "my client"
       ],
-      "answer": "Jobs, Client playbook keeps each client's rules. Open a client to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Client type, Paperwork needed with each pay app (tick each item, add the rest under Other, or tick Nothing needed), They send pay apps back when, Also email (CC) and more, then tap Save client. New pay apps use the paperwork list. When a client sends a pay app back, add the reason to They send pay apps back when and tap Save client. While something is blocking send on a job, you can also note it there under Client sent a pay app back? Note why. Each client also lists its open and finished jobs, with a link to each job's contract and Add contract. Add client takes the same details, and Import a contract fills them from the contract.",
+      "answer": "Jobs, Client playbook keeps each client's rules. Open a client to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Client type, Supporting documents needed with each pay app (tick each item, add the rest under Other, or tick Nothing needed), They send pay apps back when, Also email (CC) and more, then tap Save client. New pay apps use the supporting documents list. When a client sends a pay app back, add the reason to They send pay apps back when and tap Save client. While something is blocking send on a job, you can also note it there under Client sent a pay app back? Note why. Each client also lists its open and finished jobs, with a link to each job's contract and Add contract. Add client takes the same details, and Import a contract fills them from the contract.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1110,7 +1112,7 @@
         "punch",
         "closeout"
       ],
-      "answer": "Retainage is paid at closeout, so it is asked for once the job is marked done. The closeout paperwork is the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties; mark one Not needed on this job if it doesn't apply. Mark the job done, add those items (Open closeout paperwork), then tap Ask for retainage and confirm, or type part of it in the amount box on Money, Closeout. The job's Retainage card shows what is held, the pay apps holding it, how often you asked and when you can ask again. When the money arrives, tap Record retainage paid on the job; each release then needs its lien waiver.",
+      "answer": "Retainage is paid at closeout, so it is asked for once the job is marked done. The closeout documents are the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties; mark one Not needed on this job if it doesn't apply. Mark the job done, add those items (Closeout documents), then tap Ask for retainage and confirm, or type part of it in the amount box on Money, Closeout. The job's Retainage card shows what is held, the pay apps holding it, how often you asked and when you can ask again. When the money arrives, tap Record retainage paid on the job; each release then needs its lien waiver.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1227,7 +1229,7 @@
         "send again",
         "delivered"
       ],
-      "answer": "Communications, Outbox lists every email you approved and what happened to it: sent (with the time), failed (with the reason, such as an address the client's mail server refused), or not sent. A failed or unsent email has a Send again button, and the Dashboard shows a Didn't go out row. Pay apps go out with the PDF and paperwork attached, from \"your company via Duracash\", and the client's reply goes to whoever sent it. Each email lists what it carried (open any file from there) and has Print. The demo account never sends real email.",
+      "answer": "Communications, Outbox lists every email you approved and what happened to it: sent (with the time), failed (with the reason, such as an address the client's mail server refused), or not sent. A failed or unsent email has a Send again button, and the Dashboard shows a Didn't go out row. Pay apps go out with the PDF and supporting documents attached, from \"your company via Duracash\", and the client's reply goes to whoever sent it. Each email lists what it carried (open any file from there) and has Print. The demo account never sends real email.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1295,6 +1297,7 @@
       "questions": [
         "How do I import emails and texts?",
         "How do I upload a document?",
+        "Can I bring in my supporting documents?",
         "Can I bring in my paperwork?",
         "How do I add files?",
         "Import photos",
@@ -1364,7 +1367,7 @@
         "suggest",
         "match"
       ],
-      "answer": "It looks for the job code (like VEST), the job address, the job name or a part of it no other job has (like Oak Street for Oak Street kitchen), the client's name, or an email from the client's email for pay apps. A code in small letters (vest) or one word of a job name (Vesta) counts less than who sent it, so everyday words don't pull an item to another client's job. If a few jobs fit equally, it lists them to pick from and doesn't guess. Tip: put the job code in capitals in email subjects and texts. Tap Other job to change it before adding, and Undo under Everything received (Communications, Inbox) takes an added item back off; each row there says how it came in and why it was matched. If a pay app's paperwork uses it, Undo says so and links there: tap Remove on a draft's paperwork first; one that went to the client stays as sent.",
+      "answer": "It looks for the job code (like VEST), the job address, the job name or a part of it no other job has (like Oak Street for Oak Street kitchen), the client's name, or an email from the client's email for pay apps. A code in small letters (vest) or one word of a job name (Vesta) counts less than who sent it, so everyday words don't pull an item to another client's job. If a few jobs fit equally, it lists them to pick from and doesn't guess. Tip: put the job code in capitals in email subjects and texts. Tap Other job to change it before adding, and Undo under Everything received (Communications, Inbox) takes an added item back off; each row there says how it came in and why it was matched. If a pay app's supporting documents use it, Undo says so and links there: tap Remove on a draft's supporting documents first; one that went to the client stays as sent.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1436,7 +1439,7 @@
         "daily",
         "log"
       ],
-      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app, which then says Updated from daily records on that day. When they can't be added (the draft is with the client for their review, the job is marked done, or a line would go past what is scheduled, a lump sum past 100%), the daily record is still saved with them on it, and it says why under Quantities. Or paste many days of notes at once on Import/Export, Import; they wait in the Inbox to be added to the job. Records live on the job record and can be attached to a pay app's paperwork as backup.",
+      "answer": "A daily record is a dated note of what happened on site. Go to Jobs, Daily record, pick the Job, fill in Crew members, Weather, Materials and Deliveries if you like, type the Diary and tap Save to job record. Tick Progress photos, Quantities, Change order work, Inspections or major discussions or New punchlist items to add those, and use Attach files for photos and documents. Quantities put in place today add to each schedule of values line and update the draft pay app, which then says Updated from daily records on that day. When they can't be added (the draft is with the client for their review, the job is marked done, or a line would go past what is scheduled, a lump sum past 100%), the daily record is still saved with them on it, and it says why under Quantities. Or paste many days of notes at once on Import/Export, Import; they wait in the Inbox to be added to the job. Records live on the job record and can be attached to a pay app's supporting documents as backup.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1837,7 +1840,7 @@
         "status label",
         "awaiting"
       ],
-      "answer": "Each job has a short status, such as Needs paperwork, Blocked, Ready to send, Sent, Partly paid or Waiver due, and a line that names what's holding it up, for example \"Conditional waiver on progress payment is missing\" or \"Submitted, awaiting acknowledgment\". It never just says pending. The Next column says what to do.",
+      "answer": "Each job has a short status, such as Needs supporting documents, Blocked, Ready to send, Sent, Partly paid or Waiver due, and a line that names what's holding it up, for example \"Conditional waiver on progress payment is missing\" or \"Submitted, awaiting acknowledgment\". It never just says pending. The Next column says what to do.",
       "handler": null,
       "needs_job": false,
       "actions": [],

@@ -62,6 +62,6 @@ export function retainageCardHtml(j, now = new Date()) {
         const w = waivers.find(x => x.at === r.at);
         return `<li>${money(r.amount_cents)} · ${r.reference} · ${fmtDate(r.at)} · ${r.recorded_by}${w ? ` · ${w.waiver_sent ? `waiver sent (${waiverKindLabel(w.kind)})` : `<a href="${pathFor("waiver-detail", j.id)}" data-action="open-waiver" data-id="${j.id}">waiver due</a>`}` : ""}</li>`;
       }).join("")}</ul>` : `<p class="sub">None yet.</p>`}
-      ${(j.closeout_packet || []).length ? `<p class="retainage-closeout"><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout">Closeout paperwork</a> · ${missing ? `${missing} missing` : "complete"}${links ? `<span class="sub row-sub">${links}</span>` : ""}</p>` : ""}
+      ${(j.closeout_packet || []).length ? `<p class="retainage-closeout"><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout">Closeout documents</a> · ${missing ? `${missing} missing` : "complete"}${links ? `<span class="sub row-sub">${links}</span>` : ""}</p>` : ""}
     </section>`;
 }

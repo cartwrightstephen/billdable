@@ -14,6 +14,7 @@ import domain
 import migrations
 import sov
 from seed import seed_state
+from waiver_help import confirm_suggested
 
 
 def new_state():
@@ -60,6 +61,7 @@ def send_one(state, job, total, tag):
     inv = draft(job)
     record(state, job, "photo", f"Photos {tag}")
     record(state, job, "waiver", f"Signed conditional waiver {tag}")
+    confirm_suggested(state, job)
     domain.approve_and_send(state, job["id"])
     return inv
 
@@ -189,8 +191,9 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         domain.record_progress(s, job["id"], 1_000_000)
         inv = draft(job)
         w = next(p for p in inv["packet"] if p.get("waiver_kind"))
-        domain.skip_packet_item(s, job["id"], w["id"], "Homeowner, doesn't take waivers")
+        domain.skip_packet_item(s, job["id"], w["id"], "Homeowner, doesn't take waivers", whole_client=True)
         record(s, job, "photo", "Photos")
+        confirm_suggested(s, job)
         domain.approve_and_send(s, job["id"])
         domain.match_payment(s, job["id"], inv["amount_cents"], "chk")
         self.assertFalse(inv["waiver_due"])
@@ -209,6 +212,7 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         inv = draft(job)
         domain.skip_packet_item(s, job["id"], next(p for p in inv["packet"] if p.get("waiver_kind"))["id"], "Doesn't take them")
         record(s, job, "photo", "Photos")
+        confirm_suggested(s, job)
         domain.approve_and_send(s, job["id"])
         domain.match_payment(s, job["id"], inv["amount_cents"], "chk")
         domain.record_retainage_payment(s, job["id"], inv["retainage_cents"], "ret")
@@ -274,6 +278,7 @@ class FinalWaiverWithRetainageTests(unittest.TestCase):  # B3 (r5_final_ret.py)
         self.assertEqual(item["label"], "Conditional waiver on progress payment")
         record(s, job, "photo", "Photos Oct")
         record(s, job, "waiver", "Signed conditional waiver PA-2")
+        confirm_suggested(s, job)
         domain.approve_and_send(s, job["id"])
         self.assertEqual(inv2["conditional_waiver_kind"], "conditional_progress")
         domain.match_payment(s, job["id"], inv2["amount_cents"], "chk2")
@@ -297,6 +302,7 @@ class DailyRecordKeepsSendChoicesTests(unittest.TestCase):  # B4 (r1_attach_lost
         photo = record(s, job, "photo", "Progress photo", files=2)
         extra = record(s, job, "other", "Site letter")
         inv = draft(job)
+        confirm_suggested(s, job)
         domain.change_payapp_attachments(s, job["id"], inv["id"], "add_record", extra["id"])
         domain.change_payapp_attachments(s, job["id"], inv["id"], "exclude_file", photo["file_ids"][1])
         before = domain._packet_file_ids(s, job, inv)
@@ -407,6 +413,7 @@ class TicketSkipSticksTests(unittest.TestCase):  # B7 (r12_ticket_skip.py)
         self.assertEqual(s["payers"][0]["tickets_not_needed"]["reason"], "GC doesn't want tickets")
         record(s, job, "photo", "Photos 1")
         record(s, job, "waiver", "Signed conditional waiver 1")
+        confirm_suggested(s, job)
         domain.approve_and_send(s, job["id"])
         domain.record_sov_progress(s, job["id"], {ids[0]: "300"})
         t2 = next(p for p in draft(job)["packet"] if p["kind"] == "ticket")
@@ -516,6 +523,7 @@ class StoredDataTests(unittest.TestCase):  # migrations._review_oct30_money_waiv
                 p["label"], p["blocker"] = label, f"{label} is missing."
         record(s, job, "photo", "Photos")
         record(s, job, "waiver", "Signed conditional waiver")
+        confirm_suggested(s, job)
         return s, job, d
 
     def test_an_old_drafts_waiver_item_is_read_as_the_conditional_one(self):

@@ -662,6 +662,7 @@ def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor
         rec["source"] = source_line
         rec["file_ids"] = list(item["file_ids"])
         rec["inbox_id"] = item["id"]
+    domain._refresh_draft_gate(job, state)  # with its files now, it can be suggested for a missing item
     item.update({"status": "filed", "filed_job_id": job_id, "filed_kind": kind, "record_ids": record_ids, "filed_at": utcnow(), "filed_by": actor})
     domain.audit(state, job_id, "import_filed", f"{actor} filed {KINDS.get(kind, kind).lower()} '{label}' ({source_line}) to the job record.", actor)
     return item
@@ -768,14 +769,14 @@ def _paperwork_refusal(job: dict[str, Any], rids: set[str], can_pull_back: bool 
     drafts = [inv for inv in job.get("invoices", []) if inv.get("status") in domain.DRAFT_STATUSES and holds(inv.get("packet"))]
     if drafts:
         number = drafts[-1].get("number") or "the pay app"
-        return domain.GateError(f"The paperwork for {number} uses this record. Tap Remove on it there first.",
-                                action=link(f"Open the paperwork for {number}", "packet-detail", drafts[-1]["id"]))
+        return domain.GateError(f"The supporting documents for {number} use this record. Tap Remove on it there first.",
+                                action=link(f"Open {number}", "payapp-detail", drafts[-1]["id"]))
     if holds(job.get("packet")):
-        return domain.GateError("The job's paperwork uses this record. Tap Remove on it there first.",
-                                action=link("Open the paperwork", "packet-detail"))
+        return domain.GateError("The job's supporting documents use this record. Tap Remove on it there first.",
+                                action=link("Open supporting documents", "packet-detail"))
     if holds(job.get("closeout_packet")):
-        return domain.GateError("The closeout paperwork uses this record. Tap Remove on it there first.",
-                                action=link("Open the closeout paperwork", "packet-detail", "closeout"))
+        return domain.GateError("The closeout documents use this record. Tap Remove on it there first.",
+                                action=link("Open the closeout documents", "packet-detail", "closeout"))
     return None
 
 

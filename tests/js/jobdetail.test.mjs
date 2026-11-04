@@ -202,7 +202,7 @@ test("Client playbook: the paperwork as checkboxes and Other, the client type, a
     assert.match(html, /data-packet-choice="Conditional waiver"[^>]*> Conditional waiver<\/label><span class="sub check-note">Asked for with every pay app, ticked or not\. If this client doesn't take one, tap Not needed for this client on it\.<\/span>/);
     assert.match(html, /Nothing needed still asks for the conditional waiver/);
     assert.match(html, /<h4>At closeout<\/h4><label[^>]*><input type="checkbox"[^>]*data-packet-choice="Punch list sign-off"/, "the catalog's closeout items, from the server");
-    assert.doesNotMatch(html, /name="packet"/, "no free-text paperwork box");
+    assert.doesNotMatch(html, /name="packet"/, "no free-text supporting documents box");
     assert.match(html, /<h2>Add client<\/h2>\s*<div class="contract-import" data-contract-import="addpayer">/);
   } finally { page.formOpen.addpayer = false; }
 });

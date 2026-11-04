@@ -168,6 +168,8 @@ class DraftTests(unittest.TestCase):
         domain.record_progress(state, job["id"], 1_000_000)
         item = job["invoices"][-1]["packet"][0]
         domain.add_job_record(state, job["id"], "Signed contract PDF", "contract")
+        state.setdefault("files", []).append({"id": "f1", "name": "contract.pdf", "ext": ".pdf", "size": 10})
+        job["records"][-1]["file_ids"] = ["f1"]
         domain.attach_record_to_packet(state, job["id"], item["id"], job["records"][-1]["id"])
         self.assertTrue(item["present"])
 
@@ -184,7 +186,7 @@ class ProgressCorrectionTests(unittest.TestCase):  # R1-09
         self.assertEqual(len(live), 1)
         self.assertEqual((live[0]["number"], live[0]["gross_cents"]), (first["number"], 350_000))
         self.assertEqual(first["status"], "void")
-        self.assertTrue(live[0]["packet"][0]["present"], "the paperwork carries over")
+        self.assertTrue(live[0]["packet"][0]["present"], "the supporting documents carries over")
         self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 0)
 
     def test_progress_refused_while_the_customer_reviews_the_draft(self):

@@ -806,3 +806,8 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 :root[data-theme="dark"][data-accent="blue"] { --copper: #86b4ec; --copper-soft: #1d2a3a; --copper-line: #2c4058; --copper-wash: rgba(134, 180, 236, 0.16); --copper-glow: rgba(134, 180, 236, 0.35); }
 :root[data-theme="dark"][data-accent="green"] { --copper: #72c89b; --copper-soft: #1d3327; --copper-line: #2b4a38; --copper-wash: rgba(114, 200, 155, 0.16); --copper-glow: rgba(114, 200, 155, 0.35); }
 :root[data-theme="dark"][data-accent="slate"] { --copper: #aebbcd; --copper-soft: #262b33; --copper-line: #3a424e; --copper-wash: rgba(174, 187, 205, 0.16); --copper-glow: rgba(174, 187, 205, 0.35); }
+.doc-warning { background: var(--amber-soft); color: var(--amber); border: 1px solid var(--amber-line); border-radius: 8px; padding: 8px 12px; margin: 6px 0; font-size: 14px; }
+.doc-warning p { margin: 0 0 4px; }
+.doc-warning h3 { margin-top: 0; }
+.override-note { font-weight: 600; font-size: 14px; }
+.email-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; border: 1px solid var(--amber-line); border-radius: 8px; padding: 8px 12px; margin: 0; }

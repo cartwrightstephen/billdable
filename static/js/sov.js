@@ -108,7 +108,7 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
       ${rows}
     </table></div>
     ${periodHtml ? `<div class="form-row">${periodHtml}</div>` : ""}
-    ${replaces ? `<p class="sub">This replaces ${replaces.number} (${money(replaces.amount_cents)}). Its number and paperwork stay.</p>` : ""}
+    ${replaces ? `<p class="sub">This replaces ${replaces.number} (${money(replaces.amount_cents)}). Its number and supporting documents stay.</p>` : ""}
     <div class="form-inline"><input id="progress-notes" data-field="notes" value="${typed("notes", "")}" placeholder="What was completed (printed on the pay app)" aria-label="What was completed, printed on the pay app" class="grow"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>
   </div>`;
 }

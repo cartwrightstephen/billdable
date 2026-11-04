@@ -20,7 +20,7 @@ const GONE = [
   "What happened today", "Write what happened today", "They wait below for you", "Notes split at every line",
   "Customer settings", "Payer playbook", "Go to Today", "nothing is filed without you", "<h1>Today</h1>", "<h1>Help</h1>", "Needs you", "<h2>This week</h2>",
   // D8 (Oct 30 review): the last notes of the kind.
-  "Steps marked optional don't count", "Its record holds notes and files", "Its paperwork list comes with it", "Everyone on the team can draft",
+  "Steps marked optional don't count", "Its record holds notes and files", "Its supporting documents list comes with it", "Everyone on the team can draft",
   "Only for you, on every device", "The same PDF goes with the email", "Every job is closed. Closed jobs",
 ];
 

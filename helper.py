@@ -279,8 +279,8 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         if not job["blocked"]:
             # Missing paperwork before there is a draft is what the next pay app will need, not a block.
             return (f"{job['name']} isn't blocked yet. The next {pay_app} will need:\n" + "\n".join(f"- {b}" for b in job["blockers"]),
-                    [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open paperwork"}])
-        return f"{job['name']} is blocked by:\n" + "\n".join(f"- {b}" for b in job["blockers"]), [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open paperwork"}]
+                    [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Supporting documents"}])
+        return f"{job['name']} is blocked by:\n" + "\n".join(f"- {b}" for b in job["blockers"]), [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Supporting documents"}]
     if name == "job_status":
         if not job:
             return None

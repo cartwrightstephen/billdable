@@ -15,3 +15,11 @@ def signed_waiver(state, job_id, kind=None, label="Signed lien waiver"):
         rec["waiver_kind"] = kind
     job.setdefault("records", []).append(rec)
     return rec
+
+
+def confirm_suggested(state, job, actor="Sam"):
+    """A person confirms each file suggested from the job record (a suggestion alone clears nothing)."""
+    import domain
+    for item in domain.active_packet(job):
+        if not item["present"] and any(a.get("unconfirmed") for a in item.get("attachments", [])):
+            domain.confirm_packet_item(state, job["id"], item["id"], actor)

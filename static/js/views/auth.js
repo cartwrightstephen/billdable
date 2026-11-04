@@ -61,10 +61,10 @@ export function renderLanding() {
         <div class="land-copy">
           <p class="eyebrow">For small GCs and remodelers</p>
           <h1>You finish the work.<br>Duracash gets it billed and collected.</h1>
-          <p class="lede">Works beside QuickBooks. Catches the missing paperwork, the unsigned change order, and the money held back that nobody chased. You approve every send.</p>
+          <p class="lede">Works beside QuickBooks. Catches the missing supporting documents, the unsigned change order, and the money held back that nobody chased. You approve every send.</p>
           <div class="land-points">
             <div><strong>Same-week invoice</strong><span>From “job’s done” to a draft you can send.</span></div>
-            <div><strong>Paperwork check</strong><span>Nothing leaves with a missing waiver or photo.</span></div>
+            <div><strong>Document check</strong><span>Nothing leaves with a missing waiver or photo.</span></div>
             <div><strong>Money</strong><span>Contract, change orders, billed, received, held back — one place.</span></div>
           </div>
           ${demoAvailable ? `<div class="land-demo">
@@ -74,7 +74,7 @@ export function renderLanding() {
         </div>
         <div class="auth-card land-form" id="signup">
           <h2>${signup ? "Create your company" : "Sign in"}</h2>
-          <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, paperwork and clients."}</p>
+          <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, supporting documents and clients."}</p>
           ${!signup && signedOutNote ? `<p class="notice signed-out-note" role="status">${esc(signedOutNote)}</p>` : ""}
           ${!signup && loginCode ? `<form id="auth-form">
             <label for="login-code">${loginCode.method === "email" ? "Code from the email" : "Code from your authenticator app"}</label>
@@ -107,7 +107,7 @@ export function renderLanding() {
         <h2>How it works</h2>
         <div class="land-steps">
           <div class="card"><span class="step">1</span><h3>Mark the job done</h3><p>Notes and photos land on the job record. Money already knows the contract.</p></div>
-          <div class="card"><span class="step">2</span><h3>Add the paperwork</h3><p>Duracash names what is missing — a waiver, a signed change order, photos — before anything is sent.</p></div>
+          <div class="card"><span class="step">2</span><h3>Add the supporting documents</h3><p>Duracash names what is missing — a waiver, a signed change order, photos — before anything is sent.</p></div>
           <div class="card"><span class="step">3</span><h3>Approve and collect</h3><p>You approve the send. Payments are recorded. Money held back and closeout stay on the calendar.</p></div>
         </div>
       </section>

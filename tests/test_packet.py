@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import domain
 import migrations
 from seed import seed_state
+from waiver_help import confirm_suggested
 
 
 def new_state():
@@ -34,6 +35,7 @@ def record(state, job, kind, label, files=1):
     domain.add_job_record(state, job["id"], label, kind)
     rec = job["records"][-1]
     rec["file_ids"] = ids
+    domain._refresh_draft_gate(job, state)  # as importer.file_item does once a record has its files
     return rec
 
 
@@ -135,7 +137,10 @@ class ConditionalWaiverTests(unittest.TestCase):  # M13, M16, M19
             domain.approve_and_send(state, job["id"])
         self.assertIn("Conditional waiver on progress payment is missing.", raised.exception.blockers)
         rec = record(state, job, "waiver", "Signed conditional waiver PA-1")
-        self.assertTrue(waiver["present"], "the waiver on the job record fills it")
+        self.assertFalse(waiver["present"], "the waiver on the job record is only suggested")
+        self.assertEqual([a["record_id"] for a in waiver["attachments"]], [rec["id"]])
+        confirm_suggested(state, job)
+        self.assertTrue(waiver["present"], "a person confirmed it")
         domain.approve_and_send(state, job["id"])
         self.assertEqual(inv["conditional_waiver_kind"], "conditional_progress")
         self.assertEqual((rec["waiver_kind"], rec["invoice_id"]), ("conditional_progress", inv["id"]))
@@ -152,11 +157,11 @@ class ConditionalWaiverTests(unittest.TestCase):  # M13, M16, M19
         job = new_job(state, packet="Invoice.")
         domain.record_progress(state, job["id"], 400_000)
         waiver = next(p for p in draft(job)["packet"] if p["kind"] == "waiver")
-        domain.skip_packet_item(state, job["id"], waiver["id"], "They don't take waivers")
+        domain.skip_packet_item(state, job["id"], waiver["id"], "They don't take waivers", whole_client=True)
         self.assertEqual(state["payers"][0]["waiver_not_needed"]["reason"], "They don't take waivers")
         self.assertIn("marked Conditional waiver on progress payment not needed", state["audit"][-1]["detail"])
         inv = draft(job)
-        domain.resolve_packet_item(state, job["id"], next(p for p in inv["packet"] if p["kind"] != "waiver")["id"])
+        domain.resolve_packet_item(state, job["id"], next(p for p in inv["packet"] if p["kind"] != "waiver")["id"], reason="test")
         domain.approve_and_send(state, job["id"])
         domain.record_progress(state, job["id"], 800_000)
         nxt = next(p for p in draft(job)["packet"] if p["kind"] == "waiver")
@@ -221,6 +226,7 @@ class AttachmentTests(unittest.TestCase):  # M4
         self.photo = record(self.state, self.job, "photo", "Kitchen photos", files=2)
         self.waiver = record(self.state, self.job, "waiver", "Signed conditional waiver")
         self.inv = draft(self.job)
+        confirm_suggested(self.state, self.job)
         invoice_item = next(p for p in self.inv["packet"] if p["label"] == "Invoice")
         domain.resolve_packet_item(self.state, self.job["id"], invoice_item["id"], reason="Invoice in the PDF")
 

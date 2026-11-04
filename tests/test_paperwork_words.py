@@ -53,6 +53,16 @@ class PaperworkWordsTests(unittest.TestCase):
                 if (p.name, text) not in ALLOWED]
         self.assertEqual(left, [])
 
+    def test_no_server_text_says_paperwork(self):  # Decision 9: Supporting documents, in every string
+        word = re.compile(r"(?<![/_\-'\"\w.{])paperwork(?![_\-'\"\w)(}])", re.I)
+        left = []
+        for p in sorted(ROOT.glob("*.py")) + sorted((ROOT / "domain").glob("*.py")):
+            for tok in tokenize.generate_tokens(io.StringIO(p.read_text(encoding="utf-8")).readline):
+                body = tok.string.lstrip("rbuRBUfF")
+                if tok.type == tokenize.STRING and not body.startswith(('"""', "'''")) and " " in body and word.search(body[1:-1]):
+                    left.append(f"{p.name}:{tok.start[0]}: {tok.string}")
+        self.assertEqual([x for x in left if not x.startswith("migrations.py")], [])
+
     def test_old_default_is_replaced_on_saved_customers(self):
         import migrations
         from seed import seed_state

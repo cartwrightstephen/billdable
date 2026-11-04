@@ -1,12 +1,13 @@
 // Money, Paperwork: what goes with each pay app and the closeout paperwork, and the paperwork
-// part of a pay app's Before you send (beforeYouSendHtml).
+// part of a pay app's Review & send (beforeYouSendHtml). A pay app's supporting documents are on
+// its own page (supportingDocsHtml); closeout's, with no pay app, keep the page here.
 import { unesc, money, words, fmtDate, INVOICE_WORDS } from "../format.js";
 import { RECORD_KINDS, isBlocked, coBlockers, WAIVER_KINDS, waiverKindLabel, waiverStageText } from "../jobs.js";
 import { US_STATES } from "../validate.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
-import { state, currentJobId, currentDetailId, formOpen } from "../state.js";
+import { state, me, currentJobId, currentDetailId, formOpen } from "../state.js";
 import { may, perms, render, toast, post, backButton, emptyState, nav } from "../app-core.js";
 
 const DRAFT = ["draft", "awaiting_approval"];
@@ -60,7 +61,7 @@ export function clientNeedsHtml(j, heading = "h2") {
   return `<div class="client-needs">
     <${heading}>What ${p.name || "the client"} needs to pay</${heading}>
     ${row("Who approves", p.approver)}
-    ${row("Paperwork they ask for", p.no_paperwork ? "Nothing" : (p.packet || "Nothing listed"))}
+    ${row("Supporting documents they ask for", p.no_paperwork ? "Nothing" : (p.packet || "Nothing listed"))}
     ${row("They send it back when", p.rejects_when)}
     ${row("Pay apps due by", p.payapp_due_day ? `day ${p.payapp_due_day} of the month` : "")}
     ${row("Payment terms", p.payment_terms_days ? `${p.payment_terms_days} days` : "")}
@@ -122,12 +123,13 @@ export function waiverChecklistHtml(j, kind, inv = null, amount = null) {
 
 // Who put an attachment on an item, and when.
 function attachedLine(a) {
-  return `${a.auto ? "attached automatically" : "added by " + a.added_by}${a.added_at ? ", " + fmtDate(a.added_at) : ""}`;
+  return `${a.auto ? (a.unconfirmed ? "found on the job record" : "attached automatically") : "added by " + a.added_by}${a.added_at ? ", " + fmtDate(a.added_at) : ""}`;
 }
 
 function attachmentRow(a, records, files) {
   const rec = records[a.record_id];
-  if (!rec) return `<div class="sub">${a.auto ? "Attached from the job record" : "Attached"}: ${a.name}</div>`;
+  // From before files were required: a name with nothing behind it (it stays in, with a way forward).
+  if (!rec) return `<div class="sub">${a.auto ? "Attached from the job record" : "Attached"}: ${a.name}. No file was kept for it. Remove it and add the file.</div>`;
   const links = recordFileLinks(rec, files);
   return `<div class="attached-record"><span class="pill">${RECORD_KINDS[unesc(rec.kind)] || words(rec.kind)}</span> ${links || rec.label}${links && !links.includes(`>${rec.label}</a>`) ? ` <span class="sub">${rec.label}</span>` : ""} <span class="sub">· ${attachedLine(a)}</span></div>`;
 }
@@ -205,7 +207,7 @@ function periodHtml(j, inv, packet, editable, isCloseout) {
   </div>`;
 }
 
-// The paperwork part of a pay app's Before you send (M4, M5, M14): the client's rules, every file
+// The paperwork part of a pay app's Review & send (M4, M5, M14): the client's rules, every file
 // the email carries with Leave out and Put back, records to add, and the waiver check.
 export function beforeYouSendHtml(j, inv) {
   const records = Object.fromEntries((j.records || []).map(r => [r.id, r]));
@@ -237,75 +239,163 @@ export function beforeYouSendHtml(j, inv) {
   };
   const stages = inv.waiver_stages || {};
   const unconditional = unconditionalAttached(j, inv);
+  const packet = inv.packet || j.packet || [];
+  const overrides = packet.filter(p => p.present && p.override);
+  const warned = packet.filter(p => ((p.check || {}).problems || []).length);
+  const confirmed = packet.filter(p => p.present && p.confirmed_by);
+  const skippedItems = packet.filter(p => !p.required && p.skipped_by);
+  const preview = inv.email_preview;
   return `<div class="send-attachments">
       <h3>The email carries</h3>
       <ul class="plain-list attach-list">
-        <li>${termText("Pay app PDF")}${inv.sov_sheet && inv.sov_sheet.length ? " with continuation sheet" : ""} and the paperwork checklist</li>
+        <li><a href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">${termText("Pay app PDF")}</a>${inv.sov_sheet && inv.sov_sheet.length ? " with continuation sheet" : ""} and the supporting documents checklist</li>
         ${going.map(fileRow).join("")}
       </ul>
       ${editable && addable.length ? `<div class="form-inline"><select id="payapp-add-${inv.id}" aria-label="Add from the job record"><option value="">Add from the job record…</option>${addable.map(r => `<option value="${r.id}">${r.label}</option>`).join("")}</select>
         <button class="btn small secondary" data-action="payapp-add" data-id="${j.id}" data-inv="${inv.id}">Add</button></div>` : ""}
       ${stages.conditional && stages.conditional.status ? `<div class="money-row"><span class="label">Conditional waiver</span><span>${waiverStageText(stages.conditional)}</span></div>` : ""}
     </div>
+    ${overrides.length ? `<div class="send-overrides"><h3>Overrides</h3><ul class="plain-list">${overrides.map(p => `<li><strong>${p.label}</strong>: ${overrideText(p)}</li>`).join("")}</ul></div>` : ""}
+    ${skippedItems.length ? `<div class="send-skipped"><h3>Not needed</h3><ul class="plain-list">${skippedItems.map(p => `<li><strong>${p.label}</strong>: ${skippedHtml(p, false)}</li>`).join("")}</ul></div>` : ""}
+    ${confirmed.length ? `<div class="send-confirmed"><h3>Confirmations</h3><ul class="plain-list">${confirmed.map(p => `<li><strong>${p.label}</strong>: ${confirmedText(p)}</li>`).join("")}</ul></div>` : ""}
+    ${warned.length ? `<div class="send-warnings doc-warning"><h3>Warnings</h3><ul class="plain-list">${warned.map(p => `<li><strong>${p.label}</strong>: ${p.check.problems.join(" ")}${p.present && p.confirmed_by ? ` Confirmed by ${p.confirmed_by}.` : ""}</li>`).join("")}</ul></div>` : ""}
+    ${preview ? `<div class="send-email-text"><h3>The email</h3><p class="email-body">${preview.body.replace("[Your name]", (me && (me.name || me.email)) || "[Your name]")}</p></div>` : ""}
     ${unconditional.length ? `<div class="unconditional-warning" role="alert">
       <p class="blocker">An unconditional waiver is attached: ${unconditional.map(r => r.label).join(", ")}. It gives up your lien rights before you are paid. Take it off, or send anyway with the reason.</p>
       ${may("send") && perms().owner ? `<div class="form-inline"><input id="override-reason-${inv.id}" class="grow" aria-label="Why it goes with this pay app" placeholder="Why it goes with this pay app">
-        <button class="btn small danger" data-action="send-override" data-id="${j.id}" data-inv="${inv.id}">Send anyway</button></div>` : `<p class="sub">Only an owner can send it this way.</p>`}
+        <button class="btn small danger" data-action="send-override" data-id="${j.id}" data-inv="${inv.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}">Send anyway</button></div>` : `<p class="sub">Only an owner can send it this way.</p>`}
     </div>` : ""}
     <div class="client-needs-box">${clientNeedsHtml(j, "h3")}</div>`;
+}
+
+// How an item that is in got there: the override (Decision 5) or who checked it, and any warning
+// they looked past (Decision 6). Also on Review & send.
+export function overrideText(p) {
+  const o = p.override;
+  return o ? `Overridden by ${o.by} on ${fmtDate(o.at)}: ${o.reason}` : "";
+}
+
+export function confirmedText(p) {
+  return p.confirmed_by ? `Confirmed by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}` : "";
+}
+
+// Not needed, and on what: who and when once that was kept, with the reason (accept. 10).
+function skippedHtml(p, isCloseout) {
+  const where = p.skipped_scope === "job" || isCloseout ? "on this job" : "for this client";
+  const given = /^Not needed (for|on) this \w+$/.test(unesc(p.skipped_reason)) ? "" : p.skipped_reason;
+  if (!p.skipped_by) return `<div class="sub">Not needed ${where}${given ? ": " + given : ""}</div>`;
+  return `<div class="override-note">Not needed ${where}. Marked by ${p.skipped_by} on ${fmtDate(p.skipped_at)}: ${given || "no reason given"}</div>`;
+}
+
+function problemsHtml(p) {
+  return ((p.check || {}).problems || []).map(t => `<li>${t}</li>`).join("");
+}
+
+// A file attached and not cleared yet: a suggestion to check, or the document check's warning with
+// the way to say it is right anyway. Never a hard block (Decision 6).
+function confirmHtml(j, p, editable) {
+  const waiting = (p.attachments || []).some(a => a.unconfirmed);
+  if (p.present || !waiting) return "";
+  const flagged = ((p.check || {}).problems || []).length > 0;
+  const button = !editable ? "" : flagged
+    ? `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}" data-looked="1">I opened it and it's right</button>`
+    : `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}">I checked this file</button>`;
+  return `${flagged ? `<div class="doc-warning" role="alert"><p>Open the document and confirm it is right.</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : `<p class="sub">Open it and confirm it belongs here.</p>`}${button}`;
+}
+
+// The items of a pay app, the job or closeout: each file, who checked it, and the ways to fill it.
+function packetItemsHtml(j, inv, packet, isCloseout) {
+  // What went with a pay app stays as it was sent: these are for a draft's paperwork, the job's and closeout's.
+  const editable = !j.closed && !(inv && !DRAFT.includes(inv.status));
+  const records = Object.fromEntries((j.records || []).map(r => [r.id, r]));
+  const files = filesById();
+  if (!packet.length) return `<p class="sub">${termText("This pay app needs no supporting documents.")}</p>`;
+  return `${editable && packet.some(p => p.required && !p.present) ? `<p class="sub">Adding a file here records that you checked it.</p>` : ""}${packet.map(p => {
+    const skipped = !p.required && p.skipped_reason;
+    const waiver = unesc(p.waiver_kind || "");
+    const made = p.present_reason === "Produced by Duracash";
+    const hasWaiting = (p.attachments || []).some(a => a.unconfirmed);
+    return `
+    <div class="list-item packet-item ${p.present || skipped ? "present" : "absent"}">
+      <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
+        ${!p.present && !skipped && !hasWaiting ? `<span class="field-error">${p.blocker}</span>` : ""}
+        ${(p.covers || []).length ? `<div class="sub">For ${p.covers.join(", ")}</div>` : ""}
+        ${skipped ? skippedHtml(p, isCloseout) : ""}
+        ${p.present && made ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
+        ${p.present && p.override ? `<div class="override-note">${overrideText(p)}</div>` : ""}
+        ${p.present && !p.override && p.present_reason && !made ? `<div class="sub">Marked as in hand: ${p.present_reason}</div>` : ""}
+        ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}
+        ${p.files_left_out && !p.present ? `<div class="sub">Its files are left out of the email.</div>` : ""}
+        ${(p.attachments || []).map(a => attachmentRow(a, records, files)).join("")}
+        ${p.present && p.confirmed_by ? `<div class="override-note">${confirmedText(p)}</div>` : ""}
+        ${p.present && problemsHtml(p) ? `<div class="doc-warning"><p>${p.confirmed_by} opened it and confirmed it after this warning:</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : ""}
+        ${confirmHtml(j, p, editable)}
+        ${(p.present && !made || hasWaiting) && editable ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
+      </div>
+      ${!p.present && !skipped && editable ? `${hasWaiting ? "" : `<div class="form-inline packet-add">
+        <button class="btn small" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}"${waiver ? ` data-waiver-kind="${waiver}"` : ""} data-capture="1">Take a photo</button>
+        <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}"${waiver ? ` data-waiver-kind="${waiver}"` : ""}>Choose file</button>
+      </div>`}
+      <div class="form-inline">
+        <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">I have this…</button>
+        ${waiver.startsWith("conditional") && !isCloseout
+          ? `<button class="btn small secondary" data-action="toggle-form" data-form="skip-${p.id}" aria-expanded="${!!formOpen["skip-" + p.id]}">Not needed…</button>`
+          : `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">${isCloseout ? "Not needed on this job" : "Not needed for this client"}</button>`}
+      </div>
+      ${formOpen["skip-" + p.id] ? `<div class="form-inline"><input id="skip-reason-${p.id}" placeholder="Why (optional)" aria-label="Why it isn't needed (optional)" class="grow">
+        <button class="btn small" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">On this job</button>
+        <button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}" data-whole-client="1">For this whole client</button></div>` : ""}
+      ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Why it can go without a checked file" aria-label="Why it can go without a checked file" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save override</button></div>` : ""}` : ""}
+      ${waiver && !skipped ? `<details class="waiver-details"><summary>What the signed waiver must show</summary>${waiverChecklistHtml(j, waiver, inv)}${waiverFormHtml(j, waiver)}</details>` : ""}
+    </div>`;
+  }).join("")}`;
+}
+
+// A pay app's supporting documents, on its own page (Decision 9: they are part of the pay app).
+export function supportingDocsHtml(j, inv) {
+  const packet = inv.packet || j.packet || [];
+  const editable = !j.closed && DRAFT.includes(inv.status);
+  return `<div class="card" id="supporting-documents">
+      <h2>Supporting documents</h2>
+      ${packetItemsHtml(j, inv, packet, false)}
+    </div>
+    ${editable ? periodHtml(j, inv, packet, true, false) : ""}`;
+}
+
+// Where a button for a pay app's documents lands: the pay app. Closeout, and an older job with no
+// pay app yet, have no pay app to land on.
+export function openSupportingDocs(jobId, invId) {
+  const j = ((state && state.jobs) || []).find(x => x.id === jobId);
+  const invs = (j && j.invoices) || [];
+  const inv = invId && invId !== "closeout" ? invId : !invId ? ([...invs].reverse().find(i => DRAFT.includes(i.status)) || invs[invs.length - 1] || {}).id : null;
+  if (!inv) return nav("packet-detail", jobId, invId || null);
+  nav("payapp-detail", jobId, inv);
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => document.getElementById("supporting-documents")?.scrollIntoView({ block: "start" }));
+  return null;
 }
 
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   packetDetail() {
     const j = state.jobs.find(x => x.id === currentJobId);
-    if (!j) return backButton("payapps", termText("Pay apps")) + emptyState("Paperwork not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="payapps">${termText("Go to Pay apps")}</button>`);
+    if (!j) return backButton("payapps", termText("Pay apps")) + emptyState("Supporting documents not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="payapps">${termText("Go to Pay apps")}</button>`);
     const isCloseout = currentDetailId === "closeout";
     const inv = isCloseout ? null : (j.invoices.find(i => i.id === currentDetailId) || [...j.invoices].reverse().find(i => i.packet) || j.invoices[j.invoices.length - 1]);
     const packet = isCloseout ? (j.closeout_packet || []) : ((inv && inv.packet) || j.packet || []);
-    if (!inv && !packet.length) return backButton("job", j.name, j.id) + emptyState(isCloseout ? "No closeout paperwork yet" : "No paperwork yet", "", `<button class="btn" data-action="open-job" data-id="${j.id}">Back to ${j.name}</button>`);
+    if (!inv && !packet.length) return backButton("job", j.name, j.id) + emptyState(isCloseout ? "No closeout documents yet" : "No supporting documents yet", "", `<button class="btn" data-action="open-job" data-id="${j.id}">Back to ${j.name}</button>`);
     const missing = packet.filter(p => p.required && !p.present).length;
     // Unsigned change orders on the bill block the same send; say so here with a way to them (R3-05).
     const cosBlocking = !isCloseout && isBlocked(j) ? coBlockers(j) : [];
     // What went with a pay app stays as it was sent: Remove is for a draft's paperwork, the job's and closeout's.
     const canRemove = !j.closed && !(inv && !DRAFT.includes(inv.status));
-    const records = Object.fromEntries((j.records || []).map(r => [r.id, r]));
-    const files = filesById();
     return `
       ${backButton("job", j.name, j.id)}
-      <h1>${isCloseout ? "Closeout paperwork" : (inv ? "Paperwork for " + inv.number : "Paperwork")}</h1>
+      <h1>${isCloseout ? "Closeout documents" : (inv ? "Supporting documents for " + inv.number : "Supporting documents")}</h1>
       <p class="sub">${j.name}${inv ? " · " + money(inv.amount_cents) + " · " + (INVOICE_WORDS[inv.status] || words(inv.status)) : ""}${isCloseout && j.money.retainage_open_cents > 0 ? " · needed before you ask for the money held back" : ""} · ${missing ? `<span class="blocker">${missing} missing</span>` : "complete"}</p>
       <div class="card">${clientNeedsHtml(j)}</div>
       <div class="card">
         <h2>Required items</h2>
-        ${packet.length ? packet.map(p => {
-          const skipped = !p.required && p.skipped_reason;
-          const waiver = unesc(p.waiver_kind || "");
-          return `
-          <div class="list-item packet-item ${p.present || skipped ? "present" : "absent"}">
-            <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
-              ${!p.present && !skipped ? `<span class="field-error">${p.blocker}</span>` : ""}
-              ${(p.covers || []).length ? `<div class="sub">For ${p.covers.join(", ")}</div>` : ""}
-              ${skipped ? `<div class="sub">Not needed ${isCloseout ? "on this job" : "for this client"}${/^Not needed for this \w+$/.test(unesc(p.skipped_reason)) ? "" : ": " + p.skipped_reason}</div>` : ""}
-              ${p.present && p.present_reason === "Produced by Duracash" ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
-              ${p.present && p.present_reason && p.present_reason !== "Produced by Duracash" ? `<div class="sub">Marked as in hand: ${p.present_reason}</div>` : ""}
-              ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}
-              ${p.files_left_out && !p.present ? `<div class="sub">Its files are left out of the email.</div>` : ""}
-              ${(p.attachments || []).map(a => attachmentRow(a, records, files)).join("")}
-              ${p.present && p.present_reason !== "Produced by Duracash" && canRemove ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
-            </div>
-            ${!p.present && !skipped ? `<div class="form-inline packet-add">
-              <button class="btn small" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}"${waiver ? ` data-waiver-kind="${waiver}"` : ""} data-capture="1">Take a photo</button>
-              <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}"${waiver ? ` data-waiver-kind="${waiver}"` : ""}>Choose file</button>
-            </div>
-            <div class="form-inline">
-              <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">I have this…</button>
-              <button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">${isCloseout ? "Not needed on this job" : "Not needed for this client"}</button>
-            </div>
-            ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Where is it? (optional)" aria-label="Where is it? (optional)" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save</button></div>` : ""}` : ""}
-            ${waiver && !skipped ? `<details class="waiver-details"><summary>What the signed waiver must show</summary>${waiverChecklistHtml(j, waiver, inv)}${waiverFormHtml(j, waiver)}</details>` : ""}
-          </div>`;
-        }).join("") : `<p class="sub">${termText("This pay app needs no paperwork.")}</p>`}
+        ${packetItemsHtml(j, inv, packet, isCloseout)}
       </div>
       ${periodHtml(j, inv, packet, canRemove, isCloseout)}
       ${!isCloseout && cosBlocking.length ? `<div class="card also-blocking" role="note">
@@ -321,18 +411,27 @@ export const views = {
 export const actions = {
   "resolve": async (el, id) => {
     const box = document.getElementById(`resolve-reason-${el.dataset.item}`);
-    const reason = (box?.value || "").trim();   // optional (R3-05)
+    const reason = (box?.value || "").trim();   // a blank one is refused under the button
     const r = await post(`/api/jobs/${id}/resolve/${el.dataset.item}`, { reason });
     if (r && r.ok) { formOpen[`resolve-${el.dataset.item}`] = false; render(); }
   },
-  "goto-packet": (el, id) => nav("packet-detail", id),
-  "open-packet": (el) => nav("packet-detail", el.dataset.job, el.dataset.inv),
-  "attach": async (el, id) => {
-    const name = document.querySelector("#attach-name")?.value || "attachment.pdf";
-    await post(`/api/jobs/${id}/attach/${el.dataset.item}`, { name });
+  // A flagged document's confirm is its own step, and says what didn't match (Decision 6).
+  "packet-confirm": async (el, id) => {
+    if (!el.dataset.looked) return post(`/api/jobs/${id}/packet-confirm/${el.dataset.item}`, {});
+    const j = state.jobs.find(x => x.id === id);
+    const all = j ? [...j.invoices.flatMap(i => i.packet || []), ...(j.packet || []), ...(j.closeout_packet || [])] : [];
+    const p = all.find(x => x.id === el.dataset.item);
+    const problems = ((p && p.check && p.check.problems) || []).map(unesc).join(" ");
+    if (!(await askConfirm(`${problems} You opened the document and it is right?`, "It's right"))) return null;
+    return post(`/api/jobs/${id}/packet-confirm/${el.dataset.item}`, { looked: true });
   },
+  "goto-packet": (el, id) => openSupportingDocs(id),
+  "open-packet": (el) => openSupportingDocs(el.dataset.job, el.dataset.inv),
   "packet-detach": (el, id) => post(`/api/jobs/${id}/detach/${el.dataset.item}`),
-  "packet-skip": (el, id) => post(`/api/jobs/${id}/packet-skip/${el.dataset.item}`, {}),
+  "packet-skip": (el, id) => {
+    const reason = (document.getElementById(`skip-reason-${el.dataset.item}`)?.value || "").trim();
+    return post(`/api/jobs/${id}/packet-skip/${el.dataset.item}`, { reason, ...(el.dataset.wholeClient ? { whole_client: true } : {}) });
+  },
   // A record of the period put on a missing item, or sent with the pay app as it is (M3, M4).
   "attach-from-period": async (el, id) => {
     const pick = document.getElementById(`period-attach-${el.dataset.rec}`);
@@ -371,6 +470,6 @@ export const actions = {
     const reason = (box?.value || "").trim();
     if (!reason) { toast("Enter why it goes with this pay app."); box?.focus(); return; }
     if (!(await askConfirm("Send it with the unconditional waiver? It gives up your lien rights before you are paid.", "Send anyway", true))) return;
-    await post(`/api/jobs/${id}/send`, { unconditional_override: reason });
+    await post(`/api/jobs/${id}/send`, { unconditional_override: reason, reviewed: el.dataset.reviewed || "" });
   },
 };

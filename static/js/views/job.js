@@ -103,7 +103,7 @@ function progressFormHtml(j, openDraft) {
       : moneyField({ form: "progress", name: "period_cents", id: "progress-draw", label: "This draw ($)", help: "The work done since the last pay app, before retainage." });
   return `<div class="card form-card" data-form-key="progress"><h2>${termText("Progress pay app")}</h2>
     <p class="sub progress-context">Billed so far ${money(base)} of ${money(m.contract_total_cents)} contract (${pctBilled}%).</p>
-    ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">This replaces ${openDraft.number} (${money(openDraft.amount_cents)}). Its number and paperwork stay.</p>` : ""}
+    ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">This replaces ${openDraft.number} (${money(openDraft.amount_cents)}). Its number and supporting documents stay.</p>` : ""}
     <div class="filter-bar progress-modes" role="group" aria-label="Enter">${mode("period", "This draw $")}${mode("total", "Total done so far $")}${mode("percent", "% complete")}</div>
     ${formErrorLine("progress")}<div class="form-row">
       ${input}
@@ -302,7 +302,7 @@ export const views = {
       ${formOpen.done ? `<div class="card form-card" data-form-key="done"><h2>Mark done</h2>${formErrorLine("done")}<div class="form-row">
         ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true, help: NOTES_HELP })}
         ${periodField("done", j)}
-        ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">${openDraft.number} becomes the final pay app. Its number and paperwork stay.</p>` : ""}
+        ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">${openDraft.number} becomes the final pay app. Its number and supporting documents stay.</p>` : ""}
         <button class="btn small" data-action="done" data-id="${j.id}">Confirm done</button></div></div>` : ""}
       ${formOpen.contact ? contactFormHtml(j) : ""}
       ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Record a payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
@@ -340,10 +340,10 @@ export const views = {
             const pencil = i.pencil_status ? ` · draft ${i.pencil_status === "sent" ? "with client" : words(i.pencil_status)}${i.pencil_note ? ": " + i.pencil_note : ""}` : "";
             return `<div class="list-item row-link">
               <div><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}"><strong>${i.number}</strong></a> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
-              <div class="sub row-sub">${i.status === "void" ? (i.voided_reason ? "Pulled back: " + i.voided_reason : "Deleted") : missing ? `${missing} paperwork item${missing === 1 ? "" : "s"} missing` : "Paperwork complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by && i.sent_at ? " · sent by " + i.approved_by : ""}${i.due_on && ["sent", "approved", "partial"].includes(i.status) ? " · due " + fmtDate(i.due_on) : ""}${i.short_pay_cents ? " · short pay " + money(i.short_pay_cents) : ""}${pencil}</div></div>
+              <div class="sub row-sub">${i.status === "void" ? (i.voided_reason ? "Pulled back: " + i.voided_reason : "Deleted") : missing ? `${missing} supporting document${missing === 1 ? "" : "s"} missing` : (i.packet || []).some(p => p.override) ? "Supporting documents in, with an override" : "Supporting documents complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by && i.sent_at ? " · sent by " + i.approved_by : ""}${i.due_on && ["sent", "approved", "partial"].includes(i.status) ? " · due " + fmtDate(i.due_on) : ""}${i.short_pay_cents ? " · short pay " + money(i.short_pay_cents) : ""}${pencil}</div></div>
             </div>`;
           }).join("") : `<p class="sub">${termText("No pay apps yet.")} ${j.work_status === "complete" ? "Draft one from the work not billed yet." : "Record progress or mark the job done to draft one."}</p>`}
-          ${closeout.length ? `<div class="list-item row-link"><div><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout"><strong>Closeout paperwork</strong></a> <span class="sub">${m.retainage_open_cents > 0 ? "needed before held-back money is paid · " : ""}${closeoutMissing ? closeoutMissing + " missing" : "complete"}</span></div></div>` : ""}
+          ${closeout.length ? `<div class="list-item row-link"><div><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout"><strong>Closeout documents</strong></a> <span class="sub">${m.retainage_open_cents > 0 ? "needed before held-back money is paid · " : ""}${closeoutMissing ? closeoutMissing + " missing" : "complete"}</span></div></div>` : ""}
           <h2 class="h2-gap">Change orders</h2>
           ${j.change_orders.length ? j.change_orders.map(co => `
             <div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${coStatusWords(co.status)}</span>${co.included_in_billing ? ` <span class="sub">${termText("on a pay app")}</span>` : ""}

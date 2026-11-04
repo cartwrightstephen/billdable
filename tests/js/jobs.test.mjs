@@ -34,8 +34,8 @@ test("missing paperwork alone is amber and says what to attach; an unsigned CO s
   const paper = job({ blockers: ["Signed contract is missing.", "Completion photos are missing."], missing_paperwork: ["Signed contract", "Completion photos"], invoices: [inv("draft")],
     blocked: true, needs_paperwork: true, blocker_button: "Add 2 missing documents" });
   assert.equal(needsPaperwork(paper), true);
-  assert.deepEqual(jobStatus(paper), ["Needs paperwork", "amber"]);
-  assert.equal(nextStep(paper), "Attach the paperwork, then send: Signed contract, Completion photos");
+  assert.deepEqual(jobStatus(paper), ["Needs supporting documents", "amber"]);
+  assert.equal(nextStep(paper), "Attach the supporting documents, then send: Signed contract, Completion photos");
   assert.equal(blockerButton(paper), "Add 2 missing documents");
   const co = job({ blockers: ["Signed contract is missing.", "Change Order 2 is included in the billing amount but has not been signed."], missing_paperwork: ["Signed contract"], invoices: [inv("draft")],
     blocked: true, needs_paperwork: false, blocker_button: "Clear 2 blockers" });
@@ -187,7 +187,7 @@ test("Ask for retainage shows only once the work is done and the closeout paperw
   assert.equal(retainageNote(running), "Asked for once the job is marked done.");  // M24
   const missing = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: false }], closeout_missing: ["Punch-list signoff"] });
   assert.ok(!keys([jobActions(missing).primary, ...jobActions(missing).more].filter(Boolean)).includes("retainage"));
-  assert.equal(retainageNote(missing), "Closeout paperwork: 1 item missing.");
+  assert.equal(retainageNote(missing), "Closeout documents: 1 item missing.");
   const ready = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: true }], closeout_missing: [] });
   assert.equal(jobActions(ready).primary.key, "retainage");
   assert.equal(retainageNote(ready), "");
@@ -209,7 +209,7 @@ test("after a retainage request, Ask for retainage waits for the customer's days
   // From the due moment on, it is the main step again.
   const later = new Date("2026-11-04T15:00:00Z");
   assert.equal(jobActions(asked, { now: later }).primary.key, "retainage");
-  assert.equal(nextStep(asked, later), "Ask for the money held back once the closeout paperwork is in.");
+  assert.equal(nextStep(asked, later), "Ask for the money held back once the closeout documents are in.");
   assert.equal(retainageNote(asked, later), "");
   assert.deepEqual(closeBlockerActions(asked, { kind: "retainage" }, null, later).map(x => x.label), ["Record retainage paid", "Ask for retainage"]);
   // Before the job is done nothing is asked for (M24), whatever an older request says.
@@ -223,9 +223,9 @@ test("a done job asked for part of its retainage early still says the closeout p
   const now = new Date("2026-10-29T15:00:00Z");
   const asked = jobOf({ money, work_status: "complete", closeout_missing: ["Punch-list signoff"], invoices: [inv("paid")],
     payer: { name: "ABC", follow_up_days: 7 }, last_retainage_chase_at: "2026-10-28T15:00:00+00:00" });
-  assert.equal(nextStep(asked, now), "Ask for the money held back once the closeout paperwork is in.");
+  assert.equal(nextStep(asked, now), "Ask for the money held back once the closeout documents are in.");
   assert.doesNotMatch(nextStep(asked, now), /Ask again from/);
-  assert.equal(retainageNote(asked, now), "Closeout paperwork: 1 item missing.");
+  assert.equal(retainageNote(asked, now), "Closeout documents: 1 item missing.");
 });
 
 test("only an unsigned change order in the way: Get CO N signed opens it", () => {  // R3-05
@@ -244,7 +244,7 @@ test("each thing standing between the job and Finish job has its buttons (R3-08)
   assert.deepEqual(labels({ kind: "outstanding", text: "$500.00 is still owed on pay apps sent." }), ["Record a payment"]);
   assert.deepEqual(labels({ kind: "co", text: "CO 2 is not signed yet.", co_id: "co-2", number: 2 }), ["Get CO 2 signed", "Withdraw"]);
   assert.match(closeBlockerActions(done, { kind: "co", co_id: "co-2", number: 2 })[1].attrs, /data-action="withdraw-co".*data-co="co-2"/);
-  assert.deepEqual(labels({ kind: "retainage" }), ["Record retainage paid", "Open closeout paperwork"]);
+  assert.deepEqual(labels({ kind: "retainage" }), ["Record retainage paid", "Closeout documents"]);
   assert.deepEqual(labels({ kind: "retainage" }, jobOf({ work_status: "complete" })), ["Record retainage paid", "Ask for retainage"]);
   assert.deepEqual(labels({ kind: "waiver" }), ["Send waiver"]);
   assert.deepEqual(labels({ kind: "draft", invoice_id: "i1", number: "PA-1" }), ["Review & send", "Delete draft"]);

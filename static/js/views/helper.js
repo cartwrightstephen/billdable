@@ -5,6 +5,7 @@ import { readJson } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
 import { post, renderLanding, nav, toast } from "../app-core.js";
+import { openSupportingDocs } from "./paperwork.js";
 
 export function setAiVisible(on) {
   const badge = document.getElementById("ai-badge");
@@ -101,7 +102,7 @@ function notDoneText(r) {
 async function helperRunAction(a) {
   if (a.type === "nav") nav(a.view);
   else if (a.type === "job") nav("job", a.job_id);
-  else if (a.type === "packet") nav("packet-detail", a.job_id, a.inv || null);
+  else if (a.type === "packet") openSupportingDocs(a.job_id, a.inv || null);
   else if (a.type === "path") { const r = routeFromPath(a.path); if (r) nav(r.view, r.jobId || null, r.detailId || null); }
   else if (a.type === "ask") helperAsk(a.q);
   else if (a.type === "copy") {
