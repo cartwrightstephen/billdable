@@ -117,7 +117,7 @@ class SecondStageTests(unittest.TestCase):  # M18, M19, M21
         signed_waiver(state, job["id"], "unconditional_final")
         with self.assertRaises(domain.GateError):
             domain.send_waiver(state, job["id"], "Owner", kind="unconditional_progress")
-        domain.send_waiver(state, job["id"], "Owner", kind="unconditional_final")
+        domain.send_waiver(state, job["id"], "Owner", kind="unconditional_final", confirm_final=True)
 
     def test_the_retainage_on_a_progress_waiver_is_named(self):  # M15
         state = new_state()

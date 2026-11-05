@@ -1,7 +1,7 @@
 // The job page's client cards: what the client's playbook is missing, and the paperwork this job
 // needs. The client's list is the default; a job can change its own copy, which applies from the
 // next pay app and to a draft that hasn't been sent (domain.set_job_paperwork).
-import { unesc } from "../format.js";
+import { unesc, fmtDate } from "../format.js";
 import { formErrorLine, refuseForm, formValues } from "../forms.js";
 import { formOpen } from "../state.js";
 import { post } from "../app-core.js";
@@ -30,6 +30,7 @@ export function jobPaperworkHtml(j) {
   return `<section class="card job-paperwork" aria-labelledby="job-paperwork-h">
       <h2 id="job-paperwork-h">Supporting documents for this job</h2>
       <p>${list}</p>
+      ${view.waiver_skipped ? `<p class="override-note">Conditional waiver not needed on this job. Marked by ${view.waiver_skipped.by} on ${fmtDate(view.waiver_skipped.at)}: ${view.waiver_skipped.reason} <button type="button" class="btn small secondary" data-action="waiver-needed" data-id="${j.id}">Needed after all</button></p>` : ""}
       <p class="sub">${view.own ? "Changed for this job." : `${j.payer.name}'s list.`} Changes apply from the next pay app and to a draft that hasn't been sent.</p>
       ${formOpen[key] ? `<div data-form-key="${key}">
         ${formErrorLine(key)}

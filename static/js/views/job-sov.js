@@ -1,10 +1,10 @@
 // The job page's schedule of values: the card, the editor, pasted rows, and line-by-line progress.
 import { esc, unesc, money, fmtDate } from "../format.js";
 import { mayTake } from "../jobs.js";
-import { sovMilli, lumpDone, sovCents, sovBp, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovFixedNote, sovPeriodHtml } from "../sov.js";
+import { sovMilli, lumpDone, sovCents, sovBp, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovFixedNote, sovPeriodHtml, sovLostLines } from "../sov.js";
 import { readJson, setNetBanner } from "../net.js";
 import { askConfirm } from "../dom.js";
-import { field, formValues } from "../forms.js";
+import { field, formValues, formErrorLine, refuseForm, clearForm } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, formOpen, onSessionEnd } from "../state.js";
 import { perms, post, toast, render, nav } from "../app-core.js";
@@ -12,7 +12,8 @@ import { perms, post, toast, render, nav } from "../app-core.js";
 
 export let sovDraft = null; // schedule-of-values editor: { jobId, lines: [{id,item,description,quantity,unit,rate}], op_pct, warnings } (raw text, not escaped)
 // Signed out: a schedule being typed is that company's.
-onSessionEnd(() => { sovDraft = null; });
+let sovCorrecting = null; // the line whose field total is being corrected: { jobId, lineId }
+onSessionEnd(() => { sovDraft = null; sovCorrecting = null; });
 
 function sovStartEdit(j) {
   const v = j.sov_view || {};
@@ -118,6 +119,43 @@ function sovEditorHtml(j) {
     </div>`;
 }
 
+// How a line's quantity reads: a lump sum in %, anything else in its unit.
+function lineQty(l, milli) { return l.lump_sum ? `${+(milli / 10).toFixed(1)}%` : `${fmtQty(milli)} ${l.unit}`; }
+
+// Correct field total (a wrong quantity on a job record or an imported file): the total now, the new
+// one and why. The change, with the old and new totals, goes in the activity log.
+function sovCorrectHtml(j) {
+  if (!sovCorrecting || sovCorrecting.jobId !== j.id) return "";
+  const l = (j.sov_view.lines || []).find(x => x.id === sovCorrecting.lineId);
+  if (!l) return "";
+  return `<div class="sov-correct" data-form-key="sovcorrect">
+    <h3>Correct field total: ${l.description}</h3>
+    ${formErrorLine("sovcorrect")}
+    <p class="sub">The field total is ${lineQty(l, l.done_milli)}.${l.sent_qty_milli ? ` ${lineQty(l, l.sent_qty_milli)} is on pay apps sent, and they stay as they are.` : ""}</p>
+    <div class="form-grid">
+      ${field({ form: "sovcorrect", name: "qty", id: "sov-correct-qty", label: l.lump_sum ? "New total, % done" : `New total (${l.unit})`, inputmode: "decimal" })}
+      ${field({ form: "sovcorrect", name: "reason", id: "sov-correct-reason", label: "Why it was wrong" })}
+    </div>
+    <div class="form-inline"><button class="btn small" data-action="sov-correct-save" data-id="${j.id}">Correct field total</button>
+      <button class="btn small secondary" data-action="sov-correct-cancel">Cancel</button></div>
+  </div>`;
+}
+
+async function sovCorrectSave(jobId) {
+  const line = (state.jobs.find(j => j.id === jobId)?.sov_view?.lines || []).find(l => l.id === sovCorrecting?.lineId);
+  if (!line) return;
+  const v = formValues("sovcorrect");
+  const qty = line.lump_sum ? lumpDone(v.qty) : (v.qty || "").trim();
+  const milli = qty === null ? NaN : sovMilli(qty);
+  if (refuseForm("sovcorrect", { ...(isNaN(milli) || milli < 0 ? { qty: "Enter the correct total, zero or more." } : {}), ...((v.reason || "").trim() ? {} : { reason: "Enter why the total is wrong." }) })) return;
+  const below = milli < (line.sent_qty_milli || 0);
+  const said = `${unesc(line.description)}: ${unesc(lineQty(line, line.done_milli))} to ${unesc(lineQty(line, milli))}.`
+    + (below ? ` ${unesc(lineQty(line, line.sent_qty_milli))} is already billed. Pay apps sent stay as they are, and nothing more is suggested on this line until the field total passes that.` : "");
+  if (!(await askConfirm(said, "Correct field total", below))) return;
+  const r = await post(`/api/jobs/${jobId}/sov-correct`, { line_id: line.id, qty, reason: v.reason, below_billed: below }, { formKey: "sovcorrect" });
+  if (r && r.ok) { sovCorrecting = null; render(); }
+}
+
 export function sovCardHtml(j) {
   const v = j.sov_view || {};
   if (sovDraft && sovDraft.jobId === j.id) {
@@ -141,7 +179,7 @@ export function sovCardHtml(j) {
       <td class="num">${l.lump_sum ? "" : fmtQty(l.qty_milli) + " " + l.unit}</td>
       <td class="num">${l.lump_sum ? "LS" : money(l.rate_cents)}</td>
       <td class="num">${money(l.scheduled_cents)}</td>
-      <td class="num">${l.lump_sum ? l.pct + "%" : fmtQty(l.done_milli)}${l.stored_cents ? `<div class="sub">+ ${money(l.stored_cents)} stored</div>` : ""}${l.from_daily_on ? `<div class="sov-daily">Updated from job records on ${fmtDate(l.from_daily_on)}</div>` : ""}</td>
+      <td class="num">${l.lump_sum ? l.pct + "%" : fmtQty(l.done_milli)}${l.stored_cents ? `<div class="sub">+ ${money(l.stored_cents)} stored</div>` : ""}${l.from_daily_on ? `<div class="sov-daily">Updated from job records on ${fmtDate(l.from_daily_on)}</div>` : ""}${!v.done && l.scheduled_cents >= 0 ? `<div><button class="linkish" data-action="sov-correct-open" data-id="${j.id}" data-line="${l.id}" aria-label="Correct field total: ${l.description}">Correct field total</button></div>` : ""}</td>
       <td class="num">${money(l.to_date_cents)}</td>
       <td class="num">${money(l.billed_cents)}</td>
       <td class="num">${money(l.scheduled_cents - l.to_date_cents)}</td>
@@ -156,6 +194,7 @@ export function sovCardHtml(j) {
     </table></div>
     ${v.auto && v.editable ? `<p class="sub">One lump-sum line for the contract amount. Replace it with your own lines any time before the first pay app is sent.</p>` : ""}
     ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">${v.auto ? "Enter schedule lines" : "Edit schedule"}</button>` : fixedNote}
+    ${sovCorrectHtml(j)}
     ${sovPeriodHtml(j, true)}
   </div>`;
 }
@@ -186,6 +225,8 @@ async function sovSave(jobId, updateContract) {
   const j = state.jobs.find(x => x.id === jobId);
   if (updateContract && !(await askConfirm(`Change the contract amount from ${money(j.contract_cents)} to ${money(t.total)} to match the schedule?`, "Change the contract"))) return;
   const lines = sovFilledLines().map(l => ({ id: l.id || undefined, item: l.item, description: l.description, quantity: l.quantity, unit: l.unit, rate: l.rate }));
+  const lost = sovLostLines((j.sov_view || {}).lines, lines.map(l => l.id).filter(Boolean));
+  if (lost.length && !(await askConfirm(`These lines are being replaced, and what is recorded on them is discarded: ${lost.map(l => `${unesc(l.description)} ${unesc(lineQty(l, l.done_milli))} (${money(l.to_date_cents)})`).join("; ")}.`, "Replace the lines", true))) return;
   const draftBefore = (j.sov_view || {}).open_draft;
   const r = await post(`/api/jobs/${jobId}/sov`, { lines, op_pct: sovDraft.op_pct, update_contract: !!updateContract });
   if (r && r.ok) {
@@ -278,4 +319,7 @@ export const actions = {
   "sov-progress": (el, id) => sovProgress(id),
   "sov-amounts": (el, id) => sovAmounts(id),
   "sov-amounts-reset": (el, id) => sovAmountsReset(id),
+  "sov-correct-open": (el, id) => { clearForm("sovcorrect"); sovCorrecting = { jobId: id, lineId: el.dataset.line }; render(); document.getElementById("sov-correct-qty")?.focus(); },
+  "sov-correct-cancel": () => { sovCorrecting = null; render(); },
+  "sov-correct-save": (el, id) => sovCorrectSave(id),
 };

@@ -195,6 +195,12 @@ class Run:
             self.record(step, ok, detail)
         return payload
 
+    def send(self, step: str, job_id: str) -> Dict[str, Any]:
+        """Approve & send, with the stamp of what Review & send shows."""
+        invoices = self.get(f"/api/jobs/{job_id}")["job"]["invoices"]
+        stamp = next((i["email_preview"]["stamp"] for i in invoices if i["status"] in ("draft", "awaiting_approval")), "")
+        return self.post(step, f"/api/jobs/{job_id}/send", {"reviewed": stamp})
+
     def get(self, path: str) -> Dict[str, Any]:
         status, payload = self.api.call("GET", path)
         if status != 200:
@@ -280,31 +286,31 @@ def setup(run: Run) -> None:
     # PEAC: finished, paid, waiver sent, closed.
     run.post("PEAC: mark done (drafts the final pay app)", f"/api/jobs/{j['PEAC']}/done", {"notes": "All four baths set, grouted and sealed."})
     run.clear_packet("PEAC")
-    run.post("PEAC: approve & send PA-PEAC-01", f"/api/jobs/{j['PEAC']}/send")
+    run.send("PEAC: approve & send PA-PEAC-01", j['PEAC'])
     run.post("PEAC: match payment ACH 7781", f"/api/jobs/{j['PEAC']}/match-payment", {"amount_cents": 3_850_000, "reference": "ACH 7781"})
     signed_waiver(run, "PEAC")
-    run.post("PEAC: send waiver", f"/api/jobs/{j['PEAC']}/waiver")
+    run.post("PEAC: send waiver", f"/api/jobs/{j['PEAC']}/waiver", {"confirm_final": True})
     run.post("PEAC: close for record", f"/api/jobs/{j['PEAC']}/close")
     # DECA: finished, paid less retainage, waiver sent, retainage held.
     run.post("DECA: mark done", f"/api/jobs/{j['DECA']}/done", {"notes": "Substantially complete; punch walk pending."})
     run.clear_packet("DECA")
-    run.post("DECA: approve & send PA-DECA-01", f"/api/jobs/{j['DECA']}/send")
+    run.send("DECA: approve & send PA-DECA-01", j['DECA'])
     run.post("DECA: match payment CHK 40871", f"/api/jobs/{j['DECA']}/match-payment", {"amount_cents": 5_760_000, "reference": "CHK 40871"})
     signed_waiver(run, "DECA")
-    run.post("DECA: send waiver", f"/api/jobs/{j['DECA']}/waiver", {"kind": "unconditional_progress"})
+    run.post("DECA: send waiver", f"/api/jobs/{j['DECA']}/waiver", {"kind": "unconditional_progress", "confirm_final": True})
     # VEST, GLEN, WHIT: progress in dollars, pay app sent.
     for code, cents, note in (("VEST", 4_200_000, "Corridors and rooms 101-118 set."),
                               ("GLEN", 3_000_000, "Storefront entry and restrooms set."),
                               ("WHIT", 841_250, "Kitchen backsplash done; baths half done.")):
         run.post(f"{code}: progress {money(cents)} to date (drafts a pay app)", f"/api/jobs/{j[code]}/progress", {"completed_cents": cents, "notes": note})
         run.clear_packet(code)
-        run.post(f"{code}: approve & send", f"/api/jobs/{j[code]}/send")
+        run.send(f"{code}: approve & send", j[code])
     # ASHB: SOV progress, sent.
     ids = run.sov_lines_by_desc("ASHB")
     run.post("ASHB: SOV progress (pavers 1,400 sf, coping 340 lf)", f"/api/jobs/{j['ASHB']}/sov-progress",
              {"done": {ids.get("Travertine pool deck pavers", "?"): "1400", ids.get("Coping stone", "?"): "340"}, "notes": "Pavers half down; coping complete."})
     run.clear_packet("ASHB")
-    run.post("ASHB: approve & send PA-ASHB-01", f"/api/jobs/{j['ASHB']}/send")
+    run.send("ASHB: approve & send PA-ASHB-01", j['ASHB'])
     # MILL: SOV progress with stored materials; draft left blocked (pay app due on the 25th).
     ids = run.sov_lines_by_desc("MILL")
     run.post("MILL: SOV progress with $4,000 stored wall tile (drafts PA-MILL-01)", f"/api/jobs/{j['MILL']}/sov-progress", {

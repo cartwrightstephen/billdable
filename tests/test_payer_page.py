@@ -21,6 +21,8 @@ import importer
 import server
 import storage
 from dollar_jobs import dollar_jobs
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 SITE = "https://app.duracash.example"
@@ -79,7 +81,7 @@ class PayerPageTests(unittest.TestCase):
         for item in state["jobs"][-1]["invoices"][-1].get("packet") or []:
             if not item["present"]:
                 self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "Attached to the email"}, cookie)
-        res, raw = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+        res, raw = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie)
         self.assertEqual(res.status, 200, raw)
         state = json.loads(raw)
         body = state["email_log"][-1]["body"]
@@ -214,7 +216,7 @@ class PayerPageTests(unittest.TestCase):
             res, raw = self.request("GET", "/api/state", cookie=cookie)
             for item in json.loads(raw)["jobs"][-1]["invoices"][-1].get("packet") or []:
                 self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "ok"}, cookie)
-            res, raw = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+            res, raw = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie)
             self.assertNotIn("/p/", json.loads(raw)["email_log"][-1]["body"])
 
 

@@ -19,6 +19,7 @@ from test_accounts import ServerCase, PASSWORD
 import test_team
 from test_team import JOB
 from dollar_jobs import dollar_jobs
+from review_help import reviewed
 
 
 @dollar_jobs
@@ -139,7 +140,7 @@ class ReviewAuthTests(ServerCase):
         inv = state["jobs"][0]["invoices"][-1]
         for item in inv.get("packet") or []:
             self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "sent with the email"}, cookie=owner)
-        res, state = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie=owner)
+        res, state = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, owner), cookie=owner)
         self.assertEqual(res.status, 200, state)
         inv = state["jobs"][0]["invoices"][-1]
         pick = {"job_id": job_id, "invoice_id": inv["id"], "amount_cents": inv["amount_cents"], "reference": "77"}

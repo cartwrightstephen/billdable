@@ -14,6 +14,7 @@ import server
 from domain import profiles
 from test_accounts import PASSWORD, ServerCase
 from seed import seed_state
+from review_help import reviewed
 
 JOB = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
        "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
@@ -94,7 +95,7 @@ class TeamHttpTests(ServerCase):
         job_id = state["jobs"][0]["id"]
         self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 400_000}, cookie=cookie)
         # The page hides Send for this profile; a request sent anyway is refused on the server.
-        res, out = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie=cookie)
+        res, out = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie=cookie)
         self.assertEqual((res.status, out["error"]), (403, server.NO_PERMISSION))
         res, out = self.request("POST", "/api/company", {"name": "Renamed"}, cookie=cookie)
         self.assertEqual(res.status, 403)

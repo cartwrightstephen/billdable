@@ -126,10 +126,10 @@ function attachedLine(a) {
   return `${a.auto ? (a.unconfirmed ? "found in the job records" : "attached automatically") : "added by " + a.added_by}${a.added_at ? ", " + fmtDate(a.added_at) : ""}`;
 }
 
-function attachmentRow(a, records, files) {
+function attachmentRow(a, records, files, nameOnly) {
   const rec = records[a.record_id];
-  // From before files were required: a name with nothing behind it (it stays in, with a way forward).
-  if (!rec) return `<div class="sub">${a.auto ? "Attached from the job records" : "Attached"}: ${a.name}. No file was kept for it. Remove it and add the file.</div>`;
+  // From before files were required: a name with nothing behind it (missing, with a way forward).
+  if (!rec || nameOnly) return `<div class="sub">${a.auto ? "Attached from the job records" : "Attached"}: ${a.name}. No file was kept for it. Remove it and add the file.</div>`;
   const links = recordFileLinks(rec, files);
   return `<div class="attached-record"><span class="pill">${RECORD_KINDS[unesc(rec.kind)] || words(rec.kind)}</span> ${links || rec.label}${links && !links.includes(`>${rec.label}</a>`) ? ` <span class="sub">${rec.label}</span>` : ""} <span class="sub">· ${attachedLine(a)}</span></div>`;
 }
@@ -280,11 +280,12 @@ export function confirmedText(p) {
 }
 
 // Not needed, and on what: who and when once that was kept, with the reason (accept. 10).
-function skippedHtml(p, isCloseout) {
+function skippedHtml(p, isCloseout, j = null) {
   const where = p.skipped_scope === "job" || isCloseout ? "on this job" : "for this client";
   const given = /^Not needed (for|on) this \w+$/.test(unesc(p.skipped_reason)) ? "" : p.skipped_reason;
   if (!p.skipped_by) return `<div class="sub">Not needed ${where}${given ? ": " + given : ""}</div>`;
-  return `<div class="override-note">Not needed ${where}. Marked by ${p.skipped_by} on ${fmtDate(p.skipped_at)}: ${given || "no reason given"}</div>`;
+  const back = j && p.skipped_scope === "job" && !isCloseout ? ` <button class="btn small secondary" data-action="waiver-needed" data-id="${j.id}">Needed after all</button>` : "";
+  return `<div class="override-note">Not needed ${where}. Marked by ${p.skipped_by} on ${fmtDate(p.skipped_at)}: ${given || "no reason given"}${back}</div>`;
 }
 
 function problemsHtml(p) {
@@ -320,17 +321,17 @@ function packetItemsHtml(j, inv, packet, isCloseout) {
       <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
         ${!p.present && !skipped && !hasWaiting ? `<span class="field-error">${p.blocker}</span>` : ""}
         ${(p.covers || []).length ? `<div class="sub">For ${p.covers.join(", ")}</div>` : ""}
-        ${skipped ? skippedHtml(p, isCloseout) : ""}
+        ${skipped ? skippedHtml(p, isCloseout, editable ? j : null) : ""}
         ${p.present && made ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
         ${p.present && p.override ? `<div class="override-note">${overrideText(p)}</div>` : ""}
         ${p.present && !p.override && (p.present_reason || p.marked_in_hand) && !made ? `<div class="sub">Marked as in hand${p.present_reason ? `: ${p.present_reason}` : ""}</div>` : ""}
         ${p.present && !p.present_reason && !(p.attachments || []).length ? `<div class="sub">Marked as in hand.</div>` : ""}
         ${p.files_left_out && !p.present ? `<div class="sub">Its files are left out of the email.</div>` : ""}
-        ${(p.attachments || []).map(a => attachmentRow(a, records, files)).join("")}
+        ${(p.attachments || []).map(a => attachmentRow(a, records, files, p.name_only)).join("")}
         ${p.present && p.confirmed_by ? `<div class="override-note">${confirmedText(p)}</div>` : ""}
         ${p.present && problemsHtml(p) ? `<div class="doc-warning"><p>${p.confirmed_by} opened it and confirmed it after this warning:</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : ""}
         ${confirmHtml(j, p, editable)}
-        ${(p.present && !made || hasWaiting) && editable ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
+        ${(p.present && !made || hasWaiting || p.name_only) && editable ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
       </div>
       ${!p.present && !skipped && editable ? `${hasWaiting ? "" : `<div class="form-inline packet-add">
         <button class="btn small" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}"${waiver ? ` data-waiver-kind="${waiver}"` : ""} data-capture="1">Take a photo</button>
@@ -428,6 +429,7 @@ export const actions = {
   "goto-packet": (el, id) => openSupportingDocs(id),
   "open-packet": (el) => openSupportingDocs(el.dataset.job, el.dataset.inv),
   "packet-detach": (el, id) => post(`/api/jobs/${id}/detach/${el.dataset.item}`),
+  "waiver-needed": (el, id) => post(`/api/jobs/${id}/waiver-needed`),
   "packet-skip": (el, id) => {
     const reason = (document.getElementById(`skip-reason-${el.dataset.item}`)?.value || "").trim();
     return post(`/api/jobs/${id}/packet-skip/${el.dataset.item}`, { reason, ...(el.dataset.wholeClient ? { whole_client: true } : {}) });

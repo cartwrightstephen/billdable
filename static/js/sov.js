@@ -46,6 +46,12 @@ export function fmtQty(milli) {
   return n.toLocaleString("en-US", { maximumFractionDigits: 3 });
 }
 
+// What saving the editor's lines would throw away: base lines with something recorded that aren't
+// among the lines kept (ids). Named in the confirm before saving, and in the audit (domain.save_sov).
+export function sovLostLines(viewLines, keptIds) {
+  return (viewLines || []).filter(l => !l.co_id && l.to_date_cents > 0 && !keptIds.includes(l.id));
+}
+
 export function blankSovLine() { return { id: "", item: "", description: "", quantity: "", unit: "", rate: "" }; }
 
 // What is wrong with an editor line, as clean_lines in sov.py would say it: "" when it is fine or
@@ -155,8 +161,9 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
   const typed = (name, saved) => esc(draftValue("sovprogress", name, saved));
   // M1: an open draft that is only here is replaced, keeping its number (domain record_sov_progress).
   const replaces = (j.invoices || []).find(i => ["draft", "awaiting_approval"].includes(i.status) && i.pencil_status !== "sent");
-  // Filled in from the field total (or what is billed, when that is more); a line billed in full is closed.
-  const rows = v.lines.map(l => { const start = Math.max(l.done_milli, l.billed_qty_milli || 0), closed = (l.billed_qty_milli || 0) >= l.qty_milli; return `
+  // Filled in from the field total, or the open draft's own figure when one was typed for it (or
+  // what is billed, when that is more); a line billed in full is closed. A blank box bills the suggestion.
+  const rows = v.lines.map(l => { const start = Math.max(l.form_done_milli ?? l.done_milli, l.sent_qty_milli ?? l.billed_qty_milli ?? 0), closed = (l.sent_qty_milli ?? l.billed_qty_milli ?? 0) >= l.qty_milli; return `
     <tr>
       <td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
       <td class="num">${l.lump_sum ? "lump sum" : fmtQty(l.qty_milli) + " " + l.unit}</td>
@@ -165,7 +172,7 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
       <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
     </tr>`; }).join("");
   return `<div class="card sov-progress">${sovPeriodHtml(j)}<div data-form-key="sovprogress">${errorLine}
-    <p class="sub">Each line is filled in with the total recorded to date (not this period). Change a figure to bill a different quantity; what the field recorded stays as it is. Add the dollars of materials delivered and stored on site but not yet installed, and lower them as materials are installed. Duracash bills the difference since the last pay app, plus overhead and profit, less retainage.</p>
+    <p class="sub">Each line is filled in with the total recorded to date (not this period). Clear a box to bill what is suggested. Change a figure to bill a different quantity; what the field recorded stays as it is. Add the dollars of materials delivered and stored on site but not yet installed, and lower them as materials are installed. Duracash bills the difference since the last pay app, plus overhead and profit, less retainage.</p>
     <div class="table-wrap sov-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th>Stored materials $</th><th></th></tr>
       ${rows}
@@ -202,6 +209,7 @@ export function continuationHtml(inv, job) {
     <div class="table-wrap sov-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Previous</th><th>This period</th><th>Stored</th><th>Qty to date</th><th>Total to date</th><th>%</th><th>Balance to finish</th>${retPct ? `<th>Retainage ${retPct}%</th>` : ""}</tr>
       ${rows.map(e => { const c = sheetColumns(e, retPct); return `<tr><td>${e.item}</td><td class="sov-desc-cell">${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(c.previous)}</td><td class="num">${money(c.thisPeriod)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(c.stored)}</td><td class="num">${qtyToDate(e)}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${c.pct}%</td><td class="num">${money(c.balance)}</td>${retPct ? `<td class="num">${money(c.retainage)}</td>` : ""}</tr>`; }).join("")}
+      ${(inv.co_rows || []).map(r => `<tr><td></td><td class="sov-desc-cell">CO ${r.number}</td><td class="num">${money(r.scheduled_cents)}</td><td class="num">${money(r.previous_cents)}</td><td class="num">${money(r.this_cents)}</td><td class="num">${money(0)}</td><td></td><td class="num">${money(r.to_date_cents)}</td><td class="num">${r.scheduled_cents ? Math.floor(100 * r.to_date_cents / r.scheduled_cents) : 0}%</td><td class="num">${money(r.scheduled_cents - r.to_date_cents)}</td>${retPct ? `<td class="num">${money(Math.floor((r.to_date_cents * retPct + 50) / 100))}</td>` : ""}</tr>`).join("")}
       ${inv.op_cents ? `<tr><td></td><td class="sov-desc-cell">Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td><td></td><td></td>${retPct ? "<td></td>" : ""}</tr>` : ""}
     </table></div>
     ${retPct ? `<p class="sub">The retainage column is ${retPct}% of each line's total to date, for reference.</p>` : ""}
