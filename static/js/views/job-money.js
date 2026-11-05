@@ -16,9 +16,11 @@ export function moneyCardHtml(j) {
           <div class="money-row strong"><span class="label">Contract total</span><span>${money(m.contract_total_cents)}</span></div>
           <div class="money-row"><span class="label">Billed</span><span>${money(m.billed_cents)}</span></div>
           <div class="money-row"><span class="label" data-help="collected">Received</span><span>${money(m.collected_cents)}</span></div>
+          ${m.refunded_cents ? `<div class="money-row"><span class="label">Refunded or credited (taken off Received)</span><span>${money(m.refunded_cents)}</span></div>` : ""}
           ${m.short_paid_cents ? `<div class="money-row"><span class="label">Short pay accepted</span><span>${money(m.short_paid_cents)}</span></div>` : ""}
           <div class="money-row strong"><span class="label">Outstanding</span><span>${money(m.outstanding_cents)}</span></div>
           <div class="money-row"><span class="label">Done, not billed</span><span>${money(m.unbilled_completed_cents)}</span></div>
+          ${m.retainage_credited_cents ? `<div class="money-row"><span class="label">Signed credit taken off retainage</span><span>${money(m.retainage_credited_cents)}</span></div>` : ""}
           <div class="money-row"><span class="label">Held back, still owed</span><span>${money(m.retainage_open_cents)}</span></div>
         </details>
         ${retainageCardHtml(j)}

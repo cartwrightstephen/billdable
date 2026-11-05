@@ -58,6 +58,7 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     "retainage": "ask_retainage",
     "match-payment": "record_payments",
     "retainage-paid": "record_payments",
+    "retainage-credit": "record_payments",
     "overbilling-settled": "record_payments",
     "accept-short-pay": "void",
     "void-draft": "void",

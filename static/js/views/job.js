@@ -237,7 +237,7 @@ export const views = {
     const m = j.money;
     const blocked = isBlocked(j);
     const openDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
-    const openForPay = j.invoices.filter(i => ["sent", "approved", "partial"].includes(i.status));
+    const openForPay = j.invoices.filter(i => ["sent", "approved", "partial"].includes(i.status) || i.refund_owed_cents);
     const closeout = j.closeout_packet || [];
     const closeoutMissing = closeoutMissingCount(j);
     const { primary, more } = jobActions(j);
@@ -320,6 +320,10 @@ export const views = {
         <button class="btn small" data-action="match" data-id="${j.id}">Record</button></div>
         ${shortPayable(j).length && may("accept-short-pay") ? `<p class="sub short-pay-row">Paid short, and the rest won't come? ${shortPayButtons(j)}</p>` : ""}` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
       ${shortPayable(j).map(i => shortPayCardHtml(j, i)).join("")}
+      ${formOpen.retcredit ? `<div class="card form-card" data-form-key="retcredit"><h2>Take a signed credit off the retainage</h2>${formErrorLine("retcredit")}<p class="sub">No money is recorded as received, and no waiver is owed for this part.</p><div class="form-row">
+        ${moneyField({ form: "retcredit", name: "amount_cents", id: "retcredit-amt", label: "Amount ($)", cents: ((j.close_blocker_items || []).find(b => b.kind === "overbilled") || {}).creditable_cents || 0 })}
+        ${field({ form: "retcredit", name: "reason", id: "retcredit-reason", label: "What was agreed", placeholder: "CO 3's credit comes off retainage" })}
+        <button class="btn small" data-action="retainage-credit" data-id="${j.id}">Save</button></div></div>` : ""}
       ${formOpen.retpay ? `<div class="card form-card" data-form-key="retpay"><h2>Record retainage paid</h2>${formErrorLine("retpay")}<div class="form-row">
         ${moneyField({ form: "retpay", name: "amount_cents", id: "retpay-amt", label: "Retainage received ($)" })}
         ${field({ form: "retpay", name: "reference", id: "retpay-ref", label: "Reference", placeholder: "Check no. or QuickBooks id" })}
@@ -420,6 +424,12 @@ export const actions = {
     if (r && r.ok) { formOpen.pencilreview = false; render(); }
   },
   "pencil-agreed": (el, id) => post(`/api/jobs/${id}/pencil-response`, { agreed: true }),
+  "retainage-credit": async (el, id) => {
+    const v = formValues("retcredit");
+    const amount = centsFrom(v.amount_cents);
+    if (refuseForm("retcredit", amount.error || amount.cents <= 0 ? { amount_cents: "Enter the amount in dollars, like 5,000." } : {})) return;
+    await post(`/api/jobs/${id}/retainage-credit`, { amount_cents: amount.cents, reason: v.reason || "" }, { formKey: "retcredit", close: "retcredit" });
+  },
   "overbilling-settled": (el, id) => post(`/api/jobs/${id}/overbilling-settled`, { reason: formValues("overbilled").reason || "" }, { formKey: "overbilled", close: "overbilled" }),
   "pencil-changes": async (el, id) => {
     const note = (document.getElementById("pencil-note")?.value || "").trim();

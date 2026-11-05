@@ -397,7 +397,7 @@ export function waitingText(j, now = new Date()) {
 // JOB_ACTION_PERMS on the server, which refuses the same. An action not listed is anyone's.
 export const ACTION_PERM = {
   send: "send_payapps", "unconditional-look": "send_payapps", waiver: "send_waivers", "waiver-not-needed": "send_waivers", retainage: "ask_retainage",
-  "match-payment": "record_payments", "retainage-paid": "record_payments",
+  "match-payment": "record_payments", "retainage-paid": "record_payments", "retainage-credit": "record_payments",
   "overbilling-settled": "record_payments",
   "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",
   close: "close_jobs", reopen: "close_jobs",
@@ -505,6 +505,7 @@ function closeBlockerButtons(j, b, now) {
     case "unbilled": return [{ label: "Draft Pay App", attrs: `data-action="draft" data-id="${id}"` }];
     case "overbilled": return [
       ...(b.invoice_id ? [{ label: `Open ${b.number}`, attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}"` }] : []),
+      ...(b.creditable_cents ? [{ label: "Take Credit off Retainage", attrs: `data-action="toggle-form" data-form="retcredit"`, needs: "retainage-credit" }] : []),
       ...(b.settleable === false ? [] : [{ label: "Record Refund or Credit", attrs: `data-action="toggle-form" data-form="overbilled"`, needs: "overbilling-settled" }])];
     case "outstanding": return [{ label: "Record a Payment", attrs: `data-action="toggle-form" data-form="match"` },
       ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i), needs: "accept-short-pay" }))];

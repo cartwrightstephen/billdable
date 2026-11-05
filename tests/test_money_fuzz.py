@@ -147,6 +147,15 @@ class Sequence:
     def settle(self):
         domain.settle_overbilling(self.state, self.id, "Refund")
 
+    def retainage_credit(self):
+        domain.apply_credit_to_retainage(self.state, self.id, "Credit comes off retainage", "Sam",
+                                         amount_cents=None if self.rng.random() < 0.5 else max(1, domain.retainage_credit_room(self.job) // 2))
+
+    def pay_back(self):
+        owed = domain.job_money(self.job)["refund_owed_cents"]
+        if owed and not self.open_to_pay():
+            domain.match_payment(self.state, self.id, self.rng.choice((owed, max(1, owed // 2))), "")
+
     def retainage_paid(self):
         left = domain.job_money(self.job)["retainage_open_cents"]
         if left:
@@ -157,7 +166,7 @@ class Sequence:
 
     def pay_in_full(self):
         for inv in self.open_to_pay():
-            domain.match_payment(self.state, self.id, domain._owed_on(self.job, inv), "Full", invoice_id=inv["id"])
+            domain.match_payment(self.state, self.id, domain._owed_on(self.job, inv), "", invoice_id=inv["id"])
 
     def short_pay(self):
         partial = [i for i in self.open_to_pay() if i["status"] == "partial"]
@@ -169,11 +178,11 @@ class Sequence:
         releases = [r for r in self.job.get("retainage_waivers", []) if r.get("waiver_due") and not r.get("waiver_sent")]
         if owed:
             kind = domain.suggested_waiver_kind(self.job, owed[0])
-            signed_waiver(self.state, self.id, kind)
+            signed_waiver(self.state, self.id, kind)["invoice_id"] = owed[0]["id"]
             domain.send_waiver(self.state, self.id, "Sam", invoice_id=owed[0]["id"])
         elif releases:
             kind = domain.release_due_kind(self.job, releases[0])
-            signed_waiver(self.state, self.id, kind)
+            signed_waiver(self.state, self.id, kind)["release_id"] = releases[0]["id"]
             domain.send_waiver(self.state, self.id, "Sam", release_id=releases[0]["id"])
 
     def delete(self):
@@ -238,7 +247,7 @@ class Sequence:
 
     ACTIONS = ("daily", "daily", "daily", "import_file", "undo_import", "correct", "progress_blank", "progress_blank", "progress_typed", "amounts", "reset", "send", "send", "delete",
                "final", "undo", "pencil", "pencil_answer", "add_co", "sign_co", "include_co", "withdraw_co", "retainage", "contract", "replace_lines", "partial_pay", "pull_back",
-               "waiver_confirmed", "waiver_confirmed", "stored", "settle", "settle", "retainage_paid", "pay_in_full", "pay_in_full", "short_pay", "send_waiver", "send_waiver")
+               "waiver_confirmed", "waiver_confirmed", "stored", "settle", "settle", "retainage_paid", "pay_in_full", "pay_in_full", "short_pay", "send_waiver", "send_waiver", "retainage_credit", "pay_back")
 
     # ---------- what must hold ----------
     def check(self):
@@ -325,16 +334,90 @@ class Sequence:
             assert job.get("work_status") == "complete" and m["unbilled_completed_cents"] == 0 and m["draft_cents"] == 0 \
                 and m["outstanding_cents"] <= own and m["retainage_open_cents"] == 0 \
                 and not any(c["status"] == "pending" for c in job["change_orders"]), f"final waiver for {inv['number']} with {m}"
-        # A refund or credit counts only for money collected above the contract; the rest still shows.
-        received = m["collected_cents"] + m["short_paid_cents"] + m["retainage_released_cents"]
+        # A refund or credit counts only for what came in, and it stays money returned: whatever the
+        # contract does afterwards, what is left to bill, collect or refund adds up to it.
+        came_in = m["payments_cents"] + m["short_paid_cents"] + m["retainage_released_cents"]
         allowed = m["billing_allowed_cents"]
-        assert m["overbilling_settled_cents"] <= max(0, received - allowed), f"settled {m['overbilling_settled_cents']} of {received} on {allowed}"
-        assert m["overbilled_cents"] == max(0, m["billed_gross_cents"] - allowed - m["overbilling_settled_cents"]), f"overbilled {m}"
+        assert m["overbilling_settled_cents"] <= came_in, f"settled {m['overbilling_settled_cents']} of {came_in}"
+        assert m["collected_cents"] == m["payments_cents"] - min(m["payments_cents"], m["refunded_cents"]), f"received {m}"
+        assert m["overbilled_cents"] == max(0, m["billed_gross_cents"] - allowed - m["overbilling_settled_cents"] - m["retainage_credited_cents"]), f"overbilled {m}"
+        if not domain.close_blocker_items(job):
+            assert m["payments_cents"] + m["retainage_released_cents"] + m["short_paid_cents"] - m["refunded_cents"] >= allowed, f"nothing in the way of finishing, and money is still due: {m}"
         if m["overbilled_cents"]:
             assert any(b["kind"] == "overbilled" for b in domain.close_blocker_items(job)), "overbilled and no word of it"
         # A credit never suggests less than nothing.
         if sov.has_sov(job):
             assert (domain._sov_view(job, self.state).get("period") or {}).get("suggested_gross_cents", 0) >= 0, "a negative suggestion"
+
+    # ---------- getting it to Finish Job from wherever it ended up ----------
+    def finish(self):
+        """Only what a person can do on the job page: whatever state the job is in, it reaches closed."""
+        for _ in range(60):
+            items = domain.close_blocker_items(self.job)
+            if not items:
+                domain.close_job(self.state, self.id, "Sam")
+                self.check()
+                return
+            kind = items[0]["kind"]
+            self.log.append(f"finish:{kind}")
+            draft = draft_of(self.job)
+            if draft and draft.get("pencil_status") == "sent":
+                domain.record_pencil_response(self.state, self.id, True, "Fine")
+            getattr(self, f"clear_{kind}")(items[0])
+            self.check()
+        raise AssertionError(f"not finished: {domain.close_blockers(self.job)}")
+
+    def clear_not_done(self, item):
+        domain.mark_done(self.state, self.id)
+
+    def clear_draft(self, item):
+        for co in domain.unsigned_cos_in_billing(self.job):
+            domain.approve_change_order(self.state, self.id, co["id"])
+            self.credit_signed = self.credit_signed or co["amount_cents"] < 0
+        self.send()
+
+    def clear_co(self, item):
+        if self.rng.random() < 0.5:
+            domain.withdraw_change_order(self.state, self.id, item["co_id"])
+        else:
+            domain.approve_change_order(self.state, self.id, item["co_id"])
+            self.credit_signed = self.credit_signed or next(c for c in self.job["change_orders"] if c["id"] == item["co_id"])["amount_cents"] < 0
+
+    def clear_unbilled(self, item):
+        domain.draft_invoice(self.state, self.id, strict=True)
+
+    def clear_outstanding(self, item):
+        if self.open_to_pay():
+            if self.rng.random() < 0.5:
+                self.pay_in_full()
+            else:
+                inv = self.open_to_pay()[0]
+                domain.match_payment(self.state, self.id, max(1, domain._owed_on(self.job, inv) // 2), "", invoice_id=inv["id"])
+                self.short_pay() if self.rng.random() < 0.3 else None
+        else:
+            self.pay_back()
+
+    def clear_retainage(self, item):
+        left = domain.job_money(self.job)["retainage_open_cents"]
+        domain.record_retainage_payment(self.state, self.id, self.rng.choice((left, max(1, left // 2))), "Check")
+
+    def clear_waiver(self, item):
+        self.send_waiver()
+
+    def clear_overbilled(self, item):
+        m = domain.job_money(self.job)
+        if m["overbilling_settleable_cents"]:
+            return self.settle()
+        if domain.retainage_credit_room(self.job, m):
+            return self.retainage_credit()
+        open_ones = self.open_to_pay()
+        part = next((i for i in open_ones if i["status"] == "partial"), None)
+        if part:
+            return domain.settle_short_pay(self.state, self.id, part["id"], "Credit")
+        unpaid = next((i for i in reversed(open_ones)), None)
+        if unpaid:
+            return domain.void_sent_pay_app(self.state, self.id, unpaid["id"], "Over the contract")
+        raise AssertionError(f"overbilled with no way out: {m}")
 
     def step(self):
         name = self.rng.choice(self.ACTIONS)
@@ -358,6 +441,20 @@ class FuzzTests(unittest.TestCase):
                 domain.job_view(seq.state, seq.job)
                 for inv in sov.live_invoices(seq.job):
                     payapp_pdf.for_invoice(seq.state, seq.id, inv["id"])
+            except Exception as exc:
+                self.fail(f"run {run}, seed {seed}: {type(exc).__name__}: {exc}\nsteps: {', '.join(seq.log)}")
+
+    def test_every_job_can_be_finished(self):
+        """Whatever a run left, retainage part-released and credits included, it reaches closed."""
+        master = random.Random(SEED + 1)
+        for run in range(RUNS):
+            seed = master.randrange(1 << 30)
+            seq = Sequence(random.Random(seed))
+            try:
+                for _ in range(seq.rng.randint(0, STEPS)):
+                    seq.step()
+                seq.finish()
+                assert seq.job["closed"]
             except Exception as exc:
                 self.fail(f"run {run}, seed {seed}: {type(exc).__name__}: {exc}\nsteps: {', '.join(seq.log)}")
 

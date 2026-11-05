@@ -147,7 +147,7 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
     pending = sum(co["amount_cents"] for co in job["change_orders"] if co["status"] == "pending")
     contract_total = job["contract_cents"] + approved
     billed = sum(inv["amount_cents"] for inv in job["invoices"] if inv["status"] in BILLED_STATUSES)
-    collected = sum(p["amount_cents"] for p in job["payments"])
+    payments = sum(p["amount_cents"] for p in job["payments"])
     # What the customer kept off a pay app that was settled short (R4-01): no longer owed.
     short_paid = sum(int(inv.get("short_pay_cents") or 0) for inv in job["invoices"] if inv["status"] in BILLED_STATUSES)
     draft = sum(inv["amount_cents"] for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES)
@@ -165,18 +165,26 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
             0,
             job.get("completed_value_cents", contract_total) - billed - draft - retainage_held - retainage_on_drafts,
         )
-    outstanding = max(0, billed - collected - short_paid)
     # Work billed past the contract and signed change orders (a credit signed after the bill went
     # out, say). An unsigned change order on a pay app counts until it is signed or withdrawn.
     allowed = contract_total + sum(co["amount_cents"] for co in job["change_orders"] if co["status"] == "pending" and co.get("included_in_billing"))
     billed_gross = job.get("retainage_held_cents", 0) + sum(
         int(inv.get("gross_cents", inv["amount_cents"] + inv.get("retainage_cents", 0))) for inv in job["invoices"] if inv["status"] in BILLED_STATUSES)
-    # A refund or credit is of money that came in above the contract, so that is all it can count
-    # for, whatever was recorded when the figures were different.
-    received = collected + retainage_released + short_paid
-    above = max(0, received - allowed)
-    settled = min(sum(int(s["cents"]) for s in job.get("overbilling_settled") or []), above)
-    over = max(0, billed_gross - allowed)
+    came_in = payments + retainage_released
+    entries = job.get("overbilling_settled") or []
+    # A refund or credit is what really happened, whatever the contract does afterwards, so it stays
+    # counted; only what never came in can't have gone back. returned is the money part (a credit
+    # against a short pay moved none); an entry from before this was kept was money.
+    settled = min(sum(int(s["cents"]) for s in entries), came_in + short_paid)
+    returned = min(sum(int(s.get("returned_cents", s["cents"])) for s in entries), came_in)
+    # What came in on pay apps past what they billed is the client paying back a refund.
+    over = max(0, billed_gross + max(0, payments + short_paid - billed) - allowed)
+    # A signed credit taken off the retainage held (apply_credit_to_retainage), for as long as the
+    # contract leaves it standing: a later change order brings the retainage back.
+    credited = min(sum(int(c["cents"]) for c in job.get("retainage_credits") or []), max(0, over - settled), max(0, retainage_held - retainage_released))
+    above = max(0, came_in + short_paid - allowed)
+    # More went back than the job is now over its contract (a change order signed after a refund).
+    refund_owed = max(0, returned - over)
     return {
         "contract_cents": job["contract_cents"],
         "approved_co_cents": approved,
@@ -184,19 +192,43 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
         "contract_total_cents": contract_total,
         "billed_cents": billed,
         "draft_cents": draft,
-        "collected_cents": collected,
+        "payments_cents": payments,
+        "collected_cents": max(0, payments - returned),
+        "refunded_cents": returned,
         "short_paid_cents": short_paid,
-        "outstanding_cents": outstanding,
+        "outstanding_cents": max(0, billed - payments - short_paid) + refund_owed,
+        "refund_owed_cents": refund_owed,
         "unbilled_completed_cents": unbilled_completed,
         "billed_gross_cents": billed_gross,
-        "overbilled_cents": max(0, over - settled),
+        "overbilled_cents": max(0, over - settled - credited),
         "billing_allowed_cents": allowed,
         "overbilling_settled_cents": settled,
-        "overbilling_settleable_cents": max(0, min(over, above) - settled),
+        "overbilling_settleable_cents": max(0, min(over - credited, above) - settled),
         "retainage_held_cents": retainage_held,
         "retainage_released_cents": retainage_released,
-        "retainage_open_cents": max(0, retainage_held - retainage_released),
+        "retainage_credited_cents": credited,
+        "retainage_open_cents": max(0, retainage_held - retainage_released - credited),
     }
+
+
+def _owed_text(m: dict[str, int]) -> str:
+    """What is owed, in words: on pay apps, and what a refund left short of the contract."""
+    owed = m["refund_owed_cents"]
+    on_bills = m["outstanding_cents"] - owed
+    parts = [f"{money(on_bills)} is still owed on pay apps sent."] if on_bills else []
+    if owed:
+        parts.append(f"{money(owed)} is owed back: {money(m['refunded_cents'])} was refunded or credited, and the contract total is now {money(m['billing_allowed_cents'])}. "
+                     "Record it when it comes in, or sign a credit if the client keeps it.")
+    return " ".join(parts)
+
+
+def retainage_credit_room(job: dict[str, Any], m: dict[str, int] | None = None) -> int:
+    """How much signed credit can still come off the retainage held: what is overbilled, what is
+    held, and the credits signed less what was already taken off this way."""
+    m = m or job_money(job)
+    signed = sum(-co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved" and co["amount_cents"] < 0)
+    used = sum(int(c["cents"]) for c in job.get("retainage_credits") or [])
+    return max(0, min(m["overbilled_cents"], m["retainage_open_cents"], signed - used))
 
 
 def close_blockers(job: dict[str, Any]) -> list[str]:
@@ -226,13 +258,15 @@ def close_blocker_items(job: dict[str, Any]) -> list[dict[str, Any]]:
     if m["overbilled_cents"] > 0:
         last = next((inv for inv in reversed(job["invoices"]) if inv["status"] in BILLED_STATUSES), None)
         already = f", with {money(m['overbilling_settled_cents'])} already refunded or credited" if m["overbilling_settled_cents"] else ""
+        creditable = retainage_credit_room(job, m)
         out.append({"kind": "overbilled", "invoice_id": (last or {}).get("id", ""), "number": (last or {}).get("number", ""),
-                    "settleable": m["overbilling_settleable_cents"] > 0, "text":
+                    "settleable": m["overbilling_settleable_cents"] > 0, "creditable_cents": creditable, "text":
                     f"The client is overbilled by {money(m['overbilled_cents'])}: {money(m['billed_gross_cents'])} billed against a contract total of "
                     f"{money(m['billing_allowed_cents'])}{already}. Pull back {(last or {}).get('number', 'the last pay app')} and draft it again if nothing is paid on it. "
-                    "If it is paid, refund or credit the difference and record that here."})
+                    "If it is paid, refund or credit the difference and record that here."
+                    + (f" If the signed credit comes out of the retainage held, take {money(creditable)} off the retainage." if creditable else "")})
     if m["outstanding_cents"] > 0:
-        out.append({"kind": "outstanding", "text": f"{money(m['outstanding_cents'])} is still owed on pay apps sent."})
+        out.append({"kind": "outstanding", "refund_owed_cents": m["refund_owed_cents"], "text": _owed_text(m)})
     if m["retainage_open_cents"] > 0:
         out.append({"kind": "retainage", "text": f"{money(m['retainage_open_cents'])} held back (retainage) is still owed."})
     if job.get("waiver_due") and not job.get("waiver_sent"):
@@ -1284,16 +1318,22 @@ def match_payment(
     # A pay app settled short still takes the rest if the customer pays it after all (R4-01):
     # named by id, or on its own when nothing else is open.
     short = [inv for inv in job["invoices"] if inv["status"] == "paid" and inv.get("short_pay_cents")]
-    if not open_invoices and not short:
+    # A refund the contract no longer leaves room for (a change order signed after it): the client
+    # pays it back, on the last pay app sent, which stays as it went.
+    owed_back = job_money(job)["refund_owed_cents"]
+    back_on = next((inv for inv in reversed(job["invoices"]) if inv["status"] in BILLED_STATUSES), None) if owed_back else None
+    if not open_invoices and not short and not back_on:
         raise GateError("No open invoice to match.")
     if invoice_id:
-        invoice = next((inv for inv in open_invoices + short if inv["id"] == invoice_id), None)
+        invoice = next((inv for inv in open_invoices + short + ([back_on] if back_on else []) if inv["id"] == invoice_id), None)
         if not invoice:
             _refuse("", {"invoice_id": "Pick a pay app that is waiting for payment."})
     elif len(open_invoices) == 1:
         invoice = open_invoices[0]
     elif not open_invoices and len(short) == 1:
         invoice = short[0]
+    elif not open_invoices and back_on:
+        invoice = back_on
     else:
         raise GateError(
             "More than one pay app is open. Choose which pay app this payment is for.",
@@ -1303,7 +1343,7 @@ def match_payment(
     if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
         _refuse("", {"amount_cents": "Enter the payment amount, more than $0."})
     already = sum(p["amount_cents"] for p in job["payments"] if p["invoice_id"] == invoice["id"])
-    remaining = invoice["amount_cents"] - already
+    remaining = max(0, invoice["amount_cents"] - already) + (owed_back if invoice is back_on else 0)
     if amount_cents > remaining:
         _refuse("", {"amount_cents": f"Enter no more than the {money(remaining)} still owed on {invoice['number']}. You entered {money(amount_cents)}."})
     reference = reference.strip() if isinstance(reference, str) else ""
@@ -1331,8 +1371,9 @@ def match_payment(
     late = ""
     if invoice["status"] == "paid":
         # The rest of a short pay came in after all: less of it stays written off.
+        was_short = int(invoice.get("short_pay_cents") or 0)
         invoice["short_pay_cents"] = max(0, invoice["amount_cents"] - collected_for_invoice)
-        late = f" Short pay now {money(invoice['short_pay_cents'])}."
+        late = f" Short pay now {money(invoice['short_pay_cents'])}." if was_short else " Refund paid back."
     elif collected_for_invoice >= invoice["amount_cents"]:
         if _legacy_waiver_pending(job):
             job["legacy_waiver_pending"] = True
@@ -2017,6 +2058,11 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     for inv in out["invoices"]:
         paid = sum(p["amount_cents"] for p in job["payments"] if p.get("invoice_id") == inv["id"])
         inv["remaining_cents"] = max(0, inv["amount_cents"] - paid) if inv["status"] in OPEN_FOR_PAYMENT else 0
+    if out["money"]["refund_owed_cents"]:   # Record a Payment takes it on the last pay app sent
+        last = next((inv for inv in reversed(out["invoices"]) if inv["status"] in BILLED_STATUSES), None)
+        if last:
+            last["remaining_cents"] += out["money"]["refund_owed_cents"]
+            last["refund_owed_cents"] = out["money"]["refund_owed_cents"]
     _payapp_figures(job, out)
     _co_flags(out)
     # Money > Unpaid's Recent contact (M11), only on jobs with money owed, to keep the page light.
@@ -2034,7 +2080,11 @@ def payapp_figures(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, in
         if inv is invoice or inv.get("id") == invoice.get("id"):
             break
         earlier.add(inv.get("id"))
-    figures["received_before"] = sum(p["amount_cents"] for p in job.get("payments", []) if p.get("invoice_id") in earlier)
+    received = sum(p["amount_cents"] for p in job.get("payments", []) if p.get("invoice_id") in earlier)
+    # Less what went back by the time this one went out (a pay app not sent yet: by now).
+    sent = invoice.get("sent_at")
+    back = sum(int(s.get("returned_cents", s["cents"])) for s in job.get("overbilling_settled") or [] if not sent or str(s.get("at", "")) <= sent)
+    figures["received_before"] = max(0, received - back)
     return figures
 
 
@@ -2458,6 +2508,8 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
                 "Progress Pay App", due=cutoff_day)
         # The work is finished and billed, and nothing is out with the client: closeout, then the
         # money held back, then Finish Job, in the job page's order and words (jobActions).
+        elif m["refund_owed_cents"] and not any(i["status"] in OPEN_FOR_PAYMENT for i in invoices):
+            add(4.5, "refund_owed", job, "Owed back", "amber", _owed_text(m), "Open Job")
         elif job.get("work_status") == "complete" and m["outstanding_cents"] == 0:
             missing = closeout_missing(job)
             asked = job.get("last_retainage_chase_at")
@@ -5637,36 +5689,83 @@ def undo_quantity_import(state: dict[str, Any], job_id: str, record_id: str, act
     return job
 
 
+def _overbilling_way_out(job: dict[str, Any], m: dict[str, int]) -> str:
+    """What can settle the overbilling when no refund can: the words for what works on this job now."""
+    open_ones = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
+    part_paid = next((inv for inv in open_ones if any(p.get("invoice_id") == inv["id"] for p in job["payments"])), None)
+    unpaid = next((inv for inv in reversed(open_ones) if not any(p.get("invoice_id") == inv["id"] for p in job["payments"])), None)
+    ways = []
+    if retainage_credit_room(job, m):
+        ways.append(f"take the signed credit off the {money(m['retainage_open_cents'])} retainage held")
+    if part_paid:
+        ways.append(f"accept what is left on {part_paid['number']} as short pay")
+    if unpaid:
+        ways.append(f"pull back {unpaid['number']} and draft it again")
+    return (" Or ".join(w[0].upper() + w[1:] for w in ways) + ".") if ways else "Sign a change order for the difference."
+
+
 def settle_overbilling(state: dict[str, Any], job_id: str, reason: Any, actor: str = "owner") -> dict[str, Any]:
     """The client paid past the contract and got the difference back outside Duracash (a refund, or
-    a credit on other work): recorded with what was done, so the job can be finished."""
+    a credit on other work): recorded with what was done, so the job can be finished. returned_cents
+    is the money that went back, which comes off what the job has received: what covers only a short
+    pay accepted (money that never came in) is a credit and moved nothing."""
     job = _open_job(state, job_id)
     m = job_money(job)
     if not m["overbilled_cents"]:
         raise GateError("This job isn't overbilled.")
     cents = m["overbilling_settleable_cents"]
     if not cents:
-        received = m["collected_cents"] + m["short_paid_cents"] + m["retainage_released_cents"]
+        received = m["payments_cents"] + m["short_paid_cents"] + m["retainage_released_cents"]
         last = next((inv for inv in reversed(job["invoices"]) if inv["status"] in BILLED_STATUSES), None)
+        way_out = _overbilling_way_out(job, m)
         if not received:
             raise GateError(f"Nothing is paid on {(last or {}).get('number', 'this job')}, so there is nothing to refund. Pull it back and draft it again.")
         if m["overbilling_settled_cents"]:
-            raise GateError(f"The {money(m['overbilling_settled_cents'])} paid above the contract total of {money(m['billing_allowed_cents'])} is already recorded as refunded or credited. "
-                            "Pull back a pay app with nothing paid on it, or accept what is left as short pay.")
-        raise GateError(f"{money(received)} is paid, which is not above the contract total of {money(m['billing_allowed_cents'])}, so there is nothing to refund. "
-                        "Pull back a pay app with nothing paid on it, or accept what is left as short pay.")
+            raise GateError(f"The {money(m['overbilling_settled_cents'])} paid above the contract total of {money(m['billing_allowed_cents'])} is already recorded as refunded or credited. {way_out}")
+        raise GateError(f"{money(received)} is paid, which is not above the contract total of {money(m['billing_allowed_cents'])}, so there is nothing to refund. {way_out}")
     reason = _reason(reason)
     if not reason:
         _refuse("", {"reason": "Enter what was done, like refund check 1044."})
-    job.setdefault("overbilling_settled", []).append({"cents": cents, "by": actor, "at": utcnow(), "reason": reason})
+    money_above = max(0, m["payments_cents"] + m["retainage_released_cents"] - m["billing_allowed_cents"] - m["refunded_cents"])
+    job.setdefault("overbilling_settled", []).append({"cents": cents, "returned_cents": min(cents, money_above), "by": actor, "at": utcnow(), "reason": reason})
     audit(state, job_id, "overbilling_settled", f"{actor} recorded {money(cents)} of overbilling as refunded or credited: {reason}."
           + (f" {money(m['overbilled_cents'] - cents)} stays overbilled: that much more was not collected." if cents < m["overbilled_cents"] else ""), actor)
     return job
 
 
+def apply_credit_to_retainage(state: dict[str, Any], job_id: str, reason: Any, actor: str = "owner", amount_cents: Any = None) -> dict[str, Any]:
+    """A signed credit taken out of the retainage held: the client doesn't pay that part of it, and
+    nothing was overpaid to refund. It lowers what is held, with no money recorded and no waiver
+    owed for that part. amount_cents blank is all that can go."""
+    job = _open_job(state, job_id)
+    m = job_money(job)
+    room = retainage_credit_room(job, m)
+    if not room:
+        if not m["retainage_open_cents"]:
+            raise GateError("No retainage is held to take a credit off.")
+        if not m["overbilled_cents"]:
+            raise GateError("Nothing is overbilled, so there is no credit to take off the retainage.")
+        raise GateError("No signed credit is left to take off the retainage.")
+    if amount_cents in (None, ""):
+        amount_cents = room
+    if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
+        _refuse("", {"amount_cents": "Enter the amount, more than $0."})
+    if amount_cents > room:
+        _refuse("", {"amount_cents": f"Enter no more than {money(room)}. You entered {money(amount_cents)}."})
+    reason = _reason(reason)
+    if not reason:
+        _refuse("", {"reason": "Enter what was agreed, like CO 3's credit comes off retainage."})
+    job.setdefault("retainage_credits", []).append({"cents": amount_cents, "by": actor, "at": utcnow(), "reason": reason})
+    _sync_waiver(job)
+    _refresh_draft_gate(job, state)
+    audit(state, job_id, "retainage_credited",
+          f"{actor} took {money(amount_cents)} of signed credit off the retainage held: {reason}. No money was received and no waiver is owed for it.", actor)
+    return job
+
+
 def _settlements_follow(state: dict[str, Any], job: dict[str, Any], why: str) -> None:
-    """The billed total changed: a refund or credit recorded stays only for money collected above
-    the contract now. What no longer counts comes off, and the audit says so."""
+    """The billed total changed: a refund or credit recorded stays only for money that came in. What
+    no longer counts comes off (old data, settled on a pay app nobody paid), and the audit says so."""
     entries = job.get("overbilling_settled") or []
     recorded = sum(int(s["cents"]) for s in entries)
     keep = job_money(job)["overbilling_settled_cents"]
@@ -5677,10 +5776,10 @@ def _settlements_follow(state: dict[str, Any], job: dict[str, Any], why: str) ->
         take = min(int(entry["cents"]), keep)
         keep -= take
         if take:
-            kept.append({**entry, "cents": take})
+            kept.append({**entry, "cents": take, "returned_cents": min(take, int(entry.get("returned_cents", take)))})
     job["overbilling_settled"] = kept
     audit(state, job["id"], "overbilling_settled_dropped",
-          f"{why}: {money(recorded - sum(s['cents'] for s in kept))} recorded as refunded or credited no longer counts, since that much was not collected above the contract.", "duracash")
+          f"{why}: {money(recorded - sum(s['cents'] for s in kept))} recorded as refunded or credited no longer counts, since that much never came in.", "duracash")
 
 
 def _check_sov_progress(job: dict[str, Any], done: dict[str, Any], stored: dict[str, Any],

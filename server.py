@@ -3388,6 +3388,8 @@ JOB_ACTIONS = {
     "waiver-needed": (False, lambda h, st, j, i, c: domain.waiver_needed_after_all(st, j, c.actor)),
     "overbilling-settled": (False, lambda h, st, j, i, c: domain.settle_overbilling(st, j, _text(c.body, "reason"), c.actor)),
     "unconditional-look": (True, lambda h, st, j, i, c: domain.confirm_unconditional_mention(st, j, i, c.actor)),
+    "retainage-credit": (False, lambda h, st, j, i, c: domain.apply_credit_to_retainage(st, j, _text(c.body, "reason"), c.actor,
+                                                                                         amount_cents=_number(c.body, "amount_cents", "the amount") if c.body.get("amount_cents") not in (None, "") else None)),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, _sends("the pay app", _send_payapp)),
