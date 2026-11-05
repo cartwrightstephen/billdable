@@ -25,6 +25,11 @@ import twilio_media
 GOOD = "https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/ME1"
 
 
+def agree(user_id, phone):
+    """A person who has answered the code texted to this number."""
+    auth.confirm_sms_code(user_id, auth.issue_sms_code(user_id, phone))
+
+
 class DownloadTests(unittest.TestCase):
     def test_nothing_without_signature_checking(self):
         with mock.patch.dict(os.environ, {"TWILIO_AUTH_TOKEN": ""}):
@@ -237,7 +242,7 @@ class InboundSmsMediaTests(unittest.TestCase):
     def test_stop_turns_texts_off_and_stays_out_of_the_inbox(self):
         cookie, path = self.signup("stop@example.com")
         me = next(u for u in auth.all_users() if u["email"] == "stop@example.com")
-        auth.set_sms(me["id"], "+15555550125", True)
+        agree(me["id"], "+15555550125")
         before = len(json.loads(self.request("GET", "/api/state", cookie=cookie)[1])["inbox"])
         with mock.patch.dict(os.environ, {"TWILIO_AUTH_TOKEN": "secret"}):
             res, _ = self.post_signed(path, {"From": "+15555550125", "Body": "STOP"})

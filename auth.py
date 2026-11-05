@@ -49,7 +49,7 @@ class RateLimited(Exception):
     pass
 
 ROLES = ("owner", "member")
-TOKEN_HOURS = {"reset": 1, "verify": 72, "invite": 7 * 24, "pwchange": 0.25, "login": 1 / 6}
+TOKEN_HOURS = {"reset": 1, "verify": 72, "invite": 7 * 24, "pwchange": 0.25, "login": 1 / 6, "sms": 0.25}
 RESET_MAX_PER_HOUR = 3
 _RESETS: dict[str, list[float]] = {}
 # Emailed 6-digit codes (S2 password change, S7 sign-in from a new device): at most this many
@@ -224,6 +224,11 @@ def user_by_email(email: str) -> dict[str, Any] | None:
     return None
 
 
+def _texts_on(user: dict[str, Any]) -> bool:
+    """Agreed to texts, at a number a texted code proved is theirs."""
+    return bool(user.get("sms_opt_in") and user.get("phone") and user.get("sms_confirmed_phone") == user.get("phone"))
+
+
 def _public(user: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": user["id"],
@@ -241,7 +246,7 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "appearance": _appearance(user.get("appearance")),
         # Only ever shown to the person: team() and all_users() leave these out.
         "phone": user.get("phone", ""),
-        "sms_opt_in": bool(user.get("sms_opt_in")),
+        "sms_opt_in": _texts_on(user),
         "sms_stopped": bool(user.get("sms_opt_out_at")) and not user.get("sms_opt_in"),
         "reminders": dict(user.get("reminders") or {}),
     }
@@ -259,12 +264,17 @@ def _listed(user: dict[str, Any]) -> dict[str, Any]:
 
 def set_sms(user_id: str, phone: str, opt_in: bool) -> dict[str, Any]:
     """Keep this person's mobile number (already checked: sms.e164) and whether they agreed to
-    texts. No number means no texts; when they agree, the time is kept as the record of it."""
+    texts. No number means no texts, and agreeing counts only for a number a texted code proved
+    (confirm_sms_code); changing the number means proving the new one. When they agree, the time
+    is kept as the record of it."""
     with LOCK:
         data = _load()
         user = _user(data, user_id)
-        agreed = bool(opt_in and phone)
-        if agreed and not (user.get("sms_opt_in") and user.get("phone") == phone):
+        was_on = _texts_on(user)
+        if user.get("phone") != phone:
+            user.pop("sms_confirmed_phone", None)
+        agreed = bool(opt_in and phone and user.get("sms_confirmed_phone") == phone)
+        if agreed and not was_on:
             user["sms_opt_in_at"] = _iso(_utcnow())
             user.pop("sms_opt_out_at", None)
         user["phone"], user["sms_opt_in"] = phone, agreed
@@ -276,7 +286,66 @@ def sms_contact(company_id: str, user_id: str) -> dict[str, Any] | None:
     """{phone, opted_in} of a person in this company; None for anyone else."""
     with LOCK:
         user = next((u for u in _load()["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
-        return {"phone": user.get("phone", ""), "opted_in": bool(user.get("sms_opt_in"))} if user else None
+        return {"phone": user.get("phone", ""), "opted_in": _texts_on(user)} if user else None
+
+
+def sms_proven(user_id: str, phone: str) -> bool:
+    """Has a code texted to this number come back from this person, with the number still theirs?"""
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["id"] == user_id), None)
+        return bool(user and phone and user.get("phone") == phone and user.get("sms_confirmed_phone") == phone)
+
+
+def issue_sms_code(user_id: str, phone: str) -> str | None:
+    """A 6-digit code proving this number, in place of any earlier one, or None when too many were
+    asked for in the last hour by this person or for this number (so nobody can use it to pester
+    a stranger, whichever accounts they use)."""
+    now = time.monotonic()
+    key = f"sms-to:{phone}"
+    with LOCK:
+        recent = [t for t in _CODES.get(key, []) if now - t < 3600]
+        if len(recent) >= CODES_MAX_PER_HOUR:
+            _CODES[key] = recent
+            return None
+        _CODES[key] = recent + [now]
+        data = _load()
+        data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v.get("kind") == "sms" and v.get("user_id") == user_id)}
+        _save(data)
+    return issue_code(user_id, "sms", phone=phone)
+
+
+def sms_code_number(user_id: str, code: Any) -> str:
+    """The number this live code went to; "" when it isn't one."""
+    raw = re.sub(r"\s+", "", str(code or ""))
+    with LOCK:
+        entry = _load()["tokens"].get(_code_key("sms", user_id, raw)) or {}
+        return entry.get("phone", "") if entry.get("kind") == "sms" and entry.get("expires_at", "") > _iso(_utcnow()) else ""
+
+
+def drop_sms_codes(user_id: str) -> None:
+    with LOCK:
+        data = _load()
+        data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v.get("kind") == "sms" and v.get("user_id") == user_id)}
+        _save(data)
+
+
+def confirm_sms_code(user_id: str, code: Any) -> dict[str, Any]:
+    """The code came back: the number it was texted to is this person's, and texts are on. Wrong
+    tries count as for the emailed codes (CODE_MAX_WRONG)."""
+    raw = re.sub(r"\s+", "", str(code or ""))
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        phone = (data["tokens"].get(_code_key("sms", user_id, raw)) or {}).get("phone", "")
+        if not phone or not _take_code(data, "sms", user_id, raw):
+            _wrong_code(data, "sms", user_id)
+            raise AuthError("That code didn't match, or it has expired. Ask for a new one.")
+        if not _texts_on(user) or user.get("phone") != phone:
+            user["sms_opt_in_at"] = _iso(_utcnow())
+        user.pop("sms_opt_out_at", None)
+        user["phone"], user["sms_confirmed_phone"], user["sms_opt_in"] = phone, phone, True
+        _save(data)
+        return _public(user)
 
 
 def sms_stop(phone: str) -> int:
@@ -587,10 +656,10 @@ def _code_key(kind: str, user_id: str, code: str) -> str:
     return _digest(f"{kind}:{user_id}:{code}")
 
 
-def issue_code(user_id: str, kind: str) -> str | None:
-    """A new 6-digit code of this kind ("pwchange" or "login") for this person, or None when too
-    many were asked for in the last hour. Only its hash is kept; older ones stay valid until used
-    or expired."""
+def issue_code(user_id: str, kind: str, **fields: Any) -> str | None:
+    """A new 6-digit code of this kind ("pwchange", "login" or "sms") for this person, or None when
+    too many were asked for in the last hour. Only its hash is kept; older ones stay valid until
+    used or expired."""
     now = time.monotonic()
     with LOCK:
         key = f"{kind}:{user_id}"
@@ -609,6 +678,7 @@ def issue_code(user_id: str, kind: str) -> str | None:
         data["tokens"][_code_key(kind, user_id, code)] = {
             "kind": kind, "id": f"{kind}-" + secrets.token_hex(4), "user_id": user_id,
             "created_at": _iso(_utcnow()), "expires_at": _iso(_utcnow() + timedelta(hours=TOKEN_HOURS[kind])),
+            **fields,
         }
         _save(data)
         return code

@@ -96,6 +96,7 @@ def company_lock(company_id: str) -> threading.RLock:
 MAX_BODY_BYTES = 1_000_000
 MAX_INBOUND_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 5_000
+CLIENT_PHONE = "That number belongs to a client. Texts only go to your own team."
 BODY_SECONDS = 60  # a request body must arrive within this long in total, however slowly it trickles
 
 # The only files served from static/. Anything else is a 404.
@@ -238,7 +239,7 @@ def read_only_reason(company_id: str, state: dict | None = None) -> str:
     if state is None:
         with company_lock(company_id):
             state = load_company(company_id)
-    why = str(state.get("company", {}).get("read_only") or "").strip() or billing.standing(state)["hold"]
+    why = billing.read_only_why(state)
     return f"This company is read-only: {why}. Nothing was changed; your data is kept and can be exported from Settings." if why else ""
 
 
@@ -2634,6 +2635,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(303, b"", "text/plain", {"Location": f"/s/{company_id}.{token}"})
 
+    def _local_development(self) -> bool:
+        """No named environment, and the request came from this machine (a proxy's never does)."""
+        env = (os.environ.get("DURACASH_ENV") or "").strip().lower()
+        return env in {"", "development"} and self.client_address[0] in {"127.0.0.1", "::1"}
+
     def _inbound_sms(self, token: str) -> None:
         company_id = importer.company_for_token(token, "sms")
         if not company_id:
@@ -2647,7 +2653,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "ignored": "the demo is read-only"})
             return
         secret = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
-        if production() and not secret:
+        if not secret and not self._local_development():
             # Without the token nobody can tell a text from Twilio from a stranger's post.
             log_json("error", msg="inbound text refused: TWILIO_AUTH_TOKEN is not set", company=company_id, rid=self._rid)
             self._json(403, {"error": "Texts aren't set up on this server."})
@@ -2814,11 +2820,41 @@ class Handler(BaseHTTPRequestHandler):
         elif agreed and not phone:
             wrong = "Enter your mobile number to get texts."
         elif phone and phone in sms.client_numbers(company_state(ctx.company_id)):
-            wrong = "That number belongs to a client. Texts only go to your own team."
+            wrong = CLIENT_PHONE
+        elif agreed and not auth.sms_proven(ctx.user["id"], phone):
+            # Agreeing takes effect once a code texted to the number comes back; nothing changes until then.
+            code = auth.issue_sms_code(ctx.user["id"], phone)
+            if not code:
+                self._json(429, {"error": "Five codes were asked for in the last hour. Use the newest one, or try again later."})
+                return
+            result = sms.send_code(company_state(ctx.company_id), ctx.company_id, ctx.user["id"], code)
+            if result == "sent":
+                self._json(200, {"user": self._me_user(auth.session_public(ctx.user["id"]) or ctx.user), "code_sent": True, "sent_to": phone})
+                return
+            auth.drop_sms_codes(ctx.user["id"])
+            wrong = {sms.NOT_SET_UP: "Texts aren't set up on this server, so this number can't be confirmed.",
+                     sms.NOT_ALLOWED: "This number isn't on this server's allow-list.",
+                     sms.READ_ONLY: "Texts are off while this company is read-only.",
+                     sms.CLIENT_NUMBER: CLIENT_PHONE}.get(result, "The code couldn't be sent. Check the number and try again.")
         if wrong:
             self._json(409, {"error": wrong, "fields": {"phone": wrong}})
             return
         self._json(200, {"user": self._me_user(auth.set_sms(ctx.user["id"], phone, agreed))})
+
+    def _p_my_sms_confirm(self, m, ctx: "Ctx") -> None:
+        """The code texted to the number came back: it is this person's, and texts are on."""
+        code = ctx.body.get("code")
+        wrong = ""
+        if sms.is_client_number(company_state(ctx.company_id), auth.sms_code_number(ctx.user["id"], code)):
+            auth.drop_sms_codes(ctx.user["id"])   # a client was given this number since the code went
+            wrong = CLIENT_PHONE
+        else:
+            try:
+                self._json(200, {"user": self._me_user(auth.confirm_sms_code(ctx.user["id"], code))})
+                return
+            except auth.AuthError as exc:
+                wrong = str(exc)
+        self._json(409, {"error": wrong, "fields": {"sms_code": wrong}})
 
     def _reminders_reply(self, user: dict, state: dict) -> dict:
         return reminders.page(state, user, datetime.now(timezone.utc))
@@ -3025,6 +3061,7 @@ ROUTES = [
     Route("POST", r"/api/company", "_m_company_update", "mutate", perm="company"),
     Route("POST", r"/api/auth/name", "_p_my_name", "body"),
     Route("POST", r"/api/auth/sms", "_p_my_sms", "body"),
+    Route("POST", r"/api/auth/sms/confirm", "_p_my_sms_confirm", "body"),
     Route("GET", r"/api/reminders", "_g_reminders", "user"),
     Route("POST", r"/api/reminders/prefs", "_p_reminder_prefs", "body"),
     Route("POST", r"/api/reminders/read", "_p_reminder_read", "body"),

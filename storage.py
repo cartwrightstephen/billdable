@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,18 @@ for _name, _value in list(os.environ.items()):
         os.environ.setdefault("DURACASH_" + _name[len("BILLDABLE_"):], _value)
 
 DATA_DIR = Path(os.environ.get("DURACASH_DATA_DIR") or ROOT / "data").resolve()
+
+
+def set_aside(path: Path) -> Path | None:
+    """Copy a file that can't be read to <name>.bad-<when it was last written>, for a person to
+    look at. Once per version of the file. The file stays where it is. Never raises."""
+    try:
+        target = path.with_name(f"{path.name}.bad-{path.stat().st_mtime_ns}")
+        if not target.exists():
+            shutil.copy2(path, target)
+        return target
+    except OSError:
+        return None
 
 
 def write_json(path: Path, data: Any) -> None:

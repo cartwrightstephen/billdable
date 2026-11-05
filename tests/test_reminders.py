@@ -331,12 +331,36 @@ class Http(unittest.TestCase):
         res, data = self.request("POST", "/api/reminders/prefs", {"prefs": {"missing": ["text"]}}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertIn("missing", data["fields"])
+        user = next(u for u in auth.all_users() if u["email"] == "rem2@example.com")
+        auth.confirm_sms_code(user["id"], auth.issue_sms_code(user["id"], "+14045550123"))
         res, data = self.request("POST", "/api/auth/sms", {"phone": "(404) 555-0123", "sms_opt_in": True}, cookie=cookie)
         self.assertEqual(res.status, 200, data)
         self.assertEqual(data["user"]["phone"], "+14045550123")
         self.assertTrue(data["user"]["sms_opt_in"])
+        self.assertNotIn("code_sent", data, "the number is already proven")
         res, data = self.request("POST", "/api/reminders/prefs", {"prefs": {"missing": ["text"]}}, cookie=cookie)
         self.assertEqual(res.status, 200)
+
+    def test_my_account_says_when_a_number_can_not_be_confirmed(self):
+        cookie = self.signup("rem5@example.com")
+        res, data = self.request("POST", "/api/auth/sms", {"phone": "(404) 555-0155", "sms_opt_in": True}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        self.assertIn("set up", data["fields"]["phone"])
+        res, data = self.request("GET", "/api/me", cookie=cookie)
+        self.assertFalse(data.get("user", data).get("phone"), "nothing is saved")
+
+    def test_a_clients_number_with_an_extension_is_refused_on_my_account(self):
+        cookie = self.signup("rem6@example.com")
+        res, data = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "(404) 555-0142 x12",
+                                                       "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        self.assertEqual(data["payers"][0]["phone"], "(404) 555-0142 x12")
+        for typed in ("404-555-0142", "+1 (404) 555 0142"):
+            res, data = self.request("POST", "/api/auth/sms", {"phone": typed, "sms_opt_in": True}, cookie=cookie)
+            self.assertEqual(res.status, 409, typed)
+            self.assertIn("client", data["fields"]["phone"])
+        res, data = self.request("POST", "/api/auth/sms", {"phone": "404555\u0660\u0661\u0664\u0662", "sms_opt_in": True}, cookie=cookie)
+        self.assertEqual(res.status, 409)
 
     def test_my_account_refuses_a_bad_number_and_a_clients_number(self):
         cookie = self.signup("rem3@example.com")
