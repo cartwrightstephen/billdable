@@ -94,6 +94,59 @@ export default async function ({ browser, BASE, step, errors }) {
     await p.context().close();
   });
 
+  await step("New job: who signs off and the client type are the person's to enter (criterion 3)", async () => {
+    const p = await fresh("signer");
+    await p.goto(BASE + "/jobs");
+    await p.locator(".top").getByRole("button", { name: "New job", exact: true }).click();
+    assert.equal(await p.inputValue("#nj-client-type"), "", "starts on Choose");
+    await p.fill("#nj-customer", "Rae Homeowner");
+    await p.press("#nj-customer", "Tab");
+    assert.equal(await p.inputValue("#nj-approver"), "", "leaving the client box fills nothing");
+    await p.click('[data-action="create-job"]');
+    await p.locator("#nj-approver-err", { hasText: "who signs off" }).waitFor();
+    assert.match(await p.locator("#nj-client-type-err").innerText(), /client type/);
+    await p.context().close();
+  });
+
+  await step("Send Draft for Their Review shows what goes first; missing documents don't hold it back (criterion 78)", async () => {
+    const p = await fresh("pencil");
+    const job = await addJob(p);
+    await p.evaluate(([id, line]) => fetch(`/api/jobs/${id}/sov-progress`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ done: { [line]: "0.25" } }) }), [job.id, job.sov.lines[0].id]);
+    const emails = () => p.evaluate(async () => (await (await fetch("/api/state")).json()).email_log.length);
+    await p.goto(`${BASE}/jobs/${job.id}`);
+    await p.locator(".job-actions").getByRole("button", { name: "Send Draft for Their Review" }).click();
+    const card = p.locator(".pencil-check");
+    await card.waitFor();
+    assert.equal(await emails(), 0, "nothing goes until the screen's own button");
+    const text = await card.innerText();
+    assert.match(text, /rae@example\.com/);
+    assert.match(text, /\$5,000\.00/);
+    assert.match(text, /Pencil copy for review/);
+    assert.match(text, /Still missing/);
+    await card.getByRole("link", { name: "Open the PDF" }).waitFor();
+    await card.getByRole("button", { name: "Send Draft for Their Review" }).click();
+    await card.waitFor({ state: "detached" });
+    assert.equal(await emails(), 1);
+    await p.context().close();
+  });
+
+  await step("the Inbox offers Delivery ticket and Time sheet, and the record says which (criterion 83)", async () => {
+    const p = await fresh("ticket");
+    const job = await addJob(p);
+    await p.evaluate(() => fetch("/api/import/text", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "Crew hours for Oak", source: "paste", job_id: "" }) }));
+    await p.goto(`${BASE}/communications`);
+    const kind = p.locator('[id^="inb-kind-"]').first();
+    await kind.waitFor();
+    const labels = await kind.locator("option").allInnerTexts();
+    assert.ok(labels.includes("Delivery ticket") && labels.includes("Time sheet"), labels.join());
+    assert.ok(!labels.includes("Delivery ticket or time sheet"));
+    await kind.selectOption("ticket:time_sheet");
+    await p.locator('[id^="inb-job-"]').first().selectOption(job.id);
+    await p.locator('[data-action="inbox-file"]').first().click();
+    await p.waitForFunction(async (id) => (await (await fetch("/api/state")).json()).jobs.find(j => j.id === id).records.some(r => r.ticket_type === "time_sheet" && r.kind === "ticket"), job.id);
+    await p.context().close();
+  });
+
   await step("phone: the active tab is brought into view, once, and boxes don't make iOS zoom", async () => {
     const p = await fresh("tabs");
     await p.goto(BASE + "/settings/audit");

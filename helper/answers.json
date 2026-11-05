@@ -360,7 +360,7 @@
         "import contract",
         "address"
       ],
-      "answer": "Go to Jobs and tap New job. Fill in Job name, the address (Street address, then City, State and ZIP) and Contract amount ($). Start date is today unless you change it; Anticipated end date is optional. Then tap Existing client and pick one, or New client and fill in Client name, Client type, Who signs off on your bills, Email for pay apps and Phone. A job needs all of these on its client. A saved client missing any of these shows those boxes right there, and what you type is saved to its Client playbook. If Who signs off on your bills only reads as the client's own name from an older save, it asks you to confirm it once. Tap Save job. Have the contract as a Word file, a PDF or text? Tap Import contract first: it fills the boxes it finds, each marked From the contract, the contract's completion date goes in Anticipated end date, and the contract goes in the job records when you save. Below them: Retainage % (if the contract holds money back), Contract number and Notes (kept in the job records). A client you have saved before keeps its details; change them in Jobs, Client playbook.",
+      "answer": "Go to Jobs and tap New job. Fill in Job name, the address (Street address, then City, State and ZIP) and Contract amount ($). Start date is today unless you change it; Anticipated end date is optional. Then tap Existing client and pick one, or New client and fill in Client name, Client type, Who signs off on your bills, Email for pay apps and Phone. A job needs all of these on its client. A saved client missing any of these shows those boxes right there, and what you type is saved to its Client playbook. If Who signs off on your bills only reads as the client's own name from an older save, the box is empty and you enter it once. Tap Save job. Have the contract as a Word file, a PDF or text? Tap Import contract first: it fills the boxes it finds, each marked From the contract, the contract's completion date goes in Anticipated end date, and the contract goes in the job records when you save. Below them: Retainage % (if the contract holds money back), Contract number and Notes (kept in the job records). A client you have saved before keeps its details; change them in Jobs, Client playbook.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -696,7 +696,7 @@
         "pencil",
         "review before"
       ],
-      "answer": "A draft for their review (pencil copy) is the draft pay app sent to the client to agree quantities and change orders before the real one, so nothing gets pushed to next month. It's optional. With a draft open, tap Send Draft for Their Review on the job. When they answer, tap Client Agreed to the Draft, or Client Wants Changes and note what they said.",
+      "answer": "A draft for their review (pencil copy) is the draft pay app sent to the client to agree quantities and change orders before the real one, so nothing gets pushed to next month. It's optional. With a draft open, tap Send Draft for Their Review on the job. It opens the pay app with who it goes to, the amount, the PDF and the email, and any documents still missing, which don't hold it back. Tap Send Draft for Their Review there to email it. When they answer, tap Client Agreed to the Draft, or Client Wants Changes and note what they said.",
       "handler": null,
       "needs_job": false,
       "actions": [],

@@ -38,7 +38,7 @@ on its job page reads "sent <date> · email failed".
 
 Kirkwood Dental Suite was just awarded. Its client is new, so this job also creates the payer.
 
-- [ ] 2.1 **Jobs > Open jobs > New job**. Everything shows on the form, with nothing folded. Tap **New client**, then type exactly:
+- [ ] 2.1 **Jobs > Open jobs > New job**. Everything shows on the form, with nothing folded. **Client type** starts on **Choose…** and **Who signs off on your bills** stays empty until you fill it. Tap **New client**, then type exactly:
 
   | Field | Value |
   | --- | --- |
@@ -47,7 +47,7 @@ Kirkwood Dental Suite was just awarded. Its client is new, so this job also crea
   | Contract amount ($) * | `27,450` (commas and a `$` are fine; leaving the box shows `$27,450.00`) |
   | Client name * | `Lindell Dental Partners` |
   | Client type * | `Owner` |
-  | Who signs off on your bills * | `Dr. Maya Lindell` (leaving the Client name box fills it with the client; replace it) |
+  | Who signs off on your bills * | `Dr. Maya Lindell` |
   | Email for pay apps * | `billing@lindelldental.example` |
   | Phone * | `404-555-0127` |
   | Retainage % | `0` |

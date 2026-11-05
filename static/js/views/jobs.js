@@ -186,30 +186,16 @@ export function syncNewJobCustomer() {
   const note = form.querySelector("[data-known-payer]");
   if (note) { note.hidden = !p; note.querySelector("[data-known-payer-text]").innerHTML = knownPayerText(p); }
   form.querySelectorAll("[data-payer-slot]").forEach(box => { box.hidden = payerSlotHidden(box.dataset.payerSlot, p, clientMode()); });
-  // What it has so far starts in the boxes it is asked to confirm.
-  for (const k of ["client_type", "approver"]) {
-    const box = p && form.querySelector(`[data-field="${k}"]`);
-    if (box && !payerSlotHidden(k, p, clientMode()) && (k === "client_type" || !box.value.trim())) box.value = unesc(p[k] || "");
-  }
 }
 
-// Leaving the Client box fills "Who signs off" with the client when it is still empty: a
-// homeowner signs off on their own bills. A saved general contractor's retainage starts at what
-// their last job held (R2-01), unless already typed.
+// Who signs off and the client type are the person's to enter (Decision 4): nothing fills them,
+// and a signer that only defaulted to the client's name is asked for again, not shown to save
+// unchanged. A saved general contractor's retainage starts at what their last job held (R2-01),
+// unless already typed.
 export function prefillApprover() {
   const form = document.querySelector('[data-form-key="newjob"]');
   const customer = form?.querySelector('[data-field="customer"]')?.value.trim();
-  if (!customer) return;
-  const known = knownPayer(customer);
-  if (!known) {
-    const box = form.querySelector('[data-field="approver"]');
-    if (box && !box.value.trim()) {
-      box.value = customer;
-      (formDraft.newjob ||= {}).approver = customer;
-    }
-    return;
-  }
-  prefillRetainage();
+  if (customer && knownPayer(customer)) prefillRetainage();
 }
 
 // A general contractor usually holds the same retainage job after job: start from their last one.
@@ -298,14 +284,13 @@ function fillFromContract(form, read) {
   if (end) fields.anticipated_end_on = end;
   const put = (box, value) => { if (value !== undefined && value !== null && value !== "") d[box] = String(value); };
   if (form === "newjob") {
-    for (const k of ["name", "street", "city", "state", "zip", "customer", "client_type", "contract_number", "started_on", "anticipated_end_on", "phone", "ap_email",
+    for (const k of ["name", "street", "city", "state", "zip", "customer", "client_type", "approver", "contract_number", "started_on", "anticipated_end_on", "phone", "ap_email",
       "payapp_due_day", "payment_terms_days"]) put(k, fields[k]);
     // The client it names: a saved one is picked, any other is a new one.
     if (fields.customer) {
       const saved = knownPayer(fields.customer);
       d.client_mode = saved ? "existing" : "new";
       if (saved) d.customer = unesc(saved.name);
-      else if (!d.approver) d.approver = fields.customer;  // a homeowner signs off on their own bills
     }
     if (Number.isInteger(fields.contract_cents)) put("contract_cents", dollarsText(fields.contract_cents));
     if (Number.isInteger(fields.retainage_pct)) { put("retainage_pct", fields.retainage_pct); d.retainage_touched = true; }
@@ -437,8 +422,8 @@ export const views = {
             ${mode === "existing" ? f({ name: "customer", id: "nj-client", label: "Client", required: true, ...mark("customer"), options: [["", "Pick a client…"], ...(state.payers || []).map(p => [unesc(p.name), unesc(p.name)])] }) : ""}
             ${mode === "new" ? f({ name: "customer", id: "nj-customer", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off", rule: "name", ...mark("customer") }) : ""}
             ${sameCustomerBox("newjob")}
-            ${slot("client_type", f({ name: "client_type", id: "nj-client-type", label: "Client type", helpKey: "role", options: CLIENT_TYPES, value: known ? unesc(known.client_type || "gc") : "gc", required: true, ...mark("client_type") }))}
-            ${slot("approver", f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", required: true, placeholder: "Sam Jones", value: known ? unesc(known.approver || "") : "" }))}
+            ${slot("client_type", f({ name: "client_type", id: "nj-client-type", label: "Client type", helpKey: "role", options: [["", "Choose…"], ...CLIENT_TYPES], required: true, ...mark("client_type") }))}
+            ${slot("approver", f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", required: true, placeholder: "Sam Jones", ...mark("approver") }))}
             ${slot("ap_email", f({ name: "ap_email", id: "nj-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", required: true, autocomplete: "off", rule: "email", placeholder: "name@example.com", ...mark("ap_email") }))}
             ${slot("phone", f({ name: "phone", id: "nj-phone", label: "Phone", helpKey: "customer_phone", type: "tel", required: true, autocomplete: "off", rule: "phone", ...mark("phone") }))}
             <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
@@ -523,6 +508,7 @@ export const actions = {
     if (!mode) errors._form = "Pick an existing client, or tap New client.";
     else if (!customer) errors.customer = mode === "existing" ? "Pick the client." : "Enter the client: who pays for this job.";
     if (mode) {
+      if (asked("client_type") && !v.client_type) errors.client_type = "Pick the client type.";
       if (asked("approver") && !approver) errors.approver = "Enter who signs off on your bills.";
       if (asked("phone") && !phone) errors.phone = "Enter the client's phone number.";
       if (asked("ap_email") && (!apEmail || checkFields({ ap_email: apEmail }, { ap_email: "email" }).ap_email)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
@@ -554,7 +540,7 @@ export const actions = {
     const r = await post("/api/jobs", {
       sov_lines: newJobSovLines(v),
       name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer, approver,
-      ap_email: apEmail, phone, client_type: asked("client_type") ? (v.client_type || "gc") : "",
+      ap_email: apEmail, phone, client_type: asked("client_type") ? v.client_type : "",
       contract_number: v.contract_number, note: v.note, started_on: v.started_on || "", anticipated_end_on: v.anticipated_end_on || "", today: localDay(new Date()),
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
       contract_cents: amount.cents, retainage_pct: ret.value, ...days,

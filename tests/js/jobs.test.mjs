@@ -1,7 +1,7 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { recordFace, finalPayAppConfirm, jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, coStatusWords, waiverSendForm, waiverHint, waiverTypeText, WAIVER_KINDS, WAIVER_HINTS, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
+import { recordFace, FILE_KINDS, fileKindPick, finalPayAppConfirm, jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, coStatusWords, waiverSendForm, waiverHint, waiverTypeText, WAIVER_KINDS, WAIVER_HINTS, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
 import { invoicePill } from "../../static/js/format.js";
 import { setBillingStyle } from "../../static/js/terms.js";
 
@@ -471,4 +471,20 @@ test("a note from before conversations were records reads and files as a convers
   const other = { id: "r2", kind: "note", label: "Gate code", note: "1234" };
   assert.equal(recordFace(other), other);
   assert.deepEqual(groupRecords([old, other]).map(g => [g.key, g.records.length]), [["conversation", 1], ["other", 1]]);
+});
+
+test("Inbox filing offers Delivery ticket and Time sheet; an old ticket keeps its label", () => {
+  assert.deepEqual(FILE_KINDS.filter(([k]) => k.startsWith("ticket")), [["ticket:delivery", "Delivery ticket"], ["ticket:time_sheet", "Time sheet"]]);
+  assert.equal(fileKindPick("ticket", "Time sheet week 3"), "ticket:time_sheet");
+  assert.equal(fileKindPick("ticket", "Tile delivered"), "ticket:delivery");
+  assert.equal(fileKindPick("waiver"), "waiver");
+  assert.equal(recordKindWord({ kind: "ticket" }), "Delivery ticket or time sheet");
+  assert.equal(recordKindWord({ kind: "ticket", ticket_type: "time_sheet" }), "Time sheet");
+});
+
+test("Send Draft for Their Review opens the review screen; it emails nothing itself", () => {
+  const j = job({ invoices: [{ id: "a", number: "PA-1", status: "draft", amount_cents: 100 }], payer: { name: "Oak", ap_email: "a@b.co" } });
+  const { primary, more } = jobActions(j);
+  const pencil = [primary, ...more].find(a => a.key === "pencil");
+  assert.equal(pencil.attrs, 'data-action="pencil-review" data-job="j1" data-inv="a"');
 });

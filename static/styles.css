@@ -771,6 +771,7 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
    which iOS zooms in when one takes focus. */
 @media (pointer: coarse), (max-width: 600px) {
   #app input:not([type=checkbox]):not([type=radio]), #app select { min-height: 44px; }
+  a.btn { display: inline-flex; align-items: center; }
   #app input:not([type=checkbox]):not([type=radio]), #app select, #app textarea { font-size: 16px; }
 }
 @media (prefers-color-scheme: dark) {

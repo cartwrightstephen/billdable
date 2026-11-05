@@ -11,6 +11,10 @@ import { state, me, formOpen, onSessionEnd } from "../state.js";
 import { post, render, emptyState, can, nav } from "../app-core.js";
 import { sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount, contractImportHtml, contractMark, forgetClosedContract } from "./jobs.js";
 
+// Who signs off reads as the client's own name only because a blank box used to save that way
+// (domain.signer_defaulted): its box starts empty, so saving the card doesn't count as an answer.
+const signerDefaulted = (p) => !!p.approver && (p.playbook_missing || []).map(unesc).includes("approver");
+
 // Each client's jobs, finished ones too (S10), asked for when its card opens:
 // payer id -> { forState, jobs } (jobs escaped). Asked again once the page's data changes.
 const clientJobs = {};
@@ -119,7 +123,7 @@ export const views = {
         <div class="form-grid">
           ${field({ form: "addpayer", name: "name", id: "ap-name", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off", rule: "name" , ...contractMark("addpayer", "name") })}
           ${sameCustomerBox("addpayer")}
-          ${field({ form: "addpayer", name: "client_type", id: "ap-client-type", label: "Client type", helpKey: "role", options: CLIENT_TYPES, value: "gc", required: true, ...contractMark("addpayer", "client_type") })}
+          ${field({ form: "addpayer", name: "client_type", id: "ap-client-type", label: "Client type", helpKey: "role", options: [["", "Choose…"], ...CLIENT_TYPES], required: true, ...contractMark("addpayer", "client_type") })}
           ${field({ form: "addpayer", name: "approver", id: "ap-approver", label: "Who signs off on your bills", helpKey: "approver", required: true, placeholder: "Sam Jones" })}
           ${field({ form: "addpayer", name: "ap_email", id: "ap-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", required: true, autocomplete: "off", rule: "email", placeholder: "name@example.com" , ...contractMark("addpayer", "ap_email") })}
           ${field({ form: "addpayer", name: "phone", id: "ap-phone", label: "Phone", helpKey: "customer_phone", type: "tel", required: true, autocomplete: "off", rule: "phone" , ...contractMark("addpayer", "phone") })}
@@ -163,7 +167,7 @@ export const views = {
             <div class="form-grid">
               ${f({ name: "name", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off", rule: "name", value: unesc(p.name) })}
               ${f({ name: "client_type", label: "Client type", helpKey: "role", options: CLIENT_TYPES, value: unesc(p.client_type || (unesc(p.role || "") === "GC" ? "gc" : "owner")) })}
-              ${f({ name: "approver", label: "Who signs off on your bills", helpKey: "approver", value: unesc(clean(p.approver)) })}
+              ${f({ name: "approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "Sam Jones", value: signerDefaulted(p) ? "" : unesc(clean(p.approver)) })}
               ${f({ name: "ap_email", label: "Email for pay apps", helpKey: "ap_email", type: "email", autocomplete: "off", rule: "email", value: unesc(clean(p.ap_email)) })}
               ${f({ name: "phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off", rule: "phone", value: unesc(clean(p.phone)) })}
               ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || ""), placeholder: "7" })}
@@ -207,7 +211,7 @@ export const actions = {
     // new job. The paperwork is the ticked boxes and Other (S11); nothing ticked is refused unless
     // Nothing needed is, which the server keeps as no paperwork.
     const saved = (state.payers || []).find(p => p.id === id) || {};
-    for (const k of ["approver", "ap_email", "phone"]) if (!updates[k] && !saved[k]) delete updates[k];
+    for (const k of ["approver", "ap_email", "phone"]) if (!updates[k] && (!saved[k] || (k === "approver" && signerDefaulted(saved)))) delete updates[k];
     const paperwork = paperworkValue(key, updates.packet_other);
     delete updates.packet_other;
     const errors = {};
@@ -227,6 +231,7 @@ export const actions = {
     const v = formValues("addpayer");
     const errors = checkFields({ phone: v.phone, ap_email: v.ap_email }, { phone: "phone", ap_email: "email" });
     if (!v.name) errors.name = "Enter the client's name.";
+    if (!v.client_type) errors.client_type = "Pick the client type.";
     if (!v.approver) errors.approver = "Enter who signs off on your bills.";
     if (!v.ap_email || errors.ap_email) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
     if (!v.phone) errors.phone = "Enter the client's phone number.";

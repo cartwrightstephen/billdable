@@ -30,10 +30,12 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(await form.locator("#nj-customer").inputValue(), "Ironleaf General Contractors, LLC");
     assert.equal(await form.locator("#nj-amount").inputValue(), "$48,500.00");
     assert.ok(await form.locator("#nj-street[data-from-contract]").count(), "the box says it came from the contract");
-    // The playbook needs a phone and an email; the contract may not say.
-    for (const [box, value] of [["#nj-email", "ap@ironleaf.example"], ["#nj-phone", "404-555-0100"]]) {
+    // The playbook needs a phone and an email; the contract may not say. Who signs off is the person's to enter.
+    assert.equal(await form.locator("#nj-approver").inputValue(), "", "the client's name isn't taken for the signer");
+    for (const [box, value] of [["#nj-email", "ap@ironleaf.example"], ["#nj-phone", "404-555-0100"], ["#nj-approver", "Rae Ironleaf"]]) {
       if (!(await form.locator(box).inputValue())) await form.locator(box).fill(value);
     }
+    if (!(await form.locator("#nj-client-type").inputValue())) await form.locator("#nj-client-type").selectOption("gc");
     await form.getByRole("button", { name: "Save job" }).click();
     await p.locator(".job-head h1", { hasText: "Oak Street Kitchen" }).waitFor();
     assert.match(await p.locator(".job-head .sub").innerText(), /418 Oak Street, Decatur, GA 30030/);
