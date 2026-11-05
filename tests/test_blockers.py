@@ -123,7 +123,8 @@ class AcceptanceTests(Case):  # acceptance.md 66-70, 74, 76, 80
         self.assertFalse(self.waiver["present"])
         self.assertNotIn("waiver_kind", rec)
         domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
-        self.assertEqual(rec["waiver_kind"], "conditional_progress", "the person's word for it")
+        self.assertTrue(self.waiver["present"])
+        self.assertNotIn("waiver_kind", rec, "a look clears the item; it doesn't type the record")
 
     def test_an_untyped_waiver_is_not_stamped_at_send(self):
         rec = self.stored("waiver.pdf", pdf(GOOD), typed="")

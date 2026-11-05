@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 import os
 import threading
 import time
@@ -49,6 +50,24 @@ def _failed(site, company_id: str, what: str, exc: Exception) -> None:
 def _key(address: str) -> str:
     """How an address is kept in the jobs' files: enough to tell them apart, and not the address."""
     return hashlib.sha256(address.strip().lower().encode()).hexdigest()[:16]
+
+
+def _read_done(path: Path, what: str) -> dict | None:
+    """What was already done, {} before the first run. A file that can't be read or isn't the right
+    shape could mean sending twice: None, with a copy kept and an alert, and nothing goes out."""
+    try:
+        done = json.loads(path.read_text())
+        sending = done.get("sending", {}) if isinstance(done, dict) else None
+        if isinstance(sending, dict) and all(isinstance(v, dict) for v in sending.values()):
+            return done
+        why = "not the right shape"
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        why = exc.__class__.__name__
+    storage.set_aside(path)
+    alerts.notify(f"monthly-state:{path.name}", f"{path.name} can't be read ({why}), so the {what} aren't going out. A copy is kept beside it. Fix or remove the file to start again.")
+    return None
 
 
 def _send_once(site, path, done: dict, company_id: str, mark: str, what: str, emails: list) -> list:
@@ -143,10 +162,9 @@ def send_daily_digests(site, now: datetime | None = None) -> list:
         return []
     day = now.date().isoformat()
     path = storage.DATA_DIR / DAILY_PATH_NAME
-    try:
-        done = json.loads(path.read_text())
-    except (OSError, ValueError):
-        done = {}
+    done = _read_done(path, "daily emails")
+    if done is None:
+        return []
     lines, base, deleted = [], site.app_url() or "", site.deleted()
     for company_id in site.company_ids():
         if company_id == auth.DEMO_COMPANY_ID or done.get(company_id) == day or company_id in deleted:
@@ -174,10 +192,9 @@ def run_monthly_jobs(site, now: datetime | None = None) -> list:
     now = now or datetime.now(timezone.utc)
     month = now.strftime("%Y-%m")
     path = storage.DATA_DIR / MONTHLY_PATH_NAME
-    try:
-        done = json.loads(path.read_text())
-    except (OSError, ValueError):
-        done = {}
+    done = _read_done(path, "monthly jobs")
+    if done is None:
+        return []
     did = []
     newest = (backup.backups() or [None])[0]
     if done.get("drill") != month and newest is not None:

@@ -314,14 +314,14 @@ class WaiverKindTests(WaiverFiles):  # item 8
         self.assertIn("progress", words)
         self.assertIn("final", words)
 
-    def test_a_look_clears_it_and_the_record_takes_the_new_kind(self):
+    def test_a_look_clears_it_and_never_retypes_the_record(self):
         domain.record_sov_progress(self.state, self.job["id"], {self.rid: "1"})
         domain.confirm_packet_item(self.state, self.job["id"], waiver_item(open_draft(self.job))["id"], "Sam", looked=True)
         domain.mark_done(self.state, self.job["id"])
         item = waiver_item(open_draft(self.job))
         domain.confirm_packet_item(self.state, self.job["id"], item["id"], "Pat", looked=True)
         self.assertEqual((item["present"], item["confirmed_by"]), (True, "Pat"))
-        self.assertEqual(self.rec["waiver_kind"], "conditional_final")
+        self.assertEqual(self.rec["waiver_kind"], "conditional_progress")
 
     def final_confirmed(self):
         domain.mark_done(self.state, self.job["id"])

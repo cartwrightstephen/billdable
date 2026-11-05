@@ -279,7 +279,7 @@ export function beforeYouSendHtml(j, inv) {
       <p>These files mention an unconditional waiver. Open each one and confirm it is right.</p>
       <ul class="plain-list attach-list">${mentions.map(r => `<li><span><strong>${r.label}</strong>: "${r.found}"</span>
         ${(r.file_ids || []).map((fid, n) => `<a class="btn small secondary" href="/api/files/${fid}" target="_blank" rel="noopener">Open ${(r.file_names || [])[n] || "file"}</a>`).join(" ")}
-        ${may("unconditional-look") ? `<button class="btn small" data-action="unconditional-look" data-id="${j.id}" data-rec="${r.record_id}" data-found="${r.found}">It's right</button>` : ""}</li>`).join("")}</ul>
+        ${may("unconditional-look") ? `<button class="btn small" data-action="unconditional-look" data-id="${j.id}" data-rec="${r.record_id}" data-files="${(r.file_ids || []).join(" ")}" data-found="${r.found}">It's right</button>` : ""}</li>`).join("")}</ul>
       ${may("unconditional-look") ? "" : `<p class="sub">Someone who can send pay apps confirms this.</p>`}
     </div>` : ""}
     <div class="client-needs-box">${clientNeedsHtml(j, "h3")}</div>`;
@@ -523,7 +523,7 @@ export const actions = {
   // A file that only mentions an unconditional waiver: whoever can send opens it and says it is right.
   "unconditional-look": async (el, id) => {
     if (!(await askConfirm(`It says: "${unesc(el.dataset.found || "")}". You opened the file and it is right?`, "It's right"))) return;
-    await post(`/api/jobs/${id}/unconditional-look/${el.dataset.rec}`, {});
+    await post(`/api/jobs/${id}/unconditional-look/${el.dataset.rec}`, { shown: (el.dataset.files || "").split(" ").filter(Boolean) });
   },
   // Approve & send with an unconditional waiver attached (M14): an owner, with the reason.
   "send-override": async (el, id) => {

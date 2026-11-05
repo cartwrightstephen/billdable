@@ -174,17 +174,19 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
     entries = job.get("overbilling_settled") or []
     # A refund or credit is what really happened, whatever the contract does afterwards, so it stays
     # counted; only what never came in can't have gone back. returned is the money part (a credit
-    # against a short pay moved none); an entry from before this was kept was money.
-    settled = min(sum(int(s["cents"]) for s in entries), came_in + short_paid)
-    returned = min(sum(int(s.get("returned_cents", s["cents"])) for s in entries), came_in)
+    # against a short pay moved none), and that credit stands only as long as the short pay does.
+    returned = min(sum(int(s["returned_cents"]) for s in entries), came_in)
+    settled = returned + min(sum(int(s["cents"]) - int(s["returned_cents"]) for s in entries), short_paid)
     # What came in on pay apps past what they billed is the client paying back a refund.
-    over = max(0, billed_gross + max(0, payments + short_paid - billed) - allowed)
+    paid_back = max(0, payments + short_paid - billed)
+    over = max(0, billed_gross + paid_back - allowed)
     # A signed credit taken off the retainage held (apply_credit_to_retainage), for as long as the
     # contract leaves it standing: a later change order brings the retainage back.
     credited = min(sum(int(c["cents"]) for c in job.get("retainage_credits") or []), max(0, over - settled), max(0, retainage_held - retainage_released))
     above = max(0, came_in + short_paid - allowed)
-    # More went back than the job is now over its contract (a change order signed after a refund).
-    refund_owed = max(0, returned - over)
+    # More went back than the job is now over its contract (a change order signed after a refund),
+    # less what has come back since.
+    refund_owed = max(0, returned - max(0, billed_gross - allowed) - paid_back)
     return {
         "contract_cents": job["contract_cents"],
         "approved_co_cents": approved,
@@ -968,8 +970,9 @@ def _mark_mention_looked_at(state: dict[str, Any], job: dict[str, Any], rec: dic
           f"{actor} confirmed a file that mentions an unconditional waiver ({rec['label']}): \"{rec['mentions_unconditional']}\".", actor)
 
 
-def confirm_unconditional_mention(state: dict[str, Any], job_id: str, record_id: str, actor: str = "owner") -> dict[str, Any]:
-    """A person opened a file that mentions an unconditional waiver, and it is right."""
+def confirm_unconditional_mention(state: dict[str, Any], job_id: str, record_id: str, actor: str = "owner", shown: list[str] | None = None) -> dict[str, Any]:
+    """A person opened a file that mentions an unconditional waiver, and it is right. shown is the
+    files the page was showing: it counts for those, and a file added since asks again."""
     job = _open_job(state, job_id)
     rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
     if not rec:
@@ -978,6 +981,8 @@ def confirm_unconditional_mention(state: dict[str, Any], job_id: str, record_id:
         raise GateError(f"{rec['label']} reads as an unconditional waiver. Take it off, or an owner sends it with the reason.")
     if not rec.get("mentions_unconditional"):
         raise GateError(f"{rec['label']} doesn't mention an unconditional waiver.")
+    if set(shown or []) != set(rec.get("file_ids") or []):
+        raise GateError(f"{rec['label']} has changed since this page was opened. Look at its files again.")
     if not _looked_at_mention(rec):
         _mark_mention_looked_at(state, job, rec, actor)
     return job
@@ -3771,6 +3776,11 @@ def void_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, reaso
         raise GateError("Pick a pay app that has gone out. A draft is deleted instead.")
     if invoice["status"] in {"partial", "paid"} or any(p["invoice_id"] == invoice["id"] for p in job["payments"]):
         raise GateError(f"A payment is recorded on {invoice['number']}, so it can't be pulled back. Correct the next pay app instead.")
+    # Retainage the client paid must still have a pay app holding it. A credit off the retainage
+    # moved no money and only stands while something is held (job_money), so it doesn't stop this.
+    m = job_money(job)
+    if m["retainage_released_cents"] > m["retainage_held_cents"] - int(invoice.get("retainage_cents") or 0):
+        raise GateError(f"{money(m['retainage_released_cents'])} of retainage is recorded as paid, and {invoice['number']} holds it, so it can't be pulled back. Correct the next pay app instead.")
     later = [inv for inv in job["invoices"][job["invoices"].index(invoice) + 1:] if inv["status"] != "void"]
     if later:
         nxt = later[0]
@@ -4581,7 +4591,7 @@ def _check_stamp(job: dict[str, Any], item: dict[str, Any], invoice: dict[str, A
 
 
 def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None, actor: str,
-                read_file: Any, looked: bool, confirming: bool = False) -> None:
+                read_file: Any, looked: bool, confirming: bool = False, may_look: bool = True) -> None:
     """The person's check (Stephen's Nov 1 notes, Decision 6): the item clears with who and when,
     unless the file doesn't match or can't be read. Then it waits, with the warning, until they
     say they opened it and it is right (looked), a separate step from the warning naming what
@@ -4614,12 +4624,9 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
         a.pop("unconfirmed", None)
         a.pop("auto", None)
         rec = records.get(a.get("record_id"))
-        if looked and rec and rec.get("kind") == "waiver" and item.get("waiver_kind") and record_waiver_kind(rec) != item["waiver_kind"] \
-                and record_waiver_kind(rec).split("_")[0] in ("", item["waiver_kind"].split("_")[0]):
-            rec["waiver_kind"] = item["waiver_kind"]  # the person's word for its type, after being asked
-        # They were told what it says, opened it and said it is right: that counts at send, unless
-        # it reads as one in itself, which stays the owner's gate.
-        if looked and rec and rec.get("mentions_unconditional") and not rec.get("says_unconditional") and not _looked_at_mention(rec) \
+        # They were told what it says, opened it and said it is right: that counts at send, for
+        # someone who can send, unless it reads as one in itself, which stays the owner's gate.
+        if looked and may_look and rec and rec.get("mentions_unconditional") and not rec.get("says_unconditional") and not _looked_at_mention(rec) \
                 and any("unconditional" in p.lower() for p in problems):
             _mark_mention_looked_at(state, job, rec, actor)
     # A name with a real file beside it now has nothing to say.
@@ -4673,7 +4680,7 @@ def recheck_packet_item(state: dict[str, Any], job_id: str, item_id: str, read_f
 
 
 def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: str = "owner", looked: bool = False,
-                        read_file: Any = None, shown: list[str] | None = None) -> dict[str, Any]:
+                        read_file: Any = None, shown: list[str] | None = None, may_look: bool = True) -> dict[str, Any]:
     """A person confirms they checked what is attached to an item: a suggestion from the job
     record, or a file the document check flagged (looked says they opened it and it is right).
     shown is the records on their screen: a newer one may have taken over since, and that one
@@ -4681,7 +4688,7 @@ def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor:
     job = _open_job(state, job_id)
     item, invoice = _item_to_confirm(state, job, item_id, shown)
     records = {r["id"]: r for r in job.get("records", [])}
-    _clear_item(state, job, item, invoice, actor, read_file, looked, confirming=True)
+    _clear_item(state, job, item, invoice, actor, read_file, looked, confirming=True, may_look=may_look)
     if item["present"] and invoice and invoice.get("excluded_file_ids"):
         # Confirmed with its file left out over a redraft (_ask_for_a_look): what clears goes with the email.
         back = {fid for a in item.get("attachments", []) for fid in records.get(a.get("record_id"), {}).get("file_ids", [])}
@@ -4783,9 +4790,10 @@ def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: s
         audit(state, job_id, "paperwork_not_needed", f"{actor} marked {item['label']} not needed on this job: {item['skipped_reason']}.", actor)
         _refresh_draft_gate(job)
         return job
-    if not on_client and _invoice:
+    # A client's list and rules take the permission, on an older job-level list too (no pay app here).
+    if not on_client and (_invoice or not any(x is item for x in job.get("closeout_packet") or [])):
         item["skipped_scope"] = "pay_app"
-        audit(state, job_id, "paperwork_not_needed", f"{actor} marked {item['label']} not needed on {_invoice['number']}: {item['skipped_reason']}.", actor)
+        audit(state, job_id, "paperwork_not_needed", f"{actor} marked {item['label']} not needed on {_invoice['number'] if _invoice else 'this job'}: {item['skipped_reason']}.", actor)
         _refresh_draft_gate(job)
         return job
     payer = _payer(state, job["payer_id"])
@@ -5837,11 +5845,23 @@ def apply_credit_to_retainage(state: dict[str, Any], job_id: str, reason: Any, a
     reason = _reason(reason)
     if not reason:
         _refuse("", {"reason": "Enter what was agreed, like CO 3's credit comes off retainage."})
-    job.setdefault("retainage_credits", []).append({"cents": amount_cents, "by": actor, "at": utcnow(), "reason": reason})
+    now = utcnow()
+    job.setdefault("retainage_credits", []).append({"cents": amount_cents, "by": actor, "at": now, "reason": reason})
+    # The last of what was held gone with nothing else open finishes the job, and no release is left
+    # to carry its final waiver: it comes due here, unless one went out already.
+    owes_final = suggested_waiver_kind(job).endswith("_final") and not any(
+        x.get("waiver_sent") and str(x.get("waiver_kind") or x.get("kind") or "").endswith("_final") for x in job["invoices"] + job.get("retainage_waivers", []))
+    due = False
+    if owes_final:
+        waivers = job.setdefault("retainage_waivers", [])
+        release = {"id": f"rw-{len(waivers) + 1}", "amount_cents": amount_cents, "reference": "Signed credit", "at": now, "kind": "unconditional_final", "credit": True}
+        waivers.append(release)
+        due = _waiver_comes_due(state, job, release, "the signed credit that finishes the job")
     _sync_waiver(job)
     _refresh_draft_gate(job, state)
     audit(state, job_id, "retainage_credited",
-          f"{actor} took {money(amount_cents)} of signed credit off the retainage held: {reason}. No money was received and no waiver is owed for it.", actor)
+          f"{actor} took {money(amount_cents)} of signed credit off the retainage held: {reason}. No money was received."
+          + (" It finishes the job, so the final lien waiver is due." if due else " No waiver is owed for it."), actor)
     return job
 
 

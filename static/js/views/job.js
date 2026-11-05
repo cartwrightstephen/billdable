@@ -320,7 +320,7 @@ export const views = {
         <button class="btn small" data-action="match" data-id="${j.id}">Record</button></div>
         ${shortPayable(j).length && may("accept-short-pay") ? `<p class="sub short-pay-row">Paid short, and the rest won't come? ${shortPayButtons(j)}</p>` : ""}` : `<p class="sub">No sent pay app is waiting for payment.</p>`}</div>` : ""}
       ${shortPayable(j).map(i => shortPayCardHtml(j, i)).join("")}
-      ${formOpen.retcredit ? `<div class="card form-card" data-form-key="retcredit"><h2>Take a signed credit off the retainage</h2>${formErrorLine("retcredit")}<p class="sub">No money is recorded as received, and no waiver is owed for this part.</p><div class="form-row">
+      ${formOpen.retcredit ? `<div class="card form-card" data-form-key="retcredit"><h2>Take a signed credit off the retainage</h2>${formErrorLine("retcredit")}<p class="sub">No money is recorded as received. If this finishes the job, the final lien waiver comes due.</p><div class="form-row">
         ${moneyField({ form: "retcredit", name: "amount_cents", id: "retcredit-amt", label: "Amount ($)", cents: ((j.close_blocker_items || []).find(b => b.kind === "overbilled") || {}).creditable_cents || 0 })}
         ${field({ form: "retcredit", name: "reason", id: "retcredit-reason", label: "What was agreed", placeholder: "CO 3's credit comes off retainage" })}
         <button class="btn small" data-action="retainage-credit" data-id="${j.id}">Save</button></div></div>` : ""}

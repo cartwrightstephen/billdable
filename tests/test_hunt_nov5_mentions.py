@@ -28,7 +28,7 @@ class Reading(unittest.TestCase):
         for text in ("UNCONDITIONAL WAIVER AND RELEASE", "UNCONDITIONAL WAIVER AND RELEASE UPON PAYMENT", "Unconditional waiver of lien.", "Waiver and release, unconditional.",
                      "UNCONDITIONAL\nWAIVER AND RELEASE", "Un-conditional waiver", "Georgia Statutory Form\nUNCONDITIONAL FINAL LIEN WAIVER", "UNCONDITIONAL LIEN WAIVER\nJob: Elm",
                      "Project: Elm\nOwner: Park\nUNCONDITIONAL RELEASE", CALIFORNIA, "This release is not conditional and is an unconditional waiver.",
-                     "Not an unconditional release. Addendum: unconditional waiver of all claims."):
+                     "Not an unconditional release. Addendum: unconditional waiver of all claims.", "Conditional waiver and release\nline\nline\nUNCONDITIONAL WAIVER AND RELEASE"):
             for near_only in (False, True):
                 self.assertTrue(self.read(text, near_only)["waiver"], text)
 
@@ -39,8 +39,7 @@ class Reading(unittest.TestCase):
                      "Daily log Elm addition. Sub's unconditional lien waiver received from plumber for last month. Crew of 4.",
                      "Sub's unconditional lien waiver received from plumber for last month.",
                      "Unconditional lien waiver received from plumber for last month.",
-                     "Daily log\nCrew of four framed the second floor.\nSix hours.\nInspector came.\nCleaned up.\nWe still owe them an unconditional waiver for last month.",
-                     "Conditional waiver and release\nline\nline\nUNCONDITIONAL WAIVER AND RELEASE"):
+                     "Daily log\nCrew of four framed the second floor.\nSix hours.\nInspector came.\nCleaned up.\nWe still owe them an unconditional waiver for last month."):
             got = self.read(text, near_only=True)
             self.assertFalse(got["waiver"], text)
             self.assertTrue(got["mention"], text)
@@ -100,7 +99,8 @@ class SendGates(Base):
         return server.load_company(self.company)["audit"]
 
     def look(self, rid, cookie=None):
-        return self.post(f"/api/jobs/{self.job_id}/unconditional-look/{rid}", {}, cookie=cookie)
+        shown = next(r for r in self.job()["records"] if r["id"] == rid).get("file_ids")
+        return self.post(f"/api/jobs/{self.job_id}/unconditional-look/{rid}", {"shown": shown}, cookie=cookie)
 
     def extra(self, name, text, kind):
         res, data = self.upload(name, text.encode(), kind=kind)

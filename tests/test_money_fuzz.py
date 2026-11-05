@@ -4,7 +4,7 @@ app's lines adding up, a final pay app leaving nothing unbilled, and sent pay ap
 It takes payments too: refunds of overbilling, retainage paid, short pay, pay in full and waivers
 sent, with a final waiver never fitting while anything is left, and a draft never left out of step
 with whether it is the final one, which is what refused a send with no way forward.
-A fixed seed, so a failure repeats. MONEY_FUZZ_RUNS=5000 runs far more of them."""
+Fixed seeds, so a failure repeats. MONEY_FUZZ_RUNS=5000 runs far more of them, on each seed."""
 
 import copy
 import os
@@ -23,8 +23,9 @@ import sov
 from test_money import new_job, new_state
 from waiver_help import signed_waiver
 
-RUNS = int(os.environ.get("MONEY_FUZZ_RUNS", "1000"))
-SEED = int(os.environ.get("MONEY_FUZZ_SEED", "20261105"))
+RUNS = int(os.environ.get("MONEY_FUZZ_RUNS", "500"))   # on each seed
+# 77123 found the card and a blank box disagreeing, which 20261105 never reached.
+SEEDS = [int(os.environ["MONEY_FUZZ_SEED"])] if os.environ.get("MONEY_FUZZ_SEED") else [20261105, 77123, 4103]
 STEPS = 30
 SENT_KEYS = ("number", "amount_cents", "gross_cents", "retainage_cents", "lines", "sov_lines", "sov_sheet", "op_cents", "packet", "sent_at", "final", "contract_at_send")
 SHAPES = (
@@ -255,6 +256,13 @@ class Sequence:
         m = domain.job_money(job)
         for key, value in m.items():
             assert isinstance(value, int), f"{key} is {value!r}"
+        # What the app asks for, less what it says to give back, is exactly what is truly due: the
+        # work billed that the contract allows, less everything accounted for. So it never asks for
+        # money that isn't owed, and a payment always takes that much off.
+        accounted = m["payments_cents"] + m["retainage_released_cents"] + m["short_paid_cents"] - m["overbilling_settled_cents"]
+        due = min(m["billed_gross_cents"], m["billing_allowed_cents"]) - accounted
+        asked = m["outstanding_cents"] + m["retainage_open_cents"]
+        assert asked - m["overbilled_cents"] == due, f"asks {asked} less {m['overbilled_cents']} overbilled, but {due} is due: {m}"
         live = sov.live_invoices(job)
         sov_lines = {l["id"]: l for l in sov.lines(job)} if sov.has_sov(job) else {}
         for inv in live:
@@ -429,34 +437,55 @@ class Sequence:
         self.check()
 
 
+class MoneySequence(Sequence):
+    """Mostly payments, refunds, credits and the change orders that move what they mean."""
+    ACTIONS = ("add_co", "add_co", "sign_co", "sign_co", "sign_co", "settle", "settle", "pay_back", "pay_back", "pay_back", "pay_in_full", "pay_in_full", "partial_pay", "short_pay",
+               "retainage_credit", "retainage_credit", "retainage_paid", "send", "send", "final", "progress_blank", "daily", "withdraw_co", "retainage", "pull_back", "send_waiver")
+
+
 class FuzzTests(unittest.TestCase):
+    def test_what_is_asked_for_is_what_is_due(self):
+        """check() after every step, on runs that mostly move money."""
+        for first in SEEDS:
+            master = random.Random(first + 2)
+            for run in range(RUNS):
+                seed = master.randrange(1 << 30)
+                seq = MoneySequence(random.Random(seed))
+                try:
+                    for _ in range(STEPS):
+                        seq.step()
+                except Exception as exc:
+                    self.fail(f"run {run} of {first}, seed {seed}: {type(exc).__name__}: {exc}\nsteps: {', '.join(seq.log)}")
+
     def test_the_money_holds(self):
-        master = random.Random(SEED)
-        for run in range(RUNS):
-            seed = master.randrange(1 << 30)
-            seq = Sequence(random.Random(seed))
-            try:
-                for _ in range(STEPS):
-                    seq.step()
-                domain.job_view(seq.state, seq.job)
-                for inv in sov.live_invoices(seq.job):
-                    payapp_pdf.for_invoice(seq.state, seq.id, inv["id"])
-            except Exception as exc:
-                self.fail(f"run {run}, seed {seed}: {type(exc).__name__}: {exc}\nsteps: {', '.join(seq.log)}")
+        for first in SEEDS:
+            master = random.Random(first)
+            for run in range(RUNS):
+                seed = master.randrange(1 << 30)
+                seq = Sequence(random.Random(seed))
+                try:
+                    for _ in range(STEPS):
+                        seq.step()
+                    domain.job_view(seq.state, seq.job)
+                    for inv in sov.live_invoices(seq.job):
+                        payapp_pdf.for_invoice(seq.state, seq.id, inv["id"])
+                except Exception as exc:
+                    self.fail(f"run {run} of {first}, seed {seed}: {type(exc).__name__}: {exc}\nsteps: {', '.join(seq.log)}")
 
     def test_every_job_can_be_finished(self):
         """Whatever a run left, retainage part-released and credits included, it reaches closed."""
-        master = random.Random(SEED + 1)
-        for run in range(RUNS):
-            seed = master.randrange(1 << 30)
-            seq = Sequence(random.Random(seed))
-            try:
-                for _ in range(seq.rng.randint(0, STEPS)):
-                    seq.step()
-                seq.finish()
-                assert seq.job["closed"]
-            except Exception as exc:
-                self.fail(f"run {run}, seed {seed}: {type(exc).__name__}: {exc}\nsteps: {', '.join(seq.log)}")
+        for first in SEEDS:
+            master = random.Random(first + 1)
+            for run in range(RUNS):
+                seed = master.randrange(1 << 30)
+                seq = Sequence(random.Random(seed))
+                try:
+                    for _ in range(seq.rng.randint(0, STEPS)):
+                        seq.step()
+                    seq.finish()
+                    assert seq.job["closed"]
+                except Exception as exc:
+                    self.fail(f"run {run} of {first}, seed {seed}: {type(exc).__name__}: {exc}\nsteps: {', '.join(seq.log)}")
 
 
 if __name__ == "__main__":

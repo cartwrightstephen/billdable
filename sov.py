@@ -353,7 +353,9 @@ def this_period(job: dict[str, Any], skip: dict[str, Any] | None = None, field: 
     out, sheet = [], []
     for line in lines(job):
         if field:
+            # As a blank box bills it: never below the quantity already billed.
             line = anticipated(job, line)
+            line = {**line, "done_milli": max(line["done_milli"], already["qty_by_line"].get(line["id"], 0))}
         to_date = line_to_date(line)
         before = already["by_line"].get(line["id"], 0)
         amount = to_date - before

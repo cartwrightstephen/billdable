@@ -344,7 +344,7 @@ class Overbilling(unittest.TestCase):
     def test_a_settlement_from_before_is_dropped_on_pull_back(self):
         """Old data: settled on a pay app nobody paid. The hunter's sequence, with the audit."""
         self.credit(500_000)
-        self.job["overbilling_settled"] = [{"cents": 500_000, "by": "Sam", "at": "2026-11-01T00:00:00+00:00", "reason": "refund"}]
+        self.job["overbilling_settled"] = [{"cents": 500_000, "returned_cents": 500_000, "by": "Sam", "at": "2026-11-01T00:00:00+00:00", "reason": "refund"}]
         domain.void_sent_pay_app(self.state, self.id, self.invoice["id"], "Wrong")
         self.assertEqual(self.job.get("overbilling_settled") or [], [])
         self.assertTrue(any(a["action"] == "overbilling_settled_dropped" for a in self.state["audit"]))
