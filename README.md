@@ -181,6 +181,8 @@ The ? badge opens the helper. It answers from a database of prepared answers, no
 python3 -m unittest discover -s tests -v
 ```
 
+Browser test: `DURACASH_DATA_DIR=$(mktemp -d) BACKUP_HOURS=0 HOST=127.0.0.1 PORT=8873 python3 server.py`, then `DURACASH_URL_UNDER_TEST=http://127.0.0.1:8873 node tests/e2e/smoke.mjs`. Keep a Mac awake for it (run both under `caffeinate -s -i -m`): when it sleeps, the browser's waits run out and steps fail with timeouts that have nothing to do with the app. `pmset -g log` shows whether it slept.
+
 Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github/workflows/tests.yml`) runs them on every push and pull request; protect `main` so a red run blocks the merge (Settings, Branches, require the `unittest` check).
 
 ## Project layout
@@ -302,7 +304,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/jobs/{id}/import-qbo`: demo company only; a hard-coded sample payment
 - Billing: `GET /api/billing`; owners: `POST /api/billing/checkout` and `/api/billing/portal` (each returns a Stripe address); `POST /api/stripe/webhook` (Stripe-Signature checked)
 - QuickBooks: `GET /api/qbo/status`; owners: `POST /api/qbo/connect` (returns Intuit's sign-in address) and `/api/qbo/disconnect`; `GET /api/qbo/callback` (Intuit sends the owner back here); `POST /api/qbo/payments` `{days}` (proposals, records nothing); `GET /api/qbo/reconcile`
-- `POST /api/payers` `{name, client_type, approver, approver_confirmed, ap_email, phone}`: add a client; `POST /api/payers/{id}/update`: client playbook fields (follow-up and approval days 1–365, due day 1–31); `POST /api/payers/{id}/merge` `{into}`
+- `POST /api/payers` `{name, client_type, approver, approver_confirmed, ap_email, phone}`: add a client; `POST /api/payers/{id}/missing` `{client_type, approver, approver_confirmed, ap_email, phone}`: fill only what the client has blank, from anyone on the team; `POST /api/payers/{id}/update` (needs `company`, as do merge, delete, waiver-needed and answering a suggestion): client playbook fields (follow-up and approval days 1–365, due day 1–31); `POST /api/payers/{id}/merge` `{into}`
 - `POST /api/jobs/{id}/pencil`: send the open draft for the client's review; `POST /api/jobs/{id}/pencil-response`: `{agreed, note}`
 - `POST /api/jobs/{id}/void-draft`; `POST /api/jobs/{id}/withdraw-co/{co_id}`
 - `POST /api/import/file?job=<id>&file=1`: raw file body, `X-Filename` header (URL-encoded). Without `file=1` it goes to the Inbox.

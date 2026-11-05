@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { installFakeDom } from "./fakedom.mjs";
 
-installFakeDom();
+const dom = installFakeDom();
 const core = await import("../../static/js/app-core.js");
 const page = await import("../../static/js/state.js");
 const reg = await import("../../static/js/views/index.js");
@@ -52,4 +52,16 @@ test("Review & send's missing email doesn't need the permission", () => {
   const src = readFileSync(new URL("../../static/js/views/payapps.js", import.meta.url), "utf8");
   assert.match(src, /post\(`\/api\/payers\/\$\{id\}\/missing`, \{ ap_email: v\.ap_email \}/);
   assert.doesNotMatch(src, /\/update`/);
+});
+
+test("Save sends only the boxes filled in, to the route that can't change what is saved", async () => {
+  draw({ role: "member", perms: [] }, [{ ...client, approver: "", phone: "", playbook_missing: ["approver", "phone"] }]);
+  dom.all['[data-form-key="payer-p-1"] [data-field]'] = [
+    { dataset: { field: "approver" }, value: " Sam " }, { dataset: { field: "phone" }, value: "" }];
+  const sent = [];
+  dom.answers = [(path, init) => { if (init && init.method === "POST") sent.push([path, JSON.parse(init.body)]); return { status: 200, body: { jobs: [], payers: [] } }; }];
+  await reg.actions["save-client-missing"]({ dataset: {} }, "p-1");
+  assert.deepEqual(sent, [["/api/payers/p-1/missing", { approver: "Sam", approver_confirmed: true }]]);
+  dom.answers = [];
+  delete dom.all['[data-form-key="payer-p-1"] [data-field]'];
 });

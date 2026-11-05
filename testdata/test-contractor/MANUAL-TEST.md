@@ -10,14 +10,12 @@ When a result differs, note the step number and what you saw. Known app problems
 
 ## 0. Set up (5 minutes)
 
-- [ ] 0.1 Start a server with throwaway data, from the repo folder. The loader's jobs bill in dollars, as jobs from before Nov 3 do, and New job now gives every job a schedule of values, so this first server makes jobs the older way (`tests/dollar_jobs.py`):
-      `DURACASH_DATA_DIR=/tmp/bd-test BACKUP_HOURS=0 PORT=8791 python3 -c "import sys, runpy; sys.path.insert(0, 'tests'); import domain, dollar_jobs; domain.create_job = dollar_jobs._older_job; runpy.run_path('server.py', run_name='__main__')"`
+- [ ] 0.1 Start a server with throwaway data, from the repo folder:
+      `DURACASH_DATA_DIR=/tmp/bd-test BACKUP_HOURS=0 PORT=8791 python3 server.py`
       Use an empty folder for `DURACASH_DATA_DIR`: `rm -rf /tmp/bd-test` first if you have run this before.
 - [ ] 0.2 In a second terminal: `python3 scripts/load_test_contractor.py --base http://127.0.0.1:8791 --only-setup`
-      Expected: it ends with `58 of 59 checks passed.` and one `FAILED` line, "MILL: draft waits on the waiver and insurance certificate only": that check in the loader is older than the Daily tickets and time sheets item, which 1.2 expects. It prints an email and password, also saved in `testdata/test-contractor/.login` (git-ignored).
+      Expected: it ends with `61 of 61 checks passed.` (without `--only-setup`, the imports too: `94 of 94`). It prints an email and password, also saved in `testdata/test-contractor/.login` (git-ignored).
       `--only-setup` stops before the imports, so you do the imports by hand in part 3.
-- [ ] 0.2a Stop the server (Ctrl+C) and start it the normal way on the same data, for everything from here on, so new jobs behave as they do for a real company:
-      `DURACASH_DATA_DIR=/tmp/bd-test BACKUP_HOURS=0 PORT=8791 python3 server.py`
 - [ ] 0.3 Open http://127.0.0.1:8791, choose **Sign in** (a browser that has signed in before opens there), and use the email and password from `.login`.
       Expected: Dashboard opens for "Brightwater Tile & Stone LLC".
       Before signing in, the landing shows **Look around a sample company** under the pitch (the test server has the demo company). It opens the demo's Dashboard without a password; **Log out** brings you back. Don't change anything there.

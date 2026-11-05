@@ -1,9 +1,10 @@
-// Browser step for who changes a client: a Member reads the card, fills only what is missing, and the
-// server refuses the rest; an owner still has the form. Run by tests/e2e/smoke.mjs.
+// Browser step for who changes a client: a Member reads the card and the server refuses a change; an
+// owner has the form. Filling what is missing needs a client from older data: tests/js/client-settings.test.mjs
+// and tests/test_client_settings_perm.py. Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
 export default async function ({ browser, BASE, step, errors }) {
-  await step("Client playbook: without the permission the card reads only, and what is missing can still be filled", async () => {
+  await step("Client playbook: without the permission the card reads only, and the server refuses a change", async () => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const p = await ctx.newPage();
     p.on("pageerror", (e) => errors.push(e.message));
@@ -14,8 +15,7 @@ export default async function ({ browser, BASE, step, errors }) {
     }, [path, body]);
     const stamp = Date.now();
     await post("/api/auth/signup", { accept_terms: true, email: `clients-${stamp}@example.com`, password: "smoke test password", name: "Cora Owner", company_name: "Clients Co" });
-    // Sent with only the older role: a client type never picked is still missing (playbook_missing).
-    const made = await post("/api/payers", { name: "Holt Partners", role: "GC", approver: "Dee", ap_email: "dee@holt.example", phone: "(404) 555-0100" });
+    const made = await post("/api/payers", { name: "Holt Partners", client_type: "gc", approver: "Dee", ap_email: "dee@holt.example", phone: "(404) 555-0100" });
     assert.equal(made.status, 200, JSON.stringify(made.data));
     const id = made.data.payers[0].id;
     const card = p.locator(`[data-payer-card="${id}"]`);
@@ -36,13 +36,8 @@ export default async function ({ browser, BASE, step, errors }) {
 
     const refused = await post(`/api/payers/${id}/update`, { ap_email: "other@holt.example" });
     assert.equal(refused.status, 403);
+    await card.locator(".client-settings-read").getByText("Changing these takes the permission").waitFor();
 
-    await card.locator(`#payer-${id}-client_type`).selectOption("gc");
-    await card.getByRole("button", { name: "Save", exact: true }).click();
-    await card.locator(".client-settings-read h3", { hasText: "Still missing" }).waitFor({ state: "detached" });
-    const payer = await p.evaluate(async (pid) => (await (await fetch("/api/state")).json()).payers.find((x) => x.id === pid), id);
-    assert.equal(payer.client_type, "gc");
-    assert.equal(payer.ap_email, "dee@holt.example");
     await ctx.close();
   });
 }
