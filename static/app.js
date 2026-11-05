@@ -185,9 +185,12 @@ function render() {
   const keep = was && was.id && app.contains(was) ? { id: was.id, start: was.selectionStart, end: was.selectionEnd } : null;
   const whole = shell !== shellHtml || !document.getElementById("view");
   if (whole) {
+    const tabsLeft = document.querySelector(".tabs")?.scrollLeft || 0;
     app.innerHTML = shell;
     shellHtml = shell;
-    document.querySelector(".tabs")?.addEventListener("scroll", fadeTabs, { passive: true });
+    const tabRow = document.querySelector(".tabs");
+    tabRow?.addEventListener("scroll", fadeTabs, { passive: true });
+    showActiveTab(tabRow, tabsLeft);
   }
   const view = document.getElementById("view");
   view.innerHTML = verifyBannerHtml() + heldShareHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`));
@@ -212,6 +215,16 @@ function render() {
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin" && helperAdmin) { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
+}
+
+// A new tab row starts where the last one was, and moves only if the active tab is out of view,
+// so a redraw on the same tab doesn't jump.
+function showActiveTab(row, left) {
+  const tab = row?.querySelector(".tab.active");
+  if (!tab) return;
+  row.scrollLeft = left;
+  const r = row.getBoundingClientRect(), t = tab.getBoundingClientRect();
+  if (t.left < r.left || t.right > r.right - 48) row.scrollLeft += t.left - r.left - (r.width - t.width) / 2;
 }
 
 // The tab row scrolls sideways on a phone: it fades at the right edge until its last tab is in

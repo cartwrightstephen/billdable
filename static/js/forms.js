@@ -76,7 +76,7 @@ export function showFieldErrors(key, errors = {}) {
     if (msg) {
       input.setAttribute("aria-invalid", "true");
       first = first || input;
-      // A field folded away under "More details" opens so its error can be seen.
+      // A field folded away in a section opens so its error can be seen.
       const folded = input.closest("details");
       if (folded) folded.open = true;
     }

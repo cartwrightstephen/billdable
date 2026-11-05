@@ -1,7 +1,7 @@
 // The job page's Job records card: New job record, the drop zone, a link to Import, and the
 // records in groups by kind (J5) with a filter, each record with Edit.
 import { esc, unesc, fmtDate } from "../format.js";
-import { RECORD_KINDS, groupRecords, recordKindWord } from "../jobs.js";
+import { RECORD_KINDS, groupRecords, recordFace, recordKindWord } from "../jobs.js";
 import { draftValue, clearForm } from "../forms.js";
 import { pathFor } from "../routes.js";
 import { termText } from "../terms.js";
@@ -9,21 +9,27 @@ import { state, onSessionEnd } from "../state.js";
 import { post, toast, render, nav } from "../app-core.js";
 
 
-// A record on the job page, with Edit for its label and kind (R5-07). One open at a time.
+// A record on the job page, with Edit for its label, kind and what a conversation or note says
+// (R5-07). One open at a time.
 let editingRecord = "";
 // The group the record list shows (J5): "" for all, else a RECORD_GROUPS key, for one job.
 let recordFilter = { job: "", group: "" };
 // Signed out: a record being edited, and the filter, are that company's.
 onSessionEnd(() => { editingRecord = ""; recordFilter = { job: "", group: "" }; });
-function recordRow(j, r) {
+const NOTE_KINDS = ["conversation", "note", "other"];
+function recordRow(j, stored) {
+  const r = recordFace(stored);
   if (editingRecord === r.id && !j.closed) {
     // What was typed stays through a redraw until saved or cancelled (a form: watchForms keeps it).
     const key = `record-${r.id}`, kind = draftValue(key, "kind", unesc(r.kind));
+    const said = NOTE_KINDS.includes(unesc(r.kind));
     return `<div class="list-item record-edit" data-form-key="${key}">
       <label class="inline-label" for="rec-edit-label-${r.id}">What it is</label>
       <input id="rec-edit-label-${r.id}" data-field="label" value="${esc(draftValue(key, "label", unesc(r.label)))}" maxlength="120">
       <label class="inline-label" for="rec-edit-kind-${r.id}">Kind</label>
       <select id="rec-edit-kind-${r.id}" data-field="kind">${Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}"${kind === k ? " selected" : ""}>${termText(v)}</option>`).join("")}</select>
+      ${said ? `<label class="inline-label" for="rec-edit-note-${r.id}">${kind === "conversation" ? "What they said" : "Note"}</label>
+      <textarea id="rec-edit-note-${r.id}" data-field="note" rows="3" maxlength="5000">${esc(draftValue(key, "note", unesc(r.note || "")))}</textarea>` : ""}
       <button class="btn small" data-action="record-save" data-id="${j.id}" data-item="${r.id}">Save</button>
       <button class="btn small secondary" data-action="record-edit" data-item="">Cancel</button>
     </div>`;
@@ -89,7 +95,8 @@ export const actions = {
     const label = document.getElementById(`rec-edit-label-${rid}`)?.value || "";
     const kind = document.getElementById(`rec-edit-kind-${rid}`)?.value || "";
     if (!label.trim()) { toast("Enter what this is."); document.getElementById(`rec-edit-label-${rid}`)?.focus(); return; }
-    const r = await post(`/api/jobs/${id}/edit-record/${rid}`, { label, kind });
+    const note = document.getElementById(`rec-edit-note-${rid}`);
+    const r = await post(`/api/jobs/${id}/edit-record/${rid}`, { label, kind, ...(note ? { note: note.value } : {}) });
     if (r && r.ok) { clearForm(`record-${rid}`); editingRecord = ""; render(); }
   },
 };

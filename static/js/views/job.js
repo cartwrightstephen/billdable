@@ -394,6 +394,13 @@ export const actions = {
     if (refuseForm("conversation", v.text ? {} : { text: "Enter what they said, like \"Check goes out Friday\"." })) return;
     await post(`/api/jobs/${id}/note-contact`, { text: v.text, next_on: v.next_on || "" }, { formKey: "conversation", close: "conversation" });
   },
+  // From a page with no job open, such as Payments: the job, with Record a payment's form open.
+  "record-payment": (el, id) => {
+    nav("job", id);
+    formOpen.match = true;
+    render();
+    focusAfterDraw(() => document.getElementById("match-amt"));
+  },
   "log-conversation": (el, id) => {
     nav("job", id);
     formOpen.conversation = true;

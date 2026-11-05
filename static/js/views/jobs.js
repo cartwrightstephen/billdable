@@ -9,7 +9,7 @@ import { checkFields, US_STATES } from "../validate.js";
 import { readJson, sendFile } from "../net.js";
 import { localDay } from "../tasks.js";
 import { state, me, formOpen, teamData, setTeamData, onSessionEnd } from "../state.js";
-import { nav, moreOpen, emptyState, listPage, post, moreDetails, toast, render, load, clearJobDetails } from "../app-core.js";
+import { nav, emptyState, listPage, post, toast, render, load, clearJobDetails } from "../app-core.js";
 
 // Who pays you, as the older pages had it: Owner or GC. Client type (J2) is the finer word.
 export const ROLE_OPTIONS = [["Owner", "The homeowner or property owner"], ["GC", "A general contractor (you are the sub)"]];
@@ -233,8 +233,6 @@ let contractRead = null;
 let parkedNewJob = null;
 onSessionEnd(() => { contractRead = null; parkedNewJob = null; });
 
-const MORE_FIELDS = ["contract_number", "retainage_pct", "payapp_due_day", "payment_terms_days"];
-
 // A form closed (saved or cancelled) forgets what its contract filled.
 export function forgetClosedContract() {
   if (contractRead && !formOpen[contractRead.form]) contractRead = null;
@@ -311,7 +309,6 @@ function fillFromContract(form, read) {
     }
     if (Number.isInteger(fields.contract_cents)) put("contract_cents", dollarsText(fields.contract_cents));
     if (Number.isInteger(fields.retainage_pct)) { put("retainage_pct", fields.retainage_pct); d.retainage_touched = true; }
-    if (MORE_FIELDS.some(k => k in fields)) moreDetails.newjob = true;
   } else {
     put("name", fields.customer);
     for (const k of ["client_type", "phone", "ap_email", "payapp_due_day", "payment_terms_days"]) put(k, fields[k]);
@@ -347,7 +344,7 @@ async function fileContract(jobId, r) {
   if (!r || r.error) return;
   if (r.file) {
     const sent = await sendFile(`/api/import/file?job=${encodeURIComponent(jobId)}&file=1&kind=contract`, r.file, r.file.name);
-    if (!sent.ok) toast(`The job is saved, but the contract file wasn't added to its record: ${(sent.data && sent.data.error) || "try Add a file on the job page"}.`);
+    if (!sent.ok) toast(`The job is saved, but the contract file wasn't added to its records${sent.data && sent.data.error ? `: ${String(sent.data.error).replace(/[.\s]+$/, "")}` : ""}. On the job page, use Add a file`);
   } else if (r.text) {
     await post(`/api/jobs/${jobId}/add-record`, { label: "Contract (pasted)", kind: "contract", note: r.text.slice(0, 5000) }, { quiet: true });
   }
@@ -357,7 +354,7 @@ async function fileContract(jobId, r) {
     const res = await post(`/api/jobs/${jobId}/sov`, { lines: r.sov.lines, op_pct: 0, update_contract: !!r.useSovTotal }, { quiet: true });
     if (res && res.ok) toast(r.useSovTotal ? "Job saved with the schedule of values from the contract and its total as the contract amount"
       : "Job saved with the schedule of values from the contract");
-    else toast(`The job is saved, but the schedule of values wasn't set up: ${(res && res.data && res.data.error) || "set it up on the job page"}.`);
+    else toast(`The job is saved, but the schedule of values wasn't set up: ${String((res && res.data && res.data.error) || "set it up on the job page").replace(/[.\s]+$/, "")}.`);
   }
   if (contractRead === r) contractRead = null;
   clearJobDetails();
@@ -447,17 +444,14 @@ export const views = {
             <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
               <button type="button" class="linkish" data-action="nj-to-playbook">Change in the Client playbook</button></p>
           </div>
-          <details class="more-details" data-more="newjob"${moreOpen("newjob") ? " open" : ""}>
-            <summary>More details (optional)</summary>
-            <div class="form-grid">
-              ${jf.contract_number}
-              ${jf.retainage_pct}
-              ${assigneeField("newjob", "nj")}
-              ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") }))}
-              ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") }))}
-              ${f({ name: "note", id: "nj-note", label: "Notes (kept in the job records)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
-            </div>
-          </details>
+          <div class="form-grid">
+            ${jf.retainage_pct}
+            ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") }))}
+            ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") }))}
+            ${jf.contract_number}
+            ${assigneeField("newjob", "nj")}
+            ${f({ name: "note", id: "nj-note", label: "Notes (kept in the job records)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
+          </div>
           ${newJobSovHtml()}
           <button class="btn" data-action="create-job">Save job</button>
         </div>` : ""}
@@ -478,7 +472,7 @@ export const views = {
             </tr>`).join("")}
         </table>
       </div>` : formOpen.newjob ? "" : emptyState(state.jobs.length || state.closed_jobs_total ? "No open jobs" : "No jobs yet", "", `<button class="btn" data-action="toggle-form" data-form="newjob">New job</button>`)}
-      ${closed ? `<p class="sub">${closed} closed job${closed === 1 ? " is" : "s are"} under <button class="linkish" data-action="nav" data-view="history">Job history</button>.</p>` : ""}
+      ${closed ? `<p class="sub">${closed} closed job${closed === 1 ? " is" : "s are"} under <button class="linkish tall" data-action="nav" data-view="history">Job history</button>.</p>` : ""}
     `;
   },
   history() {
@@ -505,7 +499,7 @@ export const views = {
               <td>${j.done_notes || j.status_label}</td>
             </tr>`).join("")}
         </table>
-      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No finished jobs yet")}
+      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No finished jobs yet", "", openJobs(state.jobs).length ? `<button class="btn" data-action="nav" data-view="jobs">Open jobs</button>` : `<button class="btn" data-action="onb-newjob">New job</button>`)}
     `;
   },
 };
@@ -572,7 +566,6 @@ export const actions = {
     if (sovLine) { sovLine.textContent = sovError || ""; sovLine.hidden = !sovError; if (sovError) sovLine.scrollIntoView?.({ block: "center" }); }
     if (!r || !r.ok) return;
     delete keptNames.newjob;
-    delete moreDetails.newjob;
     njSovRows = 3;
     toast("Job saved");
     const made = state.jobs.find(j => !before.has(j.id));

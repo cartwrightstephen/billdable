@@ -6,10 +6,11 @@ import { readJson, setNetBanner, postJson } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { field, draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, onSessionEnd } from "../state.js";
-import { render, toast, emptyState, nav, setState, can } from "../app-core.js";
+import { render, toast, emptyState, nav, setState, can, perms } from "../app-core.js";
 import { canRecord, needsPick, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "../payimport.js";
 import { qboCsvLink } from "./money.js";
-import { openJobs } from "../jobs.js";
+import { openJobs, payAppStarts } from "../jobs.js";
+import { termText } from "../terms.js";
 
 export let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV or the QuickBooks connection
 export let qboStatus = null;      // /api/qbo/status: configured, connected, environment (escaped)
@@ -111,6 +112,16 @@ export function paymentsImportHtml() {
     </div>`;
 }
 
+// What comes next with no payments yet: record one when a pay app is out, else bill, else a job.
+function noPaymentsButton() {
+  const open = openJobs(state.jobs);
+  const waiting = open.find(j => j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status)));
+  if (waiting) return `<button class="btn" data-action="record-payment" data-id="${waiting.id}">Record a Payment</button>`;
+  if (payAppStarts(state.jobs, perms()).length) return `<button class="btn" data-action="payapp-new">${termText("New pay app")}</button>`;
+  if (open.length) return `<button class="btn" data-action="open-job" data-id="${open[0].id}" data-focus=".next-card">Open ${open[0].name}</button>`;
+  return `<button class="btn" data-action="onb-newjob">New job</button>`;
+}
+
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   payments() {
@@ -135,7 +146,7 @@ export const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("No payments yet")}
+      </div>` : emptyState("No payments yet", "", noPaymentsButton())}
     `;
   },
 };

@@ -54,10 +54,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("button", { name: "New client" }).click();
     await page.fill("#nj-customer", "Smoke Homeowner");
     // The job, its address in parts (J1), the amount, its dates and a complete client up front
-    // (R2-01, Decision 4); the rest wait under "More details (optional)".
+    // (R2-01, Decision 4). Retainage affects money, so nothing is folded.
     const upFront = await page.locator('[data-form-key="newjob"] > .form-grid [data-field]:visible').evaluateAll(els => els.map(e => e.id));
     for (const id of ["nj-name", "nj-street", "nj-city", "nj-state", "nj-zip", "nj-customer", "nj-amount", "nj-start", "nj-end", "nj-client-type", "nj-approver", "nj-email", "nj-phone"]) assert.ok(upFront.includes(id), `${id} up front: ${upFront}`);
-    assert.equal(await page.locator("#nj-retainage").isVisible(), false, "More details starts folded");
+    assert.equal(await page.locator("#nj-retainage").isVisible(), true, "Retainage % shows");
+    assert.equal(await page.locator('[data-form-key="newjob"] .more-details').count(), 0, "nothing folded");
     await page.fill("#nj-approver", "Sam Smoke");
     await page.fill("#nj-email", "not an email");
     await page.click('[data-action="create-job"]');

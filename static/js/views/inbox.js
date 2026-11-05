@@ -106,7 +106,7 @@ function fillImportSettings() {
     ? "This is the demo account: nothing is emailed from it."
     : s.mail_configured
       ? `Approved emails are sent from <strong>${s.mail_from}</strong> with your company name, and replies go to the person who approved them. Up to ${s.mail_daily_limit} a day.`
-      : "Email delivery is not set up on this server yet, so nothing here has left Duracash. Once it is, use Send again on any row.");
+      : "Email delivery is not set up on this server yet, so nothing here has left Duracash. Once it is, use Send Again on any row.");
   set("email-webhook", s.email_webhook);
   set("sms-webhook", s.sms_webhook);
   set("email-check", s.email_check === "password" ? "The server asks the email service for its password (INBOUND_WEBHOOK_PASSWORD): put it in the address, as https://duracash:PASSWORD@… ."

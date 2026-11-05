@@ -7,7 +7,7 @@ import { resetTrail, stepTrail, previousPage } from "./trail.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./help.js";
 import { readJson, setNetBanner } from "./net.js";
 import { labelTables } from "./dom.js";
-import { refuseForm, formErrors, clearForm, clearAllForms } from "./forms.js";
+import { refuseForm, clearForm, clearAllForms } from "./forms.js";
 import { setBillingStyle, termText } from "./terms.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, clearSession, onSessionEnd, setLocation, closeForms, pendingPath, pendingSearch, setPending, setCameraAsk, setTeamData, setDrawerOpen, setQueueExpanded, idleMinutes, setSignedOutNote } from "./state.js";
 import { startIdleWatch, stopIdleWatch, idleWatching } from "./idle.js";
@@ -87,7 +87,8 @@ function addInfoIcon(labelEl, text, hostEl) {
   icon.textContent = "i";
   icon.tabIndex = 0;
   icon.setAttribute("role", "button");
-  icon.setAttribute("aria-label", "What is this?");
+  const named = (labelEl.textContent || "").replace(/\s*\*\s*$/, "").trim();
+  icon.setAttribute("aria-label", named ? `What is ${named}?` : "What is this?");
   icon.dataset.help = text;
   icon.addEventListener("mouseenter", () => showHelpTip(icon));
   icon.addEventListener("mouseleave", hideHelpTip);
@@ -486,10 +487,5 @@ export function finishHtml(root) {
 }
 export const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-// "More details (optional)" stays as the person left it across re-renders, and opens when
-// one of its fields has an error.
+// A folded section (data-more) stays as the person left it across re-renders.
 export const moreDetails = {};
-export function moreOpen(key) {
-  const errs = formErrors[key] || {};
-  return !!moreDetails[key] || ["contract_number", "retainage_pct", "payapp_due_day", "payment_terms_days", "note"].some(k => errs[k]);
-}

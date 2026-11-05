@@ -113,7 +113,7 @@ export const views = {
         ${inv.final ? `<p class="sub final-note">${termText("The final pay app: the PDF is marked FINAL APPLICATION.")}</p>` : ""}
         ${beforeYouSendHtml(j, inv)}
         ${companyGapsHtml(state.company)}
-        ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>` : ""}
+        ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish tall" data-action="nav" data-view="playbook">Client playbook</button>.</p>` : ""}
         ${missing ? `<p class="blocker">${missing} supporting document${missing === 1 ? " is" : "s are"} missing. Add ${missing === 1 ? "it" : "them"} below, then send.</p>` : ""}
         ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
         ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
@@ -187,7 +187,7 @@ export const views = {
             <td>${a.blockers.join("; ") || "—"}</td>
           </tr>`).join("")}
         </table>
-      </div>` : emptyState(payappFilter === "all" ? termText("No pay apps yet") : "None in this view")}
+      </div>` : emptyState(payappFilter === "all" ? termText("No pay apps yet") : "None in this view", "", payappFilter !== "all" ? "" : starts.length ? `<button class="btn" data-action="payapp-new">${termText("New pay app")}</button>` : openJobs(state.jobs).length ? "" : `<button class="btn" data-action="onb-newjob">New job</button>`)}
     `;
   },
   // Paperwork is a column of Pay apps now (R6-03); /money/packets still opens it.

@@ -253,7 +253,7 @@ a.reset-btn { display: block; text-decoration: none; text-align: left; }
 .help-list dl { margin: 8px 0 0; }
 .help-list dt { font-weight: 600; margin-top: 8px; }
 .help-list dd { margin: 2px 0 0; color: var(--muted); }
-@media (hover: none) {
+@media (hover: none), (max-width: 600px) {
   .has-info .info { display: none; }
   .nav button .info { display: inline-flex; }
   .help-list { display: block; }
@@ -377,6 +377,7 @@ td.num, .num { font-variant-numeric: tabular-nums; }
 .send-check { border-color: var(--copper); }
 .send-check .btn { margin-top: 10px; }
 .packet-item { display: grid; gap: 6px; }
+.packet-item:focus { outline: 2px solid var(--copper); outline-offset: 2px; }
 .packet-item .mark { font-weight: 700; }
 .packet-item.present .mark { color: var(--green); }
 .packet-item.absent .mark { color: var(--red); }
@@ -478,13 +479,14 @@ textarea { font: inherit; }
 @media (max-width: 420px) {
   .metrics { grid-template-columns: 1fr; }
 }
-/* Touch screens: every control at least 44 px tall (WCAG 2.5.5 target size). */
-@media (pointer: coarse) {
+/* Touch screens and phone widths: every control at least 44 px tall (WCAG 2.5.5 target size). */
+@media (pointer: coarse), (max-width: 600px) {
   .btn, .btn.small, .tab, .stage, .due-item, .back, select, input:not([type=checkbox]), .filter-bar button, .chip, .nav button { min-height: 44px; }
   /* A link-like button inside a sentence keeps the line's height; its touch area grows
-     invisibly around it instead (R6-02). */
+     invisibly around it instead (R6-02). One on its own line is simply tall. */
   .linkish { position: relative; }
   .linkish::after { content: ""; position: absolute; inset: -12px -6px; }
+  .linkish.tall, .row-record, .queue-more, .known-payer .linkish { display: inline-flex; align-items: center; min-height: 40px; }
   .info { width: 24px; height: 24px; font-size: 14px; }
   .help-dismiss, .ai-close { min-width: 44px; min-height: 44px; }
 }
@@ -545,8 +547,6 @@ textarea { font: inherit; }
 .send-check .send-email .btn { margin-top: 6px; }
 .notice.confirm-first { margin: 10px 0 0; }
 .known-payer { margin: 0; }
-.more-details { margin: 12px 0; }
-.more-details > summary { cursor: pointer; color: var(--copper); font-size: 14px; margin-bottom: 8px; }
 .notice.company-gaps { margin: 10px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 /* What stands between a job and Finish job, each with the buttons that settle it (R3-08). */
@@ -767,6 +767,12 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 
 /* G9: the dark palette, for "Same as this device" on a dark device and for Dark. Only the
    tokens change; theme.js sets data-theme and data-accent on <html>. */
+/* Last, over each form's own box rules: on a phone a box is 44 px tall and 16 px, the size under
+   which iOS zooms in when one takes focus. */
+@media (pointer: coarse), (max-width: 600px) {
+  #app input:not([type=checkbox]):not([type=radio]), #app select { min-height: 44px; }
+  #app input:not([type=checkbox]):not([type=radio]), #app select, #app textarea { font-size: 16px; }
+}
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
