@@ -1,6 +1,7 @@
 """The independent hunt of Nov 5, through the server: the override on a file that says unconditional,
 New job record's uploads, and the way back from a client's waiver skip."""
 
+import contextlib
 import http.client
 import json
 import sys
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 from urllib.parse import quote, urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -194,6 +196,31 @@ class FileThatSaysUnconditional(Base):
         status, _ = self.send()
         self.assertEqual(status, 409)
         self.assertEqual([r["record_id"] for r in self.draft()["unconditional_attached"]], [rid])
+
+    def test_what_a_refusal_keeps_can_not_overwrite_another_request(self):
+        """Another request gets the lock the moment the refused send lets go of it: its change stands."""
+        self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n")
+        real, company = server.company_lock, self.company
+
+        @contextlib.contextmanager
+        def lock(company_id):
+            try:
+                with real(company_id):
+                    yield
+            except domain.GateError:
+                with real(company):
+                    state = server.load_company(company)
+                    state["company"]["name"] = "Changed in the gap"
+                    server.save_company(company, state)
+                raise
+
+        with mock.patch.object(server, "company_lock", lock):
+            status, _ = self.send()
+        self.assertEqual(status, 409)
+        state = server.load_company(company)
+        self.assertEqual(state["company"]["name"], "Changed in the gap", "the other request's change is still there")
+        job = next(j for j in state["jobs"] if j["id"] == self.job_id)
+        self.assertTrue(any(r.get("says_unconditional") for r in job["records"]), "what the refusal read is kept too")
 
     def test_an_addendum_filed_as_other_is_not_a_false_alarm(self):
         self.add(b"Addendum: unconditional acceptance of the revised scope.\n", label="addendum.txt", kind="other")

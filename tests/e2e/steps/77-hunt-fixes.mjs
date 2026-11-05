@@ -87,20 +87,25 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
       await fetch("/api/auth/signup", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "Code Tester", company_name: "Code Co", email, password: "correct horse battery", accept_terms: true }) });
     }, `code-${Date.now()}@example.com`);
-    let asked = 0;
-    await p.route("**/api/auth/sms", async (route) => {
-      asked += 1;
-      const { user } = await (await p.request.get(`${BASE}/api/auth/me`)).json();
-      await route.fulfill({ json: { user, code_sent: true, sent_to: "+14045550123" } });
-    });
     await p.goto(`${BASE}/settings/account`);
+    await p.locator("#my-phone").waitFor();
+    // As a server with Twilio answers (the whole path is tested against a stand-in in test_sms_proof.py).
+    await p.evaluate(() => {
+      const real = window.fetch;
+      window.smsAsked = 0;
+      window.fetch = async (path, options) => {
+        if (path !== "/api/auth/sms") return real(path, options);
+        window.smsAsked += 1;
+        const { user } = await (await real("/api/auth/me")).json();
+        return new Response(JSON.stringify({ user, code_sent: true, sent_to: "+14045550123" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      };
+    });
     await p.fill("#my-phone", "(404) 555-0123");
     await p.check("#my-sms-opt-in");
-    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
+    await p.locator('[data-action="save-account"]').click();
     await p.locator('[data-action="sms-resend"]').click();
+    await p.waitForFunction(() => window.smsAsked === 2);
     await p.locator("#my-sms-code").waitFor();
-    for (let t = 0; t < 50 && asked < 2; t++) await new Promise((r) => setTimeout(r, 100));
-    assert.equal(asked, 2, "the button asks for another code");
     await ctx.close();
   });
 

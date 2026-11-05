@@ -819,7 +819,14 @@ class Handler(BaseHTTPRequestHandler):
             with company_lock(company_id):
                 state = load_company(company_id)
                 waiting = {e.get("id") for e in state.get("email_log", []) if e.get("status") == "queued"}
-                fn(state)
+                try:
+                    fn(state)
+                except domain.GateError as exc:
+                    if exc.keep_changes:
+                        # What the refusal found goes on the page (an item waiting for a look), so there
+                        # is a way forward. Saved under this lock: nobody's change comes in between.
+                        save_company(company_id, state)
+                    raise
                 # To Do assignments of rows that are gone, or of an earlier turn of a row, go (C5).
                 domain.prune_assignments(state)
                 # The first paid pay app ends the free trial (trial.py): tell Stripe, once.
@@ -836,10 +843,6 @@ class Handler(BaseHTTPRequestHandler):
         except OwnerOnly:
             return 403, {"error": NO_PERMISSION}
         except domain.GateError as exc:
-            if exc.keep_changes:
-                # What the refusal found goes on the page (an item waiting for a look), so there is a way forward.
-                with company_lock(company_id):
-                    save_company(company_id, state)
             return 409, _gate(exc)
         except (KeyError, ValueError, TypeError, OverflowError) as exc:
             log_json("warn", msg="request not understood", rid=self._rid, path=redact(urlparse(self.path).path),
