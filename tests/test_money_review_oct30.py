@@ -210,7 +210,7 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         job = new_job(s, retainage=10, packet="Progress photos")
         domain.record_progress(s, job["id"], 1_000_000)
         inv = draft(job)
-        domain.skip_packet_item(s, job["id"], next(p for p in inv["packet"] if p.get("waiver_kind"))["id"], "Doesn't take them")
+        domain.skip_packet_item(s, job["id"], next(p for p in inv["packet"] if p.get("waiver_kind"))["id"], "Doesn't take them", whole_client=True)
         record(s, job, "photo", "Photos")
         confirm_suggested(s, job)
         domain.approve_and_send(s, job["id"])

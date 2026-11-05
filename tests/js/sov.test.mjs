@@ -1,7 +1,7 @@
 // Schedule of values arithmetic, the same as sov.py: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sovMilli, sovCents, lumpDone, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, qtyToDate, sovLineProblem, sovDraftLockHtml, sovFixedNote, sovPeriodHtml, sovProgressHtml } from "../../static/js/sov.js";
+import { sovMilli, sovCents, lumpDone, sovExtend, sovMarkup, fmtQty, sheetColumns, continuationHtml, qtyToDate, sovLineProblem, sovDraftLockHtml, sovFixedNote, sovPeriodHtml, sovProgressHtml, sovLostLines } from "../../static/js/sov.js";
 import { formDraft, clearForm } from "../../static/js/forms.js";
 
 test("quantities in thousandths and money in cents, from what people type", () => {
@@ -151,4 +151,27 @@ test("the continuation sheet has the quantity completed to date, blank for a lum
   assert.match(html, /<td class="num">180 ea<\/td>/);
   assert.match(html, /Panel[\s\S]*?<td class="num"><\/td><td class="num">\$6,250\.00<\/td>/, "a lump sum has no quantity");
   assert.equal(qtyToDate({ unit: "ea" }), "", "an entry from before quantities were kept");
+});
+
+test("the progress form starts from the draft's own typed figure, and a blank box is the suggestion", () => {
+  const j = { id: "j1", invoices: [], sov_view: { lines: [
+    { id: "l1", item: "1", description: "Tile", lump_sum: false, qty_milli: 100000, unit: "ea", done_milli: 50000, form_done_milli: 30000, sent_qty_milli: 0, billed_qty_milli: 30000, stored_cents: 0 },
+    { id: "l2", item: "2", description: "All of it", lump_sum: false, qty_milli: 100000, unit: "ea", done_milli: 100000, form_done_milli: 100000, sent_qty_milli: 0, billed_qty_milli: 100000, stored_cents: 0 },
+  ] } };
+  const html = sovProgressHtml(j);
+  assert.match(html, /id="sovp-done-l1"[^>]*value="30"/);
+  assert.match(html, /Clear a box to bill what is suggested/);
+  assert.doesNotMatch(html.match(/<input id="sovp-done-l2"[^>]*>/)[0], /disabled/, "only what went out closes a line");
+});
+
+test("replacing lines names what is recorded on the ones going", () => {
+  const lines = [{ id: "a", to_date_cents: 500000 }, { id: "b", to_date_cents: 0 }, { id: "c", to_date_cents: 100 }, { id: "d", to_date_cents: 100, co_id: "co" }];
+  assert.deepEqual(sovLostLines(lines, ["c"]).map(l => l.id), ["a"]);
+});
+
+test("a change order billed unsigned has its own row on the continuation sheet", () => {
+  const inv = { amount_cents: 200000, retainage_pct: 0, sov_sheet: [{ item: "1", description: "Line", unit: "LS", scheduled_cents: 200000, amount_cents: 100000, to_date_cents: 100000, work_this_cents: 100000, prev_work_cents: 0 }],
+    co_rows: [{ co_id: "c", number: 1, scheduled_cents: 100000, previous_cents: 0, this_cents: 100000, to_date_cents: 100000 }] };
+  const html = continuationHtml(inv, {});
+  assert.match(html, /CO 1<\/td><td class="num">\$1,000\.00<\/td><td class="num">\$0\.00<\/td><td class="num">\$1,000\.00/);
 });

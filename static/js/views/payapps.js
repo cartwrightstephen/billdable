@@ -2,7 +2,7 @@
 // payments, approval).
 // A pay app is drafted on its job's page; New pay app here asks for the job and opens that job's
 // step for it, the progress form or Draft pay app (Stephen's Oct 29 review, G10).
-import { unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
+import { esc, unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
 import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn, payAppStarts, defaultJobId } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm, focusAfterDraw } from "../dom.js";
@@ -71,6 +71,10 @@ export function payappSummaryHtml(inv) {
   </div>`;
 }
 
+// Why Review & send was refused for a fresh look, kept on the page until the next send (or sign out).
+let reviewAgain = null;
+onSessionEnd(() => { reviewAgain = null; });
+
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   payappDetail() {
@@ -80,6 +84,7 @@ export const views = {
     const pays = j.payments.filter(p => p.invoice_id === inv.id);
     const missing = (inv.packet || j.packet || []).filter(p => p.required && !p.present).length;
     const draft = ["draft", "awaiting_approval"].includes(inv.status);
+    const currentDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
     const fromDaily = draftFromDailyOn(j, inv);
     const copies = (j.payer.copy && unesc(j.payer.copy) !== "None") ? j.payer.copy : "";
     const firstSend = draft && !j.payer.sent_before && !state.jobs.some(x => x.payer_id === j.payer_id && x.invoices.some(i => i.sent_at));
@@ -98,8 +103,10 @@ export const views = {
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a></p>
       ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
+      ${inv.status === "void" && currentDraft ? `<p class="notice"><a href="${pathFor("payapp-detail", j.id, currentDraft.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${currentDraft.id}">Go to the current draft, ${currentDraft.number}</a></p>` : ""}
       ${draft ? `<div class="card send-check">
         <h2>Review &amp; send</h2>
+        ${reviewAgain && reviewAgain.jobId === j.id ? `<p class="form-error review-again" role="alert">${esc(reviewAgain.text)}</p>` : ""}
         <div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email || '<span class="blocker">no email yet</span>'}</span></div>
         ${noEmail ? `<div class="send-email" data-form-key="sendemail">${formErrorLine("sendemail")}
           <div class="form-grid">${field({ form: "sendemail", name: "ap_email", id: "send-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
@@ -225,9 +232,16 @@ export const actions = {
     return startPayApp(start.job.id, start.step);
   },
   // What was on the screen goes with it: a pay app changed since asks for a fresh look (reloaded here).
+  // A draft replaced since has a new id, so this lands on the one that goes now, with why on the page.
   "send": async (el, id) => {
+    reviewAgain = null;
     const r = await post(`/api/jobs/${id}/send`, { reviewed: el.dataset.reviewed || "" });
-    if (r && r.data && r.data.review_changed) { await load(); render(); }
+    if (r && r.data && r.data.review_changed) {
+      await load();
+      reviewAgain = { jobId: id, text: String(r.data.error || "Look it over again, then send.") };
+      if (r.data.invoice_id && r.data.invoice_id !== currentDetailId) nav("payapp-detail", id, r.data.invoice_id, { replace: true });
+      else render();
+    }
     return r;
   },
   // "Review & send" with no email yet (R1-05): saved to the client's settings, then send unlocks.

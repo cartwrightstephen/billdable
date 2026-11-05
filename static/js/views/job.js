@@ -329,6 +329,7 @@ export const views = {
         <section class="card close-blockers" aria-labelledby="close-blockers-h">
           <h2 id="close-blockers-h">Before you can finish this job</h2>
           <ul class="close-blocker-list">${j.close_blocker_items.map(b => `<li data-blocker="${b.kind}"><span>${termText(b.text)}</span><span class="form-inline">${closeBlockerActions(j, b, perms()).map((a, n) => `<button class="btn small${n ? " secondary" : ""}" ${a.attrs}>${a.label}</button>`).join("")}</span></li>`).join("")}</ul>
+          ${formOpen.overbilled ? `<div data-form-key="overbilled">${formErrorLine("overbilled")}<div class="form-inline"><input id="overbilled-reason" data-field="reason" value="${esc(draftValue("overbilled", "reason"))}" placeholder="What was done, like refund check 1044" aria-label="What was done about the overbilling" class="grow"><button class="btn small" data-action="overbilling-settled" data-id="${j.id}">Save</button></div></div>` : ""}
         </section>` : ""}
       <div class="detail-grid">
         ${moneyCardHtml(j)}
@@ -413,6 +414,7 @@ export const actions = {
     await post(`/api/jobs/${id}/pencil`);
   },
   "pencil-agreed": (el, id) => post(`/api/jobs/${id}/pencil-response`, { agreed: true }),
+  "overbilling-settled": (el, id) => post(`/api/jobs/${id}/overbilling-settled`, { reason: formValues("overbilled").reason || "" }, { formKey: "overbilled", close: "overbilled" }),
   "pencil-changes": async (el, id) => {
     const note = (document.getElementById("pencil-note")?.value || "").trim();
     if (!note) { toast("Say what the client wants changed."); document.getElementById("pencil-note")?.focus(); return; }

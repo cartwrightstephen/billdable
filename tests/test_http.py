@@ -15,6 +15,8 @@ import auth
 import server
 import trial
 from dollar_jobs import dollar_jobs
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 
@@ -307,7 +309,7 @@ class HttpTests(unittest.TestCase):
         inv = state["jobs"][0]["invoices"][0]
         self.assertEqual(inv["amount_cents"], 3_600_000)
         self.assertEqual([p["label"] for p in inv["packet"]], ["Pay app", "Lien waiver"])
-        res, data = self.request("POST", f"/api/jobs/{jid}/send", {}, cookie=cookie)
+        res, data = self.request("POST", f"/api/jobs/{jid}/send", reviewed(self, jid, cookie), cookie=cookie)
         self.assertEqual(res.status, 409)
         for item in inv["packet"]:
             # Where it is is optional now (R3-05); a bad item id is still refused.
@@ -315,7 +317,12 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(res.status, 409)
             res, state = self.request("POST", f"/api/jobs/{jid}/resolve/{item['id']}", {"reason": "Sent by email"}, cookie=cookie)
             self.assertEqual(res.status, 200)
-        res, state = self.request("POST", f"/api/jobs/{jid}/send", {}, cookie=cookie)
+        # Sending takes the stamp of what Review & send showed (acceptance 80).
+        res, data = self.request("POST", f"/api/jobs/{jid}/send", {}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        self.assertTrue(data["review_changed"])
+        self.assertEqual(data["invoice_id"], inv["id"])
+        res, state = self.request("POST", f"/api/jobs/{jid}/send", reviewed(self, jid, cookie), cookie=cookie)
         self.assertEqual(res.status, 200)
         res, data = self.request("POST", f"/api/jobs/{jid}/match-payment", {"amount_cents": -5, "reference": ""}, cookie=cookie)
         self.assertEqual(res.status, 409)

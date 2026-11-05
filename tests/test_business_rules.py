@@ -309,17 +309,18 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
         return job["records"][-1]
 
     def test_new_record_kinds_fill_their_paperwork(self):
-        # An insurance certificate, a supplier invoice (for a ticket item) and a stored-materials
+        # An insurance certificate, a delivery ticket (a supplier invoice only when the item asks for one) and a stored-materials
         # document on the job record fill the items that name them (J5, M6).
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.update_payer(state, job["payer_id"], {"packet": "Insurance certificate, delivery tickets, stored materials invoice"})
         self.on_record(state, job, "ACME COI 2026", "insurance")
         self.on_record(state, job, "ABC Supply invoice 4471", "supplier_invoice")
+        self.on_record(state, job, "Delivery 88", "ticket")
         domain.record_progress(state, job["id"], 400_000)
         packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
         self.assertEqual(packet["Insurance certificate"]["attachments"][0]["name"], "ACME COI 2026")
-        self.assertEqual(packet["Delivery tickets"]["attachments"][0]["name"], "ABC Supply invoice 4471")
+        self.assertEqual([a["name"] for a in packet["Delivery tickets"]["attachments"]], ["Delivery 88"])
 
     def test_records_on_the_job_fill_the_paperwork(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}

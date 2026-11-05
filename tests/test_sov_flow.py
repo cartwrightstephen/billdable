@@ -267,9 +267,10 @@ class OverrideTests(unittest.TestCase):
         draft = open_draft(job)
         entry = next(e for e in draft["sov_sheet"] if e["line_id"] == rough)
         self.assertEqual((entry["amount_cents"], entry["to_date_cents"], entry["prev_work_cents"], entry["work_this_cents"]), (0, 100_010, 100_010, 0))
-        # Panel 25% $3,000, less $1,500. O&P: 15% of $1,000.08 + $3,000 is $600.01; less $375.02 = $224.99.
-        self.assertEqual(draft["op_cents"], 22_499)
-        self.assertEqual(draft["gross_cents"], 150_000 + 22_499)
+        # Panel 25% $3,000, less $1,500. O&P: 15% of $1,000.10 (the line stands at what was billed) + $3,000
+        # is $600.015, half-up $600.02; less $375.02 = $225.00.
+        self.assertEqual(draft["op_cents"], 22_500)
+        self.assertEqual(draft["gross_cents"], 150_000 + 22_500)
         # Going below what the earned work was is still refused.
         with self.assertRaises(domain.GateError):
             domain.record_sov_progress(state, job["id"], {rough: "10"})

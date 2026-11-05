@@ -211,7 +211,7 @@ export const actions = {
     const body = { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) };
     const r = await post(`/api/jobs/${id}/waiver`, body);
     // A final waiver while a progress one is due warns; a person's confirm sends it (accept. 76).
-    if (r && r.data && r.data.final_waiver_warning && await askConfirm(r.data.error, "Send the final waiver", true)) await post(`/api/jobs/${id}/waiver`, { ...body, confirm_final: true });
+    if (r && r.data && r.data.final_waiver_warning && await askConfirm(r.data.error, r.data.confirm_label || "Send the final waiver", true)) await post(`/api/jobs/${id}/waiver`, { ...body, confirm_final: true });
   },
   // All of the retainage, or the part typed in the box, once the job is done (M24).
   "retainage": async (el, id) => {

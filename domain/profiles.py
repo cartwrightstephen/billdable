@@ -57,6 +57,7 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     "retainage": "ask_retainage",
     "match-payment": "record_payments",
     "retainage-paid": "record_payments",
+    "overbilling-settled": "record_payments",
     "accept-short-pay": "void",
     "void-draft": "void",
     "void-sent": "void",
@@ -64,7 +65,7 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     "close": "close_jobs",
     "reopen": "close_jobs",
     # Drafting, records, paperwork and follow-ups: everyone on the team.
-    "sov-amounts": None,
+    "sov-amounts": None, "sov-correct": None, "quantities-undo": None, "waiver-needed": None,
     "done": None, "undo-done": None, "progress": None, "sov": None, "sov-progress": None, "draft": None,
     "resolve": None, "packet-skip": None, "follow-up": None, "note-contact": None, "edit": None, "paperwork": None,
     "add-co": None, "approve-co": None, "request-co-signature": None, "include-co": None, "withdraw-co": None,

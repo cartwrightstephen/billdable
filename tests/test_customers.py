@@ -18,6 +18,8 @@ import domain
 import server
 import storage
 from seed import seed_state
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 
 def empty_state():
@@ -253,7 +255,7 @@ class CustomerHttpTests(unittest.TestCase):
         for item in draft.get("packet") or []:
             if "waiver" in item["label"].lower() and item.get("status") != "present":
                 self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "Signed waiver received by email"}, owner)
-        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, owner)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], owner), owner)
         self.assertEqual(res.status, 200, state)
         res, data = self.request("GET", f"/api/payers/{payer['id']}/jobs", cookie=owner)
         self.assertEqual(res.status, 200, data)

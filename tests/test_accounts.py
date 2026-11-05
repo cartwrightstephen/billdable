@@ -34,6 +34,7 @@ import storage
 import trial
 from test_mail import Sink
 from dollar_jobs import dollar_jobs
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "DURACASH_URL", "HELPER_ADMIN_USER_IDS", "BACKUP_KEEP")
@@ -390,7 +391,7 @@ class AccountHttpTests(ServerCase):
         res, out = self.request("POST", "/api/team/profiles/member", sends, cookie=owner)
         self.assertEqual(res.status, 200, out)
         self.assertIn("send_payapps", next(p for p in out["profiles"] if p["id"] == "member")["perms"])
-        res, out = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie=member)
+        res, out = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, member), cookie=member)
         self.assertEqual(res.status, 200, out)
         self.assertEqual(out["jobs"][0]["invoices"][-1]["status"], "sent")
         # Deleting and finishing stay with owners.

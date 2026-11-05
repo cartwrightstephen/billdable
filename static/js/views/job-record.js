@@ -4,6 +4,7 @@ import { esc, unesc, fmtDate } from "../format.js";
 import { RECORD_KINDS, groupRecords, recordKindWord } from "../jobs.js";
 import { draftValue, clearForm } from "../forms.js";
 import { pathFor } from "../routes.js";
+import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
 import { state, onSessionEnd } from "../state.js";
 import { post, toast, render, nav } from "../app-core.js";
@@ -28,7 +29,7 @@ function recordRow(j, r) {
       <button class="btn small secondary" data-action="record-edit" data-item="">Cancel</button>
     </div>`;
   }
-  return `<div class="list-item"><span class="pill">${termText(recordKindWord(r))}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${j.closed ? "" : ` <button class="linkish" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.on_date || r.added_at)}</div>` : ""}</div>`;
+  return `<div class="list-item"><span class="pill">${termText(recordKindWord(r))}</span> ${r.label}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${j.closed ? "" : ` <button class="linkish" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`}${(r.quantities || []).length && !j.closed && j.work_status !== "complete" ? ` <button class="linkish" data-action="quantities-undo" data-id="${j.id}" data-item="${r.id}" aria-label="Undo import: ${r.label}">Undo import</button>` : ""}${r.quantities_undone ? `<div class="sub">Quantities taken off by ${r.quantities_undone.by}, ${fmtDate(r.quantities_undone.at)}</div>` : ""}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}${r.source || r.added_at ? `<div class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.on_date || r.added_at)}</div>` : ""}</div>`;
 }
 
 
@@ -78,6 +79,16 @@ export const actions = {
     if (label) await post(`/api/jobs/${id}/add-evidence`, { label, kind: "note" });
   },
   "record-filter": (el, id) => { recordFilter = { job: id, group: el.dataset.group || "" }; render(); },
+  // Takes off what the imported file added. Going below what sent pay apps billed is said first.
+  "quantities-undo": async (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
+    const rec = (j?.records || []).find(r => r.id === el.dataset.item);
+    if (!rec) return;
+    const lines = j.sov_view?.lines || [];
+    const below = (rec.quantities || []).some(q => { const l = lines.find(x => x.id === q.line_id); return l && l.done_milli - q.qty_milli < (l.sent_qty_milli || 0); });
+    const said = `Take the quantities from ${unesc(rec.label)} off the field totals?` + (below ? " Some of it is already billed. Pay apps sent stay as they are, and nothing more is suggested on those lines until the field total passes what they billed." : "");
+    if (await askConfirm(said, "Undo import", below)) await post(`/api/jobs/${id}/quantities-undo/${rec.id}`, { below_billed: below });
+  },
   "record-edit": (el) => {
     if (editingRecord) clearForm(`record-${editingRecord}`);   // Cancel, or another record's Edit, drops what was typed
     editingRecord = el.dataset.item || "";

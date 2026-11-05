@@ -2780,7 +2780,7 @@ class Handler(BaseHTTPRequestHandler):
         """What a draft pay app's email carries (M4): {action, record_id | file_id}."""
         body = ctx.body
         domain.change_payapp_attachments(state, m.group(1), m.group(2), _text(body, "action"),
-                                         _text(body, "record_id") or _text(body, "file_id"), ctx.actor)
+                                         _text(body, "record_id") or _text(body, "file_id"), ctx.actor, read_file=_file_reader(ctx.company_id))
 
     def _m_payer_suggestion(self, state: dict, m, ctx: "Ctx") -> None:
         domain.answer_packet_suggestion(state, m.group(1), m.group(2), m.group(3) == "add", ctx.actor)
@@ -3121,7 +3121,8 @@ def _send_payapp(h, st, j, i, c):
     override = _text(c.body, "unconditional_override").strip()
     if override and c.user.get("role", "owner") != "owner":
         raise domain.GateError("Only an owner can send a pay app with an unconditional waiver attached.")
-    return domain.approve_and_send(st, j, c.actor, unconditional_override=override, reviewed=_text(c.body, "reviewed"), **_co_args(c))
+    return domain.approve_and_send(st, j, c.actor, unconditional_override=override, reviewed=_text(c.body, "reviewed"),
+                                   read_file=_file_reader(c.company_id), **_co_args(c))
 
 
 def _received_on(body: dict) -> str | None:
@@ -3210,6 +3211,11 @@ JOB_ACTIONS = {
     "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
                                                                                         period_end=_text(c.body, "period_to"))),
     "sov-amounts": (False, lambda h, st, j, i, c: domain.set_payapp_amounts(st, j, c.body.get("amounts"), c.actor)),
+    "sov-correct": (False, lambda h, st, j, i, c: domain.correct_field_total(st, j, _text(c.body, "line_id"), c.body.get("qty"), _text(c.body, "reason"), c.actor,
+                                                                             below_billed=c.body.get("below_billed") is True)),
+    "quantities-undo": (True, lambda h, st, j, i, c: domain.undo_quantity_import(st, j, i, c.actor, below_billed=c.body.get("below_billed") is True)),
+    "waiver-needed": (False, lambda h, st, j, i, c: domain.waiver_needed_after_all(st, j, c.actor)),
+    "overbilling-settled": (False, lambda h, st, j, i, c: domain.settle_overbilling(st, j, _text(c.body, "reason"), c.actor)),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, _sends("the pay app", _send_payapp)),
@@ -3217,7 +3223,8 @@ JOB_ACTIONS = {
     "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor,
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None,
-                                                                                    release_id=_text(c.body, "release_id") or None, confirm_final=c.body.get("confirm_final") is True))),
+                                                                                    release_id=_text(c.body, "release_id") or None, confirm_final=c.body.get("confirm_final") is True,
+                                                                                    read_file=_file_reader(c.company_id)))),
     # The type of a signed waiver on the job record, and which paid pay app or release it is for (B1).
     "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"))),
     # No waiver goes out through Duracash for this payment: handed over outside it, or not needed (B2).

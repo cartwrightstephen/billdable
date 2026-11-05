@@ -348,19 +348,14 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
             for i, v in enumerate((op_sched, op_prev, op_this, 0, op_to, op_ret)):
                 totals[i] += v
             y -= 13
-        # Change orders billed while unsigned are not schedule lines yet; each gets its own row,
-        # so the totals match line 4 (which counts them, as line 2a does).
-        pending = {co["id"]: co for co in terms["pending_cos"]}
-        live = [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE]
-        earlier = live[: live.index(invoice)] if invoice in live else live
-        for co_id, co in pending.items():
-            prev = sum(l["amount_cents"] for inv in earlier for l in inv.get("lines", []) if l.get("co_id") == co_id)
-            this = sum(l["amount_cents"] for l in invoice.get("lines", []) if l.get("co_id") == co_id)
-            if not prev and not this:
-                continue
-            sched, to = co["amount_cents"], prev + this
+        # Change orders billed while unsigned have no line on this sheet: each gets its own row, so
+        # the totals match line 4 (which counts them). One still unsigned as of this pay app says so.
+        unsigned = {co["id"] for co in terms["pending_cos"]}
+        for row in sov.co_rows(job, invoice):
+            sched, prev, this, to = row["scheduled_cents"], row["previous_cents"], row["this_cents"], row["to_date_cents"]
             ret = sov.retainage_on(to, pct_ret)
-            page.text(MARGIN, y, row_text(["", _fit(f"CO {co.get('number', '')} (unsigned)", 20), f"{sched / 100:,.2f}", f"{prev / 100:,.2f}",
+            name = f"CO {row['number']} (unsigned)" if row["co_id"] in unsigned else f"CO {row['number']}"
+            page.text(MARGIN, y, row_text(["", _fit(name, 20), f"{sched / 100:,.2f}", f"{prev / 100:,.2f}",
                                            f"{this / 100:,.2f}", "0.00", "", f"{to / 100:,.2f}",
                                            f"{(100 * to) // sched if sched else 0}%", f"{(sched - to) / 100:,.2f}", f"{ret / 100:,.2f}"]), "F3", size)
             for i, v in enumerate((sched, prev, this, 0, to, ret)):
@@ -393,7 +388,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         # Paperwork checklist on its own page so it never collides with the sheet.
         page, y = new_sheet_page("SUPPORTING DOCUMENTS")
         for item in packet:
-            mark = "Not attached: " if item.get("override") else "[x] " if item.get("present") else "[  ] "
+            mark = "Not attached: " if item.get("override") else "[x] " if item.get("present") and not sov.name_only_open(job, invoice, item) else "[  ] "
             page.text(MARGIN, y, mark + _fit(item["label"], 110), "F1", 10)
             y -= 15
             if y < 60:

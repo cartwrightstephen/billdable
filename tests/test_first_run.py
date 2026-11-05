@@ -20,6 +20,8 @@ import auth
 import server
 from test_accounts import ServerCase
 from dollar_jobs import dollar_jobs
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 
@@ -104,7 +106,7 @@ class FirstRunTests(unittest.TestCase):
 
         # The paperwork the customer wants with each pay app stops the send until it's in.
         missing = [p for p in draft["packet"] if p["required"] and not p["present"]]
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         if missing:
             self.assertEqual(res.status, 409, data)
             self.assertTrue(data["blockers"], data)
@@ -112,7 +114,7 @@ class FirstRunTests(unittest.TestCase):
                 res, data = self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
                 self.assertEqual(res.status, 200, data)
             self.assertEqual(self.job(data, job_id)["blockers"], [])
-            res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+            res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 200, data)
 
         job = self.job(data, job_id)
@@ -209,13 +211,13 @@ class FirstRunTests(unittest.TestCase):
         res, data = self.request("POST", f"/api/jobs/{job['id']}/done", {"notes": ""}, cookie)
         for item in self.job(data, job["id"])["invoices"][-1]["packet"]:
             self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
-        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie)
         self.assertEqual(res.status, 409, data)
         self.assertIn("Add the email pay apps go to", data["error"])
         self.assertIn("ap_email", data["fields"])
         res, data = self.request("POST", f"/api/payers/{payer['id']}/update", {"ap_email": "dana@example.com"}, cookie)
         self.assertEqual(res.status, 200, data)
-        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie)
         self.assertEqual(res.status, 200, data)
         self.assertEqual(self.job(data, job["id"])["invoices"][-1]["status"], "sent")
 
@@ -258,7 +260,7 @@ class FirstRunTests(unittest.TestCase):
         for label in job["missing_paperwork"]:
             item = next(p for p in job["invoices"][-1]["packet"] if p["label"] == label)
             self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 200, data)
         res, data = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 3000000, "notes": ""}, cookie)
         self.assertEqual(res.status, 200, data)
@@ -277,7 +279,7 @@ class FirstRunTests(unittest.TestCase):
                 self.assertEqual(res.status, 200, data)
         job = self.job(data, job_id)
         self.assertEqual(job["missing_paperwork"], [])
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 200, data)
         res, data = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 3000000, "notes": ""}, cookie)
         self.assertEqual(res.status, 200, data)
@@ -305,14 +307,14 @@ class FirstRunWithMailTests(ServerCase):
         res, data = self.request("POST", f"/api/jobs/{job_id}/done", {"notes": ""}, cookie)
         for item in next(j for j in data["jobs"] if j["id"] == job_id)["invoices"][-1]["packet"]:
             self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 409, data)
         self.assertIn("Confirm your email first so the pay app goes out from you", data["error"])
         _, state = self.request("GET", "/api/state", cookie=cookie)
         self.assertIn(next(j for j in state["jobs"] if j["id"] == job_id)["invoices"][-1]["status"], ("draft", "awaiting_approval"))
         res, data = self.request("POST", "/api/auth/verify", {"token": token})
         self.assertEqual(res.status, 200, data)
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 200, data)
 
 

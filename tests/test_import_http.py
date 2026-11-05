@@ -23,6 +23,8 @@ import importer
 import server
 import storage
 from dollar_jobs import dollar_jobs
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 EML = (b"From: Kim Park <ap@park.example>\r\nTo: jobs@example.com\r\nSubject: CO 2 signed for Elm addition\r\n"
@@ -394,7 +396,7 @@ class ImportHttpTests(unittest.TestCase):
         inv = state["jobs"][0]["invoices"][-1]
         for item in inv.get("packet") or []:
             self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "sent with the email"}, cookie=cookie)
-        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         self.assertEqual(res.status, 200, state)
         amount = state["jobs"][0]["invoices"][-1]["amount_cents"]
         csv_text = f"Date,Num,Customer,Amount,Memo\n10/09/2026,5521,Park GC,{amount / 100:.2f},\n"

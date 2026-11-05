@@ -253,7 +253,7 @@ def _amount(line: dict[str, Any], raw: str) -> tuple[int, str]:
     except sov.SovError as exc:
         return 0, str(exc)
     if milli <= 0:
-        return 0, "The quantity can't be zero or less. Correct it on the job page."
+        return 0, "The quantity can't be zero or less. Use Correct field total on the job's schedule, or Undo import on the job record."
     if _lump(line):
         if milli % 100:
             return 0, f"{_name(line)}: a % done can have at most one decimal, like 12.5."

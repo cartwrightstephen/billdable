@@ -178,7 +178,7 @@ export function waiverPick(j, inv = null, release = null) {
   const said = inv && inv.waiver_stages && inv.waiver_stages.unconditional && unesc(inv.waiver_stages.unconditional.kind || "");
   if (said) return said;
   const final = ((inv && inv.final) || (j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0))
-    && !(j.money.retainage_open_cents > 0);
+    && !(j.money.retainage_open_cents > 0) && !(j.change_orders || []).some(co => co.status === "pending");
   return final ? "unconditional_final" : "unconditional_progress";
 }
 
@@ -378,6 +378,7 @@ export function waitingText(j, now = new Date()) {
 export const ACTION_PERM = {
   send: "send_payapps", waiver: "send_waivers", "waiver-not-needed": "send_waivers", retainage: "ask_retainage",
   "match-payment": "record_payments", "retainage-paid": "record_payments",
+  "overbilling-settled": "record_payments",
   "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",
   close: "close_jobs", reopen: "close_jobs",
 };
@@ -478,6 +479,9 @@ function closeBlockerButtons(j, b, now) {
       { label: `Get CO ${b.number} Signed`, attrs: `data-action="open-co" data-job="${id}" data-co="${b.co_id}"` },
       { label: "Withdraw", attrs: `data-action="withdraw-co" data-id="${id}" data-co="${b.co_id}"` }];
     case "unbilled": return [{ label: "Draft Pay App", attrs: `data-action="draft" data-id="${id}"` }];
+    case "overbilled": return [
+      ...(b.invoice_id ? [{ label: `Open ${b.number}`, attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}"` }] : []),
+      { label: "Record Refund or Credit", attrs: `data-action="toggle-form" data-form="overbilled"`, needs: "overbilling-settled" }];
     case "outstanding": return [{ label: "Record a Payment", attrs: `data-action="toggle-form" data-form="match"` },
       ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i), needs: "accept-short-pay" }))];
     case "retainage": return [
