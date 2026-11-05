@@ -109,6 +109,29 @@ export default async function ({ browser, BASE, step, errors }) {
     await p.context().close();
   });
 
+  await step("New job: typing the client's own name as who signs off is an answer, and it stays answered", async () => {
+    const p = await fresh("own-name");
+    await p.goto(BASE + "/jobs");
+    await p.locator(".top").getByRole("button", { name: "New job", exact: true }).click();
+    await p.fill("#nj-name", "Own name deck");
+    await p.fill("#nj-street", "4 Oak St");
+    await p.fill("#nj-city", "Decatur");
+    await p.selectOption("#nj-state", "GA");
+    await p.fill("#nj-zip", "30030");
+    await p.fill("#nj-amount", "20,000");
+    await p.fill("#nj-customer", "Rae Homeowner");
+    await p.selectOption("#nj-client-type", "homeowner");
+    await p.fill("#nj-approver", "Rae Homeowner");
+    await p.fill("#nj-email", "rae@example.com");
+    await p.fill("#nj-phone", "404-555-0100");
+    await p.click('[data-action="create-job"]');
+    await p.waitForFunction(async () => ((await (await fetch("/api/state")).json()).jobs || []).length === 1);
+    const payer = await p.evaluate(async () => (await (await fetch("/api/state")).json()).payers[0]);
+    assert.equal(payer.approver_confirmed, true);
+    assert.deepEqual(payer.playbook_missing || [], []);
+    await p.context().close();
+  });
+
   await step("Send Draft for Their Review shows what goes first; missing documents don't hold it back (criterion 78)", async () => {
     const p = await fresh("pencil");
     const job = await addJob(p);
