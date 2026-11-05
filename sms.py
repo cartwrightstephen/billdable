@@ -86,6 +86,12 @@ def configured() -> bool:
     return bool(cfg["sid"] and cfg["token"] and cfg["from"])
 
 
+def shown(number: Any) -> str:
+    """+14045550199 as a person reads it: (404) 555-0199; anything else as it is."""
+    m = re.fullmatch(r"\+1(\d{3})(\d{3})(\d{4})", str(number or ""))
+    return f"({m.group(1)}) {m.group(2)}-{m.group(3)}" if m else str(number or "")
+
+
 def e164(text: Any) -> str:
     """A US number as +1XXXXXXXXXX, or "" when it isn't one (extensions, other countries and digits
     of other scripts aren't)."""

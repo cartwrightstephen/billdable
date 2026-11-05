@@ -54,7 +54,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.match(await warning.innerText(), /looks blank/);
     assert.equal(await p.locator('.send-check [data-action="send"]').isDisabled(), true);
     await p.getByRole("button", { name: "I opened it and it's right" }).click();
-    await confirmIfAsked(p);
+    await confirmDialog(p).filter({ hasText: "looks blank" }).getByRole("button", { name: "It's right" }).click();
     await p.locator(".packet-item", { hasText: "Confirmed by" }).waitFor();
     await p.locator(".send-confirmed", { hasText: "Confirmed by" }).waitFor();
     await p.locator(".send-warnings").waitFor();

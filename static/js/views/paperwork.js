@@ -1,13 +1,13 @@
 // Money, Paperwork: what goes with each pay app and the closeout paperwork, and the paperwork
 // part of a pay app's Review & send (beforeYouSendHtml). A pay app's supporting documents are on
 // its own page (supportingDocsHtml); closeout's, with no pay app, keep the page here.
-import { unesc, money, words, fmtDate, INVOICE_WORDS } from "../format.js";
+import { esc, unesc, money, words, fmtDate, INVOICE_WORDS } from "../format.js";
 import { RECORD_KINDS, isBlocked, coBlockers, WAIVER_KINDS, waiverKindLabel, waiverStageText } from "../jobs.js";
 import { US_STATES } from "../validate.js";
 import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
-import { state, me, currentJobId, currentDetailId, formOpen } from "../state.js";
+import { state, me, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
 import { may, can, perms, render, toast, post, load, backButton, emptyState, nav } from "../app-core.js";
 
 const DRAFT = ["draft", "awaiting_approval"];
@@ -311,14 +311,18 @@ function problemsHtml(p) {
 
 // A file attached and not cleared yet: a suggestion to check, or the document check's warning with
 // the way to say it is right anyway. Never a hard block (Decision 6).
+let lookAgain = null;   // why Confirm was refused: a newer file took over while the page was open
+onSessionEnd(() => { lookAgain = null; });
+
 function confirmHtml(j, p, editable) {
   const waiting = !p.name_only && (p.attachments || []).some(a => a.unconfirmed);
   if (p.present || !waiting) return "";
+  const again = lookAgain && lookAgain.item === p.id ? `<p class="form-error review-again" role="alert">${esc(lookAgain.text)}</p>` : "";
   const flagged = ((p.check || {}).problems || []).length > 0;
   const button = !editable ? "" : flagged
     ? `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}" data-looked="1">I opened it and it's right</button>`
     : `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}">I checked this file</button>`;
-  return `${flagged ? `<div class="doc-warning" role="alert"><p>Open the document and confirm it is right.</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : `<p class="sub">Open it and confirm it belongs here.</p>`}${button}`;
+  return `${again}${flagged ? `<div class="doc-warning" role="alert"><p>Open the document and confirm it is right.</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : `<p class="sub">Open it and confirm it belongs here.</p>`}${button}`;
 }
 
 // The items of a pay app, the job or closeout: each file, who checked it, and the ways to fill it.
@@ -453,13 +457,26 @@ export const actions = {
     const all = j ? [...j.invoices.flatMap(i => i.packet || []), ...(j.packet || []), ...(j.closeout_packet || [])] : [];
     const p = all.find(x => x.id === el.dataset.item);
     const shown = ((p && p.attachments) || []).filter(a => a.unconfirmed).map(a => unesc(a.record_id || ""));
+    const item = el.dataset.item;
+    lookAgain = null;
+    // Another file took over: its look comes first, and the page says why it changed.
+    const changed = async (r) => {
+      if (!(r && r.data && r.data.review_changed)) return false;
+      lookAgain = { item, text: String(r.data.error || "Look at it again, then confirm.") };
+      await load();
+      render();
+      return true;
+    };
     const confirm = async (body) => {
-      const r = await post(`/api/jobs/${id}/packet-confirm/${el.dataset.item}`, { ...body, shown });
-      if (r && r.data && r.data.review_changed) { await load(); render(); }
+      const r = await post(`/api/jobs/${id}/packet-confirm/${item}`, { ...body, shown });
+      await changed(r);
       return r;
     };
-    if (!el.dataset.looked) return confirm({});
-    const problems = ((p && p.check && p.check.problems) || []).map(unesc).join(" ");
+    // Every problem at once, as Confirm would find them: one look clears them all.
+    const read = await post(`/api/jobs/${id}/packet-recheck/${item}`, { shown }, { quiet: true });
+    if (!read || await changed(read) || !read.ok) return read;
+    const problems = (read.data.check_problems || []).map(unesc).join(" ");
+    if (!problems) return confirm({});
     if (!(await askConfirm(`${problems} You opened the document and it is right?`, "It's right"))) return null;
     return confirm({ looked: true });
   },

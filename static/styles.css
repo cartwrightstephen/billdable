@@ -112,7 +112,7 @@ a.btn { display: inline-block; text-decoration: none; }
 .metric.highlight { border-color: var(--copper); background: var(--copper-soft); }
 .metric.highlight .v { color: var(--copper); }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.money-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.money-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .money-row .label { color: var(--muted); }
 .payapp-notes { margin: 10px 0 0; white-space: pre-wrap; }
 .payapp-notes .label { display: block; color: var(--muted); font-size: 13px; }
@@ -188,7 +188,7 @@ select { max-width: 100%; }
 .auth-toggle button { background: none; border: 0; color: var(--copper); cursor: pointer; font: inherit; text-decoration: underline; padding: 0; }
 .auth-error { color: var(--red); font-size: 13px; margin-top: 10px; }
 .auth-hint { font-size: 12px; color: var(--muted); margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
-.user-meta { font-size: 12px; color: var(--muted); margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); }
+.user-meta { font-size: 12px; color: var(--muted); margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
 .user-meta .reset-btn { margin-top: 8px; }
 .landing { min-height: 100vh; }
 .land-bar { display: flex; align-items: center; justify-content: space-between; padding: 18px 32px; border-bottom: 1px solid var(--line); }
@@ -401,7 +401,10 @@ textarea { font: inherit; }
 
 @media (max-width: 800px) {
   .shell { display: block; }
-  .topbar { display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 60; background: var(--rail); border-bottom: 1px solid var(--line); padding: 8px 12px; }
+  .topbar { display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 60; background: var(--rail); border-bottom: 1px solid var(--line); padding: 8px 68px 8px 12px; }
+  /* In the bar, so it never sits over a line of the page. */
+  .ai-badge { top: 8px; bottom: auto; right: 12px; width: 44px; height: 44px; font-size: 20px; }
+  .ai-panel { top: 60px; bottom: auto; right: 16px; }
   .topbar .brand { font-size: 20px; margin: 0; }
   .topbar-section { margin-left: auto; font-size: 14px; color: var(--muted); }
   .menu-btn { width: 44px; height: 44px; border: 1px solid var(--field); border-radius: 8px; background: var(--card); font-size: 20px; cursor: pointer; color: var(--ink); }

@@ -200,5 +200,97 @@ class SendGates(Base):
         self.assertEqual(self.draft()["unconditional_mentions"][0]["record_id"], rid)
 
 
+class OneLookClearsAFile(Base):
+    """Item 12: the prompt lists everything, and one confirm clears it for that file at that amount."""
+
+    def setUp(self):
+        super().setUp()
+        line = self.job()["sov"]["lines"][0]
+        status, data = self.post(f"/api/jobs/{self.job_id}/sov-progress", {"done": {line["id"]: "1"}})
+        self.assertEqual(status, 200, data)
+
+    def item(self, words="waiver"):
+        return next(p for p in self.draft()["packet"] if p.get("waiver_kind") if words == "waiver")
+
+    def attach_waiver(self):
+        item = self.item()
+        res, data = self.upload("w.txt", b"Conditional waiver for somewhere else", kind="waiver", attach=item["id"], waiver_kind=item["waiver_kind"])
+        self.assertEqual(res.status, 200, data)
+        return data["uploaded_record_ids"][0], self.item()
+
+    def test_a_problem_that_turned_up_since_is_cleared_by_the_one_look(self):
+        rid, item = self.attach_waiver()
+        self.assertFalse(item["present"])
+        before = list(item["check"]["problems"])
+        # The job is marked done, so the draft is the final one and the waiver's wording is asked for again.
+        status, data = self.post(f"/api/jobs/{self.job_id}/done", {})
+        self.assertEqual(status, 200, data)
+        draft = self.draft()
+        item = next(p for p in draft["packet"] if p.get("waiver_kind"))
+        shown = [a["record_id"] for a in item["attachments"] if a.get("unconfirmed")]
+        status, data = self.post(f"/api/jobs/{self.job_id}/packet-confirm/{item['id']}", {"looked": True, "shown": shown})
+        self.assertEqual(status, 200, data)
+        item = next(p for p in self.draft()["packet"] if p["id"] == item["id"])
+        self.assertTrue(item["present"], "one look clears it")
+        self.assertTrue(before)
+
+    def test_the_prompt_has_everything_before_the_look(self):
+        rid, item = self.attach_waiver()
+        status, data = self.post(f"/api/jobs/{self.job_id}/done", {})
+        self.assertEqual(status, 200, data)
+        item = next(p for p in self.draft()["packet"] if p.get("waiver_kind"))
+        status, data = self.post(f"/api/jobs/{self.job_id}/packet-recheck/{item['id']}", {"shown": [a["record_id"] for a in item["attachments"] if a.get("unconfirmed")]})
+        self.assertEqual(status, 200, data)
+        fresh = next(p for p in self.draft()["packet"] if p["id"] == item["id"])
+        self.assertFalse(fresh["present"], "a recheck clears nothing")
+        self.assertIn("Final wording not found.", fresh["check"]["problems"])
+
+    def test_a_different_amount_asks_again(self):
+        rid, item = self.attach_waiver()
+        line = self.job()["sov"]["lines"][0]
+        draft_id = self.draft()["id"]
+        with server.company_lock(self.company):   # the amount changed since that look
+            state = server.load_company(self.company)
+            job = next(j for j in state["jobs"] if j["id"] == self.job_id)
+            stored = next(p for i in job["invoices"] if i["id"] == draft_id for p in i["packet"] if p["id"] == item["id"])
+            stored["check_for"]["cents"] = 1
+            server.save_company(self.company, state)
+        shown = [a["record_id"] for a in item["attachments"] if a.get("unconfirmed")]
+        status, data = self.post(f"/api/jobs/{self.job_id}/done", {})
+        self.assertEqual(status, 200, data)
+        item = next(p for p in self.draft()["packet"] if p.get("waiver_kind"))
+        status, data = self.post(f"/api/jobs/{self.job_id}/packet-confirm/{item['id']}", {"looked": True, "shown": shown})
+        item = next(p for p in self.draft()["packet"] if p["id"] == item["id"])
+        self.assertFalse(item["present"], "a new problem at another amount gets its own look")
+        self.assertIn("Final wording not found.", item["check"]["problems"])
+
+    def test_field_documents_dont_need_the_job_name(self):
+        for label, kind in (("Daily tickets", "ticket"), ("Inspection report", "inspection"), ("Supplier invoices", "supplier_invoice")):
+            job = next(j for j in server.load_company(self.company)["jobs"] if j["id"] == self.job_id)
+            with server.company_lock(self.company):
+                state = server.load_company(self.company)
+                job = next(j for j in state["jobs"] if j["id"] == self.job_id)
+                draft = next(i for i in job["invoices"] if i["status"] in ("draft", "awaiting_approval"))
+                draft["packet"].append({"id": f"it-{kind}", "kind": kind, "label": label, "required": True, "present": False, "blocker": f"{label} is missing.", "attachments": []})
+                server.save_company(self.company, state)
+            res, data = self.upload(f"{kind}.txt", b"Crew of four, six hours, framing on the second floor.", kind=kind, attach=f"it-{kind}")
+            self.assertEqual(res.status, 200, data)
+            item = next(p for p in self.draft()["packet"] if p["id"] == f"it-{kind}")
+            self.assertEqual((item.get("check") or {}).get("problems") or [], [], label)
+            self.assertTrue(item["present"], label)
+
+    def test_a_contract_still_does(self):
+        with server.company_lock(self.company):
+            state = server.load_company(self.company)
+            job = next(j for j in state["jobs"] if j["id"] == self.job_id)
+            draft = next(i for i in job["invoices"] if i["status"] in ("draft", "awaiting_approval"))
+            draft["packet"].append({"id": "it-c", "kind": "contract", "label": "Signed contract", "required": True, "present": False, "blocker": "Signed contract is missing.", "attachments": []})
+            server.save_company(self.company, state)
+        res, data = self.upload("c.txt", b"Contract for a different job altogether.", kind="contract", attach="it-c")
+        self.assertEqual(res.status, 200, data)
+        item = next(p for p in self.draft()["packet"] if p["id"] == "it-c")
+        self.assertIn("Job name not found: Elm addition.", item["check"]["problems"])
+
+
 if __name__ == "__main__":
     unittest.main()

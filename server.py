@@ -2885,7 +2885,9 @@ class Handler(BaseHTTPRequestHandler):
             # Agreeing takes effect once a code texted to the number comes back; nothing changes until then.
             code = auth.issue_sms_code(ctx.user["id"], phone)
             if not code:
-                self._json(429, {"error": "Five codes were asked for in the last hour. Use the newest one, or try again later."})
+                other = auth.sms_live_number(ctx.user["id"])
+                self._json(429, {"error": f"Five codes were asked for in the last hour, so none was sent to {sms.shown(phone)}. "
+                                          + (f"Use the newest one, which went to {sms.shown(other)}, or try again later." if other else "Use the newest one, or try again later.")})
                 return
             result = sms.send_code(company_state(ctx.company_id), ctx.company_id, ctx.user["id"], code)
             if result == "sent":
@@ -2896,7 +2898,7 @@ class Handler(BaseHTTPRequestHandler):
                      sms.NOT_ALLOWED: "This number isn't on this server's allow-list.",
                      sms.READ_ONLY: "Texts are off while this company is read-only.",
                      sms.CLIENT_NUMBER: CLIENT_PHONE,
-                     sms.STOPPED: f"This number replied STOP earlier, so nothing can be texted to it. Text START to {sms.settings()['from']} first, then try again."}.get(result, "The code couldn't be sent. Check the number and try again.")
+                     sms.STOPPED: f"This number replied STOP earlier, so nothing can be texted to it. Text START to {sms.shown(sms.settings()['from'])} first, then try again."}.get(result, "The code couldn't be sent. Check the number and try again.")
         if wrong:
             self._json(409, {"error": wrong, "fields": {"phone": wrong}})
             return
@@ -3371,7 +3373,7 @@ def _file_reader(company_id: str, ahead: dict | None = None):
     return read
 
 
-DOCUMENT_ACTIONS = {"attach-record", "packet-confirm", "attach"}
+DOCUMENT_ACTIONS = {"attach-record", "packet-confirm", "packet-recheck", "attach"}
 WAIVER_READING_ACTIONS = {"send", "waiver"}
 
 
@@ -3429,6 +3431,7 @@ JOB_ACTIONS = {
     "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor, _text(c.body, "note") if "note" in c.body else None)),
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
     "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body))),
+    "packet-recheck": (True, lambda h, st, j, i, c: c.reply.update(check_problems=domain.recheck_packet_item(st, j, i, read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body)))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: _skip_item(st, j, i, c)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),

@@ -1755,6 +1755,8 @@ def send_waiver(
     record["waiver_kind"] = kind
     if not _waiver_tie(record):
         _tie_waiver(record, invoice["id"] if invoice else release["id"] if release else EARLIER_PAYMENT)
+    if kind.endswith("_final"):
+        _final_waiver_fills_closeout(state, job, record, actor)
     job["waiver_sent_at"] = now
     job["waiver_kind"] = WAIVER_KINDS[kind]
     job["external_status"] = "Waiver sent"
@@ -1778,6 +1780,18 @@ def send_waiver(
     _sync_waiver(job)
     audit(state, job_id, "send_waiver", f"{actor} approved sending the {WAIVER_KINDS[kind].lower()}{which} ({record['label']}).", actor)
     return job
+
+
+def _final_waiver_fills_closeout(state: dict[str, Any], job: dict[str, Any], record: dict[str, Any], actor: str) -> None:
+    """The final waiver that went out is the closeout's Final lien waivers: nobody files it twice."""
+    record["sent_as_final"] = True
+    for item in job.get("closeout_packet") or []:
+        if not item.get("present") and (_record_kinds_for(item) or ("",))[0] == "final_waiver":
+            now = utcnow()
+            item["attachments"] = [{"name": record["label"], "record_id": record["id"]}]
+            item.update(present=True, resolved_at=now, confirmed_by=actor, confirmed_at=now)
+            item.pop("check", None)
+            audit(state, job["id"], "packet_confirmed", f"{record['label']} went out as the final waiver, so it fills {item['label']}.", actor)
 
 
 def waiver_not_needed(
@@ -4489,6 +4503,9 @@ def _drop_unconfirmed(item: dict[str, Any]) -> None:
     item["attachments"] = _going(item)
 
 
+FIELD_RECORD_KINDS = {"ticket", "photo", "inspection", "supplier_invoice"}
+
+
 def _document_check(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None, read_file: Any) -> dict[str, Any] | None:
     """Compare the item's files with the job (Decision 6): a waiver with the job name, the amount
     and the conditional wording, any other document with the job name. Progress photos have
@@ -4502,7 +4519,9 @@ def _document_check(state: dict[str, Any], job: dict[str, Any], item: dict[str, 
         if metas:
             waiver = name in {"waiver", "final_waiver"} or bool(item.get("waiver_kind"))
             cents = invoice["amount_cents"] if waiver and invoice else None
-            check = doc_check.check([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], job["name"],
+            # Field paperwork often doesn't name the job, so that is no reason to stop anyone.
+            field = not waiver and set((_record_kinds_for(item) or ("", ("-",)))[1]) <= FIELD_RECORD_KINDS
+            check = doc_check.check([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], "" if field else job["name"],
                                     money(cents) if cents is not None else "", cents, str(item.get("waiver_kind") or ""), waiver)
             # A waiver record that doesn't say its type: the person is asked, it is never assumed (M14).
             if item.get("waiver_kind") in WAIVER_KINDS:
@@ -4521,13 +4540,22 @@ def _document_check(state: dict[str, Any], job: dict[str, Any], item: dict[str, 
     return check
 
 
+def _check_stamp(job: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None) -> dict[str, Any]:
+    """What a check of an item was for: its files, and for a waiver, the amount."""
+    records = {r["id"]: r for r in job.get("records", [])}
+    files = sorted(f for a in item.get("attachments", []) for f in (records.get(a.get("record_id")) or {}).get("file_ids") or [])
+    return {"file_ids": files, "cents": invoice["amount_cents"] if invoice and item.get("waiver_kind") else None}
+
+
 def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None, actor: str,
-                read_file: Any, looked: bool) -> None:
+                read_file: Any, looked: bool, confirming: bool = False) -> None:
     """The person's check (Stephen's Nov 1 notes, Decision 6): the item clears with who and when,
     unless the file doesn't match or can't be read. Then it waits, with the warning, until they
     say they opened it and it is right (looked), a separate step from the warning naming what
-    didn't match, which clears it whatever the warning said."""
+    didn't match, which clears it whatever the warning said. confirming: this is Confirm on the
+    item (not an attach): one look clears the file at this amount, whatever else the check finds now."""
     shown = set((item.get("check") or {}).get("problems") or [])
+    same_file = item.get("check_for") is not None and item["check_for"] == _check_stamp(job, item, invoice)
     if read_file is not None:
         for a in item.get("attachments", []):   # the pay app's page warns before the send has to
             rec = next((r for r in job.get("records", []) if r["id"] == a.get("record_id")), None)
@@ -4536,12 +4564,13 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
     check = _document_check(state, job, item, invoice, read_file)
     if check is not None:
         item["check"] = check
+        item["check_for"] = _check_stamp(job, item, invoice)
     else:
         check = item.get("check")
     which = invoice["number"] if invoice else "the job's supporting documents"
     problems = (check or {}).get("problems") or []
     # Looked counts only for the warning the person was shown: a first attach never clears a flag.
-    if problems and not (looked and set(problems) <= shown):
+    if problems and not (looked and (set(problems) <= shown or (confirming and same_file))):
         for a in item.get("attachments", []):
             a["unconfirmed"] = True
         audit(state, job["id"], "document_flagged", f"Document check on {item['label']} on {which}: {' '.join(check['problems'])}", "duracash")
@@ -4577,13 +4606,7 @@ def _is_filed(records: dict[str, Any], attachment: dict[str, Any]) -> bool:
     return bool((records.get(attachment.get("record_id")) or {}).get("file_ids"))
 
 
-def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: str = "owner", looked: bool = False,
-                        read_file: Any = None, shown: list[str] | None = None) -> dict[str, Any]:
-    """A person confirms they checked what is attached to an item: a suggestion from the job
-    record, or a file the document check flagged (looked says they opened it and it is right).
-    shown is the records on their screen: a newer one may have taken over since, and that one
-    hasn't been looked at."""
-    job = _open_job(state, job_id)
+def _item_to_confirm(state: dict[str, Any], job: dict[str, Any], item_id: str, shown: list[str] | None) -> tuple[dict[str, Any], dict[str, Any] | None]:
     item, invoice = _find_packet_item(job, item_id)
     if not item:
         raise GateError("Supporting document not found.")
@@ -4601,7 +4624,31 @@ def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor:
         # Saved before a change said so: what this confirm is for is the type the pay app needs now.
         invoice["final"] = is_final(job)
         _name_conditional_waiver(job, invoice)
-    _clear_item(state, job, item, invoice, actor, read_file, looked)
+    return item, invoice
+
+
+def recheck_packet_item(state: dict[str, Any], job_id: str, item_id: str, read_file: Any = None, shown: list[str] | None = None) -> list[str]:
+    """Read what is on an item as Confirm would, clearing nothing, and return every problem: what
+    the prompt lists, so one look answers all of it."""
+    job = _open_job(state, job_id)
+    item, invoice = _item_to_confirm(state, job, item_id, shown)
+    check = _document_check(state, job, item, invoice, read_file)
+    if check is not None:
+        item["check"] = check
+        item["check_for"] = _check_stamp(job, item, invoice)
+    return list((item.get("check") or {}).get("problems") or [])
+
+
+def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: str = "owner", looked: bool = False,
+                        read_file: Any = None, shown: list[str] | None = None) -> dict[str, Any]:
+    """A person confirms they checked what is attached to an item: a suggestion from the job
+    record, or a file the document check flagged (looked says they opened it and it is right).
+    shown is the records on their screen: a newer one may have taken over since, and that one
+    hasn't been looked at."""
+    job = _open_job(state, job_id)
+    item, invoice = _item_to_confirm(state, job, item_id, shown)
+    records = {r["id"]: r for r in job.get("records", [])}
+    _clear_item(state, job, item, invoice, actor, read_file, looked, confirming=True)
     if item["present"] and invoice and invoice.get("excluded_file_ids"):
         # Confirmed with its file left out over a redraft (_ask_for_a_look): what clears goes with the email.
         back = {fid for a in item.get("attachments", []) for fid in records.get(a.get("record_id"), {}).get("file_ids", [])}
@@ -4615,6 +4662,8 @@ def _fits_waiver_item(record: dict[str, Any], item: dict[str, Any], invoice: dic
     fills a conditional item, M14) and it was not taken for another pay app."""
     if record.get("kind") != "waiver" or not item.get("waiver_kind"):
         return True
+    if record.get("sent_as_final") and (_record_kinds_for(item) or ("",))[0] == "final_waiver":
+        return True   # the final waiver that went out, whichever type the closeout's item names
     has = record_waiver_kind(record)
     if has and has != item["waiver_kind"]:
         return False  # a progress waiver isn't suggested for a final payment, nor the other way

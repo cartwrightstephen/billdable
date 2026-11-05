@@ -65,6 +65,8 @@ def summary_text(state: dict[str, Any], job: dict[str, Any]) -> str:
     lines += ["", "Payments:"]
     lines += [f"  {_day(p.get('matched_at'))}  {money(p['amount_cents'])}  {p.get('reference') or ''}".rstrip()
               for p in job.get("payments", [])] or ["  None"]
+    lines += [f"  {_day(e.get('at'))}  -{money(int(e.get('returned_cents', e['cents'])))}  refunded or credited: {e.get('reason') or ''}".rstrip()
+              for e in job.get("overbilling_settled") or [] if int(e.get("returned_cents", e["cents"]))]
     lines += ["", "Change orders:"]
     lines += [f"  CO {co.get('number')}  {co.get('title', '')}  {money(co['amount_cents'])}  {co.get('status', '')}"
               for co in job.get("change_orders", [])] or ["  None"]

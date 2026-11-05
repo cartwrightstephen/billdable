@@ -370,6 +370,8 @@ class CodeTroubles(Http):
             code = self.code_texted()
             res, data = self.ask("(404) 555-0124")
             self.assertEqual(res.status, 429)
+            self.assertIn("none was sent to (404) 555-0124", data["error"])
+            self.assertIn("(404) 555-0123", data["error"], "says which number the code on the screen went to")
             self.assertIn("Use the newest one", data["error"])
             res, data = self.request("POST", "/api/auth/sms/confirm", {"code": code})
             self.assertEqual(res.status, 200, data)
@@ -379,7 +381,7 @@ class CodeTroubles(Http):
         with self.ready():
             res, data = self.ask("(404) 555-0130")
         self.assertEqual(res.status, 409)
-        self.assertIn("Text START to +14045550100 first", data["fields"]["phone"])
+        self.assertIn("Text START to (404) 555-0100 first", data["fields"]["phone"])
 
     def test_stop_then_ticking_the_box_shows_stopped_with_the_start_line(self):
         with self.ready():

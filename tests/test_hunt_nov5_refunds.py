@@ -188,6 +188,37 @@ class CreditOffRetainage(unittest.TestCase):
         self.assertEqual((m["retainage_open_cents"], m["overbilled_cents"]), (1_000_000, 0))
 
 
+class FinalWaiverFillsCloseout(unittest.TestCase):
+    """Item 10: a final waiver sent fills Final lien waivers on the closeout."""
+
+    def test_sent_on_the_final_payment_it_fills_the_item(self):
+        state, job, inv = base(retainage=10)
+        domain.match_payment(state, job["id"], inv["amount_cents"], "c", invoice_id=inv["id"])
+        domain.record_retainage_payment(state, job["id"], inv["retainage_cents"], "r")
+        final = next(p for p in job["closeout_packet"] if p["kind"] == "final_waiver")
+        self.assertFalse(final["present"])
+        rel = job["retainage_waivers"][0]
+        kind = domain.release_due_kind(job, rel)
+        self.assertEqual(kind, "unconditional_final")
+        rec = signed_waiver(state, job["id"], kind)
+        rec["release_id"] = rel["id"]
+        domain.send_waiver(state, job["id"], "Sam", release_id=rel["id"])
+        self.assertTrue(final["present"], "the waiver that went out is the file")
+        self.assertEqual([a["record_id"] for a in final["attachments"]], [rec["id"]])
+        self.assertEqual(final["confirmed_by"], "Sam")
+        self.assertNotIn(final, domain.closeout_missing(job))
+
+    def test_a_progress_waiver_sent_doesnt(self):
+        state, job, inv = base(retainage=10)
+        domain.match_payment(state, job["id"], inv["amount_cents"], "c", invoice_id=inv["id"])
+        kind = domain.suggested_waiver_kind(job, inv)
+        self.assertEqual(kind, "unconditional_progress")
+        signed_waiver(state, job["id"], kind)
+        domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"])
+        final = next(p for p in job["closeout_packet"] if p["kind"] == "final_waiver")
+        self.assertFalse(final["present"])
+
+
 class CreditOffRetainageByProfile(Base):
     def test_it_takes_record_payments(self):
         self.assertEqual(profiles.JOB_ACTION_PERMS["retainage-credit"], "record_payments")

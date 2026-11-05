@@ -350,7 +350,7 @@ function twoStepCardHtml(prompt = false) {
           <input id="2fa-off-code" placeholder="Code from the app" autocomplete="one-time-code" inputmode="numeric" aria-label="Code from the app">
           <button class="btn small secondary" data-action="2fa-disable">Use email codes</button></div></details>` : ""}`;
   } else if (codesByEmail) {
-    body = `<p class="sub"><span class="pill green">On</span> Email codes. Signing in on a new device asks for a 6-digit code we email to ${me.email}; that device is then remembered for 30 days.</p>
+    body = `<p class="sub"><span class="pill green">On</span> Email codes. Signing in on a new device asks for a 6-digit code we email to <span class="long-word">${me.email}</span>; that device is then remembered for 30 days.</p>
       ${setup || `<button class="btn small secondary" data-action="2fa-begin">Use an authenticator app instead</button>`}`;
   } else {
     body = `<p class="sub"><span class="pill amber">Not set up</span> Add a code from your phone to every sign-in, so a stolen password isn't enough.</p>
@@ -373,7 +373,7 @@ function passwordView() {
     <div class="card" data-form-key="password">${formErrorLine("password")}
       ${codesByEmail ? `<div class="form-inline">
         <button class="btn small${codeSentTo ? " secondary" : ""}" data-action="pw-code">${codeSentTo ? "Send a new code" : "Email me a code"}</button>
-        ${codeSentTo ? `<span class="sub" role="status">Code sent to ${codeSentTo}. It works for 15 minutes.</span>` : `<span class="sub">To ${me.email}</span>`}
+        ${codeSentTo ? `<span class="sub long-word" role="status">Code sent to ${codeSentTo}. It works for 15 minutes.</span>` : `<span class="sub long-word">To ${me.email}</span>`}
       </div>` : ""}
       <div class="form-grid">
         ${codesByEmail ? field({ form: "password", name: "code", id: "pw-code", label: "Code from the email", autocomplete: "one-time-code", inputmode: "numeric", placeholder: "123456" }) : ""}

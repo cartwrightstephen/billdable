@@ -329,6 +329,14 @@ def sms_code_number(user_id: str, code: Any) -> str:
         return entry.get("phone", "") if entry.get("kind") == "sms" and entry.get("expires_at", "") > _iso(_utcnow()) else ""
 
 
+def sms_live_number(user_id: str) -> str:
+    """The number this person's live code went to; "" when none is."""
+    now = _iso(_utcnow())
+    with LOCK:
+        return next((v.get("phone", "") for v in _load()["tokens"].values()
+                     if v.get("kind") == "sms" and v.get("user_id") == user_id and v.get("expires_at", "") > now), "")
+
+
 def drop_sms_codes(user_id: str) -> None:
     with LOCK:
         data = _load()
