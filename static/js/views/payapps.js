@@ -22,6 +22,28 @@ let payPreselectJob = null;
 onSessionEnd(() => { payPreselectJob = null; });
 
 // The email subject the pay app goes out with (domain.pay_app_subject, R4-05).
+// What a pencil copy will be before it goes: who to, how much, the PDF and the email. Missing
+// documents are listed but don't hold it back: it is a check of the numbers.
+function pencilReviewHtml(j, inv, noEmail, locked) {
+  const preview = inv.pencil_preview || {};
+  const missing = (inv.packet || j.packet || []).filter(p => p.required && !p.present);
+  return `<div class="card pencil-check">
+    <h2>Send draft for their review</h2>
+    <div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email || '<span class="blocker">no email yet</span>'}</span></div>
+    <div class="money-row"><span class="label">Amount</span><span>${money(inv.amount_cents)}</span></div>
+    <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a></p>
+    <div class="money-row"><span class="label">Subject</span><span>${preview.subject || ""}</span></div>
+    <pre class="inbox-text">${preview.body || ""}</pre>
+    ${missing.length ? `<p class="sub">Still missing:</p><ul class="plain-list">${missing.map(p => `<li>${p.label}</li>`).join("")}</ul>` : ""}
+    ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
+    ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
+    <div class="form-inline">
+      <button class="btn" data-action="pencil" data-id="${j.id}"${noEmail || locked ? " disabled" : ""}>Send Draft for Their Review</button>
+      <button class="btn secondary" data-action="toggle-form" data-form="pencilreview">Cancel</button>
+    </div>
+  </div>`;
+}
+
 function subjectPreview(j, inv) {
   const company = (state.company || {}).name || "";
   return [`${inv.final ? "Final pay application" : "Pay application"} ${inv.number}`, j.name, money(inv.amount_cents), company,
@@ -98,6 +120,7 @@ export const views = {
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a></p>
       ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
+      ${draft && formOpen.pencilreview === inv.id && inv.pencil_status !== "sent" ? pencilReviewHtml(j, inv, noEmail, locked) : ""}
       ${draft ? `<div class="card send-check">
         <h2>Review &amp; send</h2>
         <div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email || '<span class="blocker">no email yet</span>'}</span></div>
@@ -208,6 +231,13 @@ export async function startPayApp(jobId, step) {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
   // New pay app on the list (G10): with one job to bill its step opens; else pick the job first.
+  // Send Draft for Their Review opens this first: nothing is emailed until its own button.
+  "pencil-review": (el) => {
+    nav("payapp-detail", el.dataset.job, el.dataset.inv);
+    formOpen.pencilreview = el.dataset.inv;
+    render();
+    requestAnimationFrame(() => document.querySelector(".pencil-check")?.scrollIntoView({ block: "start" }));
+  },
   "payapp-new": () => {
     const starts = payAppStarts(state.jobs, perms());
     if (starts.length === 1) return startPayApp(starts[0].job.id, starts[0].step);

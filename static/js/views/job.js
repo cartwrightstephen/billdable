@@ -413,11 +413,10 @@ export const actions = {
     if (refuseForm("retpay", amount.error || amount.cents <= 0 ? { amount_cents: "Enter the retainage received in dollars, like 2,425." } : {})) return;
     await post(`/api/jobs/${id}/retainage-paid`, { amount_cents: amount.cents, reference: v.reference }, { formKey: "retpay", close: "retpay" });
   },
+  // Sent from its review screen on the pay app, which shows what goes (payapps.js).
   "pencil": async (el, id) => {
-    const j = state.jobs.find(x => x.id === id);
-    const draft = j && j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
-    if (j && !(await askConfirm(`Email ${unesc(draft ? draft.number : "the draft")} to ${sendsTo(j)} as a draft for their review?`, "Send the draft"))) return;
-    await post(`/api/jobs/${id}/pencil`);
+    const r = await post(`/api/jobs/${id}/pencil`);
+    if (r && r.ok) { formOpen.pencilreview = false; render(); }
   },
   "pencil-agreed": (el, id) => post(`/api/jobs/${id}/pencil-response`, { agreed: true }),
   "pencil-changes": async (el, id) => {

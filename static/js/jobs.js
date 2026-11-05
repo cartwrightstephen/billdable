@@ -12,6 +12,17 @@ export const RECORD_KINDS = {
   asbuilt: "As-builts", warranty: "Warranty", other: "Other",
 };
 
+// What an Inbox item can be filed as: the record kinds, with a ticket offered as the two it can
+// be (importer.file_item splits "ticket:delivery" into its kind and ticket_type).
+export const FILE_KINDS = Object.entries(RECORD_KINDS).flatMap(([k, v]) => k === "ticket"
+  ? [["ticket:delivery", "Delivery ticket"], ["ticket:time_sheet", "Time sheet"]] : [[k, v]]);
+
+// The filing choice an Inbox guess starts on: a ticket is a time sheet if it says so.
+export function fileKindPick(kind, text = "") {
+  if (kind !== "ticket") return RECORD_KINDS[kind] ? kind : "note";
+  return /\btime ?sheet\b/i.test(unesc(text || "")) ? "ticket:time_sheet" : "ticket:delivery";
+}
+
 // A ticket says which it is, when the New job record form made it (record.ticket_type); one from
 // before, or filed from the Inbox, is just a ticket. The paperwork rules read the kind alone.
 export const TICKET_TYPES = { delivery: "Delivery ticket", time_sheet: "Time sheet" };
@@ -446,7 +457,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   // Asking for retainage only once the work is done and the closeout documents are in, and not again
   // before the client's days between contacts (chase_retainage); the Money card says why.
   if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0 && !retainageAskWaits(j, now)) add("retainage", "Ask for Retainage", `data-action="retainage" data-id="${j.id}"`, "paid");
-  if (draft && !pencilOut) add("pencil", "Send Draft for Their Review", `data-action="pencil" data-id="${j.id}"`, "bill");
+  if (draft && !pencilOut) add("pencil", "Send Draft for Their Review", `data-action="pencil-review" data-job="${j.id}" data-inv="${draft.id}"`, "bill");
   if (pencilOut) add("pencil-ok", "Client Agreed to the Draft", `data-action="pencil-agreed" data-id="${j.id}"`, "bill");
   if (pencilOut) add("pencil-no", "Client Wants Changes", `data-action="toggle-form" data-form="pencilchanges"`, "bill");
   if (isBlocked(j)) add("sentback", "Client Sent Pay App Back", `data-action="toggle-form" data-form="sentback"`, "bill");

@@ -2,7 +2,7 @@
 // text, and the forwarding addresses for email, texts and the calendar. The Inbox page shows
 // what is waiting and everything received (C1); the file and paste boxes are on Import (data.js).
 import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
-import { RECORD_KINDS, SOURCE_LABELS, defaultJobId, jobFilterOptions, finalPayAppConfirm } from "../jobs.js";
+import { RECORD_KINDS, FILE_KINDS, fileKindPick, SOURCE_LABELS, defaultJobId, jobFilterOptions, finalPayAppConfirm } from "../jobs.js";
 import { readJson, setNetBanner, inBatches } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { webcalUrl } from "../calendar.js";
@@ -293,14 +293,15 @@ function inboxItemCard(i) {
   const files = (i.file_ids || []).map(fid => (state.files || []).find(x => x.id === fid)).filter(Boolean);
   const title = i.subject || (files[0] && files[0].name) || (i.text || "").split("\n")[0].slice(0, 80) || "Untitled";
   const preview = (i.text || "").slice(0, 600);
-  const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? "selected" : ""}>${termText(v)}</option>`).join("");
+  const picked = fileKindPick(i.kind, `${i.subject || ""} ${i.text || ""}`);
+  const kinds = FILE_KINDS.map(([k, v]) => `<option value="${k}" ${picked === k ? "selected" : ""}>${termText(v)}</option>`).join("");
   const suggested = i.suggested_job_id && openJobs.find(j => j.id === i.suggested_job_id);
   const choices = suggested ? [] : choiceJobs(i, openJobs);
   // Nothing suggested and only one open job: that one (R2-07).
   const pick = i.suggested_job_id || defaultJobId(openJobs);
   const jobs = `<option value="">Pick a job…</option>` + jobsInOrder(openJobs, i.candidates || []).map(j => `<option value="${j.id}" ${pick === j.id ? "selected" : ""}>${j.name} (${j.code})</option>`).join("");
   const selects = !suggested || inboxOpen.has(i.id);
-  const kindName = termText(RECORD_KINDS[i.kind] || i.kind);
+  const kindName = termText((FILE_KINDS.find(([k]) => k === picked) || [])[1] || i.kind);
   return `<div class="inbox-item" data-item="${i.id}">
     <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${title}</strong>
       <span class="sub">${i.from ? "from " + i.from + " · " : ""}${fmtDate(i.sent_at || i.received_at)}${i.note_date ? " · dated " + fmtDate(i.note_date) : ""}</span></div>

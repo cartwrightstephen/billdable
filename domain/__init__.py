@@ -733,6 +733,18 @@ def _with_client(draft: dict[str, Any] | None) -> bool:
     return bool(draft and draft.get("pencil_status") == "sent")
 
 
+def _pencil_email(state: dict[str, Any], job: dict[str, Any], draft: dict[str, Any], payer: dict[str, Any], actor: str) -> tuple[str, str]:
+    """A pencil copy's subject and body; the review screen shows them before it goes (pencil_preview)."""
+    subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
+    body = (
+        f"{payer.get('approver') or payer['name']},\n\n"
+        f"Here is the pencil copy of {draft['number']} for {job['name']}, attached as a PDF marked PENCIL COPY. "
+        "Please confirm the quantities and change orders, or send corrections, before we submit the formal pay app.\n\n"
+        f"{pay_app_text(state, job, draft)}\n\n{sign_off(state, actor)}"
+    )
+    return subject, body
+
+
 def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
     """Send the open draft to the payer as a pencil copy to agree quantities before the formal pay app."""
     job = _open_job(state, job_id)
@@ -742,13 +754,7 @@ def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dic
     _need_playbook(state, job)
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
-    subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
-    body = (
-        f"{payer.get('approver') or payer['name']},\n\n"
-        f"Here is the pencil copy of {draft['number']} for {job['name']}, attached as a PDF marked PENCIL COPY. "
-        "Please confirm the quantities and change orders, or send corrections, before we submit the formal pay app.\n\n"
-        f"{pay_app_text(state, job, draft)}\n\n{sign_off(state, actor)}"
-    )
+    subject, body = _pencil_email(state, job, draft, payer, actor)
     _record_email(state, job_id, "pencil", to, subject, body, actor, payapp_invoice_id=draft["id"])
     draft["pencil_sent_at"] = utcnow()
     draft["pencil_status"] = "sent"
@@ -1869,6 +1875,8 @@ def _paperwork_view(state: dict[str, Any], job: dict[str, Any], out: dict[str, A
         inv["waiver_stages"] = waiver_stages(state, job, by_id[inv["id"]])
         if inv["status"] in DRAFT_STATUSES:
             inv["email_preview"] = email_preview(state, job, by_id[inv["id"]])
+            subject, body = _pencil_email(state, job, by_id[inv["id"]], _payer(state, job["payer_id"]), PREVIEW_SENDER)
+            inv["pencil_preview"] = {"subject": subject, "body": body}
     if _legacy_waiver_pending(job):
         # The older job-level waiver (Earlier payment): the signed one that would go out, or that
         # it is unclear which payment one is for while several are owed (B1).

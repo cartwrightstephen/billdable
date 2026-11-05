@@ -9,7 +9,7 @@
 // (tests/js/today.test.mjs).
 
 import { termText } from "./terms.js";
-import { RECORD_KINDS } from "./jobs.js";
+import { FILE_KINDS, RECORD_KINDS, fileKindPick } from "./jobs.js";
 import { pathFor } from "./routes.js";
 import { BALL_WORDS } from "./tasks.js";
 
@@ -46,8 +46,8 @@ export function todayQueue(state) {
 // ("Add to this job as Lien waiver") in the Inbox's own kind select, so it can be changed first
 // and what is shown is what is filed. The select has the Inbox card's id, which the button reads.
 export function inboxKindSelect(r) {
-  const guessed = RECORD_KINDS[r.item_kind] ? r.item_kind : "note";
-  const options = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}"${k === guessed ? " selected" : ""}>${termText(v)}</option>`).join("");
+  const guessed = fileKindPick(r.item_kind, r.text);
+  const options = FILE_KINDS.map(([k, v]) => `<option value="${k}"${k === guessed ? " selected" : ""}>${termText(v)}</option>`).join("");
   return `<label class="row-kind">as <select id="inb-kind-${r.item_id}" aria-label="File as">${options}</select></label>`;
 }
 

@@ -637,15 +637,29 @@ def _item(state: dict[str, Any], item_id: str) -> dict[str, Any]:
     return item
 
 
+# What a ticket can be when filed; domain/daily.py's New job record sets the same ticket_type.
+TICKET_WORDS = {"delivery": "Delivery ticket", "time_sheet": "Time sheet"}
+
+
+def _ticket_type(item: dict[str, Any]) -> str:
+    """A ticket filed without saying which: a time sheet if it says so, else a delivery ticket."""
+    said = f"{item.get('subject') or ''} {item.get('text') or ''}"
+    return "time_sheet" if re.search(r"\btime ?sheet\b", said, re.I) else "delivery"
+
+
 def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor: str) -> dict[str, Any]:
-    """Put an inbox item on a job's record. Daily notes become daily records with their own date."""
+    """Put an inbox item on a job's record. Daily notes become daily records with their own date.
+    kind may be "ticket:delivery" or "ticket:time_sheet": kind ticket with that ticket_type."""
     item = _item(state, item_id)
     if item["status"] != "new":
         raise domain.GateError("This item was already filed or dismissed.")
     job = domain._open_job(state, job_id) if job_id else None
     if not job:
         raise domain.GateError("Pick a job to file this to.")
+    kind, _, ticket_type = (kind or "").partition(":")
     kind = kind if kind in KINDS else item["kind"]
+    if kind == "ticket":
+        ticket_type = ticket_type if ticket_type in TICKET_WORDS else _ticket_type(item)
     files = [f for f in state.get("files", []) if f["id"] in item["file_ids"]]
     label = item["subject"] or (files[0]["name"] if files else "") or (item["text"].strip().splitlines() or ["Imported note"])[0]
     label = label.strip()[:120] or "Imported note"
@@ -667,9 +681,11 @@ def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor
         rec["source"] = source_line
         rec["file_ids"] = list(item["file_ids"])
         rec["inbox_id"] = item["id"]
+        if kind == "ticket":
+            rec["ticket_type"] = ticket_type
     domain._refresh_draft_gate(job, state)  # with its files now, it can be suggested for a missing item
     item.update({"status": "filed", "filed_job_id": job_id, "filed_kind": kind, "record_ids": record_ids, "filed_at": utcnow(), "filed_by": actor})
-    domain.audit(state, job_id, "import_filed", f"{actor} filed {KINDS.get(kind, kind).lower()} '{label}' ({source_line}) to the job's records.", actor)
+    domain.audit(state, job_id, "import_filed", f"{actor} filed {(TICKET_WORDS[ticket_type] if kind == 'ticket' else KINDS.get(kind, kind)).lower()} '{label}' ({source_line}) to the job's records.", actor)
     return item
 
 

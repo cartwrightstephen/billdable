@@ -294,6 +294,23 @@ class TodayRowsTests(unittest.TestCase):
         self.payer["ap_email"] = ""
         self.assertEqual(self.only()["text"], f"{inv['number']} for {domain.money(inv['amount_cents'])} to Dana is ready. Add the pay app email for Dana Lee, then Review & Send.")
 
+    def test_a_ticket_filed_from_the_inbox_says_which(self):  # criterion 83
+        import importer
+        for picked, text, expect in (("ticket:delivery", "Tile came", "delivery"), ("ticket:time_sheet", "Crew hours", "time_sheet"),
+                                     ("ticket", "Time sheet week 3", "time_sheet"), ("ticket", "Tile came", "delivery")):
+            item = {"id": f"in-{picked}-{text}", "status": "new", "kind": "note", "subject": "", "text": text, "file_ids": [], "source": "paste", "from": ""}
+            self.state.setdefault("inbox", []).append(item)
+            importer.file_item(self.state, item["id"], self.job["id"], picked, "owner")
+            rec = self.job["records"][-1]
+            self.assertEqual((rec["kind"], rec["ticket_type"]), ("ticket", expect))
+
+    def test_the_pencil_preview_is_what_goes(self):  # criterion 78
+        inv = self.draft()
+        shown = next(i for i in domain.job_view(self.state, self.job)["invoices"] if i["id"] == inv["id"])["pencil_preview"]
+        domain.send_pencil(self.state, self.job["id"], domain.PREVIEW_SENDER)
+        sent = self.state["email_log"][-1]
+        self.assertEqual((sent["subject"], sent["body"]), (shown["subject"], shown["body"]))
+
     def test_a_missing_document_row_carries_the_item_its_button_lands_on(self):
         inv = self.draft()
         r = self.only()
