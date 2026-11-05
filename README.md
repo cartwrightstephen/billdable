@@ -13,7 +13,7 @@ Then open http://127.0.0.1:8765
 The public landing page is the front door. Create a company there, or sign in.
 
 - Demo: **Look around a sample company** on the landing page opens Hartline Remodeling's sample data with no account, or sign in as `owner@hartline.example` / `demo`. Anyone can look around and reset it (see `DURACASH_DEMO` for production).
-- Create account: a blank company space. Your name, email and a password of 10+ characters; the company name can wait (the company is named after you until it is typed in Settings › Company). At most 5 sign-ups an hour from one network. Today's setup checklist then leads to the company details, the first job, its supporting documents and the first send.
+- Create account: a blank company space. Your name, email and a password of 10+ characters; the company name can wait (the company is named after you until it is typed in Settings › Company). At most 5 sign-ups an hour from one network. The Dashboard's setup checklist then leads to the company details, the first job, its supporting documents and the first send.
 
 ## Data
 
@@ -43,7 +43,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` | Billing (billing.py). With them, Settings › Billing shows everyone the subscription, and owners get Subscribe (Stripe Checkout, the free trial carried over) and Manage billing (Stripe's Customer Portal). Point a Stripe webhook at `<DURACASH_URL>/api/stripe/webhook`; see runbook 7. |
 | `BILLING_DAY`, `STRIPE_PARTNER_PRICE_ID` | Charges land on `BILLING_DAY` of the month (default 5, after the contractor's own 1st-of-the-month pay app is out): a trial ends on it, and a later subscription is anchored to it with the first part-month prorated. Design partners (`admin.py partner COMPANY_ID on`) pay `STRIPE_PARTNER_PRICE_ID`. |
 | `MONTHLY_SUMMARY_EMAILS` | `1`: the server emails each owner last month's summary on the 1st to the 3rd, once. The monthly restore drill runs by itself whenever backups exist, with an alert if it fails. |
-| `DAILY_EMAIL_HOUR_UTC` | The hour (UTC, default `11`) from which each owner with a confirmed email gets the daily "due today" email, once a day, when email is set up. Nothing is sent on a day with nothing due; a company turns it off on Settings › Company. |
+| `DAILY_EMAIL_HOUR_UTC` | The hour (UTC, default `11`) from which each owner with a confirmed email gets the daily "due today" email, once a day, when email is set up, and a member what is assigned to them. Nothing is sent on a day with nothing due; a job to finish is named once a week; a company turns it off on Settings › Company. Emailed and texted reminders go from this hour too. |
 | `BILLING_ENFORCE`, `BILLING_GRACE_DAYS` | `BILLING_ENFORCE=1` makes a company read-only (never deleted) when its subscription is unpaid or cancelled, or when the trial ended more than `BILLING_GRACE_DAYS` (14) ago with no subscription. A declined card that Stripe is still retrying only shows a warning. Off by default. |
 | `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | The Intuit Developer app's keys; with them, owners can connect QuickBooks (read-only) on Money › Payments. Add `<DURACASH_URL>/api/qbo/callback` as a redirect URI in the Intuit app. `QBO_ENV=production` for real companies; the default is the sandbox. Tokens live in `qbo_connections.json`, which the backups hold, so a restore keeps the connection (one that expired meanwhile needs Connect again). |
 | `DURACASH_STORAGE` | `json` keeps the one-file-per-company layout. Unset (the default) uses SQLite. |
@@ -52,9 +52,6 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `COOKIE_SECURE` | `1` forces the Secure cookie flag and sends `Strict-Transport-Security`. |
 | `TRUSTED_PROXY_HOPS` | How many proxies in front of the server add to `X-Forwarded-For` (default `1`, Render's). The caller's address, used by the sign-in and sign-up limits, is that many entries from the end. `0` when nothing sits in front: the header is ignored. |
 | `HELPER_ADMIN_USER_IDS` | Comma-separated account ids of the people who may review helper questions and edit answers (the founders). Nobody can, if unset. Ids, not emails, because sign-up doesn't verify email. Each person's id is at the bottom of the Help page. |
-| `TWILIO_AUTH_TOKEN` | When set, inbound texts must carry a valid `X-Twilio-Signature`, and photos and PDFs sent by text are downloaded into the Inbox item (`twilio_media.py`). Set it before giving out the SMS address. |
-| `TWILIO_ACCOUNT_SID` | Sent with the auth token when Twilio asks for a login to fetch media (accounts with media authentication on). |
-| `TWILIO_NUMBER` | The texting number shown to users in the Inbox. Display only. |
 | `INBOUND_EMAIL_ADDRESS_TEMPLATE` | The forwarding address shown in the Inbox, with `{token}` where the company's secret goes, e.g. `jobs+{token}@in.example.com`. Display only; the email service does the routing. |
 | `INBOUND_WEBHOOK_PASSWORD` | When set, the inbound email web address needs HTTP Basic with this password (any user name): give the email service `https://duracash:PASSWORD@<site>/api/inbound/email/<token>`. Anything else is refused (401). |
 | `INBOUND_SIGNING_KEY` | Mailgun's webhook signing key: when set, each inbound email post must carry Mailgun's `timestamp`, `token` and `signature` (HMAC-SHA256), no more than 15 minutes old, or it is refused (401). Each inbound email or text address takes at most 120 posts an hour either way (429 after that). The provider web addresses are shown to owners only, built from `DURACASH_URL` when it is set. |
@@ -76,20 +73,23 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `MAIL_FROM` | Sender address on a domain the provider has verified (SPF and DKIM), e.g. `billing@duracash.com`. Required with `SMTP_HOST`. |
 | `MAIL_EVENTS_TOKEN` | A random secret of 16+ characters. Give the mail provider `https://<site>/api/mail-events/<this token>` as its bounce (and spam-complaint) webhook; a bounced email's Outbox row turns "bounced" and its job's status line says so. Formats: `mail_events.py`. |
 | `MAIL_ALLOWLIST` | Comma-separated addresses and `@domains`. When set, mail to anyone else isn't sent; an Outbox email stays there marked why. With `DURACASH_ENV=staging`, a blank list sends to nobody. Sign-in codes aren't asked of someone off the list, outside production. |
-| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_NUMBER` | Twilio, for texts in and out. Production refuses inbound texts without the token. Texts only go to team members who agreed on My account; clients are never texted. |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_NUMBER` | Twilio, for texts in and out. Inbound texts must carry a valid `X-Twilio-Signature`; production and staging refuse them without the token, and only local development takes them unsigned. Photos and PDFs sent by text are downloaded into the Inbox item (`twilio_media.py`). Texts only go to team members who confirmed their number on My account; clients are never texted. |
 | `SMS_ALLOWLIST` | Comma-separated numbers. When set, texts to any other number aren't sent. With `MAIL_ALLOWLIST` or `DURACASH_ENV=staging` in force and this blank, no text goes out. |
 | `SMS_DAILY_LIMIT` | Texts per company per 24 hours, default 20. Counted in `sms_sends.json`. |
+| `REMINDER_REPEAT_DAYS` | Days before the same reminder comes round again, default 3. |
 | `MAIL_DAILY_LIMIT` | Emails per company per 24 hours, default 50. Sign-up doesn't verify anyone, so this keeps one account from using us to send spam. Counted in `mail_sends.json`. |
 
 ## Importing
 
-Everything comes into the Inbox, gets a suggested job (job code, address, job name, client name, or the client's email for pay apps as sender), a kind (change order, lien waiver, backup for the pay app, delivery or time ticket, photo, contract, daily record, note), and any dollar amounts and dates found. A person adds it to the job record with one tap (**Add to <job>**); Undo takes it back off unless a pay app's paperwork uses it. A payments export dropped in the Inbox offers **Read as payments**. No AI: the rules are in `importer.py`.
+Everything comes into the Inbox, gets a suggested job (job code, address, job name, client name, or the client's email for pay apps as sender), a kind (change order, lien waiver, backup for the pay app, delivery ticket, time sheet, photo, contract, diary entry, note), and any dollar amounts and dates found. A person adds it to the job record with one tap (**Add to <job>**); Undo takes it back off unless a pay app's supporting documents use it. A payments export dropped in the Inbox offers **Read as payments**. No AI: the rules are in `importer.py`.
 
-- Files: drop anywhere, paste a screenshot, or choose files. On a job page they go straight onto that job. PDF, images (JPG, PNG, GIF, WEBP, HEIC), Word, Excel, CSV, TXT and `.eml`, up to 15 MB. HTML, SVG and scripts are refused. Files are served back only to the same company, with `Content-Security-Policy: sandbox`, except PDFs, which are served without it so the browser's PDF viewer opens them.
+- Files: drop anywhere, paste a screenshot, or choose files on Import/Export › Import, where **Which job?** starts on **Not sure, file later** unless you came from a job's Import link. On a job page they go straight onto that job. PDF, images (JPG, PNG, GIF, WEBP, HEIC), Word, Excel, CSV, TXT and `.eml`, up to 15 MB. HTML, SVG and scripts are refused. Files are served back only to the same company, with `Content-Security-Policy: sandbox`, except PDFs, which are served without it so the browser's PDF viewer opens them.
 - Saved emails (`.eml`): sender, subject, date, body and attachments are read with Python's email parser.
 - Pasted text: an email (with or without headers), a text thread, or notes. Notes split at every line that starts with a date (`10/12`, `Oct 12, 2026`, `2026-10-12`) and file as diary entries with that date.
 - Inbound email: `POST /api/inbound/email/<token>` accepts raw MIME, a multipart form post, or JSON. The field names handled are the common ones for SendGrid Inbound Parse, Mailgun routes and Postmark inbound, written from their documentation; none has been tested against the live service.
-- Inbound SMS: `POST /api/inbound/sms/<token>` accepts Twilio's form post and answers with empty TwiML. With `TWILIO_AUTH_TOKEN` set, photos and PDFs sent by text are downloaded into the Inbox item (`twilio_media.py`); without it, or when a download fails, they are kept as links.
+- Inbound SMS: `POST /api/inbound/sms/<token>` accepts Twilio's form post and answers with empty TwiML. With `TWILIO_AUTH_TOKEN` set, photos and PDFs sent by text are downloaded into the Inbox item (`twilio_media.py`); when a download fails, they are kept as links. The item reads from the team member whose confirmed number sent it, or **Unknown sender**. The job is only suggested: filing a text needs the permission to edit company details. A one-word STOP turns texts off for that number and isn't filed.
+
+What happened on site goes on **New job record** (Jobs): the Diary, crew, weather and materials; tick boxes for Quantities, Change order work and New punchlist items; and sections for Delivery tickets, Progress photos, Time sheets, Invoices, Inspections and Other documents and notes. Each file makes one job record of its kind, and the diary one labelled "Diary entry <date>" (`domain/daily.py`).
 
 ## Sending email
 
@@ -131,7 +131,7 @@ Approved pay apps, drafts sent for the client's review, follow-ups, waivers and 
 
 ## Trial
 
-`trial.py` works out where each company stands against the agreed trial: nothing to pay until the first pay app sent through Duracash is paid, or 90 days, extended to 120 if a pay app is still unpaid on day 90. A company set to **Draws from homeowners** (Settings › Company, How you bill) gets 45 days or the first paid draw, with no extension. Today shows it, and the founders' page lists every company with its trial. Without the Stripe settings nothing is charged or locked when a trial ends; with them, Stripe's trial ends when the first pay app is paid (retried on the next change if Stripe is down), and `BILLING_ENFORCE` decides whether an unpaid company turns read-only. Companies that signed up before the trial was tracked aren't tracked.
+`trial.py` works out where each company stands against the agreed trial: nothing to pay until the first pay app sent through Duracash is paid, or 90 days, extended to 120 if a pay app is still unpaid on day 90. A company set to bill homeowners in draws (a setting from before Oct 29, `billing_style`) gets 45 days or the first paid draw, with no extension. Today shows it, and the founders' page lists every company with its trial. Without the Stripe settings nothing is charged or locked when a trial ends; with them, Stripe's trial ends when the first pay app is paid (retried on the next change if Stripe is down), and `BILLING_ENFORCE` decides whether an unpaid company turns read-only. Companies that signed up before the trial was tracked aren't tracked.
 
 ## Backups, health and logs
 
@@ -141,17 +141,29 @@ Approved pay apps, drafts sent for the client's review, follow-ups, waivers and 
 
 ## Schedule of values
 
-Optional per job, set before the first pay app (`sov.py`). Each line is a quantity at a unit rate (a lump sum is quantity 1, unit LS); overhead and profit is a percentage on top of the base lines. The schedule total must equal the contract; the editor shows the difference and offers to change the contract amount instead.
+Every new job has one (`sov.py`): the lines typed at New job, or one lump-sum line for the contract amount when they are left blank. Jobs from before Nov 3 with no schedule keep dollar progress. Each line is a quantity at a unit rate (a lump sum is quantity 1, unit LS); overhead and profit is a percentage on top of the base lines. The schedule total must equal the contract; the editor shows the difference and offers to change the contract amount instead.
 
+- A schedule can change until the first pay app is sent. A draft doesn't lock it: saving drafts it again. A draft with the client for review does, until it is answered or deleted. After a send, or once the work is finished, the card says why it is fixed.
 - Rows can be pasted from Excel or Google Sheets (tabs), a CSV, or a PDF (columns separated by runs of spaces). A header row is optional. Total and markup rows are skipped and reported; an "Overhead & profit 15%" row fills in the percentage.
-- Progress is entered as quantity done to date per line (percent for lump sums). Each pay app bills the difference since the last one, line by line, plus overhead and profit on that period's base work, less retainage, and stores the lines as a G703-style continuation sheet.
-- Quantities can't exceed the line (extra scope is a change order) or drop below what was billed, in quantity or in dollars. Numbers must be plain decimals (no exponents), and pasted text is read in bounded pieces. The schedule is fixed once a pay app exists; voiding the only pay app unlocks it.
+- Field totals are kept apart from what is billed. A New job record's quantities and Import's **Quantities done** add to each line's field total and never touch a draft. **Correct field total** (with a reason) and **Undo import** change it; an open draft drafted at the old total follows unless it is with the client, a figure typed on a draft stays, and sent pay apps stay as they are.
+- **Progress Pay App** is the one way quantities reach a draft (**Final Pay App** sets every line to 100%). Each line starts at its total to date. A blank box bills the suggestion. A changed figure bills that, audited, and the field total stays. On the draft, any line's amount can be changed from $0 to what is left on it; a cleared box goes back to the suggestion. Each pay app bills the difference since the last one, line by line, plus overhead and profit on that period's base work, less retainage, and stores the lines as a G703-style continuation sheet.
+- Quantities can't exceed the line (extra scope is a change order) or drop below what was billed, in quantity or in dollars. Numbers must be plain decimals (no exponents), and pasted text is read in bounded pieces.
 - An approved change order adds its own lump-sum line at the CO amount, without markup. A CO billed while unsigned is not billed again when approved.
 - All amounts are whole cents with half-up rounding on integers; the browser repeats the same arithmetic for the live totals.
 
+## Reminders and texts
+
+Internal only: clients get email, never texts (`sms.py`, `reminders.py`, page: Automations).
+
+- Each person picks, for Important dates, Missing information and Change order work, any of in the app, email and text. All are off until turned on. The same item comes round every `REMINDER_REPEAT_DAYS` until it is dealt with, then stops.
+- Email and text go from the hourly loop, at most one message per person per channel per day, from `DAILY_EMAIL_HOUR_UTC`. In the app they are notifications with an unread count on the menu. Nothing goes at start-up: the first run is an hour later. A read-only company is skipped.
+- A number takes a texted code on My account before texts turn on. A client's number is refused in any format, when saved, when a code goes and at every send.
+- `MAIL_ALLOWLIST` and `SMS_ALLOWLIST` limit who gets anything; on `duracash-staging` (`DURACASH_ENV=staging`) a blank list sends to nobody. Accounts and live tests: `docs/setup-integrations.md`.
+- Not built: a Twilio number shared by companies for inbound texts. One number files to one company.
+
 ## Calendar feed
 
-`GET /api/calendar/<token>.ics` is an iCalendar feed of follow-ups due, expected approvals, sends, payments, waivers and closeouts. Google Calendar, Apple Calendar and Outlook can subscribe to it; the URL carries a secret instead of a login. Calendar apps refresh subscribed feeds on their own schedule. The feed and the Calendar page say these are contract and follow-up dates, not legal deadlines; Duracash computes no lien or prompt-pay dates.
+`GET /api/calendar/<token>.ics` is an iCalendar feed of follow-ups due, expected approvals, sends, payments, waivers, closeouts and open jobs' anticipated end dates. Google Calendar, Apple Calendar and Outlook can subscribe to it; the URL carries a secret instead of a login. Calendar apps refresh subscribed feeds on their own schedule. The feed and the Calendar page say these are contract and follow-up dates, not legal deadlines; Duracash computes no lien or prompt-pay dates.
 
 ## Helper
 
@@ -173,13 +185,19 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 
 ## Project layout
 
-- `domain/`: money rules, supporting document gates, status labels, client settings, Today's rows and the daily email's, email log (`domain/__init__.py`), and the audit chain (`domain/trail.py`); every name imports from `domain`
+- `domain/`: money rules, supporting document gates, status labels, client settings, the Dashboard's rows and the daily email's, email log (`domain/__init__.py`), and the audit chain (`domain/trail.py`); every name imports from `domain`
 - `auth.py`: users and roles, password hashes, sessions, login throttling, reset/verify/invite tokens
 - `storage.py`: data directory and atomic JSON writes
 - `importer.py`: files, email parsing, notes splitting, job matching, the Inbox
 - `calendar_feed.py`: the .ics feed
 - `helper.py` and `helper/answers.json`: the helper and its answers
 - `sov.py`: schedule-of-values arithmetic and the paste reader
+- `qty_import.py`: quantities from a contractor's own file, added to the field totals
+- `contract_import.py`: reads a contract's Word, PDF or text, for New job and Add client
+- `doc_check.py`: reads a file attached as a supporting document: blank, job name, a waiver's amount and wording. Warnings only; no OCR
+- `sms.py`, `twilio_media.py`: internal texts out, and files from texts in
+- `reminders.py`: reminders by app, email and text
+- `exports.py`, `job_archive.py`: the CSV lists and a finished job's zip
 - `payapp_pdf.py`: the pay app PDF
 - `trial.py`: trial status
 - `backup.py`: backups and restore
@@ -210,15 +228,18 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 ## Money rules
 
 - Pay apps are net of retainage. With a retainage percent on the job, each pay app withholds that percent and shows it as a line. Held retainage is not counted as unbilled work.
-- A job with retainage gets closeout documents when it is marked done. The closeout documents gates asking for the retainage, not the pay apps.
-- Each pay app's supporting documents list comes from the client's **Supporting documents needed with each pay app** (Client playbook); an item named like the pay app, schedule of values or continuation sheet is in from the start, and a file on the job record whose kind matches is attached when the pay app is drafted.
-- **I have this…** marks an item in hand, with where it is (optional); **Not needed for this client** also takes it off the client's list. Supporting documents that went with a sent pay app stays as it was sent.
+- Every job gets closeout documents at Final Pay App. They gate asking for all the retainage, not the pay apps. Finish Job warns when they are missing and doesn't stop.
+- A new job needs a complete client playbook: name, client type, who signs off, billing email and phone. A saved email, signer or phone can be changed, not cleared. A job made under the rule waits for a complete playbook before a pay app starts or goes out; a job from before it isn't held up, and sending still needs the email.
+- Each pay app's supporting documents list comes from the job's own list when it has one (**Supporting documents for this job**), else the client's **Supporting documents needed with each pay app** (Client playbook), plus a conditional waiver; an item named like the pay app, schedule of values or continuation sheet is in from the start.
+- An item clears on a real file a person checked: a stored, non-empty file of a type a person can open. A record that fits is only suggested, until someone taps **I checked this file**. `doc_check.py` warns on a blank file, a missing job name, or a waiver's amount or wording; a person clears it with **I opened it and it's right**. A misread never blocks for good. An item in only on a name, from before files were required, counts as missing on a draft.
+- **I have this…** is an override with a required reason: who, when and why show on the pay app page and Review & send, and the client's PDF and page say **Not attached**. **Not needed for this client** takes an item off the client's list, or off the job's own; a conditional waiver comes off this job unless **For this whole client** is tapped, and **Needed after all** brings it back. Supporting documents that went with a sent pay app stay as they were sent.
+- A send needs a look: Approve & send carries what Review & send showed, and a change since is refused with a request to look again. A bill that stops being the final one under a confirmed waiver waits for another look too.
 - A change order approved after the job is marked done becomes billable on the next pay app.
 - A payment goes to a pay app the user picks, must be above zero and at most the balance owed, and a reference can be used once per job.
-- One waiver per paid pay app. The waiver document comes from the contractor; Duracash does not generate it.
+- One waiver per paid pay app and per retainage release (unconditional; final only when the job is finished by it, and a final waiver sent early warns first). The waiver document comes from the contractor; Duracash does not generate it.
 - A follow-up before the client's days between follow-ups have passed needs **Follow Up Now** and a confirm; one sent after **Log a Conversation** with a check-again date or the client's **Approve for payment** waits for the date they gave. Each one writes an Outbox row.
-- A job closes only when work is done, nothing is drafted, unbilled, outstanding or pending, retainage is released, and waivers are sent. Closed jobs are read-only except for notes.
-- A new job for an existing client keeps the client's who signs off and email for pay apps. Change them in Client playbook.
+- A job closes only when work is done, nothing is drafted, unbilled, outstanding or pending, nothing is overbilled (or a refund or credit was recorded), retainage is released, and waivers are sent. Closed jobs are read-only except for notes.
+- A new job for an existing client keeps what the client has and asks only for what it is missing. Change the rest in the Client playbook.
 - A sent pay app with nothing paid can be pulled back with a reason (the client is told nothing is due on it); a part-paid one can be settled short with a reason; a finished job can be reopened by an owner with a reason. Each is in the Activity log.
 - Every approved send is written to the Outbox and emailed when email is set up (see Sending email).
 
@@ -233,19 +254,21 @@ Auth (cookie session):
 
 Company data (requires a session; scoped to the signed-in company). The audit trail always names the signed-in user; an `actor` field in a request body is ignored.
 
-- `GET /api/state`: what the app needs on load: open jobs in full, jobs closed in the last 90 days as summaries, the customers (`payers`), Today's rows (`today_rows`), the latest 20 emails, and counts (`closed_jobs_total`, `email_log_total`, `audit_total`). It doesn't grow with the company's history.
+- `GET /api/state`: what the app needs on load: open jobs in full, jobs closed in the last 90 days as summaries, the clients (`payers`), the Dashboard's rows (`today_rows`), the latest 20 emails, and counts (`closed_jobs_total`, `email_log_total`, `audit_total`). It doesn't grow with the company's history.
 - `GET /api/jobs?status=open|closed|all&offset=&limit=&q=`: jobs, newest first (closed ones as summaries, by closing date); `limit` up to 200
-- `GET /api/jobs/{id}`: one job in full, with its customer
+- `GET /api/jobs/{id}`: one job in full, with its client
 - `GET /api/outbox?offset=&limit=&job=` and `GET /api/audit?…`: the Outbox and the audit trail, newest first
 - `GET /api/timeline?job=&offset=&limit=`: one job's history for its page: audit rows and emails (with delivery status, without bodies), newest first
 - `GET /api/export`: download the company's data file
 - `POST /api/reset`: demo company returns to the Hartline seed. Any other company needs `{confirm: "<exact company name>"}` and gets a snapshot first.
-- `POST /api/jobs`: create a job. Required: `name`, `address`, `customer`, `contract_cents`. Optional: `approver` (defaults to the customer), `ap_email` (asked for before the first send), `phone`, `role` (`Owner` or `GC`), `retainage_pct` (0–20), `note` (kept on the job record as "Job notes"; the old `packet_notes` key is read the same way), `contract_number`. The paperwork list for each pay app comes from the customer's settings, not from the job.
-- `POST /api/jobs/{id}/done`: `{notes}`
+- `POST /api/jobs`: create a job. Required: `name`, the address (`street`, `city`, `state`, `zip`), `customer`, `contract_cents`, and for a new client or what a saved one lacks: `client_type`, `approver`, `ap_email`, `phone`. Optional: `approver_confirmed` (the signer was typed, even as the client's own name), `sov_lines` (blank makes one lump-sum line), `anticipated_end_on`, `retainage_pct` (0–20), `note` (kept on the job record as "Job notes"; the old `packet_notes` key is read the same way), `contract_number`. The paperwork list for each pay app comes from the customer's settings, not from the job.
+- `GET /api/jobs/{id}/final-preview`: what Final Pay App would bill; `POST /api/jobs/{id}/done`: `{notes, period_to}`
 - `POST /api/jobs/{id}/progress`: `{completed_cents, notes}` (jobs without a schedule of values)
 - `POST /api/sov/parse`: `{text}` → `{lines, warnings, op_pct}`; reads pasted rows, saves nothing
-- `POST /api/jobs/{id}/sov`: `{lines: [{id?, item, description, quantity, unit, rate}], op_pct, update_contract}`; an empty list removes the schedule
-- `POST /api/jobs/{id}/sov-progress`: `{done: {line_id: quantity_to_date}, notes}`; lump sums take a fraction (0.35 = 35%)
+- `POST /api/jobs/{id}/sov`: `{lines: [{id?, item, description, quantity, unit, rate}], op_pct, update_contract}`
+- `POST /api/jobs/{id}/sov-progress`: `{done: {line_id: quantity_to_date}, stored, notes, period_to}`; lump sums take a fraction (0.35 = 35%); a line left out is at its suggestion
+- `POST /api/jobs/{id}/sov-amounts`: `{amounts: {line_id: dollars}}`, blank for the suggestion; `/sov-correct`: `{line_id, qty, reason, below_billed}`; `/quantities-undo/{record_id}`: `{below_billed}`
+- `POST /api/import/quantities/preview` and `/apply`: `{job_id, name, csv | xlsx}` and, on apply, the preview's `basis`
 - `POST /api/outbox/{id}/retry`: send a failed or unsent email again
 - `GET /api/jobs/{id}/payapp/{invoice_id}.pdf`: the pay app as a PDF
 - `GET /api/jobs/{id}/payapp/{invoice_id}.csv`: a sent pay app in QuickBooks Online's invoice-import layout (one row per line, retainage as a negative line), for **Download for QuickBooks**
@@ -256,36 +279,38 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/onboarding/dismiss`; team only: `GET /api/admin/companies`
 - `GET /healthz`
 - `POST /api/jobs/{id}/draft`: returns 409 when there is nothing to draft or a draft is already open
-- `POST /api/jobs/{id}/send`
+- `POST /api/jobs/{id}/send`: `{reviewed, unconditional_override}`; `reviewed` is the draft's `email_preview.stamp`
 - `POST /api/jobs/{id}/follow-up`
 - `POST /api/jobs/{id}/match-payment`: `{amount_cents, reference, invoice_id, received_on}`. `invoice_id` is required when more than one pay app is open.
 - Owners only: `POST /api/jobs/{id}/accept-short-pay/{invoice_id}` `{reason}`, `/void-sent/{invoice_id}` `{reason}`, `/reopen` `{reason}`. Anyone on the team: `/undo-done`, `/note-contact` `{text, next_on}`, `/request-co-signature/{co_id}`, `/packet-skip/{item_id}`, `/detach/{item_id}`
 - `POST /api/auth/demo`: a session in the sample company, when the server has one (`GET /api/auth/demo-available`)
-- `POST /api/jobs/{id}/waiver`: `{invoice_id}` optional
+- `POST /api/jobs/{id}/waiver`: `{invoice_id, release_id, kind, confirm_final}`, all optional
 - `POST /api/jobs/{id}/retainage`: request retainage release
 - `POST /api/jobs/{id}/retainage-paid`: `{amount_cents, reference}`
-- `POST /api/jobs/{id}/resolve/{item_id}`: `{reason}` (optional): mark the item in hand
-- `POST /api/jobs/{id}/attach/{item_id}`: `{name}`
-- `POST /api/jobs/{id}/attach-record/{item_id}`: `{record_id}`
-- `POST /api/jobs/{id}/add-co`: `{title, amount_cents}`
+- `POST /api/jobs/{id}/resolve/{item_id}`: `{reason}` (required): the I have this override
+- `POST /api/jobs/{id}/attach/{item_id}`: `{file_id}`; a name alone is refused
+- `POST /api/jobs/{id}/attach-record/{item_id}`: `{record_id, looked}`; `POST /api/jobs/{id}/packet-confirm/{item_id}`: `{looked}`
+- `POST /api/jobs/{id}/packet-skip/{item_id}`: `{reason, whole_client}`; `/waiver-needed`; `/paperwork`: `{packet}`, `{no_paperwork: true}` or `{use_client: true}`; `/overbilling-settled`: `{reason}`
+- `POST /api/jobs/{id}/add-co`: `{title, reason, amount_cents}`
 - `POST /api/jobs/{id}/approve-co/{co_id}`
 - `POST /api/jobs/{id}/include-co/{co_id}`: put a pending CO on the next pay app; send stays blocked until it is signed
 - `POST /api/jobs/{id}/add-evidence`: `{label, kind}`
 - `POST /api/jobs/{id}/add-record`: `{label, kind, note}`
-- `POST /api/jobs/{id}/daily-record`: `{notes}`
+- `POST /api/jobs/{id}/daily-record`: `{notes, date, today, sections, entries}`: the New job record form
 - `POST /api/jobs/{id}/learn-rejection`: `{reason}`
 - `POST /api/jobs/{id}/close`
 - `POST /api/jobs/{id}/import-qbo`: demo company only; a hard-coded sample payment
 - Billing: `GET /api/billing`; owners: `POST /api/billing/checkout` and `/api/billing/portal` (each returns a Stripe address); `POST /api/stripe/webhook` (Stripe-Signature checked)
 - QuickBooks: `GET /api/qbo/status`; owners: `POST /api/qbo/connect` (returns Intuit's sign-in address) and `/api/qbo/disconnect`; `GET /api/qbo/callback` (Intuit sends the owner back here); `POST /api/qbo/payments` `{days}` (proposals, records nothing); `GET /api/qbo/reconcile`
-- `POST /api/payers` `{name, role, approver, ap_email, phone}`: add a customer; `POST /api/payers/{id}/update`: customer settings fields (follow-up and approval days 1–365, due day 1–31); `POST /api/payers/{id}/merge` `{into}`
-- `POST /api/jobs/{id}/pencil`: send the open draft for the customer's review; `POST /api/jobs/{id}/pencil-response`: `{agreed, note}`
+- `POST /api/payers` `{name, client_type, approver, approver_confirmed, ap_email, phone}`: add a client; `POST /api/payers/{id}/update`: client playbook fields (follow-up and approval days 1–365, due day 1–31); `POST /api/payers/{id}/merge` `{into}`
+- `POST /api/jobs/{id}/pencil`: send the open draft for the client's review; `POST /api/jobs/{id}/pencil-response`: `{agreed, note}`
 - `POST /api/jobs/{id}/void-draft`; `POST /api/jobs/{id}/withdraw-co/{co_id}`
 - `POST /api/import/file?job=<id>&file=1`: raw file body, `X-Filename` header (URL-encoded). Without `file=1` it goes to the Inbox.
 - `POST /api/import/text?file=1`: `{text, source: email|sms|notes|paste, job_id}`
 - `POST /api/inbox/{item_id}/file` `{job_id, kind}`, `/dismiss`, `/undo`
 - `GET /api/import/settings`: the company's inbound and calendar addresses; `POST /api/import/rotate` `{kind}` makes a new one
 - `GET /api/files/{file_id}`
+- `POST /api/auth/sms` `{phone, sms_opt_in}`, `/api/auth/sms/confirm` `{code}`; `GET /api/reminders`, `POST /api/reminders/prefs` `{prefs}`, `/api/reminders/read` `{id}`
 - `POST /api/helper/ask` `{q, view, job_id}`; `POST /api/helper/feedback` `{log_id, helpful, note}`
 - Team only: `GET /api/helper/review`, `POST /api/helper/answers`, `POST /api/helper/resolve`
 
