@@ -19,14 +19,15 @@ are imported inside each function, so the two modules never import each other at
 from __future__ import annotations
 
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 __all__ = [
     "WEATHER", "DAILY_SECTIONS", "INSPECTION_TYPES", "CREW_MAX", "RECORD_SECTIONS", "add_daily_record", "clean_daily_details",
-    "clean_record_entries", "daily_record_note", "save_job_record",
+    "clean_record_entries", "daily_record_note", "hold_for_job_record", "save_job_record",
 ]
 
+_HOLD_HOURS = 24   # how long an uploaded file waits for its New job record
 WEATHER = ("Clear", "Cloudy", "Rain", "Snow", "Wind", "Heat", "Cold")
 # The ticked boxes under the Diary, each opening its own fields (T11).
 DAILY_SECTIONS = {
@@ -320,7 +321,32 @@ def _joined(name: str, number: str) -> str:
     return " ".join(x for x in (name, f"#{number}" if number else "") if x)
 
 
-def clean_record_entries(job: dict[str, Any], raw: Any) -> list[dict[str, Any]]:
+def hold_for_job_record(state: dict[str, Any], job_id: str, record_ids: list[str], actor: str) -> None:
+    """These files came up for a New job record that isn't saved yet (?for_job_record=1): that save,
+    by this person, may put its fields on them. Nothing else on the job can be rewritten that way."""
+    from domain import _job, utcnow
+    wanted = set(record_ids)
+    for rec in _job(state, job_id).get("records", []):
+        if rec["id"] in wanted:
+            rec["awaiting_record"] = {"by": actor, "at": utcnow()}
+
+
+def _may_file(job: dict[str, Any], rec: dict[str, Any], actor: str) -> bool:
+    """A file this person uploaded for this form in the last day, that nobody has filed since: not
+    yet saved by a New job record, and not chosen for a pay app's supporting documents (one only
+    suggested there is still free)."""
+    from domain import utcnow
+    held = rec.get("awaiting_record")
+    if not isinstance(held, dict) or held.get("by") != actor or not rec.get("file_ids"):
+        return False
+    if str(held.get("at") or "") < (datetime.fromisoformat(utcnow()) - timedelta(hours=_HOLD_HOURS)).isoformat(timespec="seconds"):
+        return False
+    packets = [job.get("packet"), job.get("closeout_packet")] + [inv.get("packet") for inv in job.get("invoices", [])]
+    return not any(a.get("record_id") == rec["id"] and not a.get("auto")
+                   for packet in packets for item in packet or [] for a in item.get("attachments") or [])
+
+
+def clean_record_entries(job: dict[str, Any], raw: Any, actor: str = "") -> list[dict[str, Any]]:
     """The form's document sections, checked: one entry per filled row, each with what its records
     will hold. Errors land under the row's own box (invoices_amount_0). Changes nothing."""
     from domain import RECORD_KINDS, _refuse
@@ -338,8 +364,8 @@ def clean_record_entries(job: dict[str, Any], raw: Any) -> list[dict[str, Any]]:
         attachments: list[str] = []
         for rid in _list(entry.get("attachments"), "attachments", "Files"):
             rid = str(rid or "")
-            if rid not in records or not records[rid].get("file_ids"):
-                _refuse("", {"attachments": "A file isn't on this job. Add it again."})
+            if rid not in records or not _may_file(job, records[rid], actor):
+                _refuse("", {"attachments": "A file isn't waiting to be saved on this job. Add it again."})
             if rid not in attachments:
                 attachments.append(rid)
         spec = RECORD_SECTIONS[section]
@@ -406,7 +432,7 @@ def _record_day(body: dict[str, Any]) -> str:
 def _apply_entry(state: dict[str, Any], job: dict[str, Any], entry: dict[str, Any], day: str, actor: str, daily_id: str) -> None:
     """Make one section's records: its fields on each file it uploaded, one record per file, or
     one record of what was typed when no file came with it."""
-    from domain import add_job_record
+    from domain import add_job_record, audit
     head = lambda rest: f"{entry['word']}: {rest}" if entry["word"] else rest
     files = [next(r for r in job["records"] if r["id"] == rid) for rid in entry["attachments"]]
     if files:
@@ -419,6 +445,8 @@ def _apply_entry(state: dict[str, Any], job: dict[str, Any], entry: dict[str, An
             rec["kind"] = entry["kind"]
             if entry["note"]:
                 rec["note"] = entry["note"]
+            rec.pop("awaiting_record", None)
+            audit(state, job["id"], "record_filed", f"{actor} filed {rec['label']} as a job record.", actor)
     else:
         add_job_record(state, job["id"], head(entry["title"] or entry["note"][:_NAME_MAX])[:200], entry["kind"], entry["note"], actor)
         files = [job["records"][-1]]
@@ -435,10 +463,10 @@ def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, 
     """What the New job record form saves: the Diary and the day's details as a daily record, when
     there are any, and one job record per file or filled section. A document alone needs no Diary;
     the day's details do. Nothing is written if any of it is refused."""
-    from domain import _job, _refresh_draft_gate, _refuse, local_today
-    job = _job(state, job_id)
+    from domain import _open_job, _refresh_draft_gate, _refuse, local_today
+    job = _open_job(state, job_id)
     notes = (notes or "").strip()
-    entries = clean_record_entries(job, body.get("entries"))
+    entries = clean_record_entries(job, body.get("entries"), actor)
     day = _record_day(body)
     details = {k: v for k, v in body.items() if k != "entries"}
     has_day = any(body.get(k) not in (None, "", [], {}) for k in

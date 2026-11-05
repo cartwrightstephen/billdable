@@ -42,12 +42,16 @@ Try everything on `duracash-staging` first. Staging has `DURACASH_ENV=staging`, 
 
 Texts are internal only. They go to a company's own team members who added a phone and agreed on My account. Clients are never texted.
 
+**Confirming a number.** Ticking the agreement on My account texts a 6-digit code to the number. Texts turn on only when that code is entered there. The code lasts 15 minutes, 5 wrong tries drop it, and each person and each number can be sent 5 codes an hour. Codes go through the same checks as any text: never to a client's number, only to `SMS_ALLOWLIST` numbers where a list is in force, and counted toward `SMS_DAILY_LIMIT`. With Twilio not set up, nobody can confirm a number, so nobody can turn texts on. Anyone who agreed before codes existed has to confirm once.
+
+A client's number is matched on its 10 digits, so an extension or a different format changes nothing. It is checked when a person saves their number, when a code is sent and confirmed, and at every send, so a client added later stops the texts.
+
 **Settings**
 
 | Name | Where | What it is |
 |---|---|---|
 | `TWILIO_ACCOUNT_SID` | staging, production | From the Twilio console. |
-| `TWILIO_AUTH_TOKEN` | staging, production | Checks that inbound texts really came from Twilio, and logs in to send. Production refuses inbound texts without it. |
+| `TWILIO_AUTH_TOKEN` | staging, production | Checks that inbound texts really came from Twilio, and logs in to send. Production and staging refuse inbound texts without it. Only local development, on the same machine, takes them unsigned. |
 | `TWILIO_NUMBER` | staging, production | The Duracash number, as `+1...`. |
 | `SMS_ALLOWLIST` | staging only | Phone numbers, separated by commas. With a blank list on staging, or with `MAIL_ALLOWLIST` set and this blank, no text goes out. |
 | `SMS_DAILY_LIMIT` | optional | Texts per company per 24 hours. Default 20. |
@@ -87,7 +91,13 @@ Texts are internal only. They go to a company's own team members who added a pho
 8. Reply START, tick the box again, and check the next one arrives.
 9. In the Twilio log, check the message status is "delivered", not filtered with error 30034 (unregistered) or similar.
 
-On production, also check that with `TWILIO_AUTH_TOKEN` unset, an inbound text gets 403.
+On staging and production, also check that with `TWILIO_AUTH_TOKEN` unset, an inbound text gets 403.
+
+**If a counting file is damaged.** `sms_sends.json` holds the texts per company and `reminder_jobs.json` what each person was last reminded of, both in the data directory. If either can't be read, no text (or no reminder) goes out, an alert fires and a copy is kept beside it as `<name>.bad-<number>`. The file stays until someone fixes or removes it. Removing `sms_sends.json` restarts the daily count. Removing `reminder_jobs.json` restarts the reminders and clears the in-app lists, so anything due goes out once more. Companies that are read-only get no reminders or texts.
+
+**Staging has no disk.** `duracash-staging` has no persistent disk, so `reminder_jobs.json` and `sms_sends.json` reset on every deploy. People on the allow-lists can get a reminder again after a deploy, even within its interval, and the daily count starts over. Nothing is built for this; production has a disk.
+
+**After a deploy.** Nothing is sent at start-up. The first daily emails and reminders wait for the first scheduled run, up to an hour after start-up.
 
 ## QuickBooks Online
 

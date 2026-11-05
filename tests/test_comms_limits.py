@@ -32,6 +32,12 @@ CLEAN = ("MAIL_ALLOWLIST", "SMS_ALLOWLIST", "DURACASH_ENV", "SMTP_HOST", "MAIL_F
          "TWILIO_NUMBER", "TWILIO_API_BASE", "SMS_DAILY_LIMIT")
 
 
+def agree(user_id, phone):
+    """A person who has answered the code texted to this number."""
+    auth._CODES.pop(f"sms-to:{phone}", None)
+    auth.confirm_sms_code(user_id, auth.issue_sms_code(user_id, phone))
+
+
 def env(**values):
     base = {k: v for k, v in os.environ.items() if k not in CLEAN}
     return mock.patch.dict(os.environ, {**base, **values}, clear=True)
@@ -186,6 +192,7 @@ class SmsBase(unittest.TestCase):
             self.addCleanup(p.stop)
         StandIn.calls = []
         StandIn.answer = (201, {"sid": "SM1", "status": "queued"})
+        auth._CODES.clear()   # the hourly limit on codes is kept per number, across tests
         self.user = auth.create_user("pat@example.com", "correct horse battery", "Pat Lee", "co-x")
         self.state = {"payers": [{"id": "p1", "name": "Client", "phone": "(404) 555-0199"}], "jobs": []}
 
@@ -201,7 +208,7 @@ class SmsTests(SmsBase):
             self.assertEqual(sms.e164(text), "")
 
     def test_sends_through_the_stand_in(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         with self.ready():
             self.assertEqual(sms.send_to_member(self.state, "co-x", self.user["id"], "Oak needs a signature."), "sent")
         call = StandIn.calls[0]
@@ -220,14 +227,14 @@ class SmsTests(SmsBase):
         self.assertEqual(StandIn.calls, [])
 
     def test_only_a_member_of_that_company(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         with self.ready():
             self.assertIn("not on this team", sms.send_to_member(self.state, "co-other", self.user["id"], "x"))
             self.assertIn("not on this team", sms.send_to_member(self.state, "co-x", "+14045550199", "x"))
         self.assertEqual(StandIn.calls, [])
 
     def test_a_clients_number_is_never_texted_even_on_a_members_account(self):
-        auth.set_sms(self.user["id"], "+14045550199", True)   # the client's phone, typed on an account
+        agree(self.user["id"], "+14045550199")   # the client's phone, typed on an account
         with self.ready():
             self.assertIn("client", sms.send_to_member(self.state, "co-x", self.user["id"], "x"))
         self.assertEqual(StandIn.calls, [])
@@ -249,7 +256,7 @@ class SmsTests(SmsBase):
                     self.assertFalse(node.attr.startswith("_"), f"{path.name} reaches into sms.{node.attr}")
 
     def test_the_allow_list_holds_texts(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         with self.ready(SMS_ALLOWLIST="(404) 555-0777"):
             self.assertEqual(sms.send_to_member(self.state, "co-x", self.user["id"], "x"), sms.NOT_ALLOWED)
         with self.ready(SMS_ALLOWLIST="(404) 555-0123"):
@@ -257,21 +264,21 @@ class SmsTests(SmsBase):
         self.assertEqual(len(StandIn.calls), 1)
 
     def test_a_mail_only_list_or_staging_means_no_texts(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         for extra in ({"MAIL_ALLOWLIST": "@team.example"}, {"DURACASH_ENV": "staging"}):
             with self.ready(**extra):
                 self.assertEqual(sms.send_to_member(self.state, "co-x", self.user["id"], "x"), sms.NOT_ALLOWED)
         self.assertEqual(StandIn.calls, [])
 
     def test_daily_limit(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         with self.ready(SMS_DAILY_LIMIT="1"):
             self.assertEqual(sms.send_to_member(self.state, "co-x", self.user["id"], "x"), "sent")
             self.assertIn("daily limit", sms.send_to_member(self.state, "co-x", self.user["id"], "x"))
         self.assertEqual(len(StandIn.calls), 1)
 
     def test_a_failure_is_logged_and_returned_never_raised(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         StandIn.answer = (400, {"code": 30034, "message": "unregistered"})
         with self.ready(), mock.patch("sys.stderr") as log:
             result = sms.send_to_member(self.state, "co-x", self.user["id"], "x")
@@ -281,14 +288,14 @@ class SmsTests(SmsBase):
             self.assertIn("not sent", sms.send_to_member(self.state, "co-x", self.user["id"], "x"))
 
     def test_twilio_saying_unsubscribed_turns_texts_off_here(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         StandIn.answer = (400, {"code": 21610, "message": "unsubscribed"})
         with self.ready(), mock.patch("sys.stderr"):
             sms.send_to_member(self.state, "co-x", self.user["id"], "x")
         self.assertFalse(next(u for u in auth.all_users() if u["id"] == self.user["id"]).get("sms_opt_in"))
 
     def test_not_set_up_sends_nothing(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         with env():
             self.assertEqual(sms.send_to_member(self.state, "co-x", self.user["id"], "x"), sms.NOT_SET_UP)
 
@@ -304,19 +311,19 @@ class SmsTests(SmsBase):
 
     def test_stop_clears_every_account_with_that_number(self):
         other = auth.create_user("sam@example.com", "correct horse battery", "Sam", "co-y")
-        auth.set_sms(self.user["id"], "+14045550123", True)
-        auth.set_sms(other["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
+        agree(other["id"], "+14045550123")
         self.assertEqual(sms.opt_out("+1 404 555 0123"), 2)
         for person in auth.all_users():
             self.assertFalse(person.get("sms_opt_in"))
 
     def test_phones_stay_out_of_team_lists(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         self.assertNotIn("+14045550123", json.dumps(auth.team("co-x")))
         self.assertNotIn("+14045550123", json.dumps(auth.all_users()))
 
     def test_changing_the_number_needs_agreeing_again(self):
-        auth.set_sms(self.user["id"], "+14045550123", True)
+        agree(self.user["id"], "+14045550123")
         got = auth.set_sms(self.user["id"], "+14045550124", False)
         self.assertFalse(got["sms_opt_in"])
         got = auth.set_sms(self.user["id"], "", True)

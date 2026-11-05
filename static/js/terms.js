@@ -57,7 +57,7 @@ export const ACTION_WORDS = {
   qbo_connected: "QuickBooks connected", qbo_disconnected: "QuickBooks disconnected", read_only: "Read-only changed",
   unconditional_override: "Sent with an unconditional waiver", waiver_type: "Waiver type set", waiver_not_needed: "No waiver through Duracash",
   daily_quantities_not_applied: "Quantities not added", quantities_imported: "Quantities imported",
-  payapp_attachments: "Email attachments changed", record_work: "Ticket tied to work",
+  payapp_attachments: "Email attachments changed", record_work: "Ticket tied to work", record_filed: "Job record filed",
 };
 
 // The pill's words for an action code (escaped, as words() is), in the company's word.

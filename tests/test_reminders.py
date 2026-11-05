@@ -145,7 +145,7 @@ class Items(unittest.TestCase):
             reminders.clean_prefs({"nope": ["email"]})
 
 
-class Loop(unittest.TestCase):
+class LoopBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -171,6 +171,8 @@ class Loop(unittest.TestCase):
         data["users"][0]["email_verified"] = True
         auth._save(data)
 
+
+class Loop(LoopBase):
     def test_off_by_default_nothing_goes_out(self):
         self.verified()
         self.assertEqual(reminders.run(self.site, NOW), [])
@@ -270,6 +272,195 @@ class Loop(unittest.TestCase):
         self.assertIn("Elm: Ends Nov 6.", both)
 
 
+class BootSendsNothing(unittest.TestCase):
+    """Criterion 84: starting up, even past the send hour with reminders due, sends nothing."""
+
+    def test_the_first_run_comes_after_the_wait_not_at_start_up(self):
+        calls, waits = [], []
+
+        def sleep(seconds):
+            waits.append(seconds)
+            if len(waits) == 3:
+                raise SystemExit
+
+        class Inline:
+            def __init__(self, target, **kw):
+                self.target = target
+
+            def start(self):
+                try:
+                    self.target()
+                except SystemExit:
+                    pass
+
+        with mock.patch.object(monthly, "run_once", side_effect=lambda site: calls.append(len(waits))), mock.patch.object(monthly.time, "sleep", sleep), mock.patch.object(monthly.threading, "Thread", Inline):
+            monthly.start(mock.Mock())
+        self.assertEqual(calls, [1, 2], "a sleep comes before every run")
+        self.assertGreaterEqual(waits[0], monthly.BOOT_QUIET_SECONDS)
+
+    def test_the_wait_is_an_hour_and_shorter_only_before_midnight(self):
+        at = lambda h, m=0: datetime(2026, 11, 3, h, m, tzinfo=timezone.utc)
+        self.assertEqual(monthly.first_wait(at(15)), 3600)
+        self.assertEqual(monthly.first_wait(at(22, 58)), 3600)
+        self.assertEqual(monthly.first_wait(at(23, 10)), 49 * 60)
+        self.assertEqual(monthly.first_wait(at(23, 58)), monthly.BOOT_QUIET_SECONDS)
+
+    def test_a_deploy_at_the_send_hour_keeps_that_days_digest(self):
+        hour = monthly.daily_email_hour()
+        start = datetime(2026, 11, 3, hour, 10, tzinfo=timezone.utc)
+        first = start + timedelta(seconds=monthly.first_wait(start))
+        self.assertEqual(first.date(), start.date(), "the first run is still that day")
+        self.assertGreaterEqual(first.hour, hour)
+        late = datetime(2026, 11, 3, 23, 30, tzinfo=timezone.utc)
+        self.assertEqual((late + timedelta(seconds=monthly.first_wait(late))).date(), late.date())
+
+
+class StateFile(LoopBase):
+    """reminder_jobs.json going wrong never sends twice and never loses it silently."""
+
+    def setUp(self):
+        super().setUp()
+        self.verified()
+        auth.set_reminders(self.owner["id"], {"missing": ["email", "app"]})
+        self.path = storage.DATA_DIR / reminders.JOBS_FILE
+        self.me = auth.session_public(self.owner["id"])
+
+    def test_a_file_that_can_not_be_written_means_no_send(self):
+        with mock.patch.object(storage, "write_json", side_effect=OSError("disk")), mock.patch("alerts.notify") as alert:
+            for hour in (15, 16, 17):
+                reminders.run(self.site, NOW.replace(hour=hour))
+        self.assertEqual(self.sent, [], "no record of it, so nothing goes out")
+        self.assertTrue(alert.called)
+
+    def test_a_crash_while_sending_does_not_send_again(self):
+        self.site.send.side_effect = KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            reminders.run(self.site, NOW)
+        self.site.send.side_effect = lambda to, subject, body, company_id: (self.sent.append(to), "sent")[1]
+        reminders.run(self.site, NOW.replace(hour=16))
+        self.assertEqual(self.sent, [], "its place was taken before sending")
+
+    def test_a_failed_send_comes_back_the_next_day(self):
+        self.site.send.side_effect = lambda to, subject, body, company_id: "not sent: the mail server said no"
+        reminders.run(self.site, NOW)
+        self.assertEqual(reminders.last_result("co-x", self.owner["id"])["results"]["email"], "not sent: the mail server said no")
+        self.site.send.side_effect = lambda to, subject, body, company_id: (self.sent.append(to), "sent")[1]
+        reminders.run(self.site, NOW.replace(hour=16))
+        self.assertEqual(self.sent, [], "once a day")
+        reminders.run(self.site, NOW + timedelta(days=1))
+        self.assertEqual(len(self.sent), 1)
+
+    def damage(self, content='{"co-x": {"u'):
+        self.path.write_text(content)
+        return content
+
+    def test_a_damaged_file_sends_nothing_alerts_and_is_kept(self):
+        for content in ('{"co-x": {"u', "[]"):
+            self.damage(content)
+            with mock.patch("sys.stderr") as log, mock.patch("alerts.notify") as alert:
+                reminders.run(self.site, NOW)
+            self.assertEqual(self.sent, [])
+            self.assertTrue(alert.called)
+            self.assertIn(reminders.JOBS_FILE, "".join(str(c) for c in log.write.call_args_list))
+            self.assertEqual(self.path.read_text(), content, "not overwritten")
+            self.assertTrue([f for f in self.path.parent.glob(reminders.JOBS_FILE + ".bad-*") if f.read_text() == content])
+
+    def test_the_page_still_opens_on_a_damaged_file_and_writes_nothing(self):
+        content = self.damage()
+        with mock.patch("sys.stderr"), mock.patch("alerts.notify"):
+            page = reminders.page(self.state, {**self.me, "company_id": "co-x"}, NOW)
+            reminders.mark_read("co-x", self.owner["id"])
+            reminders.forget_company("co-x")
+            self.assertIsNone(reminders.last_result("co-x", self.owner["id"]))
+        self.assertEqual(page["notifications"], [])
+        self.assertEqual(self.path.read_text(), content)
+
+    def test_the_page_still_opens_when_the_file_can_not_be_written(self):
+        with mock.patch.object(storage, "write_json", side_effect=OSError("disk")), mock.patch("sys.stderr"), mock.patch("alerts.notify") as alert:
+            page = reminders.page(self.state, {**self.me, "company_id": "co-x"}, NOW)
+        self.assertEqual(len(page["notifications"]), 1)
+        self.assertTrue(alert.called)
+
+    def test_a_half_written_save_leaves_the_last_good_file(self):
+        reminders.run(self.site, NOW)
+        good = self.path.read_text()
+        with mock.patch("json.dump", side_effect=OSError("disk")), mock.patch("alerts.notify"):
+            reminders.run(self.site, NOW + timedelta(days=4))
+        self.assertEqual(self.path.read_text(), good)
+
+
+class WrongShapes(LoopBase):
+    def person(self):
+        return {**auth.session_public(self.owner["id"]), "company_id": "co-x", "reminders": {"missing": ["app"]}}
+
+    def test_stored_files_of_the_wrong_shape_are_tolerated(self):
+        path = storage.DATA_DIR / reminders.JOBS_FILE
+        uid = self.owner["id"]
+        for stored in ({"co-x": []}, {"co-x": {uid: []}}, {"co-x": {uid: {"sent": []}}}, {"co-x": {uid: {"sent": {"app": []}}}}, {"co-x": {uid: {"notes": "x"}}},
+                       {"co-x": {uid: {"notes": ["x", {"id": "n1"}, {"key": "k"}]}}}, {"co-x": {uid: {"results": []}}}):
+            path.write_text(json.dumps(stored))
+            page = reminders.page(self.state, self.person(), NOW)
+            self.assertTrue(all(isinstance(n, dict) and n["id"].startswith("n-") or n["id"] == "n1" for n in page["notifications"]), stored)
+            reminders.mark_read("co-x", uid)
+            self.assertEqual(reminders.run(self.site, NOW), [], stored)
+            auth.set_reminders(uid, {"missing": ["email"]})
+            reminders.run(self.site, NOW)
+            auth.set_reminders(uid, {})
+
+    def test_records_of_the_wrong_shape_are_skipped(self):
+        for rec in ({"id": "d", "job_id": "j1", "at": "2026-11-01T00:00:00+00:00", "sections": {"co_work": ["x"]}},
+                    {"id": "d", "job_id": "j1", "at": "2026-11-01T00:00:00+00:00", "sections": ["x"]},
+                    {"id": "d", "job_id": "j1", "at": "2026-11-01T00:00:00+00:00", "sections": {"co_work": "x"}}, "x"):
+            self.state["daily_records"] = [rec]
+            self.assertEqual([i for i in reminders.build(self.state, NOW) if i["kind"] == "co_records"], [], rec)
+
+    def test_something_unforeseen_in_one_kind_leaves_the_others(self):
+        with mock.patch.object(reminders, "_co_items", side_effect=RuntimeError("no")), mock.patch("sys.stderr"), mock.patch("alerts.notify") as alert:
+            kinds = {i["kind"] for i in reminders.build(self.state, NOW)}
+        self.assertIn("missing", kinds)
+        self.assertTrue(alert.called)
+
+
+class WhoStillSees(LoopBase):
+    def member(self):
+        return {"id": "u2", "role": "member", "company_id": "co-x", "reminders": {"missing": ["app"]}}
+
+    def test_someone_taken_off_a_job_no_longer_sees_its_notifications(self):
+        self.state["jobs"][0]["assignee_id"] = "u2"
+        notes = reminders.page(self.state, self.member(), NOW)["notifications"]
+        self.assertEqual([n["job"] for n in notes], ["Oak"])
+        self.state["jobs"][0]["assignee_id"] = "u3"
+        page = reminders.page(self.state, self.member(), NOW)
+        self.assertEqual((page["notifications"], page["unread"]), ([], 0))
+        self.state["jobs"][0]["assignee_id"] = "u2"
+        self.assertEqual(len(reminders.page(self.state, self.member(), NOW)["notifications"]), 1, "hidden, not lost")
+
+    def test_a_note_from_before_this_rule_goes_by_the_job_name(self):
+        data = {"co-x": {"u2": {"notes": [{"id": "n1", "key": "k", "kind": "missing", "job": "Oak", "text": "t", "path": "/", "at": "x", "read": False}]}}}
+        (storage.DATA_DIR / reminders.JOBS_FILE).write_text(json.dumps(data))
+        self.assertEqual(reminders.page(self.state, self.member(), NOW)["notifications"], [])
+        self.state["jobs"][0]["assignee_id"] = "u2"
+        self.assertIn("n1", [n["id"] for n in reminders.page(self.state, self.member(), NOW)["notifications"]])
+
+    def test_an_owner_keeps_them_all(self):
+        owner = {**self.member(), "role": "owner"}
+        self.assertEqual(len(reminders.page(self.state, owner, NOW)["notifications"]), 1)
+        self.state["jobs"][0]["assignee_id"] = "u3"
+        self.assertEqual(len(reminders.page(self.state, owner, NOW)["notifications"]), 1)
+
+
+class ReadOnly(LoopBase):
+    def test_a_read_only_company_gets_no_reminders(self):
+        self.verified()
+        auth.set_reminders(self.owner["id"], {"missing": ["email"]})
+        self.state["company"]["read_only"] = "the account is closed"
+        reminders.run(self.site, NOW)
+        self.assertEqual(self.sent, [])
+        del self.state["company"]["read_only"]
+        reminders.run(self.site, NOW)
+        self.assertEqual(len(self.sent), 1, "nothing counted while it was read-only")
+
+
 class Http(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -331,12 +522,36 @@ class Http(unittest.TestCase):
         res, data = self.request("POST", "/api/reminders/prefs", {"prefs": {"missing": ["text"]}}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertIn("missing", data["fields"])
+        user = next(u for u in auth.all_users() if u["email"] == "rem2@example.com")
+        auth.confirm_sms_code(user["id"], auth.issue_sms_code(user["id"], "+14045550123"))
         res, data = self.request("POST", "/api/auth/sms", {"phone": "(404) 555-0123", "sms_opt_in": True}, cookie=cookie)
         self.assertEqual(res.status, 200, data)
         self.assertEqual(data["user"]["phone"], "+14045550123")
         self.assertTrue(data["user"]["sms_opt_in"])
+        self.assertNotIn("code_sent", data, "the number is already proven")
         res, data = self.request("POST", "/api/reminders/prefs", {"prefs": {"missing": ["text"]}}, cookie=cookie)
         self.assertEqual(res.status, 200)
+
+    def test_my_account_says_when_a_number_can_not_be_confirmed(self):
+        cookie = self.signup("rem5@example.com")
+        res, data = self.request("POST", "/api/auth/sms", {"phone": "(404) 555-0155", "sms_opt_in": True}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        self.assertIn("set up", data["fields"]["phone"])
+        res, data = self.request("GET", "/api/auth/me", cookie=cookie)
+        self.assertFalse(data.get("user", data).get("phone"), "nothing is saved")
+
+    def test_a_clients_number_with_an_extension_is_refused_on_my_account(self):
+        cookie = self.signup("rem6@example.com")
+        res, data = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "(404) 555-0142 x12",
+                                                       "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        self.assertEqual(data["payers"][0]["phone"], "(404) 555-0142 x12")
+        for typed in ("404-555-0142", "+1 (404) 555 0142"):
+            res, data = self.request("POST", "/api/auth/sms", {"phone": typed, "sms_opt_in": True}, cookie=cookie)
+            self.assertEqual(res.status, 409, typed)
+            self.assertIn("client", data["fields"]["phone"])
+        res, data = self.request("POST", "/api/auth/sms", {"phone": "404555\u0660\u0661\u0664\u0662", "sms_opt_in": True}, cookie=cookie)
+        self.assertEqual(res.status, 409)
 
     def test_my_account_refuses_a_bad_number_and_a_clients_number(self):
         cookie = self.signup("rem3@example.com")
@@ -350,6 +565,22 @@ class Http(unittest.TestCase):
         res, data = self.request("POST", "/api/auth/sms", {"phone": "404-555-0188", "sms_opt_in": True}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertIn("client", data["fields"]["phone"])
+
+    def test_prefs_of_the_wrong_shape_are_a_plain_400(self):
+        cookie = self.signup("rem7@example.com")
+        for prefs in ({"dates": [[]]}, {"dates": [{}]}, {"dates": "text"}, {"nope": []}, [], "x"):
+            res, data = self.request("POST", "/api/reminders/prefs", {"prefs": prefs}, cookie=cookie)
+            self.assertEqual(res.status, 400, prefs)
+            self.assertTrue(data["error"])
+
+    def test_wrong_shapes_on_disk_do_not_stop_the_page(self):
+        cookie = self.signup("rem8@example.com")
+        me = next(u for u in auth.all_users() if u["email"] == "rem8@example.com")
+        path = storage.DATA_DIR / reminders.JOBS_FILE
+        path.write_text(json.dumps({me["company_id"]: []}))
+        res, data = self.request("GET", "/api/reminders", cookie=cookie)
+        self.assertEqual(res.status, 200, data)
+        path.unlink()
 
     def test_the_demo_account_can_not_save_a_phone(self):
         res, data = self.request("POST", "/api/reminders/prefs", {"prefs": {}})

@@ -1,12 +1,19 @@
 """Reading a document attached to a pay app's supporting documents (Stephen's Nov 1 notes, Decision
 6): is it about this job, and for a lien waiver, this amount and the conditional wording? What
 doesn't match is a warning naming it, for a person to look at; it never blocks on its own. Text
-comes from contract_import's readers. A scan or a photo has none, so it says it couldn't be
-checked; there is no OCR here."""
+comes from contract_import's readers, which stay small whatever the file inflates to. A scan or a
+photo has none, so it says it couldn't be checked; there is no OCR here.
+
+prepare() does the reading, so a caller can do it before taking a company's lock and hand what it
+got to check() in place of the file's bytes (server._read_ahead). Whatever goes wrong in here is a
+warning a person can clear, never a refusal."""
 
 from __future__ import annotations
 
 import re
+import sys
+import traceback
+from dataclasses import dataclass
 from typing import Any
 
 import contract_import
@@ -15,15 +22,34 @@ PICTURES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"}
 BLANK_LETTERS = 8   # fewer letters than this is a blank page's stray marks
 
 
+@dataclass
+class ReadFile:
+    """What prepare() got from a file: its text (None for a type that isn't read), whether it
+    couldn't be opened, and whether a PDF has pictures in it."""
+    text: str | None = None
+    failed: bool = False
+    has_image: bool = False
+
+
 def _text(ext: str, data: bytes) -> str | None:
     """The file's text, or None for a type that isn't read."""
     if ext == ".pdf":
-        return contract_import.pdf_text(data)
+        return contract_import.pdf_text(data)[:contract_import.MAX_TEXT]
     if ext == ".docx":
         return contract_import.docx_text(data)
     if ext == ".txt":
-        return data.decode("utf-8", "replace")
+        return contract_import.plain_text(data)
     return None
+
+
+def prepare(ext: str, data: bytes) -> ReadFile:
+    """Read one file. Never raises: a damaged Word file or PDF is for the person to look at."""
+    if ext in PICTURES:
+        return ReadFile()
+    try:
+        return ReadFile(text=_text(ext, data), has_image=ext == ".pdf" and b"/Image" in data)
+    except Exception:
+        return ReadFile(failed=True)
 
 
 def _letters(text: str) -> int:
@@ -37,11 +63,11 @@ def _has_job_name(text: str, job_name: str) -> bool:
 
 
 def _has_amount(text: str, cents: int) -> bool:
-    for found in re.findall(r"\d[\d,]*(?:\.\d{1,2})?", text):
+    for m in re.finditer(r"\d[\d,]*(?:\.\d{1,2})?", text):
         try:
-            if round(float(found.replace(",", "")) * 100) == cents:
+            if round(float(m.group(0).replace(",", "")) * 100) == cents:
                 return True
-        except ValueError:
+        except (ValueError, OverflowError):  # hundreds of digits are no amount
             continue
     return False
 
@@ -51,14 +77,26 @@ def _has_amount(text: str, cents: int) -> bool:
 _CONDITIONAL = re.compile(r"\bconditional\b|\bconditioned\s+(?:up)?on\b|\bupon\s+(?:final\s+)?(?:payment|receipt)\b|\bsubject\s+to\s+(?:receipt|payment)\b|\binterim\b", re.I)
 _FINAL = re.compile(r"\bfinal\b", re.I)
 _PROGRESS = re.compile(r"\binterim\b|\bprogress\b|\bpartial\b", re.I)
+# The word however it was typed or broke across lines: UN-CONDITIONAL, un conditional, U N C O N...
+_UNCONDITIONAL = re.compile(r"(?<![a-z])" + r"[\s\-\u00ad\u2010-\u2015]*".join("unconditional") + r"(?![a-z])", re.I)
 
 
-def _type_problems(text: str, waiver_kind: str) -> list[str]:
-    """The wording of the waiver's type, against the item. Only what is plainly another type warns."""
-    plain = re.sub(r"unconditional", " ", text, flags=re.I)
+def _without_job_name(text: str, job_name: str) -> str:
+    """The text with the job's own name taken out: a job called Final Grade says nothing about the
+    waiver's type."""
+    words = re.findall(r"[a-z0-9]+", job_name.lower())
+    return re.sub(r"[^a-z0-9]+".join(words), " ", text, flags=re.I) if words else text
+
+
+def _type_problems(text: str, waiver_kind: str, job_name: str = "") -> list[str]:
+    """The wording of the waiver's type, against the item. Only what is plainly another type warns;
+    the word unconditional on a conditional item always does, whatever else it says (a form that
+    says "not an unconditional release" gets a look, and a person clears it)."""
+    text = _without_job_name(text, job_name)
+    plain = _UNCONDITIONAL.sub(" ", text)
     out = []
     if waiver_kind.startswith("conditional"):
-        if plain != text and not _CONDITIONAL.search(plain):
+        if plain != text:
             out.append("It says unconditional, not conditional.")
         elif not _CONDITIONAL.search(plain) and not _FINAL.search(plain):
             out.append("Conditional wording not found.")
@@ -72,10 +110,21 @@ def _type_problems(text: str, waiver_kind: str) -> list[str]:
     return out
 
 
-def check(files: list[tuple[str, str, bytes | None]], job_name: str, money_text: str = "", cents: int | None = None,
+def check(files: list[tuple[str, str, Any]], job_name: str, money_text: str = "", cents: int | None = None,
           waiver_kind: str = "", is_waiver: bool = False) -> dict[str, Any]:
-    """files is (name, extension, bytes or None when it couldn't be read). Returns {status, problems}:
-    status "matched", "flagged" (something didn't match) or "unchecked" (no text to compare)."""
+    """files is (name, extension, then the bytes, what prepare() got from them, or None when it
+    couldn't be read). Returns {status, problems}: status "matched", "flagged" (something didn't
+    match, or the check itself failed) or "unchecked" (no text to compare). Never raises."""
+    try:
+        return _check(files, job_name, money_text, cents, waiver_kind, is_waiver)
+    except Exception:
+        sys.stderr.write(traceback.format_exc())
+        names = ", ".join(str(f[0]) for f in files)
+        return {"status": "flagged", "problems": [f"{names} couldn't be checked. Open it and confirm it is right."]}
+
+
+def _check(files: list[tuple[str, str, Any]], job_name: str, money_text: str, cents: int | None,
+           waiver_kind: str, is_waiver: bool) -> dict[str, Any]:
     texts, unchecked, problems = [], [], []
     for name, ext, data in files:
         if data is None:
@@ -84,16 +133,15 @@ def check(files: list[tuple[str, str, bytes | None]], job_name: str, money_text:
         if ext in PICTURES:
             unchecked.append(f"{name} is a photo or a scan, so it couldn't be checked.")
             continue
-        try:
-            text = _text(ext, data)
-        except Exception:  # a damaged Word file or PDF: the person looks at it, it never blocks
+        read = data if isinstance(data, ReadFile) else prepare(ext, data)
+        text = read.text
+        if read.failed:
             problems.append(f"{name} couldn't be opened.")
-            continue
-        if text is None:
+        elif text is None:
             unchecked.append(f"{name} couldn't be checked.")
         elif _letters(text) >= BLANK_LETTERS:
             texts.append(text)
-        elif ext == ".pdf" and b"/Image" in data:
+        elif read.has_image:
             unchecked.append(f"{name} is a scan, so it couldn't be checked.")
         else:
             problems.append(f"{name} looks blank: no text was found in it.")
@@ -104,7 +152,7 @@ def check(files: list[tuple[str, str, bytes | None]], job_name: str, money_text:
         if is_waiver:
             if cents is not None and not _has_amount(text, cents):
                 problems.append(f"Amount not found: {money_text}.")
-            problems += _type_problems(text, waiver_kind)
+            problems += _type_problems(text, waiver_kind, job_name)
     if problems:
         return {"status": "flagged", "problems": problems + unchecked}
     if unchecked and not texts:

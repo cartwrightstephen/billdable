@@ -34,7 +34,7 @@ export const FIELD_RULES = {
 // A US phone as (xxx) xxx-xxxx (with " x123" for an extension), or null.
 export function normalizePhone(value) {
   const m = PHONE_RE.exec(String(value ?? ""));
-  if (!m) return null;
+  if (!m || new Set(m[1] + m[2] + m[3]).size === 1) return null;   // 0000000000 is nobody's number
   return `(${m[1]}) ${m[2]}-${m[3]}` + (m[4] ? ` x${m[4]}` : "");
 }
 

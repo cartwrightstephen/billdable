@@ -295,13 +295,18 @@ function myAccountView() {
 }
 
 // The mobile number and the agreement to texts (Decision 7). Texts are this person's own reminders.
+let smsCodeTo = "";   // the number a code was just texted to, until it is confirmed
 const shownPhone = (e164) => { const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(unesc(e164 || "")); return m ? `(${m[1]}) ${m[2]}-${m[3]}` : ""; };
 function textsHtml() {
   // A redraw while the box is open (a background load) keeps what was ticked.
   const box = globalThis.document?.getElementById("my-sms-opt-in");
   const ticked = box ? box.checked : me.sms_opt_in;
-  return `<div class="form-grid">${field({ form: "account", name: "phone", id: "my-phone", label: "Mobile phone", value: shownPhone(me.phone), autocomplete: "tel", inputmode: "tel", rule: "phone" })}</div>
+  return `<div class="form-grid">${field({ form: "account", name: "phone", id: "my-phone", label: "Mobile phone", value: shownPhone(smsCodeTo || me.phone), autocomplete: "tel", inputmode: "tel", rule: "phone" })}</div>
       <label class="terms-check"><input type="checkbox" id="my-sms-opt-in"${ticked ? " checked" : ""}> Text me Duracash work reminders at this number: important dates and missing information, up to one message a day per company. Message and data rates may apply. Reply STOP to stop, HELP for help. Agreeing is not a condition of using Duracash.</label>
+      ${smsCodeTo ? `<div class="invite-result" role="status" data-form-key="smscode"><strong>Enter the code we texted to ${esc(shownPhone(smsCodeTo))}.</strong> Texts turn on once it is confirmed.
+        <div class="form-grid">${field({ form: "smscode", name: "sms_code", id: "my-sms-code", label: "Code from the text", autocomplete: "one-time-code", inputmode: "numeric", placeholder: "123456" })}</div>
+        ${formErrorLine("smscode")}
+        <button class="btn small" data-action="sms-confirm">Confirm number</button></div>` : ""}
       ${me.sms_stopped ? `<p class="sub">You replied STOP, so texts are off. To turn them back on, tick the box and save, then text START to the Duracash number.</p>` : ""}`;
 }
 
@@ -590,6 +595,15 @@ export const views = {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in app.js.
 export const actions = {
   "reset-data": () => resetData(),
+  "sms-confirm": async () => {
+    const r = await postJson("/api/auth/sms/confirm", { code: formValues("smscode").sms_code || "" });
+    if (!r.ok) { refuseForm("smscode", r.data.fields || { _form: r.data.error || "Not confirmed." }); return; }
+    setMe(escDeep(r.data.user));
+    smsCodeTo = "";
+    clearForm("smscode"); clearForm("account");
+    toast("Number confirmed. Texts are on.");
+    render();
+  },
   "pw-code": async () => {
     const r = await postJson("/api/auth/password/code", {});
     if (!r.ok) { refuseForm("password", { _form: r.data.error || "No code was sent." }); return; }
@@ -715,10 +729,13 @@ export const actions = {
       setMe(escDeep(r.data.user));
     }
     const optIn = document.getElementById("my-sms-opt-in");
-    if (optIn && (("phone" in v && v.phone !== shownPhone(me.phone)) || optIn.checked !== !!me.sms_opt_in)) {
+    // A Save while a code is waiting for this same number doesn't ask for another.
+    const waiting = optIn && optIn.checked && smsCodeTo && (v.phone || "") === shownPhone(smsCodeTo);
+    if (optIn && !waiting && (("phone" in v && v.phone !== shownPhone(me.phone)) || optIn.checked !== !!me.sms_opt_in)) {
       const r = await postJson("/api/auth/sms", { phone: v.phone || "", sms_opt_in: optIn.checked });
       if (!r.ok) { refuseForm("account", r.data.fields || { _form: r.data.error || "Not saved." }); return; }
       setMe(escDeep(r.data.user));
+      smsCodeTo = r.data.code_sent ? r.data.sent_to : "";
     }
     const look = formValues("appearance");
     const was = savedAppearance();
@@ -731,8 +748,9 @@ export const actions = {
       applyAppearance(r.data.user.appearance);
     }
     clearForm("account"); clearForm("appearance");
-    toast("Saved");
+    toast(smsCodeTo ? "Saved. Enter the code we texted you to turn texts on." : "Saved");
     render();
+    if (smsCodeTo) document.getElementById("my-sms-code")?.focus();
   },
   "billing-checkout": () => openBilling("/api/billing/checkout"),
   "billing-portal": () => openBilling("/api/billing/portal"),

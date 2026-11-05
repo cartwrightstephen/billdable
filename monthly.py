@@ -28,6 +28,8 @@ import reminders
 import storage
 
 DAILY_PATH_NAME = "daily_jobs.json"
+TICK_SECONDS = 3600
+BOOT_QUIET_SECONDS = 300   # nothing is sent this soon after start-up
 MONTHLY_PATH_NAME = "monthly_jobs.json"
 
 
@@ -171,11 +173,22 @@ def run_once(site, now: datetime | None = None) -> None:
             alerts.notify(key, f"{what} failed ({exc.__class__.__name__}); see the server log")
 
 
+def first_wait(now: datetime | None = None) -> int:
+    """Seconds from start-up to the first run: a full hour, so booting alone sends nothing, and a
+    deploy at the send hour only moves that day's emails to the next hour (done-for-the-day is kept
+    on disk, so nothing repeats either). Near midnight UTC, sooner, so the day isn't missed; never
+    within BOOT_QUIET_SECONDS of start-up."""
+    now = now or datetime.now(timezone.utc)
+    to_midnight = 86400 - (now.hour * 3600 + now.minute * 60 + now.second)
+    return TICK_SECONDS if to_midnight - 60 >= TICK_SECONDS else max(BOOT_QUIET_SECONDS, to_midnight - 60)
+
+
 def start(site) -> threading.Thread:
     def loop() -> None:
+        time.sleep(first_wait())
         while True:
             run_once(site)
-            time.sleep(3600)
+            time.sleep(TICK_SECONDS)
 
     thread = threading.Thread(target=loop, name="monthly-jobs", daemon=True)
     thread.start()

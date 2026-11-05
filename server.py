@@ -39,6 +39,7 @@ import backup
 import billing
 import calendar_feed
 import contract_import
+import doc_check
 import domain
 import exports
 import helper
@@ -96,6 +97,7 @@ def company_lock(company_id: str) -> threading.RLock:
 MAX_BODY_BYTES = 1_000_000
 MAX_INBOUND_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 5_000
+CLIENT_PHONE = "That number belongs to a client. Texts only go to your own team."
 BODY_SECONDS = 60  # a request body must arrive within this long in total, however slowly it trickles
 
 # The only files served from static/. Anything else is a 404.
@@ -238,7 +240,7 @@ def read_only_reason(company_id: str, state: dict | None = None) -> str:
     if state is None:
         with company_lock(company_id):
             state = load_company(company_id)
-    why = str(state.get("company", {}).get("read_only") or "").strip() or billing.standing(state)["hold"]
+    why = billing.read_only_why(state)
     return f"This company is read-only: {why}. Nothing was changed; your data is kept and can be exported from Settings." if why else ""
 
 
@@ -972,6 +974,9 @@ class Handler(BaseHTTPRequestHandler):
         if route.access == "body":
             handler(m, ctx)
             return
+
+        if route.handler == "_m_job_action" and m.group(2) in DOCUMENT_ACTIONS and m.group(3):
+            ctx.read_ahead = _read_ahead(ctx.company_id, m.group(1), m.group(3), _text(body, "record_id"), _text(body, "file_id"))
 
         def change(state: dict) -> None:
             fresh = handler(state, m, ctx)
@@ -2214,6 +2219,8 @@ class Handler(BaseHTTPRequestHandler):
         waiver_kind = (query.get("waiver_kind") or [""])[0] if file_now else ""
         # The paid pay app or retainage release it is for, from that row of the waiver page (B1).
         waiver_for = (query.get("waiver_for") or [""])[0] if file_now else ""
+        # A file on its way into the New job record form: that form's save fills in what it is.
+        for_job_record = file_now and (query.get("for_job_record") or [""])[0] == "1"
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
@@ -2241,6 +2248,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Uploaded in the Inbox with "Which job?" answered: suggested there, filed by a person (R5-07).
         reason = "Added from the job page." if file_now else "was uploaded for this job"
+        ahead = _read_ahead(company_id, job_id, attach_to, stored=stored) if attach_to else {}
 
         def add(state: dict) -> None:
             for meta in stored:
@@ -2253,17 +2261,19 @@ class Handler(BaseHTTPRequestHandler):
                     extra={"skipped_attachments": skipped} if skipped else None, job_reason=reason)
             else:
                 meta = stored[0]
-                text = data.decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
+                text = data[:importer.MAX_TEXT_CHARS * 4].decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
                 item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=ids, job_id=job_id,
                                          extra={"payments_csv": True, "payment_rows": payment_rows} if payment_rows else None,
                                          job_reason=reason)
             if file_now:
                 # Dropped on a job page: the person already chose the job.
                 filed = importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
+                if for_job_record:
+                    domain.hold_for_job_record(state, job_id, filed["record_ids"], actor)
                 if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
                     domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for)
                 if attach_to:
-                    domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor, read_file=_file_reader(company_id))
+                    domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor, read_file=_file_reader(company_id, ahead))
                 if signed_co:
                     # Who signed the paper copy and when (M9) come with it; without them it is refused.
                     domain.mark_co_signed(state, job_id, signed_co, filed["record_ids"][0], actor,
@@ -2634,6 +2644,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(303, b"", "text/plain", {"Location": f"/s/{company_id}.{token}"})
 
+    def _local_development(self) -> bool:
+        """No named environment, and the request came from this machine (a proxy's never does)."""
+        env = (os.environ.get("DURACASH_ENV") or "").strip().lower()
+        return env in {"", "development"} and self.client_address[0] in {"127.0.0.1", "::1"}
+
     def _inbound_sms(self, token: str) -> None:
         company_id = importer.company_for_token(token, "sms")
         if not company_id:
@@ -2647,7 +2662,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "ignored": "the demo is read-only"})
             return
         secret = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
-        if production() and not secret:
+        if not secret and not self._local_development():
             # Without the token nobody can tell a text from Twilio from a stranger's post.
             log_json("error", msg="inbound text refused: TWILIO_AUTH_TOKEN is not set", company=company_id, rid=self._rid)
             self._json(403, {"error": "Texts aren't set up on this server."})
@@ -2814,11 +2829,41 @@ class Handler(BaseHTTPRequestHandler):
         elif agreed and not phone:
             wrong = "Enter your mobile number to get texts."
         elif phone and phone in sms.client_numbers(company_state(ctx.company_id)):
-            wrong = "That number belongs to a client. Texts only go to your own team."
+            wrong = CLIENT_PHONE
+        elif agreed and not auth.sms_proven(ctx.user["id"], phone):
+            # Agreeing takes effect once a code texted to the number comes back; nothing changes until then.
+            code = auth.issue_sms_code(ctx.user["id"], phone)
+            if not code:
+                self._json(429, {"error": "Five codes were asked for in the last hour. Use the newest one, or try again later."})
+                return
+            result = sms.send_code(company_state(ctx.company_id), ctx.company_id, ctx.user["id"], code)
+            if result == "sent":
+                self._json(200, {"user": self._me_user(auth.session_public(ctx.user["id"]) or ctx.user), "code_sent": True, "sent_to": phone})
+                return
+            auth.drop_sms_codes(ctx.user["id"])
+            wrong = {sms.NOT_SET_UP: "Texts aren't set up on this server, so this number can't be confirmed.",
+                     sms.NOT_ALLOWED: "This number isn't on this server's allow-list.",
+                     sms.READ_ONLY: "Texts are off while this company is read-only.",
+                     sms.CLIENT_NUMBER: CLIENT_PHONE}.get(result, "The code couldn't be sent. Check the number and try again.")
         if wrong:
             self._json(409, {"error": wrong, "fields": {"phone": wrong}})
             return
         self._json(200, {"user": self._me_user(auth.set_sms(ctx.user["id"], phone, agreed))})
+
+    def _p_my_sms_confirm(self, m, ctx: "Ctx") -> None:
+        """The code texted to the number came back: it is this person's, and texts are on."""
+        code = ctx.body.get("code")
+        wrong = ""
+        if sms.is_client_number(company_state(ctx.company_id), auth.sms_code_number(ctx.user["id"], code)):
+            auth.drop_sms_codes(ctx.user["id"])   # a client was given this number since the code went
+            wrong = CLIENT_PHONE
+        else:
+            try:
+                self._json(200, {"user": self._me_user(auth.confirm_sms_code(ctx.user["id"], code))})
+                return
+            except auth.AuthError as exc:
+                wrong = str(exc)
+        self._json(409, {"error": wrong, "fields": {"sms_code": wrong}})
 
     def _reminders_reply(self, user: dict, state: dict) -> dict:
         return reminders.page(state, user, datetime.now(timezone.utc))
@@ -2832,9 +2877,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         raw = ctx.body.get("prefs")
         try:
-            prefs = reminders.clean_prefs(raw if isinstance(raw, dict) else {})
+            if not isinstance(raw, dict):
+                raise ValueError("Pick in the app, email or text.")
+            prefs = reminders.clean_prefs(raw)
         except ValueError as exc:
-            self._json(409, {"error": str(exc)})
+            self._json(400, {"error": str(exc)})
             return
         person = auth.session_public(ctx.user["id"]) or ctx.user
         if not person.get("sms_opt_in"):
@@ -2880,6 +2927,8 @@ class Ctx:
     actor: str
     # Fields a "mutate" handler adds to the snapshot it answers with.
     reply: dict = field(default_factory=dict)
+    # Files the document check will want, read before the company's lock (_read_ahead).
+    read_ahead: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -3025,6 +3074,7 @@ ROUTES = [
     Route("POST", r"/api/company", "_m_company_update", "mutate", perm="company"),
     Route("POST", r"/api/auth/name", "_p_my_name", "body"),
     Route("POST", r"/api/auth/sms", "_p_my_sms", "body"),
+    Route("POST", r"/api/auth/sms/confirm", "_p_my_sms_confirm", "body"),
     Route("GET", r"/api/reminders", "_g_reminders", "user"),
     Route("POST", r"/api/reminders/prefs", "_p_reminder_prefs", "body"),
     Route("POST", r"/api/reminders/read", "_p_reminder_read", "body"),
@@ -3194,14 +3244,41 @@ def may_take(user: dict, action: str, state: dict) -> bool:
 
 
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
-def _file_reader(company_id: str):
-    """What the document check reads a stored file with (domain.read_file): None if it is gone."""
-    def read(meta: dict) -> bytes | None:
-        try:
-            return importer.file_path(company_id, meta).read_bytes()
-        except OSError:
-            return None
+def _read_stored(company_id: str, meta: dict) -> "doc_check.ReadFile | None":
+    """A stored file read for the document check; None if it is gone."""
+    ext = str(meta.get("ext") or "").lower()
+    try:
+        return doc_check.prepare(ext, b"" if ext in doc_check.PICTURES else importer.file_path(company_id, meta).read_bytes())
+    except OSError:
+        return None
+
+
+def _read_ahead(company_id: str, job_id: str, item_id: str, record_id: str = "", file_id: str = "", stored: tuple | list = ()) -> dict:
+    """Read the files a document check is about to want, before the company's lock is taken, so a
+    big file holds up nobody else: {file id: what doc_check.prepare got}. The files the item already
+    has, the record or file on its way to it, and those just stored."""
+    with company_lock(company_id):
+        state = load_company(company_id)
+    job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
+    item = domain._find_packet_item(job, item_id)[0] if job else None
+    wanted = {a.get("record_id") for a in (item or {}).get("attachments", [])} | {record_id}
+    ids = {fid for r in (job or {}).get("records", []) if r["id"] in wanted for fid in r.get("file_ids") or []} | {file_id}
+    metas = {m["id"]: m for m in state.get("files", []) if m["id"] in ids}
+    metas.update({m["id"]: m for m in stored})
+    return {fid: _read_stored(company_id, meta) for fid, meta in metas.items()}
+
+
+def _file_reader(company_id: str, ahead: dict | None = None):
+    """What the document check reads a stored file with (domain.read_file): what _read_ahead got,
+    or for a file that came onto the item since, read now."""
+    def read(meta: dict) -> "doc_check.ReadFile | None":
+        if ahead and meta["id"] in ahead:
+            return ahead[meta["id"]]
+        return _read_stored(company_id, meta)
     return read
+
+
+DOCUMENT_ACTIONS = {"attach-record", "packet-confirm", "attach"}
 
 
 JOB_ACTIONS = {
@@ -3252,8 +3329,8 @@ JOB_ACTIONS = {
     "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
     "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor, _text(c.body, "note") if "note" in c.body else None)),
-    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id), looked=c.body.get("looked") is True)),
-    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id))),
+    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
+    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id, c.read_ahead))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor, whole_client=c.body.get("whole_client") is True)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),
@@ -3268,7 +3345,7 @@ JOB_ACTIONS = {
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
     "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body)),
-    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id), looked=c.body.get("looked") is True)),
+    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
 }
 
 def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None = None) -> bool:

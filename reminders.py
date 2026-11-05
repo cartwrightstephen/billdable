@@ -10,7 +10,11 @@ In the app: sync_notifications() adds what is due to the person's list whenever 
 with an unread count; nothing is sent. A notification whose item has been dealt with is marked
 done and stops counting.
 All of this is kept in <data dir>/reminder_jobs.json, outside the company's data, so a restart
-doesn't repeat anything.
+doesn't repeat anything. An email or text's place is written there before it goes, so a file that
+can't be written means nothing is sent, not the same thing again each hour. If the file can't be
+read, nothing goes out and nothing is written: a copy is kept as reminder_jobs.json.bad-<time>,
+the server alerts, and the file stays until a person fixes or removes it (removing it starts the
+reminders and the in-app list afresh).
 
 The kinds:
 - dates: a follow-up or payment date in the next week or already past, a pay app due day in the
@@ -29,6 +33,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
 import traceback
 from datetime import date, datetime, timedelta, timezone
@@ -36,6 +41,7 @@ from typing import Any
 
 import alerts
 import auth
+import billing
 import calendar_feed
 import domain
 import mailer
@@ -59,6 +65,15 @@ _DATE_UID = re.compile(r"^(.+)-(follow|due(?:-\d{6})?)$")
 _LOCK = threading.RLock()
 
 
+class StateUnreadable(Exception):
+    """reminder_jobs.json is there and can't be read: what was sent isn't known."""
+
+
+def _log(level: str, **fields: Any) -> None:
+    record = {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "level": level, **fields}
+    sys.stderr.write(json.dumps(record, default=str) + "\n")
+
+
 def repeat_days() -> int:
     try:
         return max(1, int(os.environ.get("REMINDER_REPEAT_DAYS") or DEFAULT_REPEAT_DAYS))
@@ -72,7 +87,7 @@ def clean_prefs(raw: dict[str, Any]) -> dict[str, list[str]]:
     for kind, channels in raw.items():
         if kind not in KINDS:
             raise ValueError("That reminder doesn't exist.")
-        if not isinstance(channels, list) or any(c not in CHANNELS for c in channels):
+        if not isinstance(channels, list) or any(not isinstance(c, str) or c not in CHANNELS for c in channels):
             raise ValueError("Pick in the app, email or text.")
         out[kind] = [c for c in CHANNELS if c in channels]
     return out
@@ -128,10 +143,16 @@ def _co_items(state: dict[str, Any], now: datetime, jobs: dict[str, dict[str, An
     needs: dict[tuple[str, str], tuple[dict[str, Any], set[str]]] = {}
     out = []
     for rec in state.get("daily_records", []):
+        if not isinstance(rec, dict):
+            continue
         job = jobs.get(rec.get("job_id"))
         if not job or (rec.get("at") or "") < since:
             continue
-        for n, row in enumerate((rec.get("sections") or {}).get("co_work") or []):
+        sections = rec.get("sections") if isinstance(rec.get("sections"), dict) else {}
+        rows = sections.get("co_work") if isinstance(sections.get("co_work"), list) else []
+        for n, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
             co = next((c for c in job.get("change_orders", []) if c["id"] == row.get("co_id")), None)
             if not row.get("co_id"):
                 # Answered once a change order has been written since the record.
@@ -159,7 +180,18 @@ def _co_items(state: dict[str, Any], now: datetime, jobs: dict[str, dict[str, An
 def build(state: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
     """Everything worth a reminder today, for the whole company."""
     jobs = {j["id"]: j for j in state.get("jobs", []) if not j.get("closed")}
-    return _date_items(state, now.date(), jobs) + _missing_items(state, jobs) + _co_items(state, now, jobs)
+    return (_safely("dates", _date_items, state, now.date(), jobs) + _safely("missing", _missing_items, state, jobs)
+            + _safely("co_records", _co_items, state, now, jobs))
+
+
+def _safely(kind: str, read: Any, *args: Any) -> list[dict[str, Any]]:
+    """One kind of reminder, whatever stored data it meets: the others and the page go on."""
+    try:
+        return read(*args)
+    except Exception as exc:
+        _log("error", msg=f"reminders: {kind} couldn't be worked out", reason=exc.__class__.__name__, trace=traceback.format_exc())
+        alerts.notify(f"reminders-build:{kind}", f"the {kind} reminders couldn't be worked out ({exc.__class__.__name__}); see the server log")
+        return []
 
 
 def for_person(items: list[dict[str, Any]], person: dict[str, Any]) -> list[dict[str, Any]]:
@@ -198,12 +230,44 @@ def _path():
     return storage.DATA_DIR / JOBS_FILE
 
 
+def _unreadable(why: str) -> StateUnreadable:
+    _log("error", msg=f"{JOBS_FILE} can't be read: no reminders go out until it is fixed", reason=why)
+    alerts.notify("reminders-state", f"{JOBS_FILE} can't be read ({why}), so no reminders are going out. A copy is kept beside it. Fix or remove the file to start again.")
+    return StateUnreadable(why)
+
+
+def _clean_person(rec: dict[str, Any]) -> dict[str, Any]:
+    """One person's record with only the parts of the shape they should have: a stray value is
+    dropped, and never stops the page or the loop."""
+    sent = rec.get("sent") if isinstance(rec.get("sent"), dict) else {}
+    rec["sent"] = {c: {k: d for k, d in days.items() if isinstance(d, str)} for c, days in sent.items() if isinstance(days, dict)}
+    notes = rec.get("notes") if isinstance(rec.get("notes"), list) else []
+    rec["notes"] = [{"kind": "", "job": "", "text": "", "path": "", "at": "", "read": False, **n} for n in notes
+                    if isinstance(n, dict) and isinstance(n.get("id"), str) and isinstance(n.get("key"), str)]
+    if not isinstance(rec.get("results"), dict):
+        rec.pop("results", None)
+    return rec
+
+
 def _load() -> dict[str, Any]:
+    """Everything kept, {company: {person: record}}. No file is nothing kept yet. A file that can't
+    be read raises StateUnreadable (and is copied aside, logged and alerted); a company or person
+    of the wrong shape is left out."""
     try:
-        data = json.loads(_path().read_text())
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
+        raw = _path().read_bytes()
+    except FileNotFoundError:
         return {}
+    except OSError as exc:
+        raise _unreadable(exc.__class__.__name__)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        storage.set_aside(_path())
+        raise _unreadable("it is damaged")
+    return {company: {uid: _clean_person(rec) for uid, rec in people.items() if isinstance(rec, dict)}
+            for company, people in data.items() if isinstance(people, dict)}
 
 
 def _person(data: dict[str, Any], company_id: str, user_id: str) -> dict[str, Any]:
@@ -212,16 +276,22 @@ def _person(data: dict[str, Any], company_id: str, user_id: str) -> dict[str, An
 
 def last_result(company_id: str, user_id: str) -> dict[str, Any] | None:
     """{day, results: {email, text}} of this person's last reminder."""
-    with _LOCK:
-        rec = _load().get(company_id, {}).get(user_id) or {}
+    try:
+        with _LOCK:
+            rec = _load().get(company_id, {}).get(user_id) or {}
+    except StateUnreadable:
+        return None
     return {"day": rec.get("day"), "results": rec.get("results") or {}} if rec.get("day") else None
 
 
 def forget_company(company_id: str) -> None:
-    with _LOCK:
-        data = _load()
-        if data.pop(company_id, None) is not None:
-            storage.write_json(_path(), data)
+    try:
+        with _LOCK:
+            data = _load()
+            if data.pop(company_id, None) is not None:
+                storage.write_json(_path(), data)
+    except StateUnreadable:
+        pass   # logged and alerted; a person deals with the file
 
 
 def _due(items: list[dict[str, Any]], sent: dict[str, str], today: date) -> list[dict[str, Any]]:
@@ -278,28 +348,38 @@ def run(site, now: datetime | None = None) -> list[str]:
             if not people:
                 continue
             state = site.read(company_id)
-            if state is None:
+            if state is None or billing.read_only_why(state):
                 continue
             items, sent = build(state, now), 0
             for person in people:
                 mine = for_person(items, person)
-                was = done.get(person["id"]) or {}
-                results, delivered = {}, {}
-                for channel, send in senders.items():
-                    due = _due(_on_channel(mine, person.get("reminders") or {}, channel), (was.get("sent") or {}).get(channel) or {}, today)
-                    if due:
-                        results[channel] = send(site, state, company_id, person, due)
-                        if results[channel] == "sent":
-                            delivered[channel] = due
-                with _LOCK:   # the day counts with nothing to say too; the last thing sent stays on show
+                chosen = person.get("reminders") or {}
+                with _LOCK:   # each send's place is taken and written first; the day counts with nothing to say too
                     data = _load()
                     rec = _person(data, company_id, person["id"])
+                    due = {channel: _due(_on_channel(mine, chosen, channel), (rec.get("sent") or {}).get(channel) or {}, today) for channel in senders}
+                    due = {channel: rows for channel, rows in due.items() if rows}
+                    before = {channel: dict((rec.get("sent") or {}).get(channel) or {}) for channel in due}
                     rec["day"] = day
-                    if results:
-                        rec["results"] = results
-                    for channel, due in delivered.items():
-                        _mark_sent(rec, channel, due, today)
+                    for channel, rows in due.items():
+                        _mark_sent(rec, channel, rows, today)
                     storage.write_json(_path(), data)
+                results = {channel: senders[channel](site, state, company_id, person, rows) for channel, rows in due.items()}
+                delivered = [channel for channel, result in results.items() if result == "sent"]
+                if results:
+                    with _LOCK:   # the last thing sent stays on show; what didn't go gets its place back
+                        data = _load()
+                        rec = _person(data, company_id, person["id"])
+                        rec["results"] = results
+                        for channel, rows in due.items():
+                            if channel not in delivered:
+                                sent_days = rec.setdefault("sent", {}).setdefault(channel, {})
+                                for row in rows:
+                                    if row["key"] in before[channel]:
+                                        sent_days[row["key"]] = before[channel][row["key"]]
+                                    else:
+                                        sent_days.pop(row["key"], None)
+                        storage.write_json(_path(), data)
                 sent += len(delivered)
             if sent:
                 lines.append(f"{company_id}  reminders: {sent} sent")
@@ -319,25 +399,45 @@ def sync_notifications(state: dict[str, Any], person: dict[str, Any], now: datet
     prefs = person.get("reminders") or {}
     today = now.date()
     with _LOCK:
-        data = _load()
+        try:
+            data = _load()
+        except StateUnreadable:
+            return []
         rec = _person(data, person.get("company_id", ""), person["id"])
         due = _due(_on_channel(items, prefs, "app"), (rec.get("sent") or {}).get("app") or {}, today)
         if due:
             notes = rec.setdefault("notes", [])
             stamp = now.isoformat(timespec="seconds")
-            notes.extend({"id": "n-" + secrets.token_hex(4), "key": i["key"], "kind": i["kind"], "job": i["job"], "text": i["text"],
+            notes.extend({"id": "n-" + secrets.token_hex(4), "key": i["key"], "kind": i["kind"], "job_id": i["job_id"], "job": i["job"], "text": i["text"],
                           "path": i["path"], "at": stamp, "read": False} for i in due)
             del notes[:-NOTES_MAX]
             _mark_sent(rec, "app", due, today)
-            storage.write_json(_path(), data)
+            try:
+                storage.write_json(_path(), data)
+            except OSError as exc:   # shown this once; they come round again when it can be kept
+                _log("error", msg=f"{JOBS_FILE} couldn't be written", reason=exc.__class__.__name__)
+                alerts.notify("reminders-state-write", f"{JOBS_FILE} couldn't be written ({exc.__class__.__name__}); see the server log")
         notes = rec.get("notes") or []
-    return [{**n, "done": n["key"] not in live} for n in reversed(notes)]
+    return [{**n, "done": n["key"] not in live} for n in reversed(notes) if _still_theirs(state, person, n)]
+
+
+def _still_theirs(state: dict[str, Any], person: dict[str, Any], note: dict[str, Any]) -> bool:
+    """A member sees a notification while the job is theirs; taken off it, it is hidden, job name
+    and all, and back if they are put on it again. An owner sees all. A note from before job_id was
+    kept goes by the job's name."""
+    if person.get("role") == "owner":
+        return True
+    field, value = ("id", note["job_id"]) if note.get("job_id") else ("name", note.get("job"))
+    return any(j.get(field) == value and j.get("assignee_id") == person["id"] for j in state.get("jobs", []))
 
 
 def mark_read(company_id: str, user_id: str, note_id: str = "") -> None:
     """One notification read, or all of them with no id."""
     with _LOCK:
-        data = _load()
+        try:
+            data = _load()
+        except StateUnreadable:
+            return
         rec = data.get(company_id, {}).get(user_id) or {}
         changed = False
         for note in rec.get("notes") or []:

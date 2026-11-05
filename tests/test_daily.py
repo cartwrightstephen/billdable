@@ -35,6 +35,7 @@ class NewJobRecordTests(unittest.TestCase):
         rec = self.job["records"][-1]
         rec["file_ids"] = ["f-" + name]
         self.state.setdefault("files", []).append({"id": "f-" + name, "name": name, "ext": "." + name.rsplit(".", 1)[-1], "size": 10})
+        domain.hold_for_job_record(self.state, self.id, [rec["id"]], "Ana")
         return rec
 
     def refused(self, field, notes="", **body):
@@ -100,6 +101,61 @@ class NewJobRecordTests(unittest.TestCase):
         self.refused("other_kind_0", entries=[{"section": "other", "row": 0, "kind": "mystery", "label": "x"}])
         self.refused("other_kind_0", entries=[{"section": "other", "row": 0, "kind": "daily", "label": "x"}])
         self.refused("attachments", entries=[{"section": "photos", "row": 0, "attachments": ["rec-nope"]}])
+
+    def signed_waiver(self):
+        """A waiver already on the job, filed some other way."""
+        domain.add_job_record(self.state, self.id, "Signed waiver", "waiver", "", "Ana")
+        rec = self.job["records"][-1]
+        rec["file_ids"] = ["f-waiver"]
+        self.state.setdefault("files", []).append({"id": "f-waiver", "name": "w.pdf", "ext": ".pdf", "size": 10})
+        return rec
+
+    def test_a_record_already_on_the_job_can_not_be_rewritten(self):
+        rec = self.signed_waiver()
+        before = dict(rec)
+        self.refused("attachments", entries=[{"section": "other", "kind": "note", "label": "Not a waiver", "note": "overwritten", "attachments": [rec["id"]]}])
+        self.assertEqual(rec, before)
+
+    def test_a_file_can_be_filed_only_once(self):
+        rec = self.upload("note", "a.jpg")
+        self.save(entries=[{"section": "photos", "row": 0, "attachments": [rec["id"]]}])
+        before = dict(rec)
+        self.refused("attachments", entries=[{"section": "other", "kind": "note", "label": "Changed", "attachments": [rec["id"]]}])
+        self.assertEqual(rec, before)
+        self.assertNotIn("awaiting_record", rec)
+
+    def test_only_the_person_who_uploaded_it_files_it_and_only_for_a_day(self):
+        rec = self.upload("note", "a.jpg")
+        entry = [{"section": "photos", "row": 0, "attachments": [rec["id"]]}]
+        with self.assertRaises(domain.GateError):
+            domain.save_job_record(self.state, self.id, "", "Sam", {"entries": entry})
+        rec["awaiting_record"]["at"] = "2000-01-01T00:00:00+00:00"
+        self.refused("attachments", entries=entry)
+
+    def test_a_file_a_person_has_put_on_a_pay_app_can_not_be_rewritten(self):
+        rec = self.upload("waiver", "w.pdf")
+        self.job["packet"] = [{"id": "p1", "kind": "waiver", "label": "Waiver", "attachments": [{"record_id": rec["id"], "added_by": "Ana"}]}]
+        self.refused("attachments", entries=[{"section": "other", "kind": "note", "label": "x", "attachments": [rec["id"]]}])
+
+    def test_a_refused_save_keeps_the_upload_for_the_retry(self):
+        rec = self.upload("note", "a.jpg")
+        self.refused("invoices_amount_0", entries=[{"section": "invoices", "row": 0, "amount": "lots", "attachments": [rec["id"]]}])
+        self.save(entries=[{"section": "invoices", "row": 0, "amount": "10", "attachments": [rec["id"]]}])
+        self.assertEqual(rec["kind"], "supplier_invoice")
+        self.assertNotIn("awaiting_record", rec)
+
+    def test_filing_an_upload_leaves_an_audit_row(self):
+        rec = self.upload("note", "a.jpg")
+        self.save(entries=[{"section": "delivery", "row": 0, "supplier": "ABC", "attachments": [rec["id"]]}])
+        self.assertIn("Delivery ticket: ABC", " ".join(a.get("detail", "") or a.get("what", "") or str(a) for a in self.state["audit"] if a.get("action") == "record_filed"))
+
+    def test_a_closed_job_takes_no_documents(self):
+        rec = self.upload("note", "a.jpg")
+        self.job["closed"] = True
+        with self.assertRaises(domain.GateError) as ctx:
+            self.save(entries=[{"section": "photos", "row": 0, "attachments": [rec["id"]]}])
+        self.assertIn("closed", str(ctx.exception))
+        self.assertEqual(rec["kind"], "note")
 
     def test_the_date_is_kept_and_a_future_one_refused(self):
         day = (date.fromisoformat(domain.local_today()) - timedelta(days=3)).isoformat()
@@ -245,6 +301,23 @@ class DailyRecordTests(unittest.TestCase):
 
 
 class DailyRecordHttpTests(ServerCase):
+    def test_the_whole_path_rewrites_only_what_this_form_uploaded(self):
+        owner, _ = self.signup("daily-path@site.example", "Site Co")
+        _, state = self.request("POST", "/api/jobs", {"name": "Porch", "customer": "Dana Lee", "contract_cents": 1_000_000, "address": "1 Elm St",
+                                                      "approver": "Dana", "ap_email": "dana@example.com", "phone": "(404) 555-0100", "role": "Owner"}, cookie=owner)
+        job = state["jobs"][0]
+        up = lambda query: self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=waiver{query}", raw=b"\xff\xd8\xff\xe0 photo", cookie=owner,
+                                        headers={"Content-Type": "image/jpeg", "X-Filename": quote("w.jpg")})[1]["jobs"][0]["records"][-1]
+        filed = up("")
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/daily-record", {"entries": [{"section": "other", "kind": "note", "label": "Not a waiver", "note": "overwritten", "attachments": [filed["id"]]}]}, cookie=owner)
+        self.assertEqual(res.status, 409, data)
+        self.assertIn("attachments", data["fields"])
+        fresh = up("&for_job_record=1")
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/daily-record", {"entries": [{"section": "other", "kind": "asbuilt", "label": "Plan", "attachments": [fresh["id"]]}]}, cookie=owner)
+        self.assertEqual(res.status, 200, data)
+        records = {r["id"]: r for r in data["jobs"][0]["records"]}
+        self.assertEqual((records[filed["id"]]["kind"], records[fresh["id"]]["kind"]), ("waiver", "asbuilt"))
+
     def test_a_photo_uploaded_first_is_linked_to_the_daily_record(self):
         owner, _ = self.signup("daily@site.example", "Site Co")
         _, state = self.request("POST", "/api/jobs", {"name": "Porch", "customer": "Dana Lee", "contract_cents": 1_000_000, "address": "1 Elm St",
