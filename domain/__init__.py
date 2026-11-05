@@ -4472,7 +4472,8 @@ def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor:
     if not any(_can_fill(state, records.get(a.get("record_id")) or {}, item) for a in item.get("attachments", [])):
         raise GateError(f"Attach the file for {item['label']} first.")
     waiting = [a for a in item.get("attachments", []) if a.get("unconfirmed")]
-    if shown is not None and set(shown) != {a.get("record_id") for a in waiting}:
+    # An attachment by name only has no record: the page sends a blank for it.
+    if shown is not None and {r or "" for r in shown} != {a.get("record_id") or "" for a in waiting}:
         names = ", ".join(a["name"] for a in waiting) or "the file"
         raise GateError(f"{item['label']} changed since you opened it: {names} is on it now. Look at that, then confirm.",
                         extra={"review_changed": True, "invoice_id": (invoice or {}).get("id", "")})
@@ -4553,12 +4554,14 @@ def _still_a_draft(invoice: dict[str, Any] | None) -> None:
 
 
 def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: str = "", actor: str = "owner",
-                     whole_client: bool = False) -> dict[str, Any]:
+                     whole_client: bool = False, on_client: bool = True) -> dict[str, Any]:
     """This customer does not need the item: it stops blocking, and it leaves the customer's
     paperwork list so later pay apps do not ask for it. The conditional waiver and the daily
     tickets Duracash adds itself are kept off on the client instead (waiver_not_needed,
     tickets_not_needed), since they are not on the list. A conditional waiver is the exception
-    (accept. 10): it comes off this job only unless the person chose the whole client."""
+    (accept. 10): it comes off this job only unless the person chose the whole client.
+    on_client False: this person can't change the client's settings, so it comes off this pay app
+    only, and the client's list stays as it is."""
     job = _open_job(state, job_id)
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
@@ -4576,6 +4579,11 @@ def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: s
         item["skipped_scope"] = "job"
         job["waiver_skipped"] = {"by": actor, "at": item["skipped_at"], "reason": item["skipped_reason"]}
         audit(state, job_id, "paperwork_not_needed", f"{actor} marked {item['label']} not needed on this job: {item['skipped_reason']}.", actor)
+        _refresh_draft_gate(job)
+        return job
+    if not on_client and _invoice:
+        item["skipped_scope"] = "pay_app"
+        audit(state, job_id, "paperwork_not_needed", f"{actor} marked {item['label']} not needed on {_invoice['number']}: {item['skipped_reason']}.", actor)
         _refresh_draft_gate(job)
         return job
     payer = _payer(state, job["payer_id"])

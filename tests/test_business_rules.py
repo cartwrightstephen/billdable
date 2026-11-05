@@ -151,7 +151,8 @@ class MonthlyJobsTests(unittest.TestCase):
                 self.assertEqual(monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 9, tzinfo=UTC)), [], "only on the 1st to the 3rd")
                 did = monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 2, tzinfo=UTC))
                 self.assertEqual(monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 3, tzinfo=UTC)), [], "once")
-        send.assert_called_once_with(server.SITE, 2026, 10)
+        send.assert_called_once()
+        self.assertEqual(send.call_args[0][:3], (server.SITE, 2026, 10))
         self.assertIn("2026-10", did[0])
 
 

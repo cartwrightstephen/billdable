@@ -8,7 +8,7 @@ import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
 import { state, me, currentJobId, currentDetailId, formOpen } from "../state.js";
-import { may, perms, render, toast, post, load, backButton, emptyState, nav } from "../app-core.js";
+import { may, can, perms, render, toast, post, load, backButton, emptyState, nav } from "../app-core.js";
 
 const DRAFT = ["draft", "awaiting_approval"];
 const IMAGE = /\.(jpe?g|png|gif|webp)$/i;
@@ -289,7 +289,7 @@ export function confirmedText(p) {
 
 // Not needed, and on what: who and when once that was kept, with the reason (accept. 10).
 function skippedHtml(p, isCloseout, j = null) {
-  const where = p.skipped_scope === "job" || isCloseout ? "on this job" : "for this client";
+  const where = p.skipped_scope === "pay_app" ? "on this pay app" : p.skipped_scope === "job" || isCloseout ? "on this job" : "for this client";
   const given = /^Not needed (for|on) this \w+$/.test(unesc(p.skipped_reason)) ? "" : p.skipped_reason;
   if (!p.skipped_by) return `<div class="sub">Not needed ${where}${given ? ": " + given : ""}</div>`;
   const back = j && p.skipped_scope === "job" && !isCloseout ? ` <button class="btn small secondary" data-action="waiver-needed" data-id="${j.id}">Needed after all</button>` : "";
@@ -349,11 +349,11 @@ function packetItemsHtml(j, inv, packet, isCloseout) {
         <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">I have this…</button>
         ${waiver.startsWith("conditional") && !isCloseout
           ? `<button class="btn small secondary" data-action="toggle-form" data-form="skip-${p.id}" aria-expanded="${!!formOpen["skip-" + p.id]}">Not needed…</button>`
-          : `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">${isCloseout ? "Not needed on this job" : "Not needed for this client"}</button>`}
+          : `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">${isCloseout ? "Not needed on this job" : can("company") ? "Not needed for this client" : "Not needed on this pay app"}</button>`}
       </div>
       ${formOpen["skip-" + p.id] ? `<div class="form-inline"><input id="skip-reason-${p.id}" placeholder="Why (optional)" aria-label="Why it isn't needed (optional)" class="grow">
         <button class="btn small" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">On this job</button>
-        <button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}" data-whole-client="1">For this whole client</button></div>` : ""}
+        ${can("company") ? `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}" data-whole-client="1">For this whole client</button>` : ""}</div>` : ""}
       ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Why it can go without a checked file" aria-label="Why it can go without a checked file" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save override</button></div>` : ""}` : ""}
       ${waiver && !skipped ? `<details class="waiver-details"><summary>What the signed waiver must show</summary>${waiverChecklistHtml(j, waiver, inv)}${waiverFormHtml(j, waiver)}</details>` : ""}
     </div>`;

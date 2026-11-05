@@ -14,6 +14,7 @@ import re
 import sys
 import traceback
 from dataclasses import dataclass
+from itertools import islice
 from typing import Any
 
 import contract_import
@@ -90,10 +91,12 @@ _NEGATED_UNCONDITIONAL = re.compile(r"(?<![a-z])(?:not|isn['\u2019]?t|never|no)(
                                     + _UNCONDITIONAL.pattern, re.I)
 _WAIVER_WORDS = re.compile(r"waiver|release|lien", re.I)
 _NEAR_WORDS = 4
+_NEAR_CHARS = 200     # as far as a few words reach: only this much is split, however long the file
+MAX_MATCHES = 200     # a file that says it more often than this has said what it has to say
 
 
 def _near_a_waiver_word(text: str, found: "re.Match[str]") -> bool:
-    around = text[:found.start()].split()[-_NEAR_WORDS:] + text[found.end():].split()[:_NEAR_WORDS]
+    around = text[max(0, found.start() - _NEAR_CHARS):found.start()].split()[-_NEAR_WORDS:] + text[found.end():found.end() + _NEAR_CHARS].split()[:_NEAR_WORDS]
     return any(_WAIVER_WORDS.search(word) for word in around)
 
 
@@ -109,7 +112,8 @@ def says_unconditional(files: list[tuple[str, str, Any]], near_only: bool = Fals
             read = data if isinstance(data, ReadFile) else prepare(ext, data)
             text = read.text or ""
             kept = _NEGATED_UNCONDITIONAL.sub(" ", text)
-            if any(not near_only or _near_a_waiver_word(kept, found) for found in _UNCONDITIONAL.finditer(kept)):
+            matches = islice(_UNCONDITIONAL.finditer(kept), MAX_MATCHES)
+            if any(not near_only or _near_a_waiver_word(kept, found) for found in matches):
                 return True
     except Exception:
         sys.stderr.write(traceback.format_exc())

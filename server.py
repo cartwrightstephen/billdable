@@ -736,19 +736,30 @@ class Handler(BaseHTTPRequestHandler):
         return self._read_body(length) if length else b""
 
     def _drain(self, length: int) -> None:
-        """Take in a body refused for its size, up to DRAIN_BYTES, so the answer reaches a browser
-        still sending rather than a broken connection. Then the connection closes."""
+        """Take in a body refused for its size, up to DRAIN_BYTES and within BODY_SECONDS in total
+        (as _read_body: read1 and the socket timeout, since a plain read waits for all it asked for),
+        so the answer reaches a browser still sending rather than a broken connection. Then the
+        connection closes."""
         self.close_connection = True
         left = min(length, DRAIN_BYTES)
         deadline = time.monotonic() + BODY_SECONDS
         try:
-            while left > 0 and time.monotonic() < deadline:
-                chunk = self.rfile.read(min(left, 65536))
+            while left > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                self.connection.settimeout(min(self.timeout, remaining))
+                chunk = self.rfile.read1(min(left, 65536))
                 if not chunk:
                     return
                 left -= len(chunk)
-        except OSError:
+        except OSError:   # a timeout is one
             pass
+        finally:
+            try:
+                self.connection.settimeout(self.timeout)
+            except OSError:
+                pass
 
     def _read_body(self, length: int) -> bytes:
         """Read exactly `length` bytes within BODY_SECONDS in total. The socket timeout alone is per read,
@@ -3111,7 +3122,7 @@ ROUTES = [
     Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate"),
     Route("POST", r"/api/payers", "_m_payer_add", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
-    Route("POST", r"/api/payers/([^/]+)/waiver-needed", "_m_payer_waiver_needed", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/waiver-needed", "_m_payer_waiver_needed", "mutate", perm="company"),
     Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", perm="company"),
     Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate", perm="record_payments"),
@@ -3216,6 +3227,16 @@ def _shown(body: dict) -> list | None:
     """The records a page was showing when Confirm was tapped; None from a page that doesn't say."""
     shown = body.get("shown")
     return [str(r) for r in shown] if isinstance(shown, list) else None
+
+
+def _skip_item(st: dict, j: str, i: str, c: "Ctx") -> dict:
+    """Not needed. A whole client's rule or list is the client's settings: without that permission
+    the whole client is refused, and any other item comes off this pay app only."""
+    on_client = profiles.has_perm(c.user, "company", st)
+    whole_client = c.body.get("whole_client") is True
+    if whole_client and not on_client:
+        raise OwnerOnly()
+    return domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor, whole_client=whole_client, on_client=on_client)
 
 
 def _send_payapp(h, st, j, i, c):
@@ -3406,7 +3427,7 @@ JOB_ACTIONS = {
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
     "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
-    "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor, whole_client=c.body.get("whole_client") is True)),
+    "packet-skip": (True, lambda h, st, j, i, c: _skip_item(st, j, i, c)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),
     "import-qbo": (False, _import_qbo),
     "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),
