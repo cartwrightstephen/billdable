@@ -15,7 +15,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     jobId = await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Tia Tasks", company_name: "Task Builders" });
-      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver: "Kim Homeowner", name: "Maple deck", address: "3 Maple St", customer: "Kim Homeowner", role: "Owner",
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Kim Homeowner", name: "Maple deck", address: "3 Maple St", customer: "Kim Homeowner", role: "Owner",
         ap_email: "kim@example.com", contract_cents: 900000 })).json();
       return st.jobs[0].id;
     }, `tasks-${Date.now()}@example.com`);

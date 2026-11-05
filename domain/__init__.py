@@ -2285,9 +2285,10 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             more = f" And {len(items) - 1} more." if len(items) > 1 else ""
             paperwork = needs_paperwork(job)
             cos = [b for b in items if b["kind"] == "co"]
+            only_co = cos[0]["co_id"] if cos and len(cos) == len(items) else ""
             add(3, "blocked", job, "Needs supporting documents" if paperwork else "Blocked", "amber" if paperwork else "red", items[0]["text"] + more,
-                blocker_button(job), f"/money/packet/{job['id']}/{draft['id']}" if draft else f"/money/packet/{job['id']}",
-                invoice_id=draft["id"] if draft else "", co_id=cos[0]["co_id"] if cos and len(cos) == len(items) else "", due=cutoff_day,
+                blocker_button(job), f"/money/change-order/{job['id']}/{only_co}" if only_co else f"/money/packet/{job['id']}/{draft['id']}" if draft else f"/money/packet/{job['id']}",
+                invoice_id=draft["id"] if draft else "", co_id=only_co, due=cutoff_day,
                 packet_item_id=items[0].get("item_id", ""))
         elif draft:
             changes = draft.get("pencil_status") == "corrections"
@@ -2574,6 +2575,8 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     clean: dict[str, Any] = {}
     errors: dict[str, str] = {}
     for k, v in updates.items():
+        if k == "approver_confirmed":
+            continue  # read below: it says who signs off was answered, it isn't stored as sent
         if k in PAYER_DAY_FIELDS or k == "payapp_due_day":
             if v is None and k != "payapp_due_day":
                 continue
@@ -2635,14 +2638,18 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
         raise GateError("Client playbook not saved.", fields=errors)
     changed = []
     was = payer["name"]
+    signer_was = payer.get("approver")
     for k, v in clean.items():
         if v is None:
             payer.pop(k, None)
         else:
             payer[k] = v
         changed.append(k)
-    if clean.get("approver"):
-        payer["approver_confirmed"] = True  # seen and saved on the client's card
+    if clean.get("approver") or updates.get("approver_confirmed") is True:
+        if signer_answered(payer.get("approver"), payer["name"], updates.get("approver_confirmed") is True):
+            payer["approver_confirmed"] = True
+        elif clean.get("approver") != signer_was:
+            payer.pop("approver_confirmed", None)   # what was confirmed was someone else
     if clean.get("packet"):
         payer.pop("no_paperwork", None)  # a list typed in again replaces "nothing needed"
     elif clean.get("packet") == "":
@@ -2660,7 +2667,16 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
 # A complete Client playbook (Decision 4): its name and client type, and these. Box -> the reason.
 PLAYBOOK_FIELDS = {"approver": "Enter who signs off on your bills.", "ap_email": "Enter the email pay apps go to, like ap@builder.com.",
                    "phone": "Enter the client's phone number."}
+SIGNER_IS_CLIENT = "Confirm who signs off on your bills. It is set to the client's own name."
 PLAYBOOK_WORDS = {"client_type": "the client type", "approver": "who signs off", "ap_email": "email for pay apps", "phone": "phone"}
+
+
+def signer_answered(signer: str, client_name: str, said: bool) -> bool:
+    """Whether a save answers who signs off: the request says so (the screens do, their box starts
+    empty), or it names someone other than the client. Sending the client's own name back doesn't."""
+    if not str(signer or "").strip():
+        return False
+    return said or str(signer).strip().lower() != str(client_name or "").strip().lower()
 
 
 def signer_defaulted(payer: dict[str, Any]) -> bool:
@@ -2737,7 +2753,7 @@ def _same_customer_question(field: str, typed: str, near: dict[str, Any]) -> Gat
 
 
 def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_email: str, phone: str,
-               client_type: str = "") -> dict[str, Any]:
+               client_type: str = "", approver_confirmed: bool = False) -> dict[str, Any]:
     """A customer with the usual settings for its role, added to the company."""
     # Catalog labels (PAPERWORK_ITEMS), so the Client playbook shows them as ticked boxes.
     packet_rule = ", ".join(DEFAULT_PAPERWORK["GC" if role == "GC" else "Owner"])
@@ -2754,7 +2770,7 @@ def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_em
         "usual_approval_days": 21 if role == "GC" else 14,
         "rejects_when": "Missing required supporting documents.",
         "copy": "",
-        "approver_confirmed": True,  # typed by the person: both callers refuse a blank one
+        "approver_confirmed": signer_answered(approver, name, approver_confirmed),  # both callers refuse a blank one
     }
     state["payers"].append(payer)
     return payer
@@ -2791,6 +2807,8 @@ def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner")
     if not near:
         typed = {"approver": approver, "ap_email": ap_email, "phone": phone}
         errors.update({k: PLAYBOOK_FIELDS[k] for k in PLAYBOOK_FIELDS if not typed[k]})
+        if approver and not signer_answered(approver, name, body.get("approver_confirmed") is True):
+            errors["approver"] = SIGNER_IS_CLIENT
     days: dict[str, Any] = {}
     for k in (*PAYER_DAY_FIELDS, "payapp_due_day"):
         if body.get(k) not in (None, ""):
@@ -2802,7 +2820,7 @@ def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner")
     _refuse("Client not added.", errors)
     if near:
         raise _same_customer_question("name", name, near)
-    payer = _new_payer(state, name, role, approver, ap_email, phone, client_type)
+    payer = _new_payer(state, name, role, approver, ap_email, phone, client_type, body.get("approver_confirmed") is True)
     payer.update(days)
     if body.get("no_paperwork") is True:
         payer["packet"], payer["no_paperwork"] = "", True
@@ -4667,6 +4685,7 @@ def create_job(
     schedule_op: Any = "",
     today: Any = "",
     anticipated_end_on: Any = None,
+    approver_confirmed: bool = False,
 ) -> dict[str, Any]:
     """Add a job and its record. The packet is created later, with a pay app, from the payer's
     paperwork list (Customer settings); `note` is kept on the job record and never becomes it.
@@ -4728,7 +4747,10 @@ def create_job(
         wanted = playbook_missing(payer) if payer else ["client_type", *PLAYBOOK_FIELDS]
         errors.update({k: PLAYBOOK_FIELDS[k] for k in wanted if k in typed and not typed[k]})
         if payer and "approver" in errors and signer_defaulted(payer):
-            errors["approver"] = "Confirm who signs off on your bills. It is set to the client's own name."
+            errors["approver"] = SIGNER_IS_CLIENT
+        # The client's own name typed for who signs off counts when the page says a person answered.
+        if "approver" in wanted and approver and not signer_answered(approver, payer["name"] if payer else customer_name, approver_confirmed):
+            errors["approver"] = SIGNER_IS_CLIENT
         if "client_type" in wanted and not role and "client_type" not in errors:
             errors["client_type"] = "Pick the client type."
     start = ""
@@ -4771,7 +4793,7 @@ def create_job(
     if near:
         raise _same_customer_question("customer", customer_name, near)
     if not payer:
-        payer = _new_payer(state, customer_name, role, approver, ap_email, phone, client_type)
+        payer = _new_payer(state, customer_name, role, approver, ap_email, phone, client_type, approver_confirmed)
         payer.update(days)
     else:
         missing = playbook_missing(payer)

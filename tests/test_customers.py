@@ -50,7 +50,7 @@ class CustomerKeyTests(unittest.TestCase):
 
     def test_near_is_never_the_same_name(self):
         state = empty_state()
-        saved = domain.add_payer(state, {"name": "ABC Builders", "approver": "ABC Builders", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
+        saved = domain.add_payer(state, {"name": "ABC Builders", "approver_confirmed": True, "approver": "ABC Builders", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
         self.assertIs(domain.payer_near(state, "ABC Builders Inc"), saved)
         self.assertIs(domain.payer_near(state, "abc  builders"), saved)
         self.assertIsNone(domain.payer_near(state, "abc builders"), "the same name, ignoring case, is a match, not a near one")
@@ -62,7 +62,7 @@ class CustomerKeyTests(unittest.TestCase):
 class SameCustomerTests(unittest.TestCase):
     def test_new_job_asks_then_keeps_or_uses(self):
         state = empty_state()
-        saved = domain.add_payer(state, {"name": "ABC Builders", "ap_email": "ap@abc.example", "approver": "ABC Builders", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
+        saved = domain.add_payer(state, {"name": "ABC Builders", "ap_email": "ap@abc.example", "approver_confirmed": True, "approver": "ABC Builders", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
         with self.assertRaises(domain.GateError) as ctx:
             domain.create_job(state, "Porch", "ABC Builders, LLC", 100_000, address="1 Elm St", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         err = ctx.exception
@@ -82,7 +82,7 @@ class SameCustomerTests(unittest.TestCase):
 
     def test_other_errors_come_first(self):
         state = empty_state()
-        domain.add_payer(state, {"name": "ABC Builders", "approver": "ABC Builders", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
+        domain.add_payer(state, {"name": "ABC Builders", "approver_confirmed": True, "approver": "ABC Builders", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
         with self.assertRaises(domain.GateError) as ctx:
             domain.create_job(state, "", "ABC Builders Inc", 100_000, address="1 Elm St", approver="", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertIn("name", ctx.exception.fields)
@@ -90,22 +90,22 @@ class SameCustomerTests(unittest.TestCase):
 
     def test_add_customer_asks_then_keeps(self):
         state = empty_state()
-        domain.add_payer(state, {"name": "ABC Builders", "approver": "ABC Builders", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
+        domain.add_payer(state, {"name": "ABC Builders", "approver_confirmed": True, "approver": "ABC Builders", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
         with self.assertRaises(domain.GateError) as ctx:
-            domain.add_payer(state, {"name": "ABC Builders Inc.", "approver": "ABC Builders Inc.", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
+            domain.add_payer(state, {"name": "ABC Builders Inc.", "approver_confirmed": True, "approver": "ABC Builders Inc.", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
         self.assertEqual(list(ctx.exception.fields), ["name"])
         self.assertEqual(ctx.exception.extra["same_customer"]["name"], "ABC Builders")
         self.assertEqual(len(state["payers"]), 1)
-        domain.add_payer(state, {"name": "ABC Builders Inc.", "new_customer": True, "approver": "ABC Builders Inc.", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
+        domain.add_payer(state, {"name": "ABC Builders Inc.", "new_customer": True, "approver_confirmed": True, "approver": "ABC Builders Inc.", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
         self.assertEqual(len(state["payers"]), 2)
         with self.assertRaises(domain.GateError):
-            domain.add_payer(state, {"name": "ABC Builders Corp", "new_customer": "yes", "approver": "ABC Builders Corp", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")  # only true keeps it
+            domain.add_payer(state, {"name": "ABC Builders Corp", "new_customer": "yes", "approver_confirmed": True, "approver": "ABC Builders Corp", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")  # only true keeps it
 
 
 class DeleteCustomerTests(unittest.TestCase):
     def test_only_a_customer_no_job_uses(self):
         state = empty_state()
-        spare = domain.add_payer(state, {"name": "Spare Customer", "approver": "Spare Customer", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
+        spare = domain.add_payer(state, {"name": "Spare Customer", "approver_confirmed": True, "approver": "Spare Customer", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, "Pat")
         job = domain.create_job(state, "Porch", "Dana Lee", 100_000, address="1 Elm St", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         used = next(p for p in state["payers"] if p["id"] == job["payer_id"])
         with self.assertRaises(domain.GateError) as ctx:
@@ -191,9 +191,9 @@ class CustomerHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
         self.assertEqual(len(state["payers"]), 2)
 
-        res, data = self.request("POST", "/api/payers", {"name": "ABC Builders Co", "approver": "ABC Builders Co", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
+        res, data = self.request("POST", "/api/payers", {"name": "ABC Builders Co", "approver_confirmed": True, "approver": "ABC Builders Co", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
         self.assertEqual((res.status, data["same_customer"]["name"]), (409, "ABC Builders"))
-        res, state = self.request("POST", "/api/payers", {"name": "Spare Customer", "approver": "Spare Customer", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
+        res, state = self.request("POST", "/api/payers", {"name": "Spare Customer", "approver_confirmed": True, "approver": "Spare Customer", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
         spare = next(p for p in state["payers"] if p["name"] == "Spare Customer")
         self.assertEqual(spare["job_count"], 0)
 
@@ -223,7 +223,7 @@ class CustomerHttpTests(unittest.TestCase):
     def test_new_job_takes_the_four_address_boxes_start_date_and_assignee(self):  # J1, J8, G1
         owner, user = self.signup("parts@example.com", "Parts Builders")
         job = {"name": "Oak kitchen", "customer": "Ironleaf GC", "client_type": "gc", "contract_cents": 4_850_000,
-               "street": "418 Oak Street", "city": "Decatur", "state": "GA", "zip": "300", "started_on": "2026-10-05", "approver": "Ironleaf GC", "ap_email": "ap@client.example", "phone": "(404) 555-0100"}
+               "street": "418 Oak Street", "city": "Decatur", "state": "GA", "zip": "300", "started_on": "2026-10-05", "approver_confirmed": True, "approver": "Ironleaf GC", "ap_email": "ap@client.example", "phone": "(404) 555-0100"}
         res, data = self.request("POST", "/api/jobs", job, owner)
         self.assertEqual(res.status, 409)
         self.assertEqual(set(data["fields"]), {"zip"})
@@ -243,8 +243,8 @@ class CustomerHttpTests(unittest.TestCase):
     def test_client_jobs_and_the_job_file(self):  # S10, J9
         owner, _ = self.signup("file@example.com", "File Builders")
         other, _ = self.signup("other@example.com", "Other Builders")
-        self.request("POST", "/api/payers", {"name": "Ruiz Family", "ap_email": "ruiz@example.com", "no_paperwork": True, "approver": "Ruiz Family", "phone": "(404) 555-0100", "role": "Owner"}, owner)
-        res, state = self.request("POST", "/api/jobs", {"name": "Porch", "address": "1 Elm St", "customer": "Ruiz Family", "contract_cents": 100_000, "approver": "Ruiz Family", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
+        self.request("POST", "/api/payers", {"name": "Ruiz Family", "ap_email": "ruiz@example.com", "no_paperwork": True, "approver_confirmed": True, "approver": "Ruiz Family", "phone": "(404) 555-0100", "role": "Owner"}, owner)
+        res, state = self.request("POST", "/api/jobs", {"name": "Porch", "address": "1 Elm St", "customer": "Ruiz Family", "contract_cents": 100_000, "approver_confirmed": True, "approver": "Ruiz Family", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
         job, payer = state["jobs"][-1], state["payers"][0]
         res, data = self.raw("POST", f"/api/import/file?job={job['id']}&file=1&kind=contract", b"Signed subcontract", owner,
                              {"Content-Type": "text/plain", "X-Filename": "contract.txt"})
@@ -301,16 +301,16 @@ class CustomerHttpTests(unittest.TestCase):
         owner, _ = self.signup("add@example.com", "Add Builders")
         res, state = self.request("POST", "/api/payers", {"name": "Fulton County", "client_type": "public", "phone": "404-555-0100",
                                                           "packet": "Signed contract, Insurance certificate, Punch list sign-off (closeout)",
-                                                          "payapp_due_day": 25, "payment_terms_days": "30", "approver": "Fulton County", "ap_email": "ap@client.example"}, owner)
+                                                          "payapp_due_day": 25, "payment_terms_days": "30", "approver_confirmed": True, "approver": "Fulton County", "ap_email": "ap@client.example"}, owner)
         self.assertEqual(res.status, 200, state)
         p = state["payers"][0]
         self.assertEqual((p["client_type"], p["role"], p["phone"], p["payapp_due_day"], p["payment_terms_days"]),
                          ("public", "Owner", "(404) 555-0100", 25, 30))
         self.assertEqual(p["packet_items"], ["Signed contract", "Insurance certificate", "Punch list sign-off (closeout)"])
-        res, state = self.request("POST", "/api/payers", {"name": "Nothing Co", "no_paperwork": True, "approver": "Nothing Co", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
+        res, state = self.request("POST", "/api/payers", {"name": "Nothing Co", "no_paperwork": True, "approver_confirmed": True, "approver": "Nothing Co", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
         q = next(x for x in state["payers"] if x["name"] == "Nothing Co")
         self.assertEqual((q["packet"], q["no_paperwork"], q["packet_items"]), ("", True, []))
-        res, data = self.request("POST", "/api/payers", {"name": "Bad Days", "payapp_due_day": 40, "approver": "Bad Days", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
+        res, data = self.request("POST", "/api/payers", {"name": "Bad Days", "payapp_due_day": 40, "approver_confirmed": True, "approver": "Bad Days", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, owner)
         self.assertEqual((res.status, set(data["fields"])), (409, {"payapp_due_day"}))
 
 

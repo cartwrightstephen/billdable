@@ -139,3 +139,11 @@ test("an Inbox row shows the kind it files as, in a select to change it first", 
   assert.doesNotMatch(rowButtons(row({ kind: "says_done", button: "Final Pay App", item_id: "x1" })), /<select/);
   assert.doesNotMatch(queueHtml([row()]), /<select id="inb-kind/);
 });
+
+test("a row held up only by a change order opens the change order, as the job page's button does", () => {
+  const html = rowButtons(row({ kind: "blocked", button: "Get CO 2 signed", invoice_id: "i1", co_id: "co-2" }));
+  assert.match(html, /data-action="open-co" data-job="j1" data-co="co-2"/);
+  assert.doesNotMatch(html, /open-packet/);
+  const docs = rowButtons(row({ kind: "blocked", button: "Add 1 missing document", invoice_id: "i1", packet_item_id: "p1" }));
+  assert.match(docs, /data-action="open-packet" data-job="j1" data-inv="i1" data-item="p1"/);
+});

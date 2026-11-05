@@ -317,6 +317,17 @@ class TodayRowsTests(unittest.TestCase):
         self.assertEqual(r["packet_item_id"], inv["packet"][0]["id"])
         self.assertEqual(r["key"], f"blocked:{self.job['id']}:{inv['id']}", "the assignee stays with the row")
 
+    def test_a_row_held_up_only_by_a_change_order_goes_to_it(self):
+        inv = self.draft()
+        self.clear_packet(inv)
+        self.job["change_orders"].append({"id": "co-2", "number": 2, "status": "pending", "included_in_billing": True, "amount_cents": 50_000, "description": "Rail"})
+        r = self.only()
+        self.assertEqual((r["button"], r["co_id"]), ("Get CO 2 signed", "co-2"))
+        self.assertEqual(r["path"], f"/money/change-order/{self.job['id']}/co-2")
+        inv["packet"][0]["present"] = False
+        r = self.only()
+        self.assertEqual((r["co_id"], r["path"]), ("", f"/money/packet/{self.job['id']}/{inv['id']}"), "with documents missing too, the documents first")
+
     def test_a_file_waiting_for_a_look_changes_the_button(self):
         inv = self.draft()
         self.clear_packet(inv)

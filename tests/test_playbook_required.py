@@ -177,7 +177,7 @@ class OlderClientTests(unittest.TestCase):
         payer = older_client(state, approver="Old Client", ap_email="o@old.example", phone="(404) 555-0111")
         self.assertEqual(domain.playbook_missing(payer), ["approver"])
         self.assertIn("Confirm", self.refused_fields(state)["approver"])
-        domain.create_job(state, "Deck", "Old Client", 100_000, address="1 Elm St", approver="Old Client")
+        domain.create_job(state, "Deck", "Old Client", 100_000, address="1 Elm St", approver="Old Client", approver_confirmed=True)
         self.assertEqual(domain.playbook_missing(payer), [])
         domain.create_job(state, "Porch", "Old Client", 100_000, address="1 Elm St")
         self.assertEqual(len(state["jobs"]), 2)
@@ -189,15 +189,65 @@ class OlderClientTests(unittest.TestCase):
         self.assertEqual(payer["approver"], "Kim")
         self.assertFalse([a for a in state["audit"] if a["action"] == "payer_kept"])
 
-    def test_saving_the_card_confirms_the_signer(self):
+    def test_saving_the_clients_own_name_unchanged_doesnt_confirm_it(self):
         state = new_state()
         payer = older_client(state, approver="Old Client")
         domain.update_payer(state, payer["id"], {"approver": "Old Client"})
+        self.assertIn("approver", domain.playbook_missing(payer))
+        domain.update_payer(state, payer["id"], {"approver": "old client ", "follow_up_days": 7})
+        self.assertIn("approver", domain.playbook_missing(payer))
+
+    def test_a_save_that_says_so_confirms_the_signer(self):
+        state = new_state()
+        payer = older_client(state, approver="Old Client")
+        domain.update_payer(state, payer["id"], {"approver": "Old Client", "approver_confirmed": True})
         self.assertNotIn("approver", domain.playbook_missing(payer))
+        self.assertTrue(payer["approver_confirmed"])
+
+    def test_a_save_that_says_so_with_no_box_confirms_what_is_there(self):
+        state = new_state()
+        payer = older_client(state, approver="Old Client")
+        domain.update_payer(state, payer["id"], {"approver_confirmed": True})
+        self.assertNotIn("approver", domain.playbook_missing(payer))
+
+    def test_a_signer_other_than_the_client_confirms_it(self):
+        state = new_state()
+        payer = older_client(state, approver="Old Client")
+        domain.update_payer(state, payer["id"], {"approver": "Kim"})
+        self.assertNotIn("approver", domain.playbook_missing(payer))
+
+    def test_changing_to_the_clients_own_name_takes_the_confirm_back(self):
+        state = new_state()
+        payer = older_client(state, approver="Kim")
+        domain.update_payer(state, payer["id"], {"approver": "Kim"})
+        domain.update_payer(state, payer["id"], {"approver": "Old Client"})
+        self.assertIn("approver", domain.playbook_missing(payer))
+
+    def test_a_saved_signers_confirmation_stays_on_a_save_that_changes_nothing(self):
+        state = new_state()
+        payer = older_client(state, approver="Old Client")
+        domain.update_payer(state, payer["id"], {"approver": "Old Client", "approver_confirmed": True})
+        domain.update_payer(state, payer["id"], {"approver": "Old Client"})
+        self.assertNotIn("approver", domain.playbook_missing(payer))
+
+    def test_new_job_with_the_clients_own_name_needs_the_flag(self):
+        state = new_state()
+        payer = older_client(state, approver="Old Client", ap_email="o@old.example", phone="(404) 555-0111")
+        with self.assertRaises(domain.GateError) as refused:
+            domain.create_job(state, "Deck", "Old Client", 100_000, address="1 Elm St", approver="Old Client")
+        self.assertIn("Confirm", refused.exception.fields["approver"])
+        self.assertIn("approver", domain.playbook_missing(payer))
+        with self.assertRaises(domain.GateError):
+            domain.create_job(state, "Porch", "New Homeowner", 100_000, address="2 Elm St", approver="New Homeowner", ap_email="h@old.example",
+                              phone="(404) 555-0112", role="Owner", client_type="owner")
+        with self.assertRaises(domain.GateError):
+            domain.add_payer(state, {"name": "Another Owner", "client_type": "owner", "approver": "Another Owner", "ap_email": "a@old.example", "phone": "(404) 555-0113"})
+        domain.add_payer(state, {"name": "Another Owner", "client_type": "owner", "approver": "Another Owner", "ap_email": "a@old.example", "phone": "(404) 555-0113", "approver_confirmed": True})
+        self.assertEqual(domain.playbook_missing(state["payers"][-1]), [])
 
     def test_a_homeowner_who_typed_their_own_name_isnt_asked_again(self):
         state = new_state()
-        new_job(state, client="Dana Lee", approver="Dana Lee")
+        new_job(state, client="Dana Lee", approver="Dana Lee", approver_confirmed=True)
         self.assertEqual(domain.playbook_missing(state["payers"][0]), [])
 
     def test_a_type_read_from_an_older_role_is_asked_for(self):

@@ -251,7 +251,7 @@ class HttpTests(unittest.TestCase):
 
     def test_actor_comes_from_session_and_reset_needs_confirmation(self):
         cookie, user = self.signup("actor@example.com", company="Actor Co")
-        job = {"name": "Oak deck", "customer": "Lee", "address": "1 Oak St", "approver": "Lee", "ap_email": "ap@lee.example", "contract_cents": 500000, "actor": "The CEO", "phone": "(404) 555-0100", "role": "Owner"}
+        job = {"name": "Oak deck", "customer": "Lee", "address": "1 Oak St", "approver_confirmed": True, "approver": "Lee", "ap_email": "ap@lee.example", "contract_cents": 500000, "actor": "The CEO", "phone": "(404) 555-0100", "role": "Owner"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.assertEqual(res.status, 200, state)
         _, page = self.request("GET", "/api/audit?limit=1", cookie=cookie)

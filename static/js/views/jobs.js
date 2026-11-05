@@ -540,6 +540,7 @@ export const actions = {
     const r = await post("/api/jobs", {
       sov_lines: newJobSovLines(v),
       name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer, approver,
+      ...(approver ? { approver_confirmed: true } : {}),   // typed into its box here: a person's answer, even the client's own name
       ap_email: apEmail, phone, client_type: asked("client_type") ? v.client_type : "",
       contract_number: v.contract_number, note: v.note, started_on: v.started_on || "", anticipated_end_on: v.anticipated_end_on || "", today: localDay(new Date()),
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),

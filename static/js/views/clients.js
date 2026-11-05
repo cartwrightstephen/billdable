@@ -212,6 +212,8 @@ export const actions = {
     // Nothing needed is, which the server keeps as no paperwork.
     const saved = (state.payers || []).find(p => p.id === id) || {};
     for (const k of ["approver", "ap_email", "phone"]) if (!updates[k] && (!saved[k] || (k === "approver" && signerDefaulted(saved)))) delete updates[k];
+    // The box started empty and something was typed: a person's answer, even the client's own name.
+    if (updates.approver && signerDefaulted(saved)) updates.approver_confirmed = true;
     const paperwork = paperworkValue(key, updates.packet_other);
     delete updates.packet_other;
     const errors = {};
@@ -240,7 +242,7 @@ export const actions = {
     const paperwork = paperworkValue("addpayer", v.packet_other);
     delete v.packet_other;
     // Nothing ticked: the client starts with the usual paperwork for its type.
-    const body = { ...v, new_customer: keptNames.addpayer === v.name };
+    const body = { ...v, approver_confirmed: true, new_customer: keptNames.addpayer === v.name };
     if (paperwork && paperwork.none) body.no_paperwork = true;
     else if (paperwork && paperwork.text) body.packet = paperwork.text;
     for (const k of ["payapp_due_day", "payment_terms_days"]) if (!body[k]) delete body[k];

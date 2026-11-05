@@ -29,7 +29,7 @@ PASSWORD = "correct horse battery"
 def new_job_body(**over):
     """What the New job form posts (static/app.js, the create-job action), field for field."""
     body = {
-        "name": "Porch rebuild", "address": "12 Elm St", "customer": "Dana Homeowner", "approver": "Dana Homeowner",
+        "name": "Porch rebuild", "address": "12 Elm St", "customer": "Dana Homeowner", "approver_confirmed": True, "approver": "Dana Homeowner",
         "ap_email": "dana@example.com", "phone": "(404) 555-0100", "role": "Owner",
         "contract_number": "", "note": "",
         "contract_cents": 4850000, "retainage_pct": 0,
@@ -223,7 +223,7 @@ class FirstRunTests(unittest.TestCase):
 
     def test_add_rename_and_merge_customers(self):  # R3-07
         cookie, _ = self.signup("first-run-customers@example.com")
-        res, data = self.request("POST", "/api/payers", {"name": "Ironleaf GC", "role": "GC", "approver": "Ironleaf GC", "ap_email": "ap@client.example", "phone": "(404) 555-0100"}, cookie)
+        res, data = self.request("POST", "/api/payers", {"name": "Ironleaf GC", "role": "GC", "approver_confirmed": True, "approver": "Ironleaf GC", "ap_email": "ap@client.example", "phone": "(404) 555-0100"}, cookie)
         self.assertEqual(res.status, 200, data)
         target = next(p for p in data["payers"] if p["name"] == "Ironleaf GC")
         res, data = self.request("POST", "/api/jobs", new_job_body(customer="Ironleef"), cookie)

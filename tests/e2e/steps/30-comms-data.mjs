@@ -11,7 +11,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Cora Comms", company_name: "Comms Builders" });
-      await post("/api/jobs", { phone: "(404) 555-0100", approver: "Northline GC", name: "Birch deck", address: "5 Birch Rd", customer: "Northline GC", role: "GC", ap_email: "ap@northline.example", contract_cents: 2000000 });
+      await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Northline GC", name: "Birch deck", address: "5 Birch Rd", customer: "Northline GC", role: "GC", ap_email: "ap@northline.example", contract_cents: 2000000 });
     }, `${prefix}-${Date.now()}@example.com`);
     return { ctx, p };
   }
@@ -121,7 +121,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const { ctx, p } = await newCompany("qty");
     const jobId = await p.evaluate(async () => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver: "Park GC", name: "Elm wiring", address: "9 Elm St", customer: "Park GC", role: "GC",
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Park GC", name: "Elm wiring", address: "9 Elm St", customer: "Park GC", role: "GC",
         ap_email: "ap@park.example", contract_cents: 3450000 })).json();
       const id = st.jobs.find((j) => j.name === "Elm wiring").id;
       await post(`/api/jobs/${id}/sov`, { op_pct: "15", lines: [

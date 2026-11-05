@@ -304,7 +304,7 @@ class BillingHttpTests(unittest.TestCase):
         # The stand-in refuses the first request: the mark is cleared, so it isn't stuck "sent".
         self.assertTrue(self.wait_for(lambda: sum(c[0] == path for c in FakeStripe.calls) == 1 and not record().get("trial_end_requested_at")))
         self.assertEqual(record()["trial_end_tries"], 1)
-        res, _ = self.request("POST", "/api/payers", {"name": "Next Change GC", "approver": "Next Change GC", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, cookie=cookie)
+        res, _ = self.request("POST", "/api/payers", {"name": "Next Change GC", "approver_confirmed": True, "approver": "Next Change GC", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, cookie=cookie)
         self.assertEqual(res.status, 200)
         self.assertTrue(self.wait_for(lambda: sum(c[0] == path for c in FakeStripe.calls) == 2), "the next change asks again")
         self.assertTrue(self.wait_for(lambda: record().get("trial_end_requested_at")))

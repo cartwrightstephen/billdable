@@ -445,16 +445,16 @@ class JobFieldsTests(unittest.TestCase):
             domain.update_payer(state, payer["id"], {"phone": "12", "name": "--"})
         self.assertEqual(set(raised.exception.fields), {"phone", "name"})
         with self.assertRaises(domain.GateError) as raised:
-            domain.add_payer(state, {"name": "Elm Co", "phone": "1234", "approver": "Elm Co", "ap_email": "ap@client.example", "role": "Owner"})
+            domain.add_payer(state, {"name": "Elm Co", "phone": "1234", "approver_confirmed": True, "approver": "Elm Co", "ap_email": "ap@client.example", "role": "Owner"})
         self.assertIn("phone", raised.exception.fields)
 
     def test_client_type_maps_onto_the_two_sets_of_defaults(self):
         state = blank_company()
         for n, (kind, role, follow) in enumerate([("gc", "GC", 5), ("sub", "GC", 5), ("owner", "Owner", 7), ("homeowner", "Owner", 7), ("public", "Owner", 7)]):
-            payer = domain.add_payer(state, {"name": f"Client {n}", "client_type": kind, "approver": f"Client {n}", "ap_email": "ap@client.example", "phone": "(404) 555-0100"})
+            payer = domain.add_payer(state, {"name": f"Client {n}", "client_type": kind, "approver_confirmed": True, "approver": f"Client {n}", "ap_email": "ap@client.example", "phone": "(404) 555-0100"})
             self.assertEqual((payer["client_type"], payer["role"], payer["follow_up_days"]), (kind, role, follow), kind)
         with self.assertRaises(domain.GateError) as raised:
-            domain.add_payer(state, {"name": "Odd one", "client_type": "landlord", "approver": "Odd one", "ap_email": "ap@client.example", "phone": "(404) 555-0100"})
+            domain.add_payer(state, {"name": "Odd one", "client_type": "landlord", "approver_confirmed": True, "approver": "Odd one", "ap_email": "ap@client.example", "phone": "(404) 555-0100"})
         self.assertIn("client_type", raised.exception.fields)
         # New job: a new client takes the type asked; a saved client keeps its own.
         job = domain.create_job(state, "School gym", "Fulton County", 100_000, address_parts=PARTS, client_type="public", approver="School gym", ap_email="ap@client.example", phone="(404) 555-0100")

@@ -331,7 +331,7 @@ class ImportExportHttpTests(ServerCase):
     def owner_with_job(self, addr):
         cookie, _ = self.signup(addr, "Qty Co")
         res, st = self.request("POST", "/api/jobs", {"name": "Elm wiring", "customer": "Park GC", "address": "9 Elm St", "role": "GC",
-                                                     "ap_email": "ap@park.example", "contract_cents": 3_450_000, "retainage_pct": 10, "approver": "Park GC", "phone": "(404) 555-0100"}, cookie=cookie)
+                                                     "ap_email": "ap@park.example", "contract_cents": 3_450_000, "retainage_pct": 10, "approver_confirmed": True, "approver": "Park GC", "phone": "(404) 555-0100"}, cookie=cookie)
         job = st["jobs"][0]
         res, st = self.request("POST", f"/api/jobs/{job['id']}/sov", {"lines": LINES, "op_pct": "15"}, cookie=cookie)
         self.assertEqual(res.status, 200, st)

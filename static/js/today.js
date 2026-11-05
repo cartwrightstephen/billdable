@@ -21,7 +21,8 @@ export const QUEUE_SHOWN = 3;   // rows shown before "and N more"
 const ACTIONS = {
   email_failed: (r) => `data-action="email-retry" data-email="${r.email_id}"`,
   says_done: (r) => `data-action="inbox-mark-done" data-item="${r.item_id}"`,
-  blocked: (r) => `data-action="open-packet" data-job="${r.job_id}"${r.invoice_id ? ` data-inv="${r.invoice_id}"` : ""}${r.packet_item_id ? ` data-item="${r.packet_item_id}"` : ""}`,
+  // Only unsigned change orders hold it up (the row has a co_id): to the change order, as on the job page.
+  blocked: (r) => r.co_id ? `data-action="open-co" data-job="${r.job_id}" data-co="${r.co_id}"` : `data-action="open-packet" data-job="${r.job_id}"${r.invoice_id ? ` data-inv="${r.invoice_id}"` : ""}${r.packet_item_id ? ` data-item="${r.packet_item_id}"` : ""}`,
   ready: (r) => `data-action="open-payapp" data-job="${r.job_id}" data-inv="${r.invoice_id}" data-focus=".send-check"`,
   waiver: (r) => `data-action="open-waiver" data-id="${r.job_id}"`,
   not_billed: (r) => `data-action="draft" data-id="${r.job_id}"`,

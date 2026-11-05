@@ -18,7 +18,7 @@ export default async function ({ browser, BASE, step, errors }) {
   };
   const addJob = (p) => p.evaluate(async () => {
     const r = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-      phone: "(404) 555-0100", approver: "Rae Homeowner", name: "Fix deck", address: "4 Oak St", customer: "Rae Homeowner", role: "Owner",
+      phone: "(404) 555-0100", approver_confirmed: true, approver: "Rae Homeowner", name: "Fix deck", address: "4 Oak St", customer: "Rae Homeowner", role: "Owner",
       ap_email: "rae@example.com", contract_cents: 2000000 }) });
     return (await r.json()).jobs[0];
   });
@@ -74,8 +74,9 @@ export default async function ({ browser, BASE, step, errors }) {
     const row = p.locator(`#packet-item-${first.item_id}`);
     await row.waitFor();
     await p.waitForFunction((id) => document.activeElement && document.activeElement.id === id, `packet-item-${first.item_id}`);
-    const box = await row.boundingBox();
-    assert.ok(box.y >= 0 && box.y < 812, `in view: ${box.y}`);
+    // Read in the page: the waiver forms arriving redraw the page, which can catch boundingBox mid-swap.
+    const y = await p.evaluate((id) => document.getElementById(id).getBoundingClientRect().y, `packet-item-${first.item_id}`);
+    assert.ok(y >= 0 && y < 812, `in view: ${y}`);
     // The Dashboard's row does the same.
     await p.goto(`${BASE}/dashboard`);
     await p.locator(`[data-action="open-packet"][data-item="${first.item_id}"]`).first().click();
