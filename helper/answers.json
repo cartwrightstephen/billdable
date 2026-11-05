@@ -328,7 +328,7 @@
         "new",
         "how work"
       ],
-      "answer": "Duracash makes sure finished work gets billed with everything the client needs, then follows the money until it's paid.\n- Jobs, New job: job name, address, contract amount and the client, saved or new, with who signs off, its email and its phone. The rest can wait under More details (optional).\n- Add the day's diary, delivery tickets, photos, time sheets and invoices with New job record, or bring emails and texts in through the Inbox.\n- Progress Pay App: enter this draw, the total done so far or a percent, then Draft Progress Pay App. Duracash holds back retainage and lists the supporting documents the client needs.\n- Add each missing document, then Review & Send. It can go once nothing is missing.\n- Record a payment when it arrives, send the waiver, ask for retainage at the end, then Finish job.\nThe Dashboard shows what needs you next.",
+      "answer": "Duracash makes sure finished work gets billed with everything the client needs, then follows the money until it's paid.\n- Jobs, New job: job name, address, contract amount and the client, saved or new, with who signs off, its email and its phone. Retainage %, Contract number and Notes are on the same form.\n- Add the day's diary, delivery tickets, photos, time sheets and invoices with New job record, or bring emails and texts in through the Inbox.\n- Progress Pay App: enter this draw, the total done so far or a percent, then Draft Progress Pay App. Duracash holds back retainage and lists the supporting documents the client needs.\n- Add each missing document, then Review & Send. It can go once nothing is missing.\n- Record a payment when it arrives, send the waiver, ask for retainage at the end, then Finish job.\nThe Dashboard shows what needs you next.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -360,7 +360,7 @@
         "import contract",
         "address"
       ],
-      "answer": "Go to Jobs and tap New job. Fill in Job name, the address (Street address, then City, State and ZIP) and Contract amount ($). Start date is today unless you change it; Anticipated end date is optional. Then tap Existing client and pick one, or New client and fill in Client name, Client type, Who signs off on your bills, Email for pay apps and Phone. A job needs all of these on its client. A saved client missing any of these shows those boxes right there, and what you type is saved to its Client playbook. If Who signs off on your bills only reads as the client's own name from an older save, it asks you to confirm it once. Tap Save job. Have the contract as a Word file, a PDF or text? Tap Import contract first: it fills the boxes it finds, each marked From the contract, the contract's completion date goes in Anticipated end date, and the contract goes in the job records when you save. More details (optional) holds Contract number, Retainage % (if the contract holds money back) and Notes (kept in the job records). A client you have saved before keeps its details; change them in Jobs, Client playbook.",
+      "answer": "Go to Jobs and tap New job. Fill in Job name, the address (Street address, then City, State and ZIP) and Contract amount ($). Start date is today unless you change it; Anticipated end date is optional. Then tap Existing client and pick one, or New client and fill in Client name, Client type, Who signs off on your bills, Email for pay apps and Phone. A job needs all of these on its client. A saved client missing any of these shows those boxes right there, and what you type is saved to its Client playbook. If Who signs off on your bills only reads as the client's own name from an older save, it asks you to confirm it once. Tap Save job. Have the contract as a Word file, a PDF or text? Tap Import contract first: it fills the boxes it finds, each marked From the contract, the contract's completion date goes in Anticipated end date, and the contract goes in the job records when you save. Below them: Retainage % (if the contract holds money back), Contract number and Notes (kept in the job records). A client you have saved before keeps its details; change them in Jobs, Client playbook.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1352,7 +1352,7 @@
         "send again",
         "delivered"
       ],
-      "answer": "Communications, Outbox lists every email you approved and what happened to it: sent (with the time), failed (with the reason, such as an address the client's mail server refused), or not sent. A failed or unsent email has a Send again button, and the Dashboard shows a Didn't go out row. Pay apps go out with the PDF and supporting documents attached, from \"your company via Duracash\", and the client's reply goes to whoever sent it. Each email lists what it carried (open any file from there) and has Print. The demo account never sends real email.",
+      "answer": "Communications, Outbox lists every email you approved and what happened to it: sent (with the time), failed (with the reason, such as an address the client's mail server refused), or not sent. A failed or unsent email has a Send Again button, and the Dashboard shows a Didn't go out row. Pay apps go out with the PDF and supporting documents attached, from \"your company via Duracash\", and the client's reply goes to whoever sent it. Each email lists what it carried (open any file from there) and has Print. The demo account never sends real email.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -2103,7 +2103,7 @@
         "confirm email",
         "confirmation"
       ],
-      "answer": "Duracash sends pay apps with replies coming back to the person who sent them, so it checks that the address is really yours first. Tap the link in the confirmation email (it works for 3 days). Didn't get it? Use Send the link again in Settings, My account, then check spam. Emails held while you were unconfirmed have Send again in the Outbox.",
+      "answer": "Duracash sends pay apps with replies coming back to the person who sent them, so it checks that the address is really yours first. Tap the link in the confirmation email (it works for 3 days). Didn't get it? Use Send the link again in Settings, My account, then check spam. Emails held while you were unconfirmed have Send Again in the Outbox.",
       "handler": null,
       "needs_job": false,
       "actions": [
