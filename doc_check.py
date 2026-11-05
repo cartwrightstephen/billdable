@@ -77,14 +77,26 @@ def _has_amount(text: str, cents: int) -> bool:
 _CONDITIONAL = re.compile(r"\bconditional\b|\bconditioned\s+(?:up)?on\b|\bupon\s+(?:final\s+)?(?:payment|receipt)\b|\bsubject\s+to\s+(?:receipt|payment)\b|\binterim\b", re.I)
 _FINAL = re.compile(r"\bfinal\b", re.I)
 _PROGRESS = re.compile(r"\binterim\b|\bprogress\b|\bpartial\b", re.I)
+# The word however it was typed or broke across lines: UN-CONDITIONAL, un conditional, U N C O N...
+_UNCONDITIONAL = re.compile(r"(?<![a-z])" + r"[\s\-\u00ad\u2010-\u2015]*".join("unconditional") + r"(?![a-z])", re.I)
 
 
-def _type_problems(text: str, waiver_kind: str) -> list[str]:
-    """The wording of the waiver's type, against the item. Only what is plainly another type warns."""
-    plain = re.sub(r"unconditional", " ", text, flags=re.I)
+def _without_job_name(text: str, job_name: str) -> str:
+    """The text with the job's own name taken out: a job called Final Grade says nothing about the
+    waiver's type."""
+    words = re.findall(r"[a-z0-9]+", job_name.lower())
+    return re.sub(r"[^a-z0-9]+".join(words), " ", text, flags=re.I) if words else text
+
+
+def _type_problems(text: str, waiver_kind: str, job_name: str = "") -> list[str]:
+    """The wording of the waiver's type, against the item. Only what is plainly another type warns;
+    the word unconditional on a conditional item always does, whatever else it says (a form that
+    says "not an unconditional release" gets a look, and a person clears it)."""
+    text = _without_job_name(text, job_name)
+    plain = _UNCONDITIONAL.sub(" ", text)
     out = []
     if waiver_kind.startswith("conditional"):
-        if plain != text and not _CONDITIONAL.search(plain):
+        if plain != text:
             out.append("It says unconditional, not conditional.")
         elif not _CONDITIONAL.search(plain) and not _FINAL.search(plain):
             out.append("Conditional wording not found.")
@@ -140,7 +152,7 @@ def _check(files: list[tuple[str, str, Any]], job_name: str, money_text: str, ce
         if is_waiver:
             if cents is not None and not _has_amount(text, cents):
                 problems.append(f"Amount not found: {money_text}.")
-            problems += _type_problems(text, waiver_kind)
+            problems += _type_problems(text, waiver_kind, job_name)
     if problems:
         return {"status": "flagged", "problems": problems + unchecked}
     if unchecked and not texts:

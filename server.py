@@ -2877,9 +2877,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         raw = ctx.body.get("prefs")
         try:
-            prefs = reminders.clean_prefs(raw if isinstance(raw, dict) else {})
+            if not isinstance(raw, dict):
+                raise ValueError("Pick in the app, email or text.")
+            prefs = reminders.clean_prefs(raw)
         except ValueError as exc:
-            self._json(409, {"error": str(exc)})
+            self._json(400, {"error": str(exc)})
             return
         person = auth.session_public(ctx.user["id"]) or ctx.user
         if not person.get("sms_opt_in"):

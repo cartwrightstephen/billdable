@@ -57,3 +57,7 @@ street	120 Peachtree St NE	ok
 street	,	bad
 street	12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 12 Long Road 	bad
 city	Atlanta	ok
+phone	0000000000	bad
+phone	(111) 111-1111	bad
+phone	(555) 555-5555	bad
+phone	(404) 555-0000	ok

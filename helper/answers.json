@@ -1290,7 +1290,7 @@
         "texting",
         "opt"
       ],
-      "answer": "No, Duracash never texts clients. Clients hear from you by email. Texts are only for your own team: add your mobile number and agree to texts on Settings, My account, then tick Text for a reminder on Automations. Reply STOP to any text to turn them off.",
+      "answer": "No, Duracash never texts clients. Clients hear from you by email. Texts are only for your own team: add your mobile number and agree to texts on Settings, My account, enter the code we text to that number, then tick Text for a reminder on Automations. Reply STOP to any text to turn them off.",
       "handler": null,
       "needs_job": false,
       "actions": [

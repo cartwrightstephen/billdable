@@ -252,6 +252,38 @@ class OutsideTheLock(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
 
 
+class WaiverWording(unittest.TestCase):
+    def problems(self, text, kind="conditional_progress", job="Oak Street"):
+        return doc_check.check([("w.txt", ".txt", f"{job} $1,000.00 {text}".encode())], job, "$1,000.00", 100000, kind, True)["problems"]
+
+    def test_unconditional_anywhere_flags_a_conditional_item(self):
+        for text in ("UNCONDITIONAL WAIVER AND RELEASE UPON PAYMENT", "UNCONDITIONAL WAIVER AND RELEASE upon receipt", "UNCONDITIONAL WAIVER subject to payment",
+                     "UNCONDITIONAL interim WAIVER", "upon payment, an UNCONDITIONAL waiver", "interim\nunconditional\nwaiver", "UN-CONDITIONAL waiver upon payment",
+                     "un conditional waiver upon payment", "UN\nCONDITIONAL waiver interim", "Un\u2010conditional  waiver interim", "U N C O N D I T I O N A L waiver upon payment",
+                     "conditional waiver and also an unconditional one"):
+            self.assertIn("It says unconditional, not conditional.", self.problems(text), text)
+
+    def test_a_conditional_waiver_mentioning_it_gets_a_look(self):
+        self.assertIn("It says unconditional, not conditional.", self.problems("conditional waiver upon payment; this is not an unconditional release"))
+
+    def test_a_truly_conditional_waiver_passes(self):
+        for text in ("Conditional waiver upon payment", "CONDITIONAL waiver", "interim waiver upon payment"):
+            self.assertEqual(self.problems(text), [], text)
+
+    def test_other_words_are_not_it(self):
+        self.assertEqual(self.problems("run conditional waiver upon payment"), [])
+
+    def test_a_filed_unconditional_waiver_still_passes(self):
+        self.assertEqual(self.problems("Unconditional waiver", "unconditional_progress"), [])
+
+    def test_the_jobs_own_name_says_nothing_about_the_type(self):
+        self.assertEqual(self.problems("Conditional waiver", job="Final Grade"), [])
+        self.assertEqual(self.problems("Conditional waiver upon payment", job="Unconditional Plaza"), [])
+        self.assertIn("It says final, not interim or progress.", self.problems("Conditional waiver upon final payment", job="Final Grade"), "its own word still counts")
+        got = doc_check.check([("w.txt", ".txt", b"final\ngrade $1,000.00 conditional waiver")], "Final Grade", "$1,000.00", 100000, "conditional_progress", True)
+        self.assertEqual(got["problems"], [], "the name split across lines")
+
+
 class ALongNumber(unittest.TestCase):
     def test_a_long_number_is_just_not_the_amount(self):
         text = "Oak conditional waiver " + "9" * 400 + " and 1,000.00"

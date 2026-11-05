@@ -224,6 +224,36 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
+  await step("My account: texts turn on only once a code texted to the number comes back", async () => {
+    const { ctx, p } = await newCompany("smscode");
+    await p.goto(BASE + "/settings/account");
+    await p.locator("#my-phone").waitFor();
+    // This server has no Twilio, so it says the number can't be confirmed and saves nothing.
+    await p.fill("#my-phone", "(404) 555-0143");
+    await p.locator("#my-sms-opt-in").check();
+    await p.locator('[data-action="save-account"]').click();
+    await p.locator(".field-error, [data-form-error]", { hasText: "can't be confirmed" }).first().waitFor();
+    assert.equal(await p.locator("#my-sms-code").count(), 0);
+    // With a code sent: the box asks for it, and a wrong one says so.
+    const me = await p.evaluate(async () => (await (await fetch("/api/auth/me")).json()));
+    const user = me.user || me;
+    await p.route("**/api/auth/sms", (route) => route.fulfill({ status: 200, contentType: "application/json",
+      body: JSON.stringify({ user, code_sent: true, sent_to: "+14045550143" }) }));
+    await p.locator('[data-action="save-account"]').click();
+    await p.locator("#my-sms-code").waitFor();
+    assert.equal(await p.inputValue("#my-phone"), "(404) 555-0143");
+    await p.fill("#my-sms-code", "000000");
+    await p.locator('[data-action="sms-confirm"]').click();
+    await p.locator("text=That code didn't match").first().waitFor();
+    await p.route("**/api/auth/sms/confirm", (route) => route.fulfill({ status: 200, contentType: "application/json",
+      body: JSON.stringify({ user: { ...user, phone: "+14045550143", sms_opt_in: true } }) }));
+    await p.locator('[data-action="sms-confirm"]').click();
+    await p.locator("#my-sms-code").waitFor({ state: "detached" });
+    assert.equal(await p.inputValue("#my-phone"), "(404) 555-0143");
+    assert.ok(await p.locator("#my-sms-opt-in").isChecked());
+    await ctx.close();
+  });
+
   await step("A text to Duracash waits in the Inbox saying who sent it, and is filed to a job with a chosen kind", async () => {
     const { ctx, p } = await newCompany("textin");
     await p.goto(BASE + "/");
