@@ -39,6 +39,7 @@ import backup
 import billing
 import calendar_feed
 import contract_import
+import doc_check
 import domain
 import exports
 import helper
@@ -973,6 +974,9 @@ class Handler(BaseHTTPRequestHandler):
         if route.access == "body":
             handler(m, ctx)
             return
+
+        if route.handler == "_m_job_action" and m.group(2) in DOCUMENT_ACTIONS and m.group(3):
+            ctx.read_ahead = _read_ahead(ctx.company_id, m.group(1), m.group(3), _text(body, "record_id"), _text(body, "file_id"))
 
         def change(state: dict) -> None:
             fresh = handler(state, m, ctx)
@@ -2242,6 +2246,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Uploaded in the Inbox with "Which job?" answered: suggested there, filed by a person (R5-07).
         reason = "Added from the job page." if file_now else "was uploaded for this job"
+        ahead = _read_ahead(company_id, job_id, attach_to, stored=stored) if attach_to else {}
 
         def add(state: dict) -> None:
             for meta in stored:
@@ -2254,7 +2259,7 @@ class Handler(BaseHTTPRequestHandler):
                     extra={"skipped_attachments": skipped} if skipped else None, job_reason=reason)
             else:
                 meta = stored[0]
-                text = data.decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
+                text = data[:importer.MAX_TEXT_CHARS * 4].decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
                 item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=ids, job_id=job_id,
                                          extra={"payments_csv": True, "payment_rows": payment_rows} if payment_rows else None,
                                          job_reason=reason)
@@ -2264,7 +2269,7 @@ class Handler(BaseHTTPRequestHandler):
                 if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
                     domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for)
                 if attach_to:
-                    domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor, read_file=_file_reader(company_id))
+                    domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor, read_file=_file_reader(company_id, ahead))
                 if signed_co:
                     # Who signed the paper copy and when (M9) come with it; without them it is refused.
                     domain.mark_co_signed(state, job_id, signed_co, filed["record_ids"][0], actor,
@@ -2916,6 +2921,8 @@ class Ctx:
     actor: str
     # Fields a "mutate" handler adds to the snapshot it answers with.
     reply: dict = field(default_factory=dict)
+    # Files the document check will want, read before the company's lock (_read_ahead).
+    read_ahead: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -3230,14 +3237,41 @@ def may_take(user: dict, action: str, state: dict) -> bool:
 
 
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
-def _file_reader(company_id: str):
-    """What the document check reads a stored file with (domain.read_file): None if it is gone."""
-    def read(meta: dict) -> bytes | None:
-        try:
-            return importer.file_path(company_id, meta).read_bytes()
-        except OSError:
-            return None
+def _read_stored(company_id: str, meta: dict) -> "doc_check.ReadFile | None":
+    """A stored file read for the document check; None if it is gone."""
+    ext = str(meta.get("ext") or "").lower()
+    try:
+        return doc_check.prepare(ext, b"" if ext in doc_check.PICTURES else importer.file_path(company_id, meta).read_bytes())
+    except OSError:
+        return None
+
+
+def _read_ahead(company_id: str, job_id: str, item_id: str, record_id: str = "", file_id: str = "", stored: tuple | list = ()) -> dict:
+    """Read the files a document check is about to want, before the company's lock is taken, so a
+    big file holds up nobody else: {file id: what doc_check.prepare got}. The files the item already
+    has, the record or file on its way to it, and those just stored."""
+    with company_lock(company_id):
+        state = load_company(company_id)
+    job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
+    item = domain._find_packet_item(job, item_id)[0] if job else None
+    wanted = {a.get("record_id") for a in (item or {}).get("attachments", [])} | {record_id}
+    ids = {fid for r in (job or {}).get("records", []) if r["id"] in wanted for fid in r.get("file_ids") or []} | {file_id}
+    metas = {m["id"]: m for m in state.get("files", []) if m["id"] in ids}
+    metas.update({m["id"]: m for m in stored})
+    return {fid: _read_stored(company_id, meta) for fid, meta in metas.items()}
+
+
+def _file_reader(company_id: str, ahead: dict | None = None):
+    """What the document check reads a stored file with (domain.read_file): what _read_ahead got,
+    or for a file that came onto the item since, read now."""
+    def read(meta: dict) -> "doc_check.ReadFile | None":
+        if ahead and meta["id"] in ahead:
+            return ahead[meta["id"]]
+        return _read_stored(company_id, meta)
     return read
+
+
+DOCUMENT_ACTIONS = {"attach-record", "packet-confirm", "attach"}
 
 
 JOB_ACTIONS = {
@@ -3282,8 +3316,8 @@ JOB_ACTIONS = {
     "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
     "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor)),
-    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id), looked=c.body.get("looked") is True)),
-    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id))),
+    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
+    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id, c.read_ahead))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor, whole_client=c.body.get("whole_client") is True)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),
@@ -3298,7 +3332,7 @@ JOB_ACTIONS = {
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
     "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body)),
-    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id), looked=c.body.get("looked") is True)),
+    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
 }
 
 def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None = None) -> bool:
