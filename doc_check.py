@@ -79,6 +79,8 @@ _FINAL = re.compile(r"\bfinal\b", re.I)
 _PROGRESS = re.compile(r"\binterim\b|\bprogress\b|\bpartial\b", re.I)
 # The word however it was typed or broke across lines: UN-CONDITIONAL, un conditional, U N C O N...
 _UNCONDITIONAL = re.compile(r"(?<![a-z])" + r"[\s\-\u00ad\u2010-\u2015]*".join("unconditional") + r"(?![a-z])", re.I)
+# The plain word, the same way, with any unconditional taken out first.
+_PLAIN_CONDITIONAL = re.compile(r"(?<![a-z])" + r"[\s\-\u00ad\u2010-\u2015]*".join("conditional") + r"(?![a-z])", re.I)
 
 
 def _without_job_name(text: str, job_name: str) -> str:
@@ -91,7 +93,9 @@ def _without_job_name(text: str, job_name: str) -> str:
 def _type_problems(text: str, waiver_kind: str, job_name: str = "") -> list[str]:
     """The wording of the waiver's type, against the item. Only what is plainly another type warns;
     the word unconditional on a conditional item always does, whatever else it says (a form that
-    says "not an unconditional release" gets a look, and a person clears it)."""
+    says "not an unconditional release" gets a look, and a person clears it), and the plain word
+    conditional on an unconditional item does too. "Upon payment" alone isn't that word: Georgia's
+    unconditional forms say it."""
     text = _without_job_name(text, job_name)
     plain = _UNCONDITIONAL.sub(" ", text)
     out = []
@@ -101,7 +105,9 @@ def _type_problems(text: str, waiver_kind: str, job_name: str = "") -> list[str]
         elif not _CONDITIONAL.search(plain) and not _FINAL.search(plain):
             out.append("Conditional wording not found.")
     elif waiver_kind.startswith("unconditional"):
-        if plain == text and not _CONDITIONAL.search(plain) and not _FINAL.search(plain):
+        if _PLAIN_CONDITIONAL.search(plain):
+            out.append("It says conditional, not unconditional.")
+        elif plain == text and not _CONDITIONAL.search(plain) and not _FINAL.search(plain):
             out.append("Unconditional wording not found.")
     if waiver_kind.endswith("_final") and not _FINAL.search(plain):
         out.append("Final wording not found.")

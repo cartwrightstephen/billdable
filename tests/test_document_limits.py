@@ -237,6 +237,24 @@ class OutsideTheLock(unittest.TestCase):
         self.assertEqual(item["check"]["status"] in {"flagged", "matched"}, True)
         self.assertEqual(len(item["attachments"]), 1)
 
+    def test_adding_a_record_to_the_email(self):
+        _, state = self.upload("")
+        rec = state["jobs"][-1]["records"][-1]
+        inv = state["jobs"][-1]["invoices"][-1]
+        res, state = self.others_are_not_held_up_during(lambda: self.request("POST", f"/api/jobs/{self.job['id']}/payapp/{inv['id']}/attachments", {"action": "add_record", "record_id": rec["id"]}, cookie=self.cookie))
+        self.assertEqual(res.status, 200, state)
+
+    def test_sending_reads_a_waiver_with_no_type_first(self):
+        _, state = self.upload("")
+        rec = state["jobs"][-1]["records"][-1]
+        inv = state["jobs"][-1]["invoices"][-1]
+        self.request("POST", f"/api/jobs/{self.job['id']}/payapp/{inv['id']}/attachments", {"action": "add_record", "record_id": rec["id"]}, cookie=self.cookie)
+        self.others_are_not_held_up_during(lambda: self.request("POST", f"/api/jobs/{self.job['id']}/send", {}, cookie=self.cookie))
+
+    def test_the_waiver_step_reads_a_waiver_with_no_type_first(self):
+        self.upload("")
+        self.others_are_not_held_up_during(lambda: self.request("POST", f"/api/jobs/{self.job['id']}/waiver", {}, cookie=self.cookie))
+
     def test_attaching_a_record_and_confirming(self):
         res, state = self.upload("")
         rec = state["jobs"][-1]["records"][-1]
@@ -275,6 +293,23 @@ class WaiverWording(unittest.TestCase):
 
     def test_a_filed_unconditional_waiver_still_passes(self):
         self.assertEqual(self.problems("Unconditional waiver", "unconditional_progress"), [])
+
+    def test_conditional_on_an_unconditional_item_warns(self):
+        for text in ("Conditional waiver and release", "CONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT", "con-ditional waiver",
+                     "Unconditional waiver, not a conditional one", "conditional waiver upon payment"):
+            self.assertIn("It says conditional, not unconditional.", self.problems(text, "unconditional_progress"), text)
+        got = doc_check.check([("w.txt", ".txt", b"Oak Street $1,000.00 Conditional waiver and release")], "Oak Street", "$1,000.00", 100000, "unconditional_progress", True)
+        self.assertEqual(got["status"], "flagged", "a prompt to look; only send_waiver and attach decide what that does")
+
+    def test_georgias_upon_payment_alone_stays_accepted_on_an_unconditional_item(self):
+        for text in ("Interim waiver and release upon payment", "Waiver and release upon final payment", "Unconditional waiver and release upon payment"):
+            problems = self.problems(text, "unconditional_progress") + self.problems(text, "unconditional_final")
+            self.assertNotIn("It says conditional, not unconditional.", problems, text)
+            self.assertNotIn("Unconditional wording not found.", problems, text)
+        self.assertIn("It says conditional, not unconditional.", self.problems("Conditional waiver and release upon payment", "unconditional_progress"))
+
+    def test_the_jobs_own_name_doesnt_count_on_an_unconditional_item(self):
+        self.assertEqual(self.problems("Unconditional waiver", "unconditional_progress", job="Conditional Plaza"), [])
 
     def test_the_jobs_own_name_says_nothing_about_the_type(self):
         self.assertEqual(self.problems("Conditional waiver", job="Final Grade"), [])

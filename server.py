@@ -977,6 +977,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if route.handler == "_m_job_action" and m.group(2) in DOCUMENT_ACTIONS and m.group(3):
             ctx.read_ahead = _read_ahead(ctx.company_id, m.group(1), m.group(3), _text(body, "record_id"), _text(body, "file_id"))
+        elif route.handler == "_m_job_action" and m.group(2) in WAIVER_READING_ACTIONS and not m.group(3):
+            ctx.read_ahead = _read_ahead_waivers(ctx.company_id, m.group(1), m.group(2))
+        elif route.handler == "_m_payapp_attachments" and _text(body, "action") == "add_record":
+            ctx.read_ahead = _read_ahead(ctx.company_id, m.group(1), "", _text(body, "record_id"))
 
         def change(state: dict) -> None:
             fresh = handler(state, m, ctx)
@@ -2770,6 +2774,8 @@ class Handler(BaseHTTPRequestHandler):
             contract_number=_text(body, "contract_number"), actor=ctx.actor,
             # "Same as ABC Builders?" answered with "keep the new name" (Oct 23 note 5).
             new_customer=body.get("new_customer") is True,
+            # The page says when a person answered who signs off (domain.signer_answered).
+            approver_confirmed=body.get("approver_confirmed") is True,
             # J1: the address in four parts; a page that sends only "address" still works.
             address_parts=_address_parts(body), client_type=_text(body, "client_type"),
             started_on=_text(body, "started_on"), anticipated_end_on=_text(body, "anticipated_end_on"),
@@ -2795,7 +2801,7 @@ class Handler(BaseHTTPRequestHandler):
         """What a draft pay app's email carries (M4): {action, record_id | file_id}."""
         body = ctx.body
         domain.change_payapp_attachments(state, m.group(1), m.group(2), _text(body, "action"),
-                                         _text(body, "record_id") or _text(body, "file_id"), ctx.actor, read_file=_file_reader(ctx.company_id))
+                                         _text(body, "record_id") or _text(body, "file_id"), ctx.actor, read_file=_file_reader(ctx.company_id, ctx.read_ahead))
 
     def _m_payer_suggestion(self, state: dict, m, ctx: "Ctx") -> None:
         domain.answer_packet_suggestion(state, m.group(1), m.group(2), m.group(3) == "add", ctx.actor)
@@ -3172,7 +3178,7 @@ def _send_payapp(h, st, j, i, c):
     if override and c.user.get("role", "owner") != "owner":
         raise domain.GateError("Only an owner can send a pay app with an unconditional waiver attached.")
     return domain.approve_and_send(st, j, c.actor, unconditional_override=override, reviewed=_text(c.body, "reviewed"),
-                                   read_file=_file_reader(c.company_id), **_co_args(c))
+                                   read_file=_file_reader(c.company_id, c.read_ahead), **_co_args(c))
 
 
 def _received_on(body: dict) -> str | None:
@@ -3268,6 +3274,26 @@ def _read_ahead(company_id: str, job_id: str, item_id: str, record_id: str = "",
     return {fid: _read_stored(company_id, meta) for fid, meta in metas.items()}
 
 
+def _read_ahead_waivers(company_id: str, job_id: str, action: str) -> dict:
+    """The same for Approve & send and the waiver step, which read waivers that don't say their
+    type: what goes with the draft for a send, the job's waivers for the waiver step. A file
+    missed here (one that came on since) is read under the lock by _file_reader."""
+    with company_lock(company_id):
+        state = load_company(company_id)
+    job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
+    if not job:
+        return {}
+    untyped = [r for r in job.get("records", []) if r.get("kind") in {"waiver", "other"} and not domain.record_waiver_kind(r)]
+    if action == "send":
+        draft = next((i for i in job.get("invoices", []) if i.get("status") in domain.DRAFT_STATUSES), {})
+        going = {a.get("record_id") for item in draft.get("packet") or [] for a in item.get("attachments", [])} | set(draft.get("extra_record_ids") or [])
+        untyped = [r for r in untyped if r["id"] in going]
+    else:
+        untyped = [r for r in untyped if r.get("kind") == "waiver"]
+    ids = {fid for r in untyped for fid in r.get("file_ids") or []}
+    return {m["id"]: _read_stored(company_id, m) for m in state.get("files", []) if m["id"] in ids}
+
+
 def _file_reader(company_id: str, ahead: dict | None = None):
     """What the document check reads a stored file with (domain.read_file): what _read_ahead got,
     or for a file that came onto the item since, read now."""
@@ -3279,6 +3305,7 @@ def _file_reader(company_id: str, ahead: dict | None = None):
 
 
 DOCUMENT_ACTIONS = {"attach-record", "packet-confirm", "attach"}
+WAIVER_READING_ACTIONS = {"send", "waiver"}
 
 
 JOB_ACTIONS = {
@@ -3301,7 +3328,7 @@ JOB_ACTIONS = {
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None,
                                                                                     release_id=_text(c.body, "release_id") or None, confirm_final=c.body.get("confirm_final") is True,
-                                                                                    read_file=_file_reader(c.company_id)))),
+                                                                                    read_file=_file_reader(c.company_id, c.read_ahead)))),
     # The type of a signed waiver on the job record, and which paid pay app or release it is for (B1).
     "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"))),
     # No waiver goes out through Duracash for this payment: handed over outside it, or not needed (B2).
