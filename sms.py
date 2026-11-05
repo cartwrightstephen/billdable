@@ -86,10 +86,10 @@ def configured() -> bool:
     return bool(cfg["sid"] and cfg["token"] and cfg["from"])
 
 
-def shown(number: Any) -> str:
+def shown(value: Any) -> str:
     """+14045550199 as a person reads it: (404) 555-0199; anything else as it is."""
-    m = re.fullmatch(r"\+1(\d{3})(\d{3})(\d{4})", str(number or ""))
-    return f"({m.group(1)}) {m.group(2)}-{m.group(3)}" if m else str(number or "")
+    m = re.fullmatch(r"\+1(\d{3})(\d{3})(\d{4})", str(value or ""))
+    return f"({m.group(1)}) {m.group(2)}-{m.group(3)}" if m else str(value or "")
 
 
 def e164(text: Any) -> str:
