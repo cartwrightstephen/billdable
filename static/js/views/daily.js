@@ -260,7 +260,7 @@ function uploadKind(key, v) {
   return (s && s.kind) || v[`other_kind_${key.slice(at + 1)}`] || "note";
 }
 
-// Upload the picked files to the job one at a time (the importer's ?job=&file=1&kind=), keeping
+// Upload the picked files to the job one at a time (the importer's ?job=&file=1&for_job_record=1&kind=), keeping
 // each new record's id. Returns false if one didn't go up: it and the rest stay picked, what is
 // typed stays, and those already up aren't sent again.
 async function uploadDailyFiles(jobId, v) {
@@ -271,7 +271,7 @@ async function uploadDailyFiles(jobId, v) {
       const before = new Set(((state.jobs.find(x => x.id === jobId) || {}).records || []).map(r => unesc(r.id)));
       let res, data;
       try {
-        res = await fetch(`/api/import/file?job=${encodeURIComponent(unesc(jobId))}&file=1&kind=${encodeURIComponent(uploadKind(key, v))}`, {
+        res = await fetch(`/api/import/file?job=${encodeURIComponent(unesc(jobId))}&file=1&for_job_record=1&kind=${encodeURIComponent(uploadKind(key, v))}`, {
           method: "POST", headers: { "Content-Type": f.type || "application/octet-stream", "X-Filename": encodeURIComponent(f.name || "upload") }, body: f,
         });
         data = await readJson(res);

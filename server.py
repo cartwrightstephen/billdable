@@ -2219,6 +2219,8 @@ class Handler(BaseHTTPRequestHandler):
         waiver_kind = (query.get("waiver_kind") or [""])[0] if file_now else ""
         # The paid pay app or retainage release it is for, from that row of the waiver page (B1).
         waiver_for = (query.get("waiver_for") or [""])[0] if file_now else ""
+        # A file on its way into the New job record form: that form's save fills in what it is.
+        for_job_record = file_now and (query.get("for_job_record") or [""])[0] == "1"
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
@@ -2266,6 +2268,8 @@ class Handler(BaseHTTPRequestHandler):
             if file_now:
                 # Dropped on a job page: the person already chose the job.
                 filed = importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
+                if for_job_record:
+                    domain.hold_for_job_record(state, job_id, filed["record_ids"], actor)
                 if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
                     domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for)
                 if attach_to:
