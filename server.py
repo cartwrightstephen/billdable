@@ -3387,6 +3387,7 @@ JOB_ACTIONS = {
     "quantities-undo": (True, lambda h, st, j, i, c: domain.undo_quantity_import(st, j, i, c.actor, below_billed=c.body.get("below_billed") is True)),
     "waiver-needed": (False, lambda h, st, j, i, c: domain.waiver_needed_after_all(st, j, c.actor)),
     "overbilling-settled": (False, lambda h, st, j, i, c: domain.settle_overbilling(st, j, _text(c.body, "reason"), c.actor)),
+    "unconditional-look": (True, lambda h, st, j, i, c: domain.confirm_unconditional_mention(st, j, i, c.actor)),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, _sends("the pay app", _send_payapp)),

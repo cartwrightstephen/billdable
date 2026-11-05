@@ -855,17 +855,24 @@ NOT_READ_FOR_UNCONDITIONAL = {"contract", "insurance", "completion", "change_ord
 
 
 def _says_unconditional(state: dict[str, Any] | None, rec: dict[str, Any], read_file: Any) -> bool:
-    """A record going with a pay app whose file reads as an unconditional waiver, whatever it was
-    filed as or called (doc_check.says_unconditional): filed as anything but a waiver, the word has
+    """A record going with a pay app whose file reads as an unconditional waiver in itself, whatever
+    it was filed as or called (doc_check.unconditional_reading). Keeps on the record for the pay
+    app's page what was read: says_unconditional, and mentions_unconditional, the words of a file
+    that only talks about one (unconditional_mentions). Filed as anything but a waiver, the word has
     to be near waiver, release or lien. Contracts, insurance, completion papers and change orders
-    aren't read. What was read is kept on the record for the pay app's page."""
+    aren't read."""
     if rec.get("kind") in NOT_READ_FOR_UNCONDITIONAL:
         return False
     if read_file is not None and state is not None:
         ids = set(rec.get("file_ids") or [])
         metas = [f for f in state.get("files", []) if f["id"] in ids]
         if metas:
-            rec["says_unconditional"] = doc_check.says_unconditional([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], rec.get("kind") != "waiver")
+            read = doc_check.unconditional_reading([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], rec.get("kind") != "waiver")
+            rec["says_unconditional"] = read["waiver"]
+            if read["mention"] and not read["waiver"]:
+                rec["mentions_unconditional"] = read["found"]
+            else:
+                rec.pop("mentions_unconditional", None)
     return bool(rec.get("says_unconditional"))
 
 
@@ -885,20 +892,71 @@ def _unconditional_rows(job: dict[str, Any], invoice: dict[str, Any], state: dic
             for r in unconditional_waivers_attached(job, invoice)]
 
 
-def unconditional_waivers_attached(job: dict[str, Any], invoice: dict[str, Any], state: dict[str, Any] | None = None,
-                                   read_file: Any = None) -> list[dict[str, Any]]:
-    """Waiver records going out with this pay app that are unconditional (M14): attached to a
-    paperwork item or added to the send, and not left out of the email. With read_file, a record
-    that doesn't say its type is read for it."""
+def _mention_rows(job: dict[str, Any], invoice: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The files the pay app's page asks someone to look at, with the words that were found."""
+    names = {f["id"]: f.get("name", "") for f in state.get("files", [])}
+    return [{"record_id": r["id"], "label": r["label"], "found": r["mentions_unconditional"], "file_ids": list(r.get("file_ids") or []),
+             "file_names": [names[f] for f in r.get("file_ids") or [] if names.get(f)]}
+            for r in unconditional_mentions(job, invoice)]
+
+
+def _looked_at_mention(rec: dict[str, Any]) -> bool:
+    """A person's confirm counts for the files they looked at, not for one that came on since."""
+    looked = rec.get("unconditional_looked")
+    return bool(looked) and set(looked.get("file_ids") or []) == set(rec.get("file_ids") or [])
+
+
+def _records_going(job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, Any]]:
+    """The records going out with this pay app: attached to a paperwork item or added to the send."""
     records = {r["id"]: r for r in job.get("records", [])}
     ids = [a.get("record_id") for item in invoice.get("packet") or [] for a in _going(item)]
     ids += list(invoice.get("extra_record_ids") or [])
+    return [records[rid] for rid in dict.fromkeys(ids) if rid in records]
+
+
+def unconditional_mentions(job: dict[str, Any], invoice: dict[str, Any], state: dict[str, Any] | None = None, read_file: Any = None) -> list[dict[str, Any]]:
+    """Records going out whose file only mentions an unconditional waiver and that nobody has looked
+    at yet: a warning anyone who can send clears by opening it and confirming, never the owner's gate."""
     excluded = set(invoice.get("excluded_file_ids") or [])
     out = []
-    for rid in dict.fromkeys(ids):
-        rec = records.get(rid)
-        if not rec:
+    for rec in _records_going(job, invoice):
+        if _says_unconditional(state, rec, read_file) or not rec.get("mentions_unconditional") or _looked_at_mention(rec):
             continue
+        if rec.get("file_ids") and set(rec["file_ids"]) <= excluded:
+            continue
+        out.append(rec)
+    return out
+
+
+def _mark_mention_looked_at(state: dict[str, Any], job: dict[str, Any], rec: dict[str, Any], actor: str) -> None:
+    rec["unconditional_looked"] = {"by": actor, "at": utcnow(), "file_ids": list(rec.get("file_ids") or [])}
+    audit(state, job["id"], "unconditional_mention_confirmed",
+          f"{actor} confirmed a file that mentions an unconditional waiver ({rec['label']}): \"{rec['mentions_unconditional']}\".", actor)
+
+
+def confirm_unconditional_mention(state: dict[str, Any], job_id: str, record_id: str, actor: str = "owner") -> dict[str, Any]:
+    """A person opened a file that mentions an unconditional waiver, and it is right."""
+    job = _open_job(state, job_id)
+    rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not rec:
+        raise GateError("That record is not on this job.")
+    if rec.get("says_unconditional"):
+        raise GateError(f"{rec['label']} reads as an unconditional waiver. Take it off, or an owner sends it with the reason.")
+    if not rec.get("mentions_unconditional"):
+        raise GateError(f"{rec['label']} doesn't mention an unconditional waiver.")
+    if not _looked_at_mention(rec):
+        _mark_mention_looked_at(state, job, rec, actor)
+    return job
+
+
+def unconditional_waivers_attached(job: dict[str, Any], invoice: dict[str, Any], state: dict[str, Any] | None = None,
+                                   read_file: Any = None) -> list[dict[str, Any]]:
+    """Waiver records going out with this pay app that are unconditional (M14): typed so, or whose
+    file reads as one in itself, and not left out of the email. With read_file, a record that
+    doesn't say its type is read for it."""
+    excluded = set(invoice.get("excluded_file_ids") or [])
+    out = []
+    for rec in _records_going(job, invoice):
         if not _says_unconditional(state, rec, read_file):
             if not str(record_waiver_kind(rec)).startswith("unconditional"):
                 continue
@@ -980,6 +1038,10 @@ def approve_and_send(
         raise GateError(UNCONDITIONAL_ATTACHED, [f"{r['label']} ({_why_unconditional(r)})" for r in unconditional],
                         fields={"unconditional_override": "Enter why it goes with this pay app, or take it off."},
                         extra={"unconditional_waiver": True}, keep_changes=True)   # what was read goes on the page
+    mentions = unconditional_mentions(job, invoice)   # all read just above
+    if mentions:
+        raise GateError(f"{', '.join(r['label'] for r in mentions)} mentions an unconditional waiver. Open it, confirm it is right, then send.",
+                        [f"{r['label']}: \"{r['mentions_unconditional']}\"" for r in mentions], extra={"unconditional_mention": True}, keep_changes=True)
     # The bill can stop being the final one under a confirmed waiver (a change order written since,
     # say): that waiver isn't sent as the other type without a look.
     invoice["final"] = is_final(job)
@@ -2019,6 +2081,7 @@ def _paperwork_view(state: dict[str, Any], job: dict[str, Any], out: dict[str, A
         if inv["status"] in DRAFT_STATUSES:
             inv["email_preview"] = email_preview(state, job, by_id[inv["id"]])
             inv["unconditional_attached"] = _unconditional_rows(job, by_id[inv["id"]], state)
+            inv["unconditional_mentions"] = _mention_rows(job, by_id[inv["id"]], state)
             for item in inv.get("packet") or []:
                 if item.get("required") and sov.name_only(job, item):   # shown missing, with Remove and the ways to fill it
                     item.update(present=False, name_only=True)
@@ -4440,6 +4503,11 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
         if looked and rec and rec.get("kind") == "waiver" and item.get("waiver_kind") and record_waiver_kind(rec) != item["waiver_kind"] \
                 and record_waiver_kind(rec).split("_")[0] in ("", item["waiver_kind"].split("_")[0]):
             rec["waiver_kind"] = item["waiver_kind"]  # the person's word for its type, after being asked
+        # They were told what it says, opened it and said it is right: that counts at send, unless
+        # it reads as one in itself, which stays the owner's gate.
+        if looked and rec and rec.get("mentions_unconditional") and not rec.get("says_unconditional") and not _looked_at_mention(rec) \
+                and any("unconditional" in p.lower() for p in problems):
+            _mark_mention_looked_at(state, job, rec, actor)
     # A name with a real file beside it now has nothing to say.
     if any(_is_filed(records, a) for a in item.get("attachments", [])):
         item["attachments"] = [a for a in item["attachments"] if a.get("record_id") in records]

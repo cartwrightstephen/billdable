@@ -240,6 +240,7 @@ export function beforeYouSendHtml(j, inv) {
   };
   const stages = inv.waiver_stages || {};
   const unconditional = unconditionalAttached(j, inv);
+  const mentions = inv.unconditional_mentions || [];
   const packet = inv.packet || j.packet || [];
   const overrides = packet.filter(p => p.present && p.override);
   const warned = packet.filter(p => ((p.check || {}).problems || []).length);
@@ -272,6 +273,14 @@ export function beforeYouSendHtml(j, inv) {
       }).join("")}</ul>
       ${may("send") && perms().owner ? `<div class="form-inline"><input id="override-reason-${inv.id}" class="grow" aria-label="Why it goes with this pay app" placeholder="Why it goes with this pay app">
         <button class="btn small danger" data-action="send-override" data-id="${j.id}" data-inv="${inv.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}">Send anyway</button></div>` : `<p class="sub">Only an owner can send it this way${(me && me.owner_names || []).length ? `. Ask ${me.owner_names.join(" or ")}, or take the file off` : ""}.</p>`}
+    </div>` : ""}
+    ${mentions.length ? `<div class="send-warnings doc-warning" role="alert">
+      <h3>Mentions an unconditional waiver</h3>
+      <p>These files mention an unconditional waiver. Open each one and confirm it is right.</p>
+      <ul class="plain-list attach-list">${mentions.map(r => `<li><span><strong>${r.label}</strong>: "${r.found}"</span>
+        ${(r.file_ids || []).map((fid, n) => `<a class="btn small secondary" href="/api/files/${fid}" target="_blank" rel="noopener">Open ${(r.file_names || [])[n] || "file"}</a>`).join(" ")}
+        ${may("unconditional-look") ? `<button class="btn small" data-action="unconditional-look" data-id="${j.id}" data-rec="${r.record_id}" data-found="${r.found}">It's right</button>` : ""}</li>`).join("")}</ul>
+      ${may("unconditional-look") ? "" : `<p class="sub">Someone who can send pay apps confirms this.</p>`}
     </div>` : ""}
     <div class="client-needs-box">${clientNeedsHtml(j, "h3")}</div>`;
 }
@@ -493,6 +502,11 @@ export const actions = {
   "waiver-state": (el, id) => {
     pickedState[id] = document.getElementById(`waiver-state-${id}`)?.value || "";
     render();
+  },
+  // A file that only mentions an unconditional waiver: whoever can send opens it and says it is right.
+  "unconditional-look": async (el, id) => {
+    if (!(await askConfirm(`It says: "${unesc(el.dataset.found || "")}". You opened the file and it is right?`, "It's right"))) return;
+    await post(`/api/jobs/${id}/unconditional-look/${el.dataset.rec}`, {});
   },
   // Approve & send with an unconditional waiver attached (M14): an owner, with the reason.
   "send-override": async (el, id) => {

@@ -100,24 +100,98 @@ def _near_a_waiver_word(text: str, found: "re.Match[str]") -> bool:
     return any(_WAIVER_WORDS.search(word) for word in around)
 
 
-def says_unconditional(files: list[tuple[str, str, Any]], near_only: bool = False) -> bool:
-    """Does one of these files read as an unconditional waiver, for the warning at send (M14)? The
-    word taken back at once doesn't count here; it stays a prompt to look at confirm (_type_problems).
-    near_only: for a file not filed as a waiver, it counts only within a few words of waiver,
-    release or lien (an addendum can use the word for something else). Never raises."""
+_OPENING_LINES = 5
+_OPENING_CHARS = 800
+_FOUND_CHARS = 60
+# Words before the type in a heading that isn't one: "Sub's unconditional waiver", "an unconditional
+# waiver". A state or a form's name in front is still a heading.
+_NOT_A_HEADING = {"a", "an", "the", "this", "that", "these", "those", "our", "their", "his", "her", "its", "my", "your", "sub", "subs", "subcontractor", "supplier", "vendor", "copy",
+                  "received", "got", "get", "need", "needs", "needed", "send", "sent", "provide", "deliver", "attach", "attached", "with", "for", "from", "and", "or", "no", "any", "will",
+                  "must", "shall", "see", "per", "by", "if", "upon", "when", "after", "before", "on", "in", "to", "owe", "owed"}
+# What can sit between the word and waiver or release in a heading.
+_BETWEEN = {"lien", "final", "progress", "partial", "interim", "statutory", "and", "of", "on", "payment"}
+# A word right after "unconditional waiver" that makes it a sentence about one.
+_ABOUT_ONE = {"received", "will", "was", "were", "is", "are", "attached", "to", "from", "due", "needed", "required", "pending", "sent", "follows", "shall", "must", "becomes", "may", "can",
+              "has", "have", "when", "once", "after", "owed", "for"}
+_DECLARED = re.compile(r"\b(?:this|the)\b[^.;\n]{0,60}?\b(?:is|constitutes)\s+(?:an?\s+)?" + _UNCONDITIONAL.pattern + r"(?!\s+(?:on|upon|once|when|after)\b)", re.I)
+_NOT_CONDITIONAL = re.compile(r"\bnot\s+" + _PLAIN_CONDITIONAL.pattern, re.I)
+_WORD_EDGE = ".,;:()[]\"'\u2019"
+
+
+def _opening(text: str) -> str:
+    """The first few lines with something on them, which is where a form says what it is."""
+    lines = []
+    for line in text[:_OPENING_CHARS * 4].splitlines():
+        if line.strip():
+            lines.append(line.strip())
+            if len(lines) == _OPENING_LINES:
+                break
+    return "\n".join(lines)[:_OPENING_CHARS]
+
+
+def _title(opening: str) -> str:
+    """Its first line, and on a page that came out as one line, the first sentence."""
+    return re.split(r"\n|\.\s", opening, maxsplit=1)[0]
+
+
+def _is_heading(opening: str, found: "re.Match[str]", alone_counts: bool) -> bool:
+    """Is this word the type of the document, not a sentence about some other waiver?"""
+    before = re.split(r"[.;:!?\n]", opening[:found.start()])[-1].split()
+    if len(before) > 4 or any("'" in w or "\u2019" in w for w in before):
+        return False
+    after = [w.strip(_WORD_EDGE).lower() for w in opening[found.end():found.end() + 120].split()]
+    if before and before[-1].strip(_WORD_EDGE).lower() in ("waiver", "release", "waivers", "releases") and not any(w in _ABOUT_ONE for w in after[:1]):
+        return True   # "Waiver and release, unconditional"
+    if any(w.strip(_WORD_EDGE).lower() in _NOT_A_HEADING for w in before):
+        return False
+    for n, word in enumerate(after[:5]):
+        if word in ("waiver", "release", "waivers", "releases"):
+            return not (n + 1 < len(after) and after[n + 1] in _ABOUT_ONE)
+        if word not in _BETWEEN:
+            return False
+    rest_of_line = opening[found.end():].split("\n", 1)[0]
+    return alone_counts and not before and not rest_of_line.strip(_WORD_EDGE + " ")
+
+
+def _reads_as_unconditional(kept: str, alone_counts: bool) -> bool:
+    """kept is the text with the word taken back at once removed. The title or opening lines say
+    so, and the title doesn't say conditional too: a form says what it is at the top, and whatever
+    it goes on to say about another form (California's "use a conditional waiver") doesn't change it."""
+    opening = _opening(kept)
+    title = _NOT_CONDITIONAL.sub(" ", _title(opening))
+    if _PLAIN_CONDITIONAL.search(_UNCONDITIONAL.sub(" ", title)):
+        return False
+    if _DECLARED.search(opening):
+        return True
+    return any(_is_heading(opening, found, alone_counts) for found in islice(_UNCONDITIONAL.finditer(opening), MAX_MATCHES))
+
+
+def unconditional_reading(files: list[tuple[str, str, Any]], near_only: bool = False) -> dict[str, Any]:
+    """What these files say about an unconditional waiver: {waiver: one reads as an unconditional
+    waiver in itself (the send's gate, M14), mention: one uses the words, and found: the words, for
+    the person who looks}. The word taken back at once doesn't count here; it stays a prompt to look
+    at confirm (_type_problems). near_only: for a file not filed as a waiver, it counts only within a
+    few words of waiver, release or lien (an addendum can use the word for something else). Never raises."""
+    out = {"waiver": False, "mention": False, "found": ""}
     try:
         for _name, ext, data in files:
             if data is None or ext in PICTURES:
                 continue
             read = data if isinstance(data, ReadFile) else prepare(ext, data)
-            text = read.text or ""
-            kept = _NEGATED_UNCONDITIONAL.sub(" ", text)
-            matches = islice(_UNCONDITIONAL.finditer(kept), MAX_MATCHES)
-            if any(not near_only or _near_a_waiver_word(kept, found) for found in matches):
-                return True
+            kept = _NEGATED_UNCONDITIONAL.sub(" ", read.text or "")
+            out["waiver"] = out["waiver"] or _reads_as_unconditional(kept, not near_only)
+            found = next((f for f in islice(_UNCONDITIONAL.finditer(kept), MAX_MATCHES) if not near_only or _near_a_waiver_word(kept, f)), None)
+            if found and not out["found"]:
+                out["mention"] = True
+                out["found"] = " ".join(kept[max(0, found.start() - _FOUND_CHARS):found.end() + _FOUND_CHARS].split())
     except Exception:
         sys.stderr.write(traceback.format_exc())
-    return False
+    return out
+
+
+def says_unconditional(files: list[tuple[str, str, Any]], near_only: bool = False) -> bool:
+    """Does one of these files use the words at all (unconditional_reading)?"""
+    return unconditional_reading(files, near_only)["mention"]
 
 
 def _without_job_name(text: str, job_name: str) -> str:
@@ -142,7 +216,7 @@ def _type_problems(text: str, waiver_kind: str, job_name: str = "") -> list[str]
         elif not _CONDITIONAL.search(plain) and not _FINAL.search(plain):
             out.append("Conditional wording not found.")
     elif waiver_kind.startswith("unconditional"):
-        if _PLAIN_CONDITIONAL.search(plain):
+        if _PLAIN_CONDITIONAL.search(plain) and not _reads_as_unconditional(_NEGATED_UNCONDITIONAL.sub(" ", text), True):
             out.append("It says conditional, not unconditional.")
         elif plain == text and not _CONDITIONAL.search(plain) and not _FINAL.search(plain):
             out.append("Unconditional wording not found.")

@@ -267,7 +267,7 @@ export const actions = {
     reviewAgain = null;
     const r = await post(`/api/jobs/${id}/send`, { reviewed: el.dataset.reviewed || "" });
     // A file read only now: the warning and the way past it go on the page.
-    if (r && r.data && r.data.unconditional_waiver) { await load(); render(); }
+    if (r && r.data && (r.data.unconditional_waiver || r.data.unconditional_mention)) { await load(); render(); }
     if (r && r.data && r.data.review_changed) {
       await load();
       reviewAgain = { jobId: id, text: String(r.data.error || "Look it over again, then send.") };

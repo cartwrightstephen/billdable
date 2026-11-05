@@ -396,7 +396,7 @@ export function waitingText(j, now = new Date()) {
 // Who may take a job action (S6): the permission each needs, as domain/profiles.py
 // JOB_ACTION_PERMS on the server, which refuses the same. An action not listed is anyone's.
 export const ACTION_PERM = {
-  send: "send_payapps", waiver: "send_waivers", "waiver-not-needed": "send_waivers", retainage: "ask_retainage",
+  send: "send_payapps", "unconditional-look": "send_payapps", waiver: "send_waivers", "waiver-not-needed": "send_waivers", retainage: "ask_retainage",
   "match-payment": "record_payments", "retainage-paid": "record_payments",
   "overbilling-settled": "record_payments",
   "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",
