@@ -95,6 +95,7 @@ def company_lock(company_id: str) -> threading.RLock:
 
 
 MAX_BODY_BYTES = 1_000_000
+DRAIN_BYTES = 16 * 1024 * 1024
 MAX_INBOUND_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 5_000
 CLIENT_PHONE = "That number belongs to a client. Texts only go to your own team."
@@ -709,7 +710,8 @@ class Handler(BaseHTTPRequestHandler):
         if length < 0:
             raise BadRequest("Content-Length must be a number.")
         if length > MAX_BODY_BYTES:
-            raise BadRequest("Request body is too large.", 413)
+            self._drain(length)
+            raise BadRequest(f"That is too large to send: the limit is {MAX_BODY_BYTES // 1_000_000} MB. Save an Excel file as CSV and try again.", 413)
         if not length:
             return {}
         raw = self._read_body(length)
@@ -729,8 +731,24 @@ class Handler(BaseHTTPRequestHandler):
         if length < 0:
             raise BadRequest("Content-Length must be a number.")
         if length > limit:
+            self._drain(length)
             raise BadRequest(f"Upload is larger than {limit // (1024 * 1024)} MB.", 413)
         return self._read_body(length) if length else b""
+
+    def _drain(self, length: int) -> None:
+        """Take in a body refused for its size, up to DRAIN_BYTES, so the answer reaches a browser
+        still sending rather than a broken connection. Then the connection closes."""
+        self.close_connection = True
+        left = min(length, DRAIN_BYTES)
+        deadline = time.monotonic() + BODY_SECONDS
+        try:
+            while left > 0 and time.monotonic() < deadline:
+                chunk = self.rfile.read(min(left, 65536))
+                if not chunk:
+                    return
+                left -= len(chunk)
+        except OSError:
+            pass
 
     def _read_body(self, length: int) -> bytes:
         """Read exactly `length` bytes within BODY_SECONDS in total. The socket timeout alone is per read,
@@ -985,6 +1003,12 @@ class Handler(BaseHTTPRequestHandler):
             ctx.read_ahead = _read_ahead_waivers(ctx.company_id, m.group(1), m.group(2))
         elif route.handler == "_m_payapp_attachments" and _text(body, "action") == "add_record":
             ctx.read_ahead = _read_ahead(ctx.company_id, m.group(1), "", _text(body, "record_id"))
+        elif route.handler == "_m_qty_apply":
+            try:
+                ctx.read_ahead = {"sheet": _sheet_text(body)}   # an Excel file holds up nobody else while it is read
+            except domain.GateError as exc:
+                self._json(409, _gate(exc))
+                return
 
         def change(state: dict) -> None:
             fresh = handler(state, m, ctx)
@@ -1591,7 +1615,8 @@ class Handler(BaseHTTPRequestHandler):
         pid = profiles.user_profile_id(user)
         return {**user, "two_step_setup_due": due, "perms": profiles.perms_of(user, state),
                 "profile_name": profiles.profile_name(state, pid),
-                "company_admin": auth.is_company_admin(user["id"], user["company_id"])}
+                "company_admin": auth.is_company_admin(user["id"], user["company_id"]),
+                "owner_names": auth.owner_names(user["company_id"]), "texts_number": sms.settings()["from"]}
 
     def _p_signup(self, m) -> None:
         body = self._read_json()
@@ -1862,7 +1887,7 @@ class Handler(BaseHTTPRequestHandler):
         if not may_take(ctx.user, "sov-progress", state):
             raise OwnerOnly()
         # The preview's basis is required: what is added is what the person saw.
-        ctx.reply["quantity_import"] = qty_import.apply(state, _text(ctx.body, "job_id", limit=80), _sheet_text(ctx.body), ctx.actor,
+        ctx.reply["quantity_import"] = qty_import.apply(state, _text(ctx.body, "job_id", limit=80), ctx.read_ahead["sheet"], ctx.actor,
                                                         source=_text(ctx.body, "name", limit=200), seen=_text(ctx.body, "basis", limit=80))
 
     def _m_payments_apply(self, state: dict, m, ctx: "Ctx") -> None:
@@ -2257,6 +2282,7 @@ class Handler(BaseHTTPRequestHandler):
         # Uploaded in the Inbox with "Which job?" answered: suggested there, filed by a person (R5-07).
         reason = "Added from the job page." if file_now else "was uploaded for this job"
         ahead = _read_ahead(company_id, job_id, attach_to, stored=stored) if attach_to else {}
+        made: list[str] = []
 
         def add(state: dict) -> None:
             for meta in stored:
@@ -2276,6 +2302,7 @@ class Handler(BaseHTTPRequestHandler):
             if file_now:
                 # Dropped on a job page: the person already chose the job.
                 filed = importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
+                made.extend(filed["record_ids"])   # the upload's answer names its records: the page's copy of the job can be out of date
                 if for_job_record:
                     domain.hold_for_job_record(state, job_id, filed["record_ids"], actor)
                 if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
@@ -2290,7 +2317,7 @@ class Handler(BaseHTTPRequestHandler):
         status, payload = self._mutate(company_id, add)
         if status != 200:
             importer.discard(company_id, stored)
-        self._json(status, payload)
+        self._json(status, {**payload, "uploaded_record_ids": made} if status == 200 and made else payload)
 
     def _store_email_files(self, company_id: str, parsed: dict, actor: str, raw: bytes | None = None, raw_name: str = "") -> tuple:
         """Write an email's own file and its attachments to disk; refused attachment types are listed, not fatal."""
@@ -2854,7 +2881,8 @@ class Handler(BaseHTTPRequestHandler):
             wrong = {sms.NOT_SET_UP: "Texts aren't set up on this server, so this number can't be confirmed.",
                      sms.NOT_ALLOWED: "This number isn't on this server's allow-list.",
                      sms.READ_ONLY: "Texts are off while this company is read-only.",
-                     sms.CLIENT_NUMBER: CLIENT_PHONE}.get(result, "The code couldn't be sent. Check the number and try again.")
+                     sms.CLIENT_NUMBER: CLIENT_PHONE,
+                     sms.STOPPED: f"This number replied STOP earlier, so nothing can be texted to it. Text START to {sms.settings()['from']} first, then try again."}.get(result, "The code couldn't be sent. Check the number and try again.")
         if wrong:
             self._json(409, {"error": wrong, "fields": {"phone": wrong}})
             return
@@ -2907,7 +2935,12 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, self._reminders_reply(auth.session_public(ctx.user["id"]) or ctx.user, company_state(ctx.company_id)))
 
     def _m_payer_update(self, state: dict, m, ctx: "Ctx") -> None:
-        domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
+        payer = domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
+        if ctx.body.get("approver") and domain.signer_defaulted(payer):
+            ctx.reply["signer_needs_confirming"] = True
+
+    def _m_payer_waiver_needed(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.client_waiver_needed_again(state, m.group(1), ctx.actor)
 
     def _m_payer_add(self, state: dict, m, ctx: "Ctx") -> None:
         domain.add_payer(state, ctx.body, ctx.actor)
@@ -3075,6 +3108,7 @@ ROUTES = [
     Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate"),
     Route("POST", r"/api/payers", "_m_payer_add", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/waiver-needed", "_m_payer_waiver_needed", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", perm="company"),
     Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate", perm="record_payments"),
@@ -3285,22 +3319,21 @@ def _read_ahead(company_id: str, job_id: str, item_id: str, record_id: str = "",
 
 
 def _read_ahead_waivers(company_id: str, job_id: str, action: str) -> dict:
-    """The same for Approve & send and the waiver step, which read waivers that don't say their
-    type: what goes with the draft for a send, the job's waivers for the waiver step. A file
+    """The same for Approve & send and the waiver step: what goes with the draft for a send, the
+    job's waivers for the waiver step. A file
     missed here (one that came on since) is read under the lock by _file_reader."""
     with company_lock(company_id):
         state = load_company(company_id)
     job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
     if not job:
         return {}
-    untyped = [r for r in job.get("records", []) if r.get("kind") in {"waiver", "other"} and not domain.record_waiver_kind(r)]
     if action == "send":
         draft = next((i for i in job.get("invoices", []) if i.get("status") in domain.DRAFT_STATUSES), {})
         going = {a.get("record_id") for item in draft.get("packet") or [] for a in item.get("attachments", [])} | set(draft.get("extra_record_ids") or [])
-        untyped = [r for r in untyped if r["id"] in going]
+        records = [r for r in job.get("records", []) if r["id"] in going and r.get("kind") not in domain.NOT_READ_FOR_UNCONDITIONAL]
     else:
-        untyped = [r for r in untyped if r.get("kind") == "waiver"]
-    ids = {fid for r in untyped for fid in r.get("file_ids") or []}
+        records = [r for r in job.get("records", []) if r.get("kind") == "waiver"]
+    ids = {fid for r in records for fid in r.get("file_ids") or []}
     return {m["id"]: _read_stored(company_id, m) for m in state.get("files", []) if m["id"] in ids}
 
 
@@ -3338,6 +3371,7 @@ JOB_ACTIONS = {
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None,
                                                                                     release_id=_text(c.body, "release_id") or None, confirm_final=c.body.get("confirm_final") is True,
+                                                                                    looked_at=_text(c.body, "looked_at"),
                                                                                     read_file=_file_reader(c.company_id, c.read_ahead)))),
     # The type of a signed waiver on the job record, and which paid pay app or release it is for (B1).
     "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"))),
@@ -3381,7 +3415,7 @@ JOB_ACTIONS = {
     "paperwork": (False, lambda h, st, j, i, c: domain.set_job_paperwork(st, j, c.body, c.actor)),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
-    "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body)),
+    "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body, c.reply)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
 }
 

@@ -272,6 +272,7 @@ a.reset-btn { display: block; text-decoration: none; text-align: left; }
   .pointer-only { display: none; }
 }
 .drop-overlay { display: none; position: fixed; inset: 0; z-index: 90; align-items: center; justify-content: center; background: var(--copper-wash); border: 3px dashed var(--copper); font: 600 22px Georgia, serif; color: var(--copper); pointer-events: none; }
+.long-word { min-width: 0; overflow-wrap: anywhere; }
 .linkish { background: none; border: 0; padding: 0; color: var(--copper); text-decoration: underline; cursor: pointer; font: inherit; }
 .inbox-item { border-top: 1px solid var(--line); padding: 12px 0; display: flex; flex-direction: column; gap: 6px; }
 .inbox-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }

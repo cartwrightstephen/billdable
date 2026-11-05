@@ -179,7 +179,7 @@ export function sovCardHtml(j) {
       <td class="num">${l.lump_sum ? "" : fmtQty(l.qty_milli) + " " + l.unit}</td>
       <td class="num">${l.lump_sum ? "LS" : money(l.rate_cents)}</td>
       <td class="num">${money(l.scheduled_cents)}</td>
-      <td class="num">${l.lump_sum ? l.pct + "%" : fmtQty(l.done_milli)}${l.stored_cents ? `<div class="sub">+ ${money(l.stored_cents)} stored</div>` : ""}${l.from_daily_on ? `<div class="sov-daily">Updated from job records on ${fmtDate(l.from_daily_on)}</div>` : ""}${!v.done && l.scheduled_cents >= 0 ? `<div><button class="linkish" data-action="sov-correct-open" data-id="${j.id}" data-line="${l.id}" aria-label="Correct field total: ${l.description}">Correct field total</button></div>` : ""}</td>
+      <td class="num">${l.lump_sum ? l.pct + "%" : fmtQty(l.done_milli)}${l.stored_cents ? `<div class="sub">+ ${money(l.stored_cents)} stored</div>` : ""}${l.from_daily_on ? `<div class="sov-daily">Updated from job records on ${fmtDate(l.from_daily_on)}</div>` : ""}${!v.done && l.scheduled_cents >= 0 ? `<div><button class="linkish tall" data-action="sov-correct-open" data-id="${j.id}" data-line="${l.id}" aria-label="Correct field total: ${l.description}">Correct field total</button></div>` : ""}</td>
       <td class="num">${money(l.to_date_cents)}</td>
       <td class="num">${money(l.billed_cents)}</td>
       <td class="num">${money(l.scheduled_cents - l.to_date_cents)}</td>

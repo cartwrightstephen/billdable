@@ -346,9 +346,11 @@ def _may_file(job: dict[str, Any], rec: dict[str, Any], actor: str) -> bool:
                    for packet in packets for item in packet or [] for a in item.get("attachments") or [])
 
 
-def clean_record_entries(job: dict[str, Any], raw: Any, actor: str = "") -> list[dict[str, Any]]:
+def clean_record_entries(job: dict[str, Any], raw: Any, actor: str = "", report: dict[str, list] | None = None) -> list[dict[str, Any]]:
     """The form's document sections, checked: one entry per filled row, each with what its records
-    will hold. Errors land under the row's own box (invoices_amount_0). Changes nothing."""
+    will hold. Errors land under the row's own box (invoices_amount_0). Changes nothing. With report,
+    a file the form can't file doesn't stop the save: this person's own already filed goes in
+    report["already_saved"], any other in report["not_added"]; without it, it is refused."""
     from domain import RECORD_KINDS, _refuse
     import sov
     records = {r["id"]: r for r in job.get("records", [])}
@@ -364,10 +366,16 @@ def clean_record_entries(job: dict[str, Any], raw: Any, actor: str = "") -> list
         attachments: list[str] = []
         for rid in _list(entry.get("attachments"), "attachments", "Files"):
             rid = str(rid or "")
-            if rid not in records or not _may_file(job, records[rid], actor):
+            rec = records.get(rid)
+            if rec and _may_file(job, rec, actor):
+                if rid not in attachments:
+                    attachments.append(rid)
+            elif report is not None and rec and (rec.get("filed_record") or {}).get("by") == actor:
+                report["already_saved"].append(rid)   # this person's own, from a save whose answer was lost
+            elif report is not None:
+                report["not_added"].append({"record_id": rid, "label": rec["label"] if rec else ""})
+            else:
                 _refuse("", {"attachments": "A file isn't waiting to be saved on this job. Add it again."})
-            if rid not in attachments:
-                attachments.append(rid)
         spec = RECORD_SECTIONS[section]
         clean = {"kind": spec["kind"], "ticket_type": spec.get("ticket_type", ""), "word": spec["word"],
                  "title": "", "note": "", "extra": {}, "attachments": attachments}
@@ -446,6 +454,7 @@ def _apply_entry(state: dict[str, Any], job: dict[str, Any], entry: dict[str, An
             if entry["note"]:
                 rec["note"] = entry["note"]
             rec.pop("awaiting_record", None)
+            rec["filed_record"] = {"by": actor}
             audit(state, job["id"], "record_filed", f"{actor} filed {rec['label']} as a job record.", actor)
     else:
         add_job_record(state, job["id"], head(entry["title"] or entry["note"][:_NAME_MAX])[:200], entry["kind"], entry["note"], actor)
@@ -459,15 +468,34 @@ def _apply_entry(state: dict[str, Any], job: dict[str, Any], entry: dict[str, An
             rec["daily_record_id"] = daily_id
 
 
-def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, body: dict[str, Any]) -> dict[str, Any]:
+def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, body: dict[str, Any],
+                    report: dict[str, list] | None = None) -> dict[str, Any]:
     """What the New job record form saves: the Diary and the day's details as a daily record, when
     there are any, and one job record per file or filled section. A document alone needs no Diary;
-    the day's details do. Nothing is written if any of it is refused."""
-    from domain import _open_job, _refresh_draft_gate, _refuse, local_today
+    the day's details do. Nothing is written if any of it is refused. A file the form lists that it
+    can't file never holds the rest up: report says what became of it. Its own file filed already
+    means the answer to the same save was lost, so what that save wrote isn't written twice."""
+    from domain import GateError, _open_job, _refresh_draft_gate, _refuse, local_today
     job = _open_job(state, job_id)
     notes = (notes or "").strip()
-    entries = clean_record_entries(job, body.get("entries"), actor)
+    report = report if report is not None else {}
+    report.setdefault("already_saved", [])
+    report.setdefault("not_added", [])
+    entries = clean_record_entries(job, body.get("entries"), actor, report)
     day = _record_day(body)
+    if report["already_saved"]:
+        entries = [e for e in entries if e["attachments"]]
+        said = {d.get("notes") for d in state.get("daily_records", [])
+                if d.get("id") in {r.get("daily_record_id") for r in job.get("records", []) if r["id"] in report["already_saved"]}}
+        if not notes or notes in said:
+            notes = ""
+            if not entries:
+                return job
+            body = {k: body[k] for k in ("today", "date") if k in body}
+    if report["not_added"] and not notes and not entries and not any(body.get(k) not in (None, "", [], {}) for k in
+                                                                     ("crew_count", "crew_names", "weather", "weather_note", "materials", "deliveries", "sections", "attachments")):
+        message = "That file is someone else's, or was filed already, so it stays on the job records as it is. Add your own file, or write the diary entry."
+        raise GateError(message, fields={"attachments": message}, extra={"stale_record_ids": [x["record_id"] for x in report["not_added"]]})
     details = {k: v for k, v in body.items() if k != "entries"}
     has_day = any(body.get(k) not in (None, "", [], {}) for k in
                   ("crew_count", "crew_names", "weather", "weather_note", "materials", "deliveries", "sections", "attachments"))

@@ -154,6 +154,7 @@ export const views = {
             <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to supporting documents</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
           </div>`).join("")}
           ${clientJobsHtml(p, open)}
+          ${p.waiver_not_needed ? `<p class="override-note">Lien waivers not needed for this client. Marked by ${p.waiver_not_needed.by} on ${fmtDate(p.waiver_not_needed.at)}: ${p.waiver_not_needed.reason || "no reason given"} ${can("company") ? `<button type="button" class="btn small secondary" data-action="client-waiver-needed" data-id="${p.id}">Needed after all</button>` : ""}</p>` : ""}
           ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${(n => n === 1 ? "1 day" : `${n} days`)(Math.round(Number(unesc(String(p.paid_days_avg)))))} after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
             const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
             if (!(p.paid_count >= 2 && Math.abs(avg - set) >= 2)) return "That matches your setting.";
@@ -200,6 +201,10 @@ export const views = {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
   "use-approval-days": async (el, id) => { await post(`/api/payers/${id}/update`, { usual_approval_days: Number(el.dataset.days) }); },
+  "client-waiver-needed": async (el, id) => {
+    const p = (state.payers || []).find(x => x.id === id);
+    if (await askConfirm(`Ask for lien waivers from ${unesc((p || {}).name || "this client")} again? New pay apps and their open drafts will need one.`, "Needed after all")) await post(`/api/payers/${id}/waiver-needed`, {});
+  },
   "sug-add": (el, id) => post(`/api/payers/${id}/suggestion/${el.dataset.sug}/add`),
   "sug-dismiss": (el, id) => post(`/api/payers/${id}/suggestion/${el.dataset.sug}/dismiss`),
   "save-playbook": async (el, id) => {
@@ -214,6 +219,14 @@ export const actions = {
     for (const k of ["approver", "ap_email", "phone"]) if (!updates[k] && (!saved[k] || (k === "approver" && signerDefaulted(saved)))) delete updates[k];
     // The box started empty and something was typed: a person's answer, even the client's own name.
     if (updates.approver && signerDefaulted(saved)) updates.approver_confirmed = true;
+    // Typed over a real signer: the client's own name is usually a slip, so this save asks.
+    else if (updates.approver && updates.approver.toLowerCase() === (updates.name || "").toLowerCase() && updates.approver !== unesc(saved.approver || "")) {
+      if (!(await askConfirm(`${updates.approver} is the client's own name. Does ${updates.approver} sign off on your bills?`, "Yes, they sign off"))) {
+        refuseForm(key, { approver: "Enter who signs off on your bills, or confirm it is the client." });
+        return;
+      }
+      updates.approver_confirmed = true;
+    }
     const paperwork = paperworkValue(key, updates.packet_other);
     delete updates.packet_other;
     const errors = {};

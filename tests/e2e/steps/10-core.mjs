@@ -373,6 +373,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         const before = await sendWaiver.count();
         await sendWaiver.first().click();
         await confirmIfAsked(page);
+        // The stand-in file doesn't read as a waiver: a person says they opened it (criterion 67).
+        await confirmDialog(page).waitFor();
+        await confirmIfAsked(page);
         for (let t = 0; t < 100 && (await sendWaiver.count()) >= before; t++) await new Promise((r) => setTimeout(r, 100));
         await page.goto(BASE + "/jobs/job-inman");
       } else if (label === "Record a Payment") {

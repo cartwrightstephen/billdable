@@ -268,7 +268,6 @@ async function uploadDailyFiles(jobId, v) {
     while (daily.files[key].length) {
       const f = daily.files[key][0];
       if (f.size > MAX_UPLOAD_MB * 1024 * 1024) { toast(`Not saved: ${f.name} is larger than ${MAX_UPLOAD_MB} MB. What you typed is still here. Remove it or pick a smaller one, then save again.`); return false; }
-      const before = new Set(((state.jobs.find(x => x.id === jobId) || {}).records || []).map(r => unesc(r.id)));
       let res, data;
       try {
         res = await fetch(`/api/import/file?job=${encodeURIComponent(unesc(jobId))}&file=1&for_job_record=1&kind=${encodeURIComponent(uploadKind(key, v))}`, {
@@ -277,9 +276,8 @@ async function uploadDailyFiles(jobId, v) {
         data = await readJson(res);
       } catch (_) { setNetBanner(true); toast(`Not saved: can't reach Duracash. What you typed and your files are still here. Save again when you're back online.`); return false; }
       if (!res.ok) { toast(`Not saved: ${data.error || `${f.name} didn't upload.`} What you typed and your files are still here. Save again to retry.`); return false; }
-      const job = (data.jobs || []).find(x => x.id === unesc(jobId));
-      const added = ((job && job.records) || []).filter(r => !before.has(r.id) && (r.file_ids || []).length).map(r => r.id);
-      added.forEach(id => daily.uploaded.push({ key, name: f.name, record_id: id }));
+      // The answer names the record this upload made: someone else's upload is never taken for it.
+      (data.uploaded_record_ids || []).forEach(id => daily.uploaded.push({ key, name: f.name, record_id: id }));
       daily.files[key].shift();
       setNetBanner(false);
       if (Array.isArray(data.jobs)) setState(data);
@@ -339,6 +337,8 @@ async function saveRecord() {
     if (v.date) body.date = v.date;
     body.today = localDay(new Date());   // the record's day is the person's own date, not the server's UTC one
     const r = await post(`/api/jobs/${job}/daily-record`, body, { formKey: "daily", quiet: true });
+    // A file that can't be filed comes off the form, so the next save doesn't meet it again.
+    if (r && r.data && r.data.stale_record_ids) { daily.uploaded = daily.uploaded.filter(u => !r.data.stale_record_ids.includes(u.record_id)); render(); }
     if (r && r.ok) {
       resetDaily(); clearForm("daily");   // saved: the form is empty for the next one, on the same job
       const words = savedWords(notes.trim(), entries);
@@ -349,7 +349,9 @@ async function saveRecord() {
       daily.saved = { jobId: job, jobName: name, words, added };
       render();
       // The record is kept even when its quantities couldn't be added (B5): say so plainly.
+      const stayed = (r.data.not_added || []).length;
       if (blocked) toast(`Saved. The quantities were not added to the schedule of values: ${unesc(last.quantities_not_applied)}`);
+      else if (stayed) toast(`Job record saved to ${unesc(name)}. ${stayed === 1 ? "One file" : `${stayed} files`} stayed on the job records as they were: someone else's, or filed already.`);
       else toast(`Job record saved to ${unesc(name)}.${added}`);
     }
 }

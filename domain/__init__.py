@@ -851,20 +851,38 @@ def payer_link(invoice: dict[str, Any], link_base: str | None, company_id: str) 
 
 
 UNCONDITIONAL_ATTACHED = "An unconditional waiver is attached. It gives up your lien rights before you are paid."
+NOT_READ_FOR_UNCONDITIONAL = {"contract", "insurance", "completion", "change_order"}
 
 
 def _says_unconditional(state: dict[str, Any] | None, rec: dict[str, Any], read_file: Any) -> bool:
-    """A record that doesn't say its type, filed as a waiver or as Other, whose file reads as an
-    unconditional waiver. What was read is kept on the record for the pay app's page."""
-    if rec.get("kind") not in {"waiver", "other"} or record_waiver_kind(rec):
+    """A record going with a pay app whose file reads as an unconditional waiver, whatever it was
+    filed as or called (doc_check.says_unconditional): filed as anything but a waiver, the word has
+    to be near waiver, release or lien. Contracts, insurance, completion papers and change orders
+    aren't read. What was read is kept on the record for the pay app's page."""
+    if rec.get("kind") in NOT_READ_FOR_UNCONDITIONAL:
         return False
     if read_file is not None and state is not None:
         ids = set(rec.get("file_ids") or [])
         metas = [f for f in state.get("files", []) if f["id"] in ids]
         if metas:
-            check = doc_check.check([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], "", "", None, "conditional_progress", True)
-            rec["says_unconditional"] = any("unconditional" in p.lower() for p in check["problems"])
+            rec["says_unconditional"] = doc_check.says_unconditional([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], rec.get("kind") != "waiver")
     return bool(rec.get("says_unconditional"))
+
+
+def _why_unconditional(rec: dict[str, Any]) -> str:
+    kind = record_waiver_kind(rec)
+    return WAIVER_KINDS[kind] if kind.startswith("unconditional") else "its file says unconditional"
+
+
+def _unconditional_rows(job: dict[str, Any], invoice: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the pay app's page warns about (M14), the same rule as the send: each record by name, why,
+    and its files so a person can take it off."""
+    extra = set(invoice.get("extra_record_ids") or [])
+    names = {f["id"]: f.get("name", "") for f in state.get("files", [])}
+    return [{"record_id": r["id"], "label": r["label"], "why": _why_unconditional(r),
+             "extra": r["id"] in extra, "file_ids": list(r.get("file_ids") or []),
+             "file_names": [names[f] for f in r.get("file_ids") or [] if names.get(f)]}
+            for r in unconditional_waivers_attached(job, invoice)]
 
 
 def unconditional_waivers_attached(job: dict[str, Any], invoice: dict[str, Any], state: dict[str, Any] | None = None,
@@ -940,10 +958,14 @@ def approve_and_send(
     showed (review_stamp): the server always passes it, so a send needs a look at what goes.
     None is for callers with no page (scripts, tests of other rules)."""
     job = _open_job(state, job_id)
+    invoice = next((inv for inv in reversed(job["invoices"]) if inv["status"] in {"draft", "awaiting_approval"}), None)
+    # A stale screen first: what it says stands in the way may not be what stands in the way now.
+    if reviewed and invoice and reviewed != review_stamp(state, job, invoice):
+        raise GateError(f"{invoice['number']} changed since you opened it. Look it over again, then send.",
+                        extra={"review_changed": True, "invoice_id": invoice["id"]})
     blockers = blocker_lines(job)
     if blockers:
         raise GateError("Pay app blocked.", blockers)
-    invoice = next((inv for inv in reversed(job["invoices"]) if inv["status"] in {"draft", "awaiting_approval"}), None)
     if not invoice:
         raise GateError("No draft pay app to send.")
     _need_playbook(state, job)
@@ -955,7 +977,7 @@ def approve_and_send(
     unconditional = unconditional_waivers_attached(job, invoice, state, read_file)
     override = _reason(unconditional_override) if unconditional else ""
     if unconditional and not override:
-        raise GateError(UNCONDITIONAL_ATTACHED, [f"{r['label']} ({WAIVER_KINDS.get(record_waiver_kind(r), 'its file says unconditional')})" for r in unconditional],
+        raise GateError(UNCONDITIONAL_ATTACHED, [f"{r['label']} ({_why_unconditional(r)})" for r in unconditional],
                         fields={"unconditional_override": "Enter why it goes with this pay app, or take it off."},
                         extra={"unconditional_waiver": True}, keep_changes=True)   # what was read goes on the page
     # The bill can stop being the final one under a confirmed waiver (a change order written since,
@@ -1528,12 +1550,14 @@ def _pending_waivers(job: dict[str, Any]) -> list[dict[str, Any]]:
 def send_waiver(
     state: dict[str, Any], job_id: str, actor: str = "owner", invoice_id: str | None = None, kind: str | None = None,
     release_id: str | None = None, confirm_final: bool = False,
-    read_file: Any = None,
+    read_file: Any = None, looked_at: str = "",
 ) -> dict[str, Any]:
     """The second stage of the waiver (M16, M21): after payment, a person approves sending the
     signed form on the job record. One waiver per paid pay app and per retainage release
     (release_id, M20); older records keep a single job-level flag. Duracash never writes the form:
-    it is refused until a signed waiver of the type being sent is on the job record."""
+    it is refused until a signed waiver of the type being sent is on the job record. With read_file,
+    the file is read whatever its label or type says (Decision 6, criterion 67): what doesn't match
+    is named, and it goes only once a person says they opened that record (looked_at, its id)."""
     job = _open_job(state, job_id)
     if kind is not None and kind not in WAIVER_KINDS:
         raise GateError("Pick the waiver type: conditional or unconditional, progress or final.")
@@ -1577,21 +1601,24 @@ def send_waiver(
                         + (f", because {', and '.join(left)}" if left else "") + ". Send the final one only if you mean to.",
                         extra={"final_waiver_warning": True, "confirm_label": "Send the final waiver"})
     record, files = found["record"], found["file_ids"]
-    # A record that doesn't say its type hasn't been looked at as this type: its file is read (Decision 6).
-    if read_file is not None and not record_waiver_kind(record) and not confirm_final:
+    looked_past = []
+    if read_file is not None:
         amount_due = invoice["amount_cents"] - int(invoice.get("short_pay_cents") or 0) if invoice else release["amount_cents"] if release else None
         metas = [f for f in state.get("files", []) if f["id"] in set(files)]
         check = doc_check.check([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], job["name"],
                                 money(amount_due) if amount_due is not None else "", amount_due, kind, True)
-        if check["problems"]:
-            raise GateError(f"Look at {record['label']} before it goes as the {WAIVER_KINDS[kind].lower()}: {' '.join(check['problems'])}",
-                            extra={"final_waiver_warning": True, "confirm_label": "It's right, send it"})
+        looked_past = check["problems"]
+        if looked_past and looked_at != record["id"]:
+            raise GateError(f"Look at {record['label']} before it goes as the {WAIVER_KINDS[kind].lower()}: {' '.join(looked_past)}",
+                            extra={"look_warning": True, "record_id": record["id"], "confirm_label": "I opened it and it's right"})
     if found["ambiguous"]:
         # More than one waiver is owed and this one wasn't said to be for any (B1): ask, send nothing.
         why = "More than one waiver is due on this job." if len(_waiver_owed(job)) > 1 else "It was added while more than one waiver was due."
         raise GateError(f"Say which pay app {record['label']} is for first. {why}",
                         fields={"for_id": "Pick the pay app or retainage release this signed waiver is for."},
                         extra={"waiver_record_id": record["id"], "waiver_for": _waiver_owed(job)})
+    if looked_past:
+        audit(state, job_id, "waiver_looked_at", f"{actor} opened {record['label']} and said it is right: {' '.join(looked_past)}", actor)
     _hold_unclear_waivers(job)
     now = utcnow()
     if legacy:
@@ -1991,6 +2018,7 @@ def _paperwork_view(state: dict[str, Any], job: dict[str, Any], out: dict[str, A
         inv["co_rows"] = sov.co_rows(job, by_id[inv["id"]])
         if inv["status"] in DRAFT_STATUSES:
             inv["email_preview"] = email_preview(state, job, by_id[inv["id"]])
+            inv["unconditional_attached"] = _unconditional_rows(job, by_id[inv["id"]], state)
             for item in inv.get("packet") or []:
                 if item.get("required") and sov.name_only(job, item):   # shown missing, with Remove and the ways to fill it
                     item.update(present=False, name_only=True)
@@ -4055,6 +4083,28 @@ def waiver_needed_after_all(state: dict[str, Any], job_id: str, actor: str = "ow
     return job
 
 
+def client_waiver_needed_again(state: dict[str, Any], payer_id: str, actor: str = "owner") -> dict[str, Any]:
+    """The way back from Not needed for this client, on the Client playbook card: new pay apps ask
+    for the conditional waiver again, and so do the client's open drafts, except on a job marked not
+    needed on its own. After-payment waivers already settled as not due stay as they were."""
+    payer = _payer(state, payer_id)
+    skip = payer.pop("waiver_not_needed", None)
+    if not skip:
+        raise GateError(f"Lien waivers aren't marked not needed for {payer['name']}.")
+    audit(state, "", "paperwork_needed", f"{actor} marked lien waivers needed again for {payer['name']} "
+          f"(marked not needed by {skip.get('by', 'someone')} on {str(skip.get('at', ''))[:10]}: {skip.get('reason', 'no reason given')}).", actor)
+    for job in state["jobs"]:
+        if job.get("payer_id") != payer_id or job.get("closed") or job.get("waiver_skipped"):
+            continue
+        for invoice in job["invoices"]:
+            if invoice["status"] in DRAFT_STATUSES:
+                for item in invoice.get("packet") or []:
+                    if not item.get("required") and item.get("skipped_scope") != "job" and str(item.get("waiver_kind", "")).startswith("conditional"):
+                        _item_needed_again(item)
+        _refresh_draft_gate(job, state)
+    return payer
+
+
 def _work_billed_by_ticket(job: dict[str, Any], invoice: dict[str, Any]) -> list[str]:
     """What a pay app bills that daily tickets back up (M6): its change orders and its unit-price
     (not lump-sum) schedule lines, by name."""
@@ -4363,6 +4413,11 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
     say they opened it and it is right (looked), a separate step from the warning naming what
     didn't match, which clears it whatever the warning said."""
     shown = set((item.get("check") or {}).get("problems") or [])
+    if read_file is not None:
+        for a in item.get("attachments", []):   # the pay app's page warns before the send has to
+            rec = next((r for r in job.get("records", []) if r["id"] == a.get("record_id")), None)
+            if rec:
+                _says_unconditional(state, rec, read_file)
     check = _document_check(state, job, item, invoice, read_file)
     if check is not None:
         item["check"] = check
@@ -5133,6 +5188,7 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
         draft_invoice(state, job_id, actor="duracash", replaces=redraft, period_end=redraft.get("period_to") or "")
     if changes:
         audit(state, job_id, "edit_job", f"{actor} changed {job['name']}: " + "; ".join(changes) + ".", actor)
+    _refresh_draft_gate(job)   # a new contract amount can change whether a draft is the final one
     return job
 
 

@@ -83,6 +83,39 @@ _UNCONDITIONAL = re.compile(r"(?<![a-z])" + r"[\s\-\u00ad\u2010-\u2015]*".join("
 _PLAIN_CONDITIONAL = re.compile(r"(?<![a-z])" + r"[\s\-\u00ad\u2010-\u2015]*".join("conditional") + r"(?![a-z])", re.I)
 
 
+# "not an unconditional release", "does not constitute an unconditional waiver": the word taken back
+# at once. Only words that can sit between the two: "not conditional, and is an unconditional
+# waiver" says it is one, so it stays.
+_NEGATED_UNCONDITIONAL = re.compile(r"(?<![a-z])(?:not|isn['\u2019]?t|never|no)(?:\s+(?:to|be|an?|any|as|is|this|constitutes?|deemed|considered|construed|intended|meant|represents?|serves?))*\s+"
+                                    + _UNCONDITIONAL.pattern, re.I)
+_WAIVER_WORDS = re.compile(r"waiver|release|lien", re.I)
+_NEAR_WORDS = 4
+
+
+def _near_a_waiver_word(text: str, found: "re.Match[str]") -> bool:
+    around = text[:found.start()].split()[-_NEAR_WORDS:] + text[found.end():].split()[:_NEAR_WORDS]
+    return any(_WAIVER_WORDS.search(word) for word in around)
+
+
+def says_unconditional(files: list[tuple[str, str, Any]], near_only: bool = False) -> bool:
+    """Does one of these files read as an unconditional waiver, for the warning at send (M14)? The
+    word taken back at once doesn't count here; it stays a prompt to look at confirm (_type_problems).
+    near_only: for a file not filed as a waiver, it counts only within a few words of waiver,
+    release or lien (an addendum can use the word for something else). Never raises."""
+    try:
+        for _name, ext, data in files:
+            if data is None or ext in PICTURES:
+                continue
+            read = data if isinstance(data, ReadFile) else prepare(ext, data)
+            text = read.text or ""
+            kept = _NEGATED_UNCONDITIONAL.sub(" ", text)
+            if any(not near_only or _near_a_waiver_word(kept, found) for found in _UNCONDITIONAL.finditer(kept)):
+                return True
+    except Exception:
+        sys.stderr.write(traceback.format_exc())
+    return False
+
+
 def _without_job_name(text: str, job_name: str) -> str:
     """The text with the job's own name taken out: a job called Final Grade says nothing about the
     waiver's type."""

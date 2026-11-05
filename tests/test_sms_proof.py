@@ -186,11 +186,25 @@ class CodeRules(SmsBase):
         self.assertFalse(auth.set_sms(self.user["id"], "+14045550124", True)["sms_opt_in"])
         self.assertFalse(auth.set_sms(self.user["id"], "+14045550123", True)["sms_opt_in"], "going back needs a code too")
 
-    def test_stop_then_ticking_the_box_again_needs_no_new_code(self):
+    def test_stop_then_ticking_the_box_again_stays_stopped_until_a_code_gets_through(self):
         agree(self.user["id"], "+14045550123")
         auth.sms_stop("+14045550123")
         self.assertFalse(auth.session_public(self.user["id"])["sms_opt_in"])
-        self.assertTrue(auth.set_sms(self.user["id"], "+14045550123", True)["sms_opt_in"])
+        shown = auth.set_sms(self.user["id"], "+14045550123", True)
+        self.assertEqual((shown["sms_opt_in"], shown["sms_stopped"]), (False, True))
+        self.assertFalse(auth.sms_proven(self.user["id"], "+14045550123"))
+        auth._CODES.pop("sms-to:+14045550123", None)
+        shown = auth.confirm_sms_code(self.user["id"], auth.issue_sms_code(self.user["id"], "+14045550123"))
+        self.assertEqual((shown["sms_opt_in"], shown["sms_stopped"]), (True, False))
+
+    def test_someone_who_agreed_before_codes_is_told_to_confirm(self):
+        data = auth._load()
+        user = next(u for u in data["users"] if u["id"] == self.user["id"])
+        user.update(phone="+14045550123", sms_opt_in=True)
+        auth._save(data)
+        shown = auth.session_public(self.user["id"])
+        self.assertEqual((shown["sms_opt_in"], shown["sms_needs_confirming"]), (False, True))
+        self.assertFalse(auth.set_sms(self.user["id"], "+14045550123", False)["sms_needs_confirming"])
 
 
 class Limit(SmsBase):
@@ -340,6 +354,49 @@ class Http(SmsBase):
             res, data = self.request("POST", "/api/auth/sms", {"phone": "(404) 555-0123", "sms_opt_in": True})
         self.assertEqual(res.status, 429)
         self.assertEqual(len(StandIn.calls), auth.CODES_MAX_PER_HOUR)
+
+
+class CodeTroubles(Http):
+    """What a person meets asking for a code: a limit that keeps the newest one live, and a number
+    that replied STOP, told to text START first."""
+
+    def ask(self, phone):
+        return self.request("POST", "/api/auth/sms", {"phone": phone, "sms_opt_in": True})
+
+    def test_over_the_limit_on_a_new_number_the_newest_code_still_works(self):
+        with self.ready():
+            for _ in range(auth.CODES_MAX_PER_HOUR):
+                self.ask("(404) 555-0123")
+            code = self.code_texted()
+            res, data = self.ask("(404) 555-0124")
+            self.assertEqual(res.status, 429)
+            self.assertIn("Use the newest one", data["error"])
+            res, data = self.request("POST", "/api/auth/sms/confirm", {"code": code})
+            self.assertEqual(res.status, 200, data)
+
+    def test_a_number_that_replied_stop_is_told_to_text_start_first(self):
+        StandIn.answer = (400, {"code": 21610, "message": "unsubscribed"})
+        with self.ready():
+            res, data = self.ask("(404) 555-0130")
+        self.assertEqual(res.status, 409)
+        self.assertIn("Text START to +14045550100 first", data["fields"]["phone"])
+
+    def test_stop_then_ticking_the_box_shows_stopped_with_the_start_line(self):
+        with self.ready():
+            self.ask("(404) 555-0123")
+            self.request("POST", "/api/auth/sms/confirm", {"code": self.code_texted()})
+            auth.sms_stop("+14045550123")
+            StandIn.answer = (400, {"code": 21610, "message": "unsubscribed"})
+            res, data = self.ask("(404) 555-0123")
+            self.assertEqual(res.status, 409)
+            self.assertIn("Text START", data["fields"]["phone"])
+            res, me = self.request("GET", "/api/auth/me")
+            self.assertEqual((me["user"]["sms_opt_in"], me["user"]["sms_stopped"], me["user"]["texts_number"]), (False, True, "+14045550100"))
+            StandIn.answer = (201, {"sid": "SM1", "status": "queued"})   # they texted START
+            res, data = self.ask("(404) 555-0123")
+            self.assertTrue(data["code_sent"])
+            res, data = self.request("POST", "/api/auth/sms/confirm", {"code": self.code_texted()})
+            self.assertEqual((data["user"]["sms_opt_in"], data["user"]["sms_stopped"]), (True, False))
 
 
 class Inbound(Http):

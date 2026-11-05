@@ -281,7 +281,7 @@ function myAccountView() {
     <div class="card" data-form-key="account">${formErrorLine("account")}
       <h2>You</h2>
       ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-grid">${field({ form: "account", name: "name", id: "my-name", label: "Name", value: unesc(me.name), autocomplete: "name", rule: "name", required: true })}</div>`}
-      <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
+      <div class="money-row"><span class="label">Email</span><span class="long-word">${me.email} ${isDemo ? "" : verified}</span></div>
       ${isDemo ? "" : textsHtml()}
       <div class="money-row"><span class="label">Profile</span><span>${me.profile_name || words(me.role)}${me.company_admin ? ` <span class="pill copper">Company Admin</span>` : ""}</span></div>
       ${isDemo ? "" : `<div class="money-row"><span class="label">Password</span><span><button class="btn small secondary" data-action="nav" data-view="password">Change password</button></span></div>`}
@@ -306,8 +306,9 @@ function textsHtml() {
       ${smsCodeTo ? `<div class="invite-result" role="status" data-form-key="smscode"><strong>Enter the code we texted to ${esc(shownPhone(smsCodeTo))}.</strong> Texts turn on once it is confirmed.
         <div class="form-grid">${field({ form: "smscode", name: "sms_code", id: "my-sms-code", label: "Code from the text", autocomplete: "one-time-code", inputmode: "numeric", placeholder: "123456" })}</div>
         ${formErrorLine("smscode")}
-        <button class="btn small" data-action="sms-confirm">Confirm number</button></div>` : ""}
-      ${me.sms_stopped ? `<p class="sub">You replied STOP, so texts are off. To turn them back on, tick the box and save, then text START to the Duracash number.</p>` : ""}`;
+        <div class="form-inline"><button class="btn small" data-action="sms-confirm">Confirm number</button><button class="btn small secondary" data-action="sms-resend">Send a new code</button></div></div>` : ""}
+      ${me.sms_stopped ? `<p class="sub">You replied STOP, so texts are off. To turn them back on, text START to ${me.texts_number ? esc(shownPhone(me.texts_number)) : "the Duracash number"} first, then tick the box and save.</p>` : ""}
+      ${me.sms_needs_confirming && !smsCodeTo ? `<p class="sub">Confirm your number to keep getting texts: tick the box and save, then enter the code we text you.</p>` : ""}`;
 }
 
 // Appearance (G9): the theme and accent, kept on this person's account, saved with the page.
@@ -595,6 +596,15 @@ export const views = {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in app.js.
 export const actions = {
   "reset-data": () => resetData(),
+  "sms-resend": async () => {
+    const r = await postJson("/api/auth/sms", { phone: smsCodeTo, sms_opt_in: true });
+    if (!r.ok) { refuseForm("smscode", r.data.fields || { _form: r.data.error || "Not sent." }); return; }
+    setMe(escDeep(r.data.user));
+    if (r.data.code_sent) smsCodeTo = r.data.sent_to;
+    clearForm("smscode");
+    toast("A new code is on its way.");
+    render();
+  },
   "sms-confirm": async () => {
     const r = await postJson("/api/auth/sms/confirm", { code: formValues("smscode").sms_code || "" });
     if (!r.ok) { refuseForm("smscode", r.data.fields || { _form: r.data.error || "Not confirmed." }); return; }

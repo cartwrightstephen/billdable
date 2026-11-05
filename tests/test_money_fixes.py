@@ -1157,9 +1157,9 @@ class UnreadWaiverTests(unittest.TestCase):  # item 18
         rec = self.record("Signed form", "waiver", "Conditional waiver upon payment for another job")
         with self.assertRaises(domain.GateError) as raised:
             domain.send_waiver(self.state, self.job["id"], "Sam", invoice_id=self.inv["id"], read_file=self.read)
-        self.assertTrue(raised.exception.extra["final_waiver_warning"])
+        self.assertTrue(raised.exception.extra["look_warning"])
         self.assertIn(rec["label"], str(raised.exception))
-        domain.send_waiver(self.state, self.job["id"], "Sam", invoice_id=self.inv["id"], confirm_final=True, read_file=self.read)
+        domain.send_waiver(self.state, self.job["id"], "Sam", invoice_id=self.inv["id"], looked_at=rec["id"], read_file=self.read)
         self.assertTrue(self.inv["waiver_sent"])
 
 

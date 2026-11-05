@@ -209,9 +209,17 @@ export const actions = {
       if (!(await askConfirm(`Email the signed ${waiverTypeWords(kind || (row && row.kind) || "")} waiver for ${what} to ${sendsTo(j)}?`, "Send the waiver"))) return;
     }
     const body = { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) };
-    const r = await post(`/api/jobs/${id}/waiver`, body);
-    // A final waiver while a progress one is due warns; a person's confirm sends it (accept. 76).
-    if (r && r.data && r.data.final_waiver_warning && await askConfirm(r.data.error, r.data.confirm_label || "Send the final waiver", true)) await post(`/api/jobs/${id}/waiver`, { ...body, confirm_final: true });
+    let r = await post(`/api/jobs/${id}/waiver`, body);
+    // A final waiver while a progress one is due warns, and so does a file that doesn't match what it
+    // goes as (blank, other wording, another job or amount, a scan): a person's confirm sends it, each
+    // for what it names (accept. 67, 76).
+    const said = {};
+    while (r && r.data && (r.data.final_waiver_warning || r.data.look_warning)
+           && await askConfirm(r.data.error, r.data.confirm_label || "Send the final waiver", true)) {
+      if (r.data.final_waiver_warning) said.confirm_final = true;
+      if (r.data.look_warning) said.looked_at = r.data.record_id;
+      r = await post(`/api/jobs/${id}/waiver`, { ...body, ...said });
+    }
   },
   // All of the retainage, or the part typed in the box, once the job is done (M24).
   "retainage": async (el, id) => {

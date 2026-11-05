@@ -51,6 +51,7 @@ READ_ONLY = "not sent: this company is read-only"
 CLIENT_NUMBER = "not sent: this number belongs to a client"
 COUNTER_BROKEN = "not sent: the count of texts sent can't be read"
 UNSUBSCRIBED = 21610   # Twilio: this number replied STOP
+STOPPED = "not sent: this number replied STOP"
 # Twilio's default opt-out words; it answers them itself. Only a message of the one word counts.
 STOP_WORDS = {"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REVOKE", "OPTOUT"}
 OTHER_WORDS = {"START", "UNSTOP", "HELP", "INFO"}
@@ -282,7 +283,7 @@ def _deliver(state: dict[str, Any], company_id: str, user_id: str, phone: str, b
             auth.sms_stop(phone)   # they replied STOP and the post never reached us
         if reason.startswith(_REFUSED):   # a timeout may have gone through, so it keeps its place
             _release(company_id, place)
-        return f"not sent: {reason}"
+        return STOPPED if code == UNSUBSCRIBED else f"not sent: {reason}"
     return "sent"
 
 

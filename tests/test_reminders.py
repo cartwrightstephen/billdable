@@ -298,12 +298,37 @@ class BootSendsNothing(unittest.TestCase):
         self.assertEqual(calls, [1, 2], "a sleep comes before every run")
         self.assertGreaterEqual(waits[0], monthly.BOOT_QUIET_SECONDS)
 
-    def test_the_wait_is_an_hour_and_shorter_only_before_midnight(self):
+    def test_the_first_run_is_five_minutes_after_start_up(self):
         at = lambda h, m=0: datetime(2026, 11, 3, h, m, tzinfo=timezone.utc)
-        self.assertEqual(monthly.first_wait(at(15)), 3600)
-        self.assertEqual(monthly.first_wait(at(22, 58)), 3600)
-        self.assertEqual(monthly.first_wait(at(23, 10)), 49 * 60)
-        self.assertEqual(monthly.first_wait(at(23, 58)), monthly.BOOT_QUIET_SECONDS)
+        for now in (at(15), at(22, 58), at(23, 10), at(23, 58)):
+            self.assertEqual(monthly.first_wait(now), 300)
+
+    def test_a_process_restarted_hourly_still_runs_and_sends_a_day_once(self):
+        calls = []
+
+        class Stop(BaseException):
+            pass
+
+        def sleep(seconds):
+            if len(sleeps) == 1:
+                raise Stop
+            sleeps.append(seconds)
+
+        class Inline:
+            def __init__(self, target, **kw):
+                self.target = target
+
+            def start(self):
+                try:
+                    self.target()
+                except Stop:
+                    pass
+
+        for _restart in range(3):
+            sleeps = []
+            with mock.patch.object(monthly, "run_once", side_effect=lambda site: calls.append(sleeps[0])), mock.patch.object(monthly.time, "sleep", sleep), mock.patch.object(monthly.threading, "Thread", Inline):
+                monthly.start(mock.Mock())
+        self.assertEqual(calls, [300, 300, 300], "each start-up runs once its short wait is over")
 
     def test_a_deploy_at_the_send_hour_keeps_that_days_digest(self):
         hour = monthly.daily_email_hour()

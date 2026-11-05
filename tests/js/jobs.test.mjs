@@ -304,7 +304,9 @@ test("follow-ups name every unpaid pay app, and a noted call waits for its date"
 test("a final pay app says Final and preselects a final waiver", () => {
   assert.match(invoicePill({ status: "sent", final: true }), /Final/);
   assert.doesNotMatch(invoicePill({ status: "void", final: true }), /Final/);
-  assert.match(waiverSendForm(job(), { id: "inv-3", final: true }), /<option value="unconditional_final" selected>/);
+  const done = (left) => ({ ...job(), work_status: "complete", money: { ...job().money, unbilled_completed_cents: left, outstanding_cents: 0, retainage_open_cents: 0, draft_cents: 0 } });
+  assert.match(waiverSendForm(done(0), { id: "inv-3", final: true }), /<option value="unconditional_final" selected>/);
+  assert.match(waiverSendForm(done(100), { id: "inv-3", final: true }), /<option value="unconditional_progress" selected>/, "a final waiver gives up what is left");
 });
 
 test("a person sees only the job actions their profile allows (S6)", () => {

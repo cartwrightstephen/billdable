@@ -47,6 +47,7 @@ export function recordWaiverKind(rec) {
 
 // The waiver records going out with a draft that are unconditional (domain.unconditional_waivers_attached).
 export function unconditionalAttached(j, inv) {
+  if (inv.unconditional_attached) return inv.unconditional_attached;
   const records = Object.fromEntries((j.records || []).map(r => [r.id, r]));
   const excluded = new Set(inv.excluded_file_ids || []);
   const ids = [...(inv.packet || []).flatMap(p => (p.attachments || []).map(a => a.record_id)), ...(inv.extra_record_ids || [])];
@@ -110,7 +111,7 @@ export function waiverChecklistHtml(j, kind, inv = null, amount = null) {
   const items = [
     `Job: ${j.name}${j.address ? ", " + j.address : ""}`,
     `Client: ${(j.payer || {}).name || ""}`,
-    `Your legal name: ${legal}${company.legal_name ? "" : ` <button class="linkish" data-action="onb-go" data-view="company" data-focus="#co-legal-name">Add your legal name</button>`}`,
+    `Your legal name: ${legal}${company.legal_name ? "" : ` <button class="linkish tall" data-action="onb-go" data-view="company" data-focus="#co-legal-name">Add your legal name</button>`}`,
     cents != null ? `Amount covered: ${money(cents)}` : "",
     inv && inv.period_to ? `Work through: ${fmtDate(inv.period_to)}` : "",
     kind && kind.startsWith("conditional") ? "Conditional wording: it counts only once the payment clears" : "",
@@ -262,8 +263,15 @@ export function beforeYouSendHtml(j, inv) {
     ${preview ? `<div class="send-email-text"><h3>The email</h3><p class="email-body">${preview.body.replace("[Your name]", (me && (me.name || me.email)) || "[Your name]")}</p></div>` : ""}
     ${unconditional.length ? `<div class="unconditional-warning" role="alert">
       <p class="blocker">An unconditional waiver is attached: ${unconditional.map(r => r.label).join(", ")}. It gives up your lien rights before you are paid. Take it off, or send anyway with the reason.</p>
+      <ul class="plain-list attach-list">${unconditional.map(r => {
+        const named = (r.file_names || []).length && !r.file_names.includes(r.label) ? ` (${r.file_names.join(", ")})` : "";
+        const off = !editable || !r.record_id ? "" : r.extra
+          ? `<button class="btn small secondary" data-action="payapp-attach" data-id="${j.id}" data-inv="${inv.id}" data-op="remove_record" data-target="${r.record_id}">Take off</button>`
+          : (r.file_ids || []).map(fid => `<button class="btn small secondary" data-action="payapp-attach" data-id="${j.id}" data-inv="${inv.id}" data-op="exclude_file" data-target="${fid}">Leave out</button>`).join(" ");
+        return `<li><span><strong>${r.label}</strong>${named}: ${r.why || "unconditional"}</span> ${off}</li>`;
+      }).join("")}</ul>
       ${may("send") && perms().owner ? `<div class="form-inline"><input id="override-reason-${inv.id}" class="grow" aria-label="Why it goes with this pay app" placeholder="Why it goes with this pay app">
-        <button class="btn small danger" data-action="send-override" data-id="${j.id}" data-inv="${inv.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}">Send anyway</button></div>` : `<p class="sub">Only an owner can send it this way.</p>`}
+        <button class="btn small danger" data-action="send-override" data-id="${j.id}" data-inv="${inv.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}">Send anyway</button></div>` : `<p class="sub">Only an owner can send it this way${(me && me.owner_names || []).length ? `. Ask ${me.owner_names.join(" or ")}, or take the file off` : ""}.</p>`}
     </div>` : ""}
     <div class="client-needs-box">${clientNeedsHtml(j, "h3")}</div>`;
 }

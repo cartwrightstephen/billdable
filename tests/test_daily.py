@@ -113,14 +113,14 @@ class NewJobRecordTests(unittest.TestCase):
     def test_a_record_already_on_the_job_can_not_be_rewritten(self):
         rec = self.signed_waiver()
         before = dict(rec)
-        self.refused("attachments", entries=[{"section": "other", "kind": "note", "label": "Not a waiver", "note": "overwritten", "attachments": [rec["id"]]}])
+        self.save(entries=[{"section": "other", "kind": "note", "label": "Not a waiver", "note": "overwritten", "attachments": [rec["id"]]}])
         self.assertEqual(rec, before)
 
     def test_a_file_can_be_filed_only_once(self):
         rec = self.upload("note", "a.jpg")
         self.save(entries=[{"section": "photos", "row": 0, "attachments": [rec["id"]]}])
         before = dict(rec)
-        self.refused("attachments", entries=[{"section": "other", "kind": "note", "label": "Changed", "attachments": [rec["id"]]}])
+        self.save(entries=[{"section": "other", "kind": "note", "label": "Changed", "attachments": [rec["id"]]}])
         self.assertEqual(rec, before)
         self.assertNotIn("awaiting_record", rec)
 
@@ -135,7 +135,9 @@ class NewJobRecordTests(unittest.TestCase):
     def test_a_file_a_person_has_put_on_a_pay_app_can_not_be_rewritten(self):
         rec = self.upload("waiver", "w.pdf")
         self.job["packet"] = [{"id": "p1", "kind": "waiver", "label": "Waiver", "attachments": [{"record_id": rec["id"], "added_by": "Ana"}]}]
-        self.refused("attachments", entries=[{"section": "other", "kind": "note", "label": "x", "attachments": [rec["id"]]}])
+        before = dict(rec)
+        self.save(entries=[{"section": "other", "kind": "note", "label": "x", "attachments": [rec["id"]]}])
+        self.assertEqual(rec, before)
 
     def test_a_refused_save_keeps_the_upload_for_the_retry(self):
         rec = self.upload("note", "a.jpg")
@@ -310,8 +312,8 @@ class DailyRecordHttpTests(ServerCase):
                                         headers={"Content-Type": "image/jpeg", "X-Filename": quote("w.jpg")})[1]["jobs"][0]["records"][-1]
         filed = up("")
         res, data = self.request("POST", f"/api/jobs/{job['id']}/daily-record", {"entries": [{"section": "other", "kind": "note", "label": "Not a waiver", "note": "overwritten", "attachments": [filed["id"]]}]}, cookie=owner)
-        self.assertEqual(res.status, 409, data)
-        self.assertIn("attachments", data["fields"])
+        self.assertEqual(res.status, 200, data)
+        self.assertEqual([x["record_id"] for x in data["not_added"]], [filed["id"]], "it stays as it was, and the reply says so")
         fresh = up("&for_job_record=1")
         res, data = self.request("POST", f"/api/jobs/{job['id']}/daily-record", {"entries": [{"section": "other", "kind": "asbuilt", "label": "Plan", "attachments": [fresh["id"]]}]}, cookie=owner)
         self.assertEqual(res.status, 200, data)

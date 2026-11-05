@@ -248,11 +248,13 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "phone": user.get("phone", ""),
         "sms_opt_in": _texts_on(user),
         "sms_stopped": bool(user.get("sms_opt_out_at")) and not user.get("sms_opt_in"),
+        # Agreed before codes existed: texts are off until the number is confirmed.
+        "sms_needs_confirming": bool(user.get("sms_opt_in")) and not _texts_on(user),
         "reminders": dict(user.get("reminders") or {}),
     }
 
 
-_OWN_ONLY = ("phone", "sms_opt_in", "sms_stopped", "reminders")
+_OWN_ONLY = ("phone", "sms_opt_in", "sms_stopped", "sms_needs_confirming", "reminders")
 
 
 def _listed(user: dict[str, Any]) -> dict[str, Any]:
@@ -265,7 +267,7 @@ def _listed(user: dict[str, Any]) -> dict[str, Any]:
 def set_sms(user_id: str, phone: str, opt_in: bool) -> dict[str, Any]:
     """Keep this person's mobile number (already checked: sms.e164) and whether they agreed to
     texts. No number means no texts, and agreeing counts only for a number a texted code proved
-    (confirm_sms_code); changing the number means proving the new one. When they agree, the time
+    (confirm_sms_code); changing the number means proving the new one, and so does a STOP since. When they agree, the time
     is kept as the record of it."""
     with LOCK:
         data = _load()
@@ -273,7 +275,7 @@ def set_sms(user_id: str, phone: str, opt_in: bool) -> dict[str, Any]:
         was_on = _texts_on(user)
         if user.get("phone") != phone:
             user.pop("sms_confirmed_phone", None)
-        agreed = bool(opt_in and phone and user.get("sms_confirmed_phone") == phone)
+        agreed = bool(opt_in and phone and user.get("sms_confirmed_phone") == phone and not user.get("sms_opt_out_at"))
         if agreed and not was_on:
             user["sms_opt_in_at"] = _iso(_utcnow())
             user.pop("sms_opt_out_at", None)
@@ -290,10 +292,12 @@ def sms_contact(company_id: str, user_id: str) -> dict[str, Any] | None:
 
 
 def sms_proven(user_id: str, phone: str) -> bool:
-    """Has a code texted to this number come back from this person, with the number still theirs?"""
+    """Has a code texted to this number come back from this person, with the number still theirs?
+    A STOP since undoes it: only a code getting through shows the number takes texts again, and
+    until it does, the page shows texts as stopped rather than on."""
     with LOCK:
         user = next((u for u in _load()["users"] if u["id"] == user_id), None)
-        return bool(user and phone and user.get("phone") == phone and user.get("sms_confirmed_phone") == phone)
+        return bool(user and phone and user.get("phone") == phone and user.get("sms_confirmed_phone") == phone and not user.get("sms_opt_out_at"))
 
 
 def issue_sms_code(user_id: str, phone: str) -> str | None:
@@ -306,6 +310,9 @@ def issue_sms_code(user_id: str, phone: str) -> str | None:
         recent = [t for t in _CODES.get(key, []) if now - t < 3600]
         if len(recent) >= CODES_MAX_PER_HOUR:
             _CODES[key] = recent
+            return None
+        # Over this person's limit (issue_code's), the code they have stays live.
+        if len([t for t in _CODES.get(f"sms:{user_id}", []) if now - t < 3600]) >= CODES_MAX_PER_HOUR:
             return None
         _CODES[key] = recent + [now]
         data = _load()
@@ -919,6 +926,12 @@ def is_company_admin(user_id: str, company_id: str) -> bool:
     with LOCK:
         admin = _admin(_read(), company_id)
     return bool(admin and admin["id"] == user_id)
+
+
+def owner_names(company_id: str) -> list[str]:
+    """Who in this company a person can ask for what only an owner may do."""
+    with LOCK:
+        return [u.get("name") or u.get("email", "") for u in _load()["users"] if u["company_id"] == company_id and u.get("role", "owner") == "owner"]
 
 
 def team(company_id: str) -> dict[str, Any]:

@@ -174,13 +174,10 @@ def run_once(site, now: datetime | None = None) -> None:
 
 
 def first_wait(now: datetime | None = None) -> int:
-    """Seconds from start-up to the first run: a full hour, so booting alone sends nothing, and a
-    deploy at the send hour only moves that day's emails to the next hour (done-for-the-day is kept
-    on disk, so nothing repeats either). Near midnight UTC, sooner, so the day isn't missed; never
-    within BOOT_QUIET_SECONDS of start-up."""
-    now = now or datetime.now(timezone.utc)
-    to_midnight = 86400 - (now.hour * 3600 + now.minute * 60 + now.second)
-    return TICK_SECONDS if to_midnight - 60 >= TICK_SECONDS else max(BOOT_QUIET_SECONDS, to_midnight - 60)
+    """Seconds from start-up to the first run: BOOT_QUIET_SECONDS, so booting alone sends nothing,
+    and a process restarted more often than hourly (a plan that spins down) still gets its runs.
+    Done-for-the-day is kept on disk, so a restart never sends a day's emails twice."""
+    return BOOT_QUIET_SECONDS
 
 
 def start(site) -> threading.Thread:

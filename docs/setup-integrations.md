@@ -97,7 +97,7 @@ On staging and production, also check that with `TWILIO_AUTH_TOKEN` unset, an in
 
 **Staging has no disk.** `duracash-staging` has no persistent disk, so `reminder_jobs.json` and `sms_sends.json` reset on every deploy. People on the allow-lists can get a reminder again after a deploy, even within its interval, and the daily count starts over. Nothing is built for this; production has a disk.
 
-**After a deploy.** Nothing is sent at start-up. The first daily emails and reminders wait for the first scheduled run, up to an hour after start-up.
+**After a deploy or a restart.** Nothing is sent at start-up. The first scheduled run is about 5 minutes later, then every hour. Each day's emails go once, even across restarts, because what is done for the day is kept in the data directory.
 
 ## QuickBooks Online
 
