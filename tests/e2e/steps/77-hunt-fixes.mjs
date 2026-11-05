@@ -3,7 +3,7 @@
 // controls at phone width. Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
-export default async function ({ BASE, step, signedInPage, confirmDialog, confirmIfAsked }) {
+export default async function ({ browser, BASE, step, signedInPage, confirmDialog, confirmIfAsked }) {
   const made = (p, name, thenPaid = false) => p.evaluate(async ([jobName, paid]) => {
     const call = async (path, body) => (await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })).json();
     let st = await call("/api/jobs", { name: jobName, customer: `${jobName} client`, contract_cents: 1000000, address: "7 Test St, Atlanta, GA 30307",
@@ -80,18 +80,28 @@ export default async function ({ BASE, step, signedInPage, confirmDialog, confir
   });
 
   await step("A phone code that went stale has a Send a new code button", async () => {
-    const p = await signedInPage({ width: 1280, height: 900 });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto(BASE + "/");
+    await p.evaluate(async (email) => {
+      await fetch("/api/auth/signup", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Code Tester", company_name: "Code Co", email, password: "correct horse battery", accept_terms: true }) });
+    }, `code-${Date.now()}@example.com`);
+    let asked = 0;
     await p.route("**/api/auth/sms", async (route) => {
+      asked += 1;
       const { user } = await (await p.request.get(`${BASE}/api/auth/me`)).json();
       await route.fulfill({ json: { user, code_sent: true, sent_to: "+14045550123" } });
     });
     await p.goto(`${BASE}/settings/account`);
     await p.fill("#my-phone", "(404) 555-0123");
     await p.check("#my-sms-opt-in");
-    await p.click('[data-action="save-account"]');
+    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
     await p.locator('[data-action="sms-resend"]').click();
     await p.locator("#my-sms-code").waitFor();
-    await p.context().close();
+    for (let t = 0; t < 50 && asked < 2; t++) await new Promise((r) => setTimeout(r, 100));
+    assert.equal(asked, 2, "the button asks for another code");
+    await ctx.close();
   });
 
   await step("At phone width the small controls are tall enough, and a long email wraps", async () => {
