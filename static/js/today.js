@@ -21,7 +21,7 @@ export const QUEUE_SHOWN = 3;   // rows shown before "and N more"
 const ACTIONS = {
   email_failed: (r) => `data-action="email-retry" data-email="${r.email_id}"`,
   says_done: (r) => `data-action="inbox-mark-done" data-item="${r.item_id}"`,
-  blocked: (r) => `data-action="open-packet" data-job="${r.job_id}"${r.invoice_id ? ` data-inv="${r.invoice_id}"` : ""}`,
+  blocked: (r) => `data-action="open-packet" data-job="${r.job_id}"${r.invoice_id ? ` data-inv="${r.invoice_id}"` : ""}${r.packet_item_id ? ` data-item="${r.packet_item_id}"` : ""}`,
   ready: (r) => `data-action="open-payapp" data-job="${r.job_id}" data-inv="${r.invoice_id}" data-focus=".send-check"`,
   waiver: (r) => `data-action="open-waiver" data-id="${r.job_id}"`,
   not_billed: (r) => `data-action="draft" data-id="${r.job_id}"`,
@@ -32,8 +32,10 @@ const ACTIONS = {
   closeout: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
   retainage: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
   finish: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
+  finish_held: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".close-blockers"`,
+  retainage_wait: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
 };
-const OPENS_JOB = ["ready", "waiver", "due_soon", "new_job", "closeout", "retainage", "finish"];
+const OPENS_JOB = ["ready", "waiver", "due_soon", "new_job", "closeout", "retainage", "finish", "finish_held", "retainage_wait"];
 
 // The server's rows (already HTML-escaped on arrival, like the rest of state), most urgent first.
 export function todayQueue(state) {

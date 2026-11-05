@@ -84,12 +84,21 @@ function nextStepWords(j, now, listed = false) {
   const client = (j.payer || {}).approver || (j.payer || {}).name || "the client";
   if (draft && draft.pencil_status === "sent") return `${number} is with ${client} for their review${draft.pencil_sent_at ? ` since ${fmtDate(draft.pencil_sent_at)}` : ""}. When they answer, tap Client Agreed to the Draft or Client Wants Changes.`;
   if (isBlocked(j)) {
+    const button = blockerButton(j) || "Fix this";
+    const lead = `${button}${button.endsWith("before sending") ? ":" : " before it can go:"}`;
+    // A file that only needs a look says so; the line above the buttons names the file.
+    const items = j.blocker_items || [];
+    if (!listed && items.length && items.every(b => b.waiting)) return items.map(b => b.text).join(" ");
     const first = needsPaperwork(j) ? (j.missing_paperwork || []).join(", ") : j.blockers[0];
-    return `${blockerButton(j) || "Fix this"} before it can go:${listed ? "" : ` ${first}`}`;
+    return `${lead}${listed ? "" : ` ${first}`}`;
   }
-  if (draft && draft.pencil_status === "agreed") return `Client agreed to ${number}. Review & Send.`;
-  if (draft && draft.pencil_status === "corrections") return `Client wants changes to ${number}${draft.pencil_note ? `: ${draft.pencil_note}` : ""}. Fix it, then Review & Send.`;
-  if (draft) return `${number}${draft.amount_cents != null ? ` for ${money(draft.amount_cents)}` : ""} is ready. Review & Send.`;
+  if (draft) {
+    // domain.today_rows has the same sentence for the Dashboard's row.
+    const changes = draft.pencil_status === "corrections";
+    const said = draft.pencil_status === "agreed" ? "The client agreed to it. " : changes ? `The client wants changes${draft.pencil_note ? `: ${draft.pencil_note}` : ""}. Fix it, then ` : "";
+    const email = unesc((j.payer || {}).ap_email || "").trim() ? "" : `${changes ? "add" : "Add"} the pay app email for ${(j.payer || {}).name || "the client"}, then `;
+    return `${number}${draft.amount_cents != null ? ` for ${money(draft.amount_cents)}` : ""} to ${client} is ready. ${said}${email}Review & Send.`;
+  }
   if (j.waiver_due && !j.waiver_sent) return "Payment received. Choose Waiver and Send.";
   const notBilled = j.work_status === "complete" && m.unbilled_completed_cents > 0 ? `${money(m.unbilled_completed_cents)} of finished work isn't billed. Draft Pay App.` : "";
   if (j.invoices.some(i => OPEN_FOR_PAYMENT.includes(i.status))) {
@@ -366,7 +375,7 @@ export function waitingText(j, now = new Date()) {
   const when = f.due <= now ? `a follow-up has been due since ${fmtDate(f.day)}` : `follow-up due ${fmtDate(f.day)}`;
   const inv = f.invoice;
   if (f.promised && f.due > now) return `Approved by ${inv.approved_by_payer || p.approver || p.name || "the client"} ${fmtDate(inv.approved_at)}; expect payment ${fmtDate(inv.expected_payment_on)}.`;
-  if (f.noted && f.due > now) return `Waiting on ${p.approver || p.name || "the client"}. Spoke to them ${fmtDate(j.contact_noted_at)}; check again ${fmtDate(f.day)}.`;
+  if (f.noted && f.due > now) return `Waiting on ${p.approver || p.name || "the client"}. Conversation ${fmtDate(j.contact_noted_at)}; check again ${fmtDate(f.day)}.`;
   return `Waiting on ${p.approver || p.name || "the client"}. Sent ${fmtDate(f.invoice.sent_at)}; ${when}.`;
 }
 
@@ -414,7 +423,10 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   if (isBlocked(j)) {
     const cos = coBlockers(j);
     if (onlyCoBlockers(j)) add("clear", blockerButton(j), `data-action="open-co" data-job="${j.id}" data-co="${cos[0].co_id}"`, "bill");
-    else add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}`, "bill");
+    else {
+      const first = (j.blocker_items || []).find(b => b.item_id);
+      add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}${first ? ` data-item="${first.item_id}"` : ""}`, "bill");
+    }
   }
   // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
   if (draft) add("send", "Review & Send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "bill");
@@ -464,7 +476,8 @@ export function closeBlockerActions(j, b, perms = null, now = new Date()) {
 }
 
 function closeoutAttrs(j) {
-  return `data-action="open-packet" data-job="${j.id}"${(j.closeout_packet || []).length ? ` data-inv="closeout"` : ""}`;
+  const first = (j.closeout_packet || []).find(p => p.required && !p.present);
+  return `data-action="open-packet" data-job="${j.id}"${(j.closeout_packet || []).length ? ` data-inv="closeout"` : ""}${first ? ` data-item="${first.id}"` : ""}`;
 }
 
 function closeBlockerButtons(j, b, now) {
@@ -598,8 +611,17 @@ export const RECORD_GROUPS = [
   ["other", "Notes and other", ["note", "other"]],
 ];
 
+// A note from before conversations were records, labelled "Spoke to Sam", reads and files as a
+// conversation; what is stored stays until someone edits it.
+export function recordFace(r) {
+  const label = unesc(r.label || "");
+  if (unesc(r.kind || "") !== "note" || !/^Spoke to /i.test(label)) return r;
+  return { ...r, kind: "conversation", label: String(r.label).replace(/^Spoke to /i, "Conversation with ") };
+}
+
 // [{key, label, records}] for the groups that have records, newest first in each.
 export function groupRecords(records) {
+  records = (records || []).map(recordFace);
   const known = new Set(RECORD_GROUPS.flatMap(([, , kinds]) => kinds));
   const typed = (r) => { const k = unesc(r.kind || ""), t = unesc(r.ticket_type || ""); return k === "ticket" && TICKET_TYPES[t] ? `ticket:${t}` : k; };
   return RECORD_GROUPS.map(([key, label, kinds]) => ({

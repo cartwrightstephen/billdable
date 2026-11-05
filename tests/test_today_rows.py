@@ -92,7 +92,7 @@ class TodayRowsTests(unittest.TestCase):
         self.job["work_status"] = "complete"
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["button"]), ("not_billed", 5, "Not billed", "Draft Pay App"))
-        self.assertEqual(r["text"], "$4,000.00 of finished work isn't billed. Drafting sends nothing.")
+        self.assertEqual(r["text"], "$4,000.00 of finished work isn't billed. Draft Pay App.")
 
     def test_cutoff_due_soon(self):
         self.payer["payapp_due_day"] = 31
@@ -253,7 +253,10 @@ class TodayRowsTests(unittest.TestCase):
         self.assertEqual(r["text"], f"{domain.money(held)} held back. Closeout documents are in. Ask for Retainage.")
         self.assertIn("1 retainage to ask for", domain.daily_digest(self.state, "", NOW)[0])
         self.job["last_retainage_chase_at"] = iso(NOW - timedelta(days=1))
-        self.assertEqual(self.rows(), [], "asked already: nothing to do until it can be asked again")
+        r = self.only()
+        self.assertEqual((r["kind"], r["button"], r["ball_in_court"], r["due"]), ("retainage_wait", "Record Retainage Paid", "client", "2026-11-03"))
+        self.assertIn("Ask again from Nov 3, 2026, or Record Retainage Paid.", r["text"])
+        self.assertIsNone(domain.daily_digest(self.state, "", NOW), "waiting on the client: not in the email")
         self.job["last_retainage_chase_at"] = iso(NOW - timedelta(days=30))
         self.assertEqual(self.only()["kind"], "retainage")
 
@@ -261,7 +264,51 @@ class TodayRowsTests(unittest.TestCase):
         self.finished_and_paid()
         r = self.only()
         self.assertEqual((r["kind"], r["button"], r["text"]), ("finish", "Finish Job", "Ready to finish the job. Finish Job."))
+        self.job["completed_at"] = iso(NOW - timedelta(days=7))
         self.assertIn("1 job ready to finish", domain.daily_digest(self.state, "", NOW)[0])
+
+    def test_a_job_to_finish_is_in_the_email_once_a_week(self):
+        self.finished_and_paid()
+        self.job["completed_at"] = iso(NOW)
+        days = [d for d in range(21) if domain.daily_digest(self.state, "", NOW + timedelta(days=d))]
+        self.assertEqual(days, [0, 7, 14], "the row stays on the Dashboard each day")
+        self.assertEqual(self.only(NOW + timedelta(days=1))["kind"], "finish")
+        del self.job["completed_at"]
+        monday = NOW + timedelta(days=(7 - NOW.weekday()) % 7)
+        self.assertIsNotNone(domain.daily_digest(self.state, "", monday), "no date on an older job: Mondays")
+        self.assertIsNone(domain.daily_digest(self.state, "", monday + timedelta(days=1)))
+
+    def test_a_finished_job_held_up_by_an_unsigned_change_order_has_a_row(self):
+        self.finished_and_paid()
+        self.job["change_orders"].append({"id": "co-3", "number": 3, "status": "pending", "included_in_billing": False, "amount_cents": 50_000, "description": "Rail"})
+        r = self.only()
+        self.assertEqual((r["kind"], r["label"], r["tone"], r["button"]), ("finish_held", "Before you finish", "amber", "Open Job"))
+        self.assertEqual(r["text"], "Before you finish: CO 3 is not signed yet.")
+        self.job["completed_at"] = iso(NOW)
+        self.assertIn("1 job held up before finishing", domain.daily_digest(self.state, "", NOW)[0])
+        self.assertIsNone(domain.daily_digest(self.state, "", NOW + timedelta(days=1)))
+
+    def test_a_draft_to_a_client_with_no_email_names_the_email(self):
+        inv = self.draft()
+        self.clear_packet(inv)
+        self.payer["ap_email"] = ""
+        self.assertEqual(self.only()["text"], f"{inv['number']} for {domain.money(inv['amount_cents'])} to Dana is ready. Add the pay app email for Dana Lee, then Review & Send.")
+
+    def test_a_missing_document_row_carries_the_item_its_button_lands_on(self):
+        inv = self.draft()
+        r = self.only()
+        self.assertEqual(r["packet_item_id"], inv["packet"][0]["id"])
+        self.assertEqual(r["key"], f"blocked:{self.job['id']}:{inv['id']}", "the assignee stays with the row")
+
+    def test_a_file_waiting_for_a_look_changes_the_button(self):
+        inv = self.draft()
+        self.clear_packet(inv)
+        inv["packet"][0].update(present=False, attachments=[{"record_id": "r1", "name": "scan.pdf", "unconfirmed": True}])
+        r = self.only()
+        self.assertEqual(r["button"], "Check 1 document")
+        self.assertIn("look at scan.pdf and confirm it", r["text"])
+        inv["packet"][1].update(present=False)
+        self.assertEqual(self.only()["button"], "Add or check 2 documents")
 
     def test_draws_read_draw_on_today_and_in_the_email(self):
         self.state["company"]["billing_style"] = "draws"
@@ -272,7 +319,7 @@ class TodayRowsTests(unittest.TestCase):
         self.job["work_status"] = "complete"
         self.payer["payapp_due_day"] = None
         r = self.only()
-        self.assertEqual((r["button"], r["text"]), ("Draft Draw", "$4,000.00 of finished work isn't billed. Drafting sends nothing."))
+        self.assertEqual((r["button"], r["text"]), ("Draft Draw", "$4,000.00 of finished work isn't billed. Draft Draw."))
         subject, _ = domain.daily_digest(self.state, "", NOW)
         self.assertEqual(subject, "Due today in Duracash: 1 job to bill")
 

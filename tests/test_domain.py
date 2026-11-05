@@ -169,6 +169,21 @@ class MoneyFileTests(unittest.TestCase):
         domain.approve_change_order(state, "job-ponce", co_id)
         self.assertEqual(job["change_orders"][0]["status"], "approved")
 
+    def test_edit_record_note_keeps_what_it_said_in_the_audit(self):  # criterion 59
+        state = seed_state()
+        domain.note_contact(state, "job-ponce", "Check goes out Friday", "", "owner")
+        rec = state["jobs"][[j["id"] for j in state["jobs"]].index("job-ponce")]["records"][-1]
+        domain.edit_record(state, "job-ponce", rec["id"], rec["label"], "conversation", "owner", note="Check goes out Monday")
+        self.assertEqual(rec["note"], "Check goes out Monday")
+        row = state["audit"][-1]
+        self.assertEqual(row["action"], "edit_record")
+        self.assertIn("Check goes out Friday", row["detail"])
+        self.assertIn("Check goes out Monday", row["detail"])
+        count = len(state["audit"])
+        domain.edit_record(state, "job-ponce", rec["id"], rec["label"], "conversation", "owner")
+        self.assertEqual(rec["note"], "Check goes out Monday", "no note sent: left as it is")
+        self.assertEqual(len(state["audit"]), count, "nothing changed, nothing logged")
+
     def test_edit_record_kind(self):  # R5-07
         state = seed_state()
         domain.add_job_record(state, "job-ponce", "ABC Supply invoice 4471", "pay_app", "", "owner")
