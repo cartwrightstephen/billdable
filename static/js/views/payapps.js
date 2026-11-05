@@ -9,7 +9,7 @@ import { askConfirm, focusAfterDraw } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
-import { may, perms, render, post, load, backButton, emptyState, nav, EMAIL_PATTERN } from "../app-core.js";
+import { may, can, perms, render, post, load, backButton, emptyState, nav, EMAIL_PATTERN } from "../app-core.js";
 import { continuationHtml, sovPeriodHtml } from "../sov.js";
 import { companyGapsHtml } from "../setup.js";
 import { QBO_READY, qboCsvLink, OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
@@ -143,7 +143,7 @@ export const views = {
         ${inv.final ? `<p class="sub final-note">${termText("The final pay app: the PDF is marked FINAL APPLICATION.")}</p>` : ""}
         ${beforeYouSendHtml(j, inv)}
         ${companyGapsHtml(state.company)}
-        ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish tall" data-action="nav" data-view="playbook">Client playbook</button>.</p>` : ""}
+        ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger.${can("company") ? ` Change it in <button class="linkish tall" data-action="nav" data-view="playbook">Client playbook</button>.` : ""}</p>` : ""}
         ${missing ? `<p class="blocker">${missing} supporting document${missing === 1 ? " is" : "s are"} missing. Add ${missing === 1 ? "it" : "them"} below, then send.</p>` : ""}
         ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
         ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
@@ -280,7 +280,7 @@ export const actions = {
   "save-send-email": async (el, id) => {
     const v = formValues("sendemail");
     if (refuseForm("sendemail", EMAIL_PATTERN.test(v.ap_email) ? {} : { ap_email: "Enter the email pay apps go to, like ap@builder.com." })) return;
-    await post(`/api/payers/${id}/update`, { ap_email: v.ap_email }, { formKey: "sendemail" });
+    await post(`/api/payers/${id}/missing`, { ap_email: v.ap_email }, { formKey: "sendemail" });
   },
   // Short pay (R4-01): the card opens where the button was, or on the pay app's page.
   "short-pay-open": (el) => {

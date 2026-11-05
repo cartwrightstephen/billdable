@@ -820,7 +820,7 @@
         "missing email",
         "playbook missing"
       ],
-      "answer": "A new job needs a complete Client playbook: Client name, Client type, Who signs off on your bills, Email for pay apps and Phone. New job says which is missing under its box. A pay app on a job made under this rule waits the same way: the job page says what is missing, with Open Client playbook to add it. A job made before this rule keeps going as it is; its client is asked for what is missing the next time it gets a new job.",
+      "answer": "A new job needs a complete Client playbook: Client name, Client type, Who signs off on your bills, Email for pay apps and Phone. New job says which is missing under its box. A pay app on a job made under this rule waits the same way: the job page says what is missing, with Open Client playbook to add it. A job made before this rule keeps going as it is; its client is asked for what is missing the next time it gets a new job. Anyone on the team can fill in what is missing; changing what is saved takes the client settings permission.",
       "handler": "",
       "needs_job": false,
       "actions": [
@@ -941,7 +941,7 @@
         "my clients",
         "my client"
       ],
-      "answer": "Jobs, Client playbook keeps each client's rules. Open a client to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Client type, Supporting documents needed with each pay app (tick each item, add the rest under Other, or tick Nothing needed), They send pay apps back when, Also email (CC) and more, then tap Save client. New pay apps use the supporting documents list, unless a job has changed its own. Once saved, Who signs off, Email for pay apps and Phone can be changed but not removed. When a client sends a pay app back, add the reason to They send pay apps back when and tap Save client. While something is blocking send on a job, you can also note it there under Client Sent Pay App Back. Each client also lists its open and finished jobs, with a link to each job's contract and Add contract. Add client takes the same details, and Import a contract fills them from the contract.",
+      "answer": "Jobs, Client playbook keeps each client's rules. Open a client to change Who signs off on your bills, Email for pay apps, Days between follow-ups, Days they usually take to pay, Client type, Supporting documents needed with each pay app (tick each item, add the rest under Other, or tick Nothing needed), They send pay apps back when, Also email (CC) and more, then tap Save client. New pay apps use the supporting documents list, unless a job has changed its own. Once saved, Who signs off, Email for pay apps and Phone can be changed but not removed. When a client sends a pay app back, add the reason to They send pay apps back when and tap Save client. While something is blocking send on a job, you can also note it there under Client Sent Pay App Back. Each client also lists its open and finished jobs, with a link to each job's contract and Add contract. Add client takes the same details, and Import a contract fills them from the contract. Changing a saved client takes Edit company details, client settings and connections on the Team page. Without it the card is read only, and it asks only for what the client is still missing, the same as New job.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -972,7 +972,7 @@
         "duplicate customer",
         "same as"
       ],
-      "answer": "All three are in Jobs, Client playbook. To rename a client, open it, change Client name and tap Save client. Saved the same client twice? Open the one to drop, use Same client as another one?, pick the one to keep and tap Merge. Its jobs move over. An owner can tap Delete client on a client no job uses, finished jobs included. One with jobs can't be deleted, but you can merge it into another client. When you add a job or a client with a name close to a saved one, like ABC Builders Inc for ABC Builders, Duracash asks Same as ABC Builders? Tap Use ABC Builders, or keep the new name to add a second client.",
+      "answer": "All three are in Jobs, Client playbook. To rename a client, open it, change Client name and tap Save client. Saved the same client twice? Open the one to drop, use Same client as another one?, pick the one to keep and tap Merge. Its jobs move over. An owner can tap Delete client on a client no job uses, finished jobs included. One with jobs can't be deleted, but you can merge it into another client. Renaming, merging and deleting take Edit company details, client settings and connections on the Team page. When you add a job or a client with a name close to a saved one, like ABC Builders Inc for ABC Builders, Duracash asks Same as ABC Builders? Tap Use ABC Builders, or keep the new name to add a second client.",
       "handler": null,
       "needs_job": false,
       "actions": [

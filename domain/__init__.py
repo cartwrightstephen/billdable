@@ -2904,6 +2904,39 @@ def playbook_missing(payer: dict[str, Any]) -> list[str]:
     return out + [k for k in PLAYBOOK_FIELDS if not str(payer.get(k) or "").strip() or (k == "approver" and signer_defaulted(payer))]
 
 
+def fill_missing_client_details(state: dict[str, Any], payer_id: str, body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+    """The boxes a saved client still has to answer, from anyone on the team: the same rule as New
+    job, where a blank is filled since nothing goes anywhere yet. What is already saved, and every
+    other setting, is changed on the Client playbook with the company permission."""
+    payer = _payer(state, payer_id)
+    missing = playbook_missing(payer)
+    typed = {k: str(body[k]).strip() for k in ("client_type", *PLAYBOOK_FIELDS) if isinstance(body.get(k), str) and body[k].strip()}
+    if not typed:
+        raise GateError("Enter what is missing.")
+    errors = {k: "This is already saved." for k in typed if k not in missing}
+    if "client_type" in typed and not client_type_role(typed["client_type"]):
+        errors["client_type"] = "Pick the client type."
+    if "ap_email" in typed and not EMAIL_RE.match(typed["ap_email"]):
+        errors["ap_email"] = PLAYBOOK_FIELDS["ap_email"]
+    if "phone" in typed:
+        typed["phone"] = normalize_phone(typed["phone"]) or typed["phone"]
+        errors.update(check_field("phone", typed["phone"]))
+    if "approver" in typed and not signer_answered(typed["approver"], payer["name"], body.get("approver_confirmed") is True):
+        errors["approver"] = SIGNER_IS_CLIENT
+    _refuse("Client not saved.", errors)
+    for k, value in typed.items():
+        payer[k] = value
+        audit(state, "", "playbook_update", f"{actor} added {PLAYBOOK_WORDS[k]} to {payer['name']}: {value}.", actor)
+    if "approver" in typed:
+        payer["approver_confirmed"] = True
+    if "client_type" in typed:
+        payer["role"] = client_type_role(typed["client_type"])
+        for job in state["jobs"]:
+            if job.get("payer_id") == payer["id"]:
+                job["payer_role"] = payer["role"]
+    return payer
+
+
 def _need_playbook(state: dict[str, Any], job: dict[str, Any]) -> None:
     """A pay app doesn't start or go out while the client's playbook is incomplete. A job from
     before the rule isn't held up (Decision 3): sending still needs the email (_send_to)."""

@@ -2955,6 +2955,9 @@ class Handler(BaseHTTPRequestHandler):
         if ctx.body.get("approver") and domain.signer_defaulted(payer):
             ctx.reply["signer_needs_confirming"] = True
 
+    def _m_payer_missing(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.fill_missing_client_details(state, m.group(1), ctx.body, ctx.actor)
+
     def _m_payer_waiver_needed(self, state: dict, m, ctx: "Ctx") -> None:
         domain.client_waiver_needed_again(state, m.group(1), ctx.actor)
 
@@ -3121,11 +3124,12 @@ ROUTES = [
     Route("POST", r"/api/reset", "_m_reset", "mutate", perm="data"),
     Route("POST", r"/api/jobs", "_m_create_job", "mutate"),
     Route("POST", r"/api/jobs/([^/]+)/([a-z-]+)(?:/([^/]+))?", "_m_job_action", "mutate"),
-    Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate", perm="company"),
     Route("POST", r"/api/payers", "_m_payer_add", "mutate"),
-    Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate", perm="company"),
+    Route("POST", r"/api/payers/([^/]+)/missing", "_m_payer_missing", "mutate"),
     Route("POST", r"/api/payers/([^/]+)/waiver-needed", "_m_payer_waiver_needed", "mutate", perm="company"),
-    Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate", perm="company"),
     Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", perm="company"),
     Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate", perm="record_payments"),
     Route("POST", r"/api/import/quantities/apply", "_m_qty_apply", "mutate"),

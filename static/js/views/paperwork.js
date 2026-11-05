@@ -55,7 +55,7 @@ export function unconditionalAttached(j, inv) {
     && !((r.file_ids || []).length && r.file_ids.every(f => excluded.has(f))));
 }
 
-// "What <client> needs to pay" (M5): the client playbook's rules, read only, with a way to edit them.
+// "What <client> needs to pay" (M5): the client playbook's rules, read only, with a link to the Client playbook.
 export function clientNeedsHtml(j, heading = "h2") {
   const p = j.payer || {};
   const row = (label, value) => value ? `<div class="money-row"><span class="label">${label}</span><span>${value}</span></div>` : "";
@@ -67,7 +67,7 @@ export function clientNeedsHtml(j, heading = "h2") {
     ${row("Pay apps due by", p.payapp_due_day ? `day ${p.payapp_due_day} of the month` : "")}
     ${row("Payment terms", p.payment_terms_days ? `${p.payment_terms_days} days` : "")}
     ${row("Also email (CC)", p.copy)}
-    <p class="sub"><button class="linkish tall" data-action="nav" data-view="playbook">Change in the Client playbook</button></p>
+    <p class="sub"><button class="linkish tall" data-action="nav" data-view="playbook">${can("company") ? "Change in the Client playbook" : "Open Client playbook"}</button></p>
   </div>`;
 }
 

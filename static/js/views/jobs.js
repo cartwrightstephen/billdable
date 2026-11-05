@@ -9,7 +9,7 @@ import { checkFields, US_STATES } from "../validate.js";
 import { readJson, sendFile } from "../net.js";
 import { localDay } from "../tasks.js";
 import { state, me, formOpen, teamData, setTeamData, onSessionEnd } from "../state.js";
-import { nav, emptyState, listPage, post, toast, render, load, clearJobDetails } from "../app-core.js";
+import { nav, can, emptyState, listPage, post, toast, render, load, clearJobDetails } from "../app-core.js";
 
 // Who pays you, as the older pages had it: Owner or GC. Client type (J2) is the finer word.
 export const ROLE_OPTIONS = [["Owner", "The homeowner or property owner"], ["GC", "A general contractor (you are the sub)"]];
@@ -427,7 +427,7 @@ export const views = {
             ${slot("ap_email", f({ name: "ap_email", id: "nj-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", required: true, autocomplete: "off", rule: "email", placeholder: "name@example.com", ...mark("ap_email") }))}
             ${slot("phone", f({ name: "phone", id: "nj-phone", label: "Phone", helpKey: "customer_phone", type: "tel", required: true, autocomplete: "off", rule: "phone", ...mark("phone") }))}
             <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
-              <button type="button" class="linkish" data-action="nj-to-playbook">Change in the Client playbook</button></p>
+              <button type="button" class="linkish" data-action="nj-to-playbook">${can("company") ? "Change in the Client playbook" : "Open Client playbook"}</button></p>
           </div>
           <div class="form-grid">
             ${jf.retainage_pct}
