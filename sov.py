@@ -431,7 +431,9 @@ def with_amounts(job: dict[str, Any], period: dict[str, Any], amounts: dict[str,
             continue
         kept[line["id"]] = final
         to_date = before + final
-        prev_work = min(entry["prev_work_cents"], to_date)
+        # Previous is the work the last sheet showed, as this_period reads it: a typed amount that ran
+        # past the quantities on the line doesn't come back as this period's work.
+        prev_work = min(max(entry["prev_work_cents"], already["work_by_line"].get(line["id"], 0)), to_date)
         stored = min(entry["stored_cents"], to_date - prev_work)
         entry.update({
             "suggested_cents": entry["amount_cents"], "amount_cents": final, "to_date_cents": to_date,

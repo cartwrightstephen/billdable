@@ -348,7 +348,10 @@ class Sequence:
         allowed = m["billing_allowed_cents"]
         assert m["overbilling_settled_cents"] <= came_in, f"settled {m['overbilling_settled_cents']} of {came_in}"
         assert m["collected_cents"] == m["payments_cents"] - min(m["payments_cents"], m["refunded_cents"]), f"received {m}"
-        assert m["overbilled_cents"] == max(0, m["billed_gross_cents"] - allowed - m["overbilling_settled_cents"] - m["retainage_credited_cents"]), f"overbilled {m}"
+        # Money in past what the pay apps billed (a refund paid back) counts as billed when the
+        # contract later comes down under it.
+        paid_back = max(0, m["payments_cents"] + m["short_paid_cents"] - m["billed_cents"])
+        assert m["overbilled_cents"] == max(0, m["billed_gross_cents"] + paid_back - allowed - m["overbilling_settled_cents"] - m["retainage_credited_cents"]), f"overbilled {m}"
         if not domain.close_blocker_items(job):
             assert m["payments_cents"] + m["retainage_released_cents"] + m["short_paid_cents"] - m["refunded_cents"] >= allowed, f"nothing in the way of finishing, and money is still due: {m}"
         if m["overbilled_cents"]:
@@ -422,9 +425,13 @@ class Sequence:
         part = next((i for i in open_ones if i["status"] == "partial"), None)
         if part:
             return domain.settle_short_pay(self.state, self.id, part["id"], "Credit")
-        unpaid = next((i for i in reversed(open_ones)), None)
+        unpaid = next((i for i in reversed(open_ones) if not domain._holds_paid_retainage(self.job, i, m)), None)
         if unpaid:
             return domain.void_sent_pay_app(self.state, self.id, unpaid["id"], "Over the contract")
+        # The last way the app names: a change order for the difference.
+        if m["overbilled_cents"]:
+            domain.add_change_order(self.state, self.id, "Covers the difference", m["overbilled_cents"])
+            return domain.approve_change_order(self.state, self.id, self.job["change_orders"][-1]["id"])
         raise AssertionError(f"overbilled with no way out: {m}")
 
     def step(self):

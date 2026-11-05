@@ -3776,11 +3776,8 @@ def void_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, reaso
         raise GateError("Pick a pay app that has gone out. A draft is deleted instead.")
     if invoice["status"] in {"partial", "paid"} or any(p["invoice_id"] == invoice["id"] for p in job["payments"]):
         raise GateError(f"A payment is recorded on {invoice['number']}, so it can't be pulled back. Correct the next pay app instead.")
-    # Retainage the client paid must still have a pay app holding it. A credit off the retainage
-    # moved no money and only stands while something is held (job_money), so it doesn't stop this.
-    m = job_money(job)
-    if m["retainage_released_cents"] > m["retainage_held_cents"] - int(invoice.get("retainage_cents") or 0):
-        raise GateError(f"{money(m['retainage_released_cents'])} of retainage is recorded as paid, and {invoice['number']} holds it, so it can't be pulled back. Correct the next pay app instead.")
+    if _holds_paid_retainage(job, invoice):
+        raise GateError(f"{money(job_money(job)['retainage_released_cents'])} of retainage is recorded as paid, and {invoice['number']} holds it, so it can't be pulled back. Correct the next pay app instead.")
     later = [inv for inv in job["invoices"][job["invoices"].index(invoice) + 1:] if inv["status"] != "void"]
     if later:
         nxt = later[0]
@@ -5779,11 +5776,19 @@ def undo_quantity_import(state: dict[str, Any], job_id: str, record_id: str, act
     return job
 
 
+def _holds_paid_retainage(job: dict[str, Any], invoice: dict[str, Any], m: dict[str, int] | None = None) -> bool:
+    """Retainage the client paid must still have a pay app holding it, so a pay app whose retainage
+    is part of what was paid stays. A credit off the retainage moved no money and only stands while
+    something is held (job_money), so it doesn't hold a pay app."""
+    m = m or job_money(job)
+    return m["retainage_released_cents"] > m["retainage_held_cents"] - int(invoice.get("retainage_cents") or 0)
+
+
 def _overbilling_way_out(job: dict[str, Any], m: dict[str, int]) -> str:
     """What can settle the overbilling when no refund can: the words for what works on this job now."""
     open_ones = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
     part_paid = next((inv for inv in open_ones if any(p.get("invoice_id") == inv["id"] for p in job["payments"])), None)
-    unpaid = next((inv for inv in reversed(open_ones) if not any(p.get("invoice_id") == inv["id"] for p in job["payments"])), None)
+    unpaid = next((inv for inv in reversed(open_ones) if not any(p.get("invoice_id") == inv["id"] for p in job["payments"]) and not _holds_paid_retainage(job, inv, m)), None)
     ways = []
     if retainage_credit_room(job, m):
         ways.append(f"take the signed credit off the {money(m['retainage_open_cents'])} retainage held")

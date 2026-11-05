@@ -236,7 +236,33 @@ class TheCardAndABlankBox(unittest.TestCase):
         self.assertEqual(j["invoices"][-1]["gross_cents"], want)
 
 
+class AnAmountTypedAhead(unittest.TestCase):
+    def test_the_next_sheets_previous_column_is_what_the_last_one_showed(self):
+        s = new_state(); j = new_job(s, contract=1, retainage=0); i = j["id"]
+        domain.save_sov(s, i, [{"item": "1", "description": "Panel", "quantity": "1", "unit": "LS", "rate": "10000"}], "0", update_contract=True)
+        line = sov.lines(j)[0]
+        domain.record_sov_progress(s, i, {line["id"]: "0.245"})
+        domain.set_payapp_amounts(s, i, {line["id"]: "2450.81"})   # 81 cents past the quantity
+        clear_packet(s, j); domain.approve_and_send(s, i, "Owner")
+        domain.record_sov_progress(s, i, {}, stored={line["id"]: "1000"})
+        domain.set_payapp_amounts(s, i, {line["id"]: "1519.61"})   # more than the stored materials suggested
+        entry = j["invoices"][-1]["sov_sheet"][0]
+        cols = sov.sheet_columns(entry)
+        self.assertEqual(cols["previous"], 245_081, "what the last sheet showed as work to date")
+        self.assertEqual(cols["previous"] + cols["this_period"] + cols["stored"], cols["to_date"])
+        self.assertEqual((cols["stored"], cols["this_period"]), (100_000, 51_961))
+
+
 class RetainageAndPullingBack(unittest.TestCase):
+    def test_the_way_out_of_overbilling_doesnt_offer_a_pull_back_that_is_refused(self):
+        s = new_state(); j = new_job(s, retainage=10); i = j["id"]
+        domain.mark_done(s, i); inv = send_open(s, j)
+        domain.record_retainage_payment(s, i, inv["retainage_cents"], "Check")
+        signed_co(s, j, -10_000)
+        words = domain._overbilling_way_out(j, domain.job_money(j))
+        self.assertNotIn("pull back", words.lower())
+        self.assertIn("change order", words.lower())
+
     def test_a_pay_app_whose_retainage_was_paid_cant_be_pulled_back(self):
         s = new_state(); j = new_job(s, retainage=10); i = j["id"]
         domain.mark_done(s, i); inv = send_open(s, j)
