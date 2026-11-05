@@ -818,6 +818,10 @@ class Handler(BaseHTTPRequestHandler):
         except OwnerOnly:
             return 403, {"error": NO_PERMISSION}
         except domain.GateError as exc:
+            if exc.keep_changes:
+                # What the refusal found goes on the page (an item waiting for a look), so there is a way forward.
+                with company_lock(company_id):
+                    save_company(company_id, state)
             return 409, _gate(exc)
         except (KeyError, ValueError, TypeError, OverflowError) as exc:
             log_json("warn", msg="request not understood", rid=self._rid, path=redact(urlparse(self.path).path),
@@ -3171,6 +3175,12 @@ def _retainage(h, st, j, i, c):
     return domain.chase_retainage(st, j, c.actor, amount_cents=None if amount in (None, "") else _number(c.body, "amount_cents", "the retainage to ask for"))
 
 
+def _shown(body: dict) -> list | None:
+    """The records a page was showing when Confirm was tapped; None from a page that doesn't say."""
+    shown = body.get("shown")
+    return [str(r) for r in shown] if isinstance(shown, list) else None
+
+
 def _send_payapp(h, st, j, i, c):
     """Approve & send. Sending with a signed unconditional waiver attached takes a reason, and
     only an owner may give one (M14)."""
@@ -3357,7 +3367,7 @@ JOB_ACTIONS = {
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
     "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor, _text(c.body, "note") if "note" in c.body else None)),
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
-    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id, c.read_ahead))),
+    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor, whole_client=c.body.get("whole_client") is True)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),

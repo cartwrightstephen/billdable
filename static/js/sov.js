@@ -126,7 +126,8 @@ export function sovPeriodHtml(j, canChange = false) {
   };
   const moneyRow = (label, cents, cls = "") => `<div class="money-row${cls}"><span class="label">${label}</span><span>${money(cents)}</span></div>`;
   const suggested = `${moneyRow("Suggested pay app value", p.suggested_gross_cents, " sov-suggested")}
-      ${p.suggested_retainage_cents ? moneyRow(`Less retainage ${p.retainage_pct}%`, -p.suggested_retainage_cents) + moneyRow("Suggested amount due", p.suggested_net_cents) : ""}`;
+      ${p.suggested_retainage_cents ? moneyRow(`Less retainage ${p.retainage_pct}%`, -p.suggested_retainage_cents) + moneyRow("Suggested amount due", p.suggested_net_cents) : ""}
+      ${p.credit_waiting_cents ? `<p class="sub">Nothing to bill yet. The credit for ${(p.credit_waiting_names || []).join(", ") || "a signed change order"} takes ${money(p.credit_waiting_cents)} off the next pay app.</p>` : ""}`;
   const final = !draft ? "" : `${moneyRow(`On ${draft.number}`, p.final_gross_cents, " sov-suggested")}
       ${p.final_retainage_cents ? moneyRow(`Less retainage ${p.retainage_pct}%`, -p.final_retainage_cents) + moneyRow("Amount due", p.final_net_cents) : ""}`;
   return `<div class="sov-period" data-form-key="sovamounts">

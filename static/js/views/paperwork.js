@@ -8,7 +8,7 @@ import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
 import { state, me, currentJobId, currentDetailId, formOpen } from "../state.js";
-import { may, perms, render, toast, post, backButton, emptyState, nav } from "../app-core.js";
+import { may, perms, render, toast, post, load, backButton, emptyState, nav } from "../app-core.js";
 
 const DRAFT = ["draft", "awaiting_approval"];
 const IMAGE = /\.(jpe?g|png|gif|webp)$/i;
@@ -430,14 +430,21 @@ export const actions = {
     if (r && r.ok) { formOpen[`resolve-${el.dataset.item}`] = false; render(); }
   },
   // A flagged document's confirm is its own step, and says what didn't match (Decision 6).
+  // What was on the screen goes with it: a newer file that took over asks for its own look (redrawn here).
   "packet-confirm": async (el, id) => {
-    if (!el.dataset.looked) return post(`/api/jobs/${id}/packet-confirm/${el.dataset.item}`, {});
     const j = state.jobs.find(x => x.id === id);
     const all = j ? [...j.invoices.flatMap(i => i.packet || []), ...(j.packet || []), ...(j.closeout_packet || [])] : [];
     const p = all.find(x => x.id === el.dataset.item);
+    const shown = ((p && p.attachments) || []).filter(a => a.unconfirmed).map(a => unesc(a.record_id || ""));
+    const confirm = async (body) => {
+      const r = await post(`/api/jobs/${id}/packet-confirm/${el.dataset.item}`, { ...body, shown });
+      if (r && r.data && r.data.review_changed) { await load(); render(); }
+      return r;
+    };
+    if (!el.dataset.looked) return confirm({});
     const problems = ((p && p.check && p.check.problems) || []).map(unesc).join(" ");
     if (!(await askConfirm(`${problems} You opened the document and it is right?`, "It's right"))) return null;
-    return post(`/api/jobs/${id}/packet-confirm/${el.dataset.item}`, { looked: true });
+    return confirm({ looked: true });
   },
   "goto-packet": (el, id) => openSupportingDocs(id),
   "open-packet": (el) => openSupportingDocs(el.dataset.job, el.dataset.inv, el.dataset.item),

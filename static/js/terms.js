@@ -47,7 +47,7 @@ export const ACTION_WORDS = {
   add_record: "Added to the job records", edit_record: "Job record changed",
   add_evidence: "Added to the job records", attach_record: "Supporting documents added", packet_attachment: "Supporting documents added",
   packet_resolved: "Override: I have this", packet_confirmed: "Document checked", document_flagged: "Document check warning", paperwork_detached: "Supporting documents taken off", paperwork_not_needed: "Supporting documents not needed", paperwork_needed: "Supporting document needed again",
-  field_total_corrected: "Field total corrected", quantities_import_undone: "Quantity import undone", overbilling_settled: "Overbilling refunded or credited",
+  field_total_corrected: "Field total corrected", quantities_import_undone: "Quantity import undone", overbilling_settled: "Overbilling refunded or credited", overbilling_settled_dropped: "Refund or credit no longer counts",
   daily_record: "Job record saved", pencil_sent: "Draft sent for their review", pencil_response: "Client answered the draft",
   payer_received: "Client opened it", payer_approved: "Client approved", payer_question: "Client asked a question",
   reply_captured: "Client replied", learn_rejection: "Client's reason saved", playbook_learned: "Client playbook learned",

@@ -1,6 +1,9 @@
 """Random sequences of what people do to a job, with the money checked after every step: exact
 cents, the job never billed past its contract and signed change orders without saying so, each pay
 app's lines adding up, a final pay app leaving nothing unbilled, and sent pay apps never changing.
+It takes payments too: refunds of overbilling, retainage paid, short pay, pay in full and waivers
+sent, with a final waiver never fitting while anything is left, and a draft never left out of step
+with whether it is the final one, which is what refused a send with no way forward.
 A fixed seed, so a failure repeats. MONEY_FUZZ_RUNS=5000 runs far more of them."""
 
 import copy
@@ -18,6 +21,7 @@ import payapp_pdf
 import qty_import
 import sov
 from test_money import new_job, new_state
+from waiver_help import signed_waiver
 
 RUNS = int(os.environ.get("MONEY_FUZZ_RUNS", "1000"))
 SEED = int(os.environ.get("MONEY_FUZZ_SEED", "20261105"))
@@ -115,9 +119,62 @@ class Sequence:
         for item in draft["packet"]:
             if item["required"] and not item["present"]:
                 domain.resolve_packet_item(self.state, self.id, item["id"], "Sam", reason="fuzz")
-        domain.approve_and_send(self.state, self.id, "Sam")
+        ready = not domain.blocker_lines(self.job)
+        try:
+            domain.approve_and_send(self.state, self.id, "Sam", reviewed=domain.review_stamp(self.state, self.job, draft))
+        except domain.GateError as exc:
+            assert not ready, f"{draft['number']} showed nothing in the way and was refused: {exc} {exc.blockers}"
+            raise
         if draft["final"]:
             assert domain.job_money(self.job)["unbilled_completed_cents"] == 0, "final, with work left to bill"
+
+    def waiver_confirmed(self):
+        """A person looks at a signed conditional waiver and confirms it: what a change to whether
+        the draft is the final one has to ask them about again."""
+        draft = draft_of(self.job)
+        item = next((i for i in (draft or {}).get("packet") or [] if str(i.get("waiver_kind", "")).startswith("conditional") and i["required"] and not i["present"]), None)
+        if item and not domain.unconditional_waivers_attached(self.job, draft):
+            rec = signed_waiver(self.state, self.id, item["waiver_kind"])
+            domain.attach_record_to_packet(self.state, self.id, item["id"], rec["id"], "Sam")
+            if not item["present"]:
+                domain.confirm_packet_item(self.state, self.id, item["id"], "Sam", looked=True)
+
+    def stored(self):
+        line = self.line()
+        if line["scheduled_cents"] > 0:
+            domain.record_sov_progress(self.state, self.id, {}, stored={line["id"]: f"{self.rng.randint(0, line['scheduled_cents']) / 100:.2f}"})
+
+    def settle(self):
+        domain.settle_overbilling(self.state, self.id, "Refund")
+
+    def retainage_paid(self):
+        left = domain.job_money(self.job)["retainage_open_cents"]
+        if left:
+            domain.record_retainage_payment(self.state, self.id, self.rng.choice((left, max(1, left // 2))), "Check")
+
+    def open_to_pay(self):
+        return [i for i in self.job["invoices"] if i["status"] in domain.OPEN_FOR_PAYMENT]
+
+    def pay_in_full(self):
+        for inv in self.open_to_pay():
+            domain.match_payment(self.state, self.id, domain._owed_on(self.job, inv), "Full", invoice_id=inv["id"])
+
+    def short_pay(self):
+        partial = [i for i in self.open_to_pay() if i["status"] == "partial"]
+        if partial:
+            domain.settle_short_pay(self.state, self.id, partial[0]["id"], "Backcharge")
+
+    def send_waiver(self):
+        owed = [i for i in self.job["invoices"] if i.get("waiver_due") and not i.get("waiver_sent")]
+        releases = [r for r in self.job.get("retainage_waivers", []) if r.get("waiver_due") and not r.get("waiver_sent")]
+        if owed:
+            kind = domain.suggested_waiver_kind(self.job, owed[0])
+            signed_waiver(self.state, self.id, kind)
+            domain.send_waiver(self.state, self.id, "Sam", invoice_id=owed[0]["id"])
+        elif releases:
+            kind = domain.release_due_kind(self.job, releases[0])
+            signed_waiver(self.state, self.id, kind)
+            domain.send_waiver(self.state, self.id, "Sam", release_id=releases[0]["id"])
 
     def delete(self):
         domain.void_draft(self.state, self.id)
@@ -180,7 +237,8 @@ class Sequence:
             domain.void_sent_pay_app(self.state, self.id, sent[-1]["id"], "Wrong quantity")
 
     ACTIONS = ("daily", "daily", "daily", "import_file", "undo_import", "correct", "progress_blank", "progress_blank", "progress_typed", "amounts", "reset", "send", "send", "delete",
-               "final", "undo", "pencil", "pencil_answer", "add_co", "sign_co", "include_co", "withdraw_co", "retainage", "contract", "replace_lines", "partial_pay", "pull_back")
+               "final", "undo", "pencil", "pencil_answer", "add_co", "sign_co", "include_co", "withdraw_co", "retainage", "contract", "replace_lines", "partial_pay", "pull_back",
+               "waiver_confirmed", "waiver_confirmed", "stored", "settle", "settle", "retainage_paid", "pay_in_full", "pay_in_full", "short_pay", "send_waiver", "send_waiver")
 
     # ---------- what must hold ----------
     def check(self):
@@ -189,6 +247,7 @@ class Sequence:
         for key, value in m.items():
             assert isinstance(value, int), f"{key} is {value!r}"
         live = sov.live_invoices(job)
+        sov_lines = {l["id"]: l for l in sov.lines(job)} if sov.has_sov(job) else {}
         for inv in live:
             what = inv["number"]
             assert inv["gross_cents"] - inv["retainage_cents"] == inv["amount_cents"], f"{what}: gross less retainage"
@@ -199,9 +258,30 @@ class Sequence:
                 assert billed == inv["gross_cents"], f"{what}: schedule lines {billed}, gross {inv['gross_cents']}"
                 for e in inv["sov_sheet"]:
                     assert isinstance(e["to_date_cents"], int) and isinstance(e["amount_cents"], int), f"{what}: not whole cents"
-                this = sum(e["work_this_cents"] + e.get("stored_cents", 0) * 0 for e in inv["sov_sheet"]) + inv.get("op_cents", 0) \
-                    + sum(r["this_cents"] for r in sov.co_rows(job, inv))
-                assert this == inv["gross_cents"] or any(e.get("stored_cents") for e in inv["sov_sheet"]), f"{what}: the sheet's This period is {this}, gross {inv['gross_cents']}"
+                # G703: previous + this period + stored = total to date, line by line. What a pay app
+                # bills is the work this period and the change in materials stored (stored to date
+                # is a balance: what an earlier pay app stored is in its gross, not this one's). The
+                # previous column starts from the work the last sheet showed, and it can only be
+                # less when that was billed ahead of the quantities on the line (a typed amount, a
+                # field total corrected down): nothing new is called work until they catch up.
+                stored_before, work_before = {}, {}
+                for earlier in live[:live.index(inv)]:
+                    for e in earlier.get("sov_sheet") or []:
+                        stored_before[e["line_id"]] = int(e.get("stored_cents") or 0)
+                        work_before[e["line_id"]] = int(e.get("work_to_date_cents", e["to_date_cents"]))
+                this = inv.get("op_cents", 0) + sum(r["this_cents"] for r in sov.co_rows(job, inv))
+                for e in inv["sov_sheet"]:
+                    row = sov.sheet_columns(e)
+                    behind = 0
+                    if e["scheduled_cents"] >= 0:
+                        assert row["previous"] + row["this_period"] + row["stored"] == row["to_date"], f"{what}, {e['description']}: {row}"
+                        # A change order billed on its own row before it was signed has no sheet line to look back to.
+                        carried_co = e["line_id"] not in work_before and row["previous"] and sov_lines.get(e["line_id"], {}).get("co_id")
+                        behind = 0 if carried_co else work_before.get(e["line_id"], 0) - row["previous"]
+                        assert behind <= 0 or row["this_period"] == 0, f"{what}, {e['description']}: previous is {behind} under the last sheet, with new work on it"
+                    this += row["this_period"] + row["stored"] - stored_before.get(e["line_id"], 0) - behind
+                assert this == inv["gross_cents"], f"{what}: the sheet's This period and change in stored is {this}, gross {inv['gross_cents']}"
+        self.check_waivers_and_refunds(m)
         by_line = sov.billed(job)["by_line"]
         for line in sov.lines(job):
             if line["scheduled_cents"] >= 0:
@@ -227,6 +307,34 @@ class Sequence:
                 if inv["id"] not in self.sent:
                     self.sent[inv["id"]] = now
                 assert now == self.sent[inv["id"]], f"{inv['number']} changed after it was sent"
+
+    def check_waivers_and_refunds(self, m):
+        job = self.job
+        # The open draft is in step with the job: a send can't find out only then that it changed.
+        draft = draft_of(job)
+        if draft and draft.get("packet_id") != "job-packet":
+            assert draft["final"] == domain.is_final(job), f"{draft['number']} says final {draft['final']}, the job says {domain.is_final(job)}"
+            trial = copy.deepcopy(draft)
+            flipped = domain._name_conditional_waiver(job, trial)
+            assert not flipped, f"{draft['number']}: {flipped[0]['label']} would flip only at send"
+        # A final waiver only with nothing else to bill or collect.
+        for inv in job["invoices"]:
+            if inv["status"] not in domain.BILLED_STATUSES or not domain.suggested_waiver_kind(job, inv).endswith("_final"):
+                continue
+            own = domain._owed_on(job, inv) if inv["status"] in domain.OPEN_FOR_PAYMENT else 0
+            assert job.get("work_status") == "complete" and m["unbilled_completed_cents"] == 0 and m["draft_cents"] == 0 \
+                and m["outstanding_cents"] <= own and m["retainage_open_cents"] == 0 \
+                and not any(c["status"] == "pending" for c in job["change_orders"]), f"final waiver for {inv['number']} with {m}"
+        # A refund or credit counts only for money collected above the contract; the rest still shows.
+        received = m["collected_cents"] + m["short_paid_cents"] + m["retainage_released_cents"]
+        allowed = m["billing_allowed_cents"]
+        assert m["overbilling_settled_cents"] <= max(0, received - allowed), f"settled {m['overbilling_settled_cents']} of {received} on {allowed}"
+        assert m["overbilled_cents"] == max(0, m["billed_gross_cents"] - allowed - m["overbilling_settled_cents"]), f"overbilled {m}"
+        if m["overbilled_cents"]:
+            assert any(b["kind"] == "overbilled" for b in domain.close_blocker_items(job)), "overbilled and no word of it"
+        # A credit never suggests less than nothing.
+        if sov.has_sov(job):
+            assert (domain._sov_view(job, self.state).get("period") or {}).get("suggested_gross_cents", 0) >= 0, "a negative suggestion"
 
     def step(self):
         name = self.rng.choice(self.ACTIONS)

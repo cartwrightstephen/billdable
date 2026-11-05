@@ -197,8 +197,8 @@ export function waiverPick(j, inv = null, release = null) {
   if (release) return unesc(release.kind || "") || "unconditional_progress";
   const said = inv && inv.waiver_stages && inv.waiver_stages.unconditional && unesc(inv.waiver_stages.unconditional.kind || "");
   if (said) return said;
-  const final = ((inv && inv.final) || (j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0))
-    && !(j.money.retainage_open_cents > 0) && !(j.change_orders || []).some(co => co.status === "pending");
+  const final = j.work_status === "complete" && j.money.unbilled_completed_cents === 0 && j.money.outstanding_cents === 0
+    && !(j.money.draft_cents > 0) && !(j.money.retainage_open_cents > 0) && !(j.change_orders || []).some(co => co.status === "pending");
   return final ? "unconditional_final" : "unconditional_progress";
 }
 
@@ -505,7 +505,7 @@ function closeBlockerButtons(j, b, now) {
     case "unbilled": return [{ label: "Draft Pay App", attrs: `data-action="draft" data-id="${id}"` }];
     case "overbilled": return [
       ...(b.invoice_id ? [{ label: `Open ${b.number}`, attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}"` }] : []),
-      { label: "Record Refund or Credit", attrs: `data-action="toggle-form" data-form="overbilled"`, needs: "overbilling-settled" }];
+      ...(b.settleable === false ? [] : [{ label: "Record Refund or Credit", attrs: `data-action="toggle-form" data-form="overbilled"`, needs: "overbilling-settled" }])];
     case "outstanding": return [{ label: "Record a Payment", attrs: `data-action="toggle-form" data-form="match"` },
       ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i), needs: "accept-short-pay" }))];
     case "retainage": return [

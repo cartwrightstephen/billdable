@@ -287,9 +287,11 @@ class FinalWaiverWithRetainageTests(unittest.TestCase):  # B3 (r5_final_ret.py)
     def test_without_retainage_the_final_pay_app_still_asks_for_a_final_waiver(self):
         s = new_state()
         job = new_job(s, packet="Progress photos")
-        send_one(s, job, 500_000, "PA-1")
+        first = send_one(s, job, 500_000, "PA-1")
         domain.mark_done(s, job["id"])
         item = next(i for i in draft(job)["packet"] if i.get("waiver_kind"))
+        self.assertEqual(item["waiver_kind"], "conditional_progress", "PA-1 is still owed, and a final waiver would give it up (Nov 5)")
+        domain.match_payment(s, job["id"], first["amount_cents"], "chk")
         self.assertEqual(item["waiver_kind"], "conditional_final")
 
 
