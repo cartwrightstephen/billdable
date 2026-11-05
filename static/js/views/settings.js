@@ -303,7 +303,7 @@ function textsHtml() {
   const ticked = box ? box.checked : me.sms_opt_in;
   return `<div class="form-grid">${field({ form: "account", name: "phone", id: "my-phone", label: "Mobile phone", value: shownPhone(smsCodeTo || me.phone), autocomplete: "tel", inputmode: "tel", rule: "phone" })}</div>
       <label class="terms-check"><input type="checkbox" id="my-sms-opt-in"${ticked ? " checked" : ""}> Text me Duracash work reminders at this number: important dates and missing information, up to one message a day per company. Message and data rates may apply. Reply STOP to stop, HELP for help. Agreeing is not a condition of using Duracash.</label>
-      ${smsCodeTo ? `<div class="invite-result" role="status"><strong>Enter the code we texted to ${esc(shownPhone(smsCodeTo))}.</strong> Texts turn on once it is confirmed.
+      ${smsCodeTo ? `<div class="invite-result" role="status" data-form-key="smscode"><strong>Enter the code we texted to ${esc(shownPhone(smsCodeTo))}.</strong> Texts turn on once it is confirmed.
         <div class="form-grid">${field({ form: "smscode", name: "sms_code", id: "my-sms-code", label: "Code from the text", autocomplete: "one-time-code", inputmode: "numeric", placeholder: "123456" })}</div>
         ${formErrorLine("smscode")}
         <button class="btn small" data-action="sms-confirm">Confirm number</button></div>` : ""}

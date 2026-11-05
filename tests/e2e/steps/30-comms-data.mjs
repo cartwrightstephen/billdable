@@ -204,10 +204,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("My account: a mobile number and the agreement to texts, then Text can be picked", async () => {
+  await step("My account: a mobile number is kept, and Text can't be picked until the number is confirmed", async () => {
     const { ctx, p } = await newCompany("texts");
     await p.goto(BASE + "/settings/account");
-    await p.locator("#my-sms-opt-in").check();
     await p.locator("#my-phone").fill("555-01");
     await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
     await p.locator("#my-phone-err").filter({ hasText: /\S/ }).waitFor();
@@ -216,11 +215,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.getByText("Saved", { exact: true }).first().waitFor();
     await p.reload();
     assert.equal(await p.locator("#my-phone").inputValue(), "(404) 555-0142");
-    assert.equal(await p.locator("#my-sms-opt-in").isChecked(), true);
+    assert.equal(await p.locator("#my-sms-opt-in").isChecked(), false);
     await p.goto(BASE + "/automations");
     await p.locator('input[data-reminder="dates"][value="text"]').check();
     await p.getByRole("button", { name: "Save" }).click();
-    await p.getByText("Saved", { exact: true }).first().waitFor();
+    await p.getByText("agree to texts", { exact: false }).first().waitFor();
     await ctx.close();
   });
 
@@ -232,21 +231,33 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.fill("#my-phone", "(404) 555-0143");
     await p.locator("#my-sms-opt-in").check();
     await p.locator('[data-action="save-account"]').click();
-    await p.locator(".field-error, [data-form-error]", { hasText: "can't be confirmed" }).first().waitFor();
+    await p.locator("#my-phone-err", { hasText: "can't be confirmed" }).waitFor();
     assert.equal(await p.locator("#my-sms-code").count(), 0);
-    // With a code sent: the box asks for it, and a wrong one says so.
-    const me = await p.evaluate(async () => (await (await fetch("/api/auth/me")).json()));
-    const user = me.user || me;
-    await p.route("**/api/auth/sms", (route) => route.fulfill({ status: 200, contentType: "application/json",
-      body: JSON.stringify({ user, code_sent: true, sent_to: "+14045550143" }) }));
+    // As a server with Twilio answers (the whole path is tested against a stand-in in test_sms_proof.py).
+    await p.evaluate(() => {
+      const real = window.fetch;
+      const answer = (status, body) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      window.fetch = async (path, options) => {
+        if (path === "/api/auth/sms") {
+          const user = (await (await real("/api/auth/me")).json()).user;
+          return answer(200, { user, code_sent: true, sent_to: "+14045550143" });
+        }
+        if (path === "/api/auth/sms/confirm") {
+          const { code } = JSON.parse(options.body);
+          if (code !== "123456") return answer(409, { error: "That code didn't match, or it has expired. Ask for a new one.", fields: { sms_code: "That code didn't match, or it has expired. Ask for a new one." } });
+          const user = (await (await real("/api/auth/me")).json()).user;
+          return answer(200, { user: { ...user, phone: "+14045550143", sms_opt_in: true } });
+        }
+        return real(path, options);
+      };
+    });
     await p.locator('[data-action="save-account"]').click();
     await p.locator("#my-sms-code").waitFor();
     assert.equal(await p.inputValue("#my-phone"), "(404) 555-0143");
     await p.fill("#my-sms-code", "000000");
     await p.locator('[data-action="sms-confirm"]').click();
-    await p.locator("text=That code didn't match").first().waitFor();
-    await p.route("**/api/auth/sms/confirm", (route) => route.fulfill({ status: 200, contentType: "application/json",
-      body: JSON.stringify({ user: { ...user, phone: "+14045550143", sms_opt_in: true } }) }));
+    await p.locator("#my-sms-code-err", { hasText: "didn't match" }).waitFor();
+    await p.fill("#my-sms-code", "123456");
     await p.locator('[data-action="sms-confirm"]').click();
     await p.locator("#my-sms-code").waitFor({ state: "detached" });
     assert.equal(await p.inputValue("#my-phone"), "(404) 555-0143");
