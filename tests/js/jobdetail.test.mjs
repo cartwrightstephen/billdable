@@ -140,12 +140,12 @@ test("New job: the four address boxes, Client type only for a new client, the st
     assert.match(html, /<div data-payer-slot="ap_email" hidden>/);
     assert.match(html, /<div data-payer-slot="phone">/);
     assert.match(html, /no phone yet/);
-    // The server's list decides: a signer that only defaulted is asked to be confirmed, a type never picked is asked.
+    // The server's list decides: a signer that only defaulted is asked again, a type never picked is asked.
     core.setState({ ...company(), jobs: [], payers: [{ ...saved, name: "Ellison", approver: "Ellison", ap_email: "a@b.example", phone: "1", playbook_missing: ["client_type", "approver"] }] });
     html = reg.views.jobs();
     assert.match(html, /<div data-payer-slot="client_type">/);
     assert.match(html, /<div data-payer-slot="approver">/);
-    assert.match(html, /id="nj-approver"[^>]*value="Ellison"/);
+    assert.doesNotMatch(html, /id="nj-approver"[^>]*value="Ellison"/, "the box starts empty: saving it unchanged isn't an answer");
     assert.match(html, /<div data-payer-slot="phone" hidden>/);
   } finally { page.formOpen.newjob = false; delete forms.formDraft.newjob; }
 });

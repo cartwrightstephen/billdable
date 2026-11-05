@@ -66,7 +66,7 @@ export function clientNeedsHtml(j, heading = "h2") {
     ${row("Pay apps due by", p.payapp_due_day ? `day ${p.payapp_due_day} of the month` : "")}
     ${row("Payment terms", p.payment_terms_days ? `${p.payment_terms_days} days` : "")}
     ${row("Also email (CC)", p.copy)}
-    <p class="sub"><button class="linkish" data-action="nav" data-view="playbook">Change in the Client playbook</button></p>
+    <p class="sub"><button class="linkish tall" data-action="nav" data-view="playbook">Change in the Client playbook</button></p>
   </div>`;
 }
 
@@ -295,7 +295,7 @@ function problemsHtml(p) {
 // A file attached and not cleared yet: a suggestion to check, or the document check's warning with
 // the way to say it is right anyway. Never a hard block (Decision 6).
 function confirmHtml(j, p, editable) {
-  const waiting = (p.attachments || []).some(a => a.unconfirmed);
+  const waiting = !p.name_only && (p.attachments || []).some(a => a.unconfirmed);
   if (p.present || !waiting) return "";
   const flagged = ((p.check || {}).problems || []).length > 0;
   const button = !editable ? "" : flagged
@@ -315,9 +315,9 @@ function packetItemsHtml(j, inv, packet, isCloseout) {
     const skipped = !p.required && p.skipped_reason;
     const waiver = unesc(p.waiver_kind || "");
     const made = p.present_reason === "Produced by Duracash";
-    const hasWaiting = (p.attachments || []).some(a => a.unconfirmed);
+    const hasWaiting = !p.name_only && (p.attachments || []).some(a => a.unconfirmed);
     return `
-    <div class="list-item packet-item ${p.present || skipped ? "present" : "absent"}">
+    <div class="list-item packet-item ${p.present || skipped ? "present" : "absent"}" id="packet-item-${p.id}" tabindex="-1">
       <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
         ${!p.present && !skipped && !hasWaiting ? `<span class="field-error">${p.blocker}</span>` : ""}
         ${(p.covers || []).length ? `<div class="sub">For ${p.covers.join(", ")}</div>` : ""}
@@ -364,14 +364,27 @@ export function supportingDocsHtml(j, inv) {
 }
 
 // Where a button for a pay app's documents lands: the pay app. Closeout, and an older job with no
-// pay app yet, have no pay app to land on.
-export function openSupportingDocs(jobId, invId) {
+// pay app yet, have no pay app to land on. item: the one document to land on, and focus.
+function landOn(item) {
+  if (typeof requestAnimationFrame !== "function") return;
+  requestAnimationFrame(() => {
+    const row = item && document.getElementById(`packet-item-${item}`);
+    if (row) { row.scrollIntoView({ block: "center" }); row.focus({ preventScroll: true }); }
+    else document.getElementById("supporting-documents")?.scrollIntoView({ block: "start" });
+  });
+}
+
+export function openSupportingDocs(jobId, invId, item = "") {
   const j = ((state && state.jobs) || []).find(x => x.id === jobId);
   const invs = (j && j.invoices) || [];
   const inv = invId && invId !== "closeout" ? invId : !invId ? ([...invs].reverse().find(i => DRAFT.includes(i.status)) || invs[invs.length - 1] || {}).id : null;
-  if (!inv) return nav("packet-detail", jobId, invId || null);
+  if (!inv) {
+    nav("packet-detail", jobId, invId || null);
+    if (item) landOn(item);
+    return null;
+  }
   nav("payapp-detail", jobId, inv);
-  if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => document.getElementById("supporting-documents")?.scrollIntoView({ block: "start" }));
+  landOn(item);
   return null;
 }
 
@@ -427,7 +440,7 @@ export const actions = {
     return post(`/api/jobs/${id}/packet-confirm/${el.dataset.item}`, { looked: true });
   },
   "goto-packet": (el, id) => openSupportingDocs(id),
-  "open-packet": (el) => openSupportingDocs(el.dataset.job, el.dataset.inv),
+  "open-packet": (el) => openSupportingDocs(el.dataset.job, el.dataset.inv, el.dataset.item),
   "packet-detach": (el, id) => post(`/api/jobs/${id}/detach/${el.dataset.item}`),
   "waiver-needed": (el, id) => post(`/api/jobs/${id}/waiver-needed`),
   "packet-skip": (el, id) => {

@@ -244,7 +244,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator(".inbox-item", { hasText: "Who is this for" }).getByText("from Unknown sender (+14045550144)").waitFor();
     assert.equal(await p.locator(".inbox-item", { hasText: "STOP" }).count(), 0, "STOP isn't a message to file");
     const id = await item.getAttribute("data-item");
-    await p.locator(`#inb-kind-${id}`).selectOption("ticket");
+    await p.locator(`#inb-kind-${id}`).selectOption("ticket:delivery");
     await item.getByRole("button", { name: "Add to job" }).click();
     await item.waitFor({ state: "detached" });
     await ctx.close();

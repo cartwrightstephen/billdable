@@ -131,7 +131,7 @@ test("an Inbox row shows the kind it files as, in a select to change it first", 
   assert.match(html, /data-item="x2" data-job="j1">Add to this job<\/button><label class="row-kind">as <select id="inb-kind-x2" aria-label="File as">/);
   assert.match(html, /<option value="waiver" selected>Lien waiver<\/option>/);
   assert.equal((html.match(/ selected>/g) || []).length, 1);
-  assert.equal((html.match(/<option /g) || []).length, Object.keys(RECORD_KINDS).length, "the Inbox's kinds list");
+  assert.equal((html.match(/<option /g) || []).length, Object.keys(RECORD_KINDS).length + 1, "the Inbox's kinds list");
   assert.ok(html.indexOf("inb-kind-x2") < html.indexOf(">Open<"));
   // A kind the list doesn't have starts at Note rather than showing one thing and filing another.
   assert.match(rowButtons(row({ kind: "inbox", button: "Add to this job", item_id: "x3", item_kind: "nope" })), /<option value="note" selected>Note<\/option>/);

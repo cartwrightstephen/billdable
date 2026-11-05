@@ -1,7 +1,7 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { finalPayAppConfirm, jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, coStatusWords, waiverSendForm, waiverHint, waiverTypeText, WAIVER_KINDS, WAIVER_HINTS, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
+import { recordFace, FILE_KINDS, fileKindPick, finalPayAppConfirm, jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, coStatusWords, waiverSendForm, waiverHint, waiverTypeText, WAIVER_KINDS, WAIVER_HINTS, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
 import { invoicePill } from "../../static/js/format.js";
 import { setBillingStyle } from "../../static/js/terms.js";
 
@@ -294,7 +294,7 @@ test("follow-ups name every unpaid pay app, and a noted call waits for its date"
     invoices: [{ ...a, last_follow_up_at: "2026-10-28T12:00:00+00:00" }, { ...b, last_follow_up_at: "2026-10-28T12:00:00+00:00" }] });
   assert.equal(followUpDue(called).day.getDate(), 4);
   assert.equal(followUpDue(called).noted, true);
-  assert.match(waitingText(called, new Date("2026-10-29T12:00:00")), /^Waiting on Sam Jones\. Spoke to them .+; check again Nov 4, 2026\.$/);
+  assert.match(waitingText(called, new Date("2026-10-29T12:00:00")), /^Waiting on Sam Jones\. Conversation .+; check again Nov 4, 2026\.$/);
   // A follow-up emailed since (later than the call) goes back to the usual days.
   const later = job({ ...called, invoices: [{ ...a, last_follow_up_at: "2026-10-29T12:00:00+00:00" }] });
   assert.equal(followUpDue(later).noted, undefined);
@@ -443,4 +443,48 @@ test("Final Pay App's confirm says the amount, what it does, and when it isn't t
   assert.match(finalPayAppConfirm({ name: "A" }, { drafted: false }).text, /nothing left to bill/);
   setBillingStyle("draws");
   try { assert.equal(finalPayAppConfirm(j, p).button, "Final Draw"); } finally { setBillingStyle("pay_apps"); }
+});
+
+test("Next step: the wording after the acceptance test (criteria 59, 61)", () => {
+  const base = { id: "j1", blocked: true, needs_paperwork: true, invoices: [{ id: "a", number: "PA-1", status: "draft", amount_cents: 100 }], money: { unbilled_completed_cents: 0, retainage_open_cents: 0 }, payer: { name: "Oak", ap_email: "a@b.co" } };
+  // A missing document's button lands on it.
+  const missing = job({ ...base, blockers: ["Conditional waiver is missing."], blocker_button: "Add 1 missing document", missing_paperwork: ["Conditional waiver"],
+    blocker_items: [{ kind: "paperwork", text: "Conditional waiver is missing.", item_id: "p1", waiting: false }] });
+  assert.equal(nextStep(missing), "Add 1 missing document before it can go: Conditional waiver");
+  assert.match(jobActions(missing).primary.attrs, /data-action="open-packet" data-job="j1" data-inv="a" data-item="p1"/);
+  // A file waiting for a person says to look and confirm.
+  const waiting = job({ ...missing, blockers: ["Conditional waiver: look at scan.pdf and confirm it."], blocker_button: "Check 1 document",
+    blocker_items: [{ kind: "paperwork", text: "Conditional waiver: look at scan.pdf and confirm it.", item_id: "p1", waiting: true }] });
+  assert.equal(nextStep(waiting), "Conditional waiver: look at scan.pdf and confirm it.");
+  assert.equal(nextStep(waiting, new Date(), { listed: true }), "Check 1 document before it can go:");
+  // Several things, not all documents.
+  const fix = job({ ...base, needs_paperwork: false, blockers: ["Change Order 2 is unsigned."], blocker_button: "Fix 3 things before sending", blocker_items: [] });
+  assert.equal(nextStep(fix), "Fix 3 things before sending: Change Order 2 is unsigned.");
+  // A draft to a client with no email names it.
+  const draft = job({ ...base, blocked: false, needs_paperwork: false, blockers: [], payer: { name: "Oak", ap_email: "" }, invoices: [{ id: "a", number: "PA-1", status: "draft", amount_cents: 3600000 }] });
+  assert.equal(nextStep(draft), "PA-1 for $36,000.00 to Oak is ready. Add the pay app email for Oak, then Review & Send.");
+});
+
+test("a note from before conversations were records reads and files as a conversation", () => {
+  const old = { id: "r1", kind: "note", label: "Spoke to Sam", note: "Friday" };
+  assert.deepEqual(recordFace(old), { ...old, kind: "conversation", label: "Conversation with Sam" });
+  const other = { id: "r2", kind: "note", label: "Gate code", note: "1234" };
+  assert.equal(recordFace(other), other);
+  assert.deepEqual(groupRecords([old, other]).map(g => [g.key, g.records.length]), [["conversation", 1], ["other", 1]]);
+});
+
+test("Inbox filing offers Delivery ticket and Time sheet; an old ticket keeps its label", () => {
+  assert.deepEqual(FILE_KINDS.filter(([k]) => k.startsWith("ticket")), [["ticket:delivery", "Delivery ticket"], ["ticket:time_sheet", "Time sheet"]]);
+  assert.equal(fileKindPick("ticket", "Time sheet week 3"), "ticket:time_sheet");
+  assert.equal(fileKindPick("ticket", "Tile delivered"), "ticket:delivery");
+  assert.equal(fileKindPick("waiver"), "waiver");
+  assert.equal(recordKindWord({ kind: "ticket" }), "Delivery ticket or time sheet");
+  assert.equal(recordKindWord({ kind: "ticket", ticket_type: "time_sheet" }), "Time sheet");
+});
+
+test("Send Draft for Their Review opens the review screen; it emails nothing itself", () => {
+  const j = job({ invoices: [{ id: "a", number: "PA-1", status: "draft", amount_cents: 100 }], payer: { name: "Oak", ap_email: "a@b.co" } });
+  const { primary, more } = jobActions(j);
+  const pencil = [primary, ...more].find(a => a.key === "pencil");
+  assert.equal(pencil.attrs, 'data-action="pencil-review" data-job="j1" data-inv="a"');
 });

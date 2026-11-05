@@ -13,7 +13,7 @@ Then open http://127.0.0.1:8765
 The public landing page is the front door. Create a company there, or sign in.
 
 - Demo: **Look around a sample company** on the landing page opens Hartline Remodeling's sample data with no account, or sign in as `owner@hartline.example` / `demo`. Anyone can look around and reset it (see `DURACASH_DEMO` for production).
-- Create account: a blank company space. Your name, email and a password of 10+ characters; the company name can wait (the company is named after you until it is typed in Settings › Company). At most 5 sign-ups an hour from one network. Today's setup checklist then leads to the company details, the first job, its paperwork and the first send.
+- Create account: a blank company space. Your name, email and a password of 10+ characters; the company name can wait (the company is named after you until it is typed in Settings › Company). At most 5 sign-ups an hour from one network. Today's setup checklist then leads to the company details, the first job, its supporting documents and the first send.
 
 ## Data
 
@@ -68,7 +68,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `BACKUP_S3_PREFIX` | Folder in the bucket, default `duracash/`. |
 | `BACKUP_AGE_RECIPIENT` | The age public key (`age1…`) backups are encrypted to before upload. Keep the private key off the server, in both founders' password managers. Without it nothing is uploaded. |
 | `BACKUP_AGE_BINARY` | Path to the `age` program, default `age` on the PATH. The Dockerfile installs it, and `render.yaml` deploys with the Dockerfile. |
-| `ALERT_WEBHOOK_URL` | An `https://` incoming-webhook address (Slack, Discord, Better Stack, ...). Each crash and failed backup posts one line with the request id; rate limited; no customer data. |
+| `ALERT_WEBHOOK_URL` | An `https://` incoming-webhook address (Slack, Discord, Better Stack, ...). Each crash and failed backup posts one line with the request id; rate limited; no client data. |
 | `SMTP_HOST` | Mail server for outgoing email. Unset: approved emails stay in the Outbox as "not sent: email delivery is not set up". |
 | `SMTP_PORT` | Default 587 (465 with `SMTP_SECURITY=ssl`). |
 | `SMTP_USER`, `SMTP_PASSWORD` | Login for the mail provider, if it needs one. |
@@ -83,7 +83,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 
 ## Importing
 
-Everything comes into the Inbox, gets a suggested job (job code, address, job name, customer name, or the customer's email for pay apps as sender), a kind (change order, lien waiver, backup for the pay app, delivery or time ticket, photo, contract, daily record, note), and any dollar amounts and dates found. A person adds it to the job record with one tap (**Add to <job>**); Undo takes it back off unless a pay app's paperwork uses it. A payments export dropped in the Inbox offers **Read as payments**. No AI: the rules are in `importer.py`.
+Everything comes into the Inbox, gets a suggested job (job code, address, job name, client name, or the client's email for pay apps as sender), a kind (change order, lien waiver, backup for the pay app, delivery or time ticket, photo, contract, daily record, note), and any dollar amounts and dates found. A person adds it to the job record with one tap (**Add to <job>**); Undo takes it back off unless a pay app's paperwork uses it. A payments export dropped in the Inbox offers **Read as payments**. No AI: the rules are in `importer.py`.
 
 - Files: drop anywhere, paste a screenshot, or choose files. On a job page they go straight onto that job. PDF, images (JPG, PNG, GIF, WEBP, HEIC), Word, Excel, CSV, TXT and `.eml`, up to 15 MB. HTML, SVG and scripts are refused. Files are served back only to the same company, with `Content-Security-Policy: sandbox`, except PDFs, which are served without it so the browser's PDF viewer opens them.
 - Saved emails (`.eml`): sender, subject, date, body and attachments are read with Python's email parser.
@@ -93,12 +93,12 @@ Everything comes into the Inbox, gets a suggested job (job code, address, job na
 
 ## Sending email
 
-Approved pay apps, drafts sent for the customer's review, follow-ups, waivers and retainage requests are emailed over SMTP (`mailer.py`). Postmark, SendGrid, Mailgun, Amazon SES and Google Workspace all accept SMTP, so pick one and set the variables above. Tested only against a local test server in `tests/test_mail.py`, not against a real provider.
+Approved pay apps, drafts sent for the client's review, follow-ups, waivers and retainage requests are emailed over SMTP (`mailer.py`). Postmark, SendGrid, Mailgun, Amazon SES and Google Workspace all accept SMTP, so pick one and set the variables above. Tested only against a local test server in `tests/test_mail.py`, not against a real provider.
 
-- From is "<company> via Duracash" at `MAIL_FROM`; Reply-To is the person who approved the send (kept if someone else retries it), so the customer's answer goes to the contractor. Addresses in the customer's **Also email (CC)** are copied on pay apps, and from the third follow-up on a pay app the **Also email from the third follow-up** address is too. Subjects read "Pay application PA-KIRK-01 — <job> — <amount> — <company>" so an accounts-payable desk can file them.
-- A pay app goes with its full text, the schedule-of-values continuation sheet when the job has one, the paperwork checklist, and the files behind the records attached to its paperwork (up to 15 MB in total; anything left off is named in the email). A waiver email attaches the newest lien waiver on the job record not sent before, and says the waiver will follow if there is none. A retainage request attaches the closeout documents and is spaced by the customer's days between follow-ups, like follow-ups. One follow-up names every unpaid pay app on the job.
-- Delivery happens after the change is saved and the state lock is released, so a slow mail server never holds up other requests. Each email shows sending, sent (with the time), failed (with the reason) or not sent in the Outbox. Failed and unsent emails have Send again (`POST /api/outbox/{id}/retry`). The approval itself stands either way.
-- The person approving must have confirmed their email address first (when email is set up), because replies go to it; until then emails are held as "not sent" with Send again. A pay app, or a draft sent for review, also carries the pay app as a PDF (`payapp_pdf.py`), made from the pay app when the email goes out.
+- From is "<company> via Duracash" at `MAIL_FROM`; Reply-To is the person who approved the send (kept if someone else retries it), so the client's answer goes to the contractor. Addresses in the client's **Also email (CC)** are copied on pay apps, and from the third follow-up on a pay app the **Also email from the third follow-up** address is too. Subjects read "Pay application PA-KIRK-01 — <job> — <amount> — <company>" so an accounts-payable desk can file them.
+- A pay app goes with its full text, the schedule-of-values continuation sheet when the job has one, the supporting documents checklist, and the files behind the records attached to its supporting documents (up to 15 MB in total; anything left off is named in the email). A waiver email attaches the newest lien waiver on the job record not sent before, and says the waiver will follow if there is none. A retainage request attaches the closeout documents and is spaced by the client's days between follow-ups, like follow-ups. One follow-up names every unpaid pay app on the job.
+- Delivery happens after the change is saved and the state lock is released, so a slow mail server never holds up other requests. Each email shows sending, sent (with the time), failed (with the reason) or not sent in the Outbox. Failed and unsent emails have Send Again (`POST /api/outbox/{id}/retry`). The approval itself stands either way.
+- The person approving must have confirmed their email address first (when email is set up), because replies go to it; until then emails are held as "not sent" with Send Again. A pay app, or a draft sent for review, also carries the pay app as a PDF (`payapp_pdf.py`), made from the pay app when the email goes out.
 - The demo account never sends. Header fields are stripped of line breaks and control characters, addresses must be plain (`name@domain.tld`), and the mail server is given the recipients directly rather than reading them back from the headers.
 - The daily limit is counted in `mail_sends.json` in the data directory, outside the company's own data, so resetting a company doesn't reset it. An email still "sending" after 30 minutes (the server stopped mid-send) can be sent again.
 
@@ -127,7 +127,7 @@ Approved pay apps, drafts sent for the customer's review, follow-ups, waivers an
 
 ## Pay app PDF
 
-`GET /api/jobs/{id}/payapp/{invoice_id}.pdf`, and attached to pay-app emails and to drafts sent for review (never for a pay app voided after the email was approved). Older jobs' job-level held retainage counts in lines 4 and 5; unsigned change orders billed on the pay app show as line 2a and count in the contract sum; a voided pay app is marked VOID and keeps its own figures. Page 1 is an application summary (lines 1–9: contract, change orders, completed to date, retainage, previous pay apps, current payment due, balance); then a continuation sheet of every schedule line (or the pay app's lines; change orders billed unsigned get their own row, so the sheet's totals match line 4), the notes typed with Progress Pay App or Final Pay App, and the paperwork checklist. The layout follows the G702/G703 pattern but it is Duracash's own document and says it is not an AIA form. Drafts, and drafts sent for the customer's review, are marked. A final pay app is marked FINAL APPLICATION. Standard library only; built-in fonts. Lien waivers are not generated: their forms are set by state law.
+`GET /api/jobs/{id}/payapp/{invoice_id}.pdf`, and attached to pay-app emails and to drafts sent for review (never for a pay app voided after the email was approved). Older jobs' job-level held retainage counts in lines 4 and 5; unsigned change orders billed on the pay app show as line 2a and count in the contract sum; a voided pay app is marked VOID and keeps its own figures. Page 1 is an application summary (lines 1–9: contract, change orders, completed to date, retainage, previous pay apps, current payment due, balance); then a continuation sheet of every schedule line (or the pay app's lines; change orders billed unsigned get their own row, so the sheet's totals match line 4), the notes typed with Progress Pay App or Final Pay App, and the supporting documents checklist. The layout follows the G702/G703 pattern but it is Duracash's own document and says it is not an AIA form. Drafts, and drafts sent for the client's review, are marked. A final pay app is marked FINAL APPLICATION. Standard library only; built-in fonts. Lien waivers are not generated: their forms are set by state law.
 
 ## Trial
 
@@ -173,7 +173,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 
 ## Project layout
 
-- `domain/`: money rules, paperwork gates, status labels, customer settings, Today's rows and the daily email's, email log (`domain/__init__.py`), and the audit chain (`domain/trail.py`); every name imports from `domain`
+- `domain/`: money rules, supporting document gates, status labels, client settings, Today's rows and the daily email's, email log (`domain/__init__.py`), and the audit chain (`domain/trail.py`); every name imports from `domain`
 - `auth.py`: users and roles, password hashes, sessions, login throttling, reset/verify/invite tokens
 - `storage.py`: data directory and atomic JSON writes
 - `importer.py`: files, email parsing, notes splitting, job matching, the Inbox
@@ -187,13 +187,13 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `alerts.py`: crash and backup-failure alerts to a webhook
 - `totp.py`: two-step sign-in codes (RFC 6238)
 - `qr.py`: the QR code shown when two-step sign-in is set up (SVG, no library)
-- `outbox.py`: sends the emails a change approved, and Send again from the Outbox
+- `outbox.py`: sends the emails a change approved, and Send Again from the Outbox
 - `monthly.py`: the daily and monthly emails, the restore drill and the hourly loop that runs them
 - `billing.py`: Stripe Checkout and Customer Portal, the signed webhook, ending Stripe's trial when the first pay app is paid, and whether a company is held read-only. Stripe's names are from their documentation as remembered, checked only against a stand-in (`tests/test_billing.py`)
 - `qbo_csv.py`: payments from a QuickBooks CSV export, proposed against open pay apps
 - `qbo.py`: the QuickBooks Online connection, read-only: OAuth connect and token refresh, payments proposed with the same matcher (each recorded once, by its QuickBooks id), and a reconciliation report against QuickBooks invoices. Intuit's endpoints and field names are from their documentation as remembered, checked only against a stand-in (`tests/test_qbo.py`) until the first sandbox connection
 - `metrics.py`: the Results numbers and the monthly summary email (`python3 admin.py monthly-summaries`)
-- `payer_page.py`: the customer's page for a pay app (`/p/...`: Mark as received, Approve for payment, Send a question) and the change-order signing page (`/s/...`)
+- `payer_page.py`: the client's page for a pay app (`/p/...`: Mark as received, Approve for payment, Send a question) and the change-order signing page (`/s/...`)
 - `mail_events.py`: bounce and spam-complaint webhooks from the mail provider
 - `migrations.py`: the company-file schema version and the steps between versions, run on load
 - `audit_check.py`: checks every company's audit hash chain (run nightly)
@@ -210,16 +210,16 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 ## Money rules
 
 - Pay apps are net of retainage. With a retainage percent on the job, each pay app withholds that percent and shows it as a line. Held retainage is not counted as unbilled work.
-- A job with retainage gets closeout paperwork when it is marked done. The closeout paperwork gates asking for the retainage, not the pay apps.
-- Each pay app's paperwork list comes from the customer's **Paperwork needed with each pay app** (Customer settings); an item named like the pay app, schedule of values or continuation sheet is in from the start, and a file on the job record whose kind matches is attached when the pay app is drafted.
-- **I have this…** marks an item in hand, with where it is (optional); **Not needed for this customer** also takes it off the customer's list. Paperwork that went with a sent pay app stays as it was sent.
+- A job with retainage gets closeout documents when it is marked done. The closeout documents gates asking for the retainage, not the pay apps.
+- Each pay app's supporting documents list comes from the client's **Supporting documents needed with each pay app** (Client playbook); an item named like the pay app, schedule of values or continuation sheet is in from the start, and a file on the job record whose kind matches is attached when the pay app is drafted.
+- **I have this…** marks an item in hand, with where it is (optional); **Not needed for this client** also takes it off the client's list. Supporting documents that went with a sent pay app stays as it was sent.
 - A change order approved after the job is marked done becomes billable on the next pay app.
 - A payment goes to a pay app the user picks, must be above zero and at most the balance owed, and a reference can be used once per job.
 - One waiver per paid pay app. The waiver document comes from the contractor; Duracash does not generate it.
-- A follow-up before the customer's days between follow-ups have passed needs **Follow Up Now** and a confirm; one sent after **Log a Conversation** with a check-again date or the customer's **Approve for payment** waits for the date they gave. Each one writes an Outbox row.
+- A follow-up before the client's days between follow-ups have passed needs **Follow Up Now** and a confirm; one sent after **Log a Conversation** with a check-again date or the client's **Approve for payment** waits for the date they gave. Each one writes an Outbox row.
 - A job closes only when work is done, nothing is drafted, unbilled, outstanding or pending, retainage is released, and waivers are sent. Closed jobs are read-only except for notes.
-- A new job for an existing customer keeps the customer's who signs off and email for pay apps. Change them in Customer settings.
-- A sent pay app with nothing paid can be pulled back with a reason (the customer is told nothing is due on it); a part-paid one can be settled short with a reason; a finished job can be reopened by an owner with a reason. Each is in the Activity log.
+- A new job for an existing client keeps the client's who signs off and email for pay apps. Change them in Client playbook.
+- A sent pay app with nothing paid can be pulled back with a reason (the client is told nothing is due on it); a part-paid one can be settled short with a reason; a finished job can be reopened by an owner with a reason. Each is in the Activity log.
 - Every approved send is written to the Outbox and emailed when email is set up (see Sending email).
 
 ## API

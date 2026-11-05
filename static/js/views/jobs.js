@@ -9,7 +9,7 @@ import { checkFields, US_STATES } from "../validate.js";
 import { readJson, sendFile } from "../net.js";
 import { localDay } from "../tasks.js";
 import { state, me, formOpen, teamData, setTeamData, onSessionEnd } from "../state.js";
-import { nav, moreOpen, emptyState, listPage, post, moreDetails, toast, render, load, clearJobDetails } from "../app-core.js";
+import { nav, emptyState, listPage, post, toast, render, load, clearJobDetails } from "../app-core.js";
 
 // Who pays you, as the older pages had it: Owner or GC. Client type (J2) is the finer word.
 export const ROLE_OPTIONS = [["Owner", "The homeowner or property owner"], ["GC", "A general contractor (you are the sub)"]];
@@ -186,30 +186,16 @@ export function syncNewJobCustomer() {
   const note = form.querySelector("[data-known-payer]");
   if (note) { note.hidden = !p; note.querySelector("[data-known-payer-text]").innerHTML = knownPayerText(p); }
   form.querySelectorAll("[data-payer-slot]").forEach(box => { box.hidden = payerSlotHidden(box.dataset.payerSlot, p, clientMode()); });
-  // What it has so far starts in the boxes it is asked to confirm.
-  for (const k of ["client_type", "approver"]) {
-    const box = p && form.querySelector(`[data-field="${k}"]`);
-    if (box && !payerSlotHidden(k, p, clientMode()) && (k === "client_type" || !box.value.trim())) box.value = unesc(p[k] || "");
-  }
 }
 
-// Leaving the Client box fills "Who signs off" with the client when it is still empty: a
-// homeowner signs off on their own bills. A saved general contractor's retainage starts at what
-// their last job held (R2-01), unless already typed.
+// Who signs off and the client type are the person's to enter (Decision 4): nothing fills them,
+// and a signer that only defaulted to the client's name is asked for again, not shown to save
+// unchanged. A saved general contractor's retainage starts at what their last job held (R2-01),
+// unless already typed.
 export function prefillApprover() {
   const form = document.querySelector('[data-form-key="newjob"]');
   const customer = form?.querySelector('[data-field="customer"]')?.value.trim();
-  if (!customer) return;
-  const known = knownPayer(customer);
-  if (!known) {
-    const box = form.querySelector('[data-field="approver"]');
-    if (box && !box.value.trim()) {
-      box.value = customer;
-      (formDraft.newjob ||= {}).approver = customer;
-    }
-    return;
-  }
-  prefillRetainage();
+  if (customer && knownPayer(customer)) prefillRetainage();
 }
 
 // A general contractor usually holds the same retainage job after job: start from their last one.
@@ -232,8 +218,6 @@ let contractRead = null;
 // New job as it stood when the person went to the Client playbook, back when they return to Jobs.
 let parkedNewJob = null;
 onSessionEnd(() => { contractRead = null; parkedNewJob = null; });
-
-const MORE_FIELDS = ["contract_number", "retainage_pct", "payapp_due_day", "payment_terms_days"];
 
 // A form closed (saved or cancelled) forgets what its contract filled.
 export function forgetClosedContract() {
@@ -300,18 +284,16 @@ function fillFromContract(form, read) {
   if (end) fields.anticipated_end_on = end;
   const put = (box, value) => { if (value !== undefined && value !== null && value !== "") d[box] = String(value); };
   if (form === "newjob") {
-    for (const k of ["name", "street", "city", "state", "zip", "customer", "client_type", "contract_number", "started_on", "anticipated_end_on", "phone", "ap_email",
+    for (const k of ["name", "street", "city", "state", "zip", "customer", "client_type", "approver", "contract_number", "started_on", "anticipated_end_on", "phone", "ap_email",
       "payapp_due_day", "payment_terms_days"]) put(k, fields[k]);
     // The client it names: a saved one is picked, any other is a new one.
     if (fields.customer) {
       const saved = knownPayer(fields.customer);
       d.client_mode = saved ? "existing" : "new";
       if (saved) d.customer = unesc(saved.name);
-      else if (!d.approver) d.approver = fields.customer;  // a homeowner signs off on their own bills
     }
     if (Number.isInteger(fields.contract_cents)) put("contract_cents", dollarsText(fields.contract_cents));
     if (Number.isInteger(fields.retainage_pct)) { put("retainage_pct", fields.retainage_pct); d.retainage_touched = true; }
-    if (MORE_FIELDS.some(k => k in fields)) moreDetails.newjob = true;
   } else {
     put("name", fields.customer);
     for (const k of ["client_type", "phone", "ap_email", "payapp_due_day", "payment_terms_days"]) put(k, fields[k]);
@@ -347,7 +329,7 @@ async function fileContract(jobId, r) {
   if (!r || r.error) return;
   if (r.file) {
     const sent = await sendFile(`/api/import/file?job=${encodeURIComponent(jobId)}&file=1&kind=contract`, r.file, r.file.name);
-    if (!sent.ok) toast(`The job is saved, but the contract file wasn't added to its record: ${(sent.data && sent.data.error) || "try Add a file on the job page"}.`);
+    if (!sent.ok) toast(`The job is saved, but the contract file wasn't added to its records${sent.data && sent.data.error ? `: ${String(sent.data.error).replace(/[.\s]+$/, "")}` : ""}. On the job page, use Add a file`);
   } else if (r.text) {
     await post(`/api/jobs/${jobId}/add-record`, { label: "Contract (pasted)", kind: "contract", note: r.text.slice(0, 5000) }, { quiet: true });
   }
@@ -357,7 +339,7 @@ async function fileContract(jobId, r) {
     const res = await post(`/api/jobs/${jobId}/sov`, { lines: r.sov.lines, op_pct: 0, update_contract: !!r.useSovTotal }, { quiet: true });
     if (res && res.ok) toast(r.useSovTotal ? "Job saved with the schedule of values from the contract and its total as the contract amount"
       : "Job saved with the schedule of values from the contract");
-    else toast(`The job is saved, but the schedule of values wasn't set up: ${(res && res.data && res.data.error) || "set it up on the job page"}.`);
+    else toast(`The job is saved, but the schedule of values wasn't set up: ${String((res && res.data && res.data.error) || "set it up on the job page").replace(/[.\s]+$/, "")}.`);
   }
   if (contractRead === r) contractRead = null;
   clearJobDetails();
@@ -440,24 +422,21 @@ export const views = {
             ${mode === "existing" ? f({ name: "customer", id: "nj-client", label: "Client", required: true, ...mark("customer"), options: [["", "Pick a client…"], ...(state.payers || []).map(p => [unesc(p.name), unesc(p.name)])] }) : ""}
             ${mode === "new" ? f({ name: "customer", id: "nj-customer", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off", rule: "name", ...mark("customer") }) : ""}
             ${sameCustomerBox("newjob")}
-            ${slot("client_type", f({ name: "client_type", id: "nj-client-type", label: "Client type", helpKey: "role", options: CLIENT_TYPES, value: known ? unesc(known.client_type || "gc") : "gc", required: true, ...mark("client_type") }))}
-            ${slot("approver", f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", required: true, placeholder: "Sam Jones", value: known ? unesc(known.approver || "") : "" }))}
+            ${slot("client_type", f({ name: "client_type", id: "nj-client-type", label: "Client type", helpKey: "role", options: [["", "Choose…"], ...CLIENT_TYPES], required: true, ...mark("client_type") }))}
+            ${slot("approver", f({ name: "approver", id: "nj-approver", label: "Who signs off on your bills", helpKey: "approver", required: true, placeholder: "Sam Jones", ...mark("approver") }))}
             ${slot("ap_email", f({ name: "ap_email", id: "nj-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", required: true, autocomplete: "off", rule: "email", placeholder: "name@example.com", ...mark("ap_email") }))}
             ${slot("phone", f({ name: "phone", id: "nj-phone", label: "Phone", helpKey: "customer_phone", type: "tel", required: true, autocomplete: "off", rule: "phone", ...mark("phone") }))}
             <p class="span-2 sub known-payer" data-known-payer${known ? "" : " hidden"}><span data-known-payer-text>${knownPayerText(known)}</span>.
               <button type="button" class="linkish" data-action="nj-to-playbook">Change in the Client playbook</button></p>
           </div>
-          <details class="more-details" data-more="newjob"${moreOpen("newjob") ? " open" : ""}>
-            <summary>More details (optional)</summary>
-            <div class="form-grid">
-              ${jf.contract_number}
-              ${jf.retainage_pct}
-              ${assigneeField("newjob", "nj")}
-              ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") }))}
-              ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") }))}
-              ${f({ name: "note", id: "nj-note", label: "Notes (kept in the job records)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
-            </div>
-          </details>
+          <div class="form-grid">
+            ${jf.retainage_pct}
+            ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") }))}
+            ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") }))}
+            ${jf.contract_number}
+            ${assigneeField("newjob", "nj")}
+            ${f({ name: "note", id: "nj-note", label: "Notes (kept in the job records)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
+          </div>
           ${newJobSovHtml()}
           <button class="btn" data-action="create-job">Save job</button>
         </div>` : ""}
@@ -478,7 +457,7 @@ export const views = {
             </tr>`).join("")}
         </table>
       </div>` : formOpen.newjob ? "" : emptyState(state.jobs.length || state.closed_jobs_total ? "No open jobs" : "No jobs yet", "", `<button class="btn" data-action="toggle-form" data-form="newjob">New job</button>`)}
-      ${closed ? `<p class="sub">${closed} closed job${closed === 1 ? " is" : "s are"} under <button class="linkish" data-action="nav" data-view="history">Job history</button>.</p>` : ""}
+      ${closed ? `<p class="sub">${closed} closed job${closed === 1 ? " is" : "s are"} under <button class="linkish tall" data-action="nav" data-view="history">Job history</button>.</p>` : ""}
     `;
   },
   history() {
@@ -505,7 +484,7 @@ export const views = {
               <td>${j.done_notes || j.status_label}</td>
             </tr>`).join("")}
         </table>
-      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No finished jobs yet")}
+      </div>${moreButton("history", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No finished jobs yet", "", openJobs(state.jobs).length ? `<button class="btn" data-action="nav" data-view="jobs">Open jobs</button>` : `<button class="btn" data-action="onb-newjob">New job</button>`)}
     `;
   },
 };
@@ -529,6 +508,7 @@ export const actions = {
     if (!mode) errors._form = "Pick an existing client, or tap New client.";
     else if (!customer) errors.customer = mode === "existing" ? "Pick the client." : "Enter the client: who pays for this job.";
     if (mode) {
+      if (asked("client_type") && !v.client_type) errors.client_type = "Pick the client type.";
       if (asked("approver") && !approver) errors.approver = "Enter who signs off on your bills.";
       if (asked("phone") && !phone) errors.phone = "Enter the client's phone number.";
       if (asked("ap_email") && (!apEmail || checkFields({ ap_email: apEmail }, { ap_email: "email" }).ap_email)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
@@ -560,7 +540,7 @@ export const actions = {
     const r = await post("/api/jobs", {
       sov_lines: newJobSovLines(v),
       name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer, approver,
-      ap_email: apEmail, phone, client_type: asked("client_type") ? (v.client_type || "gc") : "",
+      ap_email: apEmail, phone, client_type: asked("client_type") ? v.client_type : "",
       contract_number: v.contract_number, note: v.note, started_on: v.started_on || "", anticipated_end_on: v.anticipated_end_on || "", today: localDay(new Date()),
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
       contract_cents: amount.cents, retainage_pct: ret.value, ...days,
@@ -572,7 +552,6 @@ export const actions = {
     if (sovLine) { sovLine.textContent = sovError || ""; sovLine.hidden = !sovError; if (sovError) sovLine.scrollIntoView?.({ block: "center" }); }
     if (!r || !r.ok) return;
     delete keptNames.newjob;
-    delete moreDetails.newjob;
     njSovRows = 3;
     toast("Job saved");
     const made = state.jobs.find(j => !before.has(j.id));

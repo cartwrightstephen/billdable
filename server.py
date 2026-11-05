@@ -3251,7 +3251,7 @@ JOB_ACTIONS = {
     "pencil-response": (False, lambda h, st, j, i, c: domain.record_pencil_response(st, j, c.body.get("agreed") is True, _text(c.body, "note"), c.actor)),
     "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
-    "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor)),
+    "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor, _text(c.body, "note") if "note" in c.body else None)),
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id), looked=c.body.get("looked") is True)),
     "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),

@@ -436,7 +436,7 @@ class FollowUpEscalationTests(unittest.TestCase):
         domain.audit(self.state, self.job["id"], "contact_noted", "Spoke to Sam Jones: Friday (Owner)", "Owner")
         self.assertEqual(domain.follow_up_due(self.job, payer).date(), next_on)
         row = next(r for r in domain.contact_log(self.state, self.job["id"], limit=None)[0] if r["kind"] == "call")
-        self.assertEqual((row["label"], row["text"]), ("Conversation", "Spoke to Sam Jones: Friday"))
+        self.assertEqual((row["label"], row["text"]), ("Conversation", "Conversation with Sam Jones: Friday"))
 
     def test_note_contact_holds_the_follow_up_until_the_date(self):
         payer = domain._payer(self.state, self.job["payer_id"])
@@ -454,7 +454,7 @@ class FollowUpEscalationTests(unittest.TestCase):
         with self.assertRaises(domain.GateError) as raised:
             domain.record_follow_up(self.state, self.job["id"], "Owner")
         self.assertIn(f"not due until {next_on.isoformat()}", str(raised.exception))
-        self.assertIn("you spoke to them", str(raised.exception))   # the call holds it, not the days between contacts
+        self.assertIn("a conversation on", str(raised.exception))   # the call holds it, not the days between contacts
         # A follow-up sent anyway (Follow up now) goes back to the usual days.
         domain.record_follow_up(self.state, self.job["id"], "Owner", early=True)
         self.assertGreater(domain.follow_up_due(self.job, payer), datetime.now(UTC) + timedelta(days=6))

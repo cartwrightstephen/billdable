@@ -9,7 +9,7 @@
 // (tests/js/today.test.mjs).
 
 import { termText } from "./terms.js";
-import { RECORD_KINDS } from "./jobs.js";
+import { FILE_KINDS, RECORD_KINDS, fileKindPick } from "./jobs.js";
 import { pathFor } from "./routes.js";
 import { BALL_WORDS } from "./tasks.js";
 
@@ -21,7 +21,7 @@ export const QUEUE_SHOWN = 3;   // rows shown before "and N more"
 const ACTIONS = {
   email_failed: (r) => `data-action="email-retry" data-email="${r.email_id}"`,
   says_done: (r) => `data-action="inbox-mark-done" data-item="${r.item_id}"`,
-  blocked: (r) => `data-action="open-packet" data-job="${r.job_id}"${r.invoice_id ? ` data-inv="${r.invoice_id}"` : ""}`,
+  blocked: (r) => `data-action="open-packet" data-job="${r.job_id}"${r.invoice_id ? ` data-inv="${r.invoice_id}"` : ""}${r.packet_item_id ? ` data-item="${r.packet_item_id}"` : ""}`,
   ready: (r) => `data-action="open-payapp" data-job="${r.job_id}" data-inv="${r.invoice_id}" data-focus=".send-check"`,
   waiver: (r) => `data-action="open-waiver" data-id="${r.job_id}"`,
   not_billed: (r) => `data-action="draft" data-id="${r.job_id}"`,
@@ -32,8 +32,10 @@ const ACTIONS = {
   closeout: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
   retainage: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
   finish: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
+  finish_held: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".close-blockers"`,
+  retainage_wait: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
 };
-const OPENS_JOB = ["ready", "waiver", "due_soon", "new_job", "closeout", "retainage", "finish"];
+const OPENS_JOB = ["ready", "waiver", "due_soon", "new_job", "closeout", "retainage", "finish", "finish_held", "retainage_wait"];
 
 // The server's rows (already HTML-escaped on arrival, like the rest of state), most urgent first.
 export function todayQueue(state) {
@@ -44,8 +46,8 @@ export function todayQueue(state) {
 // ("Add to this job as Lien waiver") in the Inbox's own kind select, so it can be changed first
 // and what is shown is what is filed. The select has the Inbox card's id, which the button reads.
 export function inboxKindSelect(r) {
-  const guessed = RECORD_KINDS[r.item_kind] ? r.item_kind : "note";
-  const options = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}"${k === guessed ? " selected" : ""}>${termText(v)}</option>`).join("");
+  const guessed = fileKindPick(r.item_kind, r.text);
+  const options = FILE_KINDS.map(([k, v]) => `<option value="${k}"${k === guessed ? " selected" : ""}>${termText(v)}</option>`).join("");
   return `<label class="row-kind">as <select id="inb-kind-${r.item_id}" aria-label="File as">${options}</select></label>`;
 }
 

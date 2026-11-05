@@ -63,6 +63,8 @@ def contact_log(state: dict[str, Any], job_id: str, limit: int | None = RECENT_C
             # "Conversation with Sam: Check goes out Friday Next check 2026-11-07. (Pat)", or
             # "Spoke to Sam: ..." on the ones logged before conversations were records.
             text = _ACTOR_TAIL.sub("", str(row.get("detail", "")))
+            if text.startswith("Spoke to "):
+                text = "Conversation with " + text[len("Spoke to "):]
             out.append({"at": row.get("at", ""), "kind": "call", "label": "Conversation", "text": text, "by": row.get("actor", ""), "status": ""})
         elif action in CONTACT_PAGE_WORDS:
             out.append({"at": row.get("at", ""), "kind": "client_page", "label": CONTACT_PAGE_WORDS[action],
