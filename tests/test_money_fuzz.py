@@ -257,10 +257,13 @@ class Sequence:
         for key, value in m.items():
             assert isinstance(value, int), f"{key} is {value!r}"
         # What the app asks for, less what it says to give back, is exactly what is truly due: the
-        # work billed that the contract allows, less everything accounted for. So it never asks for
-        # money that isn't owed, and a payment always takes that much off.
-        accounted = m["payments_cents"] + m["retainage_released_cents"] + m["short_paid_cents"] - m["overbilling_settled_cents"]
-        due = min(m["billed_gross_cents"], m["billing_allowed_cents"]) - accounted
+        # work billed that the contract allows, less everything accounted for (money in, money gone
+        # back, a short pay accepted). So it never asks for money that isn't owed, and a payment
+        # always takes that much off. A credit recorded against a short pay sits inside the short
+        # pay: it settles the overbilling it was recorded for, and only while that still stands.
+        accounted = m["payments_cents"] + m["retainage_released_cents"] + m["short_paid_cents"] - m["refunded_cents"]
+        credit = min(m["overbilling_settled_cents"] - m["refunded_cents"], m["short_paid_cents"], max(0, m["billed_gross_cents"] - m["billing_allowed_cents"]))
+        due = min(m["billed_gross_cents"], m["billing_allowed_cents"]) - accounted + credit
         asked = m["outstanding_cents"] + m["retainage_open_cents"]
         assert asked - m["overbilled_cents"] == due, f"asks {asked} less {m['overbilled_cents']} overbilled, but {due} is due: {m}"
         live = sov.live_invoices(job)
