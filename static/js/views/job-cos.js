@@ -78,7 +78,7 @@ export function newCoCardHtml(j) {
     <p class="sub">${made.amount_cents < 0 ? `A credit of ${money(-made.amount_cents)}` : money(made.amount_cents)}${made.schedule_days ? ` · ${made.schedule_days > 0 ? "+" : ""}${made.schedule_days} days on the schedule` : ""}. ${made.status === "pending" ? "Saved. Now get it signed." : "Signed."}</p>
     ${made.status === "pending" ? coSignControls(j, made) : coSignature(made)}
     <div class="form-inline"><button class="btn small secondary" data-action="new-co-done">Done</button></div></div>`;
-  return `<div class="card form-card" data-form-key="newco"><h2>New Change Order</h2>${formErrorLine("newco")}
+  return `<div class="card form-card" data-form-key="newco"><h2>New change order</h2>${formErrorLine("newco")}
       ${coFormFields(j)}
       <div class="form-inline">
         <button class="btn small" data-action="add-co-here" data-id="${j.id}">Create change order</button>
@@ -104,7 +104,7 @@ export function coFormFields(j) {
       ${field({ form: "newco", name: "reason", id: "co-reason", label: "Reason", required: true, options: [["", "Pick why the scope changed…"], ...Object.entries(CO_REASONS)] })}
       ${field({ form: "newco", name: "description", id: "co-desc", label: "Description (required for Other)", wide: true, multiline: true })}
       ${field({ form: "newco", name: "contract_ref", id: "co-ref", label: "Contract section or original scope it changes (optional)", wide: true, placeholder: "Section 09 30 00, tile in baths 1-3" })}
-      ${field({ form: "newco", name: "pricing", id: "co-pricing", label: "Pricing", options: Object.entries(CO_PRICING) })}
+      ${field({ form: "newco", name: "pricing", id: "co-pricing", label: "Pricing", options: Object.entries(CO_PRICING), buttons: true })}
       ${moneyField({ form: "newco", name: "amount_cents", id: "co-amt", label: coItemRows ? "Amount ($), blank adds up the cost lines" : "Amount ($), negative for a credit", inputmode: "text" })}
     </div>
     <fieldset class="co-items"><legend>Cost breakdown (optional)</legend>

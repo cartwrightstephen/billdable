@@ -157,7 +157,7 @@ export function emailStatusHtml(e) {
   const inFlight = (st === "sending" || st === "queued") && !stuck;
   const moot = e.moot && !inFlight ? `<div class="sub">No need to send it now: ${e.moot}</div>` : "";
   // Send again only where the server sends mail (round 1, item 7): elsewhere it can't work.
-  const retry = mailReady && !moot && (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send Again</button>` : "";
+  const retry = mailReady && !moot && (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
   return `<span class="pill ${cls}">${words(st)}</span>${when}${moot}${retry}`;
 }
 

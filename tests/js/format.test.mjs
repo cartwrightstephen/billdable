@@ -70,7 +70,7 @@ test("an email sent with a copy address refused says so, with no Send again", ()
   const e = { id: "eml-1", to: "ap@gc.com", status: "sent", delivered_at: "2026-10-29T10:00:00+00:00", refused: ["pm@gc.con (550)"] };
   const html = emailStatusHtml(e);
   assert.match(html, /Not delivered to the copy address pm@gc\.con \(550\)/);
-  assert.doesNotMatch(html, /Send Again/);
+  assert.doesNotMatch(html, /Send again/);
   assert.match(emailOutcome([e]), /Emailed ap@gc\.com\. Not delivered to the copy address pm@gc\.con \(550\)\./);
   assert.equal(emailOutcome([{ to: "ap@gc.com", status: "sent" }]), "Emailed ap@gc.com.");
 });
@@ -82,8 +82,8 @@ test("a stuck email that no longer needs to go out says why, with no Send again"
   const stuck = { id: "eml-2", to: "ap@gc.com", status: "sending", sending_at: at, moot: "PA-03 is paid." };
   const html = emailStatusHtml(stuck);
   assert.match(html, /No need to send it now: PA-03 is paid\./);
-  assert.doesNotMatch(html, /Send Again/);
-  assert.match(emailStatusHtml({ ...stuck, moot: undefined }), /Send Again/, "a stuck one that still matters can go again");
+  assert.doesNotMatch(html, /Send again/);
+  assert.match(emailStatusHtml({ ...stuck, moot: undefined }), /Send again/, "a stuck one that still matters can go again");
   const inFlight = { ...stuck, sending_at: new Date().toISOString() };
-  assert.doesNotMatch(emailStatusHtml(inFlight), /No need to send it now|Send Again/, "one still going out shows only its status");
+  assert.doesNotMatch(emailStatusHtml(inFlight), /No need to send it now|Send again/, "one still going out shows only its status");
 });

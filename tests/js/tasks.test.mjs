@@ -1,4 +1,4 @@
-// The To Do list's and the Calendar Tasks block's shared filter (T3, T6, G5): node --test tests/js
+// The To do list's and the Calendar Tasks block's shared filter (T3, T6, G5): node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { periodRange, inPeriod, todoItems, itemsInPeriod, assignees, localDay } from "../../static/js/tasks.js";

@@ -2,7 +2,7 @@
 // text, and the forwarding addresses for email, texts and the calendar. The Inbox page shows
 // what is waiting and everything received (C1); the file and paste boxes are on Import (data.js).
 import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
-import { RECORD_KINDS, FILE_KINDS, fileKindPick, SOURCE_LABELS, defaultJobId, jobFilterOptions, finalPayAppConfirm } from "../jobs.js";
+import { RECORD_KINDS, FILE_KINDS, fileKindPick, SOURCE_LABELS, defaultJobId, jobFilterOptions, jobFilterShown, finalPayAppConfirm } from "../jobs.js";
 import { readJson, setNetBanner, inBatches } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { webcalUrl } from "../calendar.js";
@@ -64,8 +64,13 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", ext
   // The answers can arrive out of order, so the page reads the company once at the end.
   if (ok) { clearJobDetails(); await load(); }
   const where = !fileNow ? "in the Inbox" : extra.attach ? "added to the job records and attached" : extra.co ? "added to the job records; the change order is signed" : "added to the job records";
-  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "));
+  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "), ok && !fileNow ? toInbox() : null);
   render();
+}
+
+// What was added to the Inbox from elsewhere (Import) carries a way there (round 1, item 20).
+function toInbox() {
+  return currentView === "inbox" ? null : { label: "Open the Inbox", run: () => nav("inbox") };
 }
 
 async function postImport(path, body) {
@@ -76,7 +81,7 @@ async function postImport(path, body) {
   const data = await readJson(res);
   if (!res.ok) { toast(data.error || "Import failed."); return false; }
   setState(data);
-  toast(body.job_id ? "Added to the job records." : "Added to the Inbox.");
+  toast(body.job_id ? "Added to the job records." : "Added to the Inbox.", toInbox());
   render();
   return true;
 }
@@ -106,7 +111,7 @@ function fillImportSettings() {
     ? "This is the demo account: nothing is emailed from it."
     : s.mail_configured
       ? `Approved emails are sent from <strong>${s.mail_from}</strong> with your company name, and replies go to the person who approved them. Up to ${s.mail_daily_limit} a day.`
-      : "Email delivery is not set up on this server yet, so nothing here has left Duracash. Once it is, use Send Again on any row.");
+      : "Email delivery is not set up on this server yet, so nothing here has left Duracash. Once it is, use Send again on any row.");
   set("email-webhook", s.email_webhook);
   set("sms-webhook", s.sms_webhook);
   set("email-check", s.email_check === "password" ? "The server asks the email service for its password (INBOUND_WEBHOOK_PASSWORD): put it in the address, as https://duracash:PASSWORD@… ."
@@ -166,7 +171,7 @@ export function dropzoneHtml(cameraOnly = false) {
         <button class="btn" id="inbox-camera" data-action="pick-files" data-capture="1">Take a photo</button></div></div>`;
   }
   return `<div class="dropzone" tabindex="0">
-        <label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>
+        ${state.jobs.some(j => !j.closed) ? `<label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>` : ""}
         <div class="capture-buttons touch-only">
           <button class="btn" data-action="pick-files" data-ask-job="1" data-capture="1">Take a photo</button>
           <button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button>
@@ -269,7 +274,7 @@ function receivedHtml() {
       <div class="filter-bar">
         ${receivedSelect("source", "Came in by", "All", SOURCE_OPTIONS())}
         ${receivedSelect("status", "Status", "All", STATUS_OPTIONS)}
-        ${receivedSelect("job", "Job", "All jobs", [], jobFilterOptions(state.jobs, receivedFilter.job))}
+        ${jobFilterShown(state.jobs) ? receivedSelect("job", "Job", "All jobs", [], jobFilterOptions(state.jobs, receivedFilter.job)) : ""}
         ${receivedSelect("sort", "Sort", "", SORT_OPTIONS)}
       </div>
       ${rows.length ? `<div class="table-wrap"><table>
@@ -279,7 +284,7 @@ function receivedHtml() {
           <td>${receivedStatus(r)}${r.why ? `<div class="sub">${r.why}</div>` : ""}
             <div class="row-actions">${r.status === "new" ? "" : `<button class="btn small secondary" data-action="inbox-undo" data-item="${r.id}">Undo</button>`}<button class="linkish" data-action="print-received" data-item="${r.id}">Print</button></div></td></tr>`).join("")}
       </table></div>${moreButton("inbox", page)}`
-      : !page ? `<p class="sub">Loading…</p>` : emptyState(filtered ? "Nothing matches these filters." : "Nothing has come in yet.")}
+      : !page ? `<p class="sub">Loading…</p>` : emptyState(filtered ? "Nothing matches these filters" : "Nothing received yet", "", filtered ? "" : `<button class="btn" data-action="nav" data-view="import">Import</button>`)}
     </div>`;
 }
 
@@ -423,7 +428,7 @@ export const views = {
       <h1>Inbox</h1>
       <div class="card inbox-waiting">
         <div class="top"><h2>Waiting (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
-        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting.")}
+        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting")}
       </div>
       ${dropzoneHtml(true)}
       <p class="sub">Add files or paste notes on <a href="/data/import" data-action="nav" data-view="import">Import</a>.</p>
@@ -516,7 +521,7 @@ export const actions = {
     const j = it && state.jobs.find(x => x.id === it.says_done_job_id);
     const res = j ? await fetch(`/api/jobs/${encodeURIComponent(j.id)}/final-preview`).catch(() => null) : null;
     const words = res && res.ok ? finalPayAppConfirm(j, await res.json())
-      : { text: `Record ${unesc(j ? j.name : "the job")} as finished? ${termText("This bills the rest of the contract on a final pay app.")}`, button: termText("Final Pay App") };
+      : { text: `Record ${unesc(j ? j.name : "the job")} as finished? ${termText("This bills the rest of the contract on a final pay app.")}`, button: termText("Final pay app") };
     const answer = await askConfirm(words.text, words.button, false, "Just file the message");
     if (!answer) return;
     if (answer === "alt") { if (it) await post(`/api/inbox/${it.id}/file`, { job_id: it.says_done_job_id, kind: it.kind }); return; }

@@ -52,14 +52,14 @@ OLD = {
     r"\baudit\b": "Activity log",
     r"\bblockers?\b": "Fix N things before sending / Before you can finish this job",
     r"\bchase retainage\b": "Ask for retainage",
-    r"\bteach (the )?playbook\b": "Client Sent Pay App Back",
+    r"\bteach (the )?playbook\b": "Client sent pay app back",
     r"\bleft rail\b": "Settings, Company",
     r"(?-i:\bChange Orders\b)": "Change orders",
     r"(?-i:\bDaily [Rr]ecord\b)(?=,| and| saved| page| tab)|\bsave to job record\b|\badd a note to the record\b|\battach files\b": "New job record (Nov 3 overhaul)",
     r"\bwho pays you\?": "Client type (J2, Oct 29 review)",
     r"\breopen job\b": "Add more work (J9, Oct 29 review)",
     r"\bai assisted\b": "(never used)",
-    r"(?-i:\bNeeds you\b)": "To Do",
+    r"(?-i:\bNeeds you\b)": "To do",
 }
 
 PARENTHESES = re.compile(r"\([^()]*\)")

@@ -68,7 +68,7 @@ test("the quantities-not-added toast reads as plain words, not HTML entities", a
   delete dom.byId.toast;
 });
 
-test("the Calendar's Tasks block lists To Do items and the calendar's dates in the period, overdue ones too", () => {  // T6
+test("the Calendar's Tasks block lists To do items and the calendar's dates in the period, overdue ones too", () => {  // T6
   page.setMe({ id: "u1", name: "Pat", company_id: "co-p", role: "owner" });
   const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
   core.setState({ ...company([job("j1", "OAK", [])]),

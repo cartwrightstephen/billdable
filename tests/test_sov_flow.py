@@ -64,7 +64,7 @@ class PeriodTotalTests(unittest.TestCase):
         self.assertEqual((p["suggested_gross_cents"], p["suggested_retainage_cents"], p["suggested_net_cents"]), (276_000, 27_600, 248_400))
         self.assertEqual(p["draft"], None, "a job record makes no draft")
         self.assertEqual(job["invoices"], [])
-        # Progress Pay App starts from the suggested values.
+        # Progress pay app starts from the suggested values.
         domain.record_sov_progress(state, job["id"], {})
         draft = open_draft(job)
         self.assertEqual((draft["gross_cents"], draft["retainage_cents"], draft["amount_cents"]), (276_000, 27_600, 248_400))
@@ -342,7 +342,7 @@ class OverrideTests(unittest.TestCase):
         self.assertIs(open_draft(job), draft)
         self.assertEqual(draft["gross_cents"], 258_813)
         self.assertEqual(p["suggested_gross_cents"], (135_000 + 150_000) * 115 // 100)
-        # Progress Pay App picks up what else was recorded and keeps the changed amount.
+        # Progress pay app picks up what else was recorded and keeps the changed amount.
         domain.record_sov_progress(state, job["id"], {})
         self.assertEqual(open_draft(job)["gross_cents"], 258_813)
         self.assertTrue(any("suggested $1,350.00, final stays $750.55" in t for t in audit_texts(state, "payapp_amount_changed")))

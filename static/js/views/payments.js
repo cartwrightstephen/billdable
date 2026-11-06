@@ -116,21 +116,19 @@ export function paymentsImportHtml() {
 function noPaymentsButton() {
   const open = openJobs(state.jobs);
   const waiting = open.find(j => j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status)));
-  if (waiting) return `<button class="btn" data-action="record-payment" data-id="${waiting.id}">Record a Payment</button>`;
+  if (waiting) return `<button class="btn" data-action="record-payment" data-id="${waiting.id}">Record a payment</button>`;
   if (payAppStarts(state.jobs, perms()).length) return `<button class="btn" data-action="payapp-new">${termText("New pay app")}</button>`;
   if (open.length) return `<button class="btn" data-action="open-job" data-id="${open[0].id}" data-focus=".next-card">Open ${open[0].name}</button>`;
   return `<button class="btn" data-action="onb-newjob">New job</button>`;
 }
 
 // This module's pages, by the name their address opens (routes.js).
-export const views = {
-  payments() {
+// The payments received, newest first: Pay apps' Payments filter (round 1, item 19: once a tab).
+export function paymentsListHtml() {
     const pays = [];
     // A finished job's payments are in its job file (J9).
     openJobs(state.jobs).forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     return `
-      <h1>Payments</h1>
-      <p class="sub">Import payments from QuickBooks, a CSV file or the connection, on <a href="/data/import" data-action="nav" data-view="import">Import</a>.</p>
       ${pays.length ? `<div class="table-wrap">
         <table>
           <tr><th>Job</th><th>Pay app</th><th>Amount</th><th>Reference</th><th>Received</th></tr>
@@ -147,9 +145,11 @@ export const views = {
           }).join("")}
         </table>
       </div>` : emptyState("No payments yet", "", noPaymentsButton())}
+      <p class="sub">Payments from QuickBooks or a CSV file come in on <a href="/data/import" data-action="onb-go" data-view="import" data-focus="#qbo-csv">Import</a>.</p>
     `;
-  },
-};
+}
+
+export const views = {};
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {

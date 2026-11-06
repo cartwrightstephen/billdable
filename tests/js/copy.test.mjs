@@ -52,7 +52,7 @@ test("no customer in what the page says: they are Clients", () => {
 
 test("the Results cards and the Diary use Stephen's words", () => {
   const today = text["js/views/today.js"], daily = text["js/views/daily.js"];
-  for (const s of ["Days from Job Completion to Pay App Sent", "Days from Pay App Sent to Paid", "Pay app rejections by Clients", "Jobs completed with outstanding billings"]) {
+  for (const s of ["Days from job completion to pay app sent", "Days from pay app sent to paid", "Pay app rejections by Clients", "Jobs completed with outstanding billings"]) {
     assert.ok(today.includes(s), s);
   }
   assert.match(daily, /<label for="daily-notes">Diary<\/label>/);

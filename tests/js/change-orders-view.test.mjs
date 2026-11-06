@@ -20,7 +20,7 @@ test("the list has no form; New change order with several open jobs asks for the
   core.setState(company([job("ja", "Oldest job"), job("jb", "Newer job")]));
   let html = reg.views.cos();
   assert.doesNotMatch(html, /data-form-key="newco"/, "the change order form lives on the job page");
-  assert.match(html, /data-action="co-new"[^>]*>New Change Order</);
+  assert.match(html, /data-action="co-new"[^>]*>New change order</);
   page.formOpen.copick = true;
   html = reg.views.cos();
   assert.match(html, /<select id="new-co-job"[^>]*><option value="" selected>Pick a job…<\/option><option value="ja">Oldest job<\/option>/);
@@ -37,6 +37,9 @@ test("the New change order form asks the reason, pricing, cost lines and the day
   assert.match(html, /<select id="co-reason"[^>]*><option value="" selected>Pick why the scope changed…<\/option><option value="owner_request">Owner request<\/option>/);
   for (const s of ["Unforeseen condition", "Design issue", "Value engineering", "Description (required for Other)", "Contract section or original scope it changes",
     "Time and materials", "Add a cost line", "Work started on (optional)", "Backup from the job records"]) assert.ok(html.includes(s), s);
+  // Two pricing choices are two buttons, not a select (round 1, item 8).
+  assert.match(html, /data-action="seg-pick" data-for="co-pricing" data-value="lump_sum" aria-pressed="true">/);
+  assert.doesNotMatch(html, /<select id="co-pricing"/);
   assert.match(html, /data-co-backup="rec-1"/);
   assert.doesNotMatch(html, /data-co-backup="rec-2"/, "a daily record isn't backup");
   assert.doesNotMatch(html, /style=|onclick=/);
@@ -92,7 +95,7 @@ test("a job without change orders: its page points to the job's form instead of 
   page.setLocation("co-detail", "ja", "");
   const html = reg.views.coDetail();
   assert.match(html, /No change orders on A job/);
-  assert.match(html, /data-action="co-open-form" data-id="ja">New Change Order</);
+  assert.match(html, /data-action="co-open-form" data-id="ja">New change order</);
   assert.doesNotMatch(html, /data-form-key="newco"/);
 });
 

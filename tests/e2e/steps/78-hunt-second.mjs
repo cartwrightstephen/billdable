@@ -100,7 +100,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await p.context().close();
   });
 
-  await step("A refund a later change order leaves short shows owed, and Record a Payment takes it", async () => {
+  await step("A refund a later change order leaves short shows owed, and Record a payment takes it", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     const id = await made(p, "Smoke refund");
     await sendAndPay(p, id);
@@ -113,7 +113,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await p.goto(`${BASE}/jobs/${id}`);
     const row = p.locator('[data-blocker="outstanding"]');
     await row.filter({ hasText: "owed back" }).waitFor();
-    await row.getByRole("button", { name: "Record a Payment" }).click();
+    await row.getByRole("button", { name: "Record a payment" }).click();
     await p.locator('#match-amt').waitFor();
     await p.locator('[data-action="match"]').click();
     await p.waitForFunction(async (jobId) => (await (await fetch(`/api/jobs/${jobId}`)).json()).job.money.refund_owed_cents === 0, id);
@@ -127,7 +127,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await signedCo(p, id, -500000);
     assert.equal((await call(p, `/api/jobs/${id}/retainage-paid`, { amount_cents: 500000, reference: "chk 2" })).status, 200);
     await p.goto(`${BASE}/jobs/${id}`);
-    await p.locator('[data-blocker="overbilled"]').getByRole("button", { name: "Take Credit off Retainage" }).click();
+    await p.locator('[data-blocker="overbilled"]').getByRole("button", { name: "Take credit off retainage" }).click();
     await p.locator("#retcredit-reason").fill("CO 1 comes off retainage");
     await p.locator('[data-action="retainage-credit"]').click();
     await p.waitForFunction(async (jobId) => (await (await fetch(`/api/jobs/${jobId}`)).json()).job.money.retainage_open_cents === 0, id);

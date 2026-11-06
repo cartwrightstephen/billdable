@@ -1,7 +1,7 @@
-// Dashboard: the overview with the To Do list and the setup checklist, Results, and Calendar
-// with its Tasks block. The Daily record is in daily.js.
+// Dashboard: the overview with the To Do list, the setup checklist and Results (folded), and
+// Calendar with its Tasks block. The Daily record is in daily.js.
 import { unesc, esc, escDeep, money, toDate, fmtDate } from "../format.js";
-import { isBlocked, nextStep, statusPill, openJobs } from "../jobs.js";
+import { isBlocked, nextStep, statusPill, openJobs, jobFilterShown } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { TODO_PERIODS, TASK_PERIODS, BALL_WORDS, localDay, periodRange, todoItems, itemsInPeriod, assignees } from "../tasks.js";
@@ -10,9 +10,10 @@ import { worstKind, followUpEvent } from "../calendar.js";
 import { todoHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
 import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd, teamData, setTeamData } from "../state.js";
-import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post, can } from "../app-core.js";
+import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post, can, moreDetails } from "../app-core.js";
 import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
+import { reminderItems } from "./automations.js";
 
 export let metricsData = null;   // {period, data} from /api/metrics
 export let metricsPeriod = "90";
@@ -64,10 +65,10 @@ function taskFormHtml(people) {
   return `<div class="card task-form" data-form-key="task">
     <div class="form-grid">
       ${field({ form: "task", name: "title", id: "task-title", label: "What needs doing", required: true, wide: true, placeholder: "Order the tile for the Oak Street bath" })}
-      ${field({ form: "task", name: "job_id", id: "task-job", label: "Job", options: [["", "No job"], ...open.map(j => [j.id, unesc(j.name)])] })}
-      ${field({ form: "task", name: "assignee_id", id: "task-assignee", label: "Assignee", options: [["", "Unassigned"], ...people.map(p => [p.id, unesc(p.name)])], value: me ? me.id : "" })}
+      ${open.length ? field({ form: "task", name: "job_id", id: "task-job", label: "Job", options: [["", "No job"], ...open.map(j => [j.id, unesc(j.name)])] }) : ""}
+      ${people.length > 1 ? field({ form: "task", name: "assignee_id", id: "task-assignee", label: "Assignee", options: [["", "Unassigned"], ...people.map(p => [p.id, unesc(p.name)])], value: me ? me.id : "" }) : `<input type="hidden" data-field="assignee_id" value="${me ? me.id : ""}">`}
       ${field({ form: "task", name: "due", id: "task-due", label: "Due", type: "date" })}
-      ${field({ form: "task", name: "ball_in_court", id: "task-ball", label: "Ball in court", options: Object.entries(BALL_WORDS) })}
+      ${field({ form: "task", name: "ball_in_court", id: "task-ball", label: "Ball in court", options: Object.entries(BALL_WORDS), buttons: true })}
     </div>
     <div class="form-inline"><button class="btn" data-action="task-add">Add task</button><button class="btn secondary" data-action="task-cancel">Cancel</button></div>
   </div>`;
@@ -77,13 +78,15 @@ function taskFormHtml(people) {
 function todoCardHtml() {
   loadTeamOnce();
   const today = localDay(new Date());
-  const everyone = todoItems(state);
-  const items = todoWho === "mine" ? todoItems(state, { who: "mine", meId: me ? me.id : "" }) : everyone;
+  // The reminders fired in the app are this person's own, so they show under Mine too.
+  const fired = reminderItems(state.today_rows || []);
+  const everyone = todoItems(state).concat(fired);
+  const items = todoWho === "mine" ? todoItems(state, { who: "mine", meId: me ? me.id : "" }).concat(fired) : everyone;
   const shown = itemsInPeriod(items, periodRange(todoPeriod, new Date(), todoRange.from, todoRange.to), today);
   const people = assignees(teamData, me, everyone);
   const who = (k, label) => `<button class="${todoWho === k ? "btn" : "btn secondary"} small" data-action="todo-who" data-who="${k}" aria-pressed="${todoWho === k}">${label}</button>`;
   return `<section class="card action-queue" aria-labelledby="needs-action">
-        <div class="top"><h2 id="needs-action">To Do${shown.length ? ` <span class="count-badge">${shown.length}</span>` : ""}</h2>
+        <div class="top"><h2 id="needs-action">To do${shown.length ? ` <span class="count-badge">${shown.length}</span>` : ""}</h2>
           <button class="btn small secondary" data-action="task-new">Add task</button></div>
         <div class="filter-bar todo-filters">
           <span role="group" aria-label="Whose">${who("mine", "Mine")}${who("everyone", "Everyone")}</span>
@@ -166,8 +169,11 @@ async function setChecklist(show) {
   return true;
 }
 
+let metricsAsking = "";   // the period being asked for, so a redraw meanwhile doesn't ask again
 export async function loadMetrics() {
   const period = metricsPeriod;
+  if (metricsAsking === period) return;
+  metricsAsking = period;
   const asked = me;
   try {
     const res = await fetch(`/api/metrics?period=${period}`);
@@ -176,7 +182,8 @@ export async function loadMetrics() {
     if (me !== asked) return;   // signed out while this was asked: the last company's figures
     metricsData = { period, data: escDeep(data) };
   } catch (_) { setNetBanner(true); return; }
-  if (currentView === "results") render();
+  finally { if (metricsAsking === period) metricsAsking = ""; }
+  if (currentView === "dashboard") render();
 }
 
 // The setup checklist on Today (R2-03). Each step's button goes to where that step is done:
@@ -194,18 +201,18 @@ function onboardingHtml() {
   const draftJob = open.find(j => j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status)));
   const draft = draftJob && draftJob.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   const steps = [
-    { text: termText("Add your company address, phone and licence number (they print on every pay app)."), done: !!String(state.company.address || "").trim(),
-      label: "Company details", attrs: `data-action="onb-go" data-view="company" data-focus="#co-address"`, always: true },
     { text: termText("Create your first job: contract amount, client and where pay apps go."), done: jobs.length > 0,
       label: "New job", attrs: `data-action="onb-newjob"`, always: true },
+    { text: termText("Add your company address, phone and licence number (they print on every pay app)."), done: !!String(state.company.address || "").trim(),
+      label: "Company details", attrs: `data-action="onb-go" data-view="company" data-focus="#co-address"`, always: true },
     { text: "Put the contract and supporting documents on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
     { text: "Bill line by line: replace the job's one lump-sum line with your schedule of values (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present && !j.sov_view.auto),
       label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.present && j.sov_view.auto && j.sov_view.editable), "#sov-card"), needsJob: true },
-    { text: termText("Use Progress Pay App or Final Pay App. Duracash drafts the pay app and lists the supporting documents the client needs."), done: invoices.length > 0,
+    { text: termText("Use Progress pay app or Final pay app. Duracash drafts the pay app and lists the supporting documents the client needs."), done: invoices.length > 0,
       label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
-    { text: "Add the missing supporting documents, then Review & Send.", done: invoices.some(i => i.sent_at),
-      label: draft ? "Review & Send" : "Open the job",
+    { text: "Add the missing supporting documents, then Review & send.", done: invoices.some(i => i.sent_at),
+      label: draft ? "Review & send" : "Open the job",
       attrs: draft ? `data-action="open-payapp" data-job="${draftJob.id}" data-inv="${draft.id}" data-focus=".send-check"` : goJob(billed, ".next-card"), needsJob: true },
     { text: "Already been paid on some jobs? Import the payments from QuickBooks.", optional: true, done: jobs.some(j => (j.payments || []).length),
       label: "Import payments", attrs: `data-action="onb-go" data-view="import" data-focus="#qbo-csv"`, needsJob: true },
@@ -215,15 +222,20 @@ function onboardingHtml() {
   const required = steps.filter(st => !st.optional);
   // Its job is the first pay app: once one has gone out, it is done, whatever else is left.
   if (required.every(st => st.done) || anyPayAppSent(state)) return "";
+  const optional = steps.filter(st => st.optional);
   const done = required.filter(st => st.done).length;
-  const next = steps.find(st => !st.optional && !st.done);
+  const next = required.find(st => !st.done);
   const button = (st) => st.done || !st.attrs || (st.needsJob && !jobs.length) ? ""
     : ` <button class="btn small${st === next ? "" : " secondary"}" ${st.attrs}>${st.label}</button>`;
+  const item = (st) => `<li class="${st.done ? "done" : st === next ? "next" : ""}">${st.done ? "✓ " : ""}${st.text}${st === next || st.optional || st.always ? button(st) : ""}</li>`;
+  // The count is the numbered list's; the optional steps fold under their own count.
   return `<div class="card onboarding">
     <button class="help-dismiss" data-action="onb-dismiss" title="Hide this" aria-label="Hide the setup checklist">×</button>
     <h2>${termText("Get your first pay app out")}</h2>
     <p class="sub">${done} of ${required.length} steps done.</p>
-    <ol class="onb-steps">${steps.map(st => `<li class="${st.done ? "done" : st === next ? "next" : ""}">${st.done ? "✓ " : ""}${st.optional ? "Optional: " : ""}${st.text}${st === next || st.optional || st.always ? button(st) : ""}</li>`).join("")}</ol>
+    <ol class="onb-steps">${required.map(item).join("")}</ol>
+    ${optional.length ? `<details class="onb-optional" data-more="onb-optional"${moreDetails["onb-optional"] ? " open" : ""}><summary>Optional steps (${optional.length})</summary>
+      <ul class="onb-steps">${optional.map(item).join("")}</ul></details>` : ""}
   </div>`;
 }
 
@@ -259,6 +271,40 @@ function filteredJobs() {
   return jobs;
 }
 
+// Results (round 1, item 19: once a tab of its own), folded on the Dashboard under the money tiles
+// once a pay app has gone out; its line says the figure people ask for, sent to paid.
+function resultsHtml() {
+  if (!anyPayAppSent(state)) return "";
+  const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
+  const ready = metricsData && metricsData.period === metricsPeriod;
+  const m = ready ? metricsData.data : null;
+  const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
+  const num = (v) => v === null || v === undefined ? "—" : String(v);
+  const line = m ? ` <span class="sub">· ${termText("sent to paid")}: ${days(m.sent_to_paid_median_days)} median · ${m.pay_apps_paid} paid · ${metricsPeriod === "90" ? "last 90 days" : "all time"}</span>` : "";
+  return `<details class="card dash-results" id="results" data-more="dash-results"${moreDetails["dash-results"] ? " open" : ""}><summary><strong>Results</strong>${line}</summary>
+      <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}</div>
+      ${!m ? `<p class="sub">Loading…</p>` : `
+      <div class="metrics">
+        <div class="metric"><div class="k">${termText("Days from job completion to pay app sent")}</div><div class="v">${num(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
+        <div class="metric"><div class="k">${termText("Days from pay app sent to paid")}</div><div class="v">${num(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${num(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
+        <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
+        <div class="metric"><div class="k">${termText("Pay app rejections by Clients")}</div><div class="v">${m.sent_back}</div><div class="sub row-sub">of ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} ${termText("pay apps")}</div></div>
+        <div class="metric"><div class="k">Paid</div><div class="v">${money(m.paid_cents)}</div><div class="sub row-sub">${m.pay_apps_paid} ${termText("pay apps")}</div></div>
+        <div class="metric"><div class="k">Change orders billed</div><div class="v">${money(m.change_orders_billed_cents)}</div><div class="sub row-sub">signed, all time</div></div>
+        <div class="metric"><div class="k">Held-back money received</div><div class="v">${money(m.retainage_collected_cents)}</div><div class="sub row-sub">all time</div></div>
+      </div>
+      <h3>Jobs completed with outstanding billings</h3>
+      ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">None.</p>`}
+      ${m.by_payer.length ? `<div class="table-wrap"><table>
+        <tr><th>Client</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
+        ${m.by_payer.map(r => `<tr><td>${r.payer}</td><td class="num">${r.average_days}</td><td class="num">${r.paid}</td></tr>`).join("")}
+      </table></div>` : ""}`}
+    </details>`;
+}
+
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   dashboard() {
@@ -276,22 +322,23 @@ export const views = {
       ${isDemo && !helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
-          <strong>Try the demo:</strong> open a job, add its missing supporting documents, Review & Send, record the payment, send the waiver, then finish the job.
+          <strong>Try the demo:</strong> open a job, add its missing supporting documents, Review & send, record the payment, send the waiver, then finish the job.
         </div>` : ""}
       ${state.jobs.length || (state.tasks || []).length ? todoCardHtml() : ""}
-      <div class="metrics">
+      <div class="metrics dash-tiles">
         <div class="metric ${hero === "unbilled" ? "highlight" : ""}"><div class="k">Done, not billed</div><div class="v">${money(t.unbilled_cents)}</div></div>
         <div class="metric ${hero === "outstanding" ? "highlight" : ""}"><div class="k">Outstanding</div><div class="v">${money(t.outstanding_cents)}</div></div>
         <div class="metric"><div class="k">Held back, still owed</div><div class="v">${money(t.retainage_cents)}</div></div>
         <div class="metric"><div class="k">Billed this month</div><div class="v">${money(billedThisMonth(state.jobs))}</div></div>
       </div>
+      ${resultsHtml()}
       <p class="sub">${open.length} active job${open.length === 1 ? "" : "s"}${t.blocked_jobs ? ` · ${t.blocked_jobs} can't be sent yet` : ""}</p>
       ${state.jobs.length ? `
       <div class="stages" role="group" aria-label="Show jobs">
         ${stage("all", "Open and recent")}${stage("draft", "Ready to send")}${stage("blocked", "Can't send yet")}${stage("sent", "Unpaid")}${stage("waiver", "Waiver due")}${stage("complete", "Completed this month")}
       </div>
       ${jobs.length ? `<div class="table-wrap">
-        <table class="sortable">
+        <table class="sortable dash-jobs">
           <tr>
             ${sortHead("name", "Job")}
             <th>Client</th>
@@ -306,12 +353,12 @@ export const views = {
           ${jobs.map(j => {
             const m = j.money;
             return `<tr>
-              <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
+              <td class="dj-keep dj-name"><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
               <td>${j.payer.name}</td>
-              <td>${statusPill(j)}</td>
+              <td class="dj-keep">${statusPill(j)}</td>
               <td class="num">${money(m.contract_total_cents)}</td>
               <td class="num">${money(m.billed_cents)}</td>
-              <td class="num">${money(m.outstanding_cents)}</td>
+              <td class="num dj-keep">${money(m.outstanding_cents)}</td>
               <td class="num">${money(m.unbilled_completed_cents)}</td>
               <td class="num">${money(m.retainage_open_cents)}</td>
               <td class="next-action">${nextStep(j)}</td>
@@ -319,36 +366,6 @@ export const views = {
           }).join("")}
         </table>
       </div>` : emptyState("No jobs in this view")}` : ""}
-    `;
-  },
-  results() {
-    const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
-    const head = `<h1>Results</h1>
-      <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}</div>`;
-    if (!metricsData || metricsData.period !== metricsPeriod) return head + `<p class="sub">Loading…</p>`;
-    const m = metricsData.data;
-    const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
-    const num = (v) => v === null || v === undefined ? "—" : String(v);
-    return head + `
-      <div class="metrics">
-        <div class="metric"><div class="k">${termText("Days from Job Completion to Pay App Sent")}</div><div class="v">${num(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
-        <div class="metric"><div class="k">${termText("Days from Pay App Sent to Paid")}</div><div class="v">${num(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${num(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
-        <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
-        <div class="metric"><div class="k">${termText("Pay app rejections by Clients")}</div><div class="v">${m.sent_back}</div><div class="sub row-sub">of ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
-      </div>
-      <div class="metrics">
-        <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} ${termText("pay apps")}</div></div>
-        <div class="metric"><div class="k">Paid</div><div class="v">${money(m.paid_cents)}</div><div class="sub row-sub">${m.pay_apps_paid} ${termText("pay apps")}</div></div>
-        <div class="metric"><div class="k">Change orders billed</div><div class="v">${money(m.change_orders_billed_cents)}</div><div class="sub row-sub">signed, all time</div></div>
-        <div class="metric"><div class="k">Held-back money received</div><div class="v">${money(m.retainage_collected_cents)}</div><div class="sub row-sub">all time</div></div>
-      </div>
-      <div class="card"><h2>Jobs completed with outstanding billings</h2>
-        ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">None.</p>`}
-      </div>
-      ${m.by_payer.length ? `<div class="table-wrap"><table>
-        <tr><th>Client</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
-        ${m.by_payer.map(r => `<tr><td>${r.payer}</td><td class="num">${r.average_days}</td><td class="num">${r.paid}</td></tr>`).join("")}
-      </table></div>` : ""}
     `;
   },
   calendar() {
@@ -404,13 +421,13 @@ export const views = {
     return `
       <h1>Calendar</h1>
       <p class="notice" id="cal-not-legal">These are your contract and follow-up dates, not legal deadlines. Check lien and prompt-pay deadlines with your attorney.</p>
-      <div class="filter-bar">
+      ${jobFilterShown(openJobs(state.jobs)) ? `<div class="filter-bar">
         <label for="cal-filter" class="inline-label">Job</label>
         <select id="cal-filter" data-filter-for="calendar">
           <option value="all">All jobs</option>
           ${openJobs(state.jobs).map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
         </select>
-      </div>
+      </div>` : ""}
       ${tasksBlockHtml(eventsByDay)}
       ${dayCard}
       <div class="cal-header">

@@ -1,5 +1,5 @@
-// Import/Export (Stephen's Oct 29 review): Import's Quantities done reads a CSV or Excel sheet
-// against a job's schedule of values, shows each row, and adds only on the tap (M1); Export lists
+// Import/Export (Stephen's Oct 29 review): the Quantities import (on the job's schedule card since
+// round 1) reads a CSV or Excel sheet against a job's schedule of values, shows each row, and adds only on the tap (M1); Export lists
 // jobs, pay apps, payments and change orders as CSV files (I1). node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -16,31 +16,24 @@ const company = (jobs) => ({ company: { name: "Pine" }, jobs, payers: [], inbox:
 const job = (id, name, present, extra = {}) => ({ id, name, code: id.toUpperCase(), closed: false, invoices: [], payments: [], change_orders: [],
   sov_view: { present, editable: false }, ...extra });
 
-test("Quantities done lists only open jobs with a schedule of values; with none it says what to do, or goes", () => {
+// Round 1 (item 19): the import is on the job's schedule card, not a card of Import's own.
+const qtyCard = (id) => { page.formOpen.qtyimport = id; return data.qtyImportForJob(core.jobDetails[id] || page.state.jobs.find(j => j.id === id)); };
+
+test("Import quantities is on an open job's schedule card, for that job only; Import has no card of its own", () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState(company([job("ja", "Elm wiring", true), job("jb", "Oak deck", false), job("jc", "Old wiring", true, { closed: true })]));
-  const card = data.views.import().split('id="qty-import"')[1];
-  assert.match(card, /<h2>Quantities done<\/h2>/);
-  assert.match(card, /<select id="qty-import-job"[^>]*><option value="">Pick a job…<\/option><option value="ja" selected>Elm wiring \(JA\)<\/option><\/select>/);
+  page.formOpen.qtyimport = false;
+  assert.match(data.qtyImportForJob(page.state.jobs[0]), /data-action="qty-open" data-id="ja">Import quantities</);
+  assert.equal(data.qtyImportForJob(page.state.jobs[1]), "", "no schedule, nothing to add to");
+  assert.equal(data.qtyImportForJob(page.state.jobs[2]), "", "a finished job takes none");
+  const card = qtyCard("ja");
+  assert.match(card, /<input type="hidden" id="qty-import-job" name="job" data-field="job" value="ja">/);
   assert.doesNotMatch(card, /Oak deck|Old wiring/);
   assert.match(card, /data-action="qty-read"/);
   assert.match(card, /data-action="qty-choose-file"/);
-  // No schedule yet, but one can be set: the card says so, and the card below does it.
-  core.setState(company([job("jb", "Oak deck", false, { sov_view: { present: false, editable: true } })]));
-  const page2 = data.views.import();
-  assert.match(page2.split('id="qty-import"')[1], /none of your open jobs has one yet\. Set one up on the job/);
-  assert.match(page2.split('id="sov-import"')[1], /<option value="jb">Oak deck/);
-  assert.doesNotMatch(page2, /No job has a schedule of values/);
-  assert.match(page2.split('id="qty-import"')[1], /data-action="open-job" data-id="jb" data-focus="#sov-card">Open Oak deck</);
-  // Every job's first pay app went out in dollars: it says why, opens one, and the schedule card goes.
-  core.setState(company([job("jb", "Oak deck", false)]));
-  const none = data.views.import();
-  assert.match(none.split('id="qty-import"')[1], /Your open jobs bill in dollars/);
-  assert.match(none.split('id="qty-import"')[1], /data-id="jb" data-focus="#sov-card"/);
-  assert.doesNotMatch(none, /id="sov-import"/);
-  // No open job: nothing to say.
-  core.setState(company([]));
+  assert.match(card, /data-action="qty-close">Cancel</);
   assert.doesNotMatch(data.views.import(), /id="qty-import"|id="sov-import"/);
+  page.formOpen.qtyimport = false;
 });
 
 test("Read needs a job and rows; the preview escapes what the file said, and Add sends the same sheet", async () => {
@@ -58,7 +51,7 @@ test("Read needs a job and rows; the preview escapes what the file said, and Add
   dom.answers = [(path) => (path === "/api/import/quantities/preview" ? { status: 200, body: preview } : undefined)];
   await data.actions["qty-read"]();
   assert.deepEqual(dom.requests.map(r => [r.path, r.body]), [["/api/import/quantities/preview", { job_id: "ja", csv: "1,30", name: "" }]]);
-  const html = data.views.import();
+  const html = qtyCard("ja");
   // Only the Line and "Can't add because" cells wrap anywhere; the numbers stay on one line.
   assert.match(html, /<td class="num">2<\/td><td class="qty-text">1\. Rough-in<\/td>\s*<td class="num">0 ea<\/td><td class="num">30 ea<\/td><td class="num">30 ea<\/td><td class="num">400 ea<\/td><td class="qty-text">—<\/td>/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
@@ -76,10 +69,10 @@ test("Read needs a job and rows; the preview escapes what the file said, and Add
   dom.answers = [(path) => (path === "/api/import/quantities/apply" ? { status: 200, body: after } : undefined)];
   await data.actions["qty-apply"]();
   assert.deepEqual(dom.requests.map(r => [r.path, r.body]), [["/api/import/quantities/apply", { job_id: "ja", csv: "1,30", name: "", basis: "b1" }]]);
-  const done = data.views.import();
+  const done = qtyCard("ja");
   assert.match(done, /1 line added to PA-JA-01\./);
   assert.match(done, /<h3>Not added<\/h3><div class="list-item">Row 3 \(Gutters\): No line matches\.<\/div>/);
-  assert.match(done, /data-action="open-job" data-id="ja" data-focus="#sov-card">Open the job</);
+  page.formOpen.qtyimport = false;
   delete dom.all['[data-form-key="qtyimport"] [data-field]'];
   dom.answers = [];
 });
@@ -90,11 +83,12 @@ test("a job that can't take quantities now: the reason, and no Add button", asyn
   dom.answers = [(path) => (path === "/api/import/quantities/preview"
     ? { status: 200, body: { job_id: "ja", warnings: [], blocked: "The job is marked done, so every line is already counted as done.", can_add: 0, rows: [] } } : undefined)];
   await data.actions["qty-read"]();
-  const html = data.views.import();
+  const html = qtyCard("ja");
   assert.match(html, /The job is marked done/);
   assert.doesNotMatch(html, /qty-apply/);
   data.actions["qty-cancel"]();
-  assert.match(data.views.import(), /data-action="qty-read"/);
+  assert.match(qtyCard("ja"), /data-action="qty-read"/);
+  page.formOpen.qtyimport = false;
   delete dom.all['[data-form-key="qtyimport"] [data-field]'];
   dom.answers = [];
 });

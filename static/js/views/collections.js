@@ -61,7 +61,7 @@ export const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("Nothing unpaid")}
+      </div>` : emptyState(termText("No unpaid pay apps yet"), "", openJobs(state.jobs).length ? `<button class="btn" data-action="nav" data-view="payapps">${termText("Pay apps")}</button>` : `<button class="btn" data-action="onb-newjob">New job</button>`)}
     `;
   },
 };

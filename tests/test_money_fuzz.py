@@ -363,7 +363,7 @@ class Sequence:
         if sov.has_sov(job):
             assert (domain._sov_view(job, self.state).get("period") or {}).get("suggested_gross_cents", 0) >= 0, "a negative suggestion"
 
-    # ---------- getting it to Finish Job from wherever it ended up ----------
+    # ---------- getting it to Finish job from wherever it ended up ----------
     def finish(self):
         """Only what a person can do on the job page: whatever state the job is in, it reaches closed."""
         for _ in range(60):

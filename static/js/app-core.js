@@ -85,7 +85,8 @@ function addInfoIcon(labelEl, text, hostEl) {
   const icon = document.createElement("span");
   icon.className = "info";
   icon.textContent = "i";
-  icon.tabIndex = 0;
+  // Out of the Tab order (round 1, item 11): the field it is beside carries its words (a11yPass).
+  icon.tabIndex = -1;
   icon.setAttribute("role", "button");
   const named = (labelEl.textContent || "").replace(/\s*\*\s*$/, "").trim();
   icon.setAttribute("aria-label", named ? `What is ${named}?` : "What is this?");
@@ -167,6 +168,19 @@ export function toast(msg, action = null) {
 }
 function hideToast() { const el = document.getElementById("toast"); if (el) el.style.display = "none"; }
 
+// An old address that now opens part of a page (routes.js PATH_ALIASES "view#anchor"): once that
+// part is drawn, a fold opens, a filter button is pressed, and it is scrolled into view.
+let pendingAnchor = null;
+export function showAnchor() {
+  if (!pendingAnchor) return;
+  const el = document.getElementById(pendingAnchor) || document.querySelector(`[data-anchor="${CSS.escape(pendingAnchor)}"]`);
+  if (!el) return;   // not drawn yet: the next render tries again
+  pendingAnchor = null;
+  if (el.tagName === "BUTTON") { el.click(); return; }
+  if (el.tagName === "DETAILS") { el.open = true; if (el.dataset.more) moreDetails[el.dataset.more] = true; }
+  el.scrollIntoView({ block: "start" });
+}
+
 // Called once signed in: open the page in the address bar (or the one asked for while signed out).
 // The home-screen shortcuts (manifest.webmanifest, R6-04) add ?camera=1 to the Inbox and ?new=1
 // to Jobs. A page can't open the camera by itself, so Take a photo is put under the thumb.
@@ -177,6 +191,7 @@ export function applyLocation() {
   if (r.view === "jobs" && ask.get("new") === "1") formOpen.newjob = true;
   if (r.view === "inbox" && ask.get("camera") === "1") setCameraAsk(true);
   setLocation(r.view, r.jobId, r.detailId);
+  pendingAnchor = r.anchor || null;
   resetTrail(currentView, currentJobId, currentDetailId);   // arrived from outside the app
   history.replaceState(null, "", pathFor(currentView, currentJobId, currentDetailId));
 }
@@ -244,6 +259,7 @@ onSessionEnd(() => {
   actionEl = null;
   clearAllForms();
   for (const k of Object.keys(moreDetails)) delete moreDetails[k];
+  pendingAnchor = null;
 });
 
 function placeJob(full) {
@@ -442,6 +458,11 @@ function a11yPass(root) {
     if (!field) return;
     if (!field.id) field.id = `fld-${++fieldSeq}`;
     l.htmlFor = field.id;
+  });
+  // A label's (i) help is its field's description, since the icon takes no Tab stop.
+  root.querySelectorAll("label[for] .info").forEach(icon => {
+    const f = document.getElementById(icon.closest("label").htmlFor);
+    if (f && !f.hasAttribute("aria-description")) f.setAttribute("aria-description", icon.dataset.help);
   });
   root.querySelectorAll("input:not([type=hidden]):not([type=checkbox]), select, textarea").forEach(f => {
     if (f.getAttribute("aria-label") || (f.id && root.querySelector(`label[for="${CSS.escape(f.id)}"]`))) return;

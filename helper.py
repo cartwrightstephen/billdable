@@ -35,6 +35,7 @@ LOCK = threading.Lock()
 
 ANSWER_AT = 0.42      # confident match
 SUGGEST_AT = 0.22     # close enough to offer "did you mean"
+COVER_AT = 0.5        # share of the question's known words an answer must cover (_covers)
 
 STOPWORDS = set("""a an the i me my we our you your it its is are was were be been am do does did doing to of in on at for
 from with by about as into than then so and or but if can could would should will shall may might must how what when
@@ -120,19 +121,38 @@ def _score(q: list[str], entry: dict[str, Any], idf: dict[str, float]) -> float:
     if not qs:
         return 0.0
     w = lambda ts: sum(idf.get(t, math.log(1 + len(idf) or 2)) for t in ts)
-    best = 0.0
+    best, best_tokens = 0.0, set()
     for example in entry.get("questions", []):
         es = set(tokens(example))
         if not es:
             continue
         overlap = w(qs & es)
-        if overlap:
-            best = max(best, overlap / math.sqrt(w(qs) * w(es)))
+        if overlap and overlap / math.sqrt(w(qs) * w(es)) > best:
+            best, best_tokens = overlap / math.sqrt(w(qs) * w(es)), es
     kws = {normalize(k) for k in entry.get("keywords", [])}
     joined = " ".join(q)
-    hits = sum(1 for k in kws if k and (f" {k} " in f" {joined} "))
+    hit = [k for k in kws if k and (f" {k} " in f" {joined} ")]
     # Not capped at 1.0: a keyword hit breaks ties between equally good example matches.
-    return best + 0.12 * min(hits, 3)
+    score = best + 0.12 * min(len(hit), 3)
+    if not _covers(qs, best_tokens | {t for k in hit for t in k.split()}, idf):
+        return min(score, SUGGEST_AT - 0.01)
+    return score
+
+
+def _covers(qs: set[str], matched: set[str], idf: dict[str, float]) -> bool:
+    """Whether an answer covers the question (round 1, item 20). Of the question's words that some
+    answer uses (a job's name is no answer's), it must cover at least COVER_AT of their weight, and
+    the rarest of them, the one that says what the question is about: "my GC wants a notice to
+    owner" is about the notice, which the Client type answer, matching GC and owner, doesn't cover.
+    One that doesn't is neither the answer nor a "Did you mean": the helper says it doesn't know."""
+    known = {t for t in qs if t in idf}
+    hit = known & matched
+    if not known:
+        return True
+    if not hit or sum(idf[t] for t in hit) < COVER_AT * sum(idf[t] for t in known):
+        return False
+    missed = known - hit
+    return not missed or max(idf[t] for t in missed) <= max(idf[t] for t in hit)
 
 
 def rank(question: str, kb: list[dict[str, Any]] | None = None) -> list[tuple[float, dict[str, Any]]]:
@@ -225,7 +245,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
                     actions.append(_follow_up_btn(r))
                 else:
                     actions.append({"type": "path", "path": r["path"], "label": label})
-        return "Here is your To Do, most urgent first:\n" + "\n".join(lines), actions[:6]
+        return "Here is your To do, most urgent first:\n" + "\n".join(lines), actions[:6]
     if name == "money":
         t = snap["totals"]
         billed_month = sum(i["amount_cents"] for j in snap["jobs"] for i in j["invoices"]
@@ -376,7 +396,7 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
             reply["text"] = "I'm not sure I understood. Did you mean one of these?"
             reply["suggestions"] = [e["questions"][0] for e in close]
         else:
-            reply["text"] = ("I don't have an answer for that yet. I've saved the question so the Duracash team can add one. "
+            reply["text"] = ("I don't know that yet. I've saved the question so the Duracash team can add an answer. "
                              "Try asking what to do today, who owes you, or how to import an email.")
             reply["suggestions"] = ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"]
     log_id = "q-" + secrets.token_hex(6)

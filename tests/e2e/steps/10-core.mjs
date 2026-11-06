@@ -24,7 +24,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("the Dashboard lists what needs you and opens a job by its address", async () => {
     await page.goto(BASE + "/dashboard");
     await page.getByRole("heading", { name: "Overview" }).waitFor();
-    await page.getByRole("heading", { name: /To Do/ }).waitFor();
+    await page.getByRole("heading", { name: /To do/ }).waitFor();
     await page.locator(".action-item", { hasText: "Oak Street kitchen" }).getByRole("button", { name: "Open" }).click();
     await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/jobs/job-oak");
@@ -84,8 +84,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const panel = p.locator(".check-email");
     await panel.waitFor();
     // CI has no mail server, so the panel gives the server's reason instead of "We sent a confirmation link".
-    assert.match(await panel.innerText(), new RegExp(`(We sent a confirmation link|No confirmation link went) to ${email.replace(/[.]/g, "\\.")}`));
-    assert.match(await panel.innerText(), /set up your first job meanwhile/);
+    assert.match(await panel.innerText(), new RegExp(`(We sent a confirmation link|no link went) to ${email.replace(/[.]/g, "\\.")}`));
+    // One plain line under the heading, not a card above it (round 1, item 9).
+    assert.equal(await p.locator("h1 + .check-email").count(), 1);
     await panel.getByRole("button", { name: "Got it" }).click();
     await panel.waitFor({ state: "detached" });
     // The setup checklist's first step goes to the company address box (R2-03).
@@ -126,9 +127,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.goto(BASE + "/dashboard");
     const row = p.locator(".action-item", { hasText: "First porch" });
     await row.locator(".pill", { hasText: "Not billed yet" }).waitFor();
-    await row.getByRole("button", { name: "Progress Pay App" }).click();
+    await row.getByRole("button", { name: "Progress pay app" }).click();
     await p.getByRole("heading", { name: "First porch" }).waitFor();
-    await p.locator(".next-card .primary-action", { hasText: "Progress Pay App" }).click();
+    await p.locator(".next-card .primary-action", { hasText: "Progress pay app" }).click();
     // A new job's one lump-sum line: % done, with the period's total above it.
     await p.locator('[data-form-key="sovprogress"]').waitFor();
     await p.locator(".sov-progress .sov-period", { hasText: "This billing period" }).waitFor();
@@ -302,12 +303,12 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("heading", { name: "Turner office TI" }).waitFor();
     await page.getByRole("heading", { name: "Before you can finish this job" }).waitFor();
     assert.equal(await page.locator(".close-blocker-list li").count(), 2);
-    for (const name of ["Record a Payment", "Record Retainage Paid", "Ask for Retainage"]) {
+    for (const name of ["Record a payment", "Record retainage paid", "Ask for retainage"]) {
       assert.ok(await page.getByRole("button", { name, exact: true }).count() <= 1, `${name} shows once`);
     }
-    await page.locator('.job-actions').getByRole("button", { name: "Record a Payment" }).waitFor();
-    await page.locator('.job-actions').getByRole("button", { name: "Record Retainage Paid" }).waitFor();
-    assert.equal(await page.locator(".next-card .btn", { hasText: "Finish Job" }).count(), 0, "no Finish Job while unsettled");
+    await page.locator('.job-actions').getByRole("button", { name: "Record a payment" }).waitFor();
+    await page.locator('.job-actions').getByRole("button", { name: "Record retainage paid" }).waitFor();
+    assert.equal(await page.locator(".next-card .btn", { hasText: "Finish job" }).count(), 0, "no Finish job while unsettled");
   });
 
   await step("a sent pay app with nothing paid can be pulled back, with a reason first", async () => {
@@ -331,7 +332,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     for (let n = 0; n < 12; n++) {
       await page.getByRole("heading", { name: "Inman Park bath" }).waitFor();
       if (await page.locator(".job-head .pill", { hasText: "Closed" }).count()) break;
-      // While the customer has the pay app and no follow-up is due, Record a Payment is the main button.
+      // While the customer has the pay app and no follow-up is due, Record a payment is the main button.
       await page.locator(".next-card").waitFor();
       const main = page.locator(".next-card .primary-action");
       const label = (await main.innerText()).trim();
@@ -350,10 +351,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
           await page.locator(`#resolve-reason-${item}`).waitFor({ state: "detached" });
         }
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Review & Send") {
+      } else if (label === "Review & send") {
         // Every send passes "Before you send" (R1-06): Today's button opens the pay app there.
         await page.goto(BASE + "/dashboard");
-        await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & Send" }).click();
+        await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & send" }).click();
         await page.locator(".send-check").waitFor({ state: "visible" });
         assert.match(new URL(page.url()).pathname, /^\/money\/pay-app\//);
         await page.click('.send-check [data-action="send"]');
@@ -370,7 +371,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await failed.waitFor();
         assert.equal(await failed.locator('[data-action="email-retry"]').count(), 0);
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Choose Waiver and Send") {
+      } else if (label === "Choose waiver and send") {
         await main.click();
         await page.getByRole("heading", { name: /^Closeout: / }).waitFor();
         const sendWaiver = page.locator('[data-action="waiver"]');
@@ -390,16 +391,18 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await confirmIfAsked(page);
         for (let t = 0; t < 100 && (await sendWaiver.count()) >= before; t++) await new Promise((r) => setTimeout(r, 100));
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Record a Payment") {
+      } else if (label === "Record a payment") {
         await main.click();
-        const option = await page.locator("#match-inv option").first().innerText();
+        // One open pay app reads as text, not a one-option select (round 1, item 8).
+        const option = (await page.locator("#match-inv option").count()) ? await page.locator("#match-inv option").first().innerText()
+          : await page.locator('[data-form-key="match"] .field-value').first().innerText();
         // The amount starts at what is still owed on the pay app, and the date at today (R3-02).
         assert.equal((await page.inputValue("#match-amt")).replace(/[$,]/g, ""), option.match(/\$([\d,]+\.\d\d)/)[1].replace(/,/g, ""));
         assert.match(await page.inputValue("#match-date"), /^\d{4}-\d{2}-\d{2}$/);
         await page.fill("#match-ref", "CHK-2201");
         await page.click('[data-action="match"]');
         await page.locator("#match-inv").waitFor({ state: "detached" });
-      } else if (label === "Finish Job" && triedRefusal && !triedCancel) {
+      } else if (label === "Finish job" && triedRefusal && !triedCancel) {
         // Finishing asks first; Cancel changes nothing (R3-03).
         triedCancel = true;
         await main.click();
@@ -409,7 +412,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await confirmDialog(page).waitFor({ state: "detached" });
         const inman = await page.evaluate(async () => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === "job-inman"));
         assert.ok(inman && !inman.closed, "Cancel left the job open");
-      } else if (label === "Finish Job" && !triedRefusal) {
+      } else if (label === "Finish job" && !triedRefusal) {
         // A refusal shows under the button that was tapped: an unsigned change order added
         // behind the page's back makes Close fail, and the card says why.
         triedRefusal = true;
@@ -438,7 +441,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         }
       }
     }
-    for (const want of ["Review & Send", "Record a Payment", "Choose Waiver and Send", "Finish Job"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
+    for (const want of ["Review & send", "Record a payment", "Choose waiver and send", "Finish job"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
     await page.locator(".job-head .pill", { hasText: "Closed" }).waitFor();
   });
 
@@ -466,7 +469,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       await page.locator(".queue-more").waitFor({ state: "detached" });
       assert.ok(await rows.count() > 3);
     }
-    const follow = () => page.locator(".action-item", { hasText: "Turner office TI" }).getByRole("button", { name: "Send Follow-Up" });
+    const follow = () => page.locator(".action-item", { hasText: "Turner office TI" }).getByRole("button", { name: "Send follow-up" });
     if (await follow().count()) {
       await follow().click();
       await confirmDialog(page).waitFor();
@@ -518,10 +521,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("phone: no page scrolls sideways at 375 px", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
     const wide = [];
-    for (const path of ["/dashboard", "/dashboard/results", "/dashboard/calendar", "/jobs", "/jobs/daily", "/jobs/history", "/jobs/clients", "/jobs/job-oak",
+    for (const path of ["/dashboard", "/dashboard/calendar", "/jobs", "/jobs/daily", "/jobs/history", "/jobs/clients", "/jobs/job-oak",
                         "/communications", "/communications/outbox", "/data/import", "/data/export", "/money", "/money/packets",
-                        "/money/change-orders", "/money/collections", "/money/payments", "/money/waivers", "/money/retainage",
-                        "/automations", "/settings", "/settings/company", "/settings/team", "/settings/account", "/settings/billing",
+                        "/money/change-orders", "/money/collections", "/money/waivers", "/money/retainage",
+                        "/settings", "/settings/company", "/settings/team", "/settings/account", "/settings/billing",
                         "/settings/audit"]) {
       await phone.goto(BASE + path);
       await phone.locator("#view h1").first().waitFor();
@@ -531,10 +534,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.deepEqual(wide, [], "pages wider than the screen");
   });
 
-  await step("Money has five tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03, Oct 29 review
+  await step("Money has four tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03, Oct 29 review; round 1 item 19
     await page.goto(BASE + "/money");
     await page.locator(".tabs .tab", { hasText: "Closeout" }).waitFor();  // allInnerTexts doesn't wait for the page to draw
-    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout"]);
+    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Closeout"]);
     await page.locator("table th", { hasText: "Supporting documents" }).waitFor();
     await page.goto(BASE + "/money/packets");  // the old Paperwork tab's address opens Pay apps
     await page.getByRole("heading", { name: "Pay apps" }).waitFor();

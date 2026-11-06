@@ -25,7 +25,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.getByText("Added to the Inbox.").waitFor();
     await p.locator("#paste-text").fill("Gate code 4411");
     await p.getByRole("button", { name: "Add to Inbox" }).click();
-    await p.goto(BASE + "/communications");
+    // The toast goes to the Inbox (round 1, item 20).
+    await p.locator("#toast").getByRole("button", { name: "Open the Inbox" }).click();
+    await p.waitForURL(/\/communications$/);
     const gate = p.locator(".inbox-item", { hasText: "Gate code 4411" });
     await gate.getByRole("button", { name: "Dismiss" }).click();
     await gate.waitFor({ state: "detached" });
@@ -40,9 +42,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("Import: a QuickBooks payments CSV is read there; Payments links to it", async () => {  // I1
+  await step("Import: a QuickBooks payments CSV is read there; Pay apps' Payments filter links to it", async () => {  // I1, round 1 item 19
     const { ctx, p } = await newCompany("qbo-import");
     await p.goto(BASE + "/money/payments");
+    await p.locator('[data-action="payapp-filter"][data-filter="payments"][aria-pressed="true"]').waitFor();
     await p.locator("#view").getByRole("link", { name: "Import" }).click();
     await p.waitForURL(/\/data\/import$/);
     await p.locator("#qbo-csv").fill('Date,Transaction Type,Num,Name,Memo/Description,Amount\n10/09/2026,Payment,4417,Northline GC,,"1,000.00"\n');
@@ -117,7 +120,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("Import: quantities from a CSV file show row by row, then go onto the job's schedule of values", async () => {  // M1
+  await step("Import quantities on the job's schedule card: a CSV file shows row by row, then goes onto the schedule of values", async () => {  // M1, round 1 item 19
     const { ctx, p } = await newCompany("qty");
     const jobId = await p.evaluate(async () => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -131,9 +134,12 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       return id;
     });
     await p.goto(BASE + "/data/import");
+    await p.getByRole("heading", { name: "Import" }).waitFor();
+    assert.equal(await p.locator("#qty-import").count(), 0, "Import has no Quantities card");
+    await p.goto(BASE + `/jobs/${jobId}`);
+    await p.locator("#sov-card").getByRole("button", { name: "Import quantities" }).click();
     const card = p.locator("#qty-import");
-    await card.getByRole("heading", { name: "Quantities done" }).waitFor();
-    await p.selectOption("#qty-import-job", jobId);
+    await card.getByRole("heading", { name: "Import quantities" }).waitFor();
     const [chooser] = await Promise.all([p.waitForEvent("filechooser"), card.getByRole("button", { name: "Choose the file" }).click()]);
     await chooser.setFiles({ name: "foreman-log.csv", mimeType: "text/csv",
       buffer: Buffer.from("Item,Description,Qty this period\n1,Rough-in wiring,30\n2,Panel and feeders,25%\n9,Gutters,4\n") });
@@ -175,32 +181,33 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("Reminders start off, a person turns one on, and it shows in the app with a count", async () => {
+  await step("Reminders start in the app, live on My account under Notifications, and a fired one is a To do row that Open reads", async () => {  // round 1, item 19
     const { ctx, p } = await newCompany("reminders");
-    // A new job's client is complete: what is missing here is the draft's supporting documents.
+    // Work on a job record that no change order covers: a reminder the job's own To do row doesn't say.
     await p.evaluate(async () => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = (await (await fetch("/api/state")).json()).jobs[0];
-      await post(`/api/jobs/${j.id}/sov-progress`, { done: { [j.sov.lines[0].id]: "0.5" } });
+      await post(`/api/jobs/${j.id}/daily-record`, { notes: "Hall outlets", sections: { co_work: [{ description: "Two extra outlets in the hall" }] } });
     });
     await p.goto(BASE + "/automations");
-    await p.getByRole("heading", { name: "Reminders" }).waitFor();
-    assert.equal(await p.locator("input[data-reminder]:checked").count(), 0);
-    assert.equal(await p.locator("#reminder-items").count(), 0);
+    await p.getByRole("heading", { name: "Notifications" }).waitFor();
+    assert.equal(new URL(p.url()).pathname, "/settings/account");
+    assert.equal(await p.locator('input[data-reminder][value="app"]:checked').count(), 3, "in the app, from the start");
+    assert.equal(await p.locator('input[data-reminder][value="email"]:checked, input[data-reminder][value="text"]:checked').count(), 0);
     // No phone yet: Text is refused under its box, and nothing is saved.
     const box = (kind, channel) => p.locator(`input[data-reminder="${kind}"][value="${channel}"]`);
     await box("missing", "text").check();
-    await p.getByRole("button", { name: "Save" }).click();
-    await p.locator("#reminder-missing-err").getByText("My account").waitFor();
+    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
+    await p.locator("#reminder-missing-err").getByText("agree to texts", { exact: false }).waitFor();
     await box("missing", "text").uncheck();
-    await box("missing", "app").check();
-    await p.getByRole("button", { name: "Save" }).click();
-    const note = p.locator("#reminder-items .money-row", { hasText: "The pay app needs:" });
-    await note.waitFor();
-    const count = p.locator('.nav button[data-section="automations"] .count').first();
-    assert.equal(await count.innerText(), "1");
-    await note.getByRole("button", { name: "Mark read" }).click();
-    await count.waitFor({ state: "detached" });
+    await p.goto(BASE + "/dashboard");
+    const row = p.locator(".action-item", { hasText: "Two extra outlets in the hall" });
+    await row.locator(".pill", { hasText: "Reminder" }).waitFor();
+    await row.getByRole("button", { name: "Open", exact: true }).click();
+    await p.locator("#sov-card").waitFor();
+    await p.goto(BASE + "/dashboard");
+    await p.getByRole("heading", { name: /To do/ }).waitFor();
+    assert.equal(await p.locator(".action-item", { hasText: "Two extra outlets in the hall" }).count(), 0, "read once opened");
     await ctx.close();
   });
 
@@ -216,9 +223,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.reload();
     assert.equal(await p.locator("#my-phone").inputValue(), "(404) 555-0142");
     assert.equal(await p.locator("#my-sms-opt-in").isChecked(), false);
-    await p.goto(BASE + "/automations");
+    await p.goto(BASE + "/settings/account");
     await p.locator('input[data-reminder="dates"][value="text"]').check();
-    await p.getByRole("button", { name: "Save" }).click();
+    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
     await p.getByText("agree to texts", { exact: false }).first().waitFor();
     await ctx.close();
   });

@@ -1,5 +1,5 @@
-"""Periodic internal reminders (Automations): off until a person turns them on, at most once a
-day, by the channel that person picked."""
+"""Periodic internal reminders (My account > Notifications): by email and text only once a person
+turns them on, at most once a day, by the channel that person picked."""
 
 import http.client
 import json
@@ -521,13 +521,16 @@ class Http(unittest.TestCase):
         res, _ = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": email, "password": "correct horse battery", "name": "Pat", "company_name": "Pine"})
         return res.getheader("Set-Cookie").split(";")[0]
 
-    def test_reminders_start_off_and_the_person_turns_them_on(self):
+    def test_reminders_start_in_the_app_and_the_person_changes_them(self):
         cookie = self.signup("rem1@example.com")
         res, data = self.request("GET", "/api/reminders", cookie=cookie)
         self.assertEqual(res.status, 200)
         self.assertEqual({k["key"] for k in data["kinds"]}, {"dates", "missing", "co_records"})
-        self.assertTrue(all(v == [] for v in data["prefs"].values()))
+        # Someone new starts with each kind in the app, nothing by email or text (round 1, item 19).
+        self.assertTrue(all(v == ["app"] for v in data["prefs"].values()))
         self.assertEqual((data["notifications"], data["unread"]), ([], 0))
+        res, data = self.request("POST", "/api/reminders/prefs", {"prefs": {"dates": [], "missing": [], "co_records": []}}, cookie=cookie)
+        self.assertTrue(all(v == [] for v in data["prefs"].values()))
         # A new job's client is complete, so what is missing here is the pay app's supporting documents.
         _, saved = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "4045550177",
                                                       "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)

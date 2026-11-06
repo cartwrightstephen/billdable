@@ -1650,7 +1650,7 @@ class Handler(BaseHTTPRequestHandler):
             # Read before the account is saved: a refused name must not leave a user with no company.
             company_name = _text(body, "company_name").strip()
             user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
-                                    terms_version=legal.TERMS_VERSION)
+                                    terms_version=legal.TERMS_VERSION, reminders=auth.new_user_reminders())
             # The company name can wait (R2-02): until it is typed in Account, it is the person's name.
             fresh = empty_state(company_name or str(user.get("name") or "").strip() or "New company")
             trial.start(fresh["company"])
@@ -2945,7 +2945,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         person = auth.session_public(ctx.user["id"]) or ctx.user
         if not person.get("sms_opt_in"):
-            fields = {k: "Add your mobile number and agree to texts on My account first." for k, c in prefs.items() if "text" in c}
+            fields = {k: "Add your mobile number and agree to texts above first." for k, c in prefs.items() if "text" in c}
             if fields:
                 self._json(409, {"error": next(iter(fields.values())), "fields": fields})
                 return
@@ -3215,7 +3215,7 @@ def _sends(what: str, run):
 
 def _import_qbo(h, st, j, i, c):
     if c.company_id != auth.DEMO_COMPANY_ID:
-        raise domain.GateError("The sample import only runs on the demo account. Connect QuickBooks on Payments to read your payments.")
+        raise domain.GateError("The sample import only runs on the demo account. Connect QuickBooks on Settings, Company to read your payments.")
     domain.import_sample_qbo_payment(st, j, c.actor)
 
 

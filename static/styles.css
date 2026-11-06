@@ -84,6 +84,8 @@ a.btn { display: inline-block; text-decoration: none; }
 .blocker { color: var(--red); font-weight: 500; }
 .next-action { font-size: 13px; color: var(--copper); }
 .ai-badge { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: var(--copper); color: var(--on-accent); border: none; box-shadow: 0 4px 12px var(--copper-glow); cursor: pointer; font-size: 22px; display: flex; align-items: center; justify-content: center; z-index: 1000; }
+/* Above a sticky Save bar, not over its button (round 1, item 11). The phone's sits in the top bar. */
+@media (min-width: 801px) { body:has(.save-bar) .ai-badge { bottom: 88px; } }
 .ai-panel { position: fixed; bottom: 92px; right: 24px; width: min(400px, calc(100vw - 32px)); max-height: min(620px, calc(100vh - 120px)); background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px var(--shadow-panel); z-index: 1000; display: none; flex-direction: column; overflow: hidden; }
 .ai-panel.open { display: flex; }
 .ai-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 14px 16px 8px; border-bottom: 1px solid var(--line); }
@@ -143,7 +145,7 @@ table.sortable th { cursor: pointer; }
 table.sortable th:hover { color: var(--copper); }
 .form-inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
 .form-inline input, .form-inline textarea, .form-inline select { padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: var(--field-bg); min-height: 34px; }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:disabled { opacity: 1; background: var(--field-bg); color: var(--muted); border: 1px dashed var(--field); cursor: not-allowed; }
 .gate-reason { font-size: 13px; color: var(--red); margin: 6px 0; }
 .next-step { background: var(--copper-soft); border-left: 3px solid var(--copper); padding: 10px 14px; margin-bottom: 16px; border-radius: 0 8px 8px 0; }
 .legend { display: flex; gap: 12px; margin: 8px 0 16px; font-size: 12px; flex-wrap: wrap; }
@@ -166,7 +168,7 @@ table.sortable th:hover { color: var(--copper); }
 select { max-width: 100%; }
 .stage.clickable { cursor: pointer; }
 .stage.clickable:hover, .stage.active { border-color: var(--copper); background: var(--copper-soft); }
-.toast { position: fixed; top: 16px; left: 50%; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); background: var(--ink); color: var(--on-ink); padding: 10px 16px; border-radius: 8px; z-index: 2000; font-size: 14px; }
+.toast { position: fixed; bottom: 24px; left: 50%; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); background: var(--ink); color: var(--on-ink); padding: 10px 16px; border-radius: 8px; z-index: 2000; font-size: 14px; }
 .toast-action { background: none; border: 0; padding: 0 0 0 8px; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .inbox-choices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
 .inbox-choices .sub { flex-basis: 100%; }
@@ -216,6 +218,10 @@ select { max-width: 100%; }
 .land-foot { padding: 24px 32px 40px; color: var(--muted); font-size: 13px; text-align: center; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
 .form-grid label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+/* A one-choice field read as text, and a two-choice field as two buttons (forms.js field). */
+.field-label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.field-value { display: block; padding: 8px 0; }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
 .form-grid input, .form-grid select, .form-grid textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: var(--field-bg); }
 .form-grid [aria-invalid="true"], .form-inline [aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 .form-grid .span-2 { grid-column: span 2; }
@@ -325,6 +331,9 @@ details.card > summary { cursor: pointer; }
 .terms-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 8px 0; line-height: 1.4; }
 .terms-check input { width: auto; margin-top: 2px; }
 .reminder-kind { border: 0; padding: 0; margin: 0 0 12px; }
+/* My account's Notifications: a kind's three ways on one line. */
+.reminder-kind .sub { margin: 2px 0 4px; }
+.reminder-kind .terms-check { display: inline-flex; align-items: center; gap: 6px; margin: 0 18px 0 0; }
 .switch-row { font-size: inherit; margin: 12px 0; }
 .switch-row input { margin-top: 5px; }
 .land-legal { margin-top: 8px; font-size: 13px; }
@@ -464,7 +473,7 @@ textarea { font: inherit; }
   .due-strip.week-list { flex-direction: column; flex-wrap: nowrap; }
   .due-strip.week-list .due-item { width: 100%; }
   .ai-badge { width: 48px; height: 48px; bottom: 16px; right: 16px; }
-  .toast { top: 68px; }
+  .toast { bottom: calc(16px + env(safe-area-inset-bottom)); }
   .form-inline > input, .form-inline > select { flex: 1 1 100%; }
   .sov-paste { flex-direction: column; }
 }
@@ -564,8 +573,7 @@ textarea { font: inherit; }
 /* First run (R1-05 to R1-07): hidden parts stay hidden whatever their display rule; the
    sign-up "Check your email" panel; the email box and the confirm-first note in "Before you send". */
 [hidden] { display: none !important; }
-.check-email { border-color: var(--copper); }
-.check-email p { margin: 4px 0 10px; }
+.check-email { margin: -6px 0 14px; font-size: 14px; color: var(--muted); }
 .send-check .send-email { margin: 10px 0 4px; }
 .send-check .send-email .btn { margin-top: 6px; }
 .notice.confirm-first { margin: 10px 0 0; }
@@ -858,3 +866,20 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .doc-warning h3 { margin-top: 0; }
 .override-note { font-weight: 600; font-size: 14px; }
 .email-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; border: 1px solid var(--amber-line); border-radius: 8px; padding: 8px 12px; margin: 0; }
+
+/* == round 1: the Dashboard on a phone (item 17) ==
+   To Do rows are the pill, the sentence and the one button; the tiles two by two; a job is one
+   line: its name, its pill and what it is owed. The desktop table keeps every column. */
+@media (max-width: 800px) {
+  .metrics.dash-tiles { grid-template-columns: 1fr 1fr; }
+  .dash-tiles .metric { padding: 10px 12px; }
+  .dash-tiles .metric .v { font-size: 20px; }
+  table.todo-table td.todo-job, table.todo-table td.todo-ball { display: none; }
+  table.todo-table .action-buttons .btn.secondary:not(:only-child) { display: none; }
+  table.dash-jobs tr:not(.head-row) { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
+  table.dash-jobs td:not(.dj-keep) { display: none; }
+  table.dash-jobs td.dj-keep { display: block; width: auto; padding: 0; margin: 0; border: 0; font-size: 15px; }
+  table.dash-jobs td.dj-keep::before { content: none; }
+  table.dash-jobs td.dj-name { flex: 1 1 auto; min-width: 0; }
+  table.dash-jobs td.num { margin-left: auto; white-space: nowrap; }
+}

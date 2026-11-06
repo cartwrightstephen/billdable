@@ -1,7 +1,9 @@
-"""Periodic internal reminders and in-app notifications (Automations; Stephen's texting note of Nov 1).
+"""Periodic internal reminders and in-app notifications (My account > Notifications; Stephen's
+texting note of Nov 1).
 
-Each person picks, for each kind of reminder, any of in the app, email and text. Everything is off
-until they turn it on. The same item comes round again every REPEAT_DAYS (REMINDER_REPEAT_DAYS)
+Each person picks, for each kind of reminder, any of in the app, email and text. Someone new starts
+with all three kinds in the app (auth.NEW_USER_REMINDERS); email and text are off until picked. The
+fired ones show as rows on the Dashboard's To Do. The same item comes round again every REPEAT_DAYS (REMINDER_REPEAT_DAYS)
 until what it asks for is done, and then stops.
 
 Email and text: the hourly loop (monthly.run_once) calls run(). From the daily email's hour, at most
@@ -206,7 +208,7 @@ def email_message(items: list[dict[str, Any]], company: str, base: str) -> tuple
     lines = [f"- {i['job']}: {i['text']}" + (f"\n  {base}{i['path']}" if base else "") for i in items]
     return (f"Duracash reminders: {len(items)}",
             f"Reminders{' at ' + company if company else ''}:\n\n" + "\n".join(lines)
-            + "\n\nChange or turn these off on the Automations page.")
+            + "\n\nChange or turn these off on My account, under Notifications.")
 
 
 def text_message(items: list[dict[str, Any]]) -> str:
@@ -215,11 +217,11 @@ def text_message(items: list[dict[str, Any]]) -> str:
     parts = [f"{i['job']}: {i['text']}" for i in items]
     body = ""
     for n, part in enumerate(parts):
-        tail = f" And {len(parts) - n - 1} more on Automations." if n < len(parts) - 1 else ""
+        tail = f" And {len(parts) - n - 1} more on My account." if n < len(parts) - 1 else ""
         joined = f"{body} {part}".strip()
         if len(head) + len(joined) + len(tail) > TEXT_MAX:
             if body:
-                return f"{head}{body} And {len(parts) - n} more on Automations."
+                return f"{head}{body} And {len(parts) - n} more on My account."
             room = TEXT_MAX - len(head) - len(tail) - 1
             return f"{head}{part[:room].rstrip()}…{tail}"
         body = joined
@@ -448,7 +450,7 @@ def mark_read(company_id: str, user_id: str, note_id: str = "") -> None:
 
 
 def page(state: dict[str, Any], person: dict[str, Any], now: datetime) -> dict[str, Any]:
-    """What the Automations page shows this person."""
+    """What My account's Notifications card (and the Dashboard's To Do) shows this person."""
     prefs = {kind: list((person.get("reminders") or {}).get(kind) or []) for kind in KINDS}
     notes = sync_notifications(state, person, now)
     return {"kinds": [{"key": k, "label": v[0], "help": v[1]} for k, v in KINDS.items()],

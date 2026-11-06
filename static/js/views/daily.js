@@ -223,7 +223,7 @@ export const views = {
         ${RECORD_SECTIONS.filter(sectionOpen).map(recordSectionHtml).join("")}
         <button class="btn" data-action="daily-save">Save job record</button>` : emptyState("No open jobs", "", `<button class="btn" data-action="onb-newjob">New job</button>`)}
       </div>
-      ${j ? formOpen.conversation ? conversationFormHtml(j) : `<p class="daily-conversation"><button class="btn secondary" data-action="toggle-form" data-form="conversation">Log a Conversation</button></p>` : ""}
+      ${j ? formOpen.conversation ? conversationFormHtml(j) : `<p class="daily-conversation"><button class="btn secondary" data-action="toggle-form" data-form="conversation">Log a conversation</button></p>` : ""}
       <div class="card">
         <h2>Recent diary entries</h2>
         ${records.length ? records.slice().reverse().map(r => {

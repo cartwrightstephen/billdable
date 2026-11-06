@@ -6,13 +6,14 @@ import { moreButton, askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
 import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
-import { jobFilterOptions } from "../jobs.js";
+import { jobFilterOptions, jobFilterShown } from "../jobs.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
 import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt, helperAdmin } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
 import { THEMES, ACCENTS, applyAppearance, normalizeAppearance, storedAppearance } from "../theme.js";
 import { qboCardHtml } from "./payments.js";
 import { forgetImportSettings } from "./inbox.js";
+import { notificationsCardHtml, saveReminderPrefs } from "./automations.js";
 
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
 let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
@@ -291,6 +292,7 @@ function myAccountView() {
       <div class="money-row"><span class="label">Profile</span><span>${me.profile_name || words(me.role)}${me.company_admin ? ` <span class="pill copper">Company Admin</span>` : ""}</span></div>
       ${isDemo ? "" : `<div class="money-row"><span class="label">Password</span><span><button class="btn small secondary" data-action="nav" data-view="password">Change password</button></span></div>`}
     </div>
+    ${notificationsCardHtml()}
     ${appearanceCardHtml()}
     ${isDemo || twoStepPrompt ? "" : twoStepCardHtml()}
     ${me.onboarding_dismissed && !isDemo ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
@@ -454,7 +456,7 @@ function adminCompaniesHtml() {
 
 let helperReview = null;
 let helperDraft = null;   // the answer being written or edited
-const HELPER_VIEWS = ["dashboard", "results", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "payments", "waivers", "retainage", "automations", "account", "audit"];
+const HELPER_VIEWS = ["dashboard", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "waivers", "retainage", "account", "audit"];
 
 export async function loadHelperReview() {
   const body = document.getElementById("helper-admin-body");
@@ -581,13 +583,13 @@ export const views = {
     return `
       <h1>Activity log</h1>
       ${state.audit_chain && !state.audit_chain.ok ? `<p class="blocker">The chain of records is broken at ${state.audit_chain.broken_at}.</p>` : ""}
-      <div class="filter-bar">
+      ${jobFilterShown(state.jobs) ? `<div class="filter-bar">
         <label for="audit-filter" class="inline-label">Job</label>
         <select id="audit-filter" data-filter-for="audit">
           <option value="all">All jobs</option>
           ${jobFilterOptions(state.jobs, auditJobFilter)}
         </select>
-      </div>
+      </div>` : ""}
       <div class="filter-bar" role="group" aria-label="Whose entries">
         <button class="${auditWho ? "btn secondary" : "btn"} small" data-action="audit-who" data-who="" aria-pressed="${!auditWho}">Everything</button>
         <button class="${auditWho ? "btn" : "btn secondary"} small" data-action="audit-who" data-who="people" aria-pressed="${!!auditWho}">Without the app's own entries</button>
@@ -597,7 +599,7 @@ export const views = {
           <tr><th>What happened</th><th>When</th><th>Who</th><th>Action</th></tr>
           ${events.map(e => `<tr><td>${e.detail}</td><td>${fmtDateTime(e.at)}</td><td>${e.actor}</td><td>${actionWords(e.action)}</td></tr>`).join("")}
         </table>
-      </div>${moreButton("audit", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("Nothing logged yet")}
+      </div>${moreButton("audit", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No activity yet")}
     `;
   },
 };
@@ -767,6 +769,7 @@ export const actions = {
       setMe(escDeep(r.data.user));
       applyAppearance(r.data.user.appearance);
     }
+    if (!(await saveReminderPrefs())) return;
     clearForm("account"); clearForm("appearance");
     toast(smsCodeTo ? "Saved. Enter the code we texted you to turn texts on." : "Saved");
     render();

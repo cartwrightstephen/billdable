@@ -53,25 +53,26 @@ test("draws: next steps, job buttons and the Dashboard", () => {
     setBillingStyle("draws");
     assert.equal(billingStyle(), "draws");
     assert.equal(term("Many"), "Draws");
-    assert.match(nextStep(job), /isn't billed\. Draft Draw\.$/);
+    assert.match(nextStep(job), /isn't billed\. Draft draw\.$/);
     const { primary } = jobActions(job);
-    assert.equal(primary.label, "Draft Draw");
-    assert.deepEqual(closeBlockerActions(job, { kind: "unbilled" }).map(a => a.label), ["Draft Draw"]);
+    assert.equal(primary.label, "Draft draw");
+    assert.deepEqual(closeBlockerActions(job, { kind: "unbilled" }).map(a => a.label), ["Draft draw"]);
     // The job page's title-case labels read the company's word too (R6-01).
     const running = { ...job, work_status: "in_progress" };
     const labels = [jobActions(running).primary.label, ...jobActions(running).more.map(a => a.label)];
-    assert.ok(labels.includes("Progress Draw") && labels.includes("Final Draw"), labels.join());
+    assert.ok(labels.includes("Progress draw") && labels.includes("Final draw"), labels.join());
     assert.equal(labels.filter(l => /pay app/i.test(l)).length, 0);
-    assert.match(nextStep(running), /Progress Draw.*Final Draw/);
+    assert.match(nextStep(running), /Progress draw.*Final draw/);
     assert.match(todoHtml([], {}), /when a draw is ready to send/);
     assert.equal(actionWords("approve_send"), "Draw sent");
   } finally {
     setBillingStyle("pay_apps");
   }
-  assert.match(nextStep(job), /isn't billed\. Draft Pay App\.$/);
-  assert.equal(jobActions(job).primary.label, "Draft Pay App");
-  // Title case too, as the Results card titles write it (T8).
+  assert.match(nextStep(job), /isn't billed\. Draft pay app\.$/);
+  assert.equal(jobActions(job).primary.label, "Draft pay app");
+  // Title case too; the Results tiles are sentence case now (round 1, item 12).
   assert.equal(termText("Days from Pay App Sent to Paid", "draws"), "Days from Draw Sent to Paid");
+  assert.equal(termText("Days from pay app sent to paid", "draws"), "Days from draw sent to paid");
   setBillingStyle("monthly");
   assert.equal(billingStyle(), "pay_apps", "an unknown style reads pay apps");
 });
@@ -89,7 +90,7 @@ test("draws: Closeout's waiver lines and the record kind read draw too (review)"
   // The app's own sentences on the job page, Closeout and Today go through termText (app.js and
   // the views it imports from js/views/).
   const app = files.filter(f => f === "app.js" || f.startsWith("js/views/")).map(f => text[f]).join("\n");
-  for (const s of ["Pull back this pay app…", "By pay app", "Get your first pay app out", "Days from Job Completion to Pay App Sent", "Follow-ups per pay app"]) {
+  for (const s of ["Pull back this pay app…", "By pay app", "Get your first pay app out", "Days from job completion to pay app sent", "Follow-ups per pay app"]) {
     assert.ok(app.includes(`termText("${s}`), s);
   }
   assert.ok(app.includes("${termText(b.text)}"), "the Before you can finish list");

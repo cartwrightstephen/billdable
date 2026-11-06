@@ -253,7 +253,7 @@ def close_blocker_items(job: dict[str, Any]) -> list[dict[str, Any]]:
     m = job_money(job)
     out: list[dict[str, Any]] = []
     if job.get("work_status") != "complete":
-        out.append({"kind": "not_done", "text": "The work isn't finished. Use Final Pay App."})
+        out.append({"kind": "not_done", "text": "The work isn't finished. Use Final pay app."})
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft:
         out.append({"kind": "draft", "text": f"{open_draft['number']} is still a draft.",
@@ -497,7 +497,7 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     if _with_client(open_draft):
         raise GateError(
             f"{open_draft['number']} is with the client for their review. Record their answer or delete the draft, "
-            "then use Final Pay App so it covers the rest."
+            "then use Final pay app so it covers the rest."
         )
     if not open_draft:
         _need_playbook(state, job)
@@ -519,7 +519,7 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     # on the job's header line (R2-05). A message filed from the Inbox is its own record already.
     if note_record and (notes or "").strip():
         job.setdefault("records", []).append({
-            "id": "rec-" + secrets.token_hex(3), "kind": "note", "label": "Notes at Final Pay App",
+            "id": "rec-" + secrets.token_hex(3), "kind": "note", "label": "Notes at Final pay app",
             "note": notes.strip(), "added_at": utcnow(), "added_by": actor,
         })
     if evidence:
@@ -1920,7 +1920,7 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
     if open_retainage <= 0:
         raise GateError("No open retainage.")
     if job.get("work_status") != "complete":
-        raise GateError("Retainage is asked for once the work is finished. Use Final Pay App first.")
+        raise GateError("Retainage is asked for once the work is finished. Use Final pay app first.")
     if amount_cents is not None:
         if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
             _refuse("", {"amount_cents": "Enter the retainage to ask for, more than $0."})
@@ -2472,7 +2472,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         job = jobs.get(e.get("job_id"))
         if job:
             add(0.5, "email_failed", job, "Didn't go out", "red", f"{e.get('subject', '')} to {e.get('to', '')}: {e.get('status', '')}",
-                "Send Again", "/dashboard", email_id=e.get("id", ""), invoice_id=e.get("payapp_invoice_id") or "")
+                "Send again", "/dashboard", email_id=e.get("id", ""), invoice_id=e.get("payapp_invoice_id") or "")
     inbox = [i for i in state.get("inbox", []) if i.get("status") == "new"]
     for item in inbox:
         job = jobs.get(item.get("says_done_job_id"))
@@ -2480,7 +2480,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             source = SOURCE_LABELS.get(item.get("source", ""), item.get("source", ""))
             first = (item.get("text") or item.get("subject") or "").split("\n")[0][:120]
             add(0, "says_done", job, "Job's done?", "copper", f"{source}{' from ' + item['from'] if item.get('from') else ''}: {first}",
-                term_text("Final Pay App", style), "/dashboard", item_id=item.get("id", ""))
+                term_text("Final pay app", style), "/dashboard", item_id=item.get("id", ""))
     for job in jobs.values():
         payer = payers.get(job.get("payer_id"), {})
         invoices = job.get("invoices", [])
@@ -2501,7 +2501,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         if draft and draft.get("pencil_status") == "sent":
             since = f" since {_day_words(draft['pencil_sent_at'])}" if draft.get("pencil_sent_at") else ""
             add(4.5, "pencil_out", job, "With the client", "copper", f"{draft['number']} is with {payer.get('approver') or payer.get('name', 'the client')} for their review{since}. "
-                "When they answer, tap Client Agreed to the Draft or Client Wants Changes.", "", invoice_id=draft["id"], due=cutoff_day)
+                "When they answer, tap Client agreed to the draft or Client wants changes.", "", invoice_id=draft["id"], due=cutoff_day)
         elif is_blocked(job):
             more = f" And {len(items) - 1} more." if len(items) > 1 else ""
             paperwork = needs_paperwork(job)
@@ -2516,22 +2516,22 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             said = {"agreed": "The client agreed to it. ", "corrections": f"The client wants changes{': ' + draft['pencil_note'] if draft.get('pencil_note') else ''}. Fix it, then "}.get(draft.get("pencil_status"), "")
             email = "" if str(payer.get("ap_email") or "").strip() else f"{'add' if changes else 'Add'} the pay app email for {payer.get('name', 'the client')}, then "
             add(1, "ready", job, "Ready to send", "green", f"{draft['number']} for {money(draft['amount_cents'])} to {payer.get('approver') or payer.get('name', '')} is ready. "
-                f"{said}{email}Review & Send.", "Review & Send", f"/money/pay-app/{job['id']}/{draft['id']}", invoice_id=draft["id"], due=cutoff_day)
+                f"{said}{email}Review & send.", "Review & send", f"/money/pay-app/{job['id']}/{draft['id']}", invoice_id=draft["id"], due=cutoff_day)
         elif job.get("waiver_due") and not job.get("waiver_sent"):
             released = any(r.get("waiver_due") and not r.get("waiver_sent") for r in job.get("retainage_waivers", []))
             add(2, "waiver", job, "Waiver due", "amber", ("Retainage received" if released and not any(
                 inv.get("waiver_due") and not inv.get("waiver_sent") for inv in job["invoices"]) else "Paid in full")
-                + ": the client is waiting for the lien waiver. Choose Waiver and Send.", "Choose Waiver and Send",
+                + ": the client is waiting for the lien waiver. Choose waiver and send.", "Choose waiver and send",
                 f"/money/waiver/{job['id']}")
         elif job.get("work_status") == "complete" and m["unbilled_completed_cents"] > 0:
             add(5, "not_billed", job, "Not billed", "copper",
-                f"{money(m['unbilled_completed_cents'])} of finished work isn't billed. Draft Pay App.", "Draft Pay App", due=cutoff_day)
+                f"{money(m['unbilled_completed_cents'])} of finished work isn't billed. Draft pay app.", "Draft pay app", due=cutoff_day)
         elif due_soon:
-            add(2.5, "due_soon", job, "Due soon", "amber", "Record this month's progress and draft the pay app.", "Progress Pay App", due=cutoff_day)
+            add(2.5, "due_soon", job, "Due soon", "amber", "Record this month's progress and draft the pay app.", "Progress pay app", due=cutoff_day)
         # A new job (R2-04): nothing billed on it yet, so Today says what comes next instead of nothing.
         elif not any(i["status"] not in {"void", "replaced"} for i in invoices):
-            add(5, "new_job", job, "Not billed yet", "copper", f"{job['name']} has no pay app yet. Bill the work done so far with Progress Pay App, or use Final Pay App.",
-                "Progress Pay App", due=cutoff_day)
+            add(5, "new_job", job, "Not billed yet", "copper", f"{job['name']} has no pay app yet. Bill the work done so far with Progress pay app, or use Final pay app.",
+                "Progress pay app", due=cutoff_day)
         # The work is finished and billed, and nothing is out with the client: closeout, then the
         # money held back, then Finish Job, in the job page's order and words (jobActions).
         elif m["refund_owed_cents"] and not any(i["status"] in OPEN_FOR_PAYMENT for i in invoices):
@@ -2541,17 +2541,17 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             asked = job.get("last_retainage_chase_at")
             asked_due = _aware(asked) + timedelta(days=_int_or(payer.get("follow_up_days"), 7)) if asked else None
             if missing:
-                add(5.5, "closeout", job, "Closeout", "amber", f"Closeout: missing {', '.join(i['label'] for i in missing)}. Open Closeout Documents.", "Open Closeout Documents")
+                add(5.5, "closeout", job, "Closeout", "amber", f"Closeout: missing {', '.join(i['label'] for i in missing)}. Open closeout documents.", "Open closeout documents")
             elif m["retainage_open_cents"] > 0:
                 if not asked_due or now >= asked_due:
-                    add(5.5, "retainage", job, "Retainage", "copper", f"{money(m['retainage_open_cents'])} held back. Closeout documents are in. Ask for Retainage.", "Ask for Retainage")
+                    add(5.5, "retainage", job, "Retainage", "copper", f"{money(m['retainage_open_cents'])} held back. Closeout documents are in. Ask for retainage.", "Ask for retainage")
                 else:   # asked already: waiting on the client until it can be asked again, so not in the email
                     add(5.6, "retainage_wait", job, "Retainage", "copper", f"Asked for the {money(m['retainage_open_cents'])} held back {_day_words(asked)}. "
-                        f"Ask again from {_day_words(asked_due.isoformat())}, or Record Retainage Paid.", "Record Retainage Paid", due=asked_due.date().isoformat())
+                        f"Ask again from {_day_words(asked_due.isoformat())}, or Record retainage paid.", "Record retainage paid", due=asked_due.date().isoformat())
             elif close_blockers(job):
                 add(6.5, "finish_held", job, "Before you finish", "amber", "Before you finish: " + close_blockers(job)[0], "Open Job")
             else:
-                add(7, "finish", job, "Ready to finish", "green", "Ready to finish the job. Finish Job.", "Finish Job")
+                add(7, "finish", job, "Ready to finish", "green", "Ready to finish the job. Finish job.", "Finish job")
         # A cutoff makes the job's row more urgent, and says so.
         if due_soon and len(out) > before:
             row = out[-1]
@@ -2574,7 +2574,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
                 since = f", last follow-up {_day_words(oldest['last_follow_up_at'])}" if oldest.get("last_follow_up_at") else ""
                 add(4, "follow_up", job, "Follow up", "copper",
                     f"{names} was sent {_day_words(oldest.get('sent_at'))}{since}. Emails {payer.get('ap_email') or 'the client'}.",
-                    "Send Follow-Up", invoice_id=oldest["id"], due=follow.date().isoformat())
+                    "Send follow-up", invoice_id=oldest["id"], due=follow.date().isoformat())
             # Approved on the customer's page (R4-08): no follow-up until the day after the date they gave.
             elif promised:
                 add(4.5, "approved", job, "Approved", "green",
