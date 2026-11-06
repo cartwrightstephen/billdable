@@ -828,3 +828,20 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .doc-warning h3 { margin-top: 0; }
 .override-note { font-weight: 600; font-size: 14px; }
 .email-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; border: 1px solid var(--amber-line); border-radius: 8px; padding: 8px 12px; margin: 0; }
+
+/* == round 1: the Dashboard on a phone (item 17) ==
+   To Do rows are the pill, the sentence and the one button; the tiles two by two; a job is one
+   line: its name, its pill and what it is owed. The desktop table keeps every column. */
+@media (max-width: 800px) {
+  .metrics.dash-tiles { grid-template-columns: 1fr 1fr; }
+  .dash-tiles .metric { padding: 10px 12px; }
+  .dash-tiles .metric .v { font-size: 20px; }
+  table.todo-table td.todo-job, table.todo-table td.todo-ball { display: none; }
+  table.todo-table .action-buttons .btn.secondary:not(:only-child) { display: none; }
+  table.dash-jobs tr:not(.head-row) { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
+  table.dash-jobs td:not(.dj-keep) { display: none; }
+  table.dash-jobs td.dj-keep { display: block; width: auto; padding: 0; margin: 0; border: 0; font-size: 15px; }
+  table.dash-jobs td.dj-keep::before { content: none; }
+  table.dash-jobs td.dj-name { flex: 1 1 auto; min-width: 0; }
+  table.dash-jobs td.num { margin-left: auto; white-space: nowrap; }
+}

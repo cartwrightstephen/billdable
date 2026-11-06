@@ -101,3 +101,23 @@ test("accessibility: the ? badge clears a sticky Save bar, a disabled button sta
   assert.doesNotMatch(toast, /top: 16px/);
   assert.doesNotMatch(css, /\.toast \{ top: 68px; \}/);
 });
+
+test("the Dashboard on a phone: To Do rows are pill, sentence and one button; tiles 2x2; one line per job", () => {  // item 17
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-hartline", role: "owner", onboarding_dismissed: true });
+  const j = { id: "a", name: "Turner", code: "TUR", payer_id: "p1", closed: false, invoices: [], payments: [], change_orders: [],
+    money: { contract_total_cents: 100, billed_cents: 0, outstanding_cents: 5000, unbilled_completed_cents: 0, retainage_open_cents: 0 } };
+  core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [j], today_rows: [row({ job_id: "a", job: "Turner" })] });
+  const html = reg.views.dashboard();
+  assert.match(html, /<div class="metrics dash-tiles">/);
+  assert.match(html, /<table class="sortable dash-jobs">/);
+  assert.match(html, /<td class="dj-keep dj-name"><a href="\/jobs\/a"/);
+  assert.match(html, /<td class="num dj-keep">\$50\.00<\/td>/);
+  assert.match(html, /<td class="todo-job">/);
+  assert.match(html, /<td class="todo-ball">/);
+  const css = src("styles.css");
+  const phone = css.slice(css.indexOf("/* == round 1: the Dashboard on a phone"));
+  assert.match(phone, /\.metrics\.dash-tiles \{ grid-template-columns: 1fr 1fr; \}/);
+  assert.match(phone, /table\.todo-table td\.todo-job, table\.todo-table td\.todo-ball \{ display: none; \}/);
+  assert.match(phone, /table\.todo-table \.action-buttons \.btn\.secondary:not\(:only-child\) \{ display: none; \}/);
+  assert.match(phone, /table\.dash-jobs td:not\(\.dj-keep\) \{ display: none; \}/);
+});

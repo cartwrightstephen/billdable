@@ -284,7 +284,7 @@ export const views = {
           <strong>Try the demo:</strong> open a job, add its missing supporting documents, Review & Send, record the payment, send the waiver, then finish the job.
         </div>` : ""}
       ${state.jobs.length || (state.tasks || []).length ? todoCardHtml() : ""}
-      <div class="metrics">
+      <div class="metrics dash-tiles">
         <div class="metric ${hero === "unbilled" ? "highlight" : ""}"><div class="k">Done, not billed</div><div class="v">${money(t.unbilled_cents)}</div></div>
         <div class="metric ${hero === "outstanding" ? "highlight" : ""}"><div class="k">Outstanding</div><div class="v">${money(t.outstanding_cents)}</div></div>
         <div class="metric"><div class="k">Held back, still owed</div><div class="v">${money(t.retainage_cents)}</div></div>
@@ -296,7 +296,7 @@ export const views = {
         ${stage("all", "Open and recent")}${stage("draft", "Ready to send")}${stage("blocked", "Can't send yet")}${stage("sent", "Unpaid")}${stage("waiver", "Waiver due")}${stage("complete", "Completed this month")}
       </div>
       ${jobs.length ? `<div class="table-wrap">
-        <table class="sortable">
+        <table class="sortable dash-jobs">
           <tr>
             ${sortHead("name", "Job")}
             <th>Client</th>
@@ -311,12 +311,12 @@ export const views = {
           ${jobs.map(j => {
             const m = j.money;
             return `<tr>
-              <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
+              <td class="dj-keep dj-name"><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
               <td>${j.payer.name}</td>
-              <td>${statusPill(j)}</td>
+              <td class="dj-keep">${statusPill(j)}</td>
               <td class="num">${money(m.contract_total_cents)}</td>
               <td class="num">${money(m.billed_cents)}</td>
-              <td class="num">${money(m.outstanding_cents)}</td>
+              <td class="num dj-keep">${money(m.outstanding_cents)}</td>
               <td class="num">${money(m.unbilled_completed_cents)}</td>
               <td class="num">${money(m.retainage_open_cents)}</td>
               <td class="next-action">${nextStep(j)}</td>

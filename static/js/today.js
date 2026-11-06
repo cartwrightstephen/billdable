@@ -108,8 +108,8 @@ export function todoHtml(items, { expanded = false, anySent = false, total = ite
             const late = i.due && today && i.due < today;
             return `<tr class="action-item${late ? " overdue" : ""}">
             <td class="todo-activity">${activity(i)}${late && !team ? ` <span class="pill red">Overdue</span>` : ""}</td>
-            <td>${i.job_id ? `<a href="${pathFor("job", i.job_id)}" data-action="open-job" data-id="${i.job_id}">${i.job}</a>` : ""}</td>
-            <td><span class="pill ball-${i.ball}">${BALL_WORDS[i.ball] || "Us"}</span></td>
+            <td class="todo-job">${i.job_id ? `<a href="${pathFor("job", i.job_id)}" data-action="open-job" data-id="${i.job_id}">${i.job}</a>` : ""}</td>
+            <td class="todo-ball"><span class="pill ball-${i.ball}">${BALL_WORDS[i.ball] || "Us"}</span></td>
             ${team ? `<td>${assignSelect(i, people)}</td>
             <td class="todo-due">${dueInput(i)}${late ? ` <span class="pill red">Overdue</span>` : ""}</td>` : ""}
             <td><div class="action-buttons">${itemButtons(i)}</div></td>
