@@ -200,6 +200,13 @@ def _reads_as_unconditional(kept: str) -> bool:
 # A clause number in front of a heading inside a body ("4. Unconditional Waiver.", "9.5 Unconditional
 # Waivers"): a contract's or a GC form's paragraph about one, not the document's title.
 _CLAUSE_NUMBER = re.compile(r"^\s*(?:§\s*)?(?:\d+(?:\.\d+)*\.?|[A-Za-z][.)]|\([A-Za-z0-9]+\))\s+")
+# The type given as a field ("Type of waiver: Unconditional", "Waiver type: Unconditional") or a box
+# ticked beside it ("[X] Unconditional"): the document says what it is. A box left empty says the
+# opposite, so its word is taken out first, as a negation is.
+_TYPE_FIELD = re.compile(r"\b(?:type\s+of\s+(?:lien\s+)?(?:waiver|release)|(?:lien\s+)?(?:waiver|release)\s+type)\s*:\s*$", re.I)
+_TICKED = re.compile(r"(?:\[\s*[xX\u2713\u2714]\s*\]|[\u2611\u2612])\s*$")
+_FIELD_ENDS = re.compile(r"^\s*(?:$|[|\t;,.]|\s{2,})")
+_UNTICKED = re.compile(r"(?:\[\s?\]|\u2610)\s*" + _UNCONDITIONAL.pattern, re.I)
 # Letterhead above a title: a phone, a web or email address, a street address, a city line, a company name.
 _LETTERHEAD = re.compile(r"\(?\d{3}\)?[\s.-]*\d{3}-\d{4}|www\.|https?://|@|^\d+\s+\w+.*\b(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|suite|ste)\b"
                          r"|,\s*[A-Z]{2}\s+\d{5}|\b(?:llc|l\.l\.c|inc|corp|co|company|ltd)\.?$", re.I)
@@ -253,6 +260,27 @@ def _only_a_title(before: str, after: str) -> bool:
     return all(w in _TITLE_WORDS_ONLY for w in words if w)
 
 
+def _numbered_title(before: str, after: str) -> bool:
+    """A numbered or lettered line that is all a waiver form's title, for one waiver ("1. UNCONDITIONAL
+    WAIVER AND RELEASE ON PROGRESS PAYMENT", "(1) Unconditional Waiver and Release on Final Payment",
+    "§ 2 UNCONDITIONAL WAIVER"): a form numbered in a packet. Plural ("9.5 Unconditional Waivers") or
+    with a sentence after it, it is a contract's clause about waivers."""
+    number = _CLAUSE_NUMBER.match(before)
+    if not number or before[number.end():].strip():
+        return False
+    words = [w.strip(_WORD_EDGE).lower() for w in after.split()]
+    words = [w for w in words if w]
+    if any(w in ("waivers", "releases") for w in words) or not any(w in ("waiver", "release", "lien") for w in words):
+        return False
+    return _only_a_title("", after)
+
+
+def _type_field(before: str, after: str) -> bool:
+    """"Type of waiver: Unconditional" or a ticked box beside the word, with nothing after it but
+    the end of the field."""
+    return bool((_TYPE_FIELD.search(before) or _TICKED.search(before)) and _FIELD_ENDS.match(after))
+
+
 def _about_one(before: str, after: str) -> bool:
     """A line that reports on somebody's waiver ("the plumber's signed unconditional lien waiver",
     "Unconditional waiver sent to GC") rather than naming this document."""
@@ -275,7 +303,10 @@ def unconditional_reading(files: list[tuple[str, str, Any]], near_only: bool = F
     after any letterhead), or it waives now in so many words ("hereby unconditionally waives",
     "this release is unconditional"). Filed as a waiver (near_only False), a line anywhere that
     stands as a heading naming one counts too (a second form after the first); a clause number in
-    front makes it a paragraph of a contract or form, not a title. Everything else that uses the
+    front makes it a paragraph of a contract or form, not a title, unless the numbered line is all a
+    form's title for one waiver (a packet's second form, "1. UNCONDITIONAL WAIVER AND RELEASE"). The
+    type given as a field or a ticked box ("Type of waiver: Unconditional") gates too, filed as
+    anything. Everything else that uses the
     word (one comes later, is deemed so on payment, is attached as an exhibit, was sent or received)
     is a look: any use when filed as a waiver, a use near waiver, release or lien when filed as
     anything else (an addendum can use the word for something else). The word taken back at once
@@ -287,7 +318,7 @@ def unconditional_reading(files: list[tuple[str, str, Any]], near_only: bool = F
                 continue
             read = data if isinstance(data, ReadFile) else prepare(ext, data)
             spaced_out = _SPACED_LETTERS.sub(lambda m: m.group(0).replace(" ", ""), read.text or "")
-            kept = _NEGATED_UNCONDITIONAL.sub(" ", spaced_out)
+            kept = _UNTICKED.sub(" ", _NEGATED_UNCONDITIONAL.sub(" ", spaced_out))
             titles = _title_spans(kept)
             seen = 0
             for found in islice(_UNCONDITIONAL_OR_LY.finditer(kept), MAX_MATCHES + 1):
@@ -299,10 +330,13 @@ def unconditional_reading(files: list[tuple[str, str, Any]], near_only: bool = F
                 word = found.group(0)
                 later = _comes_later(before, after, word)
                 numbered = bool(_CLAUSE_NUMBER.match(before))
+                if numbered and _numbered_title(before, after):
+                    # A form's own title with a number in front: read as the title it is.
+                    numbered, before = False, before[_CLAUSE_NUMBER.match(before).end():]
                 in_title = any(a <= found.start() < b for a, b in titles)
                 heading = not later and not numbered and _heading_like(before, after) and len((before + " x " + after).split()) <= _TITLE_WORDS
                 near = _near_a_waiver_word(kept, found) or _titled_a_waiver(before, after)
-                if not later and (_waives_now(before, after, word)
+                if not later and (_waives_now(before, after, word) or _type_field(before, after)
                                   or (in_title and not numbered and (near or not near_only) and (heading or _a_waiver_phrase(before, after)))
                                   or (heading and near and _only_a_title(before, after))
                                   or (not near_only and heading and not _about_one(before, after))):

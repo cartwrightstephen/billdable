@@ -73,5 +73,23 @@ class Titles(unittest.TestCase):
                     self.assertTrue(read(title + c.TITLE_BODY, near_only)["waiver"])
 
 
+class NumberedTitlesAndFields(unittest.TestCase):
+    """Round 1 hunt: a numbered or lettered line that is a waiver form's title, and the type given
+    as a field, are the document's own (the gate); a numbered clause about waivers is a look."""
+
+    def test_a_numbered_form_title_or_a_type_field_gates_wherever_it_is_filed(self):
+        for name, text in c.NUMBERED.items():
+            for near_only in (False, True):
+                with self.subTest(name, near_only=near_only):
+                    self.assertTrue(read(text, near_only)["waiver"])
+
+    def test_a_numbered_clause_about_waivers_stays_a_look(self):
+        for name, text in c.NOT_NUMBERED.items():
+            for near_only in (False, True):
+                with self.subTest(name, near_only=near_only):
+                    out = read(text, near_only)
+                    self.assertFalse(out["waiver"])
+
+
 if __name__ == "__main__":
     unittest.main()

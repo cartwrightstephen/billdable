@@ -185,3 +185,32 @@ TITLES = ['UNCONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT',
  'Lien Waiver\nThis is an unconditional waiver on receipt of funds.',
  'Lien Waiver\nThis release is unconditional.',
  'Lien Waiver\nThis waiver is hereby made unconditional.']
+
+# Numbered and lettered form titles, and the type as a field (Round 1 hunt, h4_gate.py and h4b_gate.py):
+# real unconditional waivers, at the gate filed as a waiver or as anything else.
+NUMBERED_BODY = ("Project: Elm addition\nAmount: $5,000.00\nThe undersigned acknowledges receipt of payment and waives and releases all lien rights "
+                 "through 10/31/2026.\nSigned: ____\n")
+_PAID = ("The undersigned has been paid in full and hereby waives and releases any and all lien rights through 10/31/2026 "
+         "on the Elm addition for the sum of $5,000.00.\n")
+NUMBERED = {
+    "1. title": "1. UNCONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT\n" + NUMBERED_BODY,
+    "1. title, other body": "1. UNCONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT\n" + _PAID,
+    "A. title": "A. UNCONDITIONAL LIEN WAIVER\n" + NUMBERED_BODY,
+    "(1) title": "(1) Unconditional Waiver and Release on Final Payment\n" + NUMBERED_BODY,
+    "section title": "§ 2 UNCONDITIONAL WAIVER\n" + NUMBERED_BODY,
+    "2.1 title": "2.1 Unconditional Release of Lien\n" + NUMBERED_BODY,
+    "packet, second form numbered": "1. CONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT\n" + NUMBERED_BODY
+                                    + "\n2. UNCONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT\n" + NUMBERED_BODY,
+    "type of waiver on the signature line": "WAIVER AND RELEASE OF LIEN\n" + _PAID + "Signed: ______________  Type of waiver: Unconditional\nTitle: President\n",
+    "waiver type field": "LIEN WAIVER AND RELEASE\nWaiver type: Unconditional\n" + NUMBERED_BODY,
+    "status field": "PARTIAL LIEN WAIVER\nSTATUS: UNCONDITIONAL\n" + NUMBERED_BODY,
+    "type ticked": "LIEN WAIVER AND RELEASE\n" + _PAID + "[X] Unconditional   [ ] Conditional\nSigned by: Sam Acme\n",
+}
+# A contract's or a GC form's numbered clause about waivers: a look at most, filed as anything.
+NOT_NUMBERED = {
+    "plural heading then prose": "SUBCONTRACT - EXCERPT\nElm addition\n12.1 Unconditional Waivers\nSubcontractor shall furnish unconditional waivers for each payment.\n",
+    "lettered plural": "SUBCONTRACT - EXCERPT\nElm addition\nA. Unconditional Lien Waivers\nEach lower-tier supplier shall provide one with the final pay application.\n",
+    "clause with prose": "SUBCONTRACT\nElm addition\n4. Unconditional Waiver. Within ten days after payment clears, Subcontractor shall deliver the unconditional waiver in the form attached.\n",
+    "bracketed sentence": "SUBCONTRACT\nElm addition\n(b) Unconditional waivers from lower-tier suppliers are due with the final pay application.\n",
+    "type unticked": "CONDITIONAL WAIVER AND RELEASE\nElm addition. Amount: $5,000.00.\n[ ] Unconditional   [X] Conditional\nThis waiver is effective on receipt of payment.\n",
+}
