@@ -1151,6 +1151,27 @@
       ]
     },
     {
+      "id": "which-waiver",
+      "category": "Waivers",
+      "questions": [
+        "Why is the app asking me which waiver it is?",
+        "Why does it ask whether a file is a lien waiver?",
+        "Which waiver do I tap?",
+        "The waiver item asks conditional or unconditional"
+      ],
+      "keywords": [
+        "tap"
+      ],
+      "answer": "Every file on a lien waiver item, on a pay app or in the closeout documents, waits for one tap that says which waiver it is: Conditional or Unconditional. The one the file reads as is picked first, and the item says so when the file reads as the other one; your tap decides, and it is kept with your name and the time. Tap Unconditional only for a signed form that gives up your lien rights without waiting for payment: a pay app, or a retainage request, sent with one takes an owner and a reason. A file filed as anything else that reads like a lien waiver is asked about once in Review & send: No, Yes, conditional or Yes, unconditional.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "What is a lien waiver?",
+        "How do I send a waiver?"
+      ]
+    },
+    {
       "id": "what-retainage",
       "category": "Retainage",
       "questions": [

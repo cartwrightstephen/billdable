@@ -36,10 +36,11 @@ LOCK = threading.Lock()
 ANSWER_AT = 0.42      # confident match
 SUGGEST_AT = 0.22     # close enough to offer "did you mean"
 COVER_AT = 0.5        # share of the question's known words an answer must cover (_covers)
-# Words a question picks up on the way ("... today", "... in Duracash", "my GC is asking") that say
-# nothing about what it asks: an answer that doesn't use them isn't missing them (Round 1 hunt).
-# "today" reads as todo (SYNONYMS), which an answer about the To do list still matches.
-FILLER = {"duracash", "asking", "todo"}
+# Words a question picks up on the way that say nothing about what it asks ("... in Duracash"): an
+# answer that doesn't use them isn't missing them (Round 1 hunt). Only the app's own name: "asking"
+# and "today" can be what a question is about ("Why is the app asking me which waiver it is?",
+# "Can I record yesterday's work today?"), so they count as any word does.
+FILLER = {"duracash"}
 
 STOPWORDS = set("""a an the i me my we our you your it its is are was were be been am do does did doing to of in on at for
 from with by about as into than then so and or but if can could would should will shall may might must how what when
