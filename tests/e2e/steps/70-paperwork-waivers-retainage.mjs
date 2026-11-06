@@ -95,6 +95,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await warn.waitFor();
     assert.match(await warn.innerText(), /An unconditional waiver is attached/);
     await p.click('.send-check [data-action="send"]');
+    await confirmIfAsked(p);   // every send the page makes asks first; the server refuses this one
     await p.locator(".action-error, .refusal").first().waitFor().catch(() => {});
     assert.equal((await p.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()).job.invoices.at(-1).status, job.id)), "awaiting_approval");
     await p.fill(`#override-reason-${job.inv}`, "Client paid by wire already");

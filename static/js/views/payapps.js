@@ -14,7 +14,7 @@ import { continuationHtml } from "../sov.js";
 import { companyGapsHtml } from "../setup.js";
 import { QBO_READY, qboCsvLink, OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
 import { shortPayCardHtml, owedText, emailFailed, sendsTo } from "./job.js";
-import { beforeYouSendHtml, supportingDocsHtml, missingDocsHtml, unconditionalAttached } from "./paperwork.js";
+import { beforeYouSendHtml, supportingDocsHtml, missingDocsHtml } from "./paperwork.js";
 import { sendConfirmText } from "../payapp-text.js";
 
 export { sendConfirmText, deleteDraftText } from "../payapp-text.js";
@@ -303,16 +303,14 @@ export const actions = {
   },
   // What was on the screen goes with it: a pay app changed since asks for a fresh look (reloaded here).
   // A draft replaced since has a new id, so this lands on the one that goes now, with why on the page.
-  // It asks first, naming who, how much and the period (round 1, item 5). One that can't go yet
-  // goes straight to the server, whose refusal shows under the button.
+  // It asks first, naming who, how much and the period (round 1, item 5), whatever the page was
+  // drawn with: something fixed in another tab can make it go. What can't go yet the server
+  // refuses, and its refusal shows under the button (Round 1 hunt).
   "send": async (el, id) => {
     reviewAgain = null;
     const j = state.jobs.find(x => x.id === id);
     const inv = j && j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
-    // What the server will refuse (something missing, an unconditional waiver or a mention of one): no question first.
-    const blocked = !j || !inv || el.dataset.blocked || (j.blockers || []).length || (inv.packet || j.packet || []).some(p => p.required && !p.present)
-      || unconditionalAttached(j, inv).length || (inv.unconditional_mentions || []).length;
-    if (!blocked && !(await askConfirm(sendConfirmText(j, inv), "Send"))) return null;
+    if (j && inv && !(await askConfirm(sendConfirmText(j, inv), "Send"))) return null;
     const r = await post(`/api/jobs/${id}/send`, { reviewed: el.dataset.reviewed || "" });
     // A file read only now: the warning and the way past it go on the page.
     if (r && r.data && (r.data.unconditional_waiver || r.data.unconditional_mention)) { await load(); render(); }

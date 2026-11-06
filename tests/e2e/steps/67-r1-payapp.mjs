@@ -1,6 +1,6 @@
 // Browser steps for round 1 of the Nov 5 audits, the pay app part: on a phone, what is missing sits
 // in Review & send above an Approve & send that stays on and says why in place; the numbers fold
-// under one line; a photo added to an item is in with one tap; a GC job at 0% retainage is named;
+// under one line; a photo added to a waiver item is in with one tap that says which waiver; a GC job at 0% retainage is named;
 // the Activity log can leave out the app's own entries. Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
@@ -29,8 +29,10 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     assert.ok(missingTop < sendTop, "the missing items are above the button");
     await review.locator(".retainage-zero", { hasText: "usually holds 10%" }).waitFor();
     await send.click();
+    // It asks first even so (Round 1 hunt): the server says why it can't go.
+    await confirmDialog(p).waitFor();
+    await confirmDialog(p).locator(".confirm-actions .btn:not(.secondary)").click();
     await p.locator(".action-error", { hasText: "Pay app blocked" }).waitFor();
-    assert.equal(await confirmDialog(p).count(), 0, "no question for a send that can't go");
     // The numbers fold under one line.
     const fold = p.locator(".payapp-numbers");
     assert.equal(await fold.getAttribute("open"), null);
@@ -40,7 +42,11 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     const [chooser] = await Promise.all([p.waitForEvent("filechooser"),
       p.locator(`#packet-item-${item.id} [data-action="pick-files"]:not([data-capture])`).click()]);
     await chooser.setFiles({ name: "signed-waiver.jpg", mimeType: "image/jpeg", buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70]) });
-    await p.locator(`#packet-item-${item.id}`, { hasText: "Photo added by" }).waitFor();
+    // On a waiver item a photo takes one tap that says which waiver it is (Round 1 acceptance, item 14).
+    const look = p.locator(`#packet-item-${item.id} [data-action="packet-confirm"]`, { hasText: "I looked at it: it's the conditional waiver for this pay app" });
+    await look.waitFor();
+    await look.click();
+    await p.locator(`#packet-item-${item.id}`, { hasText: "Looked at by" }).waitFor();
     assert.equal(await confirmDialog(p).count(), 0);
     assert.equal((await read(p, id)).invoices.at(-1).packet.find((i) => i.id === item.id).present, true);
     await p.context().close();

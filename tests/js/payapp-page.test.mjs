@@ -158,14 +158,16 @@ test("Approve & send asks first, naming who, how much and the period", async () 
   assert.deepEqual(dom.requests.find(r => r.path === "/api/jobs/j1/send").body, { reviewed: "abc123" }, "the review stamp still goes with it");
 });
 
-test("with something missing, Approve & send asks the server, which says why in place", async () => {
+test("with something missing, Approve & send still asks first, then the server says why in place", async () => {
+  // Round 1 hunt: the page may have been drawn before a fix made in another tab, so every send it
+  // makes asks first; what can't go, the server refuses.
   const j = job();
   show(j);
   dom.requests.length = 0;
   dom.answers = [(p) => (p === "/api/jobs/j1/send" ? { status: 409, body: { error: "Pay app blocked.", blockers: ["Conditional waiver is missing."] } } : undefined)];
   const d = answerDialogs(true);
-  try { await reg.actions.send({ dataset: { reviewed: "abc123" } }, "j1"); } finally { d.restore(); }
-  assert.deepEqual(d.said, [], "no confirm for a send that can't go");
+  try { await reg.actions.send({ dataset: { reviewed: "abc123", blocked: "1" } }, "j1"); } finally { d.restore(); }
+  assert.equal(d.said.length, 1, "the confirm names who, how much and the period");
   assert.equal(dom.requests.filter(r => r.path === "/api/jobs/j1/send").length, 1);
 });
 
