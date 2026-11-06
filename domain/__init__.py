@@ -177,8 +177,14 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
     # against a short pay moved none), and that credit stands only as long as the short pay does.
     returned = min(sum(int(s["returned_cents"]) for s in entries), came_in)
     settled = returned + min(sum(int(s["cents"]) - int(s["returned_cents"]) for s in entries), short_paid)
-    # What came in on pay apps past what they billed is the client paying back a refund.
-    paid_back = max(0, payments + short_paid - billed)
+    # What came in on a pay app past what it billed is the client paying back a refund, and stays
+    # that once more work is billed (Nov 6 review, C).
+    paid_back = 0
+    for inv in job["invoices"]:
+        if inv["status"] in BILLED_STATUSES:
+            paid_on = sum(p["amount_cents"] for p in job["payments"] if p.get("invoice_id") == inv["id"])
+            paid_back += max(0, paid_on + int(inv.get("short_pay_cents") or 0) - inv["amount_cents"])
+    paid_back = max(paid_back, payments + short_paid - billed)
     over = max(0, billed_gross + paid_back - allowed)
     # A signed credit taken off the retainage held (apply_credit_to_retainage), for as long as the
     # contract leaves it standing: a later change order brings the retainage back.
@@ -198,7 +204,7 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
         "collected_cents": max(0, payments - returned),
         "refunded_cents": returned,
         "short_paid_cents": short_paid,
-        "outstanding_cents": max(0, billed - payments - short_paid) + refund_owed,
+        "outstanding_cents": max(0, billed - payments - short_paid + paid_back) + refund_owed,
         "refund_owed_cents": refund_owed,
         "unbilled_completed_cents": unbilled_completed,
         "billed_gross_cents": billed_gross,
@@ -5854,8 +5860,10 @@ def apply_credit_to_retainage(state: dict[str, Any], job_id: str, reason: Any, a
     job.setdefault("retainage_credits", []).append({"cents": amount_cents, "by": actor, "at": now, "reason": reason})
     # The last of what was held gone with nothing else open finishes the job, and no release is left
     # to carry its final waiver: it comes due here, unless one went out already.
+    # A final waiver already due and not sent (the paid pay app's own, say) covers it too (Nov 6 review, B).
     owes_final = suggested_waiver_kind(job).endswith("_final") and not any(
-        x.get("waiver_sent") and str(x.get("waiver_kind") or x.get("kind") or "").endswith("_final") for x in job["invoices"] + job.get("retainage_waivers", []))
+        x.get("waiver_sent") and str(x.get("waiver_kind") or x.get("kind") or "").endswith("_final") for x in job["invoices"] + job.get("retainage_waivers", [])) \
+        and not any((release_due_kind(job, x) if "reference" in x else suggested_waiver_kind(job, x)).endswith("_final") for x in _pending_waivers(job))
     due = False
     if owes_final:
         waivers = job.setdefault("retainage_waivers", [])

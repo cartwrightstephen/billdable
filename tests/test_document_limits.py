@@ -278,11 +278,13 @@ class WaiverWording(unittest.TestCase):
         for text in ("UNCONDITIONAL WAIVER AND RELEASE UPON PAYMENT", "UNCONDITIONAL WAIVER AND RELEASE upon receipt", "UNCONDITIONAL WAIVER subject to payment",
                      "UNCONDITIONAL interim WAIVER", "upon payment, an UNCONDITIONAL waiver", "interim\nunconditional\nwaiver", "UN-CONDITIONAL waiver upon payment",
                      "un conditional waiver upon payment", "UN\nCONDITIONAL waiver interim", "Un\u2010conditional  waiver interim", "U N C O N D I T I O N A L waiver upon payment",
-                     "conditional waiver and also an unconditional one"):
+                     ):
             self.assertIn("It says unconditional, not conditional.", self.problems(text), text)
 
     def test_a_conditional_waiver_mentioning_it_gets_a_look(self):
-        self.assertIn("It says unconditional, not conditional.", self.problems("conditional waiver upon payment; this is not an unconditional release"))
+        # Nov 6 review, A: one that talks about an unconditional waiver is still a look, said as a mention.
+        for text in ("conditional waiver upon payment; this is not an unconditional release", "conditional waiver and also an unconditional one"):
+            self.assertIn(doc_check.MENTIONS_UNCONDITIONAL, self.problems(text), text)
 
     def test_a_truly_conditional_waiver_passes(self):
         for text in ("Conditional waiver upon payment", "CONDITIONAL waiver", "interim waiver upon payment"):

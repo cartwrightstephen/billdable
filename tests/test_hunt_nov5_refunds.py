@@ -149,8 +149,10 @@ class CreditOffRetainage(unittest.TestCase):
         domain.apply_credit_to_retainage(self.state, self.id, "CO 1 comes off retainage", "Sam")
         m = domain.job_money(self.job)
         self.assertEqual((m["retainage_open_cents"], m["overbilled_cents"], m["retainage_credited_cents"]), (0, 0, 500_000))
-        self.assertEqual((len(self.job["payments"]), m["collected_cents"], m["retainage_released_cents"], len(self.job.get("retainage_waivers", []))), (*before[:3], before[3] + 1), "no money, and it finishes the job, so the final waiver is due")
-        self.assertEqual(self.job["retainage_waivers"][-1]["kind"], "unconditional_final")
+        # No money, and it finishes the job: the pay app's own waiver, due and not sent, is now the
+        # final one, so no second release asks for another (Nov 6 review, B).
+        self.assertEqual((len(self.job["payments"]), m["collected_cents"], m["retainage_released_cents"], len(self.job.get("retainage_waivers", []))), before)
+        self.assertEqual(domain.suggested_waiver_kind(self.job, self.inv), "unconditional_final")
         row = next(a for a in self.state["audit"] if a["action"] == "retainage_credited")
         self.assertIn("No money was received", row["detail"])
         self.assertIn("CO 1 comes off retainage", row["detail"])

@@ -127,7 +127,7 @@ class SaysUnconditional(unittest.TestCase):
 
     def test_a_prompt_to_look_at_confirm_stays(self):
         got = doc_check.check([("a.txt", ".txt", b"Conditional waiver. This is not an unconditional release.")], "", "", None, "conditional_progress", True)
-        self.assertIn("It says unconditional, not conditional.", got["problems"])
+        self.assertIn(doc_check.MENTIONS_UNCONDITIONAL, got["problems"])   # a look, said as a mention (Nov 6 review, A)
 
 
 class FileThatSaysUnconditional(Base):
