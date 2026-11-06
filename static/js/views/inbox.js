@@ -10,7 +10,7 @@ import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "../inbox.js";
 import { termText } from "../terms.js";
 import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
-import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can } from "../app-core.js";
+import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can, may } from "../app-core.js";
 import { moreButton } from "../dom.js";
 import { printSheet } from "./communications.js";
 
@@ -34,7 +34,7 @@ const UPLOADS_AT_ONCE = 3;
 async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", extra = {}) {
   const files = [...(fileList || [])];
   if (!files.length) return;
-  let ok = 0, signedOut = false;
+  let ok = 0, signedOut = false, said = "";
   const failed = [];
   const one = async (f) => {
     if (signedOut) return;
@@ -50,7 +50,7 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", ext
       });
       const data = await readJson(res);
       if (res.status === 401) { signedOut = true; return; }
-      if (res.ok) { ok++; setNetBanner(false); }
+      if (res.ok) { ok++; setNetBanner(false); if (data.message) said = data.message; }
       else failed.push(data.error || `${name}: upload failed`);
     } catch (_) {
       setNetBanner(true);
@@ -63,8 +63,9 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", ext
   if (signedOut) { clearSession(); renderLanding(); return; }
   // The answers can arrive out of order, so the page reads the company once at the end.
   if (ok) { clearJobDetails(); await load(); }
-  const where = !fileNow ? "in the Inbox" : extra.attach ? "added to the job records and attached" : extra.co ? "added to the job records; the change order is signed" : "added to the job records";
-  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "), ok && !fileNow ? toInbox() : null);
+  // A signed copy from someone who can't approve change orders is kept with it; the answer says so.
+  const where = !fileNow ? "in the Inbox" : extra.attach ? "added to the job records and attached" : extra.co && !said ? "added to the job records; the change order is signed" : "added to the job records";
+  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", said, failed.join("; ")].filter(Boolean).join(" "), ok && !fileNow ? toInbox() : null);
   render();
 }
 
@@ -318,7 +319,7 @@ function inboxItemCard(i) {
       ${choices.map(j => `<button class="btn small secondary" data-action="inbox-file-suggested" data-item="${i.id}" data-job="${j.id}">${j.name}</button>`).join("")}</div>`
       : `<div class="sub">${suggested ? "Suggested because it " + i.match_reason : i.match_reason}</div>`}
     ${i.payments_csv && files[0] ? `<div class="notice">This looks like a payments export. <button class="btn small" data-action="inbox-read-payments" data-file="${files[0].id}">Read as payments (${i.payment_rows} row${i.payment_rows === 1 ? "" : "s"})</button></div>` : ""}
-    ${i.says_done_job_id ? `<div class="notice says-done">This says the job is done. <button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark ${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || "the job"} done and draft the pay app</button></div>` : ""}
+    ${i.says_done_job_id ? `<div class="notice says-done">This says the job is done.${may("done") ? ` <button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark ${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || "the job"} done and draft the pay app</button>` : ""}</div>` : ""}
     ${suggested ? `<div class="form-inline inbox-one-tap">
       <button class="btn" data-action="inbox-file-suggested" data-item="${i.id}" data-job="${suggested.id}">Add to ${suggested.name}</button>
       ${selects ? "" : `<button class="linkish" data-action="inbox-other" data-item="${i.id}" data-focus="job">Other job</button>

@@ -10,7 +10,7 @@ import { worstKind, followUpEvent } from "../calendar.js";
 import { todoHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
 import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd, teamData, setTeamData } from "../state.js";
-import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post, can, moreDetails } from "../app-core.js";
+import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post, can, moreDetails, perms } from "../app-core.js";
 import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
 import { reminderItems } from "./automations.js";
@@ -94,7 +94,7 @@ function todoCardHtml() {
           ${todoPeriod === "range" ? rangeInputs("todo", todoRange) : ""}
         </div>
         ${taskFormHtml(people)}
-        ${todoHtml(shown, { expanded: queueExpanded, anySent: anyPayAppSent(state), total: everyone.length, people, today })}
+        ${todoHtml(shown, { expanded: queueExpanded, anySent: anyPayAppSent(state), total: everyone.length, people, today, perms: perms() })}
       </section>`;
 }
 

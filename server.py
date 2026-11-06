@@ -1984,6 +1984,10 @@ class Handler(BaseHTTPRequestHandler):
         elif verb == "undo":
             importer.undo_item(state, item_id, actor, can_pull_back=may_take(ctx.user, "void-sent", state))
         elif verb == "mark-done":
+            # Marking the work done is the Final pay app's step: it takes manage_jobs (Round 1, item 2),
+            # whichever page it comes from. Without it the item can still be filed.
+            if not may_take(ctx.user, "done", state):
+                raise OwnerOnly()
             importer.file_and_mark_done(state, item_id, actor)
         else:
             raise UnknownAction()
@@ -2300,6 +2304,7 @@ class Handler(BaseHTTPRequestHandler):
         reason = "Added from the job page." if file_now else "was uploaded for this job"
         ahead = _read_ahead(company_id, job_id, attach_to, stored=stored) if attach_to else {}
         made: list[str] = []
+        notes: list[str] = []
 
         def add(state: dict) -> None:
             for meta in stored:
@@ -2326,14 +2331,21 @@ class Handler(BaseHTTPRequestHandler):
                     domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for)
                 if attach_to:
                     domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor, read_file=_file_reader(company_id, ahead))
-                if signed_co:
+                if signed_co and may_take(user, "approve-co", state):
                     # Who signed the paper copy and when (M9) come with it; without them it is refused.
                     domain.mark_co_signed(state, job_id, signed_co, filed["record_ids"][0], actor,
                                           signer_name=(query.get("signer") or [""])[0], signed_on=(query.get("signed_on") or [""])[0])
+                elif signed_co:
+                    # Approving it takes manage_jobs (Round 1, item 2): the copy is kept with the change
+                    # order as its backup, and it stays pending for someone who can.
+                    notes.append(domain.file_signed_co_copy(state, job_id, signed_co, filed["record_ids"][0], actor,
+                                                            signer_name=(query.get("signer") or [""])[0], signed_on=(query.get("signed_on") or [""])[0]))
 
         status, payload = self._mutate(company_id, add)
         if status != 200:
             importer.discard(company_id, stored)
+        if status == 200 and notes:
+            payload = {**payload, "message": " ".join(notes)}
         self._json(status, {**payload, "uploaded_record_ids": made} if status == 200 and made else payload)
 
     def _store_email_files(self, company_id: str, parsed: dict, actor: str, raw: bytes | None = None, raw_name: str = "") -> tuple:

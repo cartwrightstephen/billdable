@@ -21,7 +21,7 @@ const days = (n) => `${n > 0 ? "+" : ""}${n} day${Math.abs(n) === 1 ? "" : "s"}`
 // What each history row says (domain.co_event, M10).
 const HISTORY_WORDS = {
   created: "Created", included: termText("Put on the next pay app"), off_draft: "Taken off the deleted draft",
-  signature_requested: "Signature requested", signed: "Signed", withdrawn: "Withdrawn",
+  signature_requested: "Signature requested", signed_copy_filed: "Signed copy filed", signed: "Signed", withdrawn: "Withdrawn",
   work_started: "Work started", client_logged: "Client logged it on their end", client_logged_undone: "Client logged it: taken off",
 };
 

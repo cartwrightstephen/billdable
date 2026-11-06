@@ -3684,6 +3684,32 @@ def mark_co_signed(
     return job
 
 
+def file_signed_co_copy(
+    state: dict[str, Any], job_id: str, co_id: str, record_id: str, actor: str = "owner",
+    signer_name: Any = None, signed_on: Any = None,
+) -> str:
+    """A signed copy taken by someone who can't approve change orders (Round 1, item 2): it goes
+    on the change order as its backup, with who signed it and when if given, and the change order
+    stays pending until someone who can marks it signed. Returns what the page says."""
+    job, co = _pending_co(state, job_id, co_id)
+    record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not record:
+        raise GateError("That record is not on this job.")
+    if record_id not in (co.get("support_record_ids") or []):
+        co.setdefault("support_record_ids", []).append(record_id)
+    signer = " ".join(str(signer_name or "").split())[:120]
+    try:
+        day = _past_day(signed_on, "signed_on", "the date it was signed") if signed_on else ""
+    except GateError:
+        day = ""
+    co["signed_copy"] = {"record_id": record_id, "label": record.get("label", ""), "by": actor, "at": utcnow(),
+                         **({"signer_name": signer} if len(signer) >= 2 else {}), **({"signed_on": day} if day else {})}
+    co_event(co, "signed_copy_filed", actor, note=record.get("label", ""))
+    audit(state, job_id, "co_signed_copy", f"{actor} filed {record.get('label', 'a file')} as the signed copy of CO {co['number']}. "
+          "It stays pending until someone who can approve change orders marks it signed.", actor)
+    return f"Filed with CO {co['number']}. Someone who can approve change orders has to mark it signed."
+
+
 def co_signed_on(co: dict[str, Any]) -> str:
     """The day the client signed (YYYY-MM-DD), or "" while unsigned."""
     if co.get("signature"):

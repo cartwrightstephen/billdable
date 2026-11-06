@@ -49,13 +49,15 @@ export function coSignControls(j, co, extra = "", opts = {}) {
   const key = `cosign-${co.id}`;
   const records = j.records || [];
   // The signed copy is most likely the newest change-order record (R3-06).
-  const newestCo = records.filter(r => r.kind === "change_order").pop();
+  const filed = co.signed_copy && records.find(r => r.id === co.signed_copy.record_id);
+  const newestCo = filed || records.filter(r => r.kind === "change_order").pop();
   return `${flag}<div class="form-inline">
       <button class="btn small" data-action="request-co-signature" data-id="${j.id}" data-co="${co.id}">${co.signing_page ? "Send the signing link again" : "Request signature"}</button>
       ${may("approve-co") ? `<button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="${!!formOpen[key]}">Signed on paper…</button>` : ""}
       ${may("withdraw-co") ? `<button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>` : ""}
       ${extra}
     </div>
+    ${co.signed_copy ? `<p class="sub co-signed-copy">Signed copy filed by ${co.signed_copy.by}: ${co.signed_copy.label}${co.signed_copy.signer_name ? `, signed by ${co.signed_copy.signer_name}` : ""}${co.signed_copy.signed_on ? ` on ${fmtDate(co.signed_copy.signed_on)}` : ""}.${may("approve-co") ? "" : " Someone who can approve change orders has to mark it signed."}</p>` : ""}
     ${co.signing_page ? `<p class="sub">Signing page: <a href="/api/jobs/${j.id}/co/${co.id}/page" target="_blank" rel="noopener">open it</a>${co.signature_requested_at ? ` · requested ${fmtDate(co.signature_requested_at)}` : ""}</p>` : ""}
     ${formOpen[key] && may("approve-co") ? `<div class="co-paper" data-form-key="${key}">${formErrorLine(key)}
         <div class="form-grid">

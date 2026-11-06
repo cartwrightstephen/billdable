@@ -9,7 +9,7 @@
 // (tests/js/today.test.mjs).
 
 import { termText } from "./terms.js";
-import { FILE_KINDS, RECORD_KINDS, fileKindPick } from "./jobs.js";
+import { FILE_KINDS, RECORD_KINDS, fileKindPick, mayTake } from "./jobs.js";
 import { pathFor } from "./routes.js";
 import { BALL_WORDS } from "./tasks.js";
 import { mailReady } from "./state.js";
@@ -55,9 +55,10 @@ export function inboxKindSelect(r) {
 
 // One row's buttons: the main one, a conversation for a follow-up (R4-06), and Open unless the
 // main button already opens the job. A pay app the client approved (R4-08) has no main button.
-export function rowButtons(r) {
+export function rowButtons(r, perms) {
   // An email that didn't go out has Send again only where the server sends mail (round 1, item 7).
-  const attrs = r.kind === "email_failed" && !mailReady ? null : ACTIONS[r.kind];
+  // Marking work done takes manage_jobs: without it, a "Job's done?" row just opens the job.
+  const attrs = r.kind === "email_failed" && !mailReady ? null : r.kind === "says_done" && !mayTake("done", perms) ? null : ACTIONS[r.kind];
   const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` + (r.kind === "inbox" ? inboxKindSelect(r) : "") : "";
   const talked = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="log-conversation" data-id="${r.job_id}">Log a conversation</button>` : "";
   const open = OPENS_JOB.includes(r.kind) ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${r.job_id}">Open</button>`;
@@ -66,8 +67,8 @@ export function rowButtons(r) {
 
 // One To Do row's buttons: a row the jobs make keeps its own (rowButtons); a task added by hand
 // is ticked off with Done, and opens its job when it has one.
-export function itemButtons(i) {
-  if (i.source === "row") return rowButtons(i.row);
+export function itemButtons(i, perms) {
+  if (i.source === "row") return rowButtons(i.row, perms);
   // A reminder fired in the app (My account > Notifications): Open reads it and goes there.
   if (i.source === "reminder") return `<button class="btn small" data-action="reminder-open" data-note="${i.key}" data-path="${i.path}">Open</button>`
     + `<button class="btn small secondary" data-action="reminder-read" data-note="${i.key}">Mark read</button>`;
@@ -96,7 +97,7 @@ export function dueInput(i) {
 // rows until "and N more" is tapped (expanded; reset when the page changes). total is how many
 // items there are before the period and Mine filters: with none at all, "Nothing is waiting on
 // you." once a pay app has gone out, and before that what will show up here.
-export function todoHtml(items, { expanded = false, anySent = false, total = items.length, people = [], today = "" } = {}) {
+export function todoHtml(items, { expanded = false, anySent = false, total = items.length, people = [], today = "", perms } = {}) {
   if (!total) return anySent ? `<p class="sub">Nothing is waiting on you.</p>`
     : `<p class="sub">${termText("Work shows up here when a pay app is ready to send, supporting documents are missing, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.")}</p>`;
   if (!items.length) return `<p class="sub">Nothing due in this period.</p>`;
@@ -118,7 +119,7 @@ export function todoHtml(items, { expanded = false, anySent = false, total = ite
             <td class="todo-ball"><span class="pill ball-${i.ball}">${BALL_WORDS[i.ball] || "Us"}</span></td>
             ${!team ? "" : i.source === "reminder" ? "<td></td><td></td>" : `<td>${assignSelect(i, people)}</td>
             <td class="todo-due">${dueInput(i)}${late ? ` <span class="pill red">Overdue</span>` : ""}</td>`}
-            <td><div class="action-buttons">${itemButtons(i)}</div></td>
+            <td><div class="action-buttons">${itemButtons(i, perms)}</div></td>
           </tr>`;
           }).join("")}
         </table></div>`

@@ -42,7 +42,7 @@ export const ACTION_WORDS = {
   reopen_job: "Job reopened", create_job: "Job added", edit_job: "Job changed", delete_job: "Job deleted",
   contract_changed: "Contract changed", add_co: "Change order added", approve_co: "Change order signed",
   withdraw_co: "Change order withdrawn", include_co: "Change order put on the bill", change_order_off_draft: "Change order taken off the draft",
-  request_co_signature: "Signature requested", co_work_started: "Change order work started",
+  request_co_signature: "Signature requested", co_signed_copy: "Signed copy filed", co_work_started: "Change order work started",
   co_signed_after_start: "Change order signed after work started", co_client_logged: "Client logged the change order",
   add_record: "Added to the job records", edit_record: "Job record changed",
   add_evidence: "Added to the job records", attach_record: "Supporting documents added", packet_attachment: "Supporting documents added",
