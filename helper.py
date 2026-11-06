@@ -36,6 +36,10 @@ LOCK = threading.Lock()
 ANSWER_AT = 0.42      # confident match
 SUGGEST_AT = 0.22     # close enough to offer "did you mean"
 COVER_AT = 0.5        # share of the question's known words an answer must cover (_covers)
+# Words a question picks up on the way ("... today", "... in Duracash", "my GC is asking") that say
+# nothing about what it asks: an answer that doesn't use them isn't missing them (Round 1 hunt).
+# "today" reads as todo (SYNONYMS), which an answer about the To do list still matches.
+FILLER = {"duracash", "asking", "todo"}
 
 STOPWORDS = set("""a an the i me my we our you your it its is are was were be been am do does did doing to of in on at for
 from with by about as into than then so and or but if can could would should will shall may might must how what when
@@ -144,8 +148,9 @@ def _covers(qs: set[str], matched: set[str], idf: dict[str, float]) -> bool:
     answer uses (a job's name is no answer's), it must cover at least COVER_AT of their weight, and
     the rarest of them, the one that says what the question is about: "my GC wants a notice to
     owner" is about the notice, which the Client type answer, matching GC and owner, doesn't cover.
-    One that doesn't is neither the answer nor a "Did you mean": the helper says it doesn't know."""
-    known = {t for t in qs if t in idf}
+    One that doesn't is neither the answer nor a "Did you mean": the helper says it doesn't know.
+    A FILLER word the answer doesn't use is left out of both."""
+    known = {t for t in qs if t in idf and (t not in FILLER or t in matched)}
     hit = known & matched
     if not known:
         return True
