@@ -404,6 +404,15 @@ def set_reminders(user_id: str, prefs: dict[str, list[str]]) -> dict[str, Any]:
         return _public(user)
 
 
+# Someone new (signing up, or joining by invite) gets every reminder in the app; email and text
+# stay off until they pick them (round 1, item 19). Accounts from before keep what they chose.
+NEW_USER_REMINDERS = {"dates": ["app"], "missing": ["app"], "co_records": ["app"]}
+
+
+def new_user_reminders() -> dict[str, list[str]]:
+    return {kind: list(channels) for kind, channels in NEW_USER_REMINDERS.items()}
+
+
 def reminder_people(company_id: str) -> list[dict[str, Any]]:
     """The people in this company who turned on at least one reminder."""
     with LOCK:
@@ -446,8 +455,10 @@ def create_user(
     role: str = "owner",
     enforce_policy: bool = True,
     terms_version: str | None = None,
+    reminders: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
-    """Create a user. enforce_policy=False is only for the built-in demo account."""
+    """Create a user. enforce_policy=False is only for the built-in demo account. reminders: their
+    starting choices (sign-up passes new_user_reminders())."""
     if not isinstance(email, str) or not isinstance(password, str) or not isinstance(name, str):
         raise ValueError("Email, password and name must be text.")
     email = email.strip().lower()
@@ -475,6 +486,8 @@ def create_user(
     if terms_version:
         user["terms_version"] = terms_version
         user["terms_accepted_at"] = _iso(_utcnow())
+    if reminders:
+        user["reminders"] = {kind: list(channels) for kind, channels in reminders.items()}
     with LOCK:
         data = _load()
         if any(u["email"] == email for u in data["users"]):
@@ -1031,6 +1044,7 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
             # They received the invite link at this address, as with a reset link.
             "email_verified": True,
             "verified_at": _iso(_utcnow()),
+            "reminders": new_user_reminders(),
         }
         if terms_version:
             user["terms_version"] = terms_version

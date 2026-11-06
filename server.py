@@ -1647,7 +1647,7 @@ class Handler(BaseHTTPRequestHandler):
             # Read before the account is saved: a refused name must not leave a user with no company.
             company_name = _text(body, "company_name").strip()
             user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
-                                    terms_version=legal.TERMS_VERSION)
+                                    terms_version=legal.TERMS_VERSION, reminders=auth.new_user_reminders())
             # The company name can wait (R2-02): until it is typed in Account, it is the person's name.
             fresh = empty_state(company_name or str(user.get("name") or "").strip() or "New company")
             trial.start(fresh["company"])
