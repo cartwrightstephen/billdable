@@ -284,7 +284,7 @@ function receivedHtml() {
           <td>${receivedStatus(r)}${r.why ? `<div class="sub">${r.why}</div>` : ""}
             <div class="row-actions">${r.status === "new" ? "" : `<button class="btn small secondary" data-action="inbox-undo" data-item="${r.id}">Undo</button>`}<button class="linkish" data-action="print-received" data-item="${r.id}">Print</button></div></td></tr>`).join("")}
       </table></div>${moreButton("inbox", page)}`
-      : !page ? `<p class="sub">Loading…</p>` : emptyState(filtered ? "Nothing matches these filters." : "Nothing has come in yet.")}
+      : !page ? `<p class="sub">Loading…</p>` : emptyState(filtered ? "Nothing matches these filters" : "Nothing received yet", "", filtered ? "" : `<button class="btn" data-action="nav" data-view="import">Import</button>`)}
     </div>`;
 }
 
@@ -428,7 +428,7 @@ export const views = {
       <h1>Inbox</h1>
       <div class="card inbox-waiting">
         <div class="top"><h2>Waiting (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
-        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting.")}
+        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting")}
       </div>
       ${dropzoneHtml(true)}
       <p class="sub">Add files or paste notes on <a href="/data/import" data-action="nav" data-view="import">Import</a>.</p>

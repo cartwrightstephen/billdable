@@ -159,7 +159,7 @@ export const views = {
           <tr><th>Pay app</th><th>Job</th><th>Sent</th><th>Amount</th><th>Status</th><th>Download</th></tr>
           ${rows.map(sentPayAppRow).join("")}
         </table></div>${moreButton("sentpayapps", page)}`
-        : !page ? `<p class="sub">Loading…</p>` : emptyState("No pay apps sent yet")}
+        : !page ? `<p class="sub">Loading…</p>` : emptyState("No pay apps sent yet", "", `<button class="btn" data-action="nav" data-view="payapps">${termText("Pay apps")}</button>`)}
       </div>
       <div class="card" id="export-calendar">
         <h2>Calendar feed</h2>

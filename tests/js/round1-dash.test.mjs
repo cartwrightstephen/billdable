@@ -256,3 +256,21 @@ test("the QuickBooks sample is a demo-only button", async () => {  // item 19
   assert.doesNotMatch(all({ demo: false, perms: { owner: true } }), /import-qbo/);
   assert.match(all({ demo: true, perms: { owner: true } }), /import-qbo/);
 });
+
+test("empty lists read \"No X yet\" with the button that starts one", () => {  // round 1, small
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner" });
+  core.setState(fresh());
+  const empty = (html) => (html.split('<div class="empty-state">')[1] || "").split("</div>")[0];
+  const cases = {
+    collections: [/^<strong>No unpaid pay apps yet<\/strong>/, /data-action="onb-newjob">New job</],
+    outbox: [/^<strong>No emails sent yet<\/strong>/, /data-view="payapps">/],
+  };
+  core.listPages.outbox = { job: "all", entries: [], total: 0, loading: false };
+  core.listPages.audit = { job: "all", entries: [], total: 0, loading: false };
+  for (const [view, [title, button]] of Object.entries(cases)) {
+    const box = empty(reg.views[view]());
+    assert.match(box, title, view);
+    assert.match(box, button, view);
+  }
+  assert.match(empty(reg.views.audit()), /^<strong>No activity yet<\/strong>/);
+});

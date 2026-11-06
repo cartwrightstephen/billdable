@@ -590,7 +590,7 @@ export const views = {
           <tr><th>What happened</th><th>When</th><th>Who</th><th>Action</th></tr>
           ${events.map(e => `<tr><td>${e.detail}</td><td>${fmtDateTime(e.at)}</td><td>${e.actor}</td><td>${actionWords(e.action)}</td></tr>`).join("")}
         </table>
-      </div>${moreButton("audit", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("Nothing logged yet")}
+      </div>${moreButton("audit", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No activity yet")}
     `;
   },
 };
