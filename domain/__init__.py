@@ -893,7 +893,9 @@ def payer_link(invoice: dict[str, Any], link_base: str | None, company_id: str) 
 
 
 UNCONDITIONAL_ATTACHED = "An unconditional waiver is attached. It gives up your lien rights before you are paid."
-NOT_READ_FOR_UNCONDITIONAL = {"contract", "insurance", "completion", "change_order"}
+# Read for the gate, but never asked about for a mention: a contract or a certificate that talks
+# about waivers is not one (Round 1 acceptance, item 13: the gate itself reads every kind).
+NO_MENTION_LOOK = {"contract", "insurance", "completion", "change_order"}
 
 
 def _says_unconditional(state: dict[str, Any] | None, rec: dict[str, Any], read_file: Any) -> bool:
@@ -902,16 +904,14 @@ def _says_unconditional(state: dict[str, Any] | None, rec: dict[str, Any], read_
     app's page what was read: says_unconditional, and mentions_unconditional, the words of a file
     that only talks about one (unconditional_mentions). Filed as anything but a waiver, the word has
     to be near waiver, release or lien. Contracts, insurance, completion papers and change orders
-    aren't read."""
-    if rec.get("kind") in NOT_READ_FOR_UNCONDITIONAL:
-        return False
+    are read for the gate too, and are never asked about for a mention."""
     if read_file is not None and state is not None:
         ids = set(rec.get("file_ids") or [])
         metas = [f for f in state.get("files", []) if f["id"] in ids]
         if metas:
             read = doc_check.unconditional_reading([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], rec.get("kind") != "waiver")
             rec["says_unconditional"] = read["waiver"]
-            if read["mention"] and not read["waiver"]:
+            if read["mention"] and not read["waiver"] and rec.get("kind") not in NO_MENTION_LOOK:
                 rec["mentions_unconditional"] = read["found"]
             else:
                 rec.pop("mentions_unconditional", None)
@@ -4701,7 +4701,9 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
     problems = (check or {}).get("problems") or []
     # A photo or a scan the check can't read, added by the person (not a suggestion they confirm):
     # adding it is their check, and nothing was compared that could stand in the way (round 1, item 3).
-    unread = bool(problems) and not confirming and (check or {}).get("status") != "flagged"
+    # On a waiver item a photo or a scan isn't in until a person says which waiver it is (Round 1
+    # acceptance, item 14): one tap, waiver_look_words.
+    unread = bool(problems) and not confirming and (check or {}).get("status") != "flagged" and not item.get("waiver_kind")
     # Looked counts only for the warning the person was shown: a first attach never clears a flag.
     if problems and not unread and not (looked and (set(problems) <= shown or (confirming and same_file))):
         for a in item.get("attachments", []):
@@ -4734,8 +4736,20 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
         audit(state, job["id"], "packet_confirmed", f"{actor} added {names} for {item['label']} on {which}. It couldn't be read, so nothing was compared.", actor)
         return
     item.pop("unread", None)
+    if item.get("waiver_kind") and (check or {}).get("status") == "unchecked":
+        item["looked_as"] = str(item["waiver_kind"]).split("_")[0]
+        audit(state, job["id"], "packet_confirmed", f"{actor} looked at {names} for {item['label']} on {which}: it's the {item['looked_as']} waiver "
+              "for this pay app. It couldn't be read, so nothing was compared.", actor)
+        return
+    item.pop("looked_as", None)
     warned = f" after the warning: {' '.join(check['problems'])}" if check and check.get("problems") else ""
     audit(state, job["id"], "packet_confirmed", f"{actor} checked {names} for {item['label']} on {which}{warned}.", actor)
+
+
+def waiver_look_words(item: dict[str, Any]) -> str:
+    """The one tap that puts a photo or a scan on a waiver item: the person says which waiver it is."""
+    which = "unconditional" if str(item.get("waiver_kind") or "").startswith("unconditional") else "conditional"
+    return f"I looked at it: it's the {which} waiver for this pay app"
 
 
 def _keep_asked_look(item: dict[str, Any], check: dict[str, Any], stamp: dict[str, Any]) -> dict[str, Any]:

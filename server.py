@@ -3412,7 +3412,7 @@ def _read_ahead_waivers(company_id: str, job_id: str, action: str) -> dict:
     if action == "send":
         draft = next((i for i in job.get("invoices", []) if i.get("status") in domain.DRAFT_STATUSES), {})
         going = {a.get("record_id") for item in draft.get("packet") or [] for a in item.get("attachments", [])} | set(draft.get("extra_record_ids") or [])
-        records = [r for r in job.get("records", []) if r["id"] in going and r.get("kind") not in domain.NOT_READ_FOR_UNCONDITIONAL]
+        records = [r for r in job.get("records", []) if r["id"] in going]
     else:
         records = [r for r in job.get("records", []) if r.get("kind") == "waiver"]
     ids = {fid for r in records for fid in r.get("file_ids") or []}

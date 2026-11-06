@@ -407,7 +407,10 @@ class DocumentCheckTests(Case):
                 words = self.problems(data, name)
                 self.assertIn("couldn't be checked", words)
                 self.assertEqual(self.waiver["check"]["status"], "unchecked")
-                # Round 1, item 3: adding it is the person's check; nothing was compared to stop it.
+                # On a waiver item it waits for a person to say which waiver it is (Round 1 acceptance,
+                # item 14); one tap does it.
+                self.assertFalse(self.waiver["present"])
+                domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
                 self.assertTrue(self.waiver["present"])
                 self.assertEqual(self.waiver["confirmed_by"], "Sam")
 

@@ -293,9 +293,14 @@ export function overrideText(p) {
 }
 
 // Who checked it: a person's confirm, or a photo or scan the check couldn't read, which is in
-// once it is added (round 1, item 3).
+// once it is added (round 1, item 3), except on a waiver item, where a person said which waiver it is.
+export function waiverLookWords(p) {
+  return `I looked at it: it's the ${unesc(p.waiver_kind || "").startsWith("unconditional") ? "unconditional" : "conditional"} waiver for this pay app`;
+}
+
 export function confirmedText(p) {
   if (!p.confirmed_by) return "";
+  if (p.looked_as) return `Looked at by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}: the ${p.looked_as} waiver`;
   if (p.unread) return `${p.unread === "photo" ? "Photo added" : "Added"} by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}${p.unread === "photo" ? "" : " · it couldn't be read"}`;
   return `Confirmed by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}`;
 }
@@ -330,10 +335,13 @@ function confirmHtml(j, p, editable) {
   if (p.present || !waiting) return "";
   const again = lookAgain && lookAgain.item === p.id ? `<p class="form-error review-again" role="alert">${esc(lookAgain.text)}</p>` : "";
   const flagged = flaggedProblems(p).length > 0;
+  // A photo or a scan on a waiver item: the person says which waiver it is (domain.waiver_look_words).
+  const photoWaiver = !flagged && p.waiver_kind && (p.check || {}).status === "unchecked";
   const button = !editable ? "" : flagged
     ? `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}" data-looked="1">I opened it and it's right</button>`
+    : photoWaiver ? `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}">${waiverLookWords(p)}</button>`
     : `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}">I checked this file</button>`;
-  return `${again}${flagged ? `<div class="doc-warning" role="alert"><p>Open the document and confirm it is right.</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : `<p class="sub">Open it and confirm it belongs here.</p>`}${button}`;
+  return `${again}${flagged ? `<div class="doc-warning" role="alert"><p>Open the document and confirm it is right.</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : photoWaiver ? `<p class="sub">It couldn't be read. Open it and check it.</p>` : `<p class="sub">Open it and confirm it belongs here.</p>`}${button}`;
 }
 
 // The items of a pay app, the job or closeout: each file, who checked it, and the ways to fill it.

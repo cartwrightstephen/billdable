@@ -317,10 +317,10 @@ class ImportHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
         rec = state["jobs"][0]["records"][-1]
         item = next(p for p in state["jobs"][0]["invoices"][-1]["packet"] if p["id"] == item["id"])
-        # A photo the check can't read is in once added, as checked by who added it (round 1, item 3).
-        self.assertTrue(item["present"])
+        # A photo the check can't read is attached; on a waiver item it waits for one tap that says
+        # which waiver it is (Round 1 acceptance, item 14).
+        self.assertFalse(item["present"])
         self.assertEqual(item["check"]["status"], "unchecked")
-        self.assertEqual(item["unread"], "photo")
         self.assertEqual([a["record_id"] for a in item["attachments"]], [rec["id"]])
         # The Inbox's Undo was refused while the paperwork used the record; Remove frees it.
         inbox_id = state["inbox"][-1]["id"]
