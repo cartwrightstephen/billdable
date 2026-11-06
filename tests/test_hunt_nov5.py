@@ -232,7 +232,7 @@ class NoDeadEndAtSend(unittest.TestCase):
         item = waiver_item(draft)
         others_in_hand(state, job, draft, item)
         record = signed_waiver(state, job["id"], "conditional_progress")
-        domain.attach_record_to_packet(state, job["id"], item["id"], record["id"])
+        domain.attach_record_to_packet(state, job["id"], item["id"], record["id"], answer="conditional")
         self.assertTrue(item["present"], item)
         return item
 
@@ -244,7 +244,7 @@ class NoDeadEndAtSend(unittest.TestCase):
         self.assertEqual(draft["status"], "draft")
         blocker = next(b for b in domain.blocker_items(job) if b.get("item_id") == item["id"])
         self.assertTrue(blocker["waiting"])
-        domain.confirm_packet_item(state, job["id"], item["id"], "Sam", looked=True)
+        domain.confirm_packet_item(state, job["id"], item["id"], "Sam", looked=True, answer="conditional")
         self.assertTrue(item["present"])
         self.assertEqual(domain.blocker_lines(job), [])
         self.assertIsNone(tried(state, domain.approve_and_send, job["id"], "Sam", reviewed=domain.review_stamp(state, job, draft)))
@@ -387,7 +387,7 @@ class ConfirmWhatWasShown(unittest.TestCase):
         self.assertFalse(self.item["present"])
 
     def test_the_file_on_the_screen_clears(self):
-        domain.confirm_packet_item(self.state, self.id, self.item["id"], "Ann", shown=[self.old["id"]])
+        domain.confirm_packet_item(self.state, self.id, self.item["id"], "Ann", shown=[self.old["id"]], answer="conditional")
         self.assertTrue(self.item["present"])
         self.assertEqual(self.item["confirmed_by"], "Ann")
 

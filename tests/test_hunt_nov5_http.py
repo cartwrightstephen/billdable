@@ -103,31 +103,29 @@ class Base(unittest.TestCase):
         return next((i for i in (job or self.job())["invoices"] if i["status"] in ("draft", "awaiting_approval")), None)
 
 
-class SaysUnconditional(unittest.TestCase):
-    def says(self, text, **kw):
-        return doc_check.says_unconditional([("a.txt", ".txt", text.encode())], **kw)
+class WhatAFileReadsAs(unittest.TestCase):
+    """The guess beside the waiver question (doc_check.reading): never the answer."""
 
-    def test_negated_wording_does_not_trigger(self):
+    def guess(self, text):
+        return doc_check.reading(text)["guess"]
+
+    def test_wording_taken_back_does_not_read_unconditional(self):
         for text in ("Conditional waiver and release. This is not an unconditional release.",
                      "This document does not constitute an unconditional waiver.",
                      "It is not to be construed as an unconditional release of lien rights.",
                      "This isn't an UNCONDITIONAL waiver."):
-            self.assertFalse(self.says(text), text)
+            self.assertNotEqual(self.guess(text), "unconditional", text)
 
     def test_the_plain_word_still_does(self):
         for text in ("UNCONDITIONAL WAIVER AND RELEASE", "Un-conditional waiver",
                      "This release is not conditional and is an unconditional waiver.",
                      "Not an unconditional release. Addendum: unconditional waiver of all claims."):
-            self.assertTrue(self.says(text), text)
+            self.assertEqual(self.guess(text), "unconditional", text)
 
-    def test_filed_as_anything_else_the_word_has_to_be_near_waiver_release_or_lien(self):
-        self.assertFalse(self.says("Unconditional acceptance of the change in scope, with no conditions at all on this waiver.", near_only=True))
+    def test_filed_as_anything_else_it_is_asked_about_when_a_line_near_the_top_names_a_waiver(self):
+        self.assertFalse(doc_check.reading("Unconditional acceptance of the change in scope, with no conditions at all on this waiver.")["form"])
         for text in ("Unconditional waiver of lien.", "Waiver and release, unconditional.", "UNCONDITIONAL\nWAIVER AND RELEASE"):
-            self.assertTrue(self.says(text, near_only=True), text)
-
-    def test_a_prompt_to_look_at_confirm_stays(self):
-        got = doc_check.check([("a.txt", ".txt", b"Conditional waiver. This is not an unconditional release.")], "", "", None, "conditional_progress", True)
-        self.assertIn(doc_check.MENTIONS_UNCONDITIONAL, got["problems"])   # a look, said as a mention (Nov 6 review, A)
+            self.assertTrue(doc_check.reading(text)["form"], text)
 
 
 class FileThatSaysUnconditional(Base):
@@ -156,17 +154,31 @@ class FileThatSaysUnconditional(Base):
         draft = self.draft()
         return self.post(f"/api/jobs/{self.job_id}/send", {"reviewed": draft["email_preview"]["stamp"], **body}, cookie=cookie)
 
-    def test_a_negated_form_sends(self):
-        self.add(b"Conditional waiver and release upon progress payment. This is not an unconditional release.\n")
+    def answer(self, rid, kind, cookie=None):
+        files = next(r for r in self.job()["records"] if r["id"] == rid)["file_ids"]
+        return self.post(f"/api/jobs/{self.job_id}/waiver-answer/{rid}", {"answer": kind, "shown": files}, cookie=cookie)
+
+    def test_a_negated_form_goes_once_someone_says_it_is_the_conditional_one(self):
+        rid = self.add(b"Conditional waiver and release upon progress payment. This is not an unconditional release.\n")
+        self.assertEqual([(r["record_id"], r["guess"]) for r in self.draft()["waiver_questions"]], [(rid, "conditional")])
+        status, data = self.send()
+        self.assertEqual(status, 409)
+        self.assertTrue(data["waiver_question"])
+        self.assertEqual(self.answer(rid, "conditional")[0], 200)
         status, data = self.send()
         self.assertEqual(status, 200, data)
 
     def test_the_page_names_the_file_and_an_owner_sends_with_a_reason(self):
         rid = self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n", label="signed-form.txt")
+        self.assertEqual(self.draft()["unconditional_attached"], [], "the person says which it is first")
+        self.assertEqual(self.draft()["waiver_questions"][0]["guess"], "unconditional")
+        status, data = self.answer(rid, "unconditional")
+        self.assertEqual(status, 200, data)
         rows = self.draft()["unconditional_attached"]
         self.assertEqual([r["record_id"] for r in rows], [rid])
         self.assertIn("signed-form.txt", rows[0]["file_names"])
         self.assertTrue(rows[0]["extra"])
+        self.assertIn("Ann Owner said", rows[0]["why"])
         status, data = self.send()
         self.assertEqual(status, 409)
         self.assertTrue(data["unconditional_waiver"])
@@ -186,20 +198,26 @@ class FileThatSaysUnconditional(Base):
         self.assertEqual(status, 200, data)
         self.assertEqual(self.draft()["unconditional_attached"], [])
 
-    def test_a_file_only_read_at_send_is_on_the_page_after_the_refusal(self):
-        rid = self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n")
+    def unread(self, rid):
+        """As a record added before its files were read for the waiver question."""
         state = server.load_company(self.company)
         job = next(j for j in state["jobs"] if j["id"] == self.job_id)
-        next(r for r in job["records"] if r["id"] == rid).pop("says_unconditional", None)   # added before this was read
+        next(r for r in job["records"] if r["id"] == rid).pop("waiver_read", None)
         server.save_company(self.company, state)
-        self.assertEqual(self.draft()["unconditional_attached"], [])
-        status, _ = self.send()
+
+    def test_a_file_only_read_at_send_is_on_the_page_after_the_refusal(self):
+        rid = self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n", kind="other")
+        self.unread(rid)
+        self.assertEqual(self.draft()["waiver_questions"], [])
+        status, data = self.send()
         self.assertEqual(status, 409)
-        self.assertEqual([r["record_id"] for r in self.draft()["unconditional_attached"]], [rid])
+        self.assertTrue(data["waiver_question"])
+        self.assertEqual([r["record_id"] for r in self.draft()["waiver_questions"]], [rid])
 
     def test_what_a_refusal_keeps_can_not_overwrite_another_request(self):
         """Another request gets the lock the moment the refused send lets go of it: its change stands."""
-        self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n")
+        rid = self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n", kind="other")
+        self.unread(rid)
         real, company = server.company_lock, self.company
 
         @contextlib.contextmanager
@@ -220,7 +238,7 @@ class FileThatSaysUnconditional(Base):
         state = server.load_company(company)
         self.assertEqual(state["company"]["name"], "Changed in the gap", "the other request's change is still there")
         job = next(j for j in state["jobs"] if j["id"] == self.job_id)
-        self.assertTrue(any(r.get("says_unconditional") for r in job["records"]), "what the refusal read is kept too")
+        self.assertTrue(next(r for r in job["records"] if r["id"] == rid).get("waiver_read"), "what the refusal read is kept too")
 
     def test_an_addendum_filed_as_other_is_not_a_false_alarm(self):
         self.add(b"Addendum: unconditional acceptance of the revised scope.\n", label="addendum.txt", kind="other")
@@ -326,7 +344,7 @@ class EveryWaiverFileIsRead(Base):
         status, data = self.waiver()
         self.assertEqual(status, 409)
         self.assertTrue(data["look_warning"])
-        self.assertIn("It says conditional, not unconditional.", data["error"])
+        self.assertIn("This reads as conditional.", data["error"])
         self.assertEqual(data["confirm_label"], "I opened it and it's right")
         self.assertEqual(len(server.load_company(self.company)["email_log"]), emails, "no email yet")
         status, data = self.waiver(looked_at=rid)
@@ -334,7 +352,7 @@ class EveryWaiverFileIsRead(Base):
         state = server.load_company(self.company)
         row = next(a for a in state["audit"] if a["action"] == "waiver_looked_at")
         self.assertEqual(row["actor"], "Ann Owner")
-        self.assertIn("It says conditional", row["detail"])
+        self.assertIn("This reads as conditional", row["detail"])
 
     def test_blank_a_letter_and_a_title_all_warn(self):
         for name, data, says in (("blank.txt", b" ", "looks blank"), ("lunch.txt", b"Thanks for lunch on Tuesday at the Oak Grill, see you soon.", "Job name not found"),
@@ -370,26 +388,42 @@ class EveryWaiverFileIsRead(Base):
 
 
 class UnconditionalInAnyKind(FileThatSaysUnconditional):
-    """Item 16: a form filed as a note, a ticket or a photo, added to the email, still warns."""
+    """Item 16: a form filed as a note, a ticket or a photo, added to the email, is asked about; said
+    to be the unconditional one, it takes the owner."""
 
-    def test_every_kind_but_the_contract_papers(self):
+    def test_every_kind(self):
         for kind in ("note", "pay_app", "ticket", "supplier_invoice"):
             rid = self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n", label=f"{kind}.txt", kind=kind)
+            status, data = self.send()
+            self.assertEqual(status, 409, kind)
+            self.assertTrue(data["waiver_question"], kind)
+            self.assertEqual(self.answer(rid, "unconditional")[0], 200)
             status, data = self.send()
             self.assertEqual(status, 409, kind)
             self.assertTrue(data["unconditional_waiver"], kind)
             self.post(f"/api/jobs/{self.job_id}/payapp/{self.draft()['id']}/attachments", {"action": "remove_record", "record_id": rid})
 
-    def test_a_contract_is_not_read(self):
-        self.add(b"Sub agrees to an unconditional release of lien on final payment.\n", label="contract.txt", kind="contract")
+    def test_a_contract_gets_the_question_at_most(self):
+        rid = self.add(b"Sub agrees to an unconditional release of lien on final payment.\n", label="contract.txt", kind="contract")
+        status, data = self.send()
+        self.assertEqual(status, 409)
+        self.assertTrue(data["waiver_question"])
+        self.assertEqual(self.answer(rid, "no")[0], 200)
         status, data = self.send()
         self.assertEqual(status, 200, data)
 
-    def test_a_file_labelled_conditional_that_reads_unconditional_warns(self):
-        self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n", label="Conditional waiver.txt")
+    def test_a_file_labelled_conditional_that_reads_unconditional_is_guessed_so(self):
+        rid = self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n", label="Conditional waiver.txt")
+        self.assertEqual(self.draft()["waiver_questions"][0]["guess"], "unconditional")
+        self.answer(rid, "unconditional")
         status, data = self.send()
         self.assertEqual(status, 409)
         self.assertTrue(data["unconditional_waiver"])
+
+    def test_a_member_without_send_permission_cant_answer(self):
+        rid = self.add(b"UNCONDITIONAL WAIVER AND RELEASE\n", kind="note")
+        self.assertEqual(self.answer(rid, "no", cookie=self.bob)[0], 403)
+        self.assertEqual([r["record_id"] for r in self.draft()["waiver_questions"]], [rid])
 
 
 class StaleReviewWithAWaiver(Base):
@@ -404,7 +438,7 @@ class StaleReviewWithAWaiver(Base):
                 self.post(f"/api/jobs/{self.job_id}/resolve/{item['id']}", {"reason": "In hand"})
         res, up = self.upload("signed.txt", b"Elm addition $5,000.00 Conditional waiver on progress payment", kind="waiver")
         item = next(p for p in self.draft()["packet"] if p.get("waiver_kind"))
-        status, data = self.post(f"/api/jobs/{self.job_id}/attach-record/{item['id']}", {"record_id": up["uploaded_record_ids"][0], "looked": True})
+        status, data = self.post(f"/api/jobs/{self.job_id}/attach-record/{item['id']}", {"record_id": up["uploaded_record_ids"][0], "looked": True, "answer": "conditional"})
         self.assertEqual(status, 200, data)
         stale = self.draft()["email_preview"]["stamp"]
         status, data = self.post(f"/api/jobs/{self.job_id}/sov-progress", {"done": {line["id"]: "0.3"}})

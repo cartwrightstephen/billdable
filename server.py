@@ -2328,7 +2328,7 @@ class Handler(BaseHTTPRequestHandler):
                 if for_job_record:
                     domain.hold_for_job_record(state, job_id, filed["record_ids"], actor)
                 if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
-                    domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for)
+                    domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for, said=False)
                 if attach_to:
                     domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor, read_file=_file_reader(company_id, ahead))
                 if signed_co and may_take(user, "approve-co", state):
@@ -3252,7 +3252,7 @@ def _sov_progress(h, st, j, i, c):
         # the same quantities changes only its amounts (Round 1 hunt).
         done = domain.done_for_amounts(st, j, done, amounts)
         if domain.drafted_at(st, j, done) and not c.body.get("stored"):
-            return domain.set_payapp_amounts(st, j, amounts, c.actor)
+            return domain.set_payapp_amounts(st, j, amounts, c.actor, period_end=_text(c.body, "period_to") or None, notes=_text(c.body, "notes"))
     out = domain.record_sov_progress(st, j, done, _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
                                      period_end=_text(c.body, "period_to"), keep_amounts=isinstance(amounts, dict) and bool(amounts))
     if isinstance(amounts, dict) and amounts:
@@ -3283,9 +3283,14 @@ def _may_change_contract(c: "Ctx", st: dict) -> bool:
 
 
 def _retainage(h, st, j, i, c):
-    """Ask for retainage: all of it, or amount_cents of it (R4-07)."""
+    """Ask for retainage: all of it, or amount_cents of it (R4-07). With an unconditional waiver in
+    the closeout documents, only an owner gives the reason it goes (M14)."""
     amount = c.body.get("amount_cents")
-    return domain.chase_retainage(st, j, c.actor, amount_cents=None if amount in (None, "") else _number(c.body, "amount_cents", "the retainage to ask for"))
+    override = _text(c.body, "unconditional_override").strip()
+    if override and c.user.get("role", "owner") != "owner":
+        raise domain.GateError("Only an owner can ask for retainage with an unconditional waiver attached.")
+    return domain.chase_retainage(st, j, c.actor, amount_cents=None if amount in (None, "") else _number(c.body, "amount_cents", "the retainage to ask for"),
+                                  unconditional_override=override, read_file=_file_reader(c.company_id, c.read_ahead))
 
 
 def _shown(body: dict) -> list | None:
@@ -3408,8 +3413,9 @@ def _read_ahead(company_id: str, job_id: str, item_id: str, record_id: str = "",
 
 
 def _read_ahead_waivers(company_id: str, job_id: str, action: str) -> dict:
-    """The same for Approve & send and the waiver step: what goes with the draft for a send, the
-    job's waivers for the waiver step. A file
+    """The same for Approve & send, the waiver step and the retainage request: what goes with the
+    draft for a send, the job's waivers for the waiver step, the closeout documents for the
+    request. A file
     missed here (one that came on since) is read under the lock by _file_reader."""
     with company_lock(company_id):
         state = load_company(company_id)
@@ -3419,6 +3425,9 @@ def _read_ahead_waivers(company_id: str, job_id: str, action: str) -> dict:
     if action == "send":
         draft = next((i for i in job.get("invoices", []) if i.get("status") in domain.DRAFT_STATUSES), {})
         going = {a.get("record_id") for item in draft.get("packet") or [] for a in item.get("attachments", [])} | set(draft.get("extra_record_ids") or [])
+        records = [r for r in job.get("records", []) if r["id"] in going]
+    elif action == "retainage":
+        going = {a.get("record_id") for item in job.get("closeout_packet") or [] for a in item.get("attachments", [])}
         records = [r for r in job.get("records", []) if r["id"] in going]
     else:
         records = [r for r in job.get("records", []) if r.get("kind") == "waiver"]
@@ -3437,7 +3446,7 @@ def _file_reader(company_id: str, ahead: dict | None = None):
 
 
 DOCUMENT_ACTIONS = {"attach-record", "packet-confirm", "packet-recheck", "attach"}
-WAIVER_READING_ACTIONS = {"send", "waiver"}
+WAIVER_READING_ACTIONS = {"send", "waiver", "retainage"}
 
 
 JOB_ACTIONS = {
@@ -3452,7 +3461,8 @@ JOB_ACTIONS = {
     "quantities-undo": (True, lambda h, st, j, i, c: domain.undo_quantity_import(st, j, i, c.actor, below_billed=c.body.get("below_billed") is True)),
     "waiver-needed": (False, lambda h, st, j, i, c: domain.waiver_needed_after_all(st, j, c.actor)),
     "overbilling-settled": (False, lambda h, st, j, i, c: domain.settle_overbilling(st, j, _text(c.body, "reason"), c.actor)),
-    "unconditional-look": (True, lambda h, st, j, i, c: domain.confirm_unconditional_mention(st, j, i, c.actor, shown=_shown(c.body))),
+    # Is this a lien waiver? A person's answer for a file going out that reads as one (the Nov 6 redesign).
+    "waiver-answer": (True, lambda h, st, j, i, c: domain.answer_waiver_question(st, j, i, _text(c.body, "answer"), c.actor, shown=_shown(c.body))),
     "retainage-credit": (False, lambda h, st, j, i, c: domain.apply_credit_to_retainage(st, j, _text(c.body, "reason"), c.actor,
                                                                                          amount_cents=_number(c.body, "amount_cents", "the amount") if c.body.get("amount_cents") not in (None, "") else None)),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
@@ -3492,8 +3502,10 @@ JOB_ACTIONS = {
     "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
     "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor, _text(c.body, "note") if "note" in c.body else None)),
-    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
-    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, may_look=has_perm(c.user, "send_payapps", st), read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body))),
+    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead),
+                                                                                   looked=c.body.get("looked") is True, answer=_text(c.body, "answer"))),
+    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id, c.read_ahead),
+                                                                                shown=_shown(c.body), answer=_text(c.body, "answer"))),
     "packet-recheck": (True, lambda h, st, j, i, c: c.reply.update(domain.recheck_reply(st, j, i, read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body)))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: _skip_item(st, j, i, c)),
@@ -3509,7 +3521,8 @@ JOB_ACTIONS = {
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
     "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body, c.reply)),
-    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
+    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead),
+                                                                         looked=c.body.get("looked") is True, answer=_text(c.body, "answer"))),
 }
 
 def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None = None) -> bool:

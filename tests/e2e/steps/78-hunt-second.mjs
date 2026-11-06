@@ -4,7 +4,7 @@
 // of the page at phone width. Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
-export default async function ({ browser, BASE, step, signedInPage, confirmDialog }) {
+export default async function ({ browser, BASE, step, signedInPage, confirmDialog, confirmIfAsked }) {
   const call = (p, path, body) => p.evaluate(async ([to, what]) => {
     const r = await fetch(to, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(what || {}) });
     return { status: r.status, data: await r.json() };
@@ -84,7 +84,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await p.context().close();
   });
 
-  await step("A file that only mentions an unconditional waiver: the words shown, one look, then it sends", async () => {
+  await step("A log that talks about an unconditional waiver is asked about once: No, then it sends", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     const id = await made(p, "Smoke mention");
     const res = await upload(p, id, "log.txt", "Daily log. Sub's unconditional lien waiver received from plumber for last month.", { kind: "note" });
@@ -92,11 +92,14 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await call(p, `/api/jobs/${id}/payapp/${draft.id}/attachments`, { action: "add_record", record_id: res.data.uploaded_record_ids[0] });
     await clear(p, id);
     await p.goto(`${BASE}/money/pay-app/${id}/${draft.id}`);
-    const look = p.locator('[data-action="unconditional-look"]');
-    await look.waitFor();
-    await look.click();
-    await confirmDialog(p).filter({ hasText: "unconditional lien waiver received" }).getByRole("button", { name: "It's right" }).click();
-    await p.waitForFunction(async (jobId) => !((await (await fetch(`/api/jobs/${jobId}`)).json()).job.invoices.at(-1).unconditional_mentions || []).length, id);
+    const no = p.locator('.waiver-questions [data-action="waiver-answer"][data-answer="no"]');
+    await no.waitFor();
+    await no.click();
+    assert.equal(await confirmDialog(p).count(), 0, "one tap, no dialog");
+    await p.waitForFunction(async (jobId) => !((await (await fetch(`/api/jobs/${jobId}`)).json()).job.invoices.at(-1).waiver_questions || []).length, id);
+    await p.locator('.send-check [data-action="send"]').click();
+    await confirmIfAsked(p);
+    await p.waitForFunction(async (jobId) => (await (await fetch(`/api/jobs/${jobId}`)).json()).job.invoices.at(-1).status === "sent", id);
     await p.context().close();
   });
 
@@ -145,7 +148,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await p.goto(`${BASE}/money/packet/${id}/${draft.id}`);
     const row = p.locator(`#packet-item-${item.id}`);
     await row.filter({ hasText: "Amount not found" }).filter({ hasText: "Job name not found" }).waitFor();
-    await row.locator('[data-action="packet-confirm"]').click();   // round 1, item 3
+    await row.locator('[data-action="packet-confirm"][data-answer="conditional"]').click();   // round 1, item 3: the tap that says which waiver
     await p.waitForFunction(async ([jobId, itemId]) => (await (await fetch(`/api/jobs/${jobId}`)).json()).job.invoices.at(-1).packet.find((i) => i.id === itemId).present, [id, item.id]);
     await p.context().close();
   });
@@ -157,7 +160,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     const item = draft.packet.find((i) => i.waiver_kind);
     await upload(p, id, "first.txt", "Lien waiver for somewhere else", { kind: "waiver", attach: item.id, waiver_kind: item.waiver_kind });
     await p.goto(`${BASE}/money/packet/${id}/${draft.id}`);
-    const button = p.locator(`[data-action="packet-confirm"][data-item="${item.id}"]`);
+    const button = p.locator(`[data-action="packet-confirm"][data-item="${item.id}"][data-answer="conditional"]`);
     await button.waitFor();
     // In another session, a newer file takes over while this page stays as it is.
     await upload(p, id, "newer.txt", "Another lien waiver for somewhere else", { kind: "waiver", attach: item.id, waiver_kind: item.waiver_kind });

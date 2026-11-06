@@ -153,18 +153,21 @@ class BillByDollars(ServerCase):
         said = " ".join(e.get("text", "") + " ".join(d.get("text", "") for d in e.get("details", [])) for e in trail.get("entries", []))
         self.assertIn("$3,333.33 changed by hand gives way to it", said)
 
-    def test_the_percent_the_dollars_stood_at_typed_on_the_percent_form_bills_that_percent(self):
+    def test_the_percent_form_sent_with_the_line_at_its_percent_keeps_the_dollars(self):
+        # The form sends every box: a line whose quantity didn't change keeps its dollars (Round 1
+        # hunt, d1_giveway.py); this replaces "the % the dollars stood at bills that %".
         self.assertEqual(self.bill(333_333)[0].status, 200)
         lid = self.job()["sov_view"]["lines"][0]["id"]
         res, out = self.request("POST", f"/api/jobs/{self.job_id}/sov-progress", {"done": {lid: "0.333"}, "notes": ""}, cookie=self.owner)
-        self.assertEqual(res.status, 200, out.get("error"))
-        self.assertEqual(self.draft()["gross_cents"], 333_000)
+        self.assertEqual(res.status, 409, "nothing changed: it is drafted at that % already")
+        self.assertIn("already drafted at those quantities", out["error"])
+        self.assertEqual(self.draft()["gross_cents"], 333_333)
 
 
 class BillByDollarsOnABigLine(BillByDollars):
     CONTRACT = 120_000_000   # $1.2M: a $1,000 draw is 0.083%
     test_a_percent_typed_after_dollars_replaces_the_dollars_on_that_line = None
-    test_the_percent_the_dollars_stood_at_typed_on_the_percent_form_bills_that_percent = None
+    test_the_percent_form_sent_with_the_line_at_its_percent_keeps_the_dollars = None
 
     def test_a_draw_under_a_tenth_of_a_percent_bills_what_was_typed(self):
         res, out = self.bill(100_000)

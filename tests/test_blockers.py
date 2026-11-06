@@ -58,9 +58,14 @@ class Case(unittest.TestCase):
         self.data[meta["id"]] = data
         return rec
 
-    def attach(self, rec, looked=False, item=None):
-        return domain.attach_record_to_packet(self.state, self.job["id"], (item or self.waiver)["id"], rec["id"], "Sam",
-                                              read_file=self.read, looked=looked)
+    def attach(self, rec, looked=False, item=None, answer=None):
+        """A person attaches a record; on a waiver item they also say which waiver it is (the item's
+        own type unless answer says otherwise; "" for no answer yet)."""
+        item = item or self.waiver
+        if answer is None:
+            answer = domain._item_word(item) if domain.is_waiver_item(item) else ""
+        return domain.attach_record_to_packet(self.state, self.job["id"], item["id"], rec["id"], "Sam",
+                                              read_file=self.read, looked=looked, answer=answer)
 
 
 class StephensReportTests(Case):
@@ -102,9 +107,11 @@ class AcceptanceTests(Case):  # acceptance.md 66-70, 74, 76, 80
         rec = self.stored("w", pdf("Lien waiver for Oak street in the amount of $9.00"))
         self.attach(rec, looked=True)
         self.assertFalse(self.waiver["present"], "the warning has to be shown first")
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read)
-        self.assertFalse(self.waiver["present"], "the normal confirm doesn't clear a flag")
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+        with self.assertRaises(domain.GateError) as raised:   # on a waiver item the confirm is the answer
+            domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read)
+        self.assertIn("answer", raised.exception.fields)
+        self.assertFalse(self.waiver["present"])
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read, answer="conditional")
         self.assertTrue(self.waiver["present"])
 
     def test_interim_and_final_wording_is_read(self):
@@ -116,22 +123,22 @@ class AcceptanceTests(Case):  # acceptance.md 66-70, 74, 76, 80
             check = doc_check.check([("w.pdf", ".pdf", pdf(text))], "Pine kitchen", "$4,000.00", 400_000, kind, True)
             self.assertEqual(check["status"] == "matched", clean, (kind, text, check))
 
-    def test_a_waiver_with_no_type_is_asked_about_and_never_stamped(self):
+    def test_a_waiver_with_no_type_is_asked_which_it_is_and_the_answer_types_it(self):
         rec = self.stored("waiver.pdf", pdf(GOOD), typed="")
-        self.attach(rec)
-        self.assertIn("doesn't say its type", " ".join(self.waiver["check"]["problems"]))
+        self.attach(rec, answer="")
         self.assertFalse(self.waiver["present"])
-        self.assertNotIn("waiver_kind", rec)
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+        self.assertNotIn("waiver_kind", rec, "nothing is assumed")
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read, answer="conditional")
         self.assertTrue(self.waiver["present"])
-        self.assertNotIn("waiver_kind", rec, "a look clears the item; it doesn't type the record")
+        self.assertEqual(rec["waiver_kind"], "conditional_progress", "the person's answer types it")
+        self.assertEqual((rec["waiver_answer"]["kind"], rec["waiver_answer"]["by"], rec["waiver_answer"]["file_ids"]), ("conditional", "Sam", rec["file_ids"]))
 
-    def test_an_untyped_waiver_is_not_stamped_at_send(self):
+    def test_an_untyped_suggested_waiver_goes_typed_by_the_answer(self):
         rec = self.stored("waiver.pdf", pdf(GOOD), typed="")
-        confirm_suggested(self.state, self.job)  # no reader: as a draft from before these rules
+        confirm_suggested(self.state, self.job)  # no reader: the answer alone
         domain.resolve_packet_item(self.state, self.job["id"], next(p for p in self.inv["packet"] if p["label"] == "Invoice")["id"], reason="x")
         domain.approve_and_send(self.state, self.job["id"], "Sam")
-        self.assertNotIn("waiver_kind", rec)
+        self.assertEqual(rec["waiver_kind"], "conditional_progress")
 
     def test_an_unconditional_waiver_filed_as_other_still_warns(self):
         rec = self.stored("Unconditional lien waiver", pdf(GOOD), kind="other", typed="")
@@ -249,8 +256,8 @@ class RealFileTests(Case):
         self.state["files"].append({"id": "f9", "name": "w.pdf", "ext": ".pdf", "size": len(pdf(GOOD))})
         self.data["f9"] = pdf(GOOD)
         domain.add_packet_attachment(self.state, self.job["id"], self.waiver["id"], "", "Sam", file_id="f9", read_file=self.read)
-        self.assertIn("doesn't say its type", self.waiver["check"]["problems"][0], "a new record has no type yet")
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+        self.assertFalse(self.waiver["present"], "a new record waits for which waiver it is")
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read, answer="conditional")
         self.assertTrue(self.waiver["present"])
         self.assertEqual(self.job["records"][-1]["file_ids"], ["f9"])
 
@@ -306,13 +313,13 @@ class ConfirmTests(Case):
         self.assertFalse(self.waiver["present"])
         self.assertEqual([(a["record_id"], a["auto"], a["unconfirmed"]) for a in self.waiver["attachments"]], [(rec["id"], True, True)])
         self.assertEqual(domain._packet_file_ids(self.state, self.job, self.inv), [], "not in the email until confirmed")
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read)
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read, answer="conditional")
         self.assertTrue(self.waiver["present"])
         self.assertEqual(self.waiver["confirmed_by"], "Sam")
         self.assertTrue(self.waiver["confirmed_at"])
         self.assertEqual(domain._packet_file_ids(self.state, self.job, self.inv), rec["file_ids"])
         row = next(a for a in self.state["audit"] if a["action"] == "packet_confirmed")
-        self.assertIn("Sam checked", row["detail"])
+        self.assertIn("Sam said Waiver from the field is the conditional waiver", row["detail"])
 
     def test_attaching_is_the_one_step(self):
         self.attach(self.stored("Waiver", pdf(GOOD)))
@@ -374,23 +381,22 @@ class OverrideTests(Case):
 class DocumentCheckTests(Case):
     def problems(self, data, name="w.pdf"):
         rec = self.stored("w", data, name)
-        self.attach(rec)
+        self.attach(rec, answer="")
         return " ".join(self.waiver["check"]["problems"])
 
     def test_a_mismatch_names_what_did_not_match_and_a_look_clears_it(self):
         words = self.problems(pdf("Lien waiver for Oak street in the amount of $9.00"))
         self.assertIn("Job name not found: Pine kitchen.", words)
         self.assertIn("Amount not found: $4,000.00.", words)
-        self.assertIn("Conditional wording not found.", words)
         self.assertFalse(self.waiver["present"])
         self.assertEqual(self.inv["status"], "draft")
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read, answer="conditional")
         self.assertTrue(self.waiver["present"], "never a hard block")
         self.assertEqual(self.waiver["confirmed_by"], "Sam")
         self.assertIn("after the warning", self.state["audit"][-1]["detail"] + self.state["audit"][-2]["detail"])
 
     def test_unconditional_wording_on_a_conditional_item(self):
-        self.assertIn("It says unconditional", self.problems(pdf("Unconditional waiver Pine kitchen $4,000.00")))
+        self.assertIn("This reads as unconditional.", self.problems(pdf("Unconditional waiver Pine kitchen $4,000.00")))
 
     def test_word_files_are_read_too(self):
         self.attach(self.stored("w", docx(GOOD), "w.docx"))
@@ -410,7 +416,7 @@ class DocumentCheckTests(Case):
                 # On a waiver item it waits for a person to say which waiver it is (Round 1 acceptance,
                 # item 14); one tap does it.
                 self.assertFalse(self.waiver["present"])
-                domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+                domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read, answer="conditional")
                 self.assertTrue(self.waiver["present"])
                 self.assertEqual(self.waiver["confirmed_by"], "Sam")
 

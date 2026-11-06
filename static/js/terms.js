@@ -52,10 +52,10 @@ export const ACTION_WORDS = {
   payer_received: "Client opened it", payer_approved: "Client approved", payer_question: "Client asked a question",
   reply_captured: "Client replied", learn_rejection: "Client's reason saved", playbook_learned: "Client playbook learned",
   playbook_update: "Client playbook changed", payer_add: "Client added", payer_merge: "Clients merged", payer_delete: "Client deleted", payer_kept: "Client kept",
-  import_filed: "Added to the job", import_undone: "Taken off the job", sov_saved: "Schedule of values saved", payapp_amount_changed: "Pay app amount changed", sov_removed: "Schedule of values removed",
+  import_filed: "Added to the job", import_undone: "Taken off the job", sov_saved: "Schedule of values saved", payapp_amount_changed: "Pay app amount changed", payapp_period: "Pay app date changed", sov_removed: "Schedule of values removed",
   billing: "Billing changed", company_update: "Company changed", team: "Team changed", team_join: "Joined the team",
   qbo_connected: "QuickBooks connected", qbo_disconnected: "QuickBooks disconnected", read_only: "Read-only changed",
-  unconditional_override: "Sent with an unconditional waiver", unconditional_mention_confirmed: "Confirmed a file that mentions an unconditional waiver", waiver_type: "Waiver type set", waiver_not_needed: "No waiver through Duracash",
+  unconditional_override: "Sent with an unconditional waiver", unconditional_mention_confirmed: "Confirmed a file that mentions an unconditional waiver", waiver_answer: "Said which waiver it is", waiver_type: "Waiver type set", waiver_not_needed: "No waiver through Duracash",
   daily_quantities_not_applied: "Quantities not added", quantities_imported: "Quantities imported",
   payapp_attachments: "Email attachments changed", record_work: "Ticket tied to work", record_filed: "Job record filed",
 };

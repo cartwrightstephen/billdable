@@ -42,11 +42,13 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     const [chooser] = await Promise.all([p.waitForEvent("filechooser"),
       p.locator(`#packet-item-${item.id} [data-action="pick-files"]:not([data-capture])`).click()]);
     await chooser.setFiles({ name: "signed-waiver.jpg", mimeType: "image/jpeg", buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70]) });
-    // On a waiver item a photo takes one tap that says which waiver it is (Round 1 acceptance, item 14).
-    const look = p.locator(`#packet-item-${item.id} [data-action="packet-confirm"]`, { hasText: "I looked at it: it's the conditional waiver for this pay app" });
+    // On a waiver item any file, a photo too, takes one tap that says which waiver it is (the Nov 6
+    // redesign): Conditional is filled in, since that is the waiver the item needs.
+    await p.locator(`#packet-item-${item.id}`, { hasText: "Which waiver is this?" }).waitFor();
+    const look = p.locator(`#packet-item-${item.id} [data-action="packet-confirm"][data-answer="conditional"][aria-current="true"]`);
     await look.waitFor();
     await look.click();
-    await p.locator(`#packet-item-${item.id}`, { hasText: "Looked at by" }).waitFor();
+    await p.locator(`#packet-item-${item.id}`, { hasText: "Said by" }).waitFor();
     assert.equal(await confirmDialog(p).count(), 0);
     assert.equal((await read(p, id)).invoices.at(-1).packet.find((i) => i.id === item.id).present, true);
     await p.context().close();

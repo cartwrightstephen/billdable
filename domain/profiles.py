@@ -53,7 +53,7 @@ NAME_MAX = 40
 # given a permission on purpose rather than left open by accident.
 JOB_ACTION_PERMS: dict[str, str | None] = {
     "send": "send_payapps",
-    "unconditional-look": "send_payapps",   # a file that mentions one: looked at by someone who can send
+    "waiver-answer": "send_payapps",   # Is this a lien waiver? answered by someone who can send
     "waiver": "send_waivers",
     "waiver-not-needed": "send_waivers",   # the way out of sending one (B2 of the Oct 30 review)
     "retainage": "ask_retainage",

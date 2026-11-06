@@ -353,6 +353,9 @@ export async function post(path, body = {}, opts = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
+// A refusal the caller held back (opts.ownRefusal) and now shows, as post() would have.
+export function showRefused(data, anchor = actionEl) { showRefusal(anchor, data || {}); }
+
 // Why an action was refused, in a card right under the button that was tapped (or the row or
 // bar it sits in), scrolled into view, with a link to the page that fixes it when the server
 // names one. Without a button on the page it falls back to a toast.

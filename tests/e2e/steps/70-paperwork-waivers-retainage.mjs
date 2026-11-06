@@ -53,11 +53,13 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await warning.waitFor();
     assert.match(await warning.innerText(), /looks blank/);
     assert.equal(await p.locator('.send-check [data-action="send"]').isDisabled(), false);
-    // One tap: the button names the look, with no second dialog (round 1, item 3).
-    await p.getByRole("button", { name: "I opened it and it's right" }).click();
-    await p.locator(".packet-item", { hasText: "Confirmed by" }).waitFor();
+    // One tap says which waiver it is, and is the look at the warning beside it, with no second dialog
+    // (round 1, item 3; the Nov 6 redesign).
+    await p.locator(".send-missing .which-waiver", { hasText: "Which waiver is this?" }).waitFor();
+    await p.locator(`.send-missing [data-action="packet-confirm"][data-item="${made.waiver}"][data-answer="conditional"]`).click();
+    await p.locator(".packet-item", { hasText: "Said by" }).waitFor();
     assert.equal(await confirmDialog(p).count(), 0);
-    await p.locator(".send-confirmed", { hasText: "Confirmed by" }).waitFor();
+    await p.locator(".send-confirmed", { hasText: "the conditional waiver" }).waitFor();
     await p.locator(".send-warnings").waitFor();
     if (made.other) {
       await p.locator(`[data-form="resolve-${made.other}"]`).click();
@@ -85,8 +87,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       for (const item of inv.packet) if (item !== waiver && !item.present) await call(`/api/jobs/${id}/resolve/${item.id}`, { reason: "smoke" });
       const res = await fetch(`/api/import/file?job=${id}&file=1&kind=waiver&waiver_kind=unconditional_progress&attach=${waiver.id}`,
         { method: "POST", headers: { "Content-Type": "application/pdf", "X-Filename": "Unconditional waiver.pdf" }, body: "%PDF-1.4 smoke" });
-      // A blank file: it asks for a look (Decision 6), then a person says it is right.
-      await call(`/api/jobs/${id}/packet-confirm/${waiver.id}`, { looked: true });
+      // A blank file: it asks for a look (Decision 6); the person's tap says it is the unconditional one.
+      await call(`/api/jobs/${id}/packet-confirm/${waiver.id}`, { looked: true, answer: "unconditional" });
       return { id, inv: inv.id, status: res.status };
     });
     assert.equal(job.status, 200);

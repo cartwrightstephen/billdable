@@ -76,23 +76,23 @@ class OneTapToConfirmAFile(Case):
     the person's deliberate look, which names what didn't match."""
 
     def test_a_photo_added_to_an_item_is_in_with_who_added_it(self):
-        # On a waiver item a photo waits for one tap (Round 1 acceptance, item 14); elsewhere it is in.
-        self.attach(self.stored("Signed waiver", b"\xff\xd8 jpeg", "w.jpg"))
+        # On a waiver item any file, a photo too, waits for one tap that says which waiver it is
+        # (the Nov 6 redesign); elsewhere a photo is in once added.
+        self.attach(self.stored("Signed waiver", b"\xff\xd8 jpeg", "w.jpg"), answer="")
         self.assertFalse(self.waiver["present"])
         self.assertEqual(self.waiver["check"]["status"], "unchecked")
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read, answer="conditional")
         self.assertTrue(self.waiver["present"])
         self.assertEqual((self.waiver["confirmed_by"], self.waiver["looked_as"]), ("Sam", "conditional"))
         self.assertNotIn("unread", self.waiver)
         row = self.state["audit"][-1]
         self.assertEqual(row["action"], "packet_confirmed")
-        self.assertIn("Sam looked at", row["detail"])
-        self.assertIn("couldn't be read", row["detail"])
+        self.assertIn("Sam said Signed waiver is the conditional waiver", row["detail"])
 
     def test_a_scanned_pdf_waits_for_the_tap_too(self):
-        self.attach(self.stored("Scan", b"%PDF-1.4 /Subtype /Image stream", "s.pdf"))
+        self.attach(self.stored("Scan", b"%PDF-1.4 /Subtype /Image stream", "s.pdf"), answer="")
         self.assertFalse(self.waiver["present"])
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read, answer="conditional")
         self.assertTrue(self.waiver["present"])
 
     def test_a_file_that_was_read_and_matched_keeps_no_unread_mark(self):
@@ -102,23 +102,21 @@ class OneTapToConfirmAFile(Case):
 
     def test_a_flagged_mismatch_still_waits_for_the_look(self):
         self.attach(self.stored("w", pdf("Lien waiver for Oak street in the amount of $9.00")))
-        self.assertFalse(self.waiver["present"])
+        self.assertFalse(self.waiver["present"], "the answer given with the attach comes before the warning was shown")
         self.assertEqual(self.waiver["check"]["status"], "flagged")
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read)
-        self.assertFalse(self.waiver["present"], "a confirm that didn't say they looked doesn't clear a mismatch")
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
-        self.assertTrue(self.waiver["present"])
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read, answer="conditional")
+        self.assertTrue(self.waiver["present"], "the answer, given with the warning on the screen, is the look")
         self.assertNotIn("unread", self.waiver)
 
     def test_a_photo_asked_to_be_looked_at_again_isnt_cleared_by_adding_it_again(self):
         rec = self.stored("Signed waiver", b"\xff\xd8 jpeg", "w.jpg")
         self.attach(rec)
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+        self.assertTrue(self.waiver["present"], "attached and said which waiver")
         self.assertTrue(domain._ask_for_a_look(self.waiver, "The amount changed from $1.00 to $2.00. Look at it again."))
         self.attach(rec)
         self.assertFalse(self.waiver["present"])
         self.assertIn("The amount changed from $1.00 to $2.00. Look at it again.", self.waiver["check"]["problems"])
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read, answer="conditional")
         self.assertTrue(self.waiver["present"])
 
     def test_a_suggested_photo_needs_the_persons_tap_but_no_second_one(self):

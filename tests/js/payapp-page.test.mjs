@@ -95,7 +95,10 @@ test("a photo the check can't read says Photo added by who, with no warning box"
   const flagged = show(job({ invoices: [draft({ packet: [waiverItem({ attachments: [{ record_id: "r2", name: "w", unconfirmed: true }],
     check: { status: "flagged", problems: ["Amount not found: $24,500.00."] } })] })] }));
   assert.match(flagged, /Amount not found: \$24,500\.00\./);
-  assert.match(flagged, /data-action="packet-confirm" data-id="j1" data-item="pk-w" data-looked="1">I opened it and it's right</);
+  // On a waiver item the tap that answers which waiver it is is the look (the Nov 6 redesign).
+  assert.match(flagged, /<strong>Which waiver is this\?<\/strong>/);
+  assert.match(flagged, /data-action="packet-confirm" data-id="j1" data-item="pk-w" data-answer="conditional" data-looked="1" aria-current="true">Conditional</);
+  assert.match(flagged, /data-action="packet-confirm" data-id="j1" data-item="pk-w" data-answer="unconditional" data-looked="1">Unconditional</);
 });
 
 test("I opened it and it's right confirms in one tap, with no second dialog", async () => {
@@ -109,11 +112,12 @@ test("I opened it and it's right confirms in one tap, with no second dialog", as
     (p) => (p === "/api/state" ? { status: 200, body: { company: {}, jobs: [j], payers: [], inbox: [], email_log: [] } } : undefined),
   ];
   const d = answerDialogs(false);
-  try { await reg.actions["packet-confirm"]({ dataset: { item: "pk-w", looked: "1" } }, "j1"); } finally { d.restore(); }
+  try { await reg.actions["packet-confirm"]({ dataset: { item: "pk-w", looked: "1", answer: "conditional" } }, "j1"); } finally { d.restore(); }
   assert.deepEqual(d.said, [], "no dialog");
   const sent = dom.requests.find(r => r.path === "/api/jobs/j1/packet-confirm/pk-w");
   assert.ok(sent, "confirmed");
   assert.equal(sent.body.looked, true);
+  assert.equal(sent.body.answer, "conditional", "the tap says which waiver it is");
 });
 
 test("a suggestion the check flags now is shown first, not confirmed past", async () => {
@@ -137,9 +141,10 @@ test("a suggested photo the check can't read is confirmed with the one tap", asy
     (p) => (p.includes("/packet-confirm/") ? { status: 200, body: {} } : undefined),
     (p) => (p === "/api/state" ? { status: 200, body: { company: {}, jobs: [j], payers: [], inbox: [], email_log: [] } } : undefined),
   ];
-  await reg.actions["packet-confirm"]({ dataset: { item: "pk-w" } }, "j1");
+  await reg.actions["packet-confirm"]({ dataset: { item: "pk-w", answer: "unconditional" } }, "j1");
   const sent = dom.requests.find(r => r.path === "/api/jobs/j1/packet-confirm/pk-w");
   assert.equal(sent && sent.body.looked, true);
+  assert.equal(sent.body.answer, "unconditional");
 });
 
 test("Approve & send asks first, naming who, how much and the period", async () => {

@@ -37,7 +37,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     for (let t = 0; t < 100 && (await needsFile.count()); t++) await new Promise((r) => setTimeout(r, 100));
     await send.click();
     // The look comes first, then one confirm to send (Round 1 acceptance, item 17).
-    await confirmDialog(p).filter({ hasText: "It says conditional, not unconditional." }).waitFor();
+    await confirmDialog(p).filter({ hasText: "This reads as conditional." }).waitFor();
     assert.ok(await confirmDialog(p).getByRole("button", { name: "I opened it and it's right" }).count());
     await confirmIfAsked(p);
     await confirmDialog(p).filter({ hasText: "Email the signed" }).waitFor();
@@ -46,7 +46,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await p.context().close();
   });
 
-  await step("A note that reads as an unconditional waiver is named on Review & send, with the override", async () => {
+  await step("A note that reads as an unconditional waiver is asked about on Review & send; said so, it takes the override", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     const { id, inv } = await made(p, "Smoke says unconditional");
     await p.evaluate(async ([jobId, invId]) => {
@@ -55,8 +55,13 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
       await fetch(`/api/jobs/${jobId}/payapp/${invId}/attachments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "add_record", record_id: record }) });
     }, [id, inv]);
     await p.goto(`${BASE}/money/pay-app/${id}/${inv}`);
+    // Is this a lien waiver? (the Nov 6 redesign): it reads as one, so Yes, unconditional is filled in.
+    const question = p.locator(".waiver-questions", { hasText: "Is this a lien waiver?" });
+    await question.locator('a', { hasText: "Open paper.txt" }).waitFor();
+    await question.locator('[data-action="waiver-answer"][data-answer="unconditional"][aria-current="true"]').click();
     const warning = p.locator(".unconditional-warning");
     await warning.filter({ hasText: "paper.txt" }).waitFor();
+    assert.equal(await p.locator(".waiver-questions").count(), 0, "asked once");
     await warning.locator(`#override-reason-${inv}`).fill("Paid by wire");
     await warning.locator('[data-action="send-override"]').click();
     await confirmIfAsked(p);

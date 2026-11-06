@@ -20,11 +20,9 @@ test("a Job's done? row offers Final pay app only to someone who may mark work d
   assert.match(rowButtons(r, { owner: false, list: ["manage_jobs"] }), /inbox-mark-done/);
 });
 
-test("a photo on a waiver item takes one tap that says which waiver it is", () => {
-  assert.equal(paperwork.waiverLookWords({ waiver_kind: "conditional_progress" }), "I looked at it: it's the conditional waiver for this pay app");
-  assert.equal(paperwork.waiverLookWords({ waiver_kind: "unconditional_final" }), "I looked at it: it's the unconditional waiver for this pay app");
+test("who said which waiver it is reads on the item", () => {
   assert.equal(paperwork.confirmedText({ confirmed_by: "Sam", confirmed_at: "2026-11-06T10:00:00+00:00", looked_as: "conditional" }),
-    "Looked at by Sam on Nov 6, 2026: the conditional waiver");
+    "Said by Sam on Nov 6, 2026: the conditional waiver");
   assert.match(paperwork.confirmedText({ confirmed_by: "Sam", confirmed_at: "2026-11-06T10:00:00+00:00", unread: "photo" }), /^Photo added by Sam/);
 });
 
@@ -51,6 +49,12 @@ test("Record retainage paid is offered once the retainage can be released, with 
   assert.equal(jobs.retainageReleasable({ work_status: "in_progress", retainage_chases: 1, money }), true, "asked for");
   assert.equal(jobs.retainageReleasable({ work_status: "in_progress", money: { ...money, retainage_released_cents: 100 } }), true, "some came in");
   assert.equal(jobs.retainageReleasable({ work_status: "complete", money: { retainage_open_cents: 0 } }), false);
+  // Released early, mid-job (Round 1 hunt): once a pay app holding some is paid or partly paid.
+  for (const status of ["paid", "partial"]) {
+    assert.equal(jobs.retainageReleasable({ work_status: "in_progress", money, invoices: [{ status, retainage_cents: 50000 }] }), true, status);
+  }
+  assert.equal(jobs.retainageReleasable({ work_status: "in_progress", money, invoices: [{ status: "sent", retainage_cents: 50000 }] }), false, "sent, not paid");
+  assert.equal(jobs.retainageReleasable({ work_status: "in_progress", money, invoices: [{ status: "paid", retainage_cents: 0 }] }), false, "holding none");
   const src = (await import("node:fs")).readFileSync(new URL("../../static/js/views/job.js", import.meta.url), "utf8");
   assert.match(src, /id: "retpay-amt", label: "Retainage received \(\$\)", cents: j\.money\.retainage_open_cents/);
 });

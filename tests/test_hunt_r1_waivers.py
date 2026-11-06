@@ -1,6 +1,7 @@
-"""The owner gate on an unconditional waiver and the look at a photo, from the Round 1 acceptance
-test (Nov 6, items 13 and 14): every file going out is read for the gate, whatever it was filed
-as; on a waiver item a photo or a scan takes one person's tap that says which waiver it is."""
+"""The owner gate on an unconditional waiver and the waiver question (Round 1 acceptance, items 13
+and 14, redesigned Nov 6): every file going out is read, whatever it was filed as; one that reads as
+a lien waiver is asked about; on a waiver item any file, a photo or a scan too, takes one person's
+tap that says which waiver it is."""
 
 import sys
 import unittest
@@ -29,7 +30,7 @@ class GateReadsEveryKind(Case):
     def send(self, **kw):
         return domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read, **kw)
 
-    def test_a_real_unconditional_waiver_under_the_insurance_item_needs_the_owner(self):
+    def test_a_real_unconditional_waiver_under_the_insurance_item_is_asked_about_then_needs_the_owner(self):
         for text in ("UNCONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT Pine kitchen $4,000.00",
                      "Pine kitchen. The undersigned does hereby unconditionally waive and release all lien rights."):
             with self.subTest(text[:40]):
@@ -40,44 +41,59 @@ class GateReadsEveryKind(Case):
                     domain.confirm_packet_item(self.state, self.job["id"], self.cert["id"], "Sam", looked=True, read_file=self.read,
                                                shown=[rec["id"]])
                 self.assertTrue(self.cert["present"])
+                with self.assertRaises(domain.GateError) as asked:
+                    self.send()
+                self.assertTrue(asked.exception.extra["waiver_question"], "Is this a lien waiver? comes first")
+                self.assertEqual(domain.waiver_guess(rec), "unconditional", "the answer picked first")
+                domain.answer_waiver_question(self.state, self.job["id"], rec["id"], "unconditional", "Sam", shown=rec["file_ids"])
                 with self.assertRaises(domain.GateError) as refused:
                     self.send()
-                self.assertIn("unconditional", str(refused.exception).lower())
+                self.assertEqual(str(refused.exception), domain.UNCONDITIONAL_ATTACHED)
                 self.send(unconditional_override="Paid already, owner checked")
                 self.assertEqual(self.inv["status"], "sent")
 
-    def test_a_contract_that_only_talks_about_waivers_asks_for_no_look(self):
+    def test_a_contract_that_talks_about_waivers_never_gates_by_itself_and_no_clears_its_question(self):
         rec = self.stored("Contract", b"SUBCONTRACT\nPine kitchen\n9.5 Unconditional Waivers\nSubcontractor shall deliver an unconditional waiver after payment.\n",
                           "c.txt", kind="insurance", typed="")
         self.attach(rec, item=self.cert)
-        self.assertEqual(domain.unconditional_mentions(self.job, self.inv, self.state, self.read), [])
-        self.assertEqual(domain.unconditional_waivers_attached(self.job, self.inv, self.state, self.read), [])
+        self.assertEqual(domain.unconditional_waivers_attached(self.job, self.inv), [])
+        self.assertEqual(domain.waiver_questions(self.job, self.inv["packet"], (), (), self.state, self.read), [rec])
+        domain.answer_waiver_question(self.state, self.job["id"], rec["id"], "no", "Sam", shown=rec["file_ids"])
+        self.assertEqual(domain.waiver_questions(self.job, self.inv["packet"]), [])
+        self.send()
+        self.assertEqual(self.inv["status"], "sent")
+        self.assertIn("Sam said Contract is not a lien waiver", " ".join(a["detail"] for a in self.state["audit"]))
 
 
 class PhotoOnAWaiverItem(Case):
     def test_a_photo_on_the_conditional_waiver_waits_for_one_tap_that_says_which_waiver(self):
         rec = self.stored("Signed waiver", b"\xff\xd8 jpeg", "w.jpg")
-        self.attach(rec)
-        self.assertFalse(self.waiver["present"], "nobody has looked at it yet")
+        self.attach(rec, answer="")
+        self.assertFalse(self.waiver["present"], "nobody has said which waiver it is yet")
         self.assertEqual(self.waiver["check"]["status"], "unchecked")
-        self.assertEqual(domain.waiver_look_words(self.waiver), "I looked at it: it's the conditional waiver for this pay app")
-        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read, shown=[rec["id"]])
+        self.assertEqual(domain.item_question(self.job, self.waiver), {"guess": "conditional", "reads_as": ""})
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read, shown=[rec["id"]],
+                                   answer="conditional")
         self.assertTrue(self.waiver["present"])
         self.assertEqual((self.waiver["confirmed_by"], self.waiver.get("looked_as")), ("Sam", "conditional"))
         row = self.state["audit"][-1]
-        self.assertIn("Sam looked at", row["detail"])
-        self.assertIn("conditional waiver", row["detail"])
+        self.assertIn("Sam said Signed waiver is the conditional waiver", row["detail"])
 
-    def test_a_photo_typed_unconditional_still_needs_the_owner_at_send(self):
-        self.setUp()
-        unc = next(p for p in self.inv["packet"] if p["kind"] == "waiver")
+    def test_a_photo_said_unconditional_needs_the_owner_where_the_conditional_one_is_needed(self):
+        rec = self.stored("Signed waiver", b"\xff\xd8 jpeg", "w.jpg", typed="unconditional_progress")
+        self.attach(rec, answer="")
+        self.assertEqual(domain.item_question(self.job, self.waiver)["guess"], "unconditional", "its type is picked first")
+        domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read, shown=[rec["id"]], answer="unconditional")
+        self.assertTrue(self.waiver["present"])
+        self.assertEqual(domain.unconditional_waivers_attached(self.job, self.inv), [rec])
+
+    def test_on_an_item_asking_for_the_unconditional_waiver_it_is_what_is_needed(self):
+        unc = self.waiver
         unc["waiver_kind"] = "unconditional_progress"
         rec = self.stored("Signed waiver", b"\xff\xd8 jpeg", "w.jpg", typed="unconditional_progress")
-        self.attach(rec, item=unc)
-        self.assertEqual(domain.waiver_look_words(unc), "I looked at it: it's the unconditional waiver for this pay app")
-        domain.confirm_packet_item(self.state, self.job["id"], unc["id"], "Sam", looked=True, read_file=self.read, shown=[rec["id"]])
+        self.attach(rec, item=unc, answer="unconditional")
         self.assertTrue(unc["present"])
-        self.assertTrue(domain.unconditional_waivers_attached(self.job, self.inv, self.state, self.read))
+        self.assertEqual(domain.unconditional_waivers_attached(self.job, self.inv), [], "the item asks for that one")
 
     def test_a_photo_on_another_item_is_in_once_added(self):
         self.setUp()

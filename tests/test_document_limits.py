@@ -260,7 +260,7 @@ class OutsideTheLock(unittest.TestCase):
         rec = state["jobs"][-1]["records"][-1]
         res, state = self.others_are_not_held_up_during(lambda: self.request("POST", f"/api/jobs/{self.job['id']}/attach-record/{self.item['id']}", {"record_id": rec["id"]}, cookie=self.cookie))
         self.assertEqual(res.status, 200, state)
-        res, state = self.others_are_not_held_up_during(lambda: self.request("POST", f"/api/jobs/{self.job['id']}/packet-confirm/{self.item['id']}", {"looked": True}, cookie=self.cookie))
+        res, state = self.others_are_not_held_up_during(lambda: self.request("POST", f"/api/jobs/{self.job['id']}/packet-confirm/{self.item['id']}", {"looked": True, "answer": "conditional"}, cookie=self.cookie))
         self.assertEqual(res.status, 200, state)
 
     def test_a_long_number_in_a_waiver_gives_a_warning_not_a_refusal(self):
@@ -271,20 +271,22 @@ class OutsideTheLock(unittest.TestCase):
 
 
 class WaiverWording(unittest.TestCase):
+    """What a waiver reads as is a warning beside the person's answer (the Nov 6 redesign), however
+    the word was typed or broke across lines."""
+
     def problems(self, text, kind="conditional_progress", job="Oak Street"):
         return doc_check.check([("w.txt", ".txt", f"{job} $1,000.00 {text}".encode())], job, "$1,000.00", 100000, kind, True)["problems"]
 
-    def test_unconditional_anywhere_flags_a_conditional_item(self):
+    def test_unconditional_on_a_conditional_item_says_what_it_reads_as(self):
         for text in ("UNCONDITIONAL WAIVER AND RELEASE UPON PAYMENT", "UNCONDITIONAL WAIVER AND RELEASE upon receipt", "UNCONDITIONAL WAIVER subject to payment",
                      "UNCONDITIONAL interim WAIVER", "upon payment, an UNCONDITIONAL waiver", "interim\nunconditional\nwaiver", "UN-CONDITIONAL waiver upon payment",
                      "un conditional waiver upon payment", "UN\nCONDITIONAL waiver interim", "Un\u2010conditional  waiver interim", "U N C O N D I T I O N A L waiver upon payment",
                      ):
-            self.assertIn("It says unconditional, not conditional.", self.problems(text), text)
+            self.assertIn("This reads as unconditional.", self.problems(text), text)
 
-    def test_a_conditional_waiver_mentioning_it_gets_a_look(self):
-        # Nov 6 review, A: one that talks about an unconditional waiver is still a look, said as a mention.
+    def test_one_that_says_both_says_nothing_and_the_answer_decides(self):
         for text in ("conditional waiver upon payment; this is not an unconditional release", "conditional waiver and also an unconditional one"):
-            self.assertIn(doc_check.MENTIONS_UNCONDITIONAL, self.problems(text), text)
+            self.assertNotIn("This reads as unconditional.", self.problems(text), text)
 
     def test_a_truly_conditional_waiver_passes(self):
         for text in ("Conditional waiver upon payment", "CONDITIONAL waiver", "interim waiver upon payment"):
@@ -297,18 +299,17 @@ class WaiverWording(unittest.TestCase):
         self.assertEqual(self.problems("Unconditional waiver", "unconditional_progress"), [])
 
     def test_conditional_on_an_unconditional_item_warns(self):
-        for text in ("Conditional waiver and release", "CONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT", "con-ditional waiver",
-                     "Unconditional waiver, not a conditional one", "conditional waiver upon payment"):
-            self.assertIn("It says conditional, not unconditional.", self.problems(text, "unconditional_progress"), text)
+        for text in ("Conditional waiver and release", "CONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT", "conditional waiver upon payment"):
+            self.assertIn("This reads as conditional.", self.problems(text, "unconditional_progress"), text)
+        self.assertEqual(self.problems("Unconditional waiver, not a conditional one", "unconditional_progress"), [], "taken back at once")
         got = doc_check.check([("w.txt", ".txt", b"Oak Street $1,000.00 Conditional waiver and release")], "Oak Street", "$1,000.00", 100000, "unconditional_progress", True)
-        self.assertEqual(got["status"], "flagged", "a prompt to look; only send_waiver and attach decide what that does")
+        self.assertEqual(got["status"], "flagged", "a warning beside the answer, never the answer")
 
-    def test_georgias_upon_payment_alone_stays_accepted_on_an_unconditional_item(self):
+    def test_georgias_forms_say_neither_word_and_warn_on_neither_item(self):
         for text in ("Interim waiver and release upon payment", "Waiver and release upon final payment", "Unconditional waiver and release upon payment"):
             problems = self.problems(text, "unconditional_progress") + self.problems(text, "unconditional_final")
-            self.assertNotIn("It says conditional, not unconditional.", problems, text)
-            self.assertNotIn("Unconditional wording not found.", problems, text)
-        self.assertIn("It says conditional, not unconditional.", self.problems("Conditional waiver and release upon payment", "unconditional_progress"))
+            self.assertNotIn("This reads as conditional.", problems, text)
+        self.assertIn("This reads as conditional.", self.problems("Conditional waiver and release upon payment", "unconditional_progress"))
 
     def test_the_jobs_own_name_doesnt_count_on_an_unconditional_item(self):
         self.assertEqual(self.problems("Unconditional waiver", "unconditional_progress", job="Conditional Plaza"), [])

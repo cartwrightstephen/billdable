@@ -45,44 +45,36 @@ FORWARD = ("Upon receipt of payment the undersigned will deliver an unconditiona
            "The contractor shall furnish an unconditional lien waiver after each payment clears at the bank.")
 
 
-def reading(text, near_only=False):
-    return doc_check.unconditional_reading([("f.txt", ".txt", text.encode())], near_only)
+def reading(text):
+    return doc_check.reading(text)
 
 
-class TheOwnersGate(unittest.TestCase):
-    def test_filed_as_a_waiver_a_real_one_is_the_gate_wherever_its_title_is(self):
+class TheWaiverQuestion(unittest.TestCase):
+    """The Nov 5 final review's documents under the Nov 6 redesign: filed anywhere, a real one reads
+    as a lien waiver and is asked about; what it reads as is only the answer picked first."""
+
+    def test_a_real_one_is_asked_about_wherever_it_is_filed(self):
         for title in REAL_ONES + ONLY_FILED_AS_A_WAIVER:
-            self.assertTrue(reading(title + BODY % "$5,000.00")["waiver"], title)
+            self.assertTrue(reading(title + BODY % "$5,000.00")["form"], title)
 
-    def test_not_filed_as_a_waiver_a_heading_or_a_phrase_is_the_gate(self):
-        for title in REAL_ONES:
-            self.assertTrue(reading(title + BODY % "$5,000.00", near_only=True)["waiver"], title)
+    def test_most_read_as_unconditional(self):
+        wrong = [t for t in REAL_ONES + ONLY_FILED_AS_A_WAIVER if reading(t + BODY % "$5,000.00")["guess"] != "unconditional"]
+        self.assertEqual(sorted(wrong), sorted([REAL_ONES[3], REAL_ONES[12], "Unconditional Waiver and Release Conditional Builders LLC"]),
+                         "a conditional title first, or both words in it: the person's answer corrects it")
 
-    def test_filed_as_a_waiver_only_the_forward_looking_sentences_are_a_look(self):
+    def test_a_conditional_form_that_talks_about_one_reads_conditional(self):
         for sentence in FORWARD:
-            for near_only in (False, True):
-                got = reading("CONDITIONAL WAIVER AND RELEASE\nElm addition\n" + sentence, near_only)
-                self.assertFalse(got["waiver"], sentence)
-                self.assertTrue(got["mention"], sentence)
+            self.assertEqual(reading("CONDITIONAL WAIVER AND RELEASE\nElm addition\n" + sentence)["guess"], "conditional", sentence)
 
     def test_the_forward_sentence_doesnt_hide_the_title(self):
-        self.assertTrue(reading("UNCONDITIONAL WAIVER AND RELEASE\nThis waiver becomes unconditional on receipt of payment.")["waiver"])
-        self.assertTrue(reading("This waiver becomes unconditional on receipt of payment.\nl\nl\nUNCONDITIONAL WAIVER AND RELEASE")["waiver"])
+        self.assertEqual(reading("UNCONDITIONAL WAIVER AND RELEASE\nThis waiver becomes unconditional on receipt of payment.")["guess"], "unconditional")
 
-    def test_a_sentence_about_one_is_a_look_wherever_it_is_filed(self):
-        # Nov 6 review, A: a line reporting one received is a look, filed as a waiver too.
-        text = "Sub's unconditional lien waiver received from plumber for last month, and the crew moved on to the next floor."
-        for near_only in (False, True):
-            got = reading(text, near_only=near_only)
-            self.assertEqual((got["waiver"], got["mention"]), (False, True))
+    def test_taken_back_reads_conditional(self):
+        self.assertEqual(reading("Conditional waiver and release. This is not an unconditional release.")["guess"], "conditional")
 
-    def test_taken_back_stays_neither(self):
-        got = reading("Conditional waiver and release. This is not an unconditional release.")
-        self.assertEqual((got["waiver"], got["mention"]), (False, False))
-
-    def test_more_forward_sentences_than_are_read_is_the_gate(self):
-        text = "Conditional waiver.\n" + "The contractor will deliver an unconditional waiver.\n" * (doc_check.MAX_MATCHES + 1) + "UNCONDITIONAL WAIVER AND RELEASE"
-        self.assertTrue(reading(text)["waiver"])
+    def test_many_forward_sentences_still_read_and_the_title_decides(self):
+        text = "Conditional waiver.\n" + "The contractor will deliver an unconditional waiver.\n" * 201 + "UNCONDITIONAL WAIVER AND RELEASE"
+        self.assertEqual(reading(text), {"guess": "conditional", "form": True})
 
 
 class ThroughTheServer(Base):
@@ -120,59 +112,50 @@ class ThroughTheServer(Base):
     def record(self, rid):
         return next(r for r in self.job()["records"] if r["id"] == rid)
 
-    def test_a_member_cant_send_a_real_one_with_a_look(self):
+    def test_a_member_who_says_unconditional_cant_send_it(self):
         for title in ("CONTRACTOR'S UNCONDITIONAL FINAL LIEN WAIVER\n", LETTERHEAD + "UNCONDITIONAL WAIVER AND RELEASE\n"):
             with self.subTest(title):
                 rid, item = self.attach(title + "Elm addition %s\n")
-                self.post(f"/api/jobs/{self.job_id}/packet-confirm/{item['id']}", {"looked": True, "shown": [rid]}, cookie=self.bob)
-                self.assertEqual(self.record(rid).get("waiver_kind", ""), "", "a look doesn't retype it")
+                self.assertEqual(self.waiver_item()["waiver_question"]["guess"], "unconditional")
+                status, data = self.post(f"/api/jobs/{self.job_id}/packet-confirm/{item['id']}", {"looked": True, "shown": [rid], "answer": "unconditional"}, cookie=self.bob)
+                self.assertEqual(status, 200, data)
+                self.assertEqual(self.record(rid)["waiver_kind"], "unconditional_progress", "the answer types it")
                 self.assertIn(rid, [r["record_id"] for r in self.draft()["unconditional_attached"]])
                 self.clear_the_rest()
                 status, data = self.send(cookie=self.bob)
                 self.assertNotEqual(status, 200, data)
-                self.assertFalse(any(a["action"] == "unconditional_mention_confirmed" for a in server.load_company(self.company)["audit"]))
-                self.post(f"/api/jobs/{self.job_id}/payapp/{self.draft()['id']}/attachments", {"action": "remove_record", "record_id": rid})
                 self.post(f"/api/jobs/{self.job_id}/detach/{item['id']}", {})
 
-    def test_a_confirm_without_send_permission_leaves_the_mention(self):
-        self.member_perms(["record_payments"])
+    def test_the_waiver_item_waits_for_the_answer_whoever_confirms(self):
         rid, item = self.attach("CONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT\nElm addition %s. Upon receipt the undersigned will deliver an unconditional waiver and release.\n")
         status, data = self.post(f"/api/jobs/{self.job_id}/packet-confirm/{item['id']}", {"looked": True, "shown": [rid]}, cookie=self.bob)
+        self.assertEqual(status, 409, data)
+        self.assertIn("answer", data["fields"])
+        self.assertFalse(self.waiver_item()["present"])
+        status, data = self.post(f"/api/jobs/{self.job_id}/packet-confirm/{item['id']}", {"looked": True, "shown": [rid], "answer": "conditional"}, cookie=self.bob)
         self.assertEqual(status, 200, data)
-        self.assertNotIn("unconditional_looked", self.record(rid))
-        self.assertIn(rid, [r["record_id"] for r in self.draft()["unconditional_mentions"]])
-        shown = self.draft()["unconditional_mentions"][0]["file_ids"]
-        self.assertEqual(self.post(f"/api/jobs/{self.job_id}/unconditional-look/{rid}", {"shown": shown}, cookie=self.bob)[0], 403)
-        status, data = self.post(f"/api/jobs/{self.job_id}/unconditional-look/{rid}", {"shown": shown})
-        self.assertEqual(status, 200, data)
-        self.assertEqual(self.draft()["unconditional_mentions"], [], "someone who can send clears it")
+        self.assertEqual(self.draft()["waiver_questions"], [])
+        self.assertEqual(self.draft()["unconditional_attached"], [])
 
-    def test_a_confirm_by_someone_who_can_send_clears_the_mention(self):
-        rid, item = self.attach("CONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT\nElm addition %s. Upon receipt the undersigned will deliver an unconditional waiver and release.\n")
-        status, data = self.post(f"/api/jobs/{self.job_id}/packet-confirm/{item['id']}", {"looked": True, "shown": [rid]}, cookie=self.bob)
-        self.assertEqual(status, 200, data)
-        self.assertEqual(self.draft()["unconditional_mentions"], [])
-
-    def test_a_look_counts_only_for_the_files_on_screen(self):
+    def test_an_answer_counts_only_for_the_files_on_screen(self):
         res, data = self.upload("log.txt", b"Sub's unconditional lien waiver received from plumber.", kind="note")
         self.assertEqual(res.status, 200, data)
         rid = data["uploaded_record_ids"][0]
         status, data = self.post(f"/api/jobs/{self.job_id}/payapp/{self.draft()['id']}/attachments", {"action": "add_record", "record_id": rid})
         self.assertEqual(status, 200, data)
-        shown = self.draft()["unconditional_mentions"][0]["file_ids"]
+        shown = self.draft()["waiver_questions"][0]["file_ids"]
         with server.company_lock(self.company):
             state = server.load_company(self.company)
             rec = next(r for j in state["jobs"] for r in j["records"] if r["id"] == rid)
             state["files"].append({"id": "file-new", "name": "other.txt", "ext": ".txt", "size": 10, "stored": "gone"})
             rec["file_ids"].append("file-new")
             server.save_company(self.company, state)
-        for body in ({"shown": shown}, {}):
-            status, data = self.post(f"/api/jobs/{self.job_id}/unconditional-look/{rid}", body)
-            self.assertEqual(status, 409, data)
-            self.assertNotIn("unconditional_looked", self.record(rid))
-        status, data = self.post(f"/api/jobs/{self.job_id}/unconditional-look/{rid}", {"shown": shown + ["file-new"]})
+        status, data = self.post(f"/api/jobs/{self.job_id}/waiver-answer/{rid}", {"answer": "no", "shown": shown})
+        self.assertEqual(status, 409, data)
+        self.assertNotIn("waiver_answer", self.record(rid))
+        status, data = self.post(f"/api/jobs/{self.job_id}/waiver-answer/{rid}", {"answer": "no", "shown": shown + ["file-new"]})
         self.assertEqual(status, 200, data)
-        self.assertEqual(sorted(self.record(rid)["unconditional_looked"]["file_ids"]), sorted(shown + ["file-new"]))
+        self.assertEqual(sorted(self.record(rid)["waiver_answer"]["file_ids"]), sorted(shown + ["file-new"]))
 
 
 def signed_co(state, job, cents):

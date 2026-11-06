@@ -314,12 +314,15 @@ export function closeoutShown(j) {
   return items.length > 0 && (j.work_status === "complete" || !!j.closed || items.some(p => p.present || (p.attachments || []).length));
 }
 
-// Retainage is offered as paid once it can be released: the work is done, or it was asked for or
-// some of it already came in (Round 1 acceptance, item 16). Not from the first pay app on.
+// Retainage is offered as paid once it can be released: the work is done, it was asked for, some
+// of it already came in (Round 1 acceptance, item 16), or a pay app holding some is paid or partly
+// paid, so a client releasing it early, mid-job, can be recorded (Round 1 hunt). Not from a pay
+// app only drafted or sent.
 export function retainageReleasable(j) {
   const m = j.money || {};
   if (!(m.retainage_open_cents > 0)) return false;
-  return j.work_status === "complete" || !!j.closed || (Number(j.retainage_chases) || 0) > 0 || m.retainage_released_cents > 0;
+  const paidHolding = (j.invoices || []).some(i => ["paid", "partial"].includes(i.status) && (Number(i.retainage_cents) || 0) > 0);
+  return j.work_status === "complete" || !!j.closed || (Number(j.retainage_chases) || 0) > 0 || m.retainage_released_cents > 0 || paidHolding;
 }
 
 // A one-line schedule (one lump-sum line, nothing else on it) can be billed in dollars instead of
@@ -437,7 +440,7 @@ export function waitingText(j, now = new Date()) {
 // Who may take a job action (S6): the permission each needs, as domain/profiles.py
 // JOB_ACTION_PERMS on the server, which refuses the same. An action not listed is anyone's.
 export const ACTION_PERM = {
-  send: "send_payapps", "unconditional-look": "send_payapps", waiver: "send_waivers", "waiver-not-needed": "send_waivers", retainage: "ask_retainage",
+  send: "send_payapps", "waiver-answer": "send_payapps", waiver: "send_waivers", "waiver-not-needed": "send_waivers", retainage: "ask_retainage",
   "match-payment": "record_payments", "retainage-paid": "record_payments", "retainage-credit": "record_payments",
   "overbilling-settled": "record_payments",
   "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",

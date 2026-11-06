@@ -134,7 +134,8 @@ test("Before you send lists each file with Leave out or Put back, and warns of a
     { id: "r3", kind: "supplier_invoice", label: "Lumber", file_ids: ["f4"] }];
   const files = [["f1", "a.jpg"], ["f2", "b.jpg"], ["f3", "w.pdf"], ["f4", "l.pdf"]].map(([id, name]) => ({ id, name }));
   const inv = { id: "d1", number: "PA-3", status: "awaiting_approval", excluded_file_ids: ["f2"], extra_record_ids: [],
-    packet: [{ label: "Photos", attachments: [{ record_id: "r1" }] }, { label: "Conditional waiver", waiver_kind: "conditional_progress", attachments: [{ record_id: "r2" }] }] };
+    packet: [{ label: "Photos", attachments: [{ record_id: "r1" }] }, { label: "Conditional waiver", waiver_kind: "conditional_progress", attachments: [{ record_id: "r2" }] }],
+    unconditional_attached: [{ record_id: "r2", label: "Unconditional waiver", why: "Pat said it is the unconditional waiver", extra: false, file_ids: ["f3"], file_names: ["w.pdf"] }] };
   const j = job({ records, invoices: [inv] });
   core.setState({ company: { name: "Pine" }, jobs: [j], payers: [], files });
   const html = beforeYouSendHtml(j, inv);

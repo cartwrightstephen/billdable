@@ -254,7 +254,7 @@ class WaiverFiles(unittest.TestCase):
         domain.record_sov_progress(self.state, self.job["id"], {self.rid: "0.45"})
         self.inv = open_draft(self.job)
         self.rec = signed_waiver(self.state, self.job["id"], "conditional_progress", "Signed waiver")
-        domain.attach_record_to_packet(self.state, self.job["id"], waiver_item(self.inv)["id"], self.rec["id"], "Sam")
+        domain.attach_record_to_packet(self.state, self.job["id"], waiver_item(self.inv)["id"], self.rec["id"], "Sam", answer="conditional")
         self.assertTrue(waiver_item(self.inv)["present"])
 
 
@@ -521,7 +521,7 @@ class OldNameOnlyTests(unittest.TestCase):  # item 3, acceptance 96
 
     def test_a_real_file_clears_it_and_the_name_goes(self):
         rec = signed_waiver(self.state, self.job["id"], "conditional_progress", "Signed waiver")
-        domain.attach_record_to_packet(self.state, self.job["id"], self.named["id"], rec["id"], "Sam")
+        domain.attach_record_to_packet(self.state, self.job["id"], self.named["id"], rec["id"], "Sam", answer="conditional")
         self.assertEqual([a.get("record_id") for a in self.named["attachments"]], [rec["id"]])
         self.assertNotIn(self.named, domain.missing_packet(self.job))
 
@@ -1121,7 +1121,13 @@ class UnreadWaiverTests(unittest.TestCase):  # item 18
         domain.change_payapp_attachments(self.state, self.job["id"], self.inv["id"], "add_record", rec["id"], "Sam", read_file=self.read)
 
     def check_gate(self, rec):
+        """Asked about, said to be the unconditional one, then the owner's reason sends it."""
         self.add(rec)
+        self.assertEqual(domain.waiver_questions(self.job, self.inv["packet"], self.inv["extra_record_ids"]), [rec], "the page asks")
+        with self.assertRaises(domain.GateError) as raised:
+            domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
+        self.assertTrue(raised.exception.extra["waiver_question"])
+        domain.answer_waiver_question(self.state, self.job["id"], rec["id"], "unconditional", "Owner", shown=rec["file_ids"])
         self.assertEqual(domain.unconditional_waivers_attached(self.job, self.inv), [rec], "the page's warning")
         sent = len(self.state["email_log"])
         with self.assertRaises(domain.GateError) as raised:
@@ -1142,12 +1148,18 @@ class UnreadWaiverTests(unittest.TestCase):  # item 18
         self.inv["extra_record_ids"] = [rec["id"]]
         with self.assertRaises(domain.GateError) as raised:
             domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
-        self.assertEqual(str(raised.exception), domain.UNCONDITIONAL_ATTACHED)
+        self.assertTrue(raised.exception.extra["waiver_question"])
+        self.assertEqual(rec["waiver_read"]["guess"], "unconditional", "read at send, kept for the page")
 
-    def test_a_conditional_waiver_and_a_photo_go_through(self):
-        self.add(self.record("Signed form", "waiver", "Conditional waiver upon payment, Pine kitchen"))
+    def test_a_conditional_waiver_and_a_photo_go_through_once_answered(self):
+        form = self.record("Signed form", "waiver", "Conditional waiver upon payment, Pine kitchen")
+        self.add(form)
         photo = self.record("Site", "photo", "UNCONDITIONAL")
         self.add(photo)
+        with self.assertRaises(domain.GateError):
+            domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
+        domain.answer_waiver_question(self.state, self.job["id"], form["id"], "conditional", "Owner")
+        domain.answer_waiver_question(self.state, self.job["id"], photo["id"], "no", "Owner")
         domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
         self.assertEqual(self.inv["status"], "sent")
 

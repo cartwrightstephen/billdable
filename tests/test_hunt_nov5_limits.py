@@ -86,15 +86,14 @@ class SlowClientOnARefusedBody(Base):
 class ALongFileUnderTheLock(unittest.TestCase):
     """A file read at attach and again at send, while everyone in the company waits."""
 
-    def timed(self, text, **kw):
+    def timed(self, text):
         started = time.monotonic()
-        doc_check.says_unconditional([("a.txt", ".txt", text.encode())], **kw)
+        doc_check.waiver_reading([("a.txt", ".txt", text.encode())])
         return time.monotonic() - started
 
     def test_a_long_file_takes_no_time(self):
-        for filler in ("unconditional ", "not an unconditional ", "u n c o n d i t i o n a l x ", "not " + "a " * 50, "un" * 7 + " "):
+        for filler in ("unconditional ", "not an unconditional ", "u n c o n d i t i o n a l x ", "not " + "a " * 50, "un" * 7 + " ", "un \n" * 3, "[X] "):
             text = "Elm addition daily log. " + filler * (420_000 // len(filler))
-            self.assertLess(self.timed(text, near_only=True), 1.0, filler)
             self.assertLess(self.timed(text), 1.0, filler)
 
     def test_the_whole_check_on_a_long_file(self):
@@ -103,9 +102,9 @@ class ALongFileUnderTheLock(unittest.TestCase):
         doc_check.check([("a.txt", ".txt", text)], "Elm addition", "$1.00", 100, "conditional_progress", True)
         self.assertLess(time.monotonic() - started, 1.0)
 
-    def test_a_word_past_the_filler_near_a_waiver_word_still_counts_up_to_the_cap(self):
-        self.assertTrue(doc_check.says_unconditional([("a.txt", ".txt", ("filler " * 5000 + "unconditional lien waiver").encode())], near_only=True))
-        self.assertFalse(doc_check.says_unconditional([("a.txt", ".txt", ("unconditional x x x x x " * 10).encode())], near_only=True))
+    def test_a_word_far_into_a_long_file_still_counts_for_the_guess(self):
+        got = doc_check.waiver_reading([("a.txt", ".txt", ("filler " * 5000 + "unconditional lien waiver").encode())])
+        self.assertEqual(got["guess"], "unconditional")
 
 
 class Site:

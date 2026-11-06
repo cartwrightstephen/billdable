@@ -7,7 +7,7 @@ import { askConfirm } from "../dom.js";
 import { moneyField, field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentJobId } from "../state.js";
-import { may, post, backButton, emptyState, nav } from "../app-core.js";
+import { may, perms, post, load, render, showRefused, backButton, emptyState, nav } from "../app-core.js";
 import { OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
 import { sendsTo } from "./job.js";
 import { waiverChecklistHtml, waiverFormHtml } from "./paperwork.js";
@@ -21,9 +21,15 @@ function retainageAskHtml(j) {
   // chase_retainage waits the client's days between contacts after the last request.
   const asked = retainageAskWaits(j);
   if (asked) return `<span class="sub">Asked ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}.</span>`;
-  return `<div class="retainage-ask" data-form-key="${key}">${formErrorLine(key)}<div class="form-inline">
+  // An unconditional waiver in the closeout documents (M14): an owner asks with the reason.
+  const unconditional = j.closeout_unconditional || [];
+  const owner = perms().owner;
+  return `<div class="retainage-ask" data-form-key="${key}">${formErrorLine(key)}
+    ${unconditional.length ? `<p class="blocker">An unconditional waiver is in the closeout documents: ${unconditional.map(r => r.label).join(", ")}. It gives up your lien rights before you are paid.${owner ? "" : " Only an owner can ask for retainage with it."}</p>` : ""}
+    <div class="form-inline">
     ${moneyField({ form: key, name: "amount_cents", id: `${key}-amt`, label: "Amount ($), blank for all" })}
-    <button class="btn small" data-action="retainage" data-id="${j.id}">Ask for retainage</button></div></div>`;
+    ${unconditional.length && owner ? field({ form: key, name: "unconditional_override", id: `${key}-why`, label: "Why it goes with the request" }) : ""}
+    ${unconditional.length && !owner ? "" : `<button class="btn small" data-action="retainage" data-id="${j.id}">Ask for retainage</button>`}</div></div>`;
 }
 
 // Everything that owes or owed a lien waiver on a job (M20): each paid pay app, each retainage
@@ -214,8 +220,10 @@ export const actions = {
       if (r.data.look_warning) said.looked_at = r.data.record_id;
       r = await post(`/api/jobs/${id}/waiver`, { ...body, ...said, check_only: true }, { quiet: true, ownRefusal: true });
     }
-    // Anything else it can't go for: the send below says why, as it always has.
-    if (r && r.ok && j) {
+    // Anything else it can't go for, or a check that didn't come back: say why and stop. The send
+    // only ever follows the confirm.
+    if (!r || !r.ok) { if (r && r.status === 409) showRefused(r.data, el); return; }
+    if (j) {
       const row = waiverRows(j).find(x => x.due && rowId(x) === key) || waiverRows(j).find(x => x.due);
       const what = row ? `${unesc(row.label)}${row.amount != null ? ", " + money(row.amount) : ""}` : j.name;
       if (!(await askConfirm(`Email the signed ${waiverTypeWords(kind || (row && row.kind) || "")} waiver for ${what} to ${sendsTo(j)}?`, "Send the waiver"))) return;
@@ -236,8 +244,12 @@ export const actions = {
       if (typed) cents = a.cents;
     }
     const part = cents != null && cents < open;
-    if (j && !(await askConfirm(`Email a request for ${part ? `${money(cents)} of the ${money(open)}` : `the ${money(open)}`} retainage to ${sendsTo(j)}?`, "Send the request"))) return;
-    await post(`/api/jobs/${id}/retainage`, cents != null ? { amount_cents: cents } : {}, form ? { formKey: key } : {});
+    const why = form ? String(formValues(key).unconditional_override || "").trim() : "";
+    if (j && form && (j.closeout_unconditional || []).length && !why) { refuseForm(key, { unconditional_override: "Enter why it goes with the request, or take it off the closeout documents." }); return; }
+    if (j && !(await askConfirm(`Email a request for ${part ? `${money(cents)} of the ${money(open)}` : `the ${money(open)}`} retainage to ${sendsTo(j)}?`, "Send the request", !!why))) return;
+    const r = await post(`/api/jobs/${id}/retainage`, { ...(cents != null ? { amount_cents: cents } : {}), ...(why ? { unconditional_override: why } : {}) }, form ? { formKey: key } : {});
+    // What the closeout documents were read as goes on the page: the question, or the owner's reason.
+    if (r && r.data && (r.data.waiver_question || r.data.unconditional_waiver)) { await load(); render(); }
   },
   "open-waiver": (el, id) => nav("waiver-detail", id),
   // Say which paid pay app or release a signed waiver is for (B1), keeping its type.

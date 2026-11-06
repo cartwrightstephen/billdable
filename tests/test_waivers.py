@@ -37,7 +37,7 @@ class UnconditionalWithPayAppTests(unittest.TestCase):  # M14
         self.rec = signed_waiver(self.state, self.job["id"], "unconditional_progress", "Unconditional waiver PA-1")
         waiver = next(p for p in self.inv["packet"] if p["kind"] == "waiver")
         self.assertFalse(waiver["present"], "an unconditional waiver never fills the conditional item by itself")
-        domain.attach_record_to_packet(self.state, self.job["id"], waiver["id"], self.rec["id"], "Sam")
+        domain.attach_record_to_packet(self.state, self.job["id"], waiver["id"], self.rec["id"], "Sam", answer="unconditional")
 
     def test_refused_without_a_reason(self):
         with self.assertRaises(domain.GateError) as raised:

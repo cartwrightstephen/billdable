@@ -45,14 +45,25 @@ export function recordWaiverKind(rec) {
   return `${m[1] ? "unconditional" : "conditional"}_${/final/i.test(label) ? "final" : "progress"}`;
 }
 
-// The waiver records going out with a draft that are unconditional (domain.unconditional_waivers_attached).
+// The unconditional waivers going out with a draft where it needs the conditional one, as the
+// server finds them (domain.unconditional_waivers_attached): someone said so, or it is typed so.
 export function unconditionalAttached(j, inv) {
-  if (inv.unconditional_attached) return inv.unconditional_attached;
-  const records = Object.fromEntries((j.records || []).map(r => [r.id, r]));
-  const excluded = new Set(inv.excluded_file_ids || []);
-  const ids = [...(inv.packet || []).flatMap(p => (p.attachments || []).map(a => a.record_id)), ...(inv.extra_record_ids || [])];
-  return [...new Set(ids)].map(id => records[id]).filter(r => r && r.kind === "waiver" && recordWaiverKind(r).startsWith("unconditional")
-    && !((r.file_ids || []).length && r.file_ids.every(f => excluded.has(f))));
+  return inv.unconditional_attached || [];
+}
+
+// "Is this a lien waiver?" (the Nov 6 redesign): a file going out that reads as one, or is filed as
+// a waiver, not on a waiver item. Three buttons, the app's guess first in the row and filled in.
+export function waiverQuestionHtml(j, rows) {
+  if (!rows || !rows.length) return "";
+  const answers = (guess) => [["no", "No"], ["conditional", "Yes, conditional"], ["unconditional", "Yes, unconditional"]]
+    .map(([v, l]) => ({ v, l, picked: v === (unesc(guess || "") || "conditional") }));
+  return `<div class="send-warnings doc-warning waiver-questions" role="alert">
+    <h3>Is this a lien waiver?</h3>
+    <ul class="plain-list attach-list">${rows.map(r => `<li><span><strong>${r.label}</strong></span>
+      ${(r.file_ids || []).map((fid, n) => `<a class="btn small secondary" href="/api/files/${fid}" target="_blank" rel="noopener">Open ${(r.file_names || [])[n] || "file"}</a>`).join(" ")}
+      ${may("waiver-answer") ? `<span class="form-inline answer-row">${answers(r.guess).map(a => `<button class="btn small${a.picked ? "" : " secondary"}" data-action="waiver-answer" data-id="${j.id}" data-rec="${r.record_id}" data-answer="${a.v}" data-files="${(r.file_ids || []).join(" ")}"${a.picked ? ` aria-current="true"` : ""}>${a.l}</button>`).join("")}</span>` : ""}</li>`).join("")}</ul>
+    ${may("waiver-answer") ? "" : `<p class="sub">Someone who can send pay apps answers this.</p>`}
+  </div>`;
 }
 
 // "What <client> needs to pay" (M5): the client playbook's rules, read only, with a link to the Client playbook.
@@ -243,7 +254,6 @@ export function beforeYouSendHtml(j, inv) {
   };
   const stages = inv.waiver_stages || {};
   const unconditional = unconditionalAttached(j, inv);
-  const mentions = inv.unconditional_mentions || [];
   const packet = inv.packet || j.packet || [];
   const overrides = packet.filter(p => p.present && p.override);
   const warned = packet.filter(p => flaggedProblems(p).length);
@@ -277,14 +287,7 @@ export function beforeYouSendHtml(j, inv) {
       ${may("send") && perms().owner ? `<div class="form-inline"><input id="override-reason-${inv.id}" class="grow" aria-label="Why it goes with this pay app" placeholder="Why it goes with this pay app">
         <button class="btn small danger" data-action="send-override" data-id="${j.id}" data-inv="${inv.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}">Send anyway</button></div>` : `<p class="sub">Only an owner can send it this way${(me && me.owner_names || []).length ? `. Ask ${me.owner_names.join(" or ")}, or take the file off` : ""}.</p>`}
     </div>` : ""}
-    ${mentions.length ? `<div class="send-warnings doc-warning" role="alert">
-      <h3>Mentions an unconditional waiver</h3>
-      <p>These files mention an unconditional waiver. Open each one and confirm it is right.</p>
-      <ul class="plain-list attach-list">${mentions.map(r => `<li><span><strong>${r.label}</strong>: "${r.found}"</span>
-        ${(r.file_ids || []).map((fid, n) => `<a class="btn small secondary" href="/api/files/${fid}" target="_blank" rel="noopener">Open ${(r.file_names || [])[n] || "file"}</a>`).join(" ")}
-        ${may("unconditional-look") ? `<button class="btn small" data-action="unconditional-look" data-id="${j.id}" data-rec="${r.record_id}" data-files="${(r.file_ids || []).join(" ")}" data-found="${r.found}">It's right</button>` : ""}</li>`).join("")}</ul>
-      ${may("unconditional-look") ? "" : `<p class="sub">Someone who can send pay apps confirms this.</p>`}
-    </div>` : ""}
+    ${waiverQuestionHtml(j, inv.waiver_questions)}
     <div class="client-needs-box">${clientNeedsHtml(j, "h3")}</div>`;
 }
 
@@ -295,15 +298,11 @@ export function overrideText(p) {
   return o ? `Overridden by ${o.by} on ${fmtDate(o.at)}: ${o.reason}` : "";
 }
 
-// Who checked it: a person's confirm, or a photo or scan the check couldn't read, which is in
-// once it is added (round 1, item 3), except on a waiver item, where a person said which waiver it is.
-export function waiverLookWords(p) {
-  return `I looked at it: it's the ${unesc(p.waiver_kind || "").startsWith("unconditional") ? "unconditional" : "conditional"} waiver for this pay app`;
-}
-
+// Who checked it: a person's confirm, a photo or scan the check couldn't read, which is in once it
+// is added (round 1, item 3), or on a waiver item, who said which waiver it is.
 export function confirmedText(p) {
   if (!p.confirmed_by) return "";
-  if (p.looked_as) return `Looked at by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}: the ${p.looked_as} waiver`;
+  if (p.looked_as) return `Said by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}: the ${p.looked_as} waiver`;
   if (byApp(p.confirmed_by)) return `Suggested from the job records on ${fmtDate(p.confirmed_at)}`;
   if (p.unread) return `${p.unread === "photo" ? "Photo added" : "Added"} by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}${p.unread === "photo" ? "" : " · it couldn't be read"}`;
   return `Confirmed by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}`;
@@ -334,18 +333,30 @@ function problemsHtml(p) {
 let lookAgain = null;   // why Confirm was refused: a newer file took over while the page was open
 onSessionEnd(() => { lookAgain = null; });
 
+// "Which waiver is this?" on a waiver item (the Nov 6 redesign): one tap answers it, the app's
+// guess filled in, and what the file reads as said beside it when that is the other one.
+function whichWaiverHtml(j, p, editable) {
+  const q = p.waiver_question || {};
+  const needs = unesc(p.waiver_kind || "").startsWith("unconditional") ? "unconditional" : "conditional";
+  const guess = unesc(q.guess || "") || needs;
+  const reads = unesc(q.reads_as || "");
+  const warn = reads && reads !== needs ? `<p class="blocker">This reads as ${reads}.</p>` : "";
+  const problems = flaggedProblems(p).filter(t => !/^This reads as /.test(unesc(t)));
+  const buttons = !editable ? "" : `<span class="form-inline answer-row">${["conditional", "unconditional"].map(k => `<button class="btn small${k === guess ? "" : " secondary"}" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}" data-answer="${k}"${problems.length ? ` data-looked="1"` : ""}${k === guess ? ` aria-current="true"` : ""}>${k === "conditional" ? "Conditional" : "Unconditional"}</button>`).join("")}</span>`;
+  return `<div class="which-waiver"><p><strong>Which waiver is this?</strong></p>${warn}
+    ${problems.length ? `<div class="doc-warning" role="alert"><ul class="plain-list">${problems.map(t => `<li>${t}</li>`).join("")}</ul></div>` : ""}${buttons}</div>`;
+}
+
 function confirmHtml(j, p, editable) {
   const waiting = !p.name_only && (p.attachments || []).some(a => a.unconfirmed);
   if (p.present || !waiting) return "";
   const again = lookAgain && lookAgain.item === p.id ? `<p class="form-error review-again" role="alert">${esc(lookAgain.text)}</p>` : "";
+  if (unesc(p.waiver_kind || "")) return again + whichWaiverHtml(j, p, editable);
   const flagged = flaggedProblems(p).length > 0;
-  // A photo or a scan on a waiver item: the person says which waiver it is (domain.waiver_look_words).
-  const photoWaiver = !flagged && p.waiver_kind && (p.check || {}).status === "unchecked";
   const button = !editable ? "" : flagged
     ? `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}" data-looked="1">I opened it and it's right</button>`
-    : photoWaiver ? `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}">${waiverLookWords(p)}</button>`
     : `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}">I checked this file</button>`;
-  return `${again}${flagged ? `<div class="doc-warning" role="alert"><p>Open the document and confirm it is right.</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : photoWaiver ? `<p class="sub">It couldn't be read. Open it and check it.</p>` : `<p class="sub">Open it and confirm it belongs here.</p>`}${button}`;
+  return `${again}${flagged ? `<div class="doc-warning" role="alert"><p>Open the document and confirm it is right.</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : `<p class="sub">Open it and confirm it belongs here.</p>`}${button}`;
 }
 
 // The items of a pay app, the job or closeout: each file, who checked it, and the ways to fill it.
@@ -373,7 +384,7 @@ function packetItemsHtml(j, inv, packet, isCloseout, pick = null) {
         ${p.files_left_out && !p.present ? `<div class="sub">Its files are left out of the email.</div>` : ""}
         ${(p.attachments || []).map(a => attachmentRow(a, records, files, p.name_only)).join("")}
         ${p.present && p.confirmed_by ? `<div class="override-note">${confirmedText(p)}</div>` : ""}
-        ${p.present && problemsHtml(p) ? `<div class="doc-warning"><p>${p.confirmed_by} opened it and confirmed it after this warning:</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : ""}
+        ${p.present && problemsHtml(p) ? `<div class="doc-warning"><p>${p.confirmed_by} ${p.looked_as ? "said which waiver it is" : "opened it and confirmed it"} after this warning:</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : ""}
         ${confirmHtml(j, p, editable)}
         ${(p.present && !made || hasWaiting || p.name_only) && editable ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
       </div>
@@ -474,6 +485,7 @@ export const views = {
         <h2>Required items</h2>
         ${packetItemsHtml(j, inv, packet, isCloseout)}
       </div>
+      ${isCloseout ? waiverQuestionHtml(j, j.closeout_waiver_questions) : ""}
       ${periodHtml(j, inv, packet, canRemove, isCloseout)}
       ${!isCloseout && cosBlocking.length ? `<div class="card also-blocking" role="note">
         <h2>Also blocking send</h2>
@@ -509,8 +521,9 @@ export const actions = {
       render();
       return true;
     };
+    const answer = el.dataset.answer ? { answer: el.dataset.answer } : {};
     const confirm = async (body) => {
-      const r = await post(`/api/jobs/${id}/packet-confirm/${item}`, { ...body, shown });
+      const r = await post(`/api/jobs/${id}/packet-confirm/${item}`, { ...body, ...answer, shown });
       await changed(r);
       return r;
     };
@@ -569,11 +582,8 @@ export const actions = {
     pickedState[id] = document.getElementById(`waiver-state-${id}`)?.value || "";
     render();
   },
-  // A file that only mentions an unconditional waiver: whoever can send opens it and says it is right.
-  "unconditional-look": async (el, id) => {
-    if (!(await askConfirm(`It says: "${unesc(el.dataset.found || "")}". You opened the file and it is right?`, "It's right"))) return;
-    await post(`/api/jobs/${id}/unconditional-look/${el.dataset.rec}`, { shown: (el.dataset.files || "").split(" ").filter(Boolean) });
-  },
+  // Is this a lien waiver? One tap answers it for the files on the screen.
+  "waiver-answer": (el, id) => post(`/api/jobs/${id}/waiver-answer/${el.dataset.rec}`, { answer: el.dataset.answer, shown: (el.dataset.files || "").split(" ").filter(Boolean) }),
   // Approve & send with an unconditional waiver attached (M14): an owner, with the reason.
   "send-override": async (el, id) => {
     const box = document.getElementById(`override-reason-${el.dataset.inv}`);

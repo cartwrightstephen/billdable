@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import domain
 import payapp_pdf
 import qty_import
+import server
 import sov
 from test_money import new_job, new_state
 from waiver_help import signed_waiver
@@ -130,6 +131,27 @@ class Sequence:
         line = self.line()
         domain.set_payapp_amounts(self.state, self.id, {line["id"]: f"{self.rng.randint(0, max(0, line['scheduled_cents'])) / 100:.2f}"})
 
+    def bill_dollars(self):
+        """Bill by dollars through the server's route (_sov_progress), as the job page sends it: the
+        line's % done to date rounded down to a tenth of a percent, the exact dollars of this pay app,
+        notes and a date. What goes on the draft for that line is the dollars typed."""
+        line = self.line()
+        draft = draft_of(self.job)
+        billed = sov.billed(self.job, skip=draft)["by_line"].get(line["id"], 0)
+        room = line["scheduled_cents"] - billed
+        if line["scheduled_cents"] <= 0 or room <= 0:
+            return
+        cents = self.rng.choice((1, 77, max(1, room // 3), room, self.rng.randint(1, room)))
+        milli = (billed + cents) * line["qty_milli"] // line["scheduled_cents"]
+        body = {"done": {line["id"]: f"{milli // 1000}.{milli % 1000:03d}"}, "amounts": {line["id"]: f"{cents / 100:.2f}"},
+                "notes": self.rng.choice(("", "Billed by dollars")), "period_to": self.rng.choice(("", draft["period_to"] if draft and draft.get("period_to") else ""))}
+        server._sov_progress(None, self.state, self.id, None, server.Ctx(user={"role": "owner"}, body=body, company_id="co-fuzz", actor="Sam"))
+        made = draft_of(self.job)
+        entry = next(e for e in made["sov_sheet"] if e["line_id"] == line["id"])
+        assert entry["amount_cents"] == cents, f"billed {cents} by dollars on {line['description']}, the draft has {entry['amount_cents']}"
+        if body["notes"]:
+            assert made.get("progress_notes") == body["notes"], "the notes typed with the dollars are kept"
+
     def reset(self):
         period = domain._sov_view(self.job, self.state).get("period") or {}
         changed = [l["line_id"] for l in period.get("lines", []) if l["changed"]]
@@ -160,8 +182,8 @@ class Sequence:
         if item and not domain.unconditional_waivers_attached(self.job, draft):
             rec = signed_waiver(self.state, self.id, item["waiver_kind"])
             domain.attach_record_to_packet(self.state, self.id, item["id"], rec["id"], "Sam")
-            if not item["present"]:
-                domain.confirm_packet_item(self.state, self.id, item["id"], "Sam", looked=True)
+            if not item["present"]:   # the tap that says which waiver it is
+                domain.confirm_packet_item(self.state, self.id, item["id"], "Sam", looked=True, answer="conditional")
 
     def stored(self):
         line = self.line()
@@ -272,7 +294,7 @@ class Sequence:
     ACTIONS = ("daily", "daily", "daily", "import_file", "undo_import", "correct", "progress_blank", "progress_blank", "progress_typed", "amounts", "reset", "send", "send", "delete",
                "final", "undo", "pencil", "pencil_answer", "add_co", "sign_co", "include_co", "withdraw_co", "retainage", "contract", "replace_lines", "partial_pay", "pull_back",
                "waiver_confirmed", "waiver_confirmed", "stored", "settle", "settle", "retainage_paid", "pay_in_full", "pay_in_full", "short_pay", "send_waiver", "send_waiver", "retainage_credit", "pay_back",
-               "daily_to_date", "daily_to_date")
+               "daily_to_date", "daily_to_date", "bill_dollars", "bill_dollars")
 
     # ---------- what must hold ----------
     def check(self):
