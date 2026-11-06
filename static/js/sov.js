@@ -173,7 +173,6 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "", extra = "") 
       <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
     </tr>`; }).join("");
   return `<div class="card sov-progress">${sovPeriodHtml(j)}<div data-form-key="sovprogress">${errorLine}
-    <p class="sub">Each line is filled in with the total recorded to date (not this period). Clear a box to bill what is suggested. Change a figure to bill a different quantity; what the field recorded stays as it is. Add the dollars of materials delivered and stored on site but not yet installed, and lower them as materials are installed. Duracash bills the difference since the last pay app, plus overhead and profit, less retainage.</p>
     <div class="table-wrap sov-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th>Stored materials $</th><th></th></tr>
       ${rows}

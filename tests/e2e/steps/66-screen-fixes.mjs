@@ -90,7 +90,7 @@ export default async function ({ browser, BASE, step, errors }) {
   await step("New job: the money and date boxes show, with nothing folded (criterion 94)", async () => {
     const p = await fresh("form");
     await p.goto(BASE + "/jobs");
-    await p.locator(".top").getByRole("button", { name: "New job", exact: true }).click();
+    await p.getByRole("button", { name: "New job", exact: true }).first().click();
     for (const id of ["#nj-amount", "#nj-start", "#nj-end", "#nj-retainage", "#nj-contract"]) {
       assert.ok(await p.locator(id).isVisible(), `${id} shows`);
     }
@@ -101,7 +101,7 @@ export default async function ({ browser, BASE, step, errors }) {
   await step("New job: who signs off and the client type are the person's to enter (criterion 3)", async () => {
     const p = await fresh("signer");
     await p.goto(BASE + "/jobs");
-    await p.locator(".top").getByRole("button", { name: "New job", exact: true }).click();
+    await p.getByRole("button", { name: "New job", exact: true }).first().click();
     assert.equal(await p.inputValue("#nj-client-type"), "", "starts on Choose");
     await p.fill("#nj-customer", "Rae Homeowner");
     await p.press("#nj-customer", "Tab");
@@ -115,7 +115,7 @@ export default async function ({ browser, BASE, step, errors }) {
   await step("New job: typing the client's own name as who signs off is an answer, and it stays answered", async () => {
     const p = await fresh("own-name");
     await p.goto(BASE + "/jobs");
-    await p.locator(".top").getByRole("button", { name: "New job", exact: true }).click();
+    await p.getByRole("button", { name: "New job", exact: true }).first().click();
     await p.fill("#nj-name", "Own name deck");
     await p.fill("#nj-street", "4 Oak St");
     await p.fill("#nj-city", "Decatur");
@@ -192,7 +192,7 @@ export default async function ({ browser, BASE, step, errors }) {
     await p.locator(".tabs .tab.active").waitFor();
     assert.ok(await inView(), "Money: Payments");
     await p.goto(BASE + "/jobs");
-    await p.locator(".top").getByRole("button", { name: "New job", exact: true }).click();
+    await p.getByRole("button", { name: "New job", exact: true }).first().click();
     const small = await p.evaluate(() => [...document.querySelectorAll("#view input:not([type=checkbox]):not([type=radio]):not([type=file]), #view select, #view textarea")]
       .filter(e => parseFloat(getComputedStyle(e).fontSize) < 16).map(e => e.id));
     assert.deepEqual(small, []);

@@ -4,7 +4,7 @@
 import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
 import { activityAlsoHtml } from "../activity.js";
 import { deleteDraftText } from "../payapp-text.js";
-import { isBlocked, shortDay, jobNextStep, oneLumpLine, lumpDollars, ACTION_GROUPS, closeBlockerActions, finalPayAppConfirm, retainageNote, closeoutMissing as closeoutMissingCount, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
+import { isBlocked, shortDay, jobNextStep, oneLumpLine, lumpDollars, ACTION_GROUPS, closeBlockerActions, finalPayAppConfirm, retainageNote, closeoutMissing as closeoutMissingCount, closeoutShown, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
 import { sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { moreButton, askConfirm, focusAfterDraw } from "../dom.js";
@@ -183,7 +183,14 @@ export function standingCardHtml(j) {
 function archiveHtml(j) {
   const m = j.money;
   const live = (j.invoices || []).filter(i => !i.replaced && !(i.status === "void" && !i.sent_at));
-  const waivers = (j.invoices || []).filter(i => i.waiver_sent_at);
+  // The pay apps' waivers and each retainage release's, and every payment with the retainage paid
+  // (Round 1 acceptance, item 26), oldest first.
+  const waivers = [...(j.invoices || []).filter(i => i.waiver_sent_at).map(i => ({ what: i.number, kind: i.waiver_kind, at: i.waiver_sent_at })),
+    ...(j.retainage_waivers || []).filter(r => r.waiver_sent_at).map(r => ({ what: `Retainage${r.amount_cents ? " " + money(r.amount_cents) : ""}`, kind: r.kind, at: r.waiver_sent_at }))]
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const received = [...(j.payments || []).map(p => ({ at: p.matched_at, cents: p.amount_cents, reference: p.reference, what: "" })),
+    ...(j.retainage_payments || []).map(p => ({ at: p.at, cents: p.amount_cents, reference: p.reference, what: "Retainage" }))]
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const row = (k, v) => `<div class="money-row"><span class="label">${k}</span><span>${v}</span></div>`;
   return `<div class="detail-grid job-archive">
       <div class="card">
@@ -205,11 +212,11 @@ function archiveHtml(j) {
         ${live.length ? live.map(i => `<div class="list-item"><strong>${i.number}</strong> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
           <div class="sub row-sub">${i.sent_at ? "sent " + fmtDate(i.sent_at) : "not sent"}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.sent_at && i.status !== "void" ? ` · <a href="/api/jobs/${j.id}/payapp/${i.id}.pdf" target="_blank" rel="noopener">PDF</a>` : ""}</div></div>`).join("") : `<p class="sub">None.</p>`}
         <h2 class="h2-gap">Payments received</h2>
-        ${(j.payments || []).length ? j.payments.map(p => `<div class="list-item">${fmtDate(p.matched_at)} · ${money(p.amount_cents)}${p.reference ? ` · ${p.reference}` : ""}</div>`).join("") : `<p class="sub">None.</p>`}
+        ${received.length ? received.map(p => `<div class="list-item">${fmtDate(p.at)} · ${p.what ? p.what + " · " : ""}${money(p.cents)}${p.reference ? ` · ${p.reference}` : ""}</div>`).join("") : `<p class="sub">None.</p>`}
         <h2 class="h2-gap">Change orders</h2>
         ${(j.change_orders || []).length ? j.change_orders.map(co => `<div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill">${coStatusWords(co.status)}</span></div>`).join("") : `<p class="sub">None.</p>`}
         <h2 class="h2-gap">Waivers sent</h2>
-        ${waivers.length ? waivers.map(i => `<div class="list-item">${i.number} · ${waiverKindLabel(i.waiver_kind)} · ${fmtDate(i.waiver_sent_at)}</div>`).join("")
+        ${waivers.length ? waivers.map(w => `<div class="list-item">${w.what} · ${waiverKindLabel(w.kind)} · ${fmtDate(w.at)}</div>`).join("")
           : j.waiver_sent_at ? `<div class="list-item">${j.waiver_kind || "Waiver"} · ${fmtDate(j.waiver_sent_at)}</div>` : `<p class="sub">None.</p>`}
       </div>
     </div>`;
@@ -264,7 +271,7 @@ export const views = {
     const blocked = isBlocked(j);
     const openDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
     const openForPay = j.invoices.filter(i => ["sent", "approved", "partial"].includes(i.status) || i.refund_owed_cents);
-    const closeout = j.closeout_packet || [];
+    const closeout = closeoutShown(j) ? j.closeout_packet : [];
     const closeoutMissing = closeoutMissingCount(j);
     const { primary, more, line: nextLine } = jobActions(j);
     const retNote = retainageNote(j);

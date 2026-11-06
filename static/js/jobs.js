@@ -307,6 +307,13 @@ export function shortDay(iso, now = new Date()) {
   return text.endsWith(`, ${now.getFullYear()}`) ? text.slice(0, -6) : text;
 }
 
+// The closeout documents show once the work is done (Final pay app) or one of them is in, not from
+// the first progress draft on (Round 1 acceptance, item 25).
+export function closeoutShown(j) {
+  const items = j.closeout_packet || [];
+  return items.length > 0 && (j.work_status === "complete" || !!j.closed || items.some(p => p.present || (p.attachments || []).length));
+}
+
 // Retainage is offered as paid once it can be released: the work is done, or it was asked for or
 // some of it already came in (Round 1 acceptance, item 16). Not from the first pay app on.
 export function retainageReleasable(j) {

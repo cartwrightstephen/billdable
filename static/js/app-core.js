@@ -102,25 +102,21 @@ function addInfoIcon(labelEl, text, hostEl) {
 }
 
 // The (i) beside each label, found by the label's data-help key (a field()), else its text.
-// A touch screen shows no icons (styles.css); each card instead ends with one "What do these
-// mean?" list of the help in it (R3-10).
+// A touch screen shows no icons (styles.css); the page instead ends with one "What do these
+// mean?" list of the help on it (R3-10): one per page, never one per card (Round 1 acceptance,
+// item 23). A part of the page drawn again keeps the page's list.
 function decorateHelp(root) {
-  const lists = new Map();  // card -> [[term, help], ...]
+  const list = [];  // [[term, help], ...]
   root.querySelectorAll(".money-row .label, .metric .k, th, label").forEach(el => {
     if (el.closest(".auth-card")) return;
     const host = el.closest(".money-row, .metric, th, .form-grid > div") || el;
     const text = termText((el.dataset.help && FIELD_HELP[el.dataset.help]) || helpFor(el.textContent));
     addInfoIcon(el, text, host);
-    const card = text && el.closest(".card, .table-wrap, .metrics");
-    if (!card) return;
+    if (!text || !el.closest(".card, .table-wrap, .metrics")) return;
     const term = el.textContent.replace(/[↑↓*]/g, "").trim();
-    const list = lists.get(card) || [];
     if (term && !list.some(([t]) => t === term)) list.push([term, text]);
-    lists.set(card, list);
   });
-  lists.forEach((list, card) => {
-    const placed = card.classList.contains("card") ? card.querySelector(":scope > .help-list") : card.nextElementSibling?.classList.contains("help-list");
-    if (placed) return;  // drawn already
+  if (list.length && !root.querySelector(".help-list") && !(root.isConnected && document.querySelector(".help-list"))) {
     const box = document.createElement("details");
     box.className = "help-list";
     const summary = document.createElement("summary");
@@ -133,10 +129,8 @@ function decorateHelp(root) {
       dl.append(dt, dd);
     }
     box.append(summary, dl);
-    // A card holds its list; a table or a row of tiles has it just after.
-    if (card.classList.contains("card")) card.append(box);
-    else card.after(box);
-  });
+    root.append(box);
+  }
   root.querySelectorAll(".nav button[data-section]").forEach(b => addInfoIcon(b, termText(NAV_HELP[b.dataset.section]), b));
 }
 

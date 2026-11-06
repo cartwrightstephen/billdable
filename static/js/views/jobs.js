@@ -424,7 +424,8 @@ export const views = {
         <h1>Open jobs</h1>
         <div class="form-inline">
           ${open.length ? `<button class="btn secondary" data-action="daily-for-job">New job record</button>` : ""}
-          <button class="btn" data-action="toggle-form" data-form="newjob">${formOpen.newjob ? "Cancel" : "New job"}</button>
+          ${/* with no open jobs the empty state's New job is the one (Round 1 acceptance, item 27) */ ""}
+          ${open.length || formOpen.newjob ? `<button class="btn" data-action="toggle-form" data-form="newjob">${formOpen.newjob ? "Cancel" : "New job"}</button>` : ""}
         </div>
       </div>
       ${formOpen.newjob ? `

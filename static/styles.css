@@ -320,6 +320,7 @@ details.card > summary { cursor: pointer; }
 
 /* accounts, onboarding, trial */
 .verify-banner, .trial-banner { background: var(--amber-soft); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; font-size: 14px; }
+h1 + .verify-banner, h1 + .trial-banner { margin-top: 10px; }   /* the line after a heading doesn't touch it */
 .trial-banner { background: var(--ok-soft); }
 .onboarding { position: relative; }
 .onb-steps { margin: 6px 0 0; padding-left: 22px; display: grid; gap: 8px; }

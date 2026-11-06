@@ -160,7 +160,8 @@ test("the progress form starts from the draft's own typed figure, and a blank bo
   ] } };
   const html = sovProgressHtml(j);
   assert.match(html, /id="sovp-done-l1"[^>]*value="30"/);
-  assert.match(html, /Clear a box to bill what is suggested/);
+  // No explanatory paragraph (Round 1 acceptance, item 23: Stephen, no flavor text).
+  assert.doesNotMatch(html, /Each line is filled in|Clear a box to bill what is suggested/);
   assert.doesNotMatch(html.match(/<input id="sovp-done-l2"[^>]*>/)[0], /disabled/, "only what went out closes a line");
 });
 

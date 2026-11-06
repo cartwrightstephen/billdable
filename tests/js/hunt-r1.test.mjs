@@ -64,3 +64,12 @@ test("the schedule's summary says what only a draft holds is on the draft, and t
   const src = (await import("node:fs")).readFileSync(new URL("../../static/js/views/payapps.js", import.meta.url), "utf8");
   assert.match(src, /const lines = \(inv\.sov_lines \|\| \[\]\)\.length/);
 });
+
+test("closeout documents show once the work is done or one of them is in", async () => {
+  const jobs = await import("../../static/js/jobs.js");
+  const items = [{ id: "c1", required: true, present: false, attachments: [] }];
+  assert.equal(jobs.closeoutShown({ work_status: "in_progress", closeout_packet: items }), false, "not from the first progress draft");
+  assert.equal(jobs.closeoutShown({ work_status: "complete", closeout_packet: items }), true);
+  assert.equal(jobs.closeoutShown({ work_status: "in_progress", closeout_packet: [{ ...items[0], attachments: [{ record_id: "r" }] }] }), true, "one filed");
+  assert.equal(jobs.closeoutShown({ work_status: "complete", closeout_packet: [] }), false);
+});

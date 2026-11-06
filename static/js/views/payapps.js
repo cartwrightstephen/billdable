@@ -103,7 +103,7 @@ function undeliveredHtml(inv) {
   const e = (state.email_failures || []).find(x => x.payapp_invoice_id === inv.id);
   if (!e) return "";
   const why = unesc(e.status || "").replace(/^(failed|not sent):\s*/, "");
-  return `<p class="notice email-undelivered" role="status">Marked sent · the email to ${e.to} was not delivered: ${esc(why)}.${mailReady ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : ""}</p>`;
+  return `<p class="notice email-undelivered" role="status">Marked sent · the email to ${e.to} was not delivered: ${esc(why)}.${mailReady && !why.includes("demo account") ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : ""}</p>`;
 }
 
 // A GC, public or lower-tier job billed at 0% when the client usually holds some (round 1, item 1).
