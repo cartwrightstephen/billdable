@@ -122,9 +122,12 @@ export function waiverChecklistHtml(j, kind, inv = null, amount = null) {
   return `<div class="waiver-check"><h3>Check the signed form shows</h3><ul class="plain-list">${items.map(t => `<li>${t}</li>`).join("")}</ul></div>`;
 }
 
+// The app's own name on a row it wrote: what it did was suggest a file from the job records.
+const byApp = (who) => unesc(String(who || "")).toLowerCase() === "duracash";
+
 // Who put an attachment on an item, and when.
 function attachedLine(a) {
-  return `${a.auto ? (a.unconfirmed ? "found in the job records" : "attached automatically") : "added by " + a.added_by}${a.added_at ? ", " + fmtDate(a.added_at) : ""}`;
+  return `${a.auto ? (a.unconfirmed ? "found in the job records" : "attached automatically") : byApp(a.added_by) ? "suggested from the job records" : "added by " + a.added_by}${a.added_at ? ", " + fmtDate(a.added_at) : ""}`;
 }
 
 function attachmentRow(a, records, files, nameOnly) {
@@ -301,6 +304,7 @@ export function waiverLookWords(p) {
 export function confirmedText(p) {
   if (!p.confirmed_by) return "";
   if (p.looked_as) return `Looked at by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}: the ${p.looked_as} waiver`;
+  if (byApp(p.confirmed_by)) return `Suggested from the job records on ${fmtDate(p.confirmed_at)}`;
   if (p.unread) return `${p.unread === "photo" ? "Photo added" : "Added"} by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}${p.unread === "photo" ? "" : " · it couldn't be read"}`;
   return `Confirmed by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}`;
 }

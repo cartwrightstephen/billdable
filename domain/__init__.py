@@ -2682,16 +2682,15 @@ def _seconds_apart(a: str, b: str) -> float:
 
 def _one_per_action(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Oldest first in, oldest first out: bookkeeping written within a few seconds of the action
-    before it goes under that action as its details. The app's own with nothing to go under stays
-    in the activity log only; a person's (their own confirm, later) is an entry."""
+    before it goes under that action as its details, when it is the same person's or the app's own.
+    Another person's never goes under it, and what can't be grouped (the app's own later, a
+    person's own confirm) is an entry of its own: nothing is left out (Round 1 hunt)."""
     out: list[dict[str, Any]] = []
     lead = None
     for r in rows:
         if r["kind"] == "action" and r["action"] in ACTIVITY_FOLLOW_ON:
-            if lead is not None and _seconds_apart(lead["at"], r["at"]) <= FOLLOW_ON_SECONDS:
+            if lead is not None and _seconds_apart(lead["at"], r["at"]) <= FOLLOW_ON_SECONDS and r["who"] in (lead["who"], APP_ACTOR):
                 lead.setdefault("details", []).append({k: r[k] for k in ("action", "text", "at", "who")})
-                continue
-            if r["who"] == APP_ACTOR:
                 continue
         out.append(r)
         if r["kind"] == "action":

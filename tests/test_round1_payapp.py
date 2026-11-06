@@ -210,12 +210,23 @@ class ActivityOnePerAction(unittest.TestCase):
         page = domain.timeline_page(self.state(rows), "j1", 0, 50)
         self.assertEqual([e["action"] for e in page["entries"]], ["packet_confirmed", "add_record"])
 
-    def test_the_apps_own_entry_with_no_action_before_it_stays_in_the_log_only(self):
+    def test_the_apps_own_entry_with_no_action_before_it_shows_on_its_own(self):
+        # Round 1 hunt: nothing is dropped from Activity; what can't be grouped is its own entry.
         rows = [row(1, "2026-11-05T10:00:00+00:00", "add_record"),
                 row(2, "2026-11-05T12:00:00+00:00", "document_flagged", actor="duracash", detail="Document check on Waiver: Amount not found.")]
         page = domain.timeline_page(self.state(rows), "j1", 0, 50)
-        self.assertEqual([e["action"] for e in page["entries"]], ["add_record"])
-        self.assertEqual(len(self.state(rows)["audit"]), 2)
+        self.assertEqual([e["action"] for e in page["entries"]], ["document_flagged", "add_record"])
+
+    def test_one_persons_actions_never_go_under_anothers(self):  # h5_activity.py
+        rows = [row(1, "2026-11-06T10:00:00+00:00", "approve_send", actor="Alice", detail="Alice approved and sent PA-1 for $5,000.00 to ap@x."),
+                row(2, "2026-11-06T10:00:03+00:00", "add_record", actor="Bob", detail="Bob added note to the job's records: GC says inspection failed, stop work."),
+                row(3, "2026-11-06T10:00:04+00:00", "packet_confirmed", actor="Bob", detail="Bob checked waiver.pdf for Conditional waiver on PA-2."),
+                row(4, "2026-11-06T10:00:20+00:00", "document_flagged", actor="duracash", detail="Document check on Insurance on PA-2: Job name not found.")]
+        page = domain.timeline_page(self.state(rows), "j1", 0, 50)
+        shown = [(e["who"], e["action"], [(d["who"], d["action"]) for d in e.get("details", [])]) for e in reversed(page["entries"])]
+        self.assertEqual(shown, [("Alice", "approve_send", []),
+                                 ("Bob", "add_record", [("Bob", "packet_confirmed")]),
+                                 ("duracash", "document_flagged", [])])
 
     def test_other_jobs_and_emails_dont_take_the_bookkeeping(self):
         rows = [row(1, "2026-11-05T10:00:00+00:00", "add_record", job="j2"),

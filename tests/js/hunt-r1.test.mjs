@@ -36,3 +36,9 @@ test("New job's retainage follows the saved client's own type, not a type left i
   assert.equal(jobs.newJobRetainage({ name: "Park GC", client_type: "gc", retainage_pct: 5, retainage_default: 5 }, "homeowner"), 5);
   assert.equal(jobs.newJobRetainage({ name: "Old", retainage_default: 10 }, "homeowner"), 0, "a client saved without a type takes the one picked");
 });
+
+test("a file the app put on an item says it was suggested from the job records, not added by duracash", () => {
+  const t = paperwork.confirmedText({ confirmed_by: "duracash", confirmed_at: "2026-11-06T10:00:00+00:00", unread: "photo" });
+  assert.equal(t, "Suggested from the job records on Nov 6, 2026");
+  assert.doesNotMatch(t, /duracash/i);
+});
