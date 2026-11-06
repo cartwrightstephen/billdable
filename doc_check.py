@@ -79,10 +79,14 @@ def _has_amount(text: str, cents: int) -> bool:
 #   guess: which waiver it reads as. The first heading-like line that says only one of conditional
 #     or unconditional; else the one ticked ([X] Unconditional, Conditional [X]); else the one said
 #     more often; else blank, and the caller goes by the record's type, then the item's.
-#   form: it reads as a lien waiver form: a heading-like line names a waiver (one: "Lien Waivers" is
-#     a contract's section about them) or a release of lien, says it waives or releases lien
-#     rights, or gives the waiver's type with release or lien or on its own; or a statutory
-#     form's title is anywhere in it.
+#   form: it reads as a lien waiver form, anywhere in the text: a heading-like line names a waiver
+#     (one: "Lien Waivers" is a contract's section about them) or a release of lien, says it waives or
+#     releases lien rights, or gives the waiver's type with release or lien or on its own; a
+#     statutory form's title; the type (conditional or unconditional) within a few words of waiver,
+#     release or lien; or operative release language ("waives and releases", "releases all lien
+#     rights", "hereby ... releases") with a lien reference. Only a question hangs on it, never a
+#     gate, so it is wide: a contract's lien waiver clause is asked about once, and No clears it.
+#     A waiver of subrogation or of the right to recover (insurance) is no lien waiver.
 # A heading-like line is a sentence of one of the first HEAD_LINES lines, of at most TITLE_WORDS words.
 HEAD_LINES = 10
 TITLE_WORDS = 12
@@ -99,6 +103,19 @@ _TICKED = {word: re.compile(rf"(?:{_TICK}|(?:^|(?<=\s))[xX])[ \t]{{0,2}}{pattern
 _STATUTORY_TITLE = re.compile(r"\b(?:un)?conditional\s+waiver\s+and\s+release\s+(?:on|upon)\s+(?:progress|final)\s+payment"
                               r"|\binterim\s+waiver\s+and\s+release\s+upon\s+payment"
                               r"|\bwaiver\s+and\s+release\s+of\s+lien\s+(?:and\s+payment\s+bond\s+rights\s+)?upon\s+(?:progress|final)\s+payment", re.I)
+# The type within three words of waiver, release or lien, in either order: "Acme - Unconditional
+# Waiver and Release of Lien" (a title too long to be a heading), "waiver (unconditional)".
+_TYPE = rf"(?:{_UN})?conditional(?:ly)?"
+_RIGHTS = r"(?:waiv\w*|releas\w*|liens?)"
+_TYPE_NEAR_RIGHTS = re.compile(rf"\b{_TYPE}\b(?:\W+\w+){{0,3}}?\W+{_RIGHTS}\b|\b{_RIGHTS}\b(?:\W+\w+){{0,3}}?\W+{_TYPE}\b", re.I)
+# Operative release language: it gives the rights up. A lien reference has to be in the text too.
+_OPERATIVE = re.compile(r"\bwaiv\w*\s+(?:and|or)\s+releas\w*|\breleas\w*\s+(?:and|or)\s+waiv\w*"
+                        r"|\breleases?\s+(?:\w+\s+){0,3}?liens?\b|\bwaives?\b[^.;]{0,50}\bliens?\b"
+                        r"|\bliens?\b[^.;]{0,60}\b(?:are|is|hereby)\s+(?:\w+\s+)?(?:waived|released)\b"
+                        r"|\bhereby\s+(?:\w+\s+){0,6}?(?:waives?|releases?)\b", re.I)
+_LIEN = re.compile(r"\bliens?\b", re.I)
+# Insurance: "Waiver of subrogation", "waiver of our right to recover", "waiver of transfer of rights of recovery".
+_INSURANCE_WAIVER = re.compile(r"\bwaivers?\s+of\s+(?:(?!liens?\b)\w+\s+){0,6}?(?:subrogation|recover\w*)\b|\bwaives?\s+(?:(?!liens?\b)\w+\s+){0,3}?subrogation\b", re.I)
 _SPACED_LETTERS = re.compile(r"(?<![A-Za-z])(?:[A-Za-z] ){3,}[A-Za-z](?![A-Za-z])")   # U N C O N D I T I O N A L
 
 
@@ -133,7 +150,7 @@ def _heading_lines(text: str) -> list[str]:
 
 def reading(text: str) -> dict[str, Any]:
     """{guess, form} for one file's text, as above."""
-    text = _plain(text or "")
+    text = _INSURANCE_WAIVER.sub(" ", _plain(text or ""))
     heads = _heading_lines(text)
     guess = ""
     for line in heads:
@@ -149,7 +166,8 @@ def reading(text: str) -> dict[str, Any]:
         kept = _NOT_THE_TYPE.sub(" ", text)
         many = len(_UNCONDITIONAL.findall(kept)), len(_CONDITIONAL.findall(_UNCONDITIONAL.sub(" ", kept)))
         guess = "unconditional" if many[0] > many[1] else "conditional" if many[1] > many[0] else ""
-    form = any(_names_a_waiver(line) for line in heads) or bool(_STATUTORY_TITLE.search(text))
+    form = (any(_names_a_waiver(line) for line in heads) or bool(_STATUTORY_TITLE.search(text)) or bool(_TYPE_NEAR_RIGHTS.search(text))
+            or bool(_OPERATIVE.search(text) and _LIEN.search(text)))
     return {"guess": guess, "form": form}
 
 

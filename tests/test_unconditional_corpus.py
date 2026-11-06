@@ -29,9 +29,10 @@ REAL = {**c.REAL_ELSEWHERE, **c.NUMBERED, **{t: t + c.TITLE_BODY for t in c.TITL
 GUESSED_WRONG = {"packet, second form numbered", "Unconditional Waiver and Release Conditional Builders LLC", c.TITLES[46]}   # [46]: a conditional form, then the unconditional one 30 lines down
 CONDITIONAL_FORMS = {**c.GC_FORMS, "type unticked": c.NOT_NUMBERED["type unticked"]}
 NOT_WAIVERS = {**c.NOT_WAIVERS, **{k: v for k, v in c.NOT_NUMBERED.items() if k != "type unticked"}}
-# Non-waivers with a short line naming a waiver near the top: asked once, and No clears them.
-ASKED = {"contract-excerpt-heading", "daily-log-ends-waiver", "daily-log-short-line", "invoice-enclosed", "invoice-to-follow",
-         "invoice-will-be-provided", "supplier-invoice", "lettered plural", "clause with prose"}
+# Non-waivers that say conditional or unconditional next to waiver, release or lien: asked once, and
+# No clears them. Since the Round 1 hunt (r1c) that is every one of them, wherever in the text it is:
+# the price of asking about a waiver whose title isn't a heading. Insurance waivers are not among them.
+ASKED = set(NOT_WAIVERS)
 
 
 class Filed(Case):
@@ -144,7 +145,7 @@ class RealUnconditionalWaivers(Filed):
 
 
 class RecordsThatAreNotWaivers(Filed):
-    def test_asked_only_when_a_line_near_the_top_names_one_and_no_clears_it(self):
+    def test_asked_once_when_the_text_names_a_waiver_and_no_clears_it(self):
         for name, text in NOT_WAIVERS.items():
             with self.subTest(name):
                 self.assertEqual(doc_check.reading(text)["form"], name in ASKED)

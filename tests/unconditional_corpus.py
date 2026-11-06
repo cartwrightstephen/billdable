@@ -214,3 +214,52 @@ NOT_NUMBERED = {
     "bracketed sentence": "SUBCONTRACT\nElm addition\n(b) Unconditional waivers from lower-tier suppliers are due with the final pay application.\n",
     "type unticked": "CONDITIONAL WAIVER AND RELEASE\nElm addition. Amount: $5,000.00.\n[ ] Unconditional   [X] Conditional\nThis waiver is effective on receipt of payment.\n",
 }
+
+# Round 1 hunt (r1c): real unconditional waivers whose title is not read as a heading (a long title,
+# or one under a letterhead), filed under anything but a waiver, and the job's other documents,
+# which must not be asked about. The first line of each is the title; BODY is the operative text.
+LONG_BODY = "\nProject: Elm addition\nAmount: $5,000.00\nThe undersigned has been paid in full and releases all lien rights through 10/31/2026.\nSigned ____\n"
+LONG_TITLES = [
+ "Unconditional Waiver and Release of Lien for Elm addition, Park GC, Pay Application 3 October",
+ "UNCONDITIONAL LIEN WAIVER AND RELEASE FOR PARK GENERAL CONTRACTORS PAY APPLICATION NUMBER 3 DATED OCTOBER 31 2026",
+ "Acme Electric - Unconditional Waiver and Release of Lien - Elm addition - Pay App 3",
+ "Final unconditional lien release",
+ "Unconditional Statutory Lien Release",
+ "Partial Release of Lien",
+ "Release (Unconditional)",
+ "FULL AND UNCONDITIONAL RELEASE",
+ "Unconditional Release",
+ "UNCONDITIONAL",
+ "Quit claim of lien rights - unconditional",
+ "UNCONDITIONAL PAYMENT ACKNOWLEDGEMENT AND RELEASE",
+ "Lien Release Form (Unconditional)",
+ "Waiver of Lien Rights (Unconditional)",
+ "Sworn Statement and unconditional lien waiver",
+ "Affidavit of payment and unconditional waiver",
+ "Subcontractor Waiver, Release and Affidavit (Unconditional)",
+ "Contractor's Affidavit and Waiver of Lien -- unconditional -- final",
+]
+LETTERHEAD = ("ACME ELECTRIC INC\n1234 Peachtree Rd NE\nSuite 400\nAtlanta GA 30309\nPhone 404-555-0100\nFax 404-555-0101\nacme@example.com\n"
+              "www.acme.example\nLicense EN123456\nFederal ID 12-3456789\nBilling dept\n")
+TITLES_ANYWHERE = {**{t: t + LONG_BODY for t in LONG_TITLES},
+                   **{"line 12: " + t: "x\n" * 11 + t + LONG_BODY for t in LONG_TITLES},
+                   "letterhead, UNCONDITIONAL LIEN RELEASE": LETTERHEAD + "UNCONDITIONAL LIEN RELEASE" + LONG_BODY,
+                   "no title, only the words": "Elm addition\nThe undersigned has been paid in full for the work through 10/31/2026 and hereby waives and releases all lien rights, "
+                                               "and acknowledges the payment of $5,000.00 has been received.\nSigned ____\n",
+                   "the type only in the body": "Acme Electric\nElm addition\nThis is an unconditional waiver and release of lien for the payment of $5,000.00.\n"}
+# Insurance paperwork that talks about waiving a right, which is no lien waiver.
+INSURANCE = {
+ "WC waiver endorsement": "WORKERS COMPENSATION AND EMPLOYERS LIABILITY INSURANCE POLICY\nWC 00 03 13\nWAIVER OF OUR RIGHT TO RECOVER FROM OTHERS ENDORSEMENT\nWe have the right to recover our payments from anyone liable for an injury covered by this policy.",
+ "CG 24 04": "POLICY NUMBER: GL123\nCOMMERCIAL GENERAL LIABILITY\nCG 24 04 05 09\nTHIS ENDORSEMENT CHANGES THE POLICY. PLEASE READ IT CAREFULLY.\nWAIVER OF TRANSFER OF RIGHTS OF RECOVERY AGAINST OTHERS TO US",
+ "ACORD": "CERTIFICATE OF LIABILITY INSURANCE\nDATE (MM/DD/YYYY)\nTHIS CERTIFICATE IS ISSUED AS A MATTER OF INFORMATION ONLY\nPRODUCER Acme Insurance\nINSURED Acme Electric\nINSURER A: Zurich\nWaiver of subrogation applies where required by written contract.",
+ "ACORD, waiver of subrogation as a heading": "CERTIFICATE OF LIABILITY INSURANCE\nINSURED Acme Electric\nWAIVER OF SUBROGATION\nThe insurer waives its rights of subrogation against Park GC on the Elm addition.",
+}
+# What a job really carries besides its waivers: delivery tickets, invoices, a COI and a contract.
+# None of it is asked about except the contract's own lien waiver clause (one question at most).
+REALISTIC = {
+ **{f"ticket {n}": f"DELIVERY TICKET {5500 + n}\nReady-Mix Concrete\nElm addition\n{n} yd 4000 psi\nSigned driver\n" for n in range(1, 13)},
+ **{f"invoice {n}": f"INVOICE #{1040 + n}\nAcme Electric to Park GC\nElm addition - October progress\nAmount due: $5,000.00\nTerms: Net 30. Late fees of 1.5% apply.\n" for n in range(1, 4)},
+ "coi": INSURANCE["ACORD"],
+}
+CONTRACT = ("SUBCONTRACT AGREEMENT\nElm addition\nArticle 1. Scope of work\nThe Subcontractor shall furnish all labor and material for the electrical work.\n"
+            "Article 9. Payment\n9.3 Lien Waivers. With each application for payment, Subcontractor shall submit a conditional waiver and release for the amount requested.\n")
