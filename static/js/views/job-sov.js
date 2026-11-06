@@ -157,13 +157,20 @@ async function sovCorrectSave(jobId) {
   if (r && r.ok) { sovCorrecting = null; render(); }
 }
 
-// "1 line · 25% billed": the folded card's summary (Round 1, item 13).
+// "1 line · 25% billed": the folded card's summary (Round 1, item 13). What only a draft holds is
+// "on the draft" until it is sent, so it never reads as billed beside Money's $0.00 billed.
 export function sovSummary(v) {
   if (!v.present) return "Not set up";
-  const n = (v.lines || []).length;
+  const lines = v.lines || [];
+  const n = lines.length;
   const scheduled = (v.totals || {}).scheduled_cents || 0;
-  const billed = (v.lines || []).reduce((a, l) => a + (l.billed_cents || 0), 0) + (v.op_billed_cents || 0);
-  return `${n} line${n === 1 ? "" : "s"} · ${scheduled > 0 ? Math.floor(billed * 100 / scheduled) : 0}% billed`;
+  const pct = (cents) => (scheduled > 0 ? Math.floor(cents * 100 / scheduled) : 0);
+  const billed = lines.reduce((a, l) => a + (l.billed_cents || 0), 0) + (v.op_billed_cents || 0);
+  const sent = lines.some(l => l.sent_cents !== undefined) ? lines.reduce((a, l) => a + (l.sent_cents || 0), 0) + (v.op_sent_cents || 0) : billed;
+  const head = `${n} line${n === 1 ? "" : "s"}`;
+  if (billed > sent && !sent) return `${head} · ${pct(billed)}% on the draft`;
+  if (billed > sent) return `${head} · ${pct(sent)}% billed, ${pct(billed)}% with the draft`;
+  return `${head} · ${pct(billed)}% billed`;
 }
 
 // open: unfolded (a phone starts it folded). It is open, as a plain card, while it is being edited

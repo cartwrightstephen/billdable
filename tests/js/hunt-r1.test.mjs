@@ -54,3 +54,13 @@ test("Record retainage paid is offered once the retainage can be released, with 
   const src = (await import("node:fs")).readFileSync(new URL("../../static/js/views/job.js", import.meta.url), "utf8");
   assert.match(src, /id: "retpay-amt", label: "Retainage received \(\$\)", cents: j\.money\.retainage_open_cents/);
 });
+
+test("the schedule's summary says what only a draft holds is on the draft, and the numbers count schedule lines", async () => {
+  const { sovSummary } = await import("../../static/js/views/job-sov.js");
+  const v = (lines, over = {}) => ({ present: true, lines, totals: { scheduled_cents: 1000000 }, op_billed_cents: 0, op_sent_cents: 0, ...over });
+  assert.equal(sovSummary(v([{ billed_cents: 250000, sent_cents: 0 }])), "1 line · 25% on the draft");
+  assert.equal(sovSummary(v([{ billed_cents: 250000, sent_cents: 100000 }])), "1 line · 10% billed, 25% with the draft");
+  assert.equal(sovSummary(v([{ billed_cents: 250000, sent_cents: 250000 }])), "1 line · 25% billed");
+  const src = (await import("node:fs")).readFileSync(new URL("../../static/js/views/payapps.js", import.meta.url), "utf8");
+  assert.match(src, /const lines = \(inv\.sov_lines \|\| \[\]\)\.length/);
+});

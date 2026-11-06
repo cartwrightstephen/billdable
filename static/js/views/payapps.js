@@ -115,7 +115,8 @@ function retainageZeroHtml(j) {
 // The numbers, folded under one line (round 1, item 4): the summary, lines, continuation sheet
 // and approval. The fold stays as the person left it (moreDetails).
 function numbersHtml(j, inv) {
-  const lines = (inv.lines || []).length;
+  // The schedule's lines, as its card counts them: not the retainage held or an unsigned change order.
+  const lines = (inv.sov_lines || []).length || (inv.lines || []).filter(l => l.amount_cents > 0 && !l.co_id).length;
   const draft = ["draft", "awaiting_approval"].includes(inv.status);
   const period = draft && j.sov_view && j.sov_view.period && j.sov_view.period.draft && j.sov_view.period.draft.id === inv.id;
   const key = `payapp-numbers-${inv.id}`;

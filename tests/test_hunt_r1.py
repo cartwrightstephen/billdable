@@ -211,6 +211,26 @@ class PercentToDateFloor(ServerCase):
         self.assertEqual(self.view()["sov_view"]["lines"][0]["field_milli"], 450)
 
 
+class MemberScheduleRefusal(ServerCase):
+    """Round 1 acceptance, item 19: a schedule that doesn't total the contract tells a Member who
+    can change the contract, not to do it themselves."""
+    join = TeamHttpTests.join
+
+    def test_the_refusal_says_who_can(self):
+        owner, _ = self.signup("o-sched@hunt.example", "Sched Co")
+        member, _ = self.join(owner, "m-sched@hunt.example")
+        _, st = self.request("POST", "/api/jobs", JOB, cookie=owner)
+        job_id = st["jobs"][0]["id"]
+        lines = [{"description": "Framing", "quantity": "1", "unit": "LS", "rate": "12,000"}]
+        res, out = self.request("POST", f"/api/jobs/{job_id}/sov", {"lines": lines}, cookie=member)
+        self.assertEqual(res.status, 409, out)
+        said = " ".join(out.get("blockers") or out.get("problems") or [])
+        self.assertIn("takes someone who can change a job's contract", said)
+        self.assertNotIn("save it and change the contract amount", said)
+        res, out = self.request("POST", f"/api/jobs/{job_id}/sov", {"lines": lines}, cookie=owner)
+        self.assertIn("save it and change the contract amount", " ".join(out.get("blockers") or out.get("problems") or []))
+
+
 class EveryCallerIsGated(unittest.TestCase):
     """Each call that marks work done, undoes it, approves, withdraws or bills an unsigned change
     order, or changes the contract sits behind manage_jobs: grepped from the code, not the table."""

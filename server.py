@@ -3443,7 +3443,8 @@ WAIVER_READING_ACTIONS = {"send", "waiver"}
 JOB_ACTIONS = {
     "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"), period_end=_text(c.body, "period_to"))),
     "progress": (False, _progress),
-    "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), _may_change_contract(c, st), c.actor)),
+    "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), _may_change_contract(c, st), c.actor,
+                                                          may_change_contract=may_take(c.user, "edit", st))),
     "sov-progress": (False, _sov_progress),
     "sov-amounts": (False, lambda h, st, j, i, c: domain.set_payapp_amounts(st, j, c.body.get("amounts"), c.actor)),
     "sov-correct": (False, lambda h, st, j, i, c: domain.correct_field_total(st, j, _text(c.body, "line_id"), c.body.get("qty"), _text(c.body, "reason"), c.actor,

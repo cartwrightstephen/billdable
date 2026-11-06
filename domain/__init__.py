@@ -5614,10 +5614,12 @@ def save_sov(
     op_pct: Any = 0,
     update_contract: bool = False,
     actor: str = "owner",
+    may_change_contract: bool = True,
 ) -> dict[str, Any]:
     """Set the job's schedule of values. Allowed until the first pay app is sent (Nov 3 Decision
     2): an open draft doesn't lock it, it is drafted again from the new schedule. A draft that is
-    with the client for review has to be answered or deleted first."""
+    with the client for review has to be answered or deleted first. may_change_contract: whether
+    this person may make the schedule's total the contract (manage_jobs); the refusal says who can."""
     job = _open_job(state, job_id)
     sent = [inv for inv in sov.live_invoices(job) if inv["status"] not in DRAFT_STATUSES]
     if sent:
@@ -5657,7 +5659,8 @@ def save_sov(
                 [
                     f"Lines {money(figures['base_scheduled_cents'])} + overhead and profit {money(figures['op_scheduled_cents'])} = {money(figures['contract_cents'])}.",
                     f"Difference: {money(figures['contract_cents'] - contract)}.",
-                    "Adjust a line or the overhead and profit, or save it and change the contract amount to the schedule total.",
+                    "Adjust a line or the overhead and profit, or save it and change the contract amount to the schedule total." if may_change_contract
+                    else "Adjust a line or the overhead and profit. Changing the contract amount takes someone who can change a job's contract.",
                 ],
             )
         if figures["contract_cents"] + _signed_cos(job) <= 0:
@@ -6430,7 +6433,8 @@ def _sov_view(job: dict[str, Any], state: dict[str, Any] | None = None) -> dict[
     field_lines = [sov.anticipated(job, line) for line in sov.lines(job)]
     figures = sov.totals({"sov": {"op_bp": sov.op_bp(job), "lines": field_lines}})
     already = sov.billed(job)
-    sent_qty = sov.billed(job, skip=open_draft)["qty_by_line"]
+    sent_before = sov.billed(job, skip=open_draft)
+    sent_qty = sent_before["qty_by_line"]
     on_draft = {e["line_id"]: e for e in (open_draft or {}).get("sov_sheet") or []}
     rows = []
     for stored, line in zip(sov.lines(job), field_lines):
@@ -6441,6 +6445,7 @@ def _sov_view(job: dict[str, Any], state: dict[str, Any] | None = None) -> dict[
             "billed_cents": already["by_line"].get(line["id"], 0),
             "billed_qty_milli": already["qty_by_line"].get(line["id"], 0),
             "sent_qty_milli": sent_qty.get(line["id"], 0),
+            "sent_cents": sent_before["by_line"].get(line["id"], 0),   # billed on pay apps that went, the open draft left out
             "field_milli": sov.field_total(stored),
             "form_done_milli": _progress_form_figure(stored, on_draft.get(line["id"])),
             "pct": (100 * to_date) // line["scheduled_cents"] if line["scheduled_cents"] else 0,
@@ -6453,6 +6458,7 @@ def _sov_view(job: dict[str, Any], state: dict[str, Any] | None = None) -> dict[
         "contract_follows": _contract_follows(job),
         "op_bp": sov.op_bp(job),
         "op_billed_cents": already["op_cents"],
+        "op_sent_cents": sent_before["op_cents"],
         "totals": figures,
         "lines": rows,
         "period": None if job.get("closed") else _sov_period(state, job),
