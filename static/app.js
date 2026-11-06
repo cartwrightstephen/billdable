@@ -192,6 +192,7 @@ function render() {
     tabRow?.addEventListener("scroll", fadeTabs, { passive: true });
     showActiveTab(tabRow, tabsLeft);
   }
+  syncDrawer();
   const view = document.getElementById("view");
   view.innerHTML = withBanners(verifyBannerHtml() + heldShareHtml(), views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`));
   if (keep && !document.activeElement?.id) {
@@ -223,6 +224,14 @@ function withBanners(banners, html) {
   const at = banners ? html.indexOf("</h1>") : -1;
   return at < 0 ? banners + html : html.slice(0, at + 5) + banners + html.slice(at + 5);
 }
+
+// On a phone the menu is a drawer: closed, nothing in it takes a Tab stop (round 1, item 11).
+const phoneLayout = window.matchMedia("(max-width: 800px)");
+function syncDrawer() {
+  const rail = document.getElementById("rail");
+  if (rail) rail.inert = !drawerOpen && phoneLayout.matches;
+}
+phoneLayout.addEventListener?.("change", syncDrawer);
 
 // A new tab row starts where the last one was, and moves only if the active tab is out of view,
 // so a redraw on the same tab doesn't jump.

@@ -78,3 +78,26 @@ test("a job filter shows only when there are two jobs or more to pick between", 
     assert.match(reg.views[view](), new RegExp(`id="${id}"`), `${view}: two jobs, a filter`);
   }
 });
+
+import { readFileSync } from "node:fs";
+const src = (f) => readFileSync(new URL(`../../static/${f}`, import.meta.url), "utf8");
+
+test("accessibility: (i) icons are out of the Tab order and describe their field; the closed phone drawer is inert", () => {  // item 11
+  const coreSrc = src("js/app-core.js");
+  assert.match(coreSrc, /icon\.tabIndex = -1;/);
+  assert.doesNotMatch(coreSrc, /icon\.tabIndex = 0;/);
+  assert.match(coreSrc, /setAttribute\("aria-description", /);
+  const appSrc = src("app.js");
+  assert.match(appSrc, /rail\.inert = !drawerOpen && phoneLayout\.matches;/);
+});
+
+test("accessibility: the ? badge clears a sticky Save bar, a disabled button stays readable, and a toast leaves the tab row alone", () => {  // item 11, small
+  const css = src("styles.css");
+  assert.match(css, /body:has\(\.save-bar\) \.ai-badge \{ bottom: \d+px; \}/);
+  assert.doesNotMatch(css, /\.btn:disabled \{ opacity: 0\.45;/);
+  assert.match(css, /\.btn:disabled \{ opacity: 1; background: var\(--field-bg\); color: var\(--muted\);/);
+  const toast = /\n\.toast \{([^}]*)\}/.exec(css)[1];
+  assert.match(toast, /bottom: /);
+  assert.doesNotMatch(toast, /top: 16px/);
+  assert.doesNotMatch(css, /\.toast \{ top: 68px; \}/);
+});

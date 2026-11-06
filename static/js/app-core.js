@@ -85,7 +85,8 @@ function addInfoIcon(labelEl, text, hostEl) {
   const icon = document.createElement("span");
   icon.className = "info";
   icon.textContent = "i";
-  icon.tabIndex = 0;
+  // Out of the Tab order (round 1, item 11): the field it is beside carries its words (a11yPass).
+  icon.tabIndex = -1;
   icon.setAttribute("role", "button");
   const named = (labelEl.textContent || "").replace(/\s*\*\s*$/, "").trim();
   icon.setAttribute("aria-label", named ? `What is ${named}?` : "What is this?");
@@ -442,6 +443,11 @@ function a11yPass(root) {
     if (!field) return;
     if (!field.id) field.id = `fld-${++fieldSeq}`;
     l.htmlFor = field.id;
+  });
+  // A label's (i) help is its field's description, since the icon takes no Tab stop.
+  root.querySelectorAll("label[for] .info").forEach(icon => {
+    const f = document.getElementById(icon.closest("label").htmlFor);
+    if (f && !f.hasAttribute("aria-description")) f.setAttribute("aria-description", icon.dataset.help);
   });
   root.querySelectorAll("input:not([type=hidden]):not([type=checkbox]), select, textarea").forEach(f => {
     if (f.getAttribute("aria-label") || (f.id && root.querySelector(`label[for="${CSS.escape(f.id)}"]`))) return;

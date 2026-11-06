@@ -84,6 +84,8 @@ a.btn { display: inline-block; text-decoration: none; }
 .blocker { color: var(--red); font-weight: 500; }
 .next-action { font-size: 13px; color: var(--copper); }
 .ai-badge { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: var(--copper); color: var(--on-accent); border: none; box-shadow: 0 4px 12px var(--copper-glow); cursor: pointer; font-size: 22px; display: flex; align-items: center; justify-content: center; z-index: 1000; }
+/* Above a sticky Save bar, not over its button (round 1, item 11). The phone's sits in the top bar. */
+@media (min-width: 801px) { body:has(.save-bar) .ai-badge { bottom: 88px; } }
 .ai-panel { position: fixed; bottom: 92px; right: 24px; width: min(400px, calc(100vw - 32px)); max-height: min(620px, calc(100vh - 120px)); background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px var(--shadow-panel); z-index: 1000; display: none; flex-direction: column; overflow: hidden; }
 .ai-panel.open { display: flex; }
 .ai-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 14px 16px 8px; border-bottom: 1px solid var(--line); }
@@ -143,7 +145,7 @@ table.sortable th { cursor: pointer; }
 table.sortable th:hover { color: var(--copper); }
 .form-inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
 .form-inline input, .form-inline textarea, .form-inline select { padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: var(--field-bg); min-height: 34px; }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:disabled { opacity: 1; background: var(--field-bg); color: var(--muted); border: 1px dashed var(--field); cursor: not-allowed; }
 .gate-reason { font-size: 13px; color: var(--red); margin: 6px 0; }
 .next-step { background: var(--copper-soft); border-left: 3px solid var(--copper); padding: 10px 14px; margin-bottom: 16px; border-radius: 0 8px 8px 0; }
 .legend { display: flex; gap: 12px; margin: 8px 0 16px; font-size: 12px; flex-wrap: wrap; }
@@ -166,7 +168,7 @@ table.sortable th:hover { color: var(--copper); }
 select { max-width: 100%; }
 .stage.clickable { cursor: pointer; }
 .stage.clickable:hover, .stage.active { border-color: var(--copper); background: var(--copper-soft); }
-.toast { position: fixed; top: 16px; left: 50%; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); background: var(--ink); color: var(--on-ink); padding: 10px 16px; border-radius: 8px; z-index: 2000; font-size: 14px; }
+.toast { position: fixed; bottom: 24px; left: 50%; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); background: var(--ink); color: var(--on-ink); padding: 10px 16px; border-radius: 8px; z-index: 2000; font-size: 14px; }
 .toast-action { background: none; border: 0; padding: 0 0 0 8px; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .inbox-choices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
 .inbox-choices .sub { flex-basis: 100%; }
@@ -457,7 +459,7 @@ textarea { font: inherit; }
   .due-strip.week-list { flex-direction: column; flex-wrap: nowrap; }
   .due-strip.week-list .due-item { width: 100%; }
   .ai-badge { width: 48px; height: 48px; bottom: 16px; right: 16px; }
-  .toast { top: 68px; }
+  .toast { bottom: calc(16px + env(safe-area-inset-bottom)); }
   .form-inline > input, .form-inline > select { flex: 1 1 100%; }
   .sov-paste { flex-direction: column; }
 }
