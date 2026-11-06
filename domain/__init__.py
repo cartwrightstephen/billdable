@@ -5717,6 +5717,7 @@ def record_sov_progress(
     actor: str = "owner",
     stored: Any = None,
     period_end: Any = "",
+    keep_amounts: bool = False,
 ) -> dict[str, Any]:
     """Record quantities completed to date, and materials stored, on schedule lines; draft the
     progress pay app. `done` maps line id -> quantity to date; `stored` maps line id -> dollars of
@@ -5726,7 +5727,9 @@ def record_sov_progress(
     jobs. Once it is with the client for review it has to be answered or voided first.
     This is the only way job records reach a draft (Nov 3): a line not in `done`, or blank in it,
     is at its suggestion (its field total, or what is billed when that is more), and a figure typed that differs from the field total is the person's own, audited
-    with the suggested and final figures. It leaves the field total as it was."""
+    with the suggested and final figures. It leaves the field total as it was. A quantity typed on a
+    line whose amount was changed by hand on the open draft is the newer entry: the amount gives way
+    to it, and the audit says so (Round 1 hunt). keep_amounts: the dollar form, which sets them next."""
     job = _open_job(state, job_id)
     if not sov.has_sov(job):
         raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
@@ -5746,17 +5749,25 @@ def record_sov_progress(
         open_draft["status"] = "void"
     # A blank box and a line left out both mean the suggestion: what the card shows and suggests.
     done = {k: v for k, v in done.items() if not (v is None or (isinstance(v, str) and not v.strip()))} if isinstance(done, dict) else {}
+    by_hand = dict((open_draft or {}).get("sov_overrides") or {})
+    giving_way = [] if keep_amounts else [line for line in sov.lines(job) if line["id"] in done and line["id"] in by_hand]
     billed_qty = sov.billed(job)["qty_by_line"]
     for line in sov.lines(job):
         want = sov.suggested_done(line, billed_qty.get(line["id"], 0))
         if line["id"] not in done and want != line["done_milli"]:
             done[line["id"]] = f"{want // 1000}.{want % 1000:03d}"
     try:
-        changes, rebill = _check_sov_progress(job, done, stored, replacing=open_draft)
+        changes, rebill = _check_sov_progress(job, done, stored, replacing=open_draft, amounts_go=bool(giving_way))
     except GateError:
         if open_draft:
             open_draft["status"] = draft_status
         raise
+    for line in giving_way:
+        by_hand.pop(line["id"], None)
+        audit(state, job_id, "payapp_amount_changed", f"{actor} entered {_qty_words(line, sov.to_milli(done[line['id']], sov_line_name(line)))} on "
+              f"{sov_line_name(line)}: the {money(open_draft['sov_overrides'][line['id']])} changed by hand gives way to it on {open_draft['number']}.", actor)
+    if giving_way:
+        open_draft["sov_overrides"] = by_hand
     summary = []
     for line, qty, store in changes:
         part = f"{line['description']} {sov.fmt_qty(line['done_milli'])} → {sov.fmt_qty(qty)} {line['unit']}"
@@ -5790,6 +5801,50 @@ def record_sov_progress(
         audit(state, job_id, "draft_replaced", f"{open_draft['number']} ({money(open_draft['amount_cents'])}) replaced at the new quantities to date.", "duracash")
         return draft_invoice(state, job_id, actor="duracash", replaces=open_draft, period_end=runs_to, notes=notes)
     return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
+
+
+def done_for_amounts(state: dict[str, Any], job_id: str, done: Any, amounts: Any) -> dict[str, Any]:
+    """The quantities to go with "Bill by dollars" (Round 1 hunt): the page sends the line's % done
+    rounded down to a tenth of a percent beside the dollars. A draw smaller than that step would
+    round to no progress at all, so the line steps up to the next tenth that holds the dollars; the
+    pay app then bills the dollars exactly (set_payapp_amounts)."""
+    job = _job(state, job_id)
+    out = dict(done) if isinstance(done, dict) else {}
+    if not isinstance(amounts, dict):
+        return out
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    already = sov.billed(job, skip=draft)
+    for line in sov.lines(job):
+        raw = amounts.get(line["id"])
+        if raw is None or (isinstance(raw, str) and not raw.strip()) or line["scheduled_cents"] <= 0:
+            continue
+        try:
+            cents = sov.to_cents(raw, sov_line_name(line))
+            typed = sov.to_milli(out[line["id"]], sov_line_name(line)) if line["id"] in out else None
+        except sov.SovError:
+            continue
+        before = already["qty_by_line"].get(line["id"], 0)
+        if cents <= 0 or (typed is not None and typed > before):
+            continue
+        to_date = already["by_line"].get(line["id"], 0) + cents
+        need = min(line["qty_milli"], max(before + 1, -(-to_date * line["qty_milli"] // line["scheduled_cents"])))
+        out[line["id"]] = f"{need // 1000}.{need % 1000:03d}"
+    return out
+
+
+def drafted_at(state: dict[str, Any], job_id: str, done: Any) -> bool:
+    """The open draft already stands at these quantities, and it isn't with the client: only its
+    amounts can change (a new dollar amount within the same tenth of a percent)."""
+    job = _job(state, job_id)
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if not draft or _with_client(draft) or not isinstance(done, dict) or not done:
+        return False
+    by_id = {line["id"]: line for line in sov.lines(job)}
+    try:
+        return all(k in by_id and sov.to_milli(v, sov_line_name(by_id[k])) == by_id[k]["done_milli"]
+                   for k, v in done.items() if not (v is None or (isinstance(v, str) and not v.strip())))
+    except sov.SovError:
+        return False
 
 
 def _qty_words(line: dict[str, Any], milli: int) -> str:
@@ -6036,7 +6091,7 @@ def _settlements_follow(state: dict[str, Any], job: dict[str, Any], why: str) ->
 
 
 def _check_sov_progress(job: dict[str, Any], done: dict[str, Any], stored: dict[str, Any],
-                        replacing: dict[str, Any] | None = None) -> tuple[list[tuple[dict[str, Any], int, int]], bool]:
+                        replacing: dict[str, Any] | None = None, amounts_go: bool = False) -> tuple[list[tuple[dict[str, Any], int, int]], bool]:
     """The lines whose quantity to date or stored materials change, each (line, quantity, stored),
     checked against the schedule and what is already billed; and whether work recorded earlier and
     not on a pay app is drafted again unchanged. Raises GateError with every problem."""
@@ -6080,9 +6135,9 @@ def _check_sov_progress(job: dict[str, Any], done: dict[str, Any], stored: dict[
             changes.append((line, qty, store))
     if errors:
         raise GateError("Progress not recorded.", errors)
-    if not changes and replacing:
+    if not changes and replacing and not amounts_go:
         raise GateError(f"{replacing['number']} is already drafted at those quantities. Enter the corrected quantities to date.")
-    if not changes and not rebill:
+    if not changes and not rebill and not amounts_go:
         raise GateError("Nothing changed. Enter quantities to date or stored materials that differ from the last ones recorded.")
     return changes, rebill
 

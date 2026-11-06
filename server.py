@@ -3245,9 +3245,16 @@ def _sov_progress(h, st, j, i, c):
     """Progress on the schedule of values. With amounts (line id -> dollars), the draft then bills
     those amounts on its lines: "Bill by dollars instead" on a one-line schedule (Round 1, item 10)
     sends the line's % done and the exact dollars typed. One request: a refused amount leaves no draft."""
-    out = domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
-                                     period_end=_text(c.body, "period_to"))
     amounts = c.body.get("amounts")
+    done = c.body.get("done")
+    if isinstance(amounts, dict) and amounts:
+        # A draw under a tenth of a percent keeps its dollars; a new amount on the open draft at
+        # the same quantities changes only its amounts (Round 1 hunt).
+        done = domain.done_for_amounts(st, j, done, amounts)
+        if domain.drafted_at(st, j, done) and not c.body.get("stored"):
+            return domain.set_payapp_amounts(st, j, amounts, c.actor)
+    out = domain.record_sov_progress(st, j, done, _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
+                                     period_end=_text(c.body, "period_to"), keep_amounts=isinstance(amounts, dict) and bool(amounts))
     if isinstance(amounts, dict) and amounts:
         job = next(x for x in st["jobs"] if x["id"] == j)
         draft = next((inv for inv in job["invoices"] if inv["status"] in domain.DRAFT_STATUSES), None)

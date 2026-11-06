@@ -84,6 +84,94 @@ class OtherRoutesToManageJobs(ServerCase):
         self.assertEqual(self.job()["change_orders"][0]["status"], "approved")
 
 
+DOLLAR_JOB = {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
+              "contract_cents": 1_000_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
+
+
+class BillByDollars(ServerCase):
+    """Bill by dollars on a one-line schedule (h2_dollars.py, h2b.py): the dollars typed are what the
+    pay app bills, however small, and a new amount on the open draft updates it."""
+    CONTRACT = 1_000_000
+
+    def setUp(self):
+        super().setUp()
+        self.owner, _ = self.signup(f"o-{self._testMethodName[-20:]}-{self.CONTRACT}@dollars.example", "Dollar Co")
+        res, st = self.request("POST", "/api/jobs", {**DOLLAR_JOB, "contract_cents": self.CONTRACT}, cookie=self.owner)
+        self.assertEqual(res.status, 200, st)
+        self.job_id = st["jobs"][0]["id"]
+
+    def job(self):
+        _, st = self.request("GET", "/api/state", cookie=self.owner)
+        return next(j for j in st["jobs"] if j["id"] == self.job_id)
+
+    def draft(self):
+        return next((i for i in self.job()["invoices"] if i["status"] in ("draft", "awaiting_approval")), None)
+
+    def bill(self, cents):
+        """As static/js/jobs.js lumpDollars sends this draw: the % done to date rounded down to a
+        tenth of a percent, and the exact dollars."""
+        j = self.job()
+        line = j["sov_view"]["lines"][0]
+        base = sum(int(i.get("gross_cents") or 0) for i in j["invoices"] if i["status"] not in ("void", "draft", "awaiting_approval"))
+        milli = (base + cents) * 1000 // line["scheduled_cents"]
+        return self.request("POST", f"/api/jobs/{self.job_id}/sov-progress",
+                            {"done": {line["id"]: f"{milli / 1000:.3f}"}, "amounts": {line["id"]: f"{cents / 100:.2f}"}, "notes": "", "period_to": ""},
+                            cookie=self.owner)
+
+    def test_exact_cents(self):
+        res, out = self.bill(333_333)
+        self.assertEqual(res.status, 200, out)
+        self.assertEqual(self.draft()["gross_cents"], 333_333)
+
+    def test_a_draw_under_a_tenth_of_a_percent_bills_what_was_typed(self):
+        res, out = self.bill(500)
+        self.assertEqual(res.status, 200, out)
+        d = self.draft()
+        self.assertEqual((d["gross_cents"], d["retainage_cents"]), (500, 50))
+
+    def test_a_new_amount_in_the_same_tenth_of_a_percent_updates_the_draft(self):
+        self.assertEqual(self.bill(333_333)[0].status, 200)
+        number = self.draft()["number"]
+        res, out = self.bill(333_500)
+        self.assertEqual(res.status, 200, out.get("error"))
+        d = self.draft()
+        self.assertEqual((d["number"], d["gross_cents"]), (number, 333_500))
+        res, out = self.bill(340_000)
+        self.assertEqual(res.status, 200, out.get("error"))
+        self.assertEqual(self.draft()["gross_cents"], 340_000)
+        res, out = self.bill(500)
+        self.assertEqual(res.status, 200, out.get("error"))
+        self.assertEqual(self.draft()["gross_cents"], 500)
+
+    def test_a_percent_typed_after_dollars_replaces_the_dollars_on_that_line(self):
+        self.assertEqual(self.bill(333_333)[0].status, 200)
+        lid = self.job()["sov_view"]["lines"][0]["id"]
+        res, out = self.request("POST", f"/api/jobs/{self.job_id}/sov-progress", {"done": {lid: "0.600"}, "notes": ""}, cookie=self.owner)
+        self.assertEqual(res.status, 200, out)
+        self.assertEqual(self.draft()["gross_cents"], 600_000)
+        _, trail = self.request("GET", f"/api/timeline?job={self.job_id}&offset=0&limit=50", cookie=self.owner)
+        said = " ".join(e.get("text", "") + " ".join(d.get("text", "") for d in e.get("details", [])) for e in trail.get("entries", []))
+        self.assertIn("$3,333.33 changed by hand gives way to it", said)
+
+    def test_the_percent_the_dollars_stood_at_typed_on_the_percent_form_bills_that_percent(self):
+        self.assertEqual(self.bill(333_333)[0].status, 200)
+        lid = self.job()["sov_view"]["lines"][0]["id"]
+        res, out = self.request("POST", f"/api/jobs/{self.job_id}/sov-progress", {"done": {lid: "0.333"}, "notes": ""}, cookie=self.owner)
+        self.assertEqual(res.status, 200, out.get("error"))
+        self.assertEqual(self.draft()["gross_cents"], 333_000)
+
+
+class BillByDollarsOnABigLine(BillByDollars):
+    CONTRACT = 120_000_000   # $1.2M: a $1,000 draw is 0.083%
+    test_a_percent_typed_after_dollars_replaces_the_dollars_on_that_line = None
+    test_the_percent_the_dollars_stood_at_typed_on_the_percent_form_bills_that_percent = None
+
+    def test_a_draw_under_a_tenth_of_a_percent_bills_what_was_typed(self):
+        res, out = self.bill(100_000)
+        self.assertEqual(res.status, 200, out)
+        self.assertEqual(self.draft()["gross_cents"], 100_000)
+
+
 class EveryCallerIsGated(unittest.TestCase):
     """Each call that marks work done, undoes it, approves, withdraws or bills an unsigned change
     order, or changes the contract sits behind manage_jobs: grepped from the code, not the table."""
