@@ -79,8 +79,16 @@ def _stem(word: str) -> str:
     return word
 
 
+# "my client is asking for retainage": someone else asking is how the question is put, not what it
+# is about, so the phrase is left out; the app or Duracash asking ("Why is the app asking me which
+# waiver it is?") is what a question can be about.
+_ASKERS = ("client", "customer", "gc", "owner", "contractor", "sub", "subcontractor", "supplier", "vendor", "architect", "engineer", "payer", "they", "he", "she", "someone", "everyone")
+_REPORTED = re.compile(r"\b(?:" + "|".join(_ASKERS) + r")(?:\s+(?:is|are|was|were|keeps|keep|kept|has been|have been))?\s+asking\b")
+
+
 def tokens(text: str) -> list[str]:
     text = (text or "").lower().replace("’", "'")
+    text = _REPORTED.sub(" ", text)
     text = _SYN_RE.sub(lambda m: " " + SYNONYMS[m.group(1)] + " ", text)
     words = re.findall(r"[a-z0-9]+", text)
     return [_stem(w) for w in words if w not in STOPWORDS and len(w) > 1]
@@ -161,11 +169,22 @@ def _covers(qs: set[str], matched: set[str], idf: dict[str, float]) -> bool:
     return not missed or max(idf[t] for t in missed) <= max(idf[t] for t in hit)
 
 
+def _says_what_it_needs(question: str, entry: dict[str, Any]) -> bool:
+    """An answer that lists words it needs ("needs") is only the answer to a question that uses one
+    of them, as written, stop words and all: "Why is my GC asking for a waiver?" is not about
+    which waiver to tap. An answer with none lists nothing."""
+    needs = entry.get("needs") or []
+    text = (question or "").lower().replace("’", "'")
+    return not needs or any(re.search(rf"\b{re.escape(n.lower())}(?:s|es|ed|ing|ped|ping)?\b", text) for n in needs)
+
+
 def rank(question: str, kb: list[dict[str, Any]] | None = None) -> list[tuple[float, dict[str, Any]]]:
     kb = kb if kb is not None else load_kb()
     idf = _idf(kb)
     q = tokens(question)
-    return sorted(((_score(q, e, idf), e) for e in kb), key=lambda se: -se[0])
+    # Short of what it needs, an answer is at most a "did you mean", never the answer.
+    scored = [(_score(q, e, idf) if _says_what_it_needs(question, e) else min(_score(q, e, idf), SUGGEST_AT - 0.01), e) for e in kb]
+    return sorted(scored, key=lambda se: -se[0])
 
 
 # ---------- finding the job a question is about ----------
@@ -476,6 +495,8 @@ def save_answer(entry: dict[str, Any], editor: str) -> dict[str, Any]:
         if isinstance(a, dict) and a.get("type") == "nav" and isinstance(a.get("view"), str) and isinstance(a.get("label"), str):
             actions.append({"type": "nav", "view": a["view"][:30], "label": a["label"][:60]})
     answer_id = entry.get("id") or re.sub(r"[^a-z0-9]+", "-", questions[0].lower()).strip("-")[:60] or "answer-" + secrets.token_hex(3)
+    # The words a shipped answer needs in a question stay with it when its text is edited here.
+    needs = next((e.get("needs") for e in _read(SHIPPED_KB) if e.get("id") == str(answer_id)[:60]), None)
     clean = {
         "id": str(answer_id)[:60],
         "category": str(entry.get("category") or "General")[:40],
@@ -488,6 +509,7 @@ def save_answer(entry: dict[str, Any], editor: str) -> dict[str, Any]:
         "follow_ups": [f.strip()[:120] for f in entry.get("follow_ups", []) if isinstance(f, str) and f.strip()][:4],
         "edited_by": editor,
         "edited_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        **({"needs": needs} if needs else {}),
     }
     with LOCK:
         local = _read(LOCAL_KB)

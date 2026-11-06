@@ -1110,7 +1110,8 @@
       "questions": [
         "What is a lien waiver?",
         "Conditional vs unconditional waiver",
-        "Why do I need a waiver?"
+        "Why do I need a waiver?",
+        "Why is my GC asking for a lien waiver?"
       ],
       "keywords": [
         "waiver",
@@ -1157,12 +1158,20 @@
         "Why is the app asking me which waiver it is?",
         "Why does it ask whether a file is a lien waiver?",
         "Which waiver do I tap?",
-        "The waiver item asks conditional or unconditional"
+        "The waiver item asks conditional or unconditional",
+        "How do I change which waiver I said it is?"
       ],
       "keywords": [
         "tap"
       ],
-      "answer": "Every file on a lien waiver item, on a pay app or in the closeout documents, waits for one tap that says which waiver it is: Conditional or Unconditional. The one the file reads as is picked first, and the item says so when the file reads as the other one; your tap decides, and it is kept with your name and the time. Tap Unconditional only for a signed form that gives up your lien rights without waiting for payment: a pay app, or a retainage request, sent with one takes an owner and a reason. A file filed as anything else that reads like a lien waiver is asked about once in Review & send: No, Yes, conditional or Yes, unconditional.",
+      "needs": [
+        "which",
+        "conditional",
+        "unconditional",
+        "tap",
+        "answer"
+      ],
+      "answer": "Every file on a lien waiver item, on a pay app or in the closeout documents, waits for one tap that says which waiver it is: Conditional or Unconditional. It appears once for each file, in Review & send or on the closeout page, and the pay app or retainage request doesn't go until it is answered. The one the file reads as is picked first, and the item says so when the file reads as the other one; when the app couldn't tell (a photo, a scan, a form that says neither word or both), it says so and picks nothing, and you choose. Your tap decides, and it is kept with your name and the time. Tap Unconditional only for a signed form that gives up your lien rights without waiting for payment: a pay app, or a retainage request, sent with one takes an owner and a reason. A file filed as anything else that reads like a lien waiver is asked about once in Review & send: No, Yes, conditional or Yes, unconditional. To change an answer, tap the other one on the same file; taking Unconditional back takes the person who gave it or an owner, and it is kept in the activity log. Only someone who can send pay apps answers, and on the closeout page whoever can ask for retainage.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -2180,6 +2189,15 @@
         "authenticator",
         "sign-in code",
         "2fa"
+      ],
+      "needs": [
+        "two",
+        "sign",
+        "log",
+        "code",
+        "authenticator",
+        "2fa",
+        "password"
       ],
       "answer": "Two-step sign-in is on for every account, so a stolen password isn't enough. Signing in from a new device asks for a 6-digit code we email to you; tick Don't ask again on this device for 30 days to skip it on that device. If the code can't be emailed, you aren't signed in; try again shortly. For a stronger second step, open Settings, My account and tap Use an authenticator app instead: scan the QR code, type the code and save the recovery codes. It can't be turned off. Where the server can't send email yet, the authenticator app is the second step, and setting it up is asked right after you sign in (Not now puts it off).",
       "handler": null,
