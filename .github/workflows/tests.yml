@@ -4,10 +4,12 @@ on:
   push:
   pull_request:
 
+# The suite is large (a few thousand tests), so the two storage layouts run as separate jobs,
+# side by side, and each has room to finish.
 jobs:
   unittest:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,12 +19,21 @@ jobs:
         run: python3 -m compileall -q .
       - name: Unit and HTTP tests
         run: python3 -m unittest discover -s tests -v
-      - name: Same tests on the JSON storage layout
-        run: python3 -m unittest discover -s tests
-        env:
-          DURACASH_STORAGE: json
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - name: Client helper tests (no browser)
         run: node --test tests/js
+
+  unittest-json:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Same tests on the JSON storage layout
+        run: python3 -m unittest discover -s tests
+        env:
+          DURACASH_STORAGE: json

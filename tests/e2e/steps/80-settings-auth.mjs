@@ -11,7 +11,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator("#app-theme").selectOption("dark");
     await p.locator("#app-accent").selectOption("green");
     await p.locator('.save-bar [data-action="save-account"]').click();
-    await p.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+    // The page's CSP forbids evaluating strings, which waitForFunction does once its first check is
+    // false (the save now also stores the notification choices): wait on the attribute instead.
+    await p.locator('html[data-theme="dark"]').waitFor({ state: "attached" });
     assert.equal(await p.evaluate(() => document.documentElement.dataset.accent), "green");
     const bg = await p.evaluate(() => getComputedStyle(document.body).backgroundColor);
     await p.reload();
@@ -21,7 +23,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(await p.locator("#app-theme").inputValue(), "dark");
     await p.locator("#app-theme").selectOption("light");
     await p.locator('.save-bar [data-action="save-account"]').click();
-    await p.waitForFunction(() => document.documentElement.dataset.theme === "light");
+    await p.locator('html[data-theme="light"]').waitFor({ state: "attached" });
     await p.context().close();
   });
 
