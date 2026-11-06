@@ -6295,8 +6295,9 @@ def _check_sov_progress(job: dict[str, Any], done: dict[str, Any], stored: dict[
             errors.append(f"{name}: {sov.fmt_qty(billed_qty[line_id])} {line['unit']} is already billed; the quantity to date can't go below that.")
         elif sov.line_completed(trial_line) + store > line["scheduled_cents"]:
             errors.append(f"{name}: work done plus {money(store)} stored is more than the line's {money(line['scheduled_cents'])}. Lower the stored materials as they are installed.")
-        elif sov.line_to_date(trial_line) < min(already["by_line"].get(line_id, 0), sov.line_to_date(line)):
-            errors.append(f"{name}: {money(already['by_line'][line_id])} is already billed on this line; work done plus stored materials can't go below that.")
+        elif line["scheduled_cents"] >= 0 and sov.line_to_date(trial_line) < min(already["by_line"].get(line_id, 0), sov.line_to_date(line)):
+            # A credit (a signed change order for less) goes further below nothing as its work is done.
+            errors.append(f"{name}: {money(already['by_line'].get(line_id, 0))} is already billed on this line; work done plus stored materials can't go below that.")
         elif qty != line["done_milli"] or store != int(line.get("stored_cents") or 0):
             changes.append((line, qty, store))
     if errors:

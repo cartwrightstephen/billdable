@@ -241,5 +241,20 @@ class BillByDollarsKeepsTheDateAndNotes(unittest.TestCase):
         self.assertEqual(draft(self.job)["progress_notes"], "Corrected note")
 
 
+class CreditLineProgress(unittest.TestCase):
+    """The money fuzz billing by dollars (seed 873339740 of 77123): progress on a job with a signed
+    credit change order's line raised KeyError where the line's credit grew. A credit goes further
+    below nothing as its work is done; that is no refusal."""
+
+    def test_the_seed_runs_and_the_job_finishes(self):
+        import random
+        import test_money_fuzz
+        seq = test_money_fuzz.Sequence(random.Random(873339740))
+        for _ in range(test_money_fuzz.STEPS):
+            seq.step()
+        seq.finish()
+        self.assertTrue(seq.job["closed"])
+
+
 if __name__ == "__main__":
     unittest.main()
