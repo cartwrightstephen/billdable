@@ -307,6 +307,14 @@ export function shortDay(iso, now = new Date()) {
   return text.endsWith(`, ${now.getFullYear()}`) ? text.slice(0, -6) : text;
 }
 
+// Retainage is offered as paid once it can be released: the work is done, or it was asked for or
+// some of it already came in (Round 1 acceptance, item 16). Not from the first pay app on.
+export function retainageReleasable(j) {
+  const m = j.money || {};
+  if (!(m.retainage_open_cents > 0)) return false;
+  return j.work_status === "complete" || !!j.closed || (Number(j.retainage_chases) || 0) > 0 || m.retainage_released_cents > 0;
+}
+
 // A one-line schedule (one lump-sum line, nothing else on it) can be billed in dollars instead of
 // its % done (Round 1, item 10). Returns the line, or null.
 export function oneLumpLine(j) {
@@ -491,7 +499,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   if (pencilOut) add("pencil-ok", "Client agreed to the draft", `data-action="pencil-agreed" data-id="${j.id}"`, "bill");
   if (pencilOut) add("pencil-no", "Client wants changes", `data-action="toggle-form" data-form="pencilchanges"`, "bill");
   if (isBlocked(j)) add("sentback", "Client sent pay app back", `data-action="toggle-form" data-form="sentback"`, "bill");
-  if (m.retainage_open_cents > 0) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "paid");
+  if (retainageReleasable(j)) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "paid");
   add("co", "New change order", `data-action="new-co"`, "bill");
   if (draft) add("packet", "Open supporting documents", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "bill");
   if (draft) add("void", "Delete draft", `data-action="void-draft" data-id="${j.id}"`, "bill", { minor: true, danger: true });

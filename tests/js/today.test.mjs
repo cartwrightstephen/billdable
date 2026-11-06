@@ -31,7 +31,8 @@ test("the queue is the server's rows, in the order sent", () => {
 
 test("a new job shows Not billed yet; its button opens the job at its next step, so no Open", () => {
   const html = queueHtml([row()]);
-  assert.match(html, /<td class="todo-activity"><span class="pill copper">Not billed yet<\/span><div class="next-action">Porch rebuild has no pay app yet\. Bill the work done so far with Progress pay app, or use Final pay app\.<\/div><\/td>/);
+  // The job's name leads the cell too, shown only on a phone where the Job column is hidden (Round 1 acceptance, item 15).
+  assert.match(html, /<td class="todo-activity"><span class="todo-job-inline">Porch rebuild<\/span><span class="pill copper">Not billed yet<\/span><div class="next-action">Porch rebuild has no pay app yet\. Bill the work done so far with Progress pay app, or use Final pay app\.<\/div><\/td>/);
   assert.match(html, /<a href="\/jobs\/j1" data-action="open-job" data-id="j1">Porch rebuild<\/a>/);
   assert.match(html, /<button class="btn small" data-action="open-job" data-id="j1" data-focus="\.next-card">Progress pay app<\/button><\/div>/);
   assert.doesNotMatch(html, />Open</);

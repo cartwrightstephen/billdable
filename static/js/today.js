@@ -114,7 +114,7 @@ export function todoHtml(items, { expanded = false, anySent = false, total = ite
           ${rows.map(i => {
             const late = i.due && today && i.due < today;
             return `<tr class="action-item${late ? " overdue" : ""}">
-            <td class="todo-activity">${activity(i)}${late && !team ? ` <span class="pill red">Overdue</span>` : ""}</td>
+            <td class="todo-activity">${i.job ? `<span class="todo-job-inline">${i.job}</span>` : ""}${activity(i)}${late && !team ? ` <span class="pill red">Overdue</span>` : ""}</td>
             <td class="todo-job">${i.job_id ? `<a href="${pathFor("job", i.job_id)}" data-action="open-job" data-id="${i.job_id}">${i.job}</a>` : ""}</td>
             <td class="todo-ball"><span class="pill ball-${i.ball}">${BALL_WORDS[i.ball] || "Us"}</span></td>
             ${!team ? "" : i.source === "reminder" ? "<td></td><td></td>" : `<td>${assignSelect(i, people)}</td>

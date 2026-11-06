@@ -42,3 +42,15 @@ test("a file the app put on an item says it was suggested from the job records, 
   assert.equal(t, "Suggested from the job records on Nov 6, 2026");
   assert.doesNotMatch(t, /duracash/i);
 });
+
+test("Record retainage paid is offered once the retainage can be released, with what is held filled in", async () => {
+  const jobs = await import("../../static/js/jobs.js");
+  const money = { retainage_open_cents: 50000, retainage_released_cents: 0 };
+  assert.equal(jobs.retainageReleasable({ work_status: "in_progress", money }), false, "not from the first pay app on");
+  assert.equal(jobs.retainageReleasable({ work_status: "complete", money }), true);
+  assert.equal(jobs.retainageReleasable({ work_status: "in_progress", retainage_chases: 1, money }), true, "asked for");
+  assert.equal(jobs.retainageReleasable({ work_status: "in_progress", money: { ...money, retainage_released_cents: 100 } }), true, "some came in");
+  assert.equal(jobs.retainageReleasable({ work_status: "complete", money: { retainage_open_cents: 0 } }), false);
+  const src = (await import("node:fs")).readFileSync(new URL("../../static/js/views/job.js", import.meta.url), "utf8");
+  assert.match(src, /id: "retpay-amt", label: "Retainage received \(\$\)", cents: j\.money\.retainage_open_cents/);
+});

@@ -356,7 +356,7 @@ export const views = {
         ${field({ form: "retcredit", name: "reason", id: "retcredit-reason", label: "What was agreed", placeholder: "CO 3's credit comes off retainage" })}
         <button class="btn small" data-action="retainage-credit" data-id="${j.id}">Save</button></div></div>` : ""}
       ${formOpen.retpay ? `<div class="card form-card" data-form-key="retpay"><h2>Record retainage paid</h2>${formErrorLine("retpay")}<div class="form-row">
-        ${moneyField({ form: "retpay", name: "amount_cents", id: "retpay-amt", label: "Retainage received ($)" })}
+        ${moneyField({ form: "retpay", name: "amount_cents", id: "retpay-amt", label: "Retainage received ($)", cents: j.money.retainage_open_cents })}
         ${field({ form: "retpay", name: "reference", id: "retpay-ref", label: "Reference", placeholder: "Check no. or QuickBooks id" })}
         <button class="btn small" data-action="retainage-paid" data-id="${j.id}">Record</button></div></div>` : ""}
       ${formOpen.newco ? newCoCardHtml(j) : ""}
