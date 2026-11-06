@@ -377,17 +377,21 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         const sendWaiver = page.locator('[data-action="waiver"]');
         await sendWaiver.first().waitFor();
         // The signed waiver goes on the job record first (M21): Choose file, then Approve & send asks first.
-        if (await sendWaiver.first().isDisabled()) {
+        // Approve & send stays on and says why in place (Round 1 acceptance, item 18): the row asks for the file.
+        const needsFile = page.locator(".waiver-row .blocker", { hasText: "Add the signed" });
+        if (await needsFile.count()) {
           const [chooser] = await Promise.all([page.waitForEvent("filechooser"),
             page.locator('.waiver-row [data-action="pick-files"]:not([data-capture])').first().click()]);
           await chooser.setFiles({ name: "signed-waiver.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 signed waiver") });
-          for (let t = 0; t < 100 && (await sendWaiver.first().isDisabled()); t++) await new Promise((r) => setTimeout(r, 100));
+          for (let t = 0; t < 100 && (await needsFile.count()); t++) await new Promise((r) => setTimeout(r, 100));
         }
         const before = await sendWaiver.count();
         await sendWaiver.first().click();
+        // The stand-in file doesn't read as a waiver: a person says they opened it (criterion 67),
+        // then one confirm sends it (Round 1 acceptance, item 17).
+        await confirmDialog(page).filter({ hasText: "I opened it and it's right" }).waitFor();
         await confirmIfAsked(page);
-        // The stand-in file doesn't read as a waiver: a person says they opened it (criterion 67).
-        await confirmDialog(page).waitFor();
+        await confirmDialog(page).filter({ hasText: "Email the signed" }).waitFor();
         await confirmIfAsked(page);
         for (let t = 0; t < 100 && (await sendWaiver.count()) >= before; t++) await new Promise((r) => setTimeout(r, 100));
         await page.goto(BASE + "/jobs/job-inman");

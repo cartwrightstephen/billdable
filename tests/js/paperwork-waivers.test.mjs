@@ -65,7 +65,8 @@ test("the waiver page asks for the signed form before it sends, and says what th
   const html = view();
   assert.match(html, /Add the signed unconditional waiver to the job records, then send\./);
   assert.match(html, /data-waiver-kind="unconditional_progress"/);
-  assert.match(html, /data-action="waiver" data-id="j1" data-inv="i2" disabled>/);
+  // Approve & send stays on and the server says why in place, as on the pay app page (Round 1 acceptance, item 18).
+  assert.match(html, /data-action="waiver" data-id="j1" data-inv="i2">Approve & send/);
   for (const want of ["Pine Builders LLC", "Amount covered: $4,500.00", "Not released: the $600.00 retainage held to date on this job", "O.C.G.A. § 44-14-366",
     "Interim Waiver and Release Upon Payment", "Conditional, final payment: Sent"]) assert.ok(html.includes(want), want);
   assert.equal(waiverStageText({ kind: "", status: "After payment" }), "After payment");

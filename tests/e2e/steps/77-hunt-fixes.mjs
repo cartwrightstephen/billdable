@@ -33,11 +33,14 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await send.waitFor();
     const [chooser] = await Promise.all([p.waitForEvent("filechooser"), p.locator('.waiver-row [data-action="pick-files"]:not([data-capture])').first().click()]);
     await chooser.setFiles({ name: "signed.txt", mimeType: "text/plain", buffer: Buffer.from("CONDITIONAL WAIVER AND RELEASE") });
-    for (let t = 0; t < 100 && (await send.isDisabled()); t++) await new Promise((r) => setTimeout(r, 100));
+    const needsFile = p.locator(".waiver-row .blocker", { hasText: "Add the signed" });
+    for (let t = 0; t < 100 && (await needsFile.count()); t++) await new Promise((r) => setTimeout(r, 100));
     await send.click();
-    await confirmIfAsked(p);
+    // The look comes first, then one confirm to send (Round 1 acceptance, item 17).
     await confirmDialog(p).filter({ hasText: "It says conditional, not unconditional." }).waitFor();
     assert.ok(await confirmDialog(p).getByRole("button", { name: "I opened it and it's right" }).count());
+    await confirmIfAsked(p);
+    await confirmDialog(p).filter({ hasText: "Email the signed" }).waitFor();
     await confirmIfAsked(p);
     await p.waitForFunction(async (jobId) => (await (await fetch(`/api/jobs/${jobId}`)).json()).job.invoices.some((i) => i.waiver_sent), id);
     await p.context().close();

@@ -105,7 +105,6 @@ export const views = {
     const rows = waiverRows(j);
     const owed = rows.some(r => r.due);
     const first = rows.find(r => r.due);
-    const off = locked || !j.payer.ap_email;
     const payApps = (j.invoices || []).filter(i => i.status !== "void" && i.waiver_stages);
     return `
       ${backButton("waivers", "Closeout")}
@@ -124,7 +123,7 @@ export const views = {
             ${r.due && !j.summary && r.which && r.recordId && may("waiver") ? waiverForHtml(j, r, rows) : ""}
             ${r.due && !j.summary && !r.onFile && !r.which ? `<p class="blocker">Add the signed ${waiverTypeWords(r.kind)} waiver to the job records, then send.</p>${uploadButtons(j, r.kind, rowId(r))}` : ""}
             ${r.due && r.onFile && r.record ? `<p class="sub">Sends ${r.record} from the job records.</p>` : ""}
-            ${r.due ? (may("waiver") ? waiverSendForm(j, r.inv || null, off || !r.onFile, r.release || null) + (j.summary ? "" : waiverNotNeededHtml(j, r)) : OWNER_SENDS) : ""}
+            ${r.due ? (may("waiver") ? waiverSendForm(j, r.inv || null, false, r.release || null) + (j.summary ? "" : waiverNotNeededHtml(j, r)) : OWNER_SENDS) : ""}
           </div>`).join("")
           : `<p class="sub">${termText("No waiver is due yet. One is due after each paid pay app.")}</p>`}
       </div>
@@ -198,28 +197,30 @@ export const views = {
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
-  // A person approves each waiver (M21): the confirm names the type, what it covers and who gets it.
+  // A person approves each waiver (M21). A final waiver while a progress one is due warns, and so
+  // does a file that doesn't match what it goes as (blank, other wording, another job or amount, a
+  // scan): those looks come first, each for what it names (accept. 67, 76), read with nothing sent;
+  // then one confirm names the type, what it covers and who gets it (Round 1 acceptance, item 17).
   "waiver": async (el, id) => {
     const key = el.dataset.release || el.dataset.inv || "job";
     const kind = document.getElementById(`waiver-kind-${key}`)?.value;
     const j = state.jobs.find(x => x.id === id);
-    if (j) {
-      const row = waiverRows(j).find(r => r.due && rowId(r) === key) || waiverRows(j).find(r => r.due);
+    const body = { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) };
+    const said = {};
+    let r = await post(`/api/jobs/${id}/waiver`, { ...body, check_only: true }, { quiet: true, ownRefusal: true });
+    while (r && r.data && (r.data.final_waiver_warning || r.data.look_warning)) {
+      if (!(await askConfirm(r.data.error, r.data.confirm_label || "Send the final waiver", true))) return;
+      if (r.data.final_waiver_warning) said.confirm_final = true;
+      if (r.data.look_warning) said.looked_at = r.data.record_id;
+      r = await post(`/api/jobs/${id}/waiver`, { ...body, ...said, check_only: true }, { quiet: true, ownRefusal: true });
+    }
+    // Anything else it can't go for: the send below says why, as it always has.
+    if (r && r.ok && j) {
+      const row = waiverRows(j).find(x => x.due && rowId(x) === key) || waiverRows(j).find(x => x.due);
       const what = row ? `${unesc(row.label)}${row.amount != null ? ", " + money(row.amount) : ""}` : j.name;
       if (!(await askConfirm(`Email the signed ${waiverTypeWords(kind || (row && row.kind) || "")} waiver for ${what} to ${sendsTo(j)}?`, "Send the waiver"))) return;
     }
-    const body = { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) };
-    let r = await post(`/api/jobs/${id}/waiver`, body);
-    // A final waiver while a progress one is due warns, and so does a file that doesn't match what it
-    // goes as (blank, other wording, another job or amount, a scan): a person's confirm sends it, each
-    // for what it names (accept. 67, 76).
-    const said = {};
-    while (r && r.data && (r.data.final_waiver_warning || r.data.look_warning)
-           && await askConfirm(r.data.error, r.data.confirm_label || "Send the final waiver", true)) {
-      if (r.data.final_waiver_warning) said.confirm_final = true;
-      if (r.data.look_warning) said.looked_at = r.data.record_id;
-      r = await post(`/api/jobs/${id}/waiver`, { ...body, ...said });
-    }
+    await post(`/api/jobs/${id}/waiver`, { ...body, ...said });
   },
   // All of the retainage, or the part typed in the box, once the job is done (M24).
   "retainage": async (el, id) => {

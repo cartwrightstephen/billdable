@@ -3462,7 +3462,7 @@ JOB_ACTIONS = {
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None,
                                                                                     release_id=_text(c.body, "release_id") or None, confirm_final=c.body.get("confirm_final") is True,
-                                                                                    looked_at=_text(c.body, "looked_at"),
+                                                                                    looked_at=_text(c.body, "looked_at"), check_only=c.body.get("check_only") is True,
                                                                                     read_file=_file_reader(c.company_id, c.read_ahead)))),
     # The type of a signed waiver on the job record, and which paid pay app or release it is for (B1).
     "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"))),

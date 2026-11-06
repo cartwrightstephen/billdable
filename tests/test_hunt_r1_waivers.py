@@ -93,5 +93,34 @@ class PhotoOnAWaiverItem(Case):
         self.assertEqual(item["confirmed_by"], "Sam")
 
 
+class WaiverSendOrder(unittest.TestCase):
+    """Round 1 acceptance, item 17: the waiver step's look comes before its send confirm. A check
+    reads everything and warns as the send would, and sends nothing."""
+
+    def test_check_only_warns_as_the_send_would_and_sends_nothing(self):
+        from test_money_fixes import UnreadWaiverTests
+        t = UnreadWaiverTests("test_the_waiver_step_reads_a_record_with_no_type")
+        t.setUp()
+        domain.approve_and_send(t.state, t.job["id"], "Owner")
+        domain.match_payment(t.state, t.job["id"], t.inv["amount_cents"], "chk")
+        rec = t.record("Signed form", "waiver", "Conditional waiver upon payment for another job")
+        emails = len(t.state["email_log"])
+        with self.assertRaises(domain.GateError) as raised:
+            domain.send_waiver(t.state, t.job["id"], "Sam", invoice_id=t.inv["id"], read_file=t.read, check_only=True)
+        self.assertTrue(raised.exception.extra["look_warning"])
+        domain.send_waiver(t.state, t.job["id"], "Sam", invoice_id=t.inv["id"], looked_at=rec["id"], read_file=t.read, check_only=True)
+        self.assertFalse(t.inv.get("waiver_sent"))
+        self.assertEqual(len(t.state["email_log"]), emails)
+        domain.send_waiver(t.state, t.job["id"], "Sam", invoice_id=t.inv["id"], looked_at=rec["id"], read_file=t.read)
+        self.assertTrue(t.inv["waiver_sent"])
+
+
+class WaiverPageState(unittest.TestCase):
+    def test_a_job_saved_with_its_address_in_boxes_names_its_state(self):  # acceptance item 18
+        self.assertEqual(domain.job_state({"address": "9 Elm St", "address_parts": {"street": "9 Elm St", "city": "Atlanta", "state": "GA", "zip": "30307"}}), "GA")
+        self.assertEqual(domain.job_state({"address": "9 Elm St, Atlanta, GA 30307"}), "GA")
+        self.assertEqual(domain.job_state({"address": "9 Elm"}), "")
+
+
 if __name__ == "__main__":
     unittest.main()

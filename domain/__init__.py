@@ -1664,14 +1664,16 @@ def _pending_waivers(job: dict[str, Any]) -> list[dict[str, Any]]:
 def send_waiver(
     state: dict[str, Any], job_id: str, actor: str = "owner", invoice_id: str | None = None, kind: str | None = None,
     release_id: str | None = None, confirm_final: bool = False,
-    read_file: Any = None, looked_at: str = "",
+    read_file: Any = None, looked_at: str = "", check_only: bool = False,
 ) -> dict[str, Any]:
     """The second stage of the waiver (M16, M21): after payment, a person approves sending the
     signed form on the job record. One waiver per paid pay app and per retainage release
     (release_id, M20); older records keep a single job-level flag. Duracash never writes the form:
     it is refused until a signed waiver of the type being sent is on the job record. With read_file,
     the file is read whatever its label or type says (Decision 6, criterion 67): what doesn't match
-    is named, and it goes only once a person says they opened that record (looked_at, its id)."""
+    is named, and it goes only once a person says they opened that record (looked_at, its id).
+    check_only: every check and warning, and nothing sent, so the page asks for the look first and
+    then one confirm to send (Round 1 acceptance, item 17)."""
     job = _open_job(state, job_id)
     if kind is not None and kind not in WAIVER_KINDS:
         raise GateError("Pick the waiver type: conditional or unconditional, progress or final.")
@@ -1731,6 +1733,8 @@ def send_waiver(
         raise GateError(f"Say which pay app {record['label']} is for first. {why}",
                         fields={"for_id": "Pick the pay app or retainage release this signed waiver is for."},
                         extra={"waiver_record_id": record["id"], "waiver_for": _waiver_owed(job)})
+    if check_only:
+        return job
     if looked_past:
         audit(state, job_id, "waiver_looked_at", f"{actor} opened {record['label']} and said it is right: {' '.join(looked_past)}", actor)
     _hold_unclear_waivers(job)
@@ -2193,6 +2197,9 @@ def job_state(job: dict[str, Any]) -> str:
     for key in ("state", "address_state"):  # a job saved with its address in parts
         if re.fullmatch(r"[A-Za-z]{2}", str(job.get(key) or "")):
             return str(job[key]).upper()
+    saved = str((job.get("address_parts") or {}).get("state") or "")   # New job's four boxes (J1)
+    if re.fullmatch(r"[A-Za-z]{2}", saved):
+        return saved.upper()
     try:
         parts = parse_legacy_address(str(job.get("address") or ""))
     except Exception:  # an address the reader can't split names no state
