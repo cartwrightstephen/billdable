@@ -163,7 +163,7 @@ def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[s
             if to_date:
                 # New job record asks a lump sum's % done to date, the figure a foreman knows (Round 1):
                 # what is recorded is the step up from the field total. Lower is a correction, not a record.
-                current = sov.field_total(line)
+                current = _field_floor(job, line)
                 if amount < current:
                     _refuse("", {field: f"{line['description']} is at {sov.fmt_qty(current * 100)}% done already. Enter that or more, "
                                         "or lower it with Correct field total on the job's Schedule of values card."})
@@ -545,6 +545,17 @@ def quantities_blocked(job: dict[str, Any]) -> str:
     return ""
 
 
+def _field_floor(job: dict[str, Any], line: dict[str, Any]) -> int:
+    """What a lump sum's % done to date can't go below (Round 1 hunt): what the field recorded, and on a
+    line with nothing recorded yet, what pay apps that went out billed. A figure typed on a draft is
+    the pay app's own, never the floor, even after the draft is deleted."""
+    import sov
+    if "field_milli" in line:
+        return int(line["field_milli"])
+    draft = next((inv for inv in job.get("invoices", []) if inv.get("status") in ("draft", "awaiting_approval")), None)
+    return int(sov.billed(job, skip=draft)["qty_by_line"].get(line["id"], 0))
+
+
 def add_field_quantities(job: dict[str, Any], rows: list[dict[str, Any]], day: str = "") -> tuple[list[dict[str, Any]], list[str]]:
     """Add quantities to the lines' field totals, each up to its scheduled quantity. Pay apps and
     drafts aren't touched: the card's suggested value moves, and Progress Pay App bills it. Returns
@@ -555,7 +566,8 @@ def add_field_quantities(job: dict[str, Any], rows: list[dict[str, Any]], day: s
     added, over = [], []
     for row in rows:
         line = by_id[row["line_id"]]
-        total = sov.field_total(line)
+        # A % done to date is the step up from its own floor (_field_floor), not from a draft's figure.
+        total = row["to_date_milli"] - row["qty_milli"] if "to_date_milli" in row else sov.field_total(line)
         fits = min(row["qty_milli"], max(0, line["qty_milli"] - total))
         if fits < row["qty_milli"]:
             over.append(over_schedule_note(line, row["qty_milli"] - fits))

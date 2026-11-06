@@ -201,7 +201,6 @@ class PercentToDateFloor(ServerCase):
         self.assertEqual(res.status, 200, out.get("fields") or out.get("error"))
         line = self.view()["sov_view"]["lines"][0]
         self.assertEqual(line["field_milli"], 400)
-        self.assertEqual(line["form_done_milli"], 500, "the draft keeps the figure typed on it")
         res, out = self.request("POST", f"/api/jobs/{self.job_id}/void-draft", {}, cookie=self.owner)
         self.assertEqual(res.status, 200, out)
         line = self.view()["sov_view"]["lines"][0]

@@ -5783,10 +5783,6 @@ def record_sov_progress(
         if store != int(line.get("stored_cents") or 0):
             part += f", stored {money(int(line.get('stored_cents') or 0))} → {money(store)}"
         summary.append(part)
-        if "field_milli" not in line and qty != line["done_milli"]:
-            # Nothing recorded in the field yet: the field total stays where it was, so a figure typed
-            # here is the pay app's own and never the floor for the next job record (Round 1 hunt).
-            line["field_milli"] = line["done_milli"]
         if "field_milli" in line and qty != line["field_milli"]:
             audit(state, job_id, "payapp_amount_changed", f"{actor} changed the pay app quantity, {sov_line_name(line)}: "
                   f"suggested {sov.fmt_qty(line['field_milli'])} {line['unit']} ({money(sov.extend(line['field_milli'], line['rate_cents']))}), "
