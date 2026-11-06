@@ -167,7 +167,9 @@ def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[s
                 if amount < current:
                     _refuse("", {field: f"{line['description']} is at {sov.fmt_qty(current * 100)}% done already. Enter that or more, "
                                         "or lower it with Correct field total on the job's Schedule of values card."})
-                if amount > current:
+                if amount > current or ("field_milli" not in line and sov.field_total(line) != amount):
+                    # Nothing recorded in the field yet and a draft's figure on the line: the field
+                    # total becomes what is typed, even with no step up (Round 1 hunt).
                     rows.append({"line_id": line["id"], "qty_milli": amount - current, "to_date_milli": amount})
                 else:
                     unchanged = True
@@ -571,7 +573,7 @@ def add_field_quantities(job: dict[str, Any], rows: list[dict[str, Any]], day: s
         fits = min(row["qty_milli"], max(0, line["qty_milli"] - total))
         if fits < row["qty_milli"]:
             over.append(over_schedule_note(line, row["qty_milli"] - fits))
-        if fits:
+        if fits or ("to_date_milli" in row and "field_milli" not in line):
             line["field_milli"] = total + fits
             if day:
                 line["from_daily_on"] = day

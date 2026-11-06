@@ -74,21 +74,23 @@ class Sequence:
         domain.add_daily_record(self.state, self.id, "Work", details={"sections": {"quantities": [{"line_id": line["id"], "qty": qty}]}})
 
     def daily_to_date(self):
-        """New job record's lump sum (Round 1): % done to date, which adds the step up from the field
-        total; now and then below it, which is refused with nothing moved."""
+        """New job record's lump sum (Round 1): % done to date, which adds the step up from its floor,
+        what the field recorded (or, with nothing recorded, what sent pay apps billed: a figure typed
+        on a draft is never the floor, Round 1 hunt); now and then below it, refused with nothing moved."""
+        from domain.daily import _field_floor
         line = self.line()
         if not (line["unit"].upper() == "LS" and line["qty_milli"] == 1000):
             return self.daily()
-        before = sov.field_total(line)
-        pct = self.rng.randint(max(0, before // 10 - 5), 100)
+        before, floor = sov.field_total(line), _field_floor(self.job, line)
+        pct = self.rng.randint(max(0, floor // 10 - 5), 100)
         try:
             domain.add_daily_record(self.state, self.id, "Work", details={"sections": {"quantities": [{"line_id": line["id"], "qty": str(pct), "to_date": True}]}})
         except domain.GateError as exc:
             assert sov.field_total(line) == before, "a refused record moves nothing"
             if "done already" in " ".join(str(v) for v in (exc.fields or {}).values()):
-                assert pct * 10 < before, f"refused {pct}% with {before / 10}% recorded"
+                assert pct * 10 < floor, f"refused {pct}% with {floor / 10}% recorded"
             raise
-        assert pct * 10 >= before, f"{pct}% taken below the {before / 10}% recorded"
+        assert pct * 10 >= floor, f"{pct}% taken below the {floor / 10}% recorded"
         if domain.daily.quantities_blocked(self.job):
             assert sov.field_total(line) == before
         else:
