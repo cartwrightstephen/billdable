@@ -143,6 +143,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
 
   await step("a pay app's page shows its summary, as the PDF prints it", async () => {
     await page.goto(`${BASE}/money/pay-app/job-turner/inv-trn-1`);
+    // Folded under one line with the lines and the approval (round 1, item 4).
+    await page.locator(".payapp-numbers > summary", { hasText: "Show the numbers" }).click();
     const card = page.locator(".payapp-summary");
     await card.waitFor();
     const text = await card.innerText();

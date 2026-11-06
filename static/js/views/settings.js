@@ -19,7 +19,12 @@ let recoveryCodes = null; // shown once, right after two-step sign-in is turned 
 const ordinal = (n) => n + ([11, 12, 13].includes(n % 100) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"));
 const BILLING_WORDS = { trialing: "Trial", active: "Active", past_due: "Card declined", unpaid: "Unpaid", canceled: "Cancelled", incomplete: "Incomplete", incomplete_expired: "Expired", paused: "Paused" };
 let auditJobFilter = "all";
+let auditWho = "";   // "people": without the app's own entries (round 1, item 14)
 export function setAuditJobFilter(value) { auditJobFilter = value; }
+// The log's query: the job picked and whose entries (app-core's LIST_QUERY lists).
+function auditQuery() {
+  return [auditJobFilter !== "all" ? "job=" + encodeURIComponent(unesc(auditJobFilter)) : "", auditWho ? "who=" + auditWho : ""].filter(Boolean).join("&");
+}
 
 async function resetData() {
   if (me && me.company_id === DEMO_COMPANY_ID) {
@@ -423,7 +428,7 @@ export function trialBannerHtml() {
 // Signed out: what one person had open in Settings isn't kept for the next.
 export function forgetSettings() {
   twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {}; codeSentTo = ""; profileDraft = null;
-  helperReview = null; helperDraft = null; auditJobFilter = "all";
+  helperReview = null; helperDraft = null; auditJobFilter = "all"; auditWho = "";
 }
 onSessionEnd(forgetSettings);
 
@@ -571,7 +576,7 @@ export const views = {
       <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial and, once Stripe is set up, its subscription. Nothing is enforced unless BILLING_ENFORCE=1.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
   },
   audit() {
-    const page = listPage("audit", auditJobFilter);
+    const page = listPage("audit", auditQuery());
     const events = page ? page.entries : [];
     return `
       <h1>Activity log</h1>
@@ -582,6 +587,10 @@ export const views = {
           <option value="all">All jobs</option>
           ${jobFilterOptions(state.jobs, auditJobFilter)}
         </select>
+      </div>
+      <div class="filter-bar" role="group" aria-label="Whose entries">
+        <button class="${auditWho ? "btn secondary" : "btn"} small" data-action="audit-who" data-who="" aria-pressed="${!auditWho}">Everything</button>
+        <button class="${auditWho ? "btn" : "btn secondary"} small" data-action="audit-who" data-who="people" aria-pressed="${!!auditWho}">Without the app's own entries</button>
       </div>
       ${events.length ? `<div class="table-wrap">
         <table>
@@ -595,6 +604,7 @@ export const views = {
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in app.js.
 export const actions = {
+  "audit-who": (el) => { auditWho = el.dataset.who === "people" ? "people" : ""; render(); },
   "reset-data": () => resetData(),
   "sms-resend": async () => {
     const r = await postJson("/api/auth/sms", { phone: smsCodeTo, sms_opt_in: true });

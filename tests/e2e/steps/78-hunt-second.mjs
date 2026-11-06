@@ -136,16 +136,16 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await p.context().close();
   });
 
-  await step("One It's right clears a flagged file, naming everything in one prompt", async () => {
+  await step("One tap clears a flagged file whose warning names everything, with no second prompt", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     const id = await made(p, "Smoke one look");
     const draft = draftOf(await read(p, id));
     const item = draft.packet.find((i) => i.waiver_kind);
     await upload(p, id, "w.txt", "Lien waiver for somewhere else", { kind: "waiver", attach: item.id, waiver_kind: item.waiver_kind });
     await p.goto(`${BASE}/money/packet/${id}/${draft.id}`);
-    await p.locator(`[data-action="packet-confirm"][data-item="${item.id}"]`).click();
-    const prompt = confirmDialog(p).filter({ hasText: "Amount not found" }).filter({ hasText: "Job name not found" });
-    await prompt.getByRole("button", { name: "It's right" }).click();
+    const row = p.locator(`#packet-item-${item.id}`);
+    await row.filter({ hasText: "Amount not found" }).filter({ hasText: "Job name not found" }).waitFor();
+    await row.locator('[data-action="packet-confirm"]').click();   // round 1, item 3
     await p.waitForFunction(async ([jobId, itemId]) => (await (await fetch(`/api/jobs/${jobId}`)).json()).job.invoices.at(-1).packet.find((i) => i.id === itemId).present, [id, item.id]);
     await p.context().close();
   });

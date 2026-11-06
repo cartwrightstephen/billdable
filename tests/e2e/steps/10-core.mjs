@@ -203,7 +203,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     // On a phone, a missing paperwork item offers Take a photo.
     await p.setViewportSize({ width: 375, height: 812 });
     await p.locator(".next-card .primary-action").click();
-    await p.getByRole("heading", { name: "Supporting documents" }).waitFor();
+    // What is missing sits in Review & send, above the button (round 1, item 4).
+    await p.locator(".send-check .send-missing").waitFor();
     const missing = p.locator(".packet-item.absent").first();
     await missing.getByRole("button", { name: "Take a photo" }).waitFor({ state: "visible" });
     assert.equal(await missing.locator('[data-action="pick-files"][data-capture="1"][data-attach]').count(), 1);
@@ -335,7 +336,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       // Paperwork alone reads "Add N missing documents" (R1-08); with an unsigned CO too, "Fix N things before sending" (R6-01).
       if (/^(Fix \d+ things? before sending|Add \d+ missing document)/.test(label)) {
         await main.click();
-        await page.getByRole("heading", { name: /^Supporting documents/ }).waitFor();  // on the pay app; alone when no pay app is drafted yet
+        await page.locator('[data-form^="resolve-"]').first().waitFor();  // in Review & send on the pay app; alone when no pay app is drafted yet
         while (await page.locator('[data-form^="resolve-"]').count()) {
           const btn = page.locator('[data-form^="resolve-"]').first();
           const item = (await btn.getAttribute("data-form")).slice("resolve-".length);
@@ -352,11 +353,18 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.locator(".send-check").waitFor({ state: "visible" });
         assert.match(new URL(page.url()).pathname, /^\/money\/pay-app\//);
         await page.click('.send-check [data-action="send"]');
+        // It asks first, naming who, how much and the period (round 1, item 5).
+        await confirmDialog(page).filter({ hasText: "ap@ellisonresidential.example" }).waitFor();
+        await confirmIfAsked(page);
         await page.locator('.send-check [data-action="send"]').waitFor({ state: "detached" });
-        // The demo never emails, so Today lists the pay app's email as one that didn't go out (R1-11).
+        // The demo never emails: the page says so under the Sent pill (round 1, item 7).
+        await page.locator(".email-undelivered", { hasText: "was not delivered" }).waitFor();
+        // Today lists the pay app's email as one that didn't go out (R1-11); this server has no mail,
+        // so Send Again isn't offered (round 1, item 7).
         await page.goto(BASE + "/dashboard");
-        await page.locator(".action-item", { hasText: "Inman Park bath" }).filter({ hasText: "Didn't go out" })
-          .getByRole("button", { name: "Send Again" }).waitFor();
+        const failed = page.locator(".action-item", { hasText: "Inman Park bath" }).filter({ hasText: "Didn't go out" });
+        await failed.waitFor();
+        assert.equal(await failed.locator('[data-action="email-retry"]').count(), 0);
         await page.goto(BASE + "/jobs/job-inman");
       } else if (label === "Choose Waiver and Send") {
         await main.click();

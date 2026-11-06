@@ -69,11 +69,12 @@ class TheOwnersGate(unittest.TestCase):
         self.assertTrue(reading("UNCONDITIONAL WAIVER AND RELEASE\nThis waiver becomes unconditional on receipt of payment.")["waiver"])
         self.assertTrue(reading("This waiver becomes unconditional on receipt of payment.\nl\nl\nUNCONDITIONAL WAIVER AND RELEASE")["waiver"])
 
-    def test_a_sentence_about_one_filed_as_a_waiver_is_the_gate_and_elsewhere_a_look(self):
+    def test_a_sentence_about_one_is_a_look_wherever_it_is_filed(self):
+        # Nov 6 review, A: a line reporting one received is a look, filed as a waiver too.
         text = "Sub's unconditional lien waiver received from plumber for last month, and the crew moved on to the next floor."
-        self.assertTrue(reading(text)["waiver"])
-        got = reading(text, near_only=True)
-        self.assertEqual((got["waiver"], got["mention"]), (False, True))
+        for near_only in (False, True):
+            got = reading(text, near_only=near_only)
+            self.assertEqual((got["waiver"], got["mention"]), (False, True))
 
     def test_taken_back_stays_neither(self):
         got = reading("Conditional waiver and release. This is not an unconditional release.")

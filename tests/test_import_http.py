@@ -317,13 +317,11 @@ class ImportHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
         rec = state["jobs"][0]["records"][-1]
         item = next(p for p in state["jobs"][0]["invoices"][-1]["packet"] if p["id"] == item["id"])
-        self.assertFalse(item["present"], "a photo of a waiver can't be checked, so it asks for a look")
-        self.assertEqual(item["check"]["status"], "unchecked")
-        self.assertEqual([a["record_id"] for a in item["attachments"]], [rec["id"]])
-        res, state = self.request("POST", f"/api/jobs/{job['id']}/packet-confirm/{item['id']}", {"looked": True}, cookie=cookie)
-        self.assertEqual(res.status, 200, state)
-        item = next(p for p in state["jobs"][0]["invoices"][-1]["packet"] if p["id"] == item["id"])
+        # A photo the check can't read is in once added, as checked by who added it (round 1, item 3).
         self.assertTrue(item["present"])
+        self.assertEqual(item["check"]["status"], "unchecked")
+        self.assertEqual(item["unread"], "photo")
+        self.assertEqual([a["record_id"] for a in item["attachments"]], [rec["id"]])
         # The Inbox's Undo was refused while the paperwork used the record; Remove frees it.
         inbox_id = state["inbox"][-1]["id"]
         res, data = self.request("POST", f"/api/inbox/{inbox_id}/undo", {}, cookie=cookie)

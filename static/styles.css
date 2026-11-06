@@ -730,6 +730,18 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .recent-contact li:last-child { border-bottom: 0; }
 /* The pay app page's summary (M2). */
 .payapp-summary .payapp-received { margin-top: 8px; }
+/* Round 1: what is missing inside Review & send, the numbers folded under one line, an email that
+   didn't go out under the pill, a GC job at 0% retainage, and an Activity entry's bookkeeping. */
+.send-missing { margin: 12px 0; padding-top: 4px; border-top: 1px solid var(--line); }
+.send-missing h3 { margin: 8px 0 4px; font-size: 15px; color: var(--red); }
+.payapp-numbers > summary { font-weight: 600; }
+.payapp-numbers[open] > summary { margin-bottom: 12px; }
+.payapp-numbers > .card { box-shadow: none; margin: 0 0 12px; }
+.notice.email-undelivered { margin: 0 0 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.notice.retainage-zero { margin: 10px 0; }
+.pull-back-row { margin: 0 0 16px; }
+.activity-also { margin-top: 4px; font-size: 13px; }
+.activity-also summary { cursor: pointer; color: var(--muted); }
 
 
 

@@ -48,14 +48,15 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(made.status, 200);
     await p.goto(BASE + `/money/pay-app/${made.id}/${made.inv}`);
     await p.getByRole("heading", { name: "Review & send" }).waitFor();
-    await p.getByRole("heading", { name: "Supporting documents" }).waitFor();
-    const warning = p.locator(".packet-item .doc-warning");
+    // What is missing sits in Review & send, above an Approve & send that stays on (round 1, item 4).
+    const warning = p.locator(".send-check .send-missing .packet-item .doc-warning");
     await warning.waitFor();
     assert.match(await warning.innerText(), /looks blank/);
-    assert.equal(await p.locator('.send-check [data-action="send"]').isDisabled(), true);
+    assert.equal(await p.locator('.send-check [data-action="send"]').isDisabled(), false);
+    // One tap: the button names the look, with no second dialog (round 1, item 3).
     await p.getByRole("button", { name: "I opened it and it's right" }).click();
-    await confirmDialog(p).filter({ hasText: "looks blank" }).getByRole("button", { name: "It's right" }).click();
     await p.locator(".packet-item", { hasText: "Confirmed by" }).waitFor();
+    assert.equal(await confirmDialog(p).count(), 0);
     await p.locator(".send-confirmed", { hasText: "Confirmed by" }).waitFor();
     await p.locator(".send-warnings").waitFor();
     if (made.other) {

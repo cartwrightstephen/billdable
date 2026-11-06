@@ -2,6 +2,8 @@
 // the pay apps and change orders, and its activity; a finished job shows as its job file (J9). Its other cards have their own modules: job-money.js,
 // job-record.js, job-sov.js and job-cos.js (change orders).
 import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
+import { activityAlsoHtml } from "../activity.js";
+import { deleteDraftText } from "../payapp-text.js";
 import { isBlocked, nextStep, jobActions as jobActionsFor, ACTION_GROUPS, closeBlockerActions, finalPayAppConfirm, retainageNote, closeoutMissing as closeoutMissingCount, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
 import { sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
@@ -135,6 +137,7 @@ function jobHistoryHtml(j) {
     ${rows.length ? `<ol class="timeline">${rows.map(e => `<li>
         <span class="pill${e.kind === "email" ? " copper" : ""}">${e.kind === "email" ? "Email" : actionWords(e.action)}</span> ${e.text}
         <div class="sub">${fmtDateTime(e.at)}${e.who ? " · " + e.who : ""}${e.kind === "email" ? ` · to ${e.to} · ${emailStatusHtml(e)}` : ""}</div>
+        ${activityAlsoHtml(e)}
       </li>`).join("")}</ol>${moreButton("timeline", page)}`
       : !page ? `<p class="sub">Loading…</p>` : `<p class="sub">Nothing has happened on this job yet.</p>`}
   </div>`;
@@ -457,7 +460,7 @@ export const actions = {
     await post(`/api/jobs/${id}/undo-done`);
   },
   "void-draft": async (el, id) => {
-    if (!(await askConfirm(termText("Delete the open draft pay app? You can draft it again from the job page."), "Delete draft", true))) return;
+    if (!(await askConfirm(deleteDraftText(state.jobs.find(x => x.id === id) || {}), "Delete draft", true))) return;
     await post(`/api/jobs/${id}/void-draft`);
   },
   "match": async (el, id) => {
