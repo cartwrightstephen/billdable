@@ -23,7 +23,7 @@ STATUTORY = {"CA 8132": (c.CA_8132, "conditional"), "CA 8136": (c.CA_8136, "cond
              "TX conditional": (c.TX_COND, "conditional"), "TX unconditional": (c.TX_UNCOND, "unconditional")}
 # Georgia's forms say neither word: the app couldn't tell, so no answer is picked.
 SAYS_NEITHER = {"GA interim", "GA final"}
-REAL = {**c.REAL_ELSEWHERE, **c.NUMBERED, **{t: t + c.TITLE_BODY for t in c.TITLES}, **c.TITLES_ANYWHERE}
+REAL = {**c.REAL_ELSEWHERE, **c.NUMBERED, **{t: t + c.TITLE_BODY for t in c.TITLES}, **c.TITLES_ANYWHERE, **c.CLAIM_WAIVERS}
 # Real unconditional waivers where the app has no informed guess, so none is picked and the person
 # makes the choice: both words in one title, two forms in one file (a conditional form, then the
 # unconditional one 30 lines down, [46]), and a form that says neither word.

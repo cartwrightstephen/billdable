@@ -247,6 +247,16 @@ TITLES_ANYWHERE = {**{t: t + LONG_BODY for t in LONG_TITLES},
                    "no title, only the words": "Elm addition\nThe undersigned has been paid in full for the work through 10/31/2026 and hereby waives and releases all lien rights, "
                                                "and acknowledges the payment of $5,000.00 has been received.\nSigned ____\n",
                    "the type only in the body": "Acme Electric\nElm addition\nThis is an unconditional waiver and release of lien for the payment of $5,000.00.\n"}
+# Real unconditional waivers that never say "lien": they waive claims and the right to recover, with the
+# type or the payment beside it (the Round 1 hunt, r1d). The insurance waivers below stay no lien waiver.
+CLAIM_BODY = "\nProject: Elm addition\nAmount: $5,000.00\nThe undersigned has been paid $5,000.00 and waives and releases all claims against Park GC for work through 10/31/2026.\nSigned ____\n"
+CLAIM_WAIVERS = {t: t + CLAIM_BODY for t in (
+    "Unconditional Waiver of Claim and Right to Recover on Progress Payment",
+    "FINAL WAIVER OF CLAIMS AND RIGHTS OF RECOVERY (UNCONDITIONAL)",
+    "UNCONDITIONAL RELEASE OF CLAIMS AND RIGHT TO RECOVER",
+    "Waiver of Claims and Right to Recover Upon Final Payment, Unconditional",
+)}
+CLAIM_WAIVERS["no title, claims and payment only"] = "Acme Electric\nElm addition\nThe undersigned has received payment of $5,000.00 and gives a waiver of claims and rights of recovery for the unconditional release of this payment.\n"
 # Insurance paperwork that talks about waiving a right, which is no lien waiver.
 INSURANCE = {
  "WC waiver endorsement": "WORKERS COMPENSATION AND EMPLOYERS LIABILITY INSURANCE POLICY\nWC 00 03 13\nWAIVER OF OUR RIGHT TO RECOVER FROM OTHERS ENDORSEMENT\nWe have the right to recover our payments from anyone liable for an injury covered by this policy.",

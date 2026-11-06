@@ -86,7 +86,8 @@ def _has_amount(text: str, cents: int) -> bool:
 #     release or lien; or operative release language ("waives and releases", "releases all lien
 #     rights", "hereby ... releases") with a lien reference. Only a question hangs on it, never a
 #     gate, so it is wide: a contract's lien waiver clause is asked about once, and No clears it.
-#     A waiver of subrogation or of the right to recover (insurance) is no lien waiver.
+#     A waiver of subrogation or of the right to recover (insurance) is no lien waiver, but a waiver
+#     or release of claims with the type or a payment beside it is one (_claim_waiver).
 # A heading-like line is a sentence of one of the first HEAD_LINES lines, of at most TITLE_WORDS words.
 HEAD_LINES = 10
 TITLE_WORDS = 12
@@ -116,6 +117,19 @@ _OPERATIVE = re.compile(r"\bwaiv\w*\s+(?:and|or)\s+releas\w*|\breleas\w*\s+(?:an
 _LIEN = re.compile(r"\bliens?\b", re.I)
 # Insurance: "Waiver of subrogation", "waiver of our right to recover", "waiver of transfer of rights of recovery".
 _INSURANCE_WAIVER = re.compile(r"\bwaivers?\s+of\s+(?:(?!liens?\b)\w+\s+){0,6}?(?:subrogation|recover\w*)\b|\bwaives?\s+(?:(?!liens?\b)\w+\s+){0,3}?subrogation\b", re.I)
+# A waiver or release of claims is a lien waiver when the type or a payment is beside it: "Unconditional
+# Waiver of Claim and Right to Recover on Progress Payment" never says lien, and the strip above would
+# take its "right to recover" away. Insurance says neither (an endorsement's waiver of claims and
+# subrogation has no payment or type near it).
+_CLAIM_WAIVER = re.compile(r"\b(?:waivers?|releases?)\s+of\s+(?:\w+\s+){0,2}?claims?\b", re.I)
+_TYPE_OR_PAYMENT = re.compile(rf"\b{_TYPE}\b|\bpayments?\b", re.I)
+CLAIM_REACH = 80   # characters either side of the words
+
+
+def _claim_waiver(text: str) -> bool:
+    return any(_TYPE_OR_PAYMENT.search(text[max(0, m.start() - CLAIM_REACH):m.end() + CLAIM_REACH]) for m in _CLAIM_WAIVER.finditer(text))
+
+
 _SPACED_LETTERS = re.compile(r"(?<![A-Za-z])(?:[A-Za-z] ){3,}[A-Za-z](?![A-Za-z])")   # U N C O N D I T I O N A L
 
 
@@ -150,7 +164,8 @@ def _heading_lines(text: str) -> list[str]:
 
 def reading(text: str) -> dict[str, Any]:
     """{guess, form} for one file's text, as above."""
-    text = _INSURANCE_WAIVER.sub(" ", _plain(text or ""))
+    plain = _plain(text or "")
+    text = _INSURANCE_WAIVER.sub(" ", plain)
     heads = _heading_lines(text)
     guess = ""
     for line in heads:
@@ -167,7 +182,7 @@ def reading(text: str) -> dict[str, Any]:
         many = len(_UNCONDITIONAL.findall(kept)), len(_CONDITIONAL.findall(_UNCONDITIONAL.sub(" ", kept)))
         guess = "unconditional" if many[0] > many[1] else "conditional" if many[1] > many[0] else ""
     form = (any(_names_a_waiver(line) for line in heads) or bool(_STATUTORY_TITLE.search(text)) or bool(_TYPE_NEAR_RIGHTS.search(text))
-            or bool(_OPERATIVE.search(text) and _LIEN.search(text)))
+            or bool(_OPERATIVE.search(text) and _LIEN.search(text)) or _claim_waiver(plain))
     return {"guess": guess, "form": form}
 
 

@@ -468,6 +468,8 @@ def _apply_entry(state: dict[str, Any], job: dict[str, Any], entry: dict[str, An
                 rec["label"] = head(entry["title"])[:190] + many
             else:
                 rec["label"] = head(rec["label"])[:200]
+            if rec.get("kind") == "waiver" and entry["kind"] != "waiver":
+                rec["was_waiver"] = True   # still a waiver going out for the waiver question (edit_record)
             rec["kind"] = entry["kind"]
             if entry["note"]:
                 rec["note"] = entry["note"]

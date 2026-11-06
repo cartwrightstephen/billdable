@@ -1169,7 +1169,8 @@
         "conditional",
         "unconditional",
         "tap",
-        "answer"
+        "answer",
+        "lien"
       ],
       "answer": "Every file on a lien waiver item, on a pay app or in the closeout documents, waits for one tap that says which waiver it is: Conditional or Unconditional. It appears once for each file, in Review & send or on the closeout page, and the pay app or retainage request doesn't go until it is answered. The one the file reads as is picked first, and the item says so when the file reads as the other one; when the app couldn't tell (a photo, a scan, a form that says neither word or both), it says so and picks nothing, and you choose. Your tap decides, and it is kept with your name and the time. Tap Unconditional only for a signed form that gives up your lien rights without waiting for payment: a pay app, or a retainage request, sent with one takes an owner and a reason. A file filed as anything else that reads like a lien waiver is asked about once in Review & send: No, Yes, conditional or Yes, unconditional. To change an answer, tap the other one on the same file; taking Unconditional back takes the person who gave it or an owner, and it is kept in the activity log. Only someone who can send pay apps answers, and on the closeout page whoever can ask for retainage.",
       "handler": null,

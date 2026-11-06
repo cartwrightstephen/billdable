@@ -113,7 +113,7 @@ class AskingAsAWord(Kb):
             try:
                 helper.save_answer({"id": "which-waiver", "questions": ["Which waiver do I tap?"], "answer": "Edited."}, "founder")
                 edited = next(e for e in helper.load_kb() if e["id"] == "which-waiver")
-                self.assertEqual((edited["answer"], sorted(edited["needs"])), ("Edited.", ["answer", "conditional", "tap", "unconditional", "which"]))
+                self.assertEqual((edited["answer"], sorted(edited["needs"])), ("Edited.", ["answer", "conditional", "lien", "tap", "unconditional", "which"]))
             finally:
                 helper.LOCAL_KB, helper.LOG_PATH = orig
 
