@@ -70,6 +70,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.fill("#daily-crew", "3");
     await p.selectOption("#daily-weather", "Rain");
     await p.fill("#daily-notes", "Set the ledger board");
+    // Each kind of document is a chip that opens its section (Round 1, item 15).
+    assert.equal(await p.locator("[data-record-section]").count(), 0, "no document section until its chip is tapped");
+    for (const chip of ["+ Delivery ticket", "+ Photos", "+ Time sheet", "+ Invoice", "+ Inspection", "+ Other"]) await p.getByRole("button", { name: chip, exact: true }).click();
+    assert.equal(await p.inputValue("#daily-notes"), "Set the ledger board", "opening a section keeps what was typed");
     await p.fill("#daily-delivery-supplier-0", "ABC Supply");
     await p.locator("#daily-delivery_0-files").setInputFiles(jpg("ticket.jpg"));
     await p.locator(".daily-files", { hasText: "ticket.jpg" }).waitFor();
@@ -136,7 +140,15 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.setViewportSize({ width: 375, height: 812 });
     await p.goto(BASE + "/jobs/daily");
     await p.locator("#daily-job").waitFor();
+    await p.getByRole("button", { name: "+ Photos", exact: true }).click();
+    await p.getByRole("button", { name: "+ Delivery ticket", exact: true }).click();
     assert.equal(await p.getAttribute("#daily-photos_0-camera", "capture"), "environment");
+    // Take a photo takes several: after the first it reads Take another photo, until Done.
+    await p.locator("#daily-photos_0-camera").setInputFiles(jpg("site1.jpg"));
+    await p.locator(".file-pick", { hasText: "Take another photo" }).waitFor();
+    await p.locator("#daily-photos_0-camera").setInputFiles(jpg("site2.jpg"));
+    await p.locator('[data-action="daily-photos-done"]').click();
+    await p.locator(".record-files-done", { hasText: "2 photos" }).waitFor();
     assert.equal(await p.getAttribute("#daily-delivery_0-camera", "capture"), "environment");
     for (const width of [375, 320]) {
       await p.setViewportSize({ width, height: 812 });

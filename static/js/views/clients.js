@@ -8,7 +8,7 @@ import { checkFields } from "../validate.js";
 import { readJson } from "../net.js";
 import { pathFor } from "../routes.js";
 import { state, me, formOpen, onSessionEnd } from "../state.js";
-import { post, render, emptyState, can, nav } from "../app-core.js";
+import { post, render, emptyState, can, nav, moreDetails } from "../app-core.js";
 import { sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount, contractImportHtml, contractMark, forgetClosedContract } from "./jobs.js";
 
 // Who signs off reads as the client's own name only because a blank box used to save that way
@@ -123,6 +123,17 @@ export function paperworkValue(key, other) {
 // Forget what was ticked and not saved, once it is saved.
 export function forgetPaperworkTicks(key) { ticks.delete(key); }
 
+// A client card's section (Round 1, item 18): folded with a one-line summary, open while one of its
+// boxes has an error. Its boxes stay in the form, so Save client reads them folded or not.
+function playbookSection(more, title, summary, body, key, fields) {
+  const errs = formErrors[key] || {};
+  const open = fields.some(k => errs[k]) || !!moreDetails[more];
+  return `<details class="playbook-section" data-more="${more}"${open ? " open" : ""}>
+              <summary><h3>${title}</h3><span class="sub">${summary}</span></summary>
+              <div class="form-grid">${body}</div>
+            </details>`;
+}
+
 // The open cards, kept open through a redraw.
 const openCards = new Set();
 
@@ -202,22 +213,26 @@ export const views = {
           })()}</p>` : ""}
           ${edits ? `<div data-form-key="${key}">
             ${formErrorLine(key)}
+            <h3>Contact and billing</h3>
             <div class="form-grid">
               ${f({ name: "name", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off", rule: "name", value: unesc(p.name) })}
               ${f({ name: "client_type", label: "Client type", helpKey: "role", options: CLIENT_TYPES, value: unesc(p.client_type || (unesc(p.role || "") === "GC" ? "gc" : "owner")) })}
               ${f({ name: "approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "Sam Jones", value: signerDefaulted(p) ? "" : unesc(clean(p.approver)) })}
               ${f({ name: "ap_email", label: "Email for pay apps", helpKey: "ap_email", type: "email", autocomplete: "off", rule: "email", value: unesc(clean(p.ap_email)) })}
               ${f({ name: "phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off", rule: "phone", value: unesc(clean(p.phone)) })}
-              ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || ""), placeholder: "7" })}
               ${f({ name: "payapp_due_day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", value: String(p.payapp_due_day || ""), placeholder: "e.g. 25" })}
-              ${f({ name: "usual_approval_days", label: "Days they usually take to pay", helpKey: "usual_approval_days", inputmode: "numeric", autocomplete: "off", value: String(p.usual_approval_days || ""), placeholder: "14" })}
               ${f({ name: "payment_terms_days", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", value: String(p.payment_terms_days || ""), placeholder: "30" })}
-              ${paperworkHtml(key, p)}
-              ${f({ name: "rejects_when", label: "They send pay apps back when", helpKey: "rejects_when", multiline: true, wide: true, value: unesc(clean(p.rejects_when)) })}
-              ${f({ name: "copy", label: "Also email (CC)", helpKey: "copy", wide: true, autocomplete: "off", value: unesc(clean(p.copy)), placeholder: "other@example.com, pm@example.com" })}
-              ${f({ name: "escalation_email", label: "Also email from the third follow-up", helpKey: "escalation_email", type: "email", autocomplete: "off", value: unesc(clean(p.escalation_email)), placeholder: "owner@example.com" })}
+              ${/* Money stays in this open section: the client's usual retainage % goes here. */ ""}
             </div>
-            <div class="form-inline"><button type="button" class="btn small" data-action="save-playbook" data-id="${p.id}">Save client</button></div>
+            ${playbookSection(`pb-docs-${p.id}`, "Supporting documents", p.no_paperwork ? "Nothing needed" : (p.packet_items || []).join(", ") || "None ticked", `
+              ${paperworkHtml(key, p)}
+              ${f({ name: "rejects_when", label: "They send pay apps back when", helpKey: "rejects_when", multiline: true, wide: true, value: unesc(clean(p.rejects_when)) })}`, key, ["packet", "rejects_when"])}
+            ${playbookSection(`pb-follow-${p.id}`, "Follow-ups and copies", `Every ${p.follow_up_days || 7} days${clean(p.copy) ? ` · CC ${p.copy}` : ""}`, `
+              ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || ""), placeholder: "7" })}
+              ${f({ name: "usual_approval_days", label: "Days they usually take to pay", helpKey: "usual_approval_days", inputmode: "numeric", autocomplete: "off", value: String(p.usual_approval_days || ""), placeholder: "14" })}
+              ${f({ name: "copy", label: "Also email (CC)", helpKey: "copy", wide: true, autocomplete: "off", value: unesc(clean(p.copy)), placeholder: "other@example.com, pm@example.com" })}
+              ${f({ name: "escalation_email", label: "Also email from the third follow-up", helpKey: "escalation_email", type: "email", autocomplete: "off", value: unesc(clean(p.escalation_email)), placeholder: "owner@example.com" })}`, key, ["follow_up_days", "usual_approval_days", "copy", "escalation_email"])}
+            <button type="button" class="btn full-width" data-action="save-playbook" data-id="${p.id}">Save client</button>
           </div>` : clientReadOnlyHtml(p, key, f)}
           ${edits && others.length ? `<details class="merge-payer">
             <summary>Same client as another one?</summary>

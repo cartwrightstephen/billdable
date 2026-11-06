@@ -249,7 +249,7 @@ test("Supporting documents for this job: the client's list until it is changed, 
   assert.match(html, /Ellison's list/);
   assert.doesNotMatch(html, /use-client-paperwork/);
   html = jobPaperworkHtml({ ...j, paperwork_view: { own: true, labels: [], none: true, legacy: false } });
-  assert.match(html, /Nothing needed\./);
+  assert.match(html, /<span class="sub">Nothing needed<\/span>/);
   assert.match(html, /Changed for this job/);
   assert.match(html, /data-action="use-client-paperwork" data-id="j-1"/);
   assert.equal(jobPaperworkHtml({ ...j, paperwork_view: { ...j.paperwork_view, legacy: true } }), "");

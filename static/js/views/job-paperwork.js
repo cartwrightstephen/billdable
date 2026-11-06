@@ -22,14 +22,14 @@ export function playbookMissingHtml(j) {
 
 // The paperwork this job asks for with each pay app. A job on the older job-level paperwork has
 // none of its own (the server refuses it).
-export function jobPaperworkHtml(j) {
+// A fold whose summary is the list itself (Round 1, item 13); open while it is being changed.
+export function jobPaperworkHtml(j, open = true) {
   const view = j.paperwork_view;
   if (!view || view.legacy) return "";
   const key = `jobpaperwork-${j.id}`;
-  const list = view.none ? "Nothing needed." : (view.labels || []).join(", ");
-  return `<section class="card job-paperwork" aria-labelledby="job-paperwork-h">
-      <h2 id="job-paperwork-h">Supporting documents for this job</h2>
-      <p>${list}</p>
+  const list = view.none ? "Nothing needed" : (view.labels || []).join(", ");
+  return `<details class="card job-paperwork" data-more="job-docs"${open || formOpen[key] ? " open" : ""}>
+      <summary><h2 id="job-paperwork-h">Supporting documents for this job</h2><span class="sub">${list}</span></summary>
       ${view.waiver_skipped ? `<p class="override-note">Conditional waiver not needed on this job. Marked by ${view.waiver_skipped.by} on ${fmtDate(view.waiver_skipped.at)}: ${view.waiver_skipped.reason} <button type="button" class="btn small secondary" data-action="waiver-needed" data-id="${j.id}">Needed after all</button></p>` : ""}
       <p class="sub">${view.own ? "Changed for this job." : `${j.payer.name}'s list.`} Changes apply from the next pay app and to a draft that hasn't been sent.</p>
       ${formOpen[key] ? `<div data-form-key="${key}">
@@ -39,7 +39,7 @@ export function jobPaperworkHtml(j) {
           <button type="button" class="btn small secondary" data-action="toggle-form" data-form="${key}">Cancel</button></div>
       </div>` : `<div class="form-inline"><button type="button" class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="false">Change for this job</button>
         ${view.own ? `<button type="button" class="btn small secondary" data-action="use-client-paperwork" data-id="${j.id}">Use ${j.payer.name}'s list</button>` : ""}</div>`}
-    </section>`;
+    </details>`;
 }
 
 export const actions = {

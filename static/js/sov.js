@@ -153,11 +153,11 @@ export function sovPeriodHtml(j, canChange = false) {
 
 // What a progress line's box is called on a phone, where the table is a card per line and the
 // column heading is gone (R6-02): a lump sum is a percent, anything else a quantity in its unit.
-export function doneLabel(l) { return l.lump_sum ? "% done" : `Qty done (${l.unit})`; }
+export function doneLabel(l) { return l.lump_sum ? "% done to date" : `Qty done (${l.unit})`; }
 
 // periodHtml: the "Period to" box (R4-04); errorLine: the form's error line.
 // What was typed in a box is kept (forms.js, data-field) across a redraw; else the saved value.
-export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
+export function sovProgressHtml(j, periodHtml = "", errorLine = "", extra = "") {
   const v = j.sov_view;
   const typed = (name, saved) => esc(draftValue("sovprogress", name, saved));
   // M1: an open draft that is only here is replaced, keeping its number (domain record_sov_progress).
@@ -168,7 +168,7 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
     <tr>
       <td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
       <td class="num">${l.lump_sum ? "lump sum" : fmtQty(l.qty_milli) + " " + l.unit}</td>
-      <td data-label="${doneLabel(l)}"><input id="sovp-done-${l.id}" class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" data-field="done_${l.id}" value="${typed(`done_${l.id}`, String(l.lump_sum ? +(start / 10).toFixed(1) : start / 1000))}" inputmode="decimal" aria-label="${l.description}: done to date" ${closed ? "disabled" : ""}> ${l.lump_sum ? "%" : l.unit}</td>
+      <td data-label="${doneLabel(l)}"><input id="sovp-done-${l.id}" class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" data-field="done_${l.id}" value="${typed(`done_${l.id}`, String(l.lump_sum ? +(start / 10).toFixed(1) : start / 1000))}" inputmode="decimal" aria-label="${l.description}: ${l.lump_sum ? "% done to date" : "done to date"}" ${closed ? "disabled" : ""}> ${l.lump_sum ? "%" : l.unit}</td>
       <td><input id="sovp-stored-${l.id}" class="sov-in sov-num" data-sovs="${l.id}" data-field="stored_${l.id}" value="${typed(`stored_${l.id}`, l.stored_cents ? (l.stored_cents / 100).toFixed(2) : "")}" placeholder="0.00" inputmode="decimal" aria-label="${l.description}: materials stored, dollars" ${closed ? "disabled" : ""}></td>
       <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
     </tr>`; }).join("");
@@ -181,6 +181,7 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "") {
     ${periodHtml ? `<div class="form-row">${periodHtml}</div>` : ""}
     ${replaces ? `<p class="sub">This replaces ${replaces.number} (${money(replaces.amount_cents)}). Its number and supporting documents stay.</p>` : ""}
     <div class="form-inline"><input id="progress-notes" data-field="notes" value="${typed("notes", "")}" placeholder="What was completed (printed on the pay app)" aria-label="What was completed, printed on the pay app" class="grow"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>
+    ${extra}
   </div></div>`;
 }
 

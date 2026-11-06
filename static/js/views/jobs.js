@@ -9,7 +9,7 @@ import { checkFields, US_STATES } from "../validate.js";
 import { readJson, sendFile } from "../net.js";
 import { localDay } from "../tasks.js";
 import { state, me, formOpen, teamData, setTeamData, onSessionEnd } from "../state.js";
-import { nav, can, emptyState, listPage, post, toast, render, load, clearJobDetails } from "../app-core.js";
+import { nav, can, emptyState, listPage, post, toast, render, load, clearJobDetails, moreDetails } from "../app-core.js";
 
 // Who pays you, as the older pages had it: Owner or GC. Client type (J2) is the finer word.
 export const ROLE_OPTIONS = [["Owner", "The homeowner or property owner"], ["GC", "A general contractor (you are the sub)"]];
@@ -149,6 +149,27 @@ export function showSameCustomer(formKey, prefix, data) {
   if (!box || !same || !same.name) return false;
   box.innerHTML = `<button type="button" class="btn small" data-action="${prefix}-same-use" data-name="${esc(same.name)}" data-id="${esc(same.id || "")}">Use ${esc(same.name)}</button>`
     + `<button type="button" class="btn small secondary" data-action="${prefix}-same-keep" data-name="${esc(same.typed || "")}">Keep “${esc(same.typed || "")}” as a new client</button>`;
+  box.hidden = false;
+  return true;
+}
+
+// "You already have a job called Peachtree" (Round 1, item 20): an open job of the same name is
+// refused by the server with same_job, and the form offers that job or keeping this one as new.
+let keptJobName = "";
+onSessionEnd(() => { keptJobName = ""; });
+export function showSameJob(data) {
+  const box = document.querySelector('[data-same-job="newjob"]');
+  const same = data && data.same_job;
+  if (!box || !same || !same.id) return false;
+  // The question is said here, beside its two answers, not under the name box: that line clears
+  // when the box is left, and the buttons would move under the tap.
+  if (formErrors.newjob) delete formErrors.newjob.name;
+  const err = document.getElementById("nj-name-err");
+  if (err) err.textContent = "";
+  document.getElementById("nj-name")?.removeAttribute?.("aria-invalid");
+  box.innerHTML = `<p class="same-job-q">You already have a job called ${esc(same.name)}.</p>`
+    + `<button type="button" class="btn small" data-action="open-job" data-id="${esc(same.id)}">Open ${esc(same.name)}</button>`
+    + `<button type="button" class="btn small secondary" data-action="nj-same-job-keep">Keep as a new job</button>`;
   box.hidden = false;
   return true;
 }
@@ -361,11 +382,15 @@ function newJobSovHtml() {
       <td class="sov-desc-cell"><input id="nj-sov-desc-${i}" class="sov-in sov-desc" data-field="sov_desc_${i}" value="${esc(draftValue("newjob", `sov_desc_${i}`))}" placeholder="Conduit" aria-label="Line ${i + 1}: description"></td>
       ${box(i, "qty", "Qty", "sov-num", ' inputmode="decimal" placeholder="1"')}${box(i, "unit", "Unit", "sov-unit", ' placeholder="LS"')}${box(i, "rate", "Unit rate $", "sov-num", ' inputmode="decimal" placeholder="0.00"')}
     </tr>`).join("");
-  return `<div class="nj-sov"><h3>Schedule of values</h3>
-    <p class="sub">Enter the lines, or leave them blank for one lump-sum line for the contract amount. You can change the schedule on the job page until the first pay app is sent.</p>
+  // Folded (Round 1, item 16): most jobs start on the one lump-sum line. Open once lines are typed.
+  const typedLines = newJobSovLines(formDraft.newjob || {}).length;
+  const open = "nj-sov" in moreDetails ? moreDetails["nj-sov"] : typedLines > 0;
+  return `<details class="nj-sov" data-more="nj-sov"${open ? " open" : ""}>
+    <summary>Schedule of values <span class="sub">${typedLines ? `${typedLines} line${typedLines === 1 ? "" : "s"}` : "One lump-sum line for the contract amount"}</span></summary>
+    <p class="sub">Leave the lines blank for one lump-sum line. You can change the schedule on the job page until the first pay app is sent.</p>
     <p class="form-error" id="nj-sov-err" role="alert" hidden></p>
     <div class="table-wrap sov-wrap"><table class="sov-table sov-edit"><tr class="head-row"><th>Description</th><th>Qty</th><th>Unit</th><th>Unit rate $</th></tr>${rows}</table></div>
-    <button class="btn small secondary" data-action="nj-sov-add">Add line</button></div>`;
+    <button class="btn small secondary" data-action="nj-sov-add">Add line</button></details>`;
 }
 
 // The lines typed on the form, as POST /api/jobs takes them.
@@ -407,15 +432,22 @@ export const views = {
       ${formOpen.newjob ? `
         <div class="card" data-form-key="newjob">
           <h2>New job</h2>
-          ${contractImportHtml("newjob")}
+          ${(() => {
+            // Import contract, folded with what it does (Round 1, item 16); open while a read is shown.
+            const read = contractRead && contractRead.form === "newjob";
+            const open = "nj-import" in moreDetails ? moreDetails["nj-import"] : read;
+            return `<details class="contract-fold" data-more="nj-import"${open ? " open" : ""}>
+            <summary>Import contract <span class="sub">${read && !contractRead.error ? `Filled from ${esc(contractRead.name)}` : "Fill the boxes from a Word, PDF or text file"}</span></summary>
+            ${contractImportHtml("newjob")}</details>`;
+          })()}
           <p class="sub">Fields marked <span class="req">*</span> are required.</p>
           ${formErrorLine("newjob")}
           <div class="form-grid">
             ${jf.name}
+            <div class="span-2 same-job form-inline" data-same-job="newjob" hidden></div>
             ${jf.address}
             ${jf.contract_cents}
-            ${jf.started_on}
-            ${jf.anticipated_end_on}
+            ${jf.retainage_pct}
             ${(state.payers || []).length ? `<div class="span-2 form-inline client-choice" role="group" aria-label="Client">
               ${[["existing", "Existing client"], ["new", "New client"]].map(([key, label]) => `<button type="button" class="${mode === key ? "btn" : "btn secondary"} small" data-action="nj-client-mode" data-mode="${key}" aria-pressed="${mode === key}">${label}</button>`).join("")}
             </div>` : ""}
@@ -430,7 +462,8 @@ export const views = {
               <button type="button" class="linkish" data-action="nj-to-playbook">${can("company") ? "Change in the Client playbook" : "Open Client playbook"}</button></p>
           </div>
           <div class="form-grid">
-            ${jf.retainage_pct}
+            ${jf.started_on}
+            ${jf.anticipated_end_on}
             ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") }))}
             ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") }))}
             ${jf.contract_number}
@@ -546,13 +579,15 @@ export const actions = {
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
       contract_cents: amount.cents, retainage_pct: ret.value, ...days,
       new_customer: !known && keptNames.newjob === customer,
+      new_job: !!keptJobName && keptJobName === v.name,
     }, { formKey: "newjob", close: "newjob" });
-    if (r && !r.ok) showSameCustomer("newjob", "nj", r.data);
+    if (r && !r.ok && !showSameJob(r.data)) showSameCustomer("newjob", "nj", r.data);
     const sovError = r && !r.ok && r.data && r.data.fields && r.data.fields.sov;
     const sovLine = document.getElementById("nj-sov-err");
     if (sovLine) { sovLine.textContent = sovError || ""; sovLine.hidden = !sovError; if (sovError) sovLine.scrollIntoView?.({ block: "center" }); }
     if (!r || !r.ok) return;
     delete keptNames.newjob;
+    keptJobName = "";
     njSovRows = 3;
     toast("Job saved");
     const made = state.jobs.find(j => !before.has(j.id));
@@ -560,6 +595,13 @@ export const actions = {
       await fileContract(made.id, read);
       nav("job", made.id);
     }
+  },
+  // ...or keep it as a new job of the same name, on purpose.
+  "nj-same-job-keep": () => {
+    keptJobName = formValues("newjob").name || "";
+    const box = document.querySelector('[data-same-job="newjob"]');
+    if (box) { box.hidden = true; box.innerHTML = ""; }
+    return actions["create-job"]();
   },
   // To the Client playbook and back: nothing typed on New job is lost.
   "nj-to-playbook": () => {

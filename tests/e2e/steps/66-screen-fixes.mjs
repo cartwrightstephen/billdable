@@ -47,6 +47,9 @@ export default async function ({ browser, BASE, step, errors }) {
     await p.evaluate((id) => fetch(`/api/jobs/${id}/note-contact`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: "Check goes out Friday" }) }), job.id);
     await p.goto(`${BASE}/jobs/${job.id}`);
+    // Job records is folded on a phone (Round 1, item 13): open it.
+    const records = p.locator("details.job-records");
+    if (await records.getAttribute("open") === null) await records.locator(":scope > summary").click();
     const group = p.locator('.record-group[data-group="conversation"]');
     await group.getByRole("button", { name: /^Edit / }).click();
     const box = group.locator("textarea");

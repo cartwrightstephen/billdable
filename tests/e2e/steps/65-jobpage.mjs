@@ -39,7 +39,16 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     for (const b of await buttons.all()) assert.ok(await b.isVisible());
     const wide = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(wide <= 0, `page scrolls sideways by ${wide}px`);
-    assert.equal(await p.locator("details.money-file").getAttribute("open"), "", "Money is open on a phone");
+    // Round 1, item 13: Money and the long cards start folded on a phone, each with its summary line.
+    assert.equal(await p.locator("details.money-file").getAttribute("open"), null, "Money is folded on a phone");
+    for (const card of ["money-file", "sov-file", "job-records", "job-history"]) {
+      assert.ok(await p.locator(`details.${card} > summary .sub`).isVisible(), `${card} shows its summary`);
+    }
+    assert.equal(await p.locator(".job-actions .action-group h3").first().isVisible(), false, "no group headings on a phone");
+    // A fold opened stays open after the page redraws.
+    await p.locator("details.money-file > summary").click();
+    await p.getByRole("button", { name: "Log a Conversation" }).click();
+    assert.equal(await p.locator("details.money-file").getAttribute("open"), "");
     await p.context().close();
   });
 
