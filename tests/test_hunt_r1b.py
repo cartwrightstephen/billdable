@@ -62,11 +62,11 @@ class WhichWaiverIsThis(Case):
         domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read, unconditional_override="Paid by wire")
         self.assertEqual(self.inv["unconditional_override"]["record_ids"], [rec["id"]])
 
-    def test_a_record_typed_before_keeps_its_type_and_its_type_is_picked_first(self):
+    def test_a_record_typed_before_keeps_its_type_and_the_app_picks_nothing_for_a_scan(self):
         rec = self.stored("Waiver", b"\xff\xd8 jpeg", "w.jpg", typed="unconditional_progress")
         self.attach(rec, answer="")
         self.assertEqual(rec["waiver_kind"], "unconditional_progress", "nothing retypes it")
-        self.assertEqual(domain.item_question(self.job, self.waiver)["guess"], "unconditional")
+        self.assertEqual(domain.item_question(self.job, self.waiver)["guess"], "", "nothing was read: the type from before is not a reading")
         self.assertFalse(self.waiver["present"], "a type from before is not the answer")
 
     def test_typing_a_record_is_the_answer_and_retyping_it_moves_the_gate(self):

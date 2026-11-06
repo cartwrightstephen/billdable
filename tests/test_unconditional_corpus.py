@@ -21,12 +21,14 @@ from test_packet import draft, new_job, new_state
 STATUTORY = {"CA 8132": (c.CA_8132, "conditional"), "CA 8136": (c.CA_8136, "conditional"), "CA 8134": (c.CA_8134, "unconditional"),
              "CA 8138": (c.CA_8138, "unconditional"), "GA interim": (c.GA_INTERIM, "conditional"), "GA final": (c.GA_FINAL, "conditional"),
              "TX conditional": (c.TX_COND, "conditional"), "TX unconditional": (c.TX_UNCOND, "unconditional")}
-# Georgia's forms say neither word: the guess is blank and the item's type is picked first.
+# Georgia's forms say neither word: the app couldn't tell, so no answer is picked.
 SAYS_NEITHER = {"GA interim", "GA final"}
-REAL = {**c.REAL_ELSEWHERE, **c.NUMBERED, **{t: t + c.TITLE_BODY for t in c.TITLES}}
-# Real unconditional waivers whose text puts a conditional title, or both words, first: the guess
-# is wrong and the person's answer corrects it.
-GUESSED_WRONG = {"packet, second form numbered", "Unconditional Waiver and Release Conditional Builders LLC", c.TITLES[46]}   # [46]: a conditional form, then the unconditional one 30 lines down
+REAL = {**c.REAL_ELSEWHERE, **c.NUMBERED, **{t: t + c.TITLE_BODY for t in c.TITLES}, **c.TITLES_ANYWHERE}
+# Real unconditional waivers where the app has no informed guess, so none is picked and the person
+# makes the choice: both words in one title, two forms in one file (a conditional form, then the
+# unconditional one 30 lines down, [46]), and a form that says neither word.
+NO_GUESS = {"packet, second form numbered", "Unconditional Waiver and Release Conditional Builders LLC", c.TITLES[46],
+            "Partial Release of Lien", "line 12: Partial Release of Lien", "no title, only the words"}
 CONDITIONAL_FORMS = {**c.GC_FORMS, "type unticked": c.NOT_NUMBERED["type unticked"]}
 NOT_WAIVERS = {**c.NOT_WAIVERS, **{k: v for k, v in c.NOT_NUMBERED.items() if k != "type unticked"}}
 # Non-waivers that say conditional or unconditional next to waiver, release or lien: asked once, and
@@ -111,7 +113,7 @@ class StatutoryForms(Filed):
             with self.subTest(name):
                 self.assertEqual(doc_check.reading(text)["guess"], "" if name in SAYS_NEITHER else truth)
                 self.assertTrue(doc_check.reading(text)["form"])
-                self.on_the_waiver_item(text, truth, truth)
+                self.on_the_waiver_item(text, "" if name in SAYS_NEITHER else truth, truth)
                 self.elsewhere(text, True, truth)
 
 
@@ -130,8 +132,8 @@ class RealUnconditionalWaivers(Filed):
             with self.subTest(name[:60]):
                 read = doc_check.reading(text)
                 self.assertTrue(read["form"], "filed as anything else it is asked about")
-                guess = "conditional" if name in GUESSED_WRONG else "unconditional"
-                self.assertEqual(read["guess"] or "conditional", guess)
+                guess = "" if name in NO_GUESS else "unconditional"
+                self.assertEqual(doc_check.waiver_reading([("w.txt", ".txt", text.encode())])["guess"], guess)
                 self.on_the_waiver_item(text, guess, "unconditional")
                 self.elsewhere(text, True, "unconditional")
 

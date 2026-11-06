@@ -43,9 +43,11 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
       p.locator(`#packet-item-${item.id} [data-action="pick-files"]:not([data-capture])`).click()]);
     await chooser.setFiles({ name: "signed-waiver.jpg", mimeType: "image/jpeg", buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 73, 70]) });
     // On a waiver item any file, a photo too, takes one tap that says which waiver it is (the Nov 6
-    // redesign): Conditional is filled in, since that is the waiver the item needs.
+    // redesign): a photo reads as nothing, so the app says it couldn't tell and picks neither.
     await p.locator(`#packet-item-${item.id}`, { hasText: "Which waiver is this?" }).waitFor();
-    const look = p.locator(`#packet-item-${item.id} [data-action="packet-confirm"][data-answer="conditional"][aria-current="true"]`);
+    await p.locator(`#packet-item-${item.id}`, { hasText: "The app couldn't tell which one this is." }).waitFor();
+    assert.equal(await p.locator(`#packet-item-${item.id} [data-action="packet-confirm"][aria-current="true"]`).count(), 0);
+    const look = p.locator(`#packet-item-${item.id} [data-action="packet-confirm"][data-answer="conditional"]`);
     await look.waitFor();
     await look.click();
     await p.locator(`#packet-item-${item.id}`, { hasText: "Said by" }).waitFor();

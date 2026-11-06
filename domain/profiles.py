@@ -53,7 +53,7 @@ NAME_MAX = 40
 # given a permission on purpose rather than left open by accident.
 JOB_ACTION_PERMS: dict[str, str | None] = {
     "send": "send_payapps",
-    "waiver-answer": "send_payapps",   # Is this a lien waiver? answered by someone who can send
+    "waiver-answer": "send_payapps",   # Is this a lien waiver? answered by someone who can send (JOB_ACTION_ALSO: on a retainage request, ask_retainage)
     "waiver": "send_waivers",
     "waiver-not-needed": "send_waivers",   # the way out of sending one (B2 of the Oct 30 review)
     "retainage": "ask_retainage",
@@ -82,6 +82,11 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     # Added on dev by the other streams of the Oct 29 review (anyone, as they shipped).
     "waiver-type": None, "record-work": None, "co-logged": None, "co-work-started": None,
 }
+
+
+# A second permission that takes the action too: whoever asks for retainage answers the questions on
+# its request; the domain refuses it for anything that is not one (domain.Answerer).
+JOB_ACTION_ALSO: dict[str, str] = {"waiver-answer": "ask_retainage"}
 
 
 def _company(state: dict[str, Any]) -> dict[str, Any]:
@@ -149,7 +154,7 @@ def has_perm(user: dict[str, Any], perm: str, state: dict[str, Any]) -> bool:
 def may_take(user: dict[str, Any], action: str, state: dict[str, Any]) -> bool:
     """Whether this person may take this job action (mirrored by mayTake in static/js/jobs.js)."""
     need = JOB_ACTION_PERMS.get(action)
-    return need is None or has_perm(user, need, state)
+    return need is None or has_perm(user, need, state) or (action in JOB_ACTION_ALSO and has_perm(user, JOB_ACTION_ALSO[action], state))
 
 
 def holders(state: dict[str, Any], perm: str) -> set[str]:

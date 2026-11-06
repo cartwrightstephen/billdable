@@ -171,11 +171,32 @@ def reading(text: str) -> dict[str, Any]:
     return {"guess": guess, "form": form}
 
 
+FORM_LINES = 600   # lines looked at for a form of each kind (separate_forms)
+
+
+def separate_forms(text: str) -> bool:
+    """Both a conditional and an unconditional waiver are in the text as forms of their own: a line
+    (not a sentence of a longer one) of at most TITLE_WORDS words that names a waiver and says one
+    of the words, for each word, in the first FORM_LINES lines. "If you have not been paid, use a
+    conditional release form." in a notice on an unconditional form is a sentence, not a title."""
+    text = _INSURANCE_WAIVER.sub(" ", _plain(text or ""))
+    lines = [line.strip() for line in text.split("\n", FORM_LINES * 4)[:FORM_LINES * 4] if line.strip()][:FORM_LINES]
+    titled = set()
+    for line in lines:
+        if len(line.split()) <= TITLE_WORDS and not line.endswith((".", ":")) and _names_a_waiver(line):
+            said = _says(line)
+            if len(said) == 1:
+                titled |= said
+    return len(titled) == 2
+
+
 def waiver_reading(files: list[tuple[str, str, Any]]) -> dict[str, Any]:
-    """reading() for a record's files together: any that reads as a form makes it one; the guess is
+    """reading() for a record's files together: any that reads as a form makes it one. The guess is
     unconditional when any file reads so (the answer to check first), else conditional when any
-    does, else blank. A photo, a scan or a file that couldn't be read says nothing. Never raises."""
-    out = {"guess": "", "form": False}
+    does, else blank. "both": the files read as different waivers, or a file has a conditional and
+    an unconditional form in it; then there is no guess, since the app can't tell which one the
+    person means. A photo, a scan or a file that couldn't be read says nothing. Never raises."""
+    out = {"guess": "", "form": False, "both": False}
     try:
         guesses = set()
         for _name, ext, data in files:
@@ -186,8 +207,10 @@ def waiver_reading(files: list[tuple[str, str, Any]]) -> dict[str, Any]:
                 continue
             got = reading(read.text)
             out["form"] = out["form"] or got["form"]
+            out["both"] = out["both"] or separate_forms(read.text)
             guesses.add(got["guess"])
-        out["guess"] = "unconditional" if "unconditional" in guesses else "conditional" if "conditional" in guesses else ""
+        out["both"] = out["both"] or {"conditional", "unconditional"} <= guesses
+        out["guess"] = "" if out["both"] else "unconditional" if "unconditional" in guesses else "conditional" if "conditional" in guesses else ""
     except Exception:
         sys.stderr.write(traceback.format_exc())
     return out

@@ -15,6 +15,7 @@ import json
 import re
 import secrets
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -881,6 +882,15 @@ def resolve_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor:
     if not reason:
         _refuse("", {"reason": f"Enter why {item['label']} can go without a checked file."})
     _drop_unconfirmed(item)
+    if is_waiver_item(item):
+        # An override doesn't replace the answer for a file that is going out: one nobody has said
+        # which waiver it is stays off the item (it is still on the job records).
+        records = {r["id"]: r for r in job.get("records", [])}
+        unanswered = [a for a in item.get("attachments", []) if (records.get(a.get("record_id")) or {}).get("file_ids") and waiver_answer(records[a["record_id"]]) not in WAIVER_ANSWERS]
+        if unanswered:
+            item["attachments"] = [a for a in item["attachments"] if a not in unanswered]
+            item.setdefault("detached_record_ids", []).extend(a["record_id"] for a in unanswered if a.get("auto"))
+            audit(state, job_id, "paperwork_detached", f"{actor} took {', '.join(a['name'] for a in unanswered)} off {item['label']}: nobody had said which waiver it is.", actor)
     item["present"] = True
     item["resolved_at"] = utcnow()
     item["marked_in_hand"] = True
@@ -906,13 +916,54 @@ UNCONDITIONAL_ATTACHED = "An unconditional waiver is attached. It gives up your 
 
 # Which waiver a file is, is the person's answer (Nov 6 redesign). A file on a waiver item goes once
 # someone says which waiver it is, Conditional or Unconditional, with the app's guess picked first
-# (waiver_guess, doc_check.reading). Any other file going out that reads as a lien waiver form, or
+# when it read one (waiver_guess, doc_check.reading; none picked when it couldn't tell). Any other
+# file going out that reads as a lien waiver form, wherever its text says so, or
 # is filed as a waiver, is asked about once: Is this a lien waiver? No, Yes, conditional or Yes,
 # unconditional (waiver_questions). The answer is kept on the record with who, when and the files it
-# was given for, and types the record. The owner gate (M14) is for an unconditional answer, or a
-# record typed unconditional, where a conditional waiver is needed.
+# was given for, and types the record, and setting or changing one takes send_payapps (Answerer).
+# The owner gate (M14) is for an unconditional answer, or a record typed unconditional, where a
+# conditional waiver is needed.
 WAIVER_ANSWERS = ("conditional", "unconditional")
 QUESTION_ANSWERS = ("no",) + WAIVER_ANSWERS
+
+
+@dataclass(frozen=True)
+class Answerer:
+    """Who is setting a waiver answer, as the server knows them from their profile: setting or
+    changing one, by any route (the question, Confirm on a waiver item, attaching with an answer,
+    the record's waiver type), takes send_payapps; on a retainage request, ask_retainage does too.
+    An unconditional answer is taken back only by whoever gave it or an owner. None (scripts and
+    tests of other rules) is anyone."""
+    send_payapps: bool = True
+    ask_retainage: bool = True
+    owner: bool = True
+    id: str = ""
+
+
+NOT_YOURS_TO_ANSWER = "Someone who can send pay apps says which waiver this is."
+
+
+def _retainage_packet(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """The documents a retainage request attaches: the closeout list, or on a job from before it
+    the older packet."""
+    return job.get("closeout_packet") or job.get("packet") or []
+
+
+def _on_retainage_request(job: dict[str, Any], item: dict[str, Any] | None = None, record: dict[str, Any] | None = None) -> bool:
+    """An item on the closeout list (the retainage request's), or a record on one and on no pay app."""
+    closeout = job.get("closeout_packet") or []
+    if item is not None:
+        return any(x is item for x in closeout)
+    if record is None:
+        return False
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if draft and (record["id"] in (draft.get("extra_record_ids") or []) or any(a.get("record_id") == record["id"] for x in draft.get("packet") or [] for a in x.get("attachments", []))):
+        return False
+    return any(a.get("record_id") == record["id"] for x in closeout for a in x.get("attachments", []))
+
+
+def _may_answer(answerer: "Answerer | None", retainage: bool) -> bool:
+    return answerer is None or answerer.send_payapps or (retainage and answerer.ask_retainage)
 
 
 def is_waiver_item(item: dict[str, Any]) -> bool:
@@ -948,17 +999,29 @@ def _read_waiver(state: dict[str, Any] | None, record: dict[str, Any], read_file
     return _read_now(record)
 
 
-def waiver_guess(record: dict[str, Any], item: dict[str, Any] | None = None) -> str:
-    """The answer picked first: what the files read as, else the record's type, else the waiver the
-    item needs (a conditional one for any other item: a pay app goes with the conditional waiver)."""
-    typed = str(record.get("waiver_kind") or "")
-    return _read_now(record).get("guess") or (typed.split("_")[0] if typed in WAIVER_KINDS else "") or _item_word(item)
+def waiver_guess(record: dict[str, Any]) -> str:
+    """The answer picked first: what the files read as, and nothing else. A photo, a scan, a form
+    that says neither word or both has no informed guess, so none is picked and the page says the
+    app couldn't tell. The record's type and the waiver the item needs are not a reading."""
+    return str(_read_now(record).get("guess") or "")
 
 
-def _say_which(state: dict[str, Any], job: dict[str, Any], record: dict[str, Any], kind: str, actor: str, stage: str = "progress", where: str = "") -> None:
+def _say_which(state: dict[str, Any], job: dict[str, Any], record: dict[str, Any], kind: str, actor: str, stage: str = "progress", where: str = "",
+               answerer: "Answerer | None" = None) -> None:
     """Keep a person's answer on the record, with who, when and its files, and type the record.
-    where: the audit's words for it, or blank when the caller's own audit row says it."""
+    where: the audit's words for it, or blank when the caller's own audit row says it. An
+    unconditional answer is changed to another only by whoever gave it or an owner; any change of
+    an answer that stood is audited."""
+    before = waiver_answer(record)
+    said = record.get("waiver_answer") or {}
+    if before == "unconditional" and kind != "unconditional" and answerer is not None and not answerer.owner:
+        if not ((said.get("by_id") and said["by_id"] == answerer.id) or (not said.get("by_id") and said.get("by") == actor)):
+            raise GateError(f"{record['label']} was marked unconditional by {said.get('by') or 'someone'}. Only {said.get('by') or 'they'} or an owner can change it.")
+    if before and before != kind:
+        audit(state, job["id"], "waiver_answer_changed", f"{actor} changed {record['label']} from {before} to {kind} (first said by {said.get('by') or 'someone'}).", actor)
     record["waiver_answer"] = {"kind": kind, "by": actor, "at": utcnow(), "file_ids": list(record.get("file_ids") or [])}
+    if answerer is not None and answerer.id:
+        record["waiver_answer"]["by_id"] = answerer.id
     if kind in WAIVER_ANSWERS:
         record["waiver_kind"] = f"{kind}_{stage}"
     if where:
@@ -972,33 +1035,49 @@ def _filed_records(job: dict[str, Any], item: dict[str, Any]) -> list[dict[str, 
     return [records[a["record_id"]] for a in item.get("attachments", []) if a.get("record_id") in records and records[a["record_id"]].get("file_ids")]
 
 
-def item_question(job: dict[str, Any], item: dict[str, Any]) -> dict[str, str]:
-    """What "Which waiver is this?" shows on a waiver item: the answer picked first (unconditional
-    when any of its files' guess is) and what the files read as, for the warning beside it."""
+def item_question(job: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    """What "Which waiver is this?" shows on a waiver item: the answer picked first, only when the
+    files all read (unconditional when any of them reads so), blank when the app couldn't tell; what
+    the files read as, for the warning beside it; and "both" when a file holds both forms."""
     filed = _filed_records(job, item)
-    reads = {_read_now(r).get("guess") for r in filed} - {"", None}
-    return {"guess": "unconditional" if any(waiver_guess(r, item) == "unconditional" for r in filed) else "conditional",
-            "reads_as": "unconditional" if "unconditional" in reads else "conditional" if reads else ""}
+    guesses = [waiver_guess(r) for r in filed]
+    both = any(_read_now(r).get("both") for r in filed)
+    reads = set(guesses) - {""}
+    guess = "" if both or not filed else "unconditional" if "unconditional" in reads else "conditional" if all(guesses) else ""
+    out = {"guess": guess, "reads_as": "" if both else "unconditional" if "unconditional" in reads else "conditional" if reads else ""}
+    if both:
+        out["both"] = True
+    return out
 
 
-def _ask_which_waiver(job: dict[str, Any], packet: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _ask_which_waiver(job: dict[str, Any], packet: list[dict[str, Any]], retainage: bool = False) -> list[dict[str, Any]]:
     """A waiver item that is in with a file nobody has said which waiver it is (in from before the
-    question, or a file added to its record since) waits for the answer. An override stays, and so
-    does the final waiver that went out after payment. Returns the items now waiting."""
+    question, or a file added to its record since) waits for the answer; an override ("I have this")
+    doesn't replace the answer for a file that is going out. The final waiver that went out after
+    payment stays on the retainage request (retainage), not on a later pay app. Returns the items
+    now waiting."""
     out = []
     for item in packet or []:
-        if not item.get("present") or item.get("override") or item.get("marked_in_hand") or item.get("present_reason") or not is_waiver_item(item):
+        if not item.get("present") or not is_waiver_item(item):
             continue
         filed = _filed_records(job, item)
-        if not any(waiver_answer(r) not in WAIVER_ANSWERS and not r.get("sent_as_final") for r in filed):
+        if not any(waiver_answer(r) not in WAIVER_ANSWERS and not (retainage and _sent_for_this_job(job, r)) for r in filed):
             continue
         item["present"] = False
-        for key in ("confirmed_by", "confirmed_at", "resolved_at", "looked_as", "unread"):
+        for key in ("confirmed_by", "confirmed_at", "resolved_at", "looked_as", "unread", "override", "marked_in_hand", "present_reason"):
             item.pop(key, None)
         for a in item.get("attachments", []):
             a["unconfirmed"] = True
         out.append(item)
     return out
+
+
+def _sent_for_this_job(job: dict[str, Any], rec: dict[str, Any]) -> bool:
+    """The final waiver that went out after payment (send_waiver): already with the client, for a
+    pay app or retainage release of this job. It fills the closeout's final waiver item and goes with
+    the retainage request; added to a later pay app's email it is asked about like any other."""
+    tie = _waiver_tie(rec)
+    return bool(rec.get("sent_as_final")) and bool(tie) and (tie == EARLIER_PAYMENT or tie in {inv["id"] for inv in job["invoices"]} or tie in {r["id"] for r in job.get("retainage_waivers", [])})
 
 
 def _going_records(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any = ()) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
@@ -1048,16 +1127,17 @@ def _is_unconditional(rec: dict[str, Any]) -> bool:
     return record_waiver_kind(rec).startswith("unconditional") and (rec.get("kind") == "waiver" or "waiver" in str(rec.get("label") or "").lower())
 
 
-def _unconditional_going(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any = (), excluded: Any = ()) -> list[dict[str, Any]]:
+def _unconditional_going(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any = (), excluded: Any = (), retainage: bool = False) -> list[dict[str, Any]]:
     """Unconditional waivers going where a conditional one is needed: on any item but one asking for
     an unconditional waiver (for an earlier payment), or added to the send. The final waiver that
-    went out after payment is already with the client."""
+    went out after payment is already with the client, and goes with the retainage request (retainage)
+    it fills the closeout for; on a later pay app it is gated like any other."""
     excluded = set(excluded or [])
     out: list[dict[str, Any]] = []
     for rec, item in _going_records(job, packet, extra_ids):
         if item is not None and is_waiver_item(item) and _item_word(item) == "unconditional":
             continue
-        if rec in out or rec.get("sent_as_final") or not _is_unconditional(rec) or _left_out(rec, excluded):
+        if rec in out or (retainage and _sent_for_this_job(job, rec)) or not _is_unconditional(rec) or _left_out(rec, excluded):
             continue
         out.append(rec)
     return out
@@ -1092,11 +1172,12 @@ def _unconditional_rows(state: dict[str, Any], records: list[dict[str, Any]], ex
 
 def _question_rows(state: dict[str, Any], records: list[dict[str, Any]], extra: Any = ()) -> list[dict[str, Any]]:
     """The records a page asks "Is this a lien waiver?" about, with the answer picked first."""
-    return [{**row, "guess": waiver_guess(r)} for row, r in zip(_record_rows(state, records, extra), records)]
+    return [{**row, "guess": waiver_guess(r), **({"both": True} if _read_now(r).get("both") else {})}
+            for row, r in zip(_record_rows(state, records, extra), records)]
 
 
 def answer_waiver_question(state: dict[str, Any], job_id: str, record_id: str, answer: str, actor: str = "owner",
-                           shown: list[str] | None = None) -> dict[str, Any]:
+                           shown: list[str] | None = None, answerer: "Answerer | None" = None) -> dict[str, Any]:
     """Is this a lien waiver? A person's answer for a record going out (waiver_questions): no, yes
     and conditional, or yes and unconditional, which then takes the owner where a conditional one
     is needed. shown is the files the page was showing: a file added since asks again."""
@@ -1106,11 +1187,13 @@ def answer_waiver_question(state: dict[str, Any], job_id: str, record_id: str, a
         raise GateError("That record is not on this job.")
     if answer not in QUESTION_ANSWERS:
         _refuse("", {"answer": f"Say whether {rec['label']} is a lien waiver: no, yes and conditional, or yes and unconditional."})
+    if not _may_answer(answerer, _on_retainage_request(job, record=rec)):
+        raise GateError(f"Someone who can send pay apps says whether {rec['label']} is a lien waiver.")
     if shown is not None and set(shown) != set(rec.get("file_ids") or []):
         raise GateError(f"{rec['label']} has changed since this page was opened. Look at its files again.", extra={"review_changed": True})
     draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     stage = "final" if (draft or {}).get("final") or (not draft and job.get("work_status") == "complete") else "progress"
-    _say_which(state, job, rec, answer, actor, stage, f" going with {draft['number']}" if draft else " going with the closeout documents")
+    _say_which(state, job, rec, answer, actor, stage, f" going with {draft['number']}" if draft else " going with the closeout documents", answerer)
     if not job.get("closed"):
         _refresh_draft_gate(job, state)
     return job
@@ -1632,18 +1715,23 @@ def record_waiver_kind(record: dict[str, Any]) -> str:
 
 
 def set_waiver_type(state: dict[str, Any], job_id: str, record_id: str, kind: str, actor: str = "owner",
-                    for_id: str = "", said: bool = True) -> dict[str, Any]:
+                    for_id: str = "", said: bool = True, answerer: "Answerer | None" = None) -> dict[str, Any]:
     """Say which of the four types a signed waiver on the job record is (M14), and with for_id
     which paid pay app or retainage release it is for (B1 of the Oct 30 review), or "job" for the
     older job-level waiver (Earlier payment). An unconditional one is tied as it is added when only
     one waiver is owed, so it can't go out for another; never one that was unclear while several
     were owed (waiver_needs_tie): a person says which that one is for. said: a person picked the
     type for this record, which is their answer to which waiver it is (False for an upload that
-    takes the type of the item or page it was added on)."""
+    takes the type of the item or page it was added on). Someone who can't answer (answerer) sets
+    the type and nothing more, and changes no type that already has an answer."""
     job = _job(state, job_id)
     rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
     if not rec or rec.get("kind") != "waiver":
         raise GateError("That lien waiver is not on this job's record.")
+    if said and not _may_answer(answerer, _on_retainage_request(job, record=rec)):
+        if waiver_answer(rec):
+            raise GateError(f"{rec['label']} has been answered. {NOT_YOURS_TO_ANSWER}")
+        said = False
     if kind not in WAIVER_KINDS:
         _refuse("", {"kind": "Pick the waiver type: conditional or unconditional, progress or final."})
     owed = _waiver_owed(job)
@@ -1656,7 +1744,7 @@ def set_waiver_type(state: dict[str, Any], job_id: str, record_id: str, kind: st
         target = owed[0]
     before = record_waiver_kind(rec)
     if said:
-        _say_which(state, job, rec, kind.split("_")[0], actor, kind.split("_")[1])   # a person said it: their answer
+        _say_which(state, job, rec, kind.split("_")[0], actor, kind.split("_")[1], answerer=answerer)   # a person said it: their answer
     else:
         rec["waiver_kind"] = kind
     if before != kind:
@@ -1782,7 +1870,7 @@ def _pending_waivers(job: dict[str, Any]) -> list[dict[str, Any]]:
 def send_waiver(
     state: dict[str, Any], job_id: str, actor: str = "owner", invoice_id: str | None = None, kind: str | None = None,
     release_id: str | None = None, confirm_final: bool = False,
-    read_file: Any = None, looked_at: str = "", check_only: bool = False,
+    read_file: Any = None, looked_at: str = "", check_only: bool = False, answerer: "Answerer | None" = None,
 ) -> dict[str, Any]:
     """The second stage of the waiver (M16, M21): after payment, a person approves sending the
     signed form on the job record. One waiver per paid pay app and per retainage release
@@ -1885,7 +1973,7 @@ def send_waiver(
         which = f" for the retainage released {release['at'][:10]}"
         detail = f"release of {money(amount)} retainage"
         through, held = "", 0
-    _say_which(state, job, record, kind.split("_")[0], actor, kind.split("_")[1])   # they chose the type and looked
+    _say_which(state, job, record, kind.split("_")[0], actor, kind.split("_")[1], answerer=answerer)   # they chose the type and looked
     if not _waiver_tie(record):
         _tie_waiver(record, invoice["id"] if invoice else release["id"] if release else EARLIER_PAYMENT)
     if kind.endswith("_final"):
@@ -2053,13 +2141,13 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
             _refuse("", {"amount_cents": f"Enter no more than the {money(open_retainage)} held."})
     amount = amount_cents or open_retainage
     partial = amount < open_retainage
-    closeout = job.get("closeout_packet") or []
-    asked = _ask_which_waiver(job, closeout)
+    closeout = _retainage_packet(job)   # what _packet_file_ids attaches below, on a job from before the closeout list too
+    asked = _ask_which_waiver(job, closeout, retainage=True)
     missing = closeout_missing(job)
     if missing:
         raise GateError("The closeout documents aren't complete.", [_blocker_text(job, item) for item in missing], keep_changes=bool(asked))
     _need_waiver_answers(state, job, closeout, (), (), read_file)
-    unconditional = _unconditional_going(job, closeout)
+    unconditional = _unconditional_going(job, closeout, retainage=True)
     override = _reason(unconditional_override) if unconditional else ""
     if unconditional and not override:
         raise GateError(UNCONDITIONAL_ATTACHED, [f"{r['label']} ({_why_unconditional(r)})" for r in unconditional],
@@ -2081,7 +2169,7 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
     job["retainage_asked_cents"] = amount
     job["external_status"] = f"Retainage follow-up sent to {payer['approver']}"
     subject = f"Application for release of retainage — {money(amount)} — {job['name']}"
-    files = _packet_file_ids(state, job, {"packet": job.get("closeout_packet") or job.get("packet") or []})
+    files = _packet_file_ids(state, job, {"packet": closeout})
     newest = next((inv for inv in reversed(job["invoices"]) if inv["status"] in BILLED_STATUSES), None)
     if partial:
         ask = (f"The work on {job['name']} is complete. Please release {money(amount)} "
@@ -2315,9 +2403,9 @@ def _paperwork_view(state: dict[str, Any], job: dict[str, Any], out: dict[str, A
         for item in out.get("closeout_packet") or []:
             if item.get("required") and sov.name_only(job, item):
                 item.update(present=False, name_only=True)
-        closeout = job.get("closeout_packet") or []
+        closeout = _retainage_packet(job)
         _item_questions(job, out.get("closeout_packet") or [])
-        out["closeout_unconditional"] = _unconditional_rows(state, _unconditional_going(job, closeout))
+        out["closeout_unconditional"] = _unconditional_rows(state, _unconditional_going(job, closeout, retainage=True))
         out["closeout_waiver_questions"] = _question_rows(state, waiver_questions(job, closeout))
     if _legacy_waiver_pending(job):
         # The older job-level waiver (Earlier payment): the signed one that would go out, or that
@@ -4180,7 +4268,7 @@ def reopen_job(state: dict[str, Any], job_id: str, reason: str, actor: str = "ow
 
 
 def add_packet_attachment(state: dict[str, Any], job_id: str, item_id: str, name: str, actor: str = "owner", file_id: str = "",
-                          read_file: Any = None, looked: bool = False, answer: str = "") -> dict[str, Any]:
+                          read_file: Any = None, looked: bool = False, answer: str = "", answerer: "Answerer | None" = None) -> dict[str, Any]:
     """Attach a stored file by its id. A name alone is refused: it used to clear the item with no
     document behind it. The file goes on the job record if it isn't there yet."""
     job = _open_job(state, job_id)
@@ -4196,7 +4284,7 @@ def add_packet_attachment(state: dict[str, Any], job_id: str, item_id: str, name
         add_job_record(state, job_id, str(name or meta["name"])[:200], (_record_kinds_for(item) or ("", ("other",)))[1][0], "", actor)
         record = job["records"][-1]
         record["file_ids"] = [file_id]
-    return attach_record_to_packet(state, job_id, item_id, record["id"], actor, read_file=read_file, looked=looked, answer=answer)
+    return attach_record_to_packet(state, job_id, item_id, record["id"], actor, read_file=read_file, looked=looked, answer=answer, answerer=answerer)
 
 
 def import_sample_qbo_payment(state: dict[str, Any], job_id: str, actor: str = "duracash") -> dict[str, Any]:
@@ -4826,7 +4914,7 @@ def _check_stamp(job: dict[str, Any], item: dict[str, Any], invoice: dict[str, A
 
 
 def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None, actor: str,
-                read_file: Any, looked: bool, confirming: bool = False, answer: str = "") -> None:
+                read_file: Any, looked: bool, confirming: bool = False, answer: str = "", answerer: "Answerer | None" = None) -> None:
     """The person's check (Stephen's Nov 1 notes, Decision 6): the item clears with who and when,
     unless the file doesn't match or can't be read. Then it waits, with the warning, until they
     say they opened it and it is right (looked), a separate step from the warning naming what
@@ -4891,7 +4979,7 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
         stage = "final" if str(item.get("waiver_kind") or "").endswith("_final") else "progress"
         for rec in filed:
             if answer:
-                _say_which(state, job, rec, answer, actor, stage)
+                _say_which(state, job, rec, answer, actor, stage, answerer=answerer)
         item["looked_as"] = answer or waiver_answer(filed[0])
         audit(state, job["id"], "packet_confirmed", f"{actor} said {names} is the {item['looked_as']} waiver for {item['label']} on {which}{warned}.", actor)
         return
@@ -4958,7 +5046,7 @@ def recheck_reply(state: dict[str, Any], job_id: str, item_id: str, read_file: A
 
 
 def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: str = "owner", looked: bool = False,
-                        read_file: Any = None, shown: list[str] | None = None, answer: str = "") -> dict[str, Any]:
+                        read_file: Any = None, shown: list[str] | None = None, answer: str = "", answerer: "Answerer | None" = None) -> dict[str, Any]:
     """A person confirms they checked what is attached to an item: a suggestion from the job
     record, or a file the document check flagged (looked says they opened it and it is right).
     On a waiver item the confirm is the answer to which waiver it is (answer: conditional or
@@ -4967,9 +5055,13 @@ def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor:
     job = _open_job(state, job_id)
     item, invoice = _item_to_confirm(state, job, item_id, shown)
     records = {r["id"]: r for r in job.get("records", [])}
-    if is_waiver_item(item) and answer not in WAIVER_ANSWERS and not all(waiver_answer(r) in WAIVER_ANSWERS for r in _filed_records(job, item)):
-        _refuse("", {"answer": f"Which waiver is on {item['label']}? Say conditional or unconditional."})
-    _clear_item(state, job, item, invoice, actor, read_file, looked, confirming=True, answer=answer)
+    if is_waiver_item(item):
+        unanswered = answer not in WAIVER_ANSWERS and not all(waiver_answer(r) in WAIVER_ANSWERS for r in _filed_records(job, item))
+        if (answer in WAIVER_ANSWERS or unanswered) and not _may_answer(answerer, _on_retainage_request(job, item=item)):
+            raise GateError(NOT_YOURS_TO_ANSWER, fields={"answer": NOT_YOURS_TO_ANSWER})
+        if unanswered:
+            _refuse("", {"answer": f"Which waiver is on {item['label']}? Say conditional or unconditional."})
+    _clear_item(state, job, item, invoice, actor, read_file, looked, confirming=True, answer=answer, answerer=answerer)
     if item["present"] and invoice and invoice.get("excluded_file_ids"):
         # Confirmed with its file left out over a redraft (_ask_for_a_look): what clears goes with the email.
         back = {fid for a in item.get("attachments", []) for fid in records.get(a.get("record_id"), {}).get("file_ids", [])}
@@ -5239,14 +5331,18 @@ def attach_record_to_packet(
     read_file: Any = None,
     looked: bool = False,
     answer: str = "",
+    answerer: "Answerer | None" = None,
 ) -> dict[str, Any]:
     """Attaching and confirming are one step for the person doing it: they chose this record for
     this item, so it clears in their name, unless the document check has something to say, or it
     is a waiver item and nobody has said which waiver it is (answer, _clear_item). A record with no
-    real file can't fill a document item, whatever it is called."""
+    real file can't fill a document item, whatever it is called. Someone who can't answer
+    (answerer) attaches the file all the same, and it waits for an answer."""
     job = _open_job(state, job_id)
     item, invoice = _find_packet_item(job, item_id)
     record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if item and not _may_answer(answerer, _on_retainage_request(job, item=item)):
+        answer = ""
     if not item:
         raise GateError("Supporting document not found.")
     if not record:
@@ -5272,7 +5368,7 @@ def attach_record_to_packet(
         })
         which = invoice["number"] if invoice else "the job's supporting documents"
         audit(state, job_id, "attach_record", f"{actor} attached {record['label']} to {item['label']} on {which}.", actor)
-    _clear_item(state, job, item, invoice, actor, read_file, looked, answer=answer)
+    _clear_item(state, job, item, invoice, actor, read_file, looked, answer=answer, answerer=answerer)
     _refresh_draft_gate(job, state)
     return job
 
@@ -5884,8 +5980,8 @@ def record_sov_progress(
     is at its suggestion (its field total, or what is billed when that is more), and a figure typed that differs from the field total is the person's own, audited
     with the suggested and final figures. It leaves the field total as it was. A quantity typed on a
     line whose amount was changed by hand on the open draft is the newer entry: the amount gives way
-    to it, and the audit says so (Round 1 hunt); a line sent at the quantity it stands at keeps its
-    amount. keep_amounts: the dollar form, which sets them next."""
+    to it, and the audit says so (Round 1 hunt), and so does a change to its stored materials; a
+    line sent at the quantity and stored materials it stands at keeps its amount. keep_amounts: the dollar form, which sets them next."""
     job = _open_job(state, job_id)
     if not sov.has_sov(job):
         raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
@@ -5906,8 +6002,9 @@ def record_sov_progress(
     # A blank box and a line left out both mean the suggestion: what the card shows and suggests.
     done = {k: v for k, v in done.items() if not (v is None or (isinstance(v, str) and not v.strip()))} if isinstance(done, dict) else {}
     by_hand = dict((open_draft or {}).get("sov_overrides") or {})
-    # Only a line whose quantity changed from the draft's: the form sends every box (Round 1 hunt).
-    giving_way = [] if keep_amounts else [line for line in sov.lines(job) if line["id"] in done and line["id"] in by_hand and _qty_changed(line, done[line["id"]])]
+    # Only a line whose quantity or stored materials changed from the draft's: the form sends every box (Round 1 hunt).
+    giving_way = [] if keep_amounts else [line for line in sov.lines(job) if line["id"] in by_hand
+                                          and ((line["id"] in done and _qty_changed(line, done[line["id"]])) or _stored_changed(line, stored))]
     billed_qty = sov.billed(job)["qty_by_line"]
     for line in sov.lines(job):
         want = sov.suggested_done(line, billed_qty.get(line["id"], 0))
@@ -5921,7 +6018,10 @@ def record_sov_progress(
         raise
     for line in giving_way:
         by_hand.pop(line["id"], None)
-        audit(state, job_id, "payapp_amount_changed", f"{actor} entered {_qty_words(line, sov.to_milli(done[line['id']], sov_line_name(line)))} on "
+        qty_changed = line["id"] in done and _qty_changed(line, done[line["id"]])
+        entered = (f"entered {_qty_words(line, sov.to_milli(done[line['id']], sov_line_name(line)))}" if qty_changed
+                   else f"changed the stored materials to {money(sov.to_cents(stored[line['id']], 'stored materials'))}")
+        audit(state, job_id, "payapp_amount_changed", f"{actor} {entered} on "
               f"{sov_line_name(line)}: the {money(open_draft['sov_overrides'][line['id']])} changed by hand gives way to it on {open_draft['number']}.", actor)
     if giving_way:
         open_draft["sov_overrides"] = by_hand
@@ -6002,6 +6102,18 @@ def drafted_at(state: dict[str, Any], job_id: str, done: Any) -> bool:
                    for k, v in done.items() if not (v is None or (isinstance(v, str) and not v.strip())))
     except sov.SovError:
         return False
+
+
+def _stored_changed(line: dict[str, Any], stored: dict[str, Any]) -> bool:
+    """Stored materials sent for a line differ from the open draft's. A blank box is no change; one
+    that can't be read counts as changed, as for a quantity."""
+    value = stored.get(line["id"])
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return False
+    try:
+        return sov.to_cents(value, "stored materials") != int(line.get("stored_cents") or 0)
+    except sov.SovError:
+        return True
 
 
 def _qty_changed(line: dict[str, Any], value: Any) -> bool:

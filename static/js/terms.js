@@ -55,7 +55,7 @@ export const ACTION_WORDS = {
   import_filed: "Added to the job", import_undone: "Taken off the job", sov_saved: "Schedule of values saved", payapp_amount_changed: "Pay app amount changed", payapp_period: "Pay app date changed", sov_removed: "Schedule of values removed",
   billing: "Billing changed", company_update: "Company changed", team: "Team changed", team_join: "Joined the team",
   qbo_connected: "QuickBooks connected", qbo_disconnected: "QuickBooks disconnected", read_only: "Read-only changed",
-  unconditional_override: "Sent with an unconditional waiver", unconditional_mention_confirmed: "Confirmed a file that mentions an unconditional waiver", waiver_answer: "Said which waiver it is", waiver_type: "Waiver type set", waiver_not_needed: "No waiver through Duracash",
+  unconditional_override: "Sent with an unconditional waiver", unconditional_mention_confirmed: "Confirmed a file that mentions an unconditional waiver", waiver_answer: "Said which waiver it is", waiver_answer_changed: "Changed which waiver it is", waiver_type: "Waiver type set", waiver_not_needed: "No waiver through Duracash",
   daily_quantities_not_applied: "Quantities not added", quantities_imported: "Quantities imported",
   payapp_attachments: "Email attachments changed", record_work: "Ticket tied to work", record_filed: "Job record filed",
 };

@@ -71,7 +71,7 @@ class PhotoOnAWaiverItem(Case):
         self.attach(rec, answer="")
         self.assertFalse(self.waiver["present"], "nobody has said which waiver it is yet")
         self.assertEqual(self.waiver["check"]["status"], "unchecked")
-        self.assertEqual(domain.item_question(self.job, self.waiver), {"guess": "conditional", "reads_as": ""})
+        self.assertEqual(domain.item_question(self.job, self.waiver), {"guess": "", "reads_as": ""}, "the app couldn't tell: nothing is picked")
         domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read, shown=[rec["id"]],
                                    answer="conditional")
         self.assertTrue(self.waiver["present"])
@@ -82,7 +82,7 @@ class PhotoOnAWaiverItem(Case):
     def test_a_photo_said_unconditional_needs_the_owner_where_the_conditional_one_is_needed(self):
         rec = self.stored("Signed waiver", b"\xff\xd8 jpeg", "w.jpg", typed="unconditional_progress")
         self.attach(rec, answer="")
-        self.assertEqual(domain.item_question(self.job, self.waiver)["guess"], "unconditional", "its type is picked first")
+        self.assertEqual(domain.item_question(self.job, self.waiver)["guess"], "", "a scan is read as nothing, whatever it was typed")
         domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read, shown=[rec["id"]], answer="unconditional")
         self.assertTrue(self.waiver["present"])
         self.assertEqual(domain.unconditional_waivers_attached(self.job, self.inv), [rec])

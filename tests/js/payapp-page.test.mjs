@@ -97,8 +97,10 @@ test("a photo the check can't read says Photo added by who, with no warning box"
   assert.match(flagged, /Amount not found: \$24,500\.00\./);
   // On a waiver item the tap that answers which waiver it is is the look (the Nov 6 redesign).
   assert.match(flagged, /<strong>Which waiver is this\?<\/strong>/);
-  assert.match(flagged, /data-action="packet-confirm" data-id="j1" data-item="pk-w" data-answer="conditional" data-looked="1" aria-current="true">Conditional</);
+  assert.match(flagged, /The app couldn't tell which one this is\./, "no reading came with it: nothing is picked");
+  assert.match(flagged, /data-action="packet-confirm" data-id="j1" data-item="pk-w" data-answer="conditional" data-looked="1">Conditional</);
   assert.match(flagged, /data-action="packet-confirm" data-id="j1" data-item="pk-w" data-answer="unconditional" data-looked="1">Unconditional</);
+  assert.doesNotMatch(flagged, /aria-current="true">(Un)?[Cc]onditional/);
 });
 
 test("I opened it and it's right confirms in one tap, with no second dialog", async () => {

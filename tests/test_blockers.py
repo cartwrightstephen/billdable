@@ -462,6 +462,12 @@ class ExistingDataTests(unittest.TestCase):
         item = inv["packet"][0]
         item.update(marked_in_hand=True, present_reason="old reason")
         domain._refresh_draft_gate(job, state)
+        # An override doesn't replace the answer for a file that is going out (Round 1 hunt, r1c, M7):
+        # the old automatic attachment waits for someone to say which waiver it is, then goes.
+        self.assertEqual(domain.blocker_lines(job), ["Conditional waiver on progress payment: look at Old auto and confirm it."])
+        self.assertFalse(item["present"])
+        self.assertTrue(all(p["present"] for p in inv["packet"] if p is not item))
+        domain.confirm_packet_item(state, job["id"], item["id"], "Sam", looked=True, answer="conditional", shown=[rec["id"]])
         self.assertEqual(domain.blocker_lines(job), [])
         self.assertEqual(inv["status"], "awaiting_approval")
         self.assertTrue(all(p["present"] for p in inv["packet"]))

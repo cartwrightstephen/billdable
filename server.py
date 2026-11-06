@@ -3293,6 +3293,14 @@ def _retainage(h, st, j, i, c):
                                   unconditional_override=override, read_file=_file_reader(c.company_id, c.read_ahead))
 
 
+def _answerer(c: "Ctx", st: dict) -> "domain.Answerer":
+    """Who is answering which waiver a file is, from their profile (domain.Answerer): setting or
+    changing a waiver answer, by any route, takes send_payapps (ask_retainage on a retainage
+    request), and an unconditional answer is taken back only by whoever gave it or an owner."""
+    return domain.Answerer(send_payapps=profiles.has_perm(c.user, "send_payapps", st), ask_retainage=profiles.has_perm(c.user, "ask_retainage", st),
+                           owner=c.user.get("role", "owner") == "owner", id=str(c.user.get("id") or ""))
+
+
 def _shown(body: dict) -> list | None:
     """The records a page was showing when Confirm was tapped; None from a page that doesn't say."""
     shown = body.get("shown")
@@ -3462,7 +3470,7 @@ JOB_ACTIONS = {
     "waiver-needed": (False, lambda h, st, j, i, c: domain.waiver_needed_after_all(st, j, c.actor)),
     "overbilling-settled": (False, lambda h, st, j, i, c: domain.settle_overbilling(st, j, _text(c.body, "reason"), c.actor)),
     # Is this a lien waiver? A person's answer for a file going out that reads as one (the Nov 6 redesign).
-    "waiver-answer": (True, lambda h, st, j, i, c: domain.answer_waiver_question(st, j, i, _text(c.body, "answer"), c.actor, shown=_shown(c.body))),
+    "waiver-answer": (True, lambda h, st, j, i, c: domain.answer_waiver_question(st, j, i, _text(c.body, "answer"), c.actor, shown=_shown(c.body), answerer=_answerer(c, st))),
     "retainage-credit": (False, lambda h, st, j, i, c: domain.apply_credit_to_retainage(st, j, _text(c.body, "reason"), c.actor,
                                                                                          amount_cents=_number(c.body, "amount_cents", "the amount") if c.body.get("amount_cents") not in (None, "") else None)),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
@@ -3474,9 +3482,9 @@ JOB_ACTIONS = {
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None,
                                                                                     release_id=_text(c.body, "release_id") or None, confirm_final=c.body.get("confirm_final") is True,
                                                                                     looked_at=_text(c.body, "looked_at"), check_only=c.body.get("check_only") is True,
-                                                                                    read_file=_file_reader(c.company_id, c.read_ahead)))),
+                                                                                    read_file=_file_reader(c.company_id, c.read_ahead), answerer=_answerer(c, st)))),
     # The type of a signed waiver on the job record, and which paid pay app or release it is for (B1).
-    "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"))),
+    "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"), answerer=_answerer(c, st))),
     # No waiver goes out through Duracash for this payment: handed over outside it, or not needed (B2).
     "waiver-not-needed": (False, lambda h, st, j, i, c: domain.waiver_not_needed(st, j, _text(c.body, "reason"), invoice_id=_text(c.body, "invoice_id") or None,
                                                                               release_id=_text(c.body, "release_id") or None, actor=c.actor)),
@@ -3503,9 +3511,9 @@ JOB_ACTIONS = {
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
     "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor, _text(c.body, "note") if "note" in c.body else None)),
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead),
-                                                                                   looked=c.body.get("looked") is True, answer=_text(c.body, "answer"))),
+                                                                                   looked=c.body.get("looked") is True, answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
     "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id, c.read_ahead),
-                                                                                shown=_shown(c.body), answer=_text(c.body, "answer"))),
+                                                                                shown=_shown(c.body), answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
     "packet-recheck": (True, lambda h, st, j, i, c: c.reply.update(domain.recheck_reply(st, j, i, read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body)))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: _skip_item(st, j, i, c)),
@@ -3522,7 +3530,7 @@ JOB_ACTIONS = {
     # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
     "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body, c.reply)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead),
-                                                                         looked=c.body.get("looked") is True, answer=_text(c.body, "answer"))),
+                                                                         looked=c.body.get("looked") is True, answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
 }
 
 def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None = None) -> bool:

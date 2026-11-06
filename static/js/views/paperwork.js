@@ -51,18 +51,30 @@ export function unconditionalAttached(j, inv) {
   return inv.unconditional_attached || [];
 }
 
+// Who answers which waiver a file is: someone who can send pay apps, and on the closeout documents
+// (the retainage request) whoever can ask for retainage; the server refuses anyone else.
+const mayAnswer = (closeout) => may("waiver-answer") || (!!closeout && can("ask_retainage"));
+
+// What the page says when the app has no pick to make: nothing read, or no clear reading.
+function couldntTell(both, what = "which one this is") {
+  return `<p class="sub app-unsure">${both ? "It has both a conditional and an unconditional waiver in it, so the app" : "The app"} couldn't tell ${what}.</p>`;
+}
+
 // "Is this a lien waiver?" (the Nov 6 redesign): a file going out that reads as one, or is filed as
-// a waiver, not on a waiver item. Three buttons, the app's guess first in the row and filled in.
-export function waiverQuestionHtml(j, rows) {
+// a waiver, not on a waiver item. Three buttons, the one the app read first and filled in; when it
+// read none, none is filled in and the page says so.
+export function waiverQuestionHtml(j, rows, closeout = false) {
   if (!rows || !rows.length) return "";
   const answers = (guess) => [["no", "No"], ["conditional", "Yes, conditional"], ["unconditional", "Yes, unconditional"]]
-    .map(([v, l]) => ({ v, l, picked: v === (unesc(guess || "") || "conditional") }));
+    .map(([v, l]) => ({ v, l, picked: !!unesc(guess || "") && v === unesc(guess) }));
+  const may_ = mayAnswer(closeout);
   return `<div class="send-warnings doc-warning waiver-questions" role="alert">
     <h3>Is this a lien waiver?</h3>
     <ul class="plain-list attach-list">${rows.map(r => `<li><span><strong>${r.label}</strong></span>
       ${(r.file_ids || []).map((fid, n) => `<a class="btn small secondary" href="/api/files/${fid}" target="_blank" rel="noopener">Open ${(r.file_names || [])[n] || "file"}</a>`).join(" ")}
-      ${may("waiver-answer") ? `<span class="form-inline answer-row">${answers(r.guess).map(a => `<button class="btn small${a.picked ? "" : " secondary"}" data-action="waiver-answer" data-id="${j.id}" data-rec="${r.record_id}" data-answer="${a.v}" data-files="${(r.file_ids || []).join(" ")}"${a.picked ? ` aria-current="true"` : ""}>${a.l}</button>`).join("")}</span>` : ""}</li>`).join("")}</ul>
-    ${may("waiver-answer") ? "" : `<p class="sub">Someone who can send pay apps answers this.</p>`}
+      ${unesc(r.guess || "") ? "" : couldntTell(r.both)}
+      ${may_ ? `<span class="form-inline answer-row">${answers(r.guess).map(a => `<button class="btn small${a.picked ? "" : " secondary"}" data-action="waiver-answer" data-id="${j.id}" data-rec="${r.record_id}" data-answer="${a.v}" data-files="${(r.file_ids || []).join(" ")}"${a.picked ? ` aria-current="true"` : ""}>${a.l}</button>`).join("")}</span>` : ""}</li>`).join("")}</ul>
+    ${may_ ? "" : `<p class="sub">Someone who can send pay apps answers this.</p>`}
   </div>`;
 }
 
@@ -334,24 +346,25 @@ let lookAgain = null;   // why Confirm was refused: a newer file took over while
 onSessionEnd(() => { lookAgain = null; });
 
 // "Which waiver is this?" on a waiver item (the Nov 6 redesign): one tap answers it, the app's
-// guess filled in, and what the file reads as said beside it when that is the other one.
-function whichWaiverHtml(j, p, editable) {
+// guess filled in, and what the file reads as said beside it when that is the other one. With no
+// reading the app says it couldn't tell and picks nothing: the tap is a choice of one of two buttons.
+function whichWaiverHtml(j, p, editable, isCloseout = false) {
   const q = p.waiver_question || {};
   const needs = unesc(p.waiver_kind || "").startsWith("unconditional") ? "unconditional" : "conditional";
-  const guess = unesc(q.guess || "") || needs;
+  const guess = unesc(q.guess || "");
   const reads = unesc(q.reads_as || "");
   const warn = reads && reads !== needs ? `<p class="blocker">This reads as ${reads}.</p>` : "";
   const problems = flaggedProblems(p).filter(t => !/^This reads as /.test(unesc(t)));
-  const buttons = !editable ? "" : `<span class="form-inline answer-row">${["conditional", "unconditional"].map(k => `<button class="btn small${k === guess ? "" : " secondary"}" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}" data-answer="${k}"${problems.length ? ` data-looked="1"` : ""}${k === guess ? ` aria-current="true"` : ""}>${k === "conditional" ? "Conditional" : "Unconditional"}</button>`).join("")}</span>`;
-  return `<div class="which-waiver"><p><strong>Which waiver is this?</strong></p>${warn}
+  const buttons = !editable ? "" : !mayAnswer(isCloseout) ? `<p class="sub">Someone who can send pay apps says which waiver this is.</p>` : `<span class="form-inline answer-row">${["conditional", "unconditional"].map(k => `<button class="btn small${k === guess ? "" : " secondary"}" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}" data-answer="${k}"${problems.length ? ` data-looked="1"` : ""}${k === guess ? ` aria-current="true"` : ""}>${k === "conditional" ? "Conditional" : "Unconditional"}</button>`).join("")}</span>`;
+  return `<div class="which-waiver"><p><strong>Which waiver is this?</strong></p>${warn}${guess ? "" : couldntTell(q.both)}
     ${problems.length ? `<div class="doc-warning" role="alert"><ul class="plain-list">${problems.map(t => `<li>${t}</li>`).join("")}</ul></div>` : ""}${buttons}</div>`;
 }
 
-function confirmHtml(j, p, editable) {
+function confirmHtml(j, p, editable, isCloseout = false) {
   const waiting = !p.name_only && (p.attachments || []).some(a => a.unconfirmed);
   if (p.present || !waiting) return "";
   const again = lookAgain && lookAgain.item === p.id ? `<p class="form-error review-again" role="alert">${esc(lookAgain.text)}</p>` : "";
-  if (unesc(p.waiver_kind || "")) return again + whichWaiverHtml(j, p, editable);
+  if (unesc(p.waiver_kind || "")) return again + whichWaiverHtml(j, p, editable, isCloseout);
   const flagged = flaggedProblems(p).length > 0;
   const button = !editable ? "" : flagged
     ? `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}" data-looked="1">I opened it and it's right</button>`
@@ -385,7 +398,7 @@ function packetItemsHtml(j, inv, packet, isCloseout, pick = null) {
         ${(p.attachments || []).map(a => attachmentRow(a, records, files, p.name_only)).join("")}
         ${p.present && p.confirmed_by ? `<div class="override-note">${confirmedText(p)}</div>` : ""}
         ${p.present && problemsHtml(p) ? `<div class="doc-warning"><p>${p.confirmed_by} ${p.looked_as ? "said which waiver it is" : "opened it and confirmed it"} after this warning:</p><ul class="plain-list">${problemsHtml(p)}</ul></div>` : ""}
-        ${confirmHtml(j, p, editable)}
+        ${confirmHtml(j, p, editable, isCloseout)}
         ${(p.present && !made || hasWaiting || p.name_only) && editable ? `<button class="btn small secondary" data-action="packet-detach" data-id="${j.id}" data-item="${p.id}">Remove</button>` : ""}
       </div>
       ${!p.present && !skipped && editable ? `${hasWaiting ? "" : `<div class="form-inline packet-add">
@@ -485,7 +498,7 @@ export const views = {
         <h2>Required items</h2>
         ${packetItemsHtml(j, inv, packet, isCloseout)}
       </div>
-      ${isCloseout ? waiverQuestionHtml(j, j.closeout_waiver_questions) : ""}
+      ${isCloseout ? waiverQuestionHtml(j, j.closeout_waiver_questions, true) : ""}
       ${periodHtml(j, inv, packet, canRemove, isCloseout)}
       ${!isCloseout && cosBlocking.length ? `<div class="card also-blocking" role="note">
         <h2>Also blocking send</h2>

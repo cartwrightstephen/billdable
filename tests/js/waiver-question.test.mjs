@@ -37,12 +37,31 @@ test("a waiver item asks which waiver it is, the guess filled in and the other r
   assert.doesNotMatch(html, /style=|onclick=/);
 });
 
-test("a photo the guess can't read starts at the waiver the item asks for, with no warning", () => {
+test("a photo the app can't read picks nothing and says so; the tap is a choice of one of two buttons", () => {
   const j = job();
   show(j);
-  const html = missingDocsHtml(j, { ...inv(), packet: [waiting({ waiver_question: { guess: "conditional", reads_as: "" }, check: { status: "unchecked", problems: ["w.jpg is a photo or a scan, so it couldn't be checked."] } })] });
-  assert.match(html, /data-answer="conditional" aria-current="true">Conditional</);
-  assert.doesNotMatch(html, /This reads as/);
+  const html = missingDocsHtml(j, { ...inv(), packet: [waiting({ waiver_question: { guess: "", reads_as: "" }, check: { status: "unchecked", problems: ["w.jpg is a photo or a scan, so it couldn't be checked."] } })] });
+  assert.match(html, /The app couldn't tell which one this is\./);
+  assert.match(html, /data-answer="conditional">Conditional</);
+  assert.match(html, /data-answer="unconditional">Unconditional</);
+  assert.doesNotMatch(html, /aria-current|This reads as/);
+});
+
+test("a file with a conditional and an unconditional waiver in it says so and picks nothing", () => {
+  const j = job();
+  show(j);
+  const html = missingDocsHtml(j, { ...inv(), packet: [waiting({ waiver_question: { guess: "", reads_as: "", both: true } })] });
+  assert.match(html, /It has both a conditional and an unconditional waiver in it, so the app couldn't tell which one this is\./);
+  assert.doesNotMatch(html, /aria-current/);
+});
+
+test("someone who can't send pay apps sees which waiver it is without the buttons, and says who answers", () => {
+  const j = job();
+  show(j, { name: "Mo", company_id: "co-p", role: "member", perms: ["record_payments"] });
+  const html = missingDocsHtml(j, { ...inv(), packet: [waiting({ waiver_question: { guess: "conditional", reads_as: "conditional" } })] });
+  assert.match(html, /<strong>Which waiver is this\?<\/strong>/);
+  assert.match(html, /Someone who can send pay apps says which waiver this is\./);
+  assert.doesNotMatch(html, /data-action="packet-confirm"[^>]*data-answer/);
 });
 
 test("Is this a lien waiver? has three buttons, the guess filled in, and one tap answers it for the files shown", async () => {
@@ -60,6 +79,26 @@ test("Is this a lien waiver? has three buttons, the guess filled in, and one tap
   await reg.actions["waiver-answer"]({ dataset: { rec: "r9", answer: "no", files: "f9" } }, "j1");
   const sent = dom.requests.find(r => r.path === "/api/jobs/j1/waiver-answer/r9");
   assert.deepEqual(sent.body, { answer: "no", shown: ["f9"] });
+});
+
+test("Is this a lien waiver? picks nothing when the app couldn't tell, and says it", () => {
+  const rows = [{ record_id: "r9", label: "Scan", file_ids: ["f9"], file_names: ["scan.pdf"], guess: "" }, { record_id: "r8", label: "Packet", file_ids: ["f8"], file_names: ["p.pdf"], guess: "", both: true }];
+  const j = job({ records: [{ id: "r9", kind: "other", label: "Scan", file_ids: ["f9"] }], invoices: [inv({ packet: [], extra_record_ids: ["r9"], waiver_questions: rows })] });
+  show(j);
+  const html = beforeYouSendHtml(j, j.invoices[0]);
+  assert.match(html, /The app couldn't tell which one this is\./);
+  assert.match(html, /It has both a conditional and an unconditional waiver in it, so the app couldn't tell which one this is\./);
+  assert.doesNotMatch(html, /aria-current/);
+  assert.equal((html.match(/data-answer="no"/g) || []).length, 2, "all three buttons are there for each");
+});
+
+test("on the closeout documents whoever can ask for retainage answers the question; on a pay app only someone who can send", () => {
+  const rows = [{ record_id: "r9", label: "Paperwork", file_ids: ["f9"], file_names: ["p.pdf"], guess: "unconditional" }];
+  page.setMe({ name: "Dee", company_id: "co-p", role: "member", perms: ["record_payments", "ask_retainage"] });
+  assert.match(waiverQuestionHtml(job(), rows, true), /data-action="waiver-answer"/);
+  const onPayApp = waiverQuestionHtml(job(), rows, false);
+  assert.doesNotMatch(onPayApp, /data-action="waiver-answer"/);
+  assert.match(onPayApp, /Someone who can send pay apps answers this\./);
 });
 
 test("someone who can't send pay apps sees the question but no buttons", () => {
