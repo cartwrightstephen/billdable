@@ -12,6 +12,7 @@ import { termText } from "./terms.js";
 import { FILE_KINDS, RECORD_KINDS, fileKindPick } from "./jobs.js";
 import { pathFor } from "./routes.js";
 import { BALL_WORDS } from "./tasks.js";
+import { mailReady } from "./state.js";
 
 const WENT_OUT = ["sent", "approved", "partial", "paid"];
 export const QUEUE_SHOWN = 3;   // rows shown before "and N more"
@@ -55,7 +56,8 @@ export function inboxKindSelect(r) {
 // One row's buttons: the main one, a conversation for a follow-up (R4-06), and Open unless the
 // main button already opens the job. A pay app the client approved (R4-08) has no main button.
 export function rowButtons(r) {
-  const attrs = ACTIONS[r.kind];
+  // An email that didn't go out has Send again only where the server sends mail (round 1, item 7).
+  const attrs = r.kind === "email_failed" && !mailReady ? null : ACTIONS[r.kind];
   const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` + (r.kind === "inbox" ? inboxKindSelect(r) : "") : "";
   const talked = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="log-conversation" data-id="${r.job_id}">Log a Conversation</button>` : "";
   const open = OPENS_JOB.includes(r.kind) ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${r.job_id}">Open</button>`;

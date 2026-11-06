@@ -54,7 +54,7 @@ const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api
   inbox: "/api/inbox?", sentpayapps: "/api/payapps/sent?" };
 const LIST_VIEWS = { timeline: "job", sentpayapps: "export" };   // the view that shows a list, where it isn't the list's own name
 // Lists whose filter is a whole query string (several filters and a sort), not one job id.
-const LIST_QUERY = new Set(["inbox"]);
+const LIST_QUERY = new Set(["inbox", "audit"]);
 let toastTimer = null;
 export const DEMO_COMPANY_ID = "co-hartline";
 

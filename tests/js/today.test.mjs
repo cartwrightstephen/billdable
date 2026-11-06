@@ -8,6 +8,9 @@ import assert from "node:assert/strict";
 import { todayQueue, rowButtons, todoHtml, assignSelect, anyPayAppSent, QUEUE_SHOWN } from "../../static/js/today.js";
 import { todoItems } from "../../static/js/tasks.js";
 import { RECORD_KINDS } from "../../static/js/jobs.js";
+import { setAccount } from "../../static/js/state.js";
+
+setAccount({ mailReady: true });   // Send again shows only where the server sends mail (payapp-page.test.mjs)
 
 const row = (over = {}) => ({
   rank: 5, kind: "new_job", job_id: "j1", job: "Porch rebuild", payer: "Dana Lee", label: "Not billed yet", tone: "copper",

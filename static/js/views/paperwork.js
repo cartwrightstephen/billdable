@@ -243,7 +243,7 @@ export function beforeYouSendHtml(j, inv) {
   const mentions = inv.unconditional_mentions || [];
   const packet = inv.packet || j.packet || [];
   const overrides = packet.filter(p => p.present && p.override);
-  const warned = packet.filter(p => ((p.check || {}).problems || []).length);
+  const warned = packet.filter(p => flaggedProblems(p).length);
   const confirmed = packet.filter(p => p.present && p.confirmed_by);
   const skippedItems = packet.filter(p => !p.required && p.skipped_by);
   const preview = inv.email_preview;
@@ -260,7 +260,7 @@ export function beforeYouSendHtml(j, inv) {
     ${overrides.length ? `<div class="send-overrides"><h3>Overrides</h3><ul class="plain-list">${overrides.map(p => `<li><strong>${p.label}</strong>: ${overrideText(p)}</li>`).join("")}</ul></div>` : ""}
     ${skippedItems.length ? `<div class="send-skipped"><h3>Not needed</h3><ul class="plain-list">${skippedItems.map(p => `<li><strong>${p.label}</strong>: ${skippedHtml(p, false)}</li>`).join("")}</ul></div>` : ""}
     ${confirmed.length ? `<div class="send-confirmed"><h3>Confirmations</h3><ul class="plain-list">${confirmed.map(p => `<li><strong>${p.label}</strong>: ${confirmedText(p)}</li>`).join("")}</ul></div>` : ""}
-    ${warned.length ? `<div class="send-warnings doc-warning"><h3>Warnings</h3><ul class="plain-list">${warned.map(p => `<li><strong>${p.label}</strong>: ${p.check.problems.join(" ")}${p.present && p.confirmed_by ? ` Confirmed by ${p.confirmed_by}.` : ""}</li>`).join("")}</ul></div>` : ""}
+    ${warned.length ? `<div class="send-warnings doc-warning"><h3>Warnings</h3><ul class="plain-list">${warned.map(p => `<li><strong>${p.label}</strong>: ${flaggedProblems(p).join(" ")}${p.present && p.confirmed_by ? ` Confirmed by ${p.confirmed_by}.` : ""}</li>`).join("")}</ul></div>` : ""}
     ${preview ? `<div class="send-email-text"><h3>The email</h3><p class="email-body">${preview.body.replace("[Your name]", (me && (me.name || me.email)) || "[Your name]")}</p></div>` : ""}
     ${unconditional.length ? `<div class="unconditional-warning" role="alert">
       <p class="blocker">An unconditional waiver is attached: ${unconditional.map(r => r.label).join(", ")}. It gives up your lien rights before you are paid. Take it off, or send anyway with the reason.</p>
@@ -292,8 +292,12 @@ export function overrideText(p) {
   return o ? `Overridden by ${o.by} on ${fmtDate(o.at)}: ${o.reason}` : "";
 }
 
+// Who checked it: a person's confirm, or a photo or scan the check couldn't read, which is in
+// once it is added (round 1, item 3).
 export function confirmedText(p) {
-  return p.confirmed_by ? `Confirmed by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}` : "";
+  if (!p.confirmed_by) return "";
+  if (p.unread) return `${p.unread === "photo" ? "Photo added" : "Added"} by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}${p.unread === "photo" ? "" : " · it couldn't be read"}`;
+  return `Confirmed by ${p.confirmed_by} on ${fmtDate(p.confirmed_at)}`;
 }
 
 // Not needed, and on what: who and when once that was kept, with the reason (accept. 10).
@@ -305,8 +309,15 @@ function skippedHtml(p, isCloseout, j = null) {
   return `<div class="override-note">Not needed ${where}. Marked by ${p.skipped_by} on ${fmtDate(p.skipped_at)}: ${given || "no reason given"}${back}</div>`;
 }
 
+// What the document check found that a person answers: a mismatch (status flagged). A photo or a
+// scan it couldn't read has nothing to answer.
+function flaggedProblems(p) {
+  const c = p.check || {};
+  return c.status === "flagged" ? c.problems || [] : [];
+}
+
 function problemsHtml(p) {
-  return ((p.check || {}).problems || []).map(t => `<li>${t}</li>`).join("");
+  return flaggedProblems(p).map(t => `<li>${t}</li>`).join("");
 }
 
 // A file attached and not cleared yet: a suggestion to check, or the document check's warning with
@@ -318,7 +329,7 @@ function confirmHtml(j, p, editable) {
   const waiting = !p.name_only && (p.attachments || []).some(a => a.unconfirmed);
   if (p.present || !waiting) return "";
   const again = lookAgain && lookAgain.item === p.id ? `<p class="form-error review-again" role="alert">${esc(lookAgain.text)}</p>` : "";
-  const flagged = ((p.check || {}).problems || []).length > 0;
+  const flagged = flaggedProblems(p).length > 0;
   const button = !editable ? "" : flagged
     ? `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}" data-looked="1">I opened it and it's right</button>`
     : `<button class="btn small" data-action="packet-confirm" data-id="${j.id}" data-item="${p.id}">I checked this file</button>`;
@@ -326,13 +337,13 @@ function confirmHtml(j, p, editable) {
 }
 
 // The items of a pay app, the job or closeout: each file, who checked it, and the ways to fill it.
-function packetItemsHtml(j, inv, packet, isCloseout) {
+function packetItemsHtml(j, inv, packet, isCloseout, pick = null) {
   // What went with a pay app stays as it was sent: these are for a draft's paperwork, the job's and closeout's.
   const editable = !j.closed && !(inv && !DRAFT.includes(inv.status));
   const records = Object.fromEntries((j.records || []).map(r => [r.id, r]));
   const files = filesById();
   if (!packet.length) return `<p class="sub">${termText("This pay app needs no supporting documents.")}</p>`;
-  return `${editable && packet.some(p => p.required && !p.present) ? `<p class="sub">Adding a file here records that you checked it.</p>` : ""}${packet.map(p => {
+  return `${packet.filter(p => !pick || pick(p)).map(p => {
     const skipped = !p.required && p.skipped_reason;
     const waiver = unesc(p.waiver_kind || "");
     const made = p.present_reason === "Produced by Duracash";
@@ -373,14 +384,33 @@ function packetItemsHtml(j, inv, packet, isCloseout) {
   }).join("")}`;
 }
 
+// What a draft still needs: required, not in, not marked not needed. It sits in Review & send above
+// Approve & send while there is any (round 1, item 4).
+export function isMissing(p) {
+  return p.required && !p.present && !p.skipped_reason;
+}
+
+export function missingDocsHtml(j, inv) {
+  const packet = inv.packet || j.packet || [];
+  const missing = packet.filter(isMissing);
+  if (!missing.length) return "";
+  return `<div class="send-missing" id="supporting-documents">
+      <h3>Missing (${missing.length})</h3>
+      ${packetItemsHtml(j, inv, packet, false, isMissing)}
+    </div>`;
+}
+
 // A pay app's supporting documents, on its own page (Decision 9: they are part of the pay app).
+// A draft's missing ones are in Review & send (missingDocsHtml); the rest are here.
 export function supportingDocsHtml(j, inv) {
   const packet = inv.packet || j.packet || [];
   const editable = !j.closed && DRAFT.includes(inv.status);
-  return `<div class="card" id="supporting-documents">
+  const split = DRAFT.includes(inv.status) && packet.some(isMissing);
+  const rest = split ? packet.filter(p => !isMissing(p)) : packet;
+  return `${rest.length || !split ? `<div class="card" id="${split ? "supporting-documents-in" : "supporting-documents"}">
       <h2>Supporting documents</h2>
-      ${packetItemsHtml(j, inv, packet, false)}
-    </div>
+      ${packetItemsHtml(j, inv, packet, false, split ? (p => !isMissing(p)) : null)}
+    </div>` : ""}
     ${editable ? periodHtml(j, inv, packet, true, false) : ""}`;
 }
 
@@ -472,13 +502,20 @@ export const actions = {
       await changed(r);
       return r;
     };
-    // Every problem at once, as Confirm would find them: one look clears them all.
+    // Every problem at once, as Confirm would find them: the tap is the look (round 1, item 3). A
+    // mismatch the page wasn't showing is shown first, for its own tap; a photo or a scan the check
+    // couldn't read has nothing to answer.
+    const onScreen = new Set(((p && p.check && p.check.status === "flagged" && p.check.problems) || []).map(unesc));
     const read = await post(`/api/jobs/${id}/packet-recheck/${item}`, { shown }, { quiet: true });
     if (!read || await changed(read) || !read.ok) return read;
-    const problems = (read.data.check_problems || []).map(unesc).join(" ");
-    if (!problems) return confirm({});
-    if (!(await askConfirm(`${problems} You opened the document and it is right?`, "It's right"))) return null;
-    return confirm({ looked: true });
+    const problems = (read.data.check_problems || []).map(unesc);
+    if (read.data.check_status === "flagged" && !(el.dataset.looked && problems.every(t => onScreen.has(t)))) {
+      lookAgain = { item, text: "Look at what didn't match, then confirm." };
+      await load();
+      render();
+      return null;
+    }
+    return confirm(problems.length ? { looked: true } : {});
   },
   "goto-packet": (el, id) => openSupportingDocs(id),
   "open-packet": (el) => openSupportingDocs(el.dataset.job, el.dataset.inv, el.dataset.item),

@@ -91,6 +91,7 @@ export default async function ({ BASE, step, signedInPage, confirmIfAsked }) {
     }, [id, line]);
     assert.notEqual(now, inv);
     await send.click();
+    await confirmIfAsked(p);   // it asks first (round 1, item 5); the stale stamp still refuses it
     await p.locator(".review-again").waitFor();
     await p.waitForURL(`**/money/pay-app/${id}/${now}`);
     await new Promise((r) => setTimeout(r, 1500));

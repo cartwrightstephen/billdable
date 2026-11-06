@@ -1,4 +1,5 @@
 // Formatting and escaping: money, dates, status words. Every value from the server is HTML-escaped once on arrival (escDeep); unesc gives back the raw text.
+import { mailReady } from "./state.js";
 
 // Every string that comes from the server is HTML-escaped once, when it
 // arrives. Templates below interpolate into innerHTML, so this is what keeps
@@ -155,7 +156,8 @@ export function emailStatusHtml(e) {
   // going out shows only its status.
   const inFlight = (st === "sending" || st === "queued") && !stuck;
   const moot = e.moot && !inFlight ? `<div class="sub">No need to send it now: ${e.moot}</div>` : "";
-  const retry = !moot && (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send Again</button>` : "";
+  // Send again only where the server sends mail (round 1, item 7): elsewhere it can't work.
+  const retry = mailReady && !moot && (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send Again</button>` : "";
   return `<span class="pill ${cls}">${words(st)}</span>${when}${moot}${retry}`;
 }
 
