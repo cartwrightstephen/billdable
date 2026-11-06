@@ -407,9 +407,9 @@ class DocumentCheckTests(Case):
                 words = self.problems(data, name)
                 self.assertIn("couldn't be checked", words)
                 self.assertEqual(self.waiver["check"]["status"], "unchecked")
-                self.assertFalse(self.waiver["present"])
-                domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read)
+                # Round 1, item 3: adding it is the person's check; nothing was compared to stop it.
                 self.assertTrue(self.waiver["present"])
+                self.assertEqual(self.waiver["confirmed_by"], "Sam")
 
     def test_a_file_gone_from_the_disk_warns(self):
         rec = self.stored("w", pdf(GOOD))

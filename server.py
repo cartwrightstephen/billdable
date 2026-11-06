@@ -1249,7 +1249,10 @@ class Handler(BaseHTTPRequestHandler):
         key = "email_log" if m.group(1) == "outbox" else "audit"
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
-            page = domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0])
+            rows = state.get(key, [])
+            if key == "audit" and (q.get("who") or [""])[0] == "people":
+                rows = [r for r in rows if r.get("actor") != domain.APP_ACTOR]   # without the app's own entries (round 1, item 14)
+            page = domain.page(rows, offset, limit, (q.get("job") or [""])[0])
             if key == "email_log":
                 domain.mark_moot(state, page["entries"])
         self._json(200, page)
@@ -2813,7 +2816,8 @@ class Handler(BaseHTTPRequestHandler):
             state, _text(body, "name"), _text(body, "customer"), _number(body, "contract_cents", "the contract amount", 0),
             address=_text(body, "address"), approver=_text(body, "approver"), ap_email=_text(body, "ap_email"),
             phone=_text(body, "phone"), role=_text(body, "role"),
-            retainage_pct=_number(body, "retainage_pct", "the retainage percent", 0),
+            # Blank or left out: what the client usually holds (round 1, item 1).
+            retainage_pct=None if body.get("retainage_pct") in (None, "") else _number(body, "retainage_pct", "the retainage percent", 0),
             # "packet_notes" is what pages from before R1-04 send; it is a note on the job record now.
             note=_text(body, "note") or _text(body, "packet_notes"),
             contract_number=_text(body, "contract_number"), actor=ctx.actor,
@@ -3435,7 +3439,7 @@ JOB_ACTIONS = {
     "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor, _text(c.body, "note") if "note" in c.body else None)),
     "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead), looked=c.body.get("looked") is True)),
     "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, may_look=has_perm(c.user, "send_payapps", st), read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body))),
-    "packet-recheck": (True, lambda h, st, j, i, c: c.reply.update(check_problems=domain.recheck_packet_item(st, j, i, read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body)))),
+    "packet-recheck": (True, lambda h, st, j, i, c: c.reply.update(domain.recheck_reply(st, j, i, read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body)))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
     "packet-skip": (True, lambda h, st, j, i, c: _skip_item(st, j, i, c)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),

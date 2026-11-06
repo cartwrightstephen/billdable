@@ -2059,6 +2059,7 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out["needs_paperwork"] = needs_paperwork(job)
     out["blocker_button"] = blocker_button(job) if out["blocked"] else ""
     out["payer"] = deepcopy(_payer(state, job["payer_id"]))
+    out["retainage_usual"] = default_retainage_pct(out["payer"])   # the pay app warns at 0% (round 1, item 1)
     out["can_delete"] = can_delete_job(job)
     out["can_undo_done"] = can_undo_done(job)
     out["close_blocker_items"] = close_blocker_items(job)
@@ -2664,9 +2665,44 @@ def page(rows: list[dict[str, Any]], offset: int, limit: int, job_id: str = "") 
     return {"entries": deepcopy(picked[offset:offset + limit]), "total": len(picked), "offset": offset, "limit": limit}
 
 
+# The app's own bookkeeping that comes with a person's action (round 1, item 14): a file put on a
+# supporting document, the check's warning, the confirm that came with it, a suggestion from the
+# job records, an Inbox item filed. In a job's Activity it goes under the action it came with.
+ACTIVITY_FOLLOW_ON = {"add_record", "attach_record", "packet_attachment", "document_flagged", "packet_confirmed", "import_filed", "record_filed", "add_evidence"}
+FOLLOW_ON_SECONDS = 5
+APP_ACTOR = "duracash"
+
+
+def _seconds_apart(a: str, b: str) -> float:
+    try:
+        return abs((_aware(b) - _aware(a)).total_seconds())
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _one_per_action(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Oldest first in, oldest first out: bookkeeping written within a few seconds of the action
+    before it goes under that action as its details. The app's own with nothing to go under stays
+    in the activity log only; a person's (their own confirm, later) is an entry."""
+    out: list[dict[str, Any]] = []
+    lead = None
+    for r in rows:
+        if r["kind"] == "action" and r["action"] in ACTIVITY_FOLLOW_ON:
+            if lead is not None and _seconds_apart(lead["at"], r["at"]) <= FOLLOW_ON_SECONDS:
+                lead.setdefault("details", []).append({k: r[k] for k in ("action", "text", "at", "who")})
+                continue
+            if r["who"] == APP_ACTOR:
+                continue
+        out.append(r)
+        if r["kind"] == "action":
+            lead = r
+    return out
+
+
 def timeline_page(state: dict[str, Any], job_id: str, offset: int, limit: int) -> dict[str, Any]:
-    """One job's history, newest first (UI/UX Option B): every audit row on the job, and every
-    email with its delivery status (bodies left out)."""
+    """One job's history, newest first (UI/UX Option B): one entry per action on the job, with the
+    app's bookkeeping that came with it as its details (_one_per_action), and every email with its
+    delivery status (bodies left out). The activity log keeps every row."""
     # One sequence for both: an action's place is its row number in the audit trail, an email's
     # is between the audit rows written before and after it (audit_seq). Older emails, from
     # before audit_seq, go after every audit row of the same second or earlier. Times are only
@@ -2683,8 +2719,8 @@ def timeline_page(state: dict[str, Any], job_id: str, offset: int, limit: int) -
         keyed.append(((place, n), {**{k: v for k, v in e.items() if k not in {"body", "subject", "approved_by", "kind", "audit_seq"}},
                                    "kind": "email", "email_kind": e.get("kind", ""), "at": e.get("at", ""), "text": e.get("subject", ""),
                                    "who": e.get("approved_by", "")}))
-    keyed.sort(key=lambda kr: kr[0], reverse=True)
-    rows = [r for _, r in keyed]
+    keyed.sort(key=lambda kr: kr[0])
+    rows = list(reversed(_one_per_action([r for _, r in keyed])))
     return {"entries": mark_moot(state, deepcopy(rows[offset:offset + limit])), "total": len(rows), "offset": offset, "limit": limit}
 
 
@@ -2807,6 +2843,17 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
                 errors[k] = error
             else:
                 clean[k] = value
+            continue
+        if k == "retainage_pct":
+            # The client playbook's "Usual retainage %" (round 1, item 1): blank goes back to its type's.
+            if v in (None, "") or (isinstance(v, str) and not v.strip()):
+                clean[k] = None
+                continue
+            pct = _int_or(v, None) if not isinstance(v, bool) else None
+            if pct is None or not 0 <= pct <= 20 or (isinstance(v, str) and not v.strip().isdigit()):
+                errors[k] = "Enter a retainage from 0 to 20 percent, or leave it blank."
+            else:
+                clean[k] = pct
             continue
         if v is None:
             continue
@@ -4348,6 +4395,7 @@ def _name_conditional_waiver(job: dict[str, Any], invoice: dict[str, Any]) -> li
             flipped.append(item)
         elif not item.get("present") and (item.get("check") or {}).get("problems"):
             item["check"]["problems"].append(_kind_problem(was, kind))  # already waiting: all of it goes in one look
+            item["check"]["status"] = "flagged"
     return flipped
 
 
@@ -4601,7 +4649,8 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
     didn't match, which clears it whatever the warning said. confirming: this is Confirm on the
     item (not an attach): one look clears the file at this amount, whatever else the check finds now."""
     shown = set((item.get("check") or {}).get("problems") or [])
-    same_file = item.get("check_for") is not None and item["check_for"] == _check_stamp(job, item, invoice)
+    stamp = _check_stamp(job, item, invoice)
+    same_file = item.get("check_for") is not None and item["check_for"] == stamp
     if read_file is not None:
         for a in item.get("attachments", []):   # the pay app's page warns before the send has to
             rec = next((r for r in job.get("records", []) if r["id"] == a.get("record_id")), None)
@@ -4609,14 +4658,17 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
                 _says_unconditional(state, rec, read_file)
     check = _document_check(state, job, item, invoice, read_file)
     if check is not None:
-        item["check"] = check
-        item["check_for"] = _check_stamp(job, item, invoice)
+        item["check"] = check = _keep_asked_look(item, check, stamp)
+        item["check_for"] = stamp
     else:
         check = item.get("check")
     which = invoice["number"] if invoice else "the job's supporting documents"
     problems = (check or {}).get("problems") or []
+    # A photo or a scan the check can't read, added by the person (not a suggestion they confirm):
+    # adding it is their check, and nothing was compared that could stand in the way (round 1, item 3).
+    unread = bool(problems) and not confirming and (check or {}).get("status") != "flagged"
     # Looked counts only for the warning the person was shown: a first attach never clears a flag.
-    if problems and not (looked and (set(problems) <= shown or (confirming and same_file))):
+    if problems and not unread and not (looked and (set(problems) <= shown or (confirming and same_file))):
         for a in item.get("attachments", []):
             a["unconfirmed"] = True
         audit(state, job["id"], "document_flagged", f"Document check on {item['label']} on {which}: {' '.join(check['problems'])}", "duracash")
@@ -4641,8 +4693,26 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
     item["confirmed_at"] = item["resolved_at"]
     item.pop("files_left_out", None)
     names = ", ".join(a["name"] for a in item.get("attachments", []))
+    if unread:
+        files = [f for a in item.get("attachments", []) for f in _record_files(state, records.get(a.get("record_id")) or {}, item)]
+        item["unread"] = "photo" if files and all(str(f.get("ext") or "").lower() in doc_check.PICTURES for f in files) else "file"
+        audit(state, job["id"], "packet_confirmed", f"{actor} added {names} for {item['label']} on {which}. It couldn't be read, so nothing was compared.", actor)
+        return
+    item.pop("unread", None)
     warned = f" after the warning: {' '.join(check['problems'])}" if check and check.get("problems") else ""
     audit(state, job["id"], "packet_confirmed", f"{actor} checked {names} for {item['label']} on {which}{warned}.", actor)
+
+
+def _keep_asked_look(item: dict[str, Any], check: dict[str, Any], stamp: dict[str, Any]) -> dict[str, Any]:
+    """A look asked for on these same files (a new amount, the other type, a mismatch) stands until a
+    person gives it: a check that could read nothing new doesn't answer it."""
+    was = item.get("check") or {}
+    if check.get("status") != "unchecked" or was.get("status") != "flagged":
+        return check
+    if (item.get("check_for") or {}).get("file_ids") not in (None, stamp["file_ids"]):
+        return check
+    asked = list(was.get("problems") or [])
+    return {"status": "flagged", "problems": asked + [p for p in check.get("problems") or [] if p not in asked]}
 
 
 def _is_filed(records: dict[str, Any], attachment: dict[str, Any]) -> bool:
@@ -4677,9 +4747,18 @@ def recheck_packet_item(state: dict[str, Any], job_id: str, item_id: str, read_f
     item, invoice = _item_to_confirm(state, job, item_id, shown)
     check = _document_check(state, job, item, invoice, read_file)
     if check is not None:
-        item["check"] = check
-        item["check_for"] = _check_stamp(job, item, invoice)
+        stamp = _check_stamp(job, item, invoice)
+        item["check"] = _keep_asked_look(item, check, stamp)
+        item["check_for"] = stamp
     return list((item.get("check") or {}).get("problems") or [])
+
+
+def recheck_reply(state: dict[str, Any], job_id: str, item_id: str, read_file: Any = None, shown: list[str] | None = None) -> dict[str, Any]:
+    """What the page's Confirm reads before it confirms: every problem, and whether any of them is a
+    mismatch for the person to answer ("flagged"), or only a file that couldn't be read."""
+    problems = recheck_packet_item(state, job_id, item_id, read_file=read_file, shown=shown)
+    item, _invoice = _find_packet_item(_open_job(state, job_id), item_id)
+    return {"check_problems": problems, "check_status": ((item or {}).get("check") or {}).get("status", "")}
 
 
 def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: str = "owner", looked: bool = False,
@@ -5011,7 +5090,7 @@ def create_job(
     ap_email: str = "",
     phone: str = "",
     role: str = "",
-    retainage_pct: int = 0,
+    retainage_pct: int | None = 0,
     note: str = "",
     contract_number: str = "",
     actor: str = "owner",
@@ -5121,7 +5200,7 @@ def create_job(
         errors["contract_cents"] = "Enter the contract amount, more than $0."
     elif contract_cents > MAX_AMOUNT_CENTS:
         errors["contract_cents"] = f"Enter a contract amount up to {money(MAX_AMOUNT_CENTS)}."
-    if not isinstance(retainage_pct, int) or isinstance(retainage_pct, bool) or not 0 <= retainage_pct <= 20:
+    if retainage_pct is not None and (not isinstance(retainage_pct, int) or isinstance(retainage_pct, bool) or not 0 <= retainage_pct <= 20):
         errors["retainage_pct"] = "Enter a retainage from 0 to 20 percent."
     # ---- schedule of values at New job (Nov 3 Decision 1) ----
     schedule = None
@@ -5171,6 +5250,9 @@ def create_job(
                 f"{actor} entered a different {' and '.join(differs)} for {payer['name']}; kept the saved ones. Change them in the Client playbook.",
                 actor,
             )
+
+    if retainage_pct is None:
+        retainage_pct = default_retainage_pct(payer)   # none given: what the client usually holds (round 1, item 1)
 
     base = "".join(ch for ch in name.upper() if ch.isalnum())[:4] or "JOB"
     code = base

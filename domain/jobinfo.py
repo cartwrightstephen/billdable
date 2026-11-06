@@ -14,6 +14,7 @@ from typing import Any
 __all__ = [
     "CLIENT_TYPES", "client_type_role", "client_type_of", "START_BACK_DAYS", "START_AHEAD_DAYS", "parse_start_date", "parse_end_date",
     "local_today", "job_started_on", "JOB_STAGES", "job_stage", "job_key_dates", "payer_jobs", "payer_extras",
+    "RETAINAGE_BY_TYPE", "default_retainage_pct",
 ]
 
 # Client type (J2): five kinds of client, each mapped onto the two sets of defaults the app
@@ -32,6 +33,21 @@ def client_type_role(client_type: Any) -> str | None:
     """"GC" or "Owner" for a client type, or None when it isn't one."""
     entry = CLIENT_TYPES.get(str(client_type or ""))
     return entry[1] if entry else None
+
+
+# The retainage a client usually holds (round 1, item 1): 10% for a general contractor, a public
+# agency and a higher-tier sub, none for an owner or homeowner, unless the client playbook says.
+RETAINAGE_BY_TYPE = {"gc": 10, "public": 10, "sub": 10}
+
+
+def default_retainage_pct(payer: dict[str, Any] | None) -> int:
+    """The retainage percent a new job for this client starts at: the client playbook's "Usual
+    retainage %" when it has one, else its type's."""
+    payer = payer or {}
+    saved = payer.get("retainage_pct")
+    if isinstance(saved, int) and not isinstance(saved, bool):
+        return saved
+    return RETAINAGE_BY_TYPE.get(client_type_of(payer), 0)
 
 
 def client_type_of(payer: dict[str, Any]) -> str:
@@ -225,4 +241,5 @@ def payer_extras(state: dict[str, Any], payer: dict[str, Any]) -> None:
     from domain import parse_packet_text, playbook_missing
     payer["playbook_missing"] = playbook_missing(payer)  # read before the type below fills in
     payer["client_type"] = client_type_of(payer)
+    payer["retainage_default"] = default_retainage_pct(payer)   # what New job starts at (round 1, item 1)
     payer["packet_items"] = [] if payer.get("no_paperwork") else parse_packet_text(payer.get("packet") or "")
