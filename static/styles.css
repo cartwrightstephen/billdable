@@ -388,14 +388,14 @@ td.num, .num { font-variant-numeric: tabular-nums; }
 /* Round 1, item 18: a client card in three sections, then one full-width Save. */
 .playbook-card [data-form-key] > h3, .playbook-section summary h3 { font-size: 15px; margin: 12px 0 6px; }
 .playbook-section { border-top: 1px solid var(--line); margin: 8px 0; }
-.playbook-section > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-height: 44px; }
-.playbook-section > summary h3 { margin: 10px 0; }
+.playbook-section > summary { cursor: pointer; min-height: 44px; padding: 10px 0; }
+.playbook-section > summary h3 { display: inline; margin: 0 8px 0 0; }
 .btn.full-width { width: 100%; margin-top: 12px; }
 /* New job (Round 1, item 16): Import contract and the schedule folded, each with what it holds. */
 .same-job-q { flex-basis: 100%; margin: 0; font-weight: 600; }
 .contract-fold, .nj-sov { border-top: 1px solid var(--line); margin: 8px 0 12px; }
-.contract-fold > summary, .nj-sov > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.contract-fold > summary .sub, .nj-sov > summary .sub { font-weight: 400; margin: 0; }
+.contract-fold > summary, .nj-sov > summary { cursor: pointer; font-weight: 600; min-height: 44px; padding: 10px 0; }
+.contract-fold > summary .sub, .nj-sov > summary .sub { font-weight: 400; margin: 0 0 0 6px; }
 .merge-payer { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
 .merge-payer summary { cursor: pointer; color: var(--muted); }
 .merge-payer .form-inline { margin-top: 8px; }
