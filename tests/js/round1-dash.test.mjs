@@ -231,3 +231,28 @@ test("Quantities import sits on the job's schedule card; Import has no Quantitie
     page.formOpen.qtyimport = false;
   });
 });
+
+// ---- item 20 and the small ones ----
+test("Added to the Inbox carries a button to the Inbox", async () => {  // item 20
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner" });
+  core.setState(fresh());
+  page.setLocation("import");
+  const toastEl = { textContent: "", style: {}, parts: [], append(...p) { this.parts.push(...p); } };
+  dom.byId.toast = toastEl;
+  dom.bySelector["#paste-text"] = { value: "Gate code 4411" };
+  dom.bySelector["#paste-source"] = { value: "notes" };
+  dom.answers = [(p) => (p.startsWith("/api/import/text") ? { status: 200, body: fresh() } : undefined)];
+  await reg.actions["import-text"]({ dataset: {} });
+  assert.equal(toastEl.textContent, "Added to the Inbox.");
+  assert.ok(toastEl.parts.some(b => b && b.textContent === "Open the Inbox"), "a button to the Inbox");
+  delete dom.byId.toast; delete dom.bySelector["#paste-text"]; delete dom.bySelector["#paste-source"];
+  dom.answers = [];
+});
+
+test("the QuickBooks sample is a demo-only button", async () => {  // item 19
+  const { jobActions: jobActionsFor } = await import("../../static/js/jobs.js");
+  const j = { id: "a", name: "Oak", invoices: [{ id: "i1", status: "sent", sent_at: "2026-10-01", amount_cents: 100 }], payments: [], change_orders: [], money: { outstanding_cents: 100 }, work_status: "in_progress" };
+  const all = (o) => { const { primary, more } = jobActionsFor(j, o); return [primary, ...more].filter(Boolean).map(a => a.attrs).join(" "); };
+  assert.doesNotMatch(all({ demo: false, perms: { owner: true } }), /import-qbo/);
+  assert.match(all({ demo: true, perms: { owner: true } }), /import-qbo/);
+});

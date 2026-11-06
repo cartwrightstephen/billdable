@@ -13,10 +13,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
+import helper
 import importer
 import reminders
 import server
 import storage
+from seed import seed_state
 
 
 class NewPeopleGetReminders(unittest.TestCase):
@@ -106,6 +108,34 @@ class SignUp(unittest.TestCase):
         res = conn.getresponse()
         self.assertEqual((res.status, res.getheader("Content-Type").split(";")[0]), (200, "text/html"))
         conn.close()
+
+
+class HelperSaysItDoesNotKnow(unittest.TestCase):
+    """A question whose most telling word the best answer doesn't cover, or most of whose words it
+    doesn't cover, isn't answered with it: the helper says it doesn't know yet (round 1, item 20)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._orig = (helper.LOCAL_KB, helper.LOG_PATH)
+        helper.LOCAL_KB = Path(self.tmp.name) / "helper_answers.json"
+        helper.LOG_PATH = Path(self.tmp.name) / "helper_log.json"
+
+    def tearDown(self):
+        helper.LOCAL_KB, helper.LOG_PATH = self._orig
+        self.tmp.cleanup()
+
+    def test_the_audits_three_questions(self):
+        for q in ("my gc wants a notice to owner", "can the GC see the pay app online", "sales tax"):
+            reply = helper.answer(q, seed_state(), "co-x", "u-1")
+            self.assertIsNone(reply["matched"], q)
+            self.assertTrue(reply["text"].startswith("I don't know that yet."), (q, reply["text"]))
+            self.assertNotIn("role-field", [e for e in reply["suggestions"]], q)
+        self.assertEqual(len(helper.review()["open"]), 3, "each is saved for the Duracash team")
+
+    def test_questions_it_knows_still_answer(self):
+        for q, want in (("how do I record a payment", "match-payment"), ("what should I do today", "today"), ("who owes me money", "who-owes"),
+                        ("is my client a gc or an owner", "role-field"), ("do you do lien deadlines", "lien-deadlines")):
+            self.assertEqual(helper.answer(q, seed_state(), "co-x", "u-1")["matched"], want, q)
 
 
 if __name__ == "__main__":

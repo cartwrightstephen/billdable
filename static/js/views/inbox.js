@@ -64,8 +64,13 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", ext
   // The answers can arrive out of order, so the page reads the company once at the end.
   if (ok) { clearJobDetails(); await load(); }
   const where = !fileNow ? "in the Inbox" : extra.attach ? "added to the job records and attached" : extra.co ? "added to the job records; the change order is signed" : "added to the job records";
-  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "));
+  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "), ok && !fileNow ? toInbox() : null);
   render();
+}
+
+// What was added to the Inbox from elsewhere (Import) carries a way there (round 1, item 20).
+function toInbox() {
+  return currentView === "inbox" ? null : { label: "Open the Inbox", run: () => nav("inbox") };
 }
 
 async function postImport(path, body) {
@@ -76,7 +81,7 @@ async function postImport(path, body) {
   const data = await readJson(res);
   if (!res.ok) { toast(data.error || "Import failed."); return false; }
   setState(data);
-  toast(body.job_id ? "Added to the job records." : "Added to the Inbox.");
+  toast(body.job_id ? "Added to the job records." : "Added to the Inbox.", toInbox());
   render();
   return true;
 }

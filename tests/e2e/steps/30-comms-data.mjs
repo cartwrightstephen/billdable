@@ -25,7 +25,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.getByText("Added to the Inbox.").waitFor();
     await p.locator("#paste-text").fill("Gate code 4411");
     await p.getByRole("button", { name: "Add to Inbox" }).click();
-    await p.goto(BASE + "/communications");
+    // The toast goes to the Inbox (round 1, item 20).
+    await p.locator("#toast").getByRole("button", { name: "Open the Inbox" }).click();
+    await p.waitForURL(/\/communications$/);
     const gate = p.locator(".inbox-item", { hasText: "Gate code 4411" });
     await gate.getByRole("button", { name: "Dismiss" }).click();
     await gate.waitFor({ state: "detached" });
