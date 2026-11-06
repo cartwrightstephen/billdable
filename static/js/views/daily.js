@@ -127,16 +127,26 @@ function recordChipsHtml() {
     `<button type="button" class="btn small secondary" data-action="daily-chip" data-kind="${s.key}"${daily.open.has(s.key) ? ' aria-pressed="true"' : ""}>+ ${s.chip}</button>`).join("")}</div>`;
 }
 
+// What the quantities do, in words that fit what is typed: a lump sum's % is done to date.
+export function quantitiesNote(lines) {
+  const lump = lines.filter(lumpSum).length;
+  if (lump && lump === lines.length) return "They set the job's % done to date.";
+  if (lump) return "A quantity today adds to the job's totals; a % is done to date.";
+  return "They add to the job's totals for the period.";
+}
+
 function sectionHtml(key, j) {
   if (key === "quantities") {
     const lines = ((j.sov_view && j.sov_view.lines) || []).filter(l => l.done_milli < l.qty_milli);
     // A lump sum asks its % done to date, the figure a foreman knows; the server records the step
     // up from the field total (domain.daily.clean_daily_details). Other lines take today's quantity.
+    // A mixed schedule labels each row as it is sent (dailyBody): % done to date, or today's quantity.
     const allLump = lines.length > 0 && lines.every(lumpSum);
-    return `<div class="daily-section"><h3>${allLump ? "Work done to date" : "Quantities put in place today"}</h3>
-      <p class="sub">They add to the job's totals for the period.</p>
+    const anyLump = lines.some(lumpSum);
+    return `<div class="daily-section"><h3>${allLump ? "Work done to date" : anyLump ? "Work done" : "Quantities put in place today"}</h3>
+      <p class="sub">${quantitiesNote(lines)}</p>
       ${lines.length ? `<div class="table-wrap sov-wrap"><table class="sov-table">
-        <tr><th>Item</th><th>Description</th><th>Done so far</th><th>${allLump ? "% done to date" : "Today"}</th></tr>
+        <tr><th>Item</th><th>Description</th><th>Done so far</th><th>${allLump ? "% done to date" : anyLump ? "Today, or % done to date" : "Today"}</th></tr>
         ${lines.map(l => `<tr><td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
           <td class="num">${lumpSum(l) ? `${+(l.done_milli / 10).toFixed(1)}%` : `${fmtQty(l.done_milli)} of ${fmtQty(l.qty_milli)} ${l.unit}`}</td>
           <td data-label="${lumpSum(l) ? "% done to date" : `Today (${l.unit})`}"><input class="sov-in sov-num" id="daily-qty-${l.id}" data-field="qty_${l.id}" value="${typed(`qty_${l.id}`)}" inputmode="decimal"
@@ -392,7 +402,8 @@ async function saveRecord() {
       const name = j ? j.name : "";
       const last = (state.daily_records || []).filter(x => x.job_id === job).slice(-1)[0];
       const blocked = notes.trim() && last && last.quantities_not_applied;
-      const added = (body.sections || {}).quantities && !blocked ? " Quantities added to the job's totals for the period." : "";
+      const sent = (body.sections || {}).quantities || [];
+      const added = sent.length && !blocked ? (sent.every(q => q.to_date) ? " The job's % done to date is updated." : " Quantities added to the job's totals for the period.") : "";
       daily.saved = { jobId: job, jobName: name, words, added };
       render();
       // The record is kept even when its quantities couldn't be added (B5): say so plainly.

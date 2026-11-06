@@ -306,14 +306,16 @@ function fillFromContract(form, read) {
   if (end) fields.anticipated_end_on = end;
   const put = (box, value) => { if (value !== undefined && value !== null && value !== "") d[box] = String(value); };
   if (form === "newjob") {
-    for (const k of ["name", "street", "city", "state", "zip", "customer", "client_type", "approver", "contract_number", "started_on", "anticipated_end_on", "phone", "ap_email",
+    for (const k of ["name", "street", "city", "state", "zip", "customer", "approver", "contract_number", "started_on", "anticipated_end_on", "phone", "ap_email",
       "payapp_due_day", "payment_terms_days"]) put(k, fields[k]);
-    // The client it names: a saved one is picked, any other is a new one.
+    // The client it names: a saved one is picked, any other is a new one. A saved client keeps its
+    // own type (and so its usual retainage); the contract's guess is for a new one.
+    const saved = fields.customer ? knownPayer(fields.customer) : null;
     if (fields.customer) {
-      const saved = knownPayer(fields.customer);
       d.client_mode = saved ? "existing" : "new";
       if (saved) d.customer = unesc(saved.name);
     }
+    if (!(saved && saved.client_type)) put("client_type", fields.client_type);
     if (Number.isInteger(fields.contract_cents)) put("contract_cents", dollarsText(fields.contract_cents));
     if (Number.isInteger(fields.retainage_pct)) { put("retainage_pct", fields.retainage_pct); d.retainage_touched = true; }
   } else {

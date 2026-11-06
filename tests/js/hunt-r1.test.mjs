@@ -27,3 +27,12 @@ test("a photo on a waiver item takes one tap that says which waiver it is", () =
     "Looked at by Sam on Nov 6, 2026: the conditional waiver");
   assert.match(paperwork.confirmedText({ confirmed_by: "Sam", confirmed_at: "2026-11-06T10:00:00+00:00", unread: "photo" }), /^Photo added by Sam/);
 });
+
+test("New job's retainage follows the saved client's own type, not a type left in the form", async () => {
+  const jobs = await import("../../static/js/jobs.js");
+  const owner = { name: "Dana Lee", client_type: "homeowner", retainage_default: 0 };
+  assert.equal(jobs.newJobRetainage(owner, "gc"), 0, "a GC picked for another client, or read from a contract, doesn't count");
+  assert.equal(jobs.newJobRetainage({ name: "Park GC", client_type: "gc", retainage_default: 10 }, "homeowner"), 10);
+  assert.equal(jobs.newJobRetainage({ name: "Park GC", client_type: "gc", retainage_pct: 5, retainage_default: 5 }, "homeowner"), 5);
+  assert.equal(jobs.newJobRetainage({ name: "Old", retainage_default: 10 }, "homeowner"), 0, "a client saved without a type takes the one picked");
+});

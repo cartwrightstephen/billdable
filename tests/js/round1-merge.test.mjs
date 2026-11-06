@@ -156,12 +156,17 @@ test("New job record asks a lump sum's % done to date, and today's quantity on t
   page.setLocation("daily");
   let html = reg.views.daily();
   assert.match(html, /<h3>Work done to date<\/h3>/);
+  assert.match(html, /They set the job's % done to date\./, "a to-date figure doesn't add to the period's totals");
   assert.match(html, /aria-label="Contract amount: % done to date"/);
   assert.doesNotMatch(html, /% done today/);
   core.setState(company({ jobs: [job([lump, unit])] }));
   html = reg.views.daily();
-  assert.match(html, /<h3>Quantities put in place today<\/h3>/);
+  // Mixed: each row says what it asks (Round 1 hunt), the heading and the header fit both.
+  assert.match(html, /<h3>Work done<\/h3>/);
+  assert.match(html, /<th>Today, or % done to date<\/th>/);
+  assert.match(html, /A quantity today adds to the job's totals; a % is done to date\./);
   assert.match(html, /data-label="% done to date"/);
+  assert.match(html, /data-label="Today \(LF\)"/);
   assert.match(html, /aria-label="Conduit: LF put in place today"/);
   const body = daily.dailyBody({ notes: "", qty_l1: "60", qty_l2: "40" }, job([lump, unit]), new Set());
   assert.deepEqual(body.sections.quantities, [{ line_id: "l1", qty: "60", to_date: true }, { line_id: "l2", qty: "40" }]);

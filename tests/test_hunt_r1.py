@@ -172,6 +172,45 @@ class BillByDollarsOnABigLine(BillByDollars):
         self.assertEqual(self.draft()["gross_cents"], 100_000)
 
 
+class PercentToDateFloor(ServerCase):
+    """New job record's % done to date (h3_todate.py): what a pay app typed is the pay app's, never
+    the floor for the field. The floor is the field total only."""
+    join = TeamHttpTests.join
+
+    def setUp(self):
+        super().setUp()
+        tag = self._testMethodName.replace("_", "")[-20:]
+        self.owner, _ = self.signup(f"o-{tag}@todate.example", "To Date Co")
+        self.fore, _ = self.join(self.owner, f"f-{tag}@todate.example")
+        _, st = self.request("POST", "/api/jobs", DOLLAR_JOB, cookie=self.owner)
+        self.job_id = st["jobs"][0]["id"]
+        self.line = self.view()["sov_view"]["lines"][0]["id"]
+
+    def view(self):
+        _, st = self.request("GET", "/api/state", cookie=self.owner)
+        return next(j for j in st["jobs"] if j["id"] == self.job_id)
+
+    def record(self, pct):
+        return self.request("POST", f"/api/jobs/{self.job_id}/daily-record",
+                            {"notes": "x", "sections": {"quantities": [{"line_id": self.line, "qty": pct, "to_date": True}]}}, cookie=self.fore)
+
+    def test_a_pay_app_typed_before_any_record_is_not_the_floor(self):
+        res, out = self.request("POST", f"/api/jobs/{self.job_id}/sov-progress", {"done": {self.line: "0.500"}}, cookie=self.owner)
+        self.assertEqual(res.status, 200, out)
+        res, out = self.record("40")
+        self.assertEqual(res.status, 200, out.get("fields") or out.get("error"))
+        line = self.view()["sov_view"]["lines"][0]
+        self.assertEqual(line["field_milli"], 400)
+        self.assertEqual(line["form_done_milli"], 500, "the draft keeps the figure typed on it")
+        res, out = self.request("POST", f"/api/jobs/{self.job_id}/void-draft", {}, cookie=self.owner)
+        self.assertEqual(res.status, 200, out)
+        line = self.view()["sov_view"]["lines"][0]
+        self.assertEqual((line["field_milli"], line["form_done_milli"]), (400, 400), "back to the field total once the draft is gone")
+        res, out = self.record("45")
+        self.assertEqual(res.status, 200, out.get("fields") or out.get("error"))
+        self.assertEqual(self.view()["sov_view"]["lines"][0]["field_milli"], 450)
+
+
 class EveryCallerIsGated(unittest.TestCase):
     """Each call that marks work done, undoes it, approves, withdraws or bills an unsigned change
     order, or changes the contract sits behind manage_jobs: grepped from the code, not the table."""
