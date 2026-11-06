@@ -10,7 +10,7 @@ import { worstKind, followUpEvent } from "../calendar.js";
 import { todoHtml, anyPayAppSent, billedThisMonth } from "../today.js";
 import { termText } from "../terms.js";
 import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpanded, onSessionEnd, teamData, setTeamData } from "../state.js";
-import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post, can } from "../app-core.js";
+import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post, can, moreDetails } from "../app-core.js";
 import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
 
@@ -194,10 +194,10 @@ function onboardingHtml() {
   const draftJob = open.find(j => j.invoices.some(i => ["draft", "awaiting_approval"].includes(i.status)));
   const draft = draftJob && draftJob.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
   const steps = [
-    { text: termText("Add your company address, phone and licence number (they print on every pay app)."), done: !!String(state.company.address || "").trim(),
-      label: "Company details", attrs: `data-action="onb-go" data-view="company" data-focus="#co-address"`, always: true },
     { text: termText("Create your first job: contract amount, client and where pay apps go."), done: jobs.length > 0,
       label: "New job", attrs: `data-action="onb-newjob"`, always: true },
+    { text: termText("Add your company address, phone and licence number (they print on every pay app)."), done: !!String(state.company.address || "").trim(),
+      label: "Company details", attrs: `data-action="onb-go" data-view="company" data-focus="#co-address"`, always: true },
     { text: "Put the contract and supporting documents on its record: drop files on the job, or bring emails and texts in through the Inbox.", done: jobs.some(hasPaperwork),
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
     { text: "Bill line by line: replace the job's one lump-sum line with your schedule of values (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present && !j.sov_view.auto),
@@ -215,15 +215,20 @@ function onboardingHtml() {
   const required = steps.filter(st => !st.optional);
   // Its job is the first pay app: once one has gone out, it is done, whatever else is left.
   if (required.every(st => st.done) || anyPayAppSent(state)) return "";
+  const optional = steps.filter(st => st.optional);
   const done = required.filter(st => st.done).length;
-  const next = steps.find(st => !st.optional && !st.done);
+  const next = required.find(st => !st.done);
   const button = (st) => st.done || !st.attrs || (st.needsJob && !jobs.length) ? ""
     : ` <button class="btn small${st === next ? "" : " secondary"}" ${st.attrs}>${st.label}</button>`;
+  const item = (st) => `<li class="${st.done ? "done" : st === next ? "next" : ""}">${st.done ? "✓ " : ""}${st.text}${st === next || st.optional || st.always ? button(st) : ""}</li>`;
+  // The count is the numbered list's; the optional steps fold under their own count.
   return `<div class="card onboarding">
     <button class="help-dismiss" data-action="onb-dismiss" title="Hide this" aria-label="Hide the setup checklist">×</button>
     <h2>${termText("Get your first pay app out")}</h2>
     <p class="sub">${done} of ${required.length} steps done.</p>
-    <ol class="onb-steps">${steps.map(st => `<li class="${st.done ? "done" : st === next ? "next" : ""}">${st.done ? "✓ " : ""}${st.optional ? "Optional: " : ""}${st.text}${st === next || st.optional || st.always ? button(st) : ""}</li>`).join("")}</ol>
+    <ol class="onb-steps">${required.map(item).join("")}</ol>
+    ${optional.length ? `<details class="onb-optional" data-more="onb-optional"${moreDetails["onb-optional"] ? " open" : ""}><summary>Optional steps (${optional.length})</summary>
+      <ul class="onb-steps">${optional.map(item).join("")}</ul></details>` : ""}
   </div>`;
 }
 

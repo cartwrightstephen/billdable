@@ -374,12 +374,9 @@ function renderForgot(message = "", error = "") {
 // out, the server's reason is shown instead (email not set up on this server, too many links).
 function checkEmailHtml() {
   const sent = checkEmail.verification === "sent";
-  return `<div class="card check-email" role="status">
-    <h2>${sent ? "Check your email" : "Your email isn't confirmed yet"}</h2>
-    <p>${sent ? `We sent a confirmation link to ${checkEmail.email}.` : `No confirmation link went to ${checkEmail.email}: ${checkEmail.verification || "it could not be sent"}.`} You can set up your first job meanwhile.</p>
-    <div class="form-inline">${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : ""}
-      <button class="btn small secondary" data-action="dismiss-check-email">Got it</button></div>
-  </div>`;
+  // One plain line under the page's heading (round 1, item 9): the first job comes first.
+  return `<p class="check-email" role="status">${sent ? `We sent a confirmation link to ${checkEmail.email}.` : `Email not confirmed: no link went to ${checkEmail.email} (${checkEmail.verification || "it could not be sent"}).`}`
+    + `${mailReady ? ` <button class="linkish" data-action="resend-verify">Send the link again</button>` : ""} <button class="linkish" data-action="dismiss-check-email">Got it</button></p>`;
 }
 
 // Shared from the phone before signing in (R6-10): held for half an hour, added here with one tap.

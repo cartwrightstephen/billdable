@@ -545,8 +545,7 @@ textarea { font: inherit; }
 /* First run (R1-05 to R1-07): hidden parts stay hidden whatever their display rule; the
    sign-up "Check your email" panel; the email box and the confirm-first note in "Before you send". */
 [hidden] { display: none !important; }
-.check-email { border-color: var(--copper); }
-.check-email p { margin: 4px 0 10px; }
+.check-email { margin: -6px 0 14px; font-size: 14px; color: var(--muted); }
 .send-check .send-email { margin: 10px 0 4px; }
 .send-check .send-email .btn { margin-top: 6px; }
 .notice.confirm-first { margin: 10px 0 0; }

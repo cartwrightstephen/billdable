@@ -193,7 +193,7 @@ function render() {
     showActiveTab(tabRow, tabsLeft);
   }
   const view = document.getElementById("view");
-  view.innerHTML = verifyBannerHtml() + heldShareHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`));
+  view.innerHTML = withBanners(verifyBannerHtml() + heldShareHtml(), views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`));
   if (keep && !document.activeElement?.id) {
     const again = document.getElementById(keep.id);
     if (again && again !== document.activeElement) {
@@ -215,6 +215,13 @@ function render() {
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin" && helperAdmin) { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
+}
+
+// The account's notes (email not confirmed, read-only, a share waiting) go just under the page's
+// heading, so the page still opens with its own name (round 1, item 9).
+function withBanners(banners, html) {
+  const at = banners ? html.indexOf("</h1>") : -1;
+  return at < 0 ? banners + html : html.slice(0, at + 5) + banners + html.slice(at + 5);
 }
 
 // A new tab row starts where the last one was, and moves only if the active tab is out of view,
