@@ -2993,6 +2993,15 @@ def payer_near(state: dict[str, Any], name: str, other_than: str = "") -> dict[s
                  and customer_key(p["name"]) == key), None)
 
 
+def job_near(state: dict[str, Any], name: str) -> dict[str, Any] | None:
+    """An open job whose name is this one, ignoring case, spacing and punctuation (Round 1, item 20):
+    two "Peachtree Clinic electrical" jobs can't be told apart in the Inbox or a job picker."""
+    key = " ".join(re.findall(r"[a-z0-9]+", (name or "").lower()))
+    if not key:
+        return None
+    return next((j for j in state["jobs"] if not j.get("closed") and " ".join(re.findall(r"[a-z0-9]+", j["name"].lower())) == key), None)
+
+
 def _same_customer_question(field: str, typed: str, near: dict[str, Any]) -> GateError:
     """The refusal that asks "Same as ABC Builders?": the page offers the saved customer or
     keeping the new name (sent again with new_customer: true)."""
@@ -5022,8 +5031,10 @@ def create_job(
     today: Any = "",
     anticipated_end_on: Any = None,
     approver_confirmed: bool = False,
+    ask_same_job: bool = False,
 ) -> dict[str, Any]:
-    """Add a job and its record. The packet is created later, with a pay app, from the payer's
+    """Add a job and its record. With ask_same_job (New job), an open job of the same name is asked
+    about first (job_near), the way a near-match client is. The packet is created later, with a pay app, from the payer's
     paperwork list (Customer settings); `note` is kept on the job record and never becomes it.
     The client's playbook has to be complete (Decisions 3 and 4): a new client comes with its
     type, who signs off, email and phone; a saved client missing one takes it from here, and
@@ -5128,6 +5139,11 @@ def create_job(
 
     if near:
         raise _same_customer_question("customer", customer_name, near)
+    same_job = job_near(state, name) if ask_same_job else None
+    if same_job:
+        raise GateError(f"You already have a job called {same_job['name']}.",
+                        fields={"name": f"You already have a job called {same_job['name']}. Open it, or keep this as a new job."},
+                        extra={"same_job": {"id": same_job["id"], "name": same_job["name"], "typed": name}})
     if not payer:
         payer = _new_payer(state, customer_name, role, approver, ap_email, phone, client_type, approver_confirmed)
         payer.update(days)

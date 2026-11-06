@@ -268,11 +268,17 @@ def _review_oct30_waiver_repair(state: dict[str, Any]) -> None:
             inv["status"] = "draft" if domain.blocker_lines(job) else "awaiting_approval"
 
 
+def _round1_manage_jobs(state: dict[str, Any]) -> None:
+    """Round 1 (Nov 5 audits, item 2): the new manage_jobs permission goes to the custom profiles
+    that held void or close_jobs (domain/profiles.py grant_manage_jobs). Idempotent."""
+    profiles.grant_manage_jobs(state)
+
+
 STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _tasks_daily_lists, _payapps_cos_co_history,
                                                    _paperwork_insurance_records, _jobs_clients_address_parts,
                                                    _settings_auth_company_address_parts, _settings_auth_permission_profiles,
                                                    _followups_paperwork_catalog_labels, _review_oct30_money_waivers,
-                                                   _review_oct30_waiver_repair]
+                                                   _review_oct30_waiver_repair, _round1_manage_jobs]
 
 
 # ----- steps for auth.json (the accounts file), run once at start-up by auth.upgrade_file -----

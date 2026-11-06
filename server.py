@@ -2819,6 +2819,8 @@ class Handler(BaseHTTPRequestHandler):
             contract_number=_text(body, "contract_number"), actor=ctx.actor,
             # "Same as ABC Builders?" answered with "keep the new name" (Oct 23 note 5).
             new_customer=body.get("new_customer") is True,
+            # Round 1: an open job of the same name is asked about, unless kept as a new job.
+            ask_same_job=body.get("new_job") is not True,
             # The page says when a person answered who signs off (domain.signer_answered).
             approver_confirmed=body.get("approver_confirmed") is True,
             # J1: the address in four parts; a page that sends only "address" still works.
@@ -3223,6 +3225,40 @@ def _progress(h, st, j, i, c):
     return domain.record_progress(st, j, _number(body, "completed_cents", "the total done so far", 0), _text(body, "notes"), c.actor, period_end=runs_to)
 
 
+def _sov_progress(h, st, j, i, c):
+    """Progress on the schedule of values. With amounts (line id -> dollars), the draft then bills
+    those amounts on its lines: "Bill by dollars instead" on a one-line schedule (Round 1, item 10)
+    sends the line's % done and the exact dollars typed. One request: a refused amount leaves no draft."""
+    out = domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
+                                     period_end=_text(c.body, "period_to"))
+    amounts = c.body.get("amounts")
+    if isinstance(amounts, dict) and amounts:
+        job = next(x for x in st["jobs"] if x["id"] == j)
+        draft = next((inv for inv in job["invoices"] if inv["status"] in domain.DRAFT_STATUSES), None)
+        drafted = {e["line_id"]: e["amount_cents"] for e in (draft or {}).get("sov_sheet") or []}
+        changed = {k: v for k, v in amounts.items() if not (isinstance(v, str) and v.strip() and _cents_or_none(v) == drafted.get(k))}
+        if changed:
+            out = domain.set_payapp_amounts(st, j, changed, c.actor)
+    return out
+
+
+def _cents_or_none(text: str) -> "int | None":
+    try:
+        return sov.to_cents(text, "Amount")
+    except sov.SovError:
+        return None
+
+
+def _may_change_contract(c: "Ctx", st: dict) -> bool:
+    """A schedule saved as the new contract amount changes the contract: that takes manage_jobs
+    (Round 1, item 2), the same as Edit job. Without it the request is refused, not half-done."""
+    if c.body.get("update_contract") is not True:
+        return False
+    if not may_take(c.user, "edit", st):
+        raise OwnerOnly()
+    return True
+
+
 def _retainage(h, st, j, i, c):
     """Ask for retainage: all of it, or amount_cents of it (R4-07)."""
     amount = c.body.get("amount_cents")
@@ -3384,9 +3420,8 @@ WAIVER_READING_ACTIONS = {"send", "waiver"}
 JOB_ACTIONS = {
     "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"), period_end=_text(c.body, "period_to"))),
     "progress": (False, _progress),
-    "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), c.body.get("update_contract") is True, c.actor)),
-    "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
-                                                                                        period_end=_text(c.body, "period_to"))),
+    "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), _may_change_contract(c, st), c.actor)),
+    "sov-progress": (False, _sov_progress),
     "sov-amounts": (False, lambda h, st, j, i, c: domain.set_payapp_amounts(st, j, c.body.get("amounts"), c.actor)),
     "sov-correct": (False, lambda h, st, j, i, c: domain.correct_field_total(st, j, _text(c.body, "line_id"), c.body.get("qty"), _text(c.body, "reason"), c.actor,
                                                                              below_billed=c.body.get("below_billed") is True)),

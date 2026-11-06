@@ -29,6 +29,7 @@ PERMISSIONS: list[tuple[str, str]] = [
     ("record_payments", "Record payments"),
     ("void", "Delete drafts, pull back sent pay apps and accept short pays"),
     ("close_jobs", "Finish and reopen jobs"),
+    ("manage_jobs", "Change a job's contract, change orders and mark work done"),
     ("company", "Edit company details, client settings and connections"),
     ("team", "Manage the team and permissions"),
     ("billing", "Manage billing"),
@@ -66,11 +67,15 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     "delete": "void",
     "close": "close_jobs",
     "reopen": "close_jobs",
+    # Round 1 (Nov 5 audits): what changes the job itself, not a record on it. A Member keeps
+    # records, conversations, drafts, progress and documents.
+    "done": "manage_jobs", "undo-done": "manage_jobs", "edit": "manage_jobs",
+    "approve-co": "manage_jobs", "withdraw-co": "manage_jobs", "include-co": "manage_jobs",
     # Drafting, records, paperwork and follow-ups: everyone on the team.
     "sov-amounts": None, "sov-correct": None, "quantities-undo": None, "waiver-needed": None,
-    "done": None, "undo-done": None, "progress": None, "sov": None, "sov-progress": None, "draft": None,
-    "resolve": None, "packet-skip": None, "follow-up": None, "note-contact": None, "edit": None, "paperwork": None,
-    "add-co": None, "approve-co": None, "request-co-signature": None, "include-co": None, "withdraw-co": None,
+    "progress": None, "sov": None, "sov-progress": None, "draft": None,
+    "resolve": None, "packet-skip": None, "follow-up": None, "note-contact": None, "paperwork": None,
+    "add-co": None, "request-co-signature": None,
     "attach": None, "detach": None, "add-evidence": None, "add-record": None, "attach-record": None, "packet-confirm": None, "packet-recheck": None,
     "edit-record": None, "daily-record": None, "pencil": None, "pencil-response": None,
     "learn-rejection": None, "import-qbo": None,
@@ -221,6 +226,18 @@ def delete_profile(state: dict[str, Any], profile_id: str, in_use: bool, actor: 
     _company(state)["profiles"] = [{k: v for k, v in q.items() if not (q["id"] == OWNER and k == "perms")}
                                    for q in profiles(state) if q["id"] != profile_id]
     audit(state, "", "team", f"{actor} deleted the {p['name']} profile.", actor)
+
+
+def grant_manage_jobs(state: dict[str, Any]) -> None:
+    """Round 1: manage_jobs is new, and what it gates was anyone's before. A custom profile that
+    could delete drafts or finish jobs gets it; Member and the custom profiles that couldn't do
+    either don't (an owner ticks it for them). Owner holds every permission without it being stored.
+    Safe to run again."""
+    for p in _company(state).get("profiles") or []:
+        if not isinstance(p, dict) or p.get("id") in BUILT_IN or not isinstance(p.get("perms"), list):
+            continue
+        if ("void" in p["perms"] or "close_jobs" in p["perms"]) and "manage_jobs" not in p["perms"]:
+            p["perms"].append("manage_jobs")
 
 
 def migrate_company(state: dict[str, Any]) -> None:

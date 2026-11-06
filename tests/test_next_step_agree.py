@@ -26,7 +26,7 @@ let body = "";
 for await (const chunk of process.stdin) body += chunk;
 console.log(JSON.stringify(JSON.parse(body).map(j => {
   const { primary } = jobActions(j, { now });
-  return { line: nextStep(j, now), primary: primary ? primary.label : "" };
+  return { line: nextStep(j, now), page: nextStep(j, now, { listed: !!j.blocked }), primary: primary ? primary.label : "" };
 })));
 """
 
@@ -233,6 +233,51 @@ class NextStepAgreesTests(unittest.TestCase):
         state, job = self.build()
         self.finished(state, job)
         self.agree(state, job, "finish", "Finish Job")
+
+
+    def test_the_line_names_the_button_under_it_in_every_state(self):
+        """Round 1, item 6: whatever the state, the job page's Next step sentence names its main button."""
+        def states():
+            state, job = self.build()
+            yield "new", state, job
+            state, job = self.build()
+            inv = self.draft(state, job, packet=True)
+            yield "documents missing", state, job
+            state, job = self.build()
+            inv = self.draft(state, job, packet=True)
+            clear(inv)
+            item = inv["packet"][0]
+            job["records"].append({"id": "r1", "label": "scan.pdf", "file_ids": ["f1"]})
+            item.update(present=False, attachments=[{"record_id": "r1", "name": "scan.pdf", "unconfirmed": True}])
+            yield "a file to look at", state, job
+            state, job = self.build()
+            self.draft(state, job)
+            yield "ready", state, job
+            state, job = self.build()
+            self.draft(state, job)
+            job["change_orders"].append({"id": "co-2", "number": 2, "status": "pending", "included_in_billing": True, "amount_cents": 50_000, "description": "Rail"})
+            yield "unsigned CO", state, job
+            state, job = self.build()
+            self.sent(state, job, days_ago=30)
+            yield "follow-up due", state, job
+            state, job = self.build()
+            self.sent(state, job)["status"] = "paid"
+            job.update(waiver_due=True, waiver_sent=False)
+            yield "waiver", state, job
+            state, job = self.build()
+            self.finished(state, job)
+            job["closeout_packet"] = [{"id": "c1", "kind": "punch", "label": "Punch list sign-off", "required": True, "present": False, "blocker": "Punch list sign-off is missing."}]
+            yield "closeout", state, job
+            state, job = self.build()
+            self.finished(state, job, retainage=1)
+            yield "retainage", state, job
+            state, job = self.build()
+            self.finished(state, job)
+            yield "finish", state, job
+        for name, state, job in states():
+            _, page = self.compare(state, job)
+            if page["primary"]:
+                self.assertIn(page["primary"].lower(), page["page"].lower(), f"{name}: {page}")
 
 
 if __name__ == "__main__":
