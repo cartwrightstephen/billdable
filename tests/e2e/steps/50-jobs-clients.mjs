@@ -17,6 +17,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await form.locator("#nj-zip").fill("3030");
     await form.locator("#nj-city").focus();
     assert.match(await form.locator("#nj-zip-err").innerText(), /5-digit ZIP/);
+    // Import contract is folded with what it does (Round 1, item 16).
+    await form.locator('details[data-more="nj-import"] > summary').click();
     const chooser = p.waitForEvent("filechooser");
     await form.getByRole("button", { name: "Import contract" }).click();
     await (await chooser).setFiles({ name: "subcontract.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -37,6 +39,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     }
     if (!(await form.locator("#nj-client-type").inputValue())) await form.locator("#nj-client-type").selectOption("gc");
     await form.getByRole("button", { name: "Save job" }).click();
+    // The demo has an open Oak Street kitchen: the same name is asked about (Round 1, item 20).
+    await form.locator('[data-same-job="newjob"]').getByRole("button", { name: "Open Oak Street kitchen" }).waitFor();
+    await form.getByRole("button", { name: "Keep as a new job" }).click();
     await p.locator(".job-head h1", { hasText: "Oak Street Kitchen" }).waitFor();
     assert.match(await p.locator(".job-head .sub").innerText(), /418 Oak Street, Decatur, GA 30030/);
     await p.locator(".record-group", { hasText: "Contract and change orders" }).waitFor();
@@ -50,6 +55,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.goto(BASE + "/jobs");
     await p.getByRole("button", { name: "New job", exact: true }).click();
     const form = p.locator('[data-form-key="newjob"]');
+    await form.locator('details[data-more="nj-import"] > summary').click();
     const chooser = p.waitForEvent("filechooser");
     await form.getByRole("button", { name: "Import contract" }).click();
     await (await chooser).setFiles({ name: "subcontract.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -138,6 +144,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator('[data-action="daily-for-job"][data-id="job-oak"]').click();
     await p.getByRole("heading", { name: "New job record" }).waitFor();
     assert.equal(await p.inputValue("#daily-job"), "job-oak");
+    await p.getByRole("button", { name: "+ Delivery ticket", exact: true }).click();
     await p.fill("#daily-delivery-supplier-0", "Tile delivered to site");
     await p.locator('[data-action="daily-save"]').click();
     await p.locator(".saved-result", { hasText: "1 delivery ticket" }).waitFor();
@@ -178,6 +185,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await card.locator(":scope > summary").click();
     await card.locator(".client-jobs h3", { hasText: "Finished jobs" }).waitFor();
     assert.ok(await card.locator(".client-job", { hasText: "Maple Residence" }).count());
+    // The card's Supporting documents section is folded with its list (Round 1, item 18).
+    await card.locator('details[data-more^="pb-docs"] > summary').click();
     const box = card.locator('[data-packet-choice="Insurance certificate"]');
     await box.check();
     await card.getByRole("button", { name: "Save client" }).click();

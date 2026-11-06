@@ -36,10 +36,10 @@ test("tables stay inside the screen; a schedule of values scrolls in its own box
 });
 
 test("a progress line's box says what goes in it", () => {
-  assert.equal(doneLabel({ lump_sum: true, unit: "LS" }), "% done");
+  assert.equal(doneLabel({ lump_sum: true, unit: "LS" }), "% done to date");
   assert.equal(doneLabel({ lump_sum: false, unit: "SF" }), "Qty done (SF)");
   const j = { id: "j1", sov_view: { lines: [{ id: "l1", item: "1", description: "Tile", lump_sum: true, qty_milli: 1000, unit: "LS", done_milli: 0, stored_cents: 0, billed_qty_milli: 0 }] } };
-  assert.match(sovProgressHtml(j), /data-label="% done"/);
+  assert.match(sovProgressHtml(j), /data-label="% done to date"/);
 });
 
 test("a calendar day's dot takes its most pressing kind", () => {

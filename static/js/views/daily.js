@@ -12,10 +12,11 @@ import { localDay } from "../tasks.js";
 import { recordFiles } from "./job-record.js";
 import { conversationFormHtml } from "./job.js";
 import { readJson, setNetBanner } from "../net.js";
-import { draftValue, clearForm, field, moneyField, formValues, formErrors, refuseForm } from "../forms.js";
+import { draftValue, clearForm, field, moneyField, formValues, formErrors, formDraft, refuseForm } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, onSessionEnd, currentView, formOpen } from "../state.js";
 import { post, toast, render, emptyState, nav, setState } from "../app-core.js";
+import { focusAfterDraw } from "../dom.js";
 
 // The New job record form starts on the job last used on this device (R2-07).
 const DAILY_JOB_KEY = "duracash-daily-job";
@@ -30,23 +31,24 @@ export const WEATHER = ["Clear", "Cloudy", "Rain", "Snow", "Wind", "Heat", "Cold
 export const SECTIONS = [["quantities", "Quantities"], ["co_work", "Change order work"], ["punch", "New punchlist items"]];   // in domain.daily.DAILY_SECTIONS
 const MAX_UPLOAD_MB = 15;
 
-// The document sections, always shown, as domain.daily.RECORD_SECTIONS has them: the record kind
+// The document sections, as domain.daily.RECORD_SECTIONS has them, each opened by its chip
+// ("+ Delivery ticket", Round 1 item 15): the record kind
 // each makes (other's comes from its row) and only the boxes it needs. A section with more has
 // Add another. Every row has its own files; each file is one record.
 const OTHER_KINDS = () => Object.entries(RECORD_KINDS).filter(([k]) => k !== "daily").map(([k, v]) => [k, termText(v)]);
 export const RECORD_SECTIONS = [
-  { key: "delivery", title: "Delivery tickets", kind: "ticket", one: "delivery ticket", many: "delivery tickets", more: true, fields: [
+  { key: "delivery", title: "Delivery tickets", chip: "Delivery ticket", kind: "ticket", one: "delivery ticket", many: "delivery tickets", more: true, fields: [
     { name: "supplier", label: "Supplier" }, { name: "number", label: "Ticket number" },
     { name: "what", label: "What arrived", wide: true }] },
-  { key: "photos", title: "Progress photos", kind: "photo", one: "progress photo", many: "progress photos", imagesOnly: true, fields: [
+  { key: "photos", title: "Progress photos", chip: "Photos", kind: "photo", one: "progress photo", many: "progress photos", imagesOnly: true, fields: [
     { name: "note", label: "What they show", wide: true }] },
-  { key: "time_sheets", title: "Time sheets", kind: "ticket", one: "time sheet", many: "time sheets", more: true, fields: [
+  { key: "time_sheets", title: "Time sheets", chip: "Time sheet", kind: "ticket", one: "time sheet", many: "time sheets", more: true, fields: [
     { name: "who", label: "Who or which crew" }, { name: "hours", label: "Hours", inputmode: "decimal" }] },
-  { key: "invoices", title: "Invoices", kind: "supplier_invoice", one: "invoice", many: "invoices", more: true, fields: [
+  { key: "invoices", title: "Invoices", chip: "Invoice", kind: "supplier_invoice", one: "invoice", many: "invoices", more: true, fields: [
     { name: "supplier", label: "Supplier" }, { name: "number", label: "Invoice number" }, { name: "amount", label: "Amount ($)", money: true }] },
-  { key: "inspections", title: "Inspections", kind: "inspection", one: "inspection", many: "inspections", more: true, fields: [
+  { key: "inspections", title: "Inspections", chip: "Inspection", kind: "inspection", one: "inspection", many: "inspections", more: true, fields: [
     { name: "who", label: "Who inspected", placeholder: "City electrical inspector" }, { name: "outcome", label: "Result", placeholder: "Passed rough-in" }] },
-  { key: "other", title: "Other documents and notes", one: "other document or note", many: "other documents and notes", more: true, fields: [
+  { key: "other", title: "Other documents and notes", chip: "Other", one: "other document or note", many: "other documents and notes", more: true, fields: [
     { name: "kind", label: "Kind", options: OTHER_KINDS }, { name: "label", label: "What it is", placeholder: "COI Brightwater 2026-27" },
     { name: "note", label: "Note", wide: true }] },
 ];
@@ -56,9 +58,12 @@ export const RECORD_SECTIONS = [
 // refilled after a redraw, so the files are kept here and listed; once uploaded, a file is a
 // record on the job and only its record id is kept, so a second Save doesn't upload it again.
 // saved says what the last Save did, until the next one.
-export const daily = { checked: new Set(), rows: { co: 1 }, files: {}, uploaded: [], saved: null };
+// open: the document sections whose chip was tapped; photosDone: photo rows the person said Done to.
+export const daily = { checked: new Set(), rows: { co: 1 }, files: {}, uploaded: [], saved: null, open: new Set(), photosDone: new Set() };
 function resetDaily() {
   daily.checked = new Set();
+  daily.open = new Set();
+  daily.photosDone = new Set();
   daily.rows = { co: 1 };
   daily.files = {};
   daily.uploaded = [];
@@ -80,12 +85,18 @@ function fileList(key) {
     <button class="linkish" data-action="daily-file-remove" data-kind="${key}" data-n="${n}" aria-label="Remove ${esc(f.name)}">Remove</button></li>`).join("")}</ul>`;
 }
 
-// Take a photo opens the phone's rear camera; Choose files offers every source.
+// Take a photo opens the phone's rear camera, and asks for more than one where the phone allows;
+// once a photo is in, it reads Take another photo, until Done. Choose files offers every source.
 function filePickers(s, key) {
   const what = s.title.toLowerCase();
+  const taken = (daily.files[key] || []).length + daily.uploaded.filter(u => u.key === key).length;
+  if (s.imagesOnly && daily.photosDone.has(key) && taken) {
+    return `<p class="record-files-done">${taken} photo${taken === 1 ? "" : "s"} <button class="linkish" data-action="daily-photos-more" data-kind="${key}">Add more</button></p>${fileList(key)}`;
+  }
   return `<div class="record-files">
-      <label class="btn small secondary file-pick">Take a photo<input type="file" class="visually-hidden" id="daily-${key}-camera" data-record-files="${key}" accept="image/*" capture="environment" aria-label="Take a photo: ${what}"></label>
+      <label class="btn small secondary file-pick">${taken ? "Take another photo" : "Take a photo"}<input type="file" class="visually-hidden" id="daily-${key}-camera" data-record-files="${key}" accept="image/*" capture="environment" multiple aria-label="Take a photo: ${what}"></label>
       <label class="btn small secondary file-pick">Choose files<input type="file" class="visually-hidden" id="daily-${key}-files" data-record-files="${key}" multiple${s.imagesOnly ? ' accept="image/*"' : ""} aria-label="Choose files: ${what}"></label>
+      ${s.imagesOnly && taken ? `<button class="btn small" data-action="daily-photos-done" data-kind="${key}">Done</button>` : ""}
     </div>${fileList(key)}`;
 }
 
@@ -98,8 +109,22 @@ function recordSectionHtml(s) {
     }).join("");
     return `<div class="record-row"><div class="form-grid">${boxes}</div>${filePickers(s, `${s.key}_${n}`)}</div>`;
   }).join("");
-  return `<section class="daily-section" data-record-section="${s.key}"><h3>${s.title}</h3>${rows}
-    ${s.more ? `<button class="btn small secondary" data-action="daily-more" data-kind="${s.key}">Add another</button>` : ""}</section>`;
+  return `<section class="daily-section" data-record-section="${s.key}"><h3>${s.title}</h3>${rows}</section>`;
+}
+
+// A section is shown once its chip is tapped, and whenever something is in it: a typed box or a file.
+function sectionOpen(s) {
+  if (daily.open.has(s.key)) return true;
+  const at = `${s.key}_`;
+  return Object.keys(daily.files).some(k => k.startsWith(at) && daily.files[k].length) || daily.uploaded.some(u => u.key.startsWith(at))
+    // Other's Kind alone is nothing in it (recordEntries reads it the same way).
+    || Object.entries(formDraft.daily || {}).some(([k, v]) => String(v || "").trim() && s.fields.some(f => f.name !== "kind" && k.startsWith(`${at}${f.name}_`)));
+}
+
+// The chips that open the document sections; tapped again, a section that takes more adds a row.
+function recordChipsHtml() {
+  return `<div class="record-chips" role="group" aria-label="Add to this record">${RECORD_SECTIONS.map(s =>
+    `<button type="button" class="btn small secondary" data-action="daily-chip" data-kind="${s.key}"${daily.open.has(s.key) ? ' aria-pressed="true"' : ""}>+ ${s.chip}</button>`).join("")}</div>`;
 }
 
 function sectionHtml(key, j) {
@@ -174,7 +199,8 @@ export const views = {
     const j = openJobs.find(x => x.id === pick);
     const hasSov = !!(j && j.sov_view && j.sov_view.present);
     const records = state.daily_records || [];
-    const box = (key, label) => key === "quantities" && !hasSov ? ""
+    // Quantities are open whenever the job has a schedule (Round 1, item 15); the other two are ticked.
+    const box = (key, label) => key === "quantities" ? ""
       : `<label><input type="checkbox" data-daily-section="${key}"${daily.checked.has(key) ? " checked" : ""}> ${label}</label>`;
     return `
       <h1>New job record</h1>
@@ -191,8 +217,10 @@ export const views = {
           ${field({ form: "daily", name: "materials", id: "daily-materials", label: "Materials used or installed", multiline: true, wide: true })}
         </div>
         <div class="daily-checks" role="group" aria-label="Also on this record">${SECTIONS.map(([k, label]) => box(k, label)).join("")}</div>
-        ${j ? SECTIONS.filter(([k]) => daily.checked.has(k) && (k !== "quantities" || hasSov)).map(([k]) => sectionHtml(k, j)).join("") : ""}
-        ${RECORD_SECTIONS.map(recordSectionHtml).join("")}
+        ${j && hasSov ? sectionHtml("quantities", j) : ""}
+        ${j ? SECTIONS.filter(([k]) => k !== "quantities" && daily.checked.has(k)).map(([k]) => sectionHtml(k, j)).join("") : ""}
+        ${recordChipsHtml()}
+        ${RECORD_SECTIONS.filter(sectionOpen).map(recordSectionHtml).join("")}
         <button class="btn" data-action="daily-save">Save job record</button>` : emptyState("No open jobs", "", `<button class="btn" data-action="onb-newjob">New job</button>`)}
       </div>
       ${j ? formOpen.conversation ? conversationFormHtml(j) : `<p class="daily-conversation"><button class="btn secondary" data-action="toggle-form" data-form="conversation">Log a Conversation</button></p>` : ""}
@@ -212,9 +240,10 @@ export function dailyBody(v, j, checked) {
   const body = { notes: v.notes || "" };
   for (const k of ["crew_count", "crew_names", "weather", "weather_note", "materials", "deliveries"]) if (v[k]) body[k] = v[k];
   const sections = {};
-  if (checked.has("quantities") && j && j.sov_view && j.sov_view.present) {
-    sections.quantities = (j.sov_view.lines || []).filter(l => (v[`qty_${l.id}`] || "").trim()).map(l => ({ line_id: unesc(l.id), qty: v[`qty_${l.id}`].trim() }));
-  }
+  // Quantities are always on the form for a job with a schedule: sent when one is typed.
+  const qty = j && j.sov_view && j.sov_view.present
+    ? (j.sov_view.lines || []).filter(l => (v[`qty_${l.id}`] || "").trim()).map(l => ({ line_id: unesc(l.id), qty: v[`qty_${l.id}`].trim() })) : [];
+  if (qty.length) sections.quantities = qty;
   if (checked.has("co_work")) sections.co_work = Object.keys(v).filter(k => /^co_desc_\d+$/.test(k)).map(k => k.slice(8))
     .map(n => ({ co_id: v[`co_${n}`] || "", description: v[`co_desc_${n}`] || "", hours: v[`co_hours_${n}`] || "" }));
   if (checked.has("punch")) sections.punch = v.punch || "";
@@ -311,6 +340,19 @@ let saving = false;
 export const actions = {
   // "New job record" on a job page or a row of Open jobs (T9): the form with that job picked.
   "daily-for-job": (el, id) => { if (id) rememberDailyJob(id); nav("daily"); },
+  // "+ Delivery ticket": opens its section; once open, adds another row where the section takes more.
+  "daily-chip": (el) => {
+    const key = el.dataset.kind;
+    const s = RECORD_SECTIONS.find(x => x.key === key);
+    if (!s) return;
+    if (!daily.open.has(key)) daily.open.add(key);
+    else if (s.more) daily.rows[key] = Math.min(10, (daily.rows[key] || 1) + 1);
+    render();
+    const n = (daily.rows[key] || 1) - 1;
+    focusAfterDraw(() => document.querySelector(`[data-record-section="${key}"] .record-row:nth-of-type(${n + 1}) input, [data-record-section="${key}"] .record-row:nth-of-type(${n + 1}) select`));
+  },
+  "daily-photos-done": (el) => { daily.photosDone.add(el.dataset.kind); render(); },
+  "daily-photos-more": (el) => { daily.photosDone.delete(el.dataset.kind); render(); },
   "daily-more": (el) => { daily.rows[el.dataset.kind] = Math.min(10, (daily.rows[el.dataset.kind] || 1) + 1); render(); },
   "daily-file-remove": (el) => { daily.files[el.dataset.kind].splice(+el.dataset.n, 1); render(); },
   "daily-save": async () => {

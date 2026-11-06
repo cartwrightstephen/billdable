@@ -114,7 +114,7 @@ function sovEditorHtml(j) {
     </div>
     <div class="form-inline">
       <button class="btn" data-action="sov-save" data-id="${j.id}">Save schedule</button>
-      <button class="btn secondary" data-action="sov-save-contract" data-id="${j.id}" hidden>Save and change the contract</button>
+      ${mayTake("edit", perms()) ? `<button class="btn secondary" data-action="sov-save-contract" data-id="${j.id}" hidden>Save and change the contract</button>` : ""}
       <button class="btn secondary" data-action="sov-cancel">Cancel</button>
     </div>`;
 }
@@ -156,20 +156,31 @@ async function sovCorrectSave(jobId) {
   if (r && r.ok) { sovCorrecting = null; render(); }
 }
 
-export function sovCardHtml(j) {
+// "1 line · 25% billed": the folded card's summary (Round 1, item 13).
+export function sovSummary(v) {
+  if (!v.present) return "Not set up";
+  const n = (v.lines || []).length;
+  const scheduled = (v.totals || {}).scheduled_cents || 0;
+  const billed = (v.lines || []).reduce((a, l) => a + (l.billed_cents || 0), 0) + (v.op_billed_cents || 0);
+  return `${n} line${n === 1 ? "" : "s"} · ${scheduled > 0 ? Math.floor(billed * 100 / scheduled) : 0}% billed`;
+}
+
+// open: unfolded (a phone starts it folded). It is open, as a plain card, while it is being edited
+// or a field total corrected.
+export function sovCardHtml(j, open = true) {
   const v = j.sov_view || {};
   if (sovDraft && sovDraft.jobId === j.id) {
     return `<div class="card" id="sov-card"><h2>Schedule of values</h2>${sovEditorHtml(j)}</div>`;
   }
+  const fold = (body) => `<details class="card sov-file" id="sov-card" data-more="job-sov"${open || (sovCorrecting && sovCorrecting.jobId === j.id) ? " open" : ""}>
+    <summary><h2>Schedule of values</h2><span class="sub">${sovSummary(v)}</span></summary>${body}</details>`;
   // The card is on every job (Nov 3 Decision 2): what it can't do, it says.
   const fixedNote = sovFixedNote(j, mayTake("void-draft", perms()));
   if (!v.present) {
-    if (!v.editable) return `<div class="card" id="sov-card"><h2>Schedule of values</h2>${fixedNote}</div>`;
-    return `<div class="card" id="sov-card">
-      <h2>Schedule of values</h2>
+    if (!v.editable) return fold(fixedNote);
+    return fold(`
       <p class="sub">Bill line by line, the way subs bill: quantity × unit rate plus overhead and profit. ${termText("Each pay app then shows what was done on each line this period. Without it, progress is entered in dollars. It can be set until the first pay app is sent.")}${v.open_draft ? ` Setting it updates ${v.open_draft.number}.` : ""}</p>
-      <button class="btn secondary" data-action="sov-start" data-id="${j.id}">Set up schedule of values</button>
-    </div>`;
+      <button class="btn secondary" data-action="sov-start" data-id="${j.id}">Set up schedule of values</button>`);
   }
   const t = v.totals;
   const rows = v.lines.map(l => `
@@ -184,8 +195,7 @@ export function sovCardHtml(j) {
       <td class="num">${money(l.billed_cents)}</td>
       <td class="num">${money(l.scheduled_cents - l.to_date_cents)}</td>
     </tr>`).join("");
-  return `<div class="card" id="sov-card">
-    <h2>Schedule of values</h2>
+  return fold(`
     <div class="table-wrap sov-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Qty</th><th>Unit rate</th><th>Scheduled value</th><th>Done to date</th><th>Earned to date</th><th>Billed</th><th>Balance to finish</th></tr>
       ${rows}
@@ -195,8 +205,7 @@ export function sovCardHtml(j) {
     ${v.auto && v.editable ? `<p class="sub">One lump-sum line for the contract amount. Replace it with your own lines any time before the first pay app is sent.</p>` : ""}
     ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">${v.auto ? "Enter schedule lines" : "Edit schedule"}</button>` : fixedNote}
     ${sovCorrectHtml(j)}
-    ${sovPeriodHtml(j, true)}
-  </div>`;
+    ${sovPeriodHtml(j, true)}`);
 }
 
 async function sovReadPaste() {

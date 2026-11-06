@@ -84,10 +84,10 @@ export function blockerButton(j) { return j.blocker_button || ""; }
 
 // In the company's word for a pay app (terms.js): "Draft a draw for..." for draws (R6-01).
 // listed: the job page shows every blocker under the line (J6), so the line doesn't name one.
-export function nextStep(j, now = new Date(), { listed = false } = {}) { return termText(nextStepWords(j, now, listed)); }
+export function nextStep(j, now = new Date(), { listed = false, perms = null } = {}) { return termText(nextStepWords(j, now, listed, perms)); }
 
 // The line names the main button jobActions puts under it, in the same words (Nov 3 review).
-function nextStepWords(j, now, listed = false) {
+function nextStepWords(j, now, listed = false, perms = null) {
   if (j.closed) return "Finished.";
   const m = j.money;
   const draft = j.invoices.find(i => DRAFTS.includes(i.status));
@@ -118,7 +118,7 @@ function nextStepWords(j, now, listed = false) {
     if (follow && follow.due <= now) return `${waiting} Send Follow-Up.`;
     return notBilled || `${waiting} Record a Payment when it comes in.`;
   }
-  if (j.work_status !== "complete") return "Bill the work so far with Progress Pay App, or use Final Pay App once it is finished." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
+  if (j.work_status !== "complete") return `Bill the work so far with Progress Pay App${mayTake("done", perms) ? ", or use Final Pay App once it is finished" : ""}.` + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
   if (notBilled) return notBilled;
   // The closeout documents come first: domain.chase_retainage refuses before it looks at the wait.
   if (closeoutMissing(j)) return `Closeout: missing ${j.closeout_missing.join(", ")}. Open Closeout Documents.`;
@@ -301,6 +301,32 @@ export function progressFigures(j, mode, text) {
   return out;
 }
 
+// "Nov 5" for a date this year, "Nov 5, 2025" for an older one: the folded cards' summaries.
+export function shortDay(iso, now = new Date()) {
+  const text = fmtDate(iso);
+  return text.endsWith(`, ${now.getFullYear()}`) ? text.slice(0, -6) : text;
+}
+
+// A one-line schedule (one lump-sum line, nothing else on it) can be billed in dollars instead of
+// its % done (Round 1, item 10). Returns the line, or null.
+export function oneLumpLine(j) {
+  const v = j.sov_view || {};
+  const lines = v.lines || [];
+  return v.present && lines.length === 1 && lines[0].lump_sum && !v.op_bp && lines[0].scheduled_cents > 0 ? lines[0] : null;
+}
+
+// What the dollar form sends for a one-line schedule: the line's % done to date (a tenth of a
+// percent at most, rounded down) as the quantity, and the exact dollars of this pay app as the line's
+// amount. mode "period" (this draw $) or "total" (total done so far $), as progressFigures reads them.
+// Returns {error, done, amount, figures}.
+export function lumpDollars(j, mode, text) {
+  const line = oneLumpLine(j);
+  const f = progressFigures({ ...j, money: { ...j.money, contract_total_cents: line ? line.scheduled_cents : j.money.contract_total_cents } }, mode, text);
+  if (!line || f.error) return { error: f.error || "This job's schedule has more than one line.", done: "", amount: "", figures: f };
+  const milli = Math.floor(f.completed * 1000 / line.scheduled_cents);
+  return { error: "", done: (milli / 1000).toFixed(3), amount: (f.period / 100).toFixed(2), figures: f };
+}
+
 // A date the server keeps as a day ("2026-11-05") counts from midnight UTC, as domain.follow_up_due
 // reads it; the day people see is that same calendar day.
 const utcMidnight = (iso) => { const d = new Date(unesc(iso) + "T00:00:00Z"); return isNaN(d) ? null : d; };
@@ -401,6 +427,7 @@ export const ACTION_PERM = {
   "overbilling-settled": "record_payments",
   "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",
   close: "close_jobs", reopen: "close_jobs",
+  done: "manage_jobs", "undo-done": "manage_jobs", edit: "manage_jobs", "approve-co": "manage_jobs", "withdraw-co": "manage_jobs", "include-co": "manage_jobs",
 };
 
 // perms: {list: the signed-in person's permissions (me.perms)}; {owner: true} allows all.
@@ -414,7 +441,7 @@ export function mayTake(action, perms) {
 
 // The job-page button keys that need a permission.
 const KEY_ACTION = { send: "send", waiver: "waiver", retainage: "retainage", void: "void-draft", close: "close", match: "match-payment", retpay: "retainage-paid",
-  draft: "draft", progress: "progress" };
+  draft: "draft", progress: "progress", done: "done", undo: "undo-done" };
 
 const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "conversation", "pencil", "pencil-ok", "pencil-no", "sentback", "packet", "closeout",
   "draft", "progress", "done", "retainage", "retpay", "co", "close", "undo", "void", "qbo"];
@@ -431,7 +458,9 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   const all = [];
   // Labels in the company's word for a pay app (terms.js, R6-01). minor: a rare or destructive one,
   // drawn smaller. danger: drawn as one that throws something away.
-  const add = (key, label, attrs, group, opts = {}) => { if (mayTake(KEY_ACTION[key], perms)) all.push({ key, label: termText(label), attrs, group, ...opts }); };
+  // Every action the job offers is listed; what this person may not take is marked, so the main
+  // step stays the job's own (the Next step sentence names it) rather than moving to another.
+  const add = (key, label, attrs, group, opts = {}) => { all.push({ key, label: termText(label), attrs, group, allowed: mayTake(KEY_ACTION[key], perms), ...opts }); };
   if (isBlocked(j)) {
     const cos = coBlockers(j);
     if (onlyCoBlockers(j)) add("clear", blockerButton(j), `data-action="open-co" data-job="${j.id}" data-co="${cos[0].co_id}"`, "bill");
@@ -473,9 +502,25 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   // work still to bill, then recording the payment.
   if (waitingPay) order.push(...(followDue ? ["follow"] : []), "draft", "match");
   else order.push("draft", "progress", "closeout", "close", "retainage", "retpay");
-  const primary = order.map(k => all.find(a => a.key === k)).find(Boolean) || null;
-  const more = all.filter(a => a !== primary).sort((a, b) => SECONDARY_ORDER.indexOf(a.key) - SECONDARY_ORDER.indexOf(b.key));
-  return { primary, more };
+  const step = order.map(k => all.find(a => a.key === k)).find(Boolean) || null;
+  // The next step is someone else's to take: no main button, and the line says whose it is.
+  const primary = step && step.allowed ? step : null;
+  const more = all.filter(a => a !== step && a.allowed).sort((a, b) => SECONDARY_ORDER.indexOf(a.key) - SECONDARY_ORDER.indexOf(b.key));
+  return { primary, more, step };
+}
+
+// The permission a job-page action takes, in the Team page's words (domain/profiles.py PERMISSIONS).
+const PERM_NAMES = { send_payapps: "Send pay apps", send_waivers: "Send lien waivers", ask_retainage: "Ask for retainage",
+  record_payments: "Record payments", void: "Delete drafts, pull back sent pay apps and accept short pays", close_jobs: "Finish and reopen jobs",
+  manage_jobs: "Change a job's contract, change orders and mark work done" };
+
+// The job page's Next step (Round 1, item 6): the sentence names the main button under it. When
+// the step is one this person may not take, it says which permission takes it instead.
+export function jobNextStep(j, { now = new Date(), demo = false, perms = null } = {}) {
+  const { primary, more, step } = jobActions(j, { now, demo, perms });
+  let line = nextStep(j, now, { listed: isBlocked(j), perms });
+  if (step && !step.allowed) line += ` ${step.label} takes the “${PERM_NAMES[ACTION_PERM[KEY_ACTION[step.key]]] || "right"}” permission.`;
+  return { line, primary, more };
 }
 
 export const ACTION_GROUPS = [["bill", "Bill"], ["paid", "Get paid"], ["close", "Close out"]];
@@ -495,13 +540,13 @@ function closeoutAttrs(j) {
 function closeBlockerButtons(j, b, now) {
   const id = j.id;
   switch (b.kind) {
-    case "not_done": return [{ label: "Final Pay App", attrs: `data-action="toggle-form" data-form="done"` }];
+    case "not_done": return [{ label: "Final Pay App", attrs: `data-action="toggle-form" data-form="done"`, needs: "done" }];
     case "draft": return [
       { label: "Review & Send", attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}" data-focus=".send-check"`, needs: "send" },
       { label: "Delete Draft", attrs: `data-action="void-draft" data-id="${id}"`, needs: "void-draft" }];
     case "co": return [
       { label: `Get CO ${b.number} Signed`, attrs: `data-action="open-co" data-job="${id}" data-co="${b.co_id}"` },
-      { label: "Withdraw", attrs: `data-action="withdraw-co" data-id="${id}" data-co="${b.co_id}"` }];
+      { label: "Withdraw", attrs: `data-action="withdraw-co" data-id="${id}" data-co="${b.co_id}"`, needs: "withdraw-co" }];
     case "unbilled": return [{ label: "Draft Pay App", attrs: `data-action="draft" data-id="${id}"` }];
     case "overbilled": return [
       ...(b.invoice_id ? [{ label: `Open ${b.number}`, attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}"` }] : []),

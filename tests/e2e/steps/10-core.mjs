@@ -294,14 +294,18 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("heading", { name: "Unpaid" }).waitFor();
   });
 
-  await step("an unsettled job lists what stands before Finish job, each with its buttons", async () => {
+  await step("an unsettled job lists what stands before Finish job, with no button twice on the page", async () => {
     // Turner office TI is done, with money still owed on a pay app and retainage held back (R3-08).
+    // Round 1, item 6: the list stays; its buttons that the actions above already offer go.
     await page.goto(BASE + "/jobs/job-turner");
     await page.getByRole("heading", { name: "Turner office TI" }).waitFor();
     await page.getByRole("heading", { name: "Before you can finish this job" }).waitFor();
     assert.equal(await page.locator(".close-blocker-list li").count(), 2);
-    await page.locator('.close-blocker-list li[data-blocker="outstanding"]').getByRole("button", { name: "Record a Payment" }).waitFor();
-    await page.locator('.close-blocker-list li[data-blocker="retainage"]').getByRole("button", { name: "Record Retainage Paid" }).waitFor();
+    for (const name of ["Record a Payment", "Record Retainage Paid", "Ask for Retainage"]) {
+      assert.ok(await page.getByRole("button", { name, exact: true }).count() <= 1, `${name} shows once`);
+    }
+    await page.locator('.job-actions').getByRole("button", { name: "Record a Payment" }).waitFor();
+    await page.locator('.job-actions').getByRole("button", { name: "Record Retainage Paid" }).waitFor();
     assert.equal(await page.locator(".next-card .btn", { hasText: "Finish Job" }).count(), 0, "no Finish Job while unsettled");
   });
 
@@ -556,6 +560,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       assert.ok(width <= 375, `${where} is ${width}px wide`);
     };
     await p.goto(BASE + `/jobs/${jobId}`);
+    // Folded on a phone, with its summary (Round 1, item 13).
+    await p.locator("#sov-card > summary", { hasText: "2 lines" }).click();
     await p.locator("#sov-card .sov-table").waitFor();
     await noSideways("the job page with a schedule of values");
     await p.locator('#sov-card [data-action="sov-start"]').click();

@@ -5,7 +5,7 @@ import { coSignature, RECORD_KINDS } from "../jobs.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, formOpen, onSessionEnd } from "../state.js";
-import { post, render, toggleForm } from "../app-core.js";
+import { post, render, toggleForm, may } from "../app-core.js";
 
 
 // The change order just made from the job page's New change order card, shown there with
@@ -52,12 +52,12 @@ export function coSignControls(j, co, extra = "", opts = {}) {
   const newestCo = records.filter(r => r.kind === "change_order").pop();
   return `${flag}<div class="form-inline">
       <button class="btn small" data-action="request-co-signature" data-id="${j.id}" data-co="${co.id}">${co.signing_page ? "Send the signing link again" : "Request signature"}</button>
-      <button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="${!!formOpen[key]}">Signed on paper…</button>
-      <button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>
+      ${may("approve-co") ? `<button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="${!!formOpen[key]}">Signed on paper…</button>` : ""}
+      ${may("withdraw-co") ? `<button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>` : ""}
       ${extra}
     </div>
     ${co.signing_page ? `<p class="sub">Signing page: <a href="/api/jobs/${j.id}/co/${co.id}/page" target="_blank" rel="noopener">open it</a>${co.signature_requested_at ? ` · requested ${fmtDate(co.signature_requested_at)}` : ""}</p>` : ""}
-    ${formOpen[key] ? `<div class="co-paper" data-form-key="${key}">${formErrorLine(key)}
+    ${formOpen[key] && may("approve-co") ? `<div class="co-paper" data-form-key="${key}">${formErrorLine(key)}
         <div class="form-grid">
           ${field({ form: key, name: "signer_name", id: `cosign-name-${co.id}`, label: "Signed by (name)", required: true, autocomplete: "off" })}
           ${field({ form: key, name: "signed_on", id: `cosign-date-${co.id}`, label: "Date signed", type: "date", required: true, attrs: `max="${localToday()}"` })}

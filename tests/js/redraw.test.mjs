@@ -52,14 +52,14 @@ test("New job record: crew, weather and the ticked sections stay through a redra
   assert.match(html, /id="daily-crew"[^>]*type="number" value="4"/);
   assert.match(html, /<option value="Rain" selected>Rain<\/option>/);
   assert.match(html, /data-field="materials"[^>]*>Wire &lt;12 boxes&gt;<\/textarea>/);
-  assert.match(html, /data-daily-section="quantities" checked/);
+  assert.doesNotMatch(html, /data-daily-section="quantities"/, "quantities are open, not ticked (Round 1)");
   assert.match(html, /data-field="qty_l1" value="120"/);
   assert.doesNotMatch(html, /data-field="qty_l2"/, "a finished line takes no more");
   assert.match(html, /<option value="co1">CO 2 Extra outlets<\/option>/);
   assert.doesNotMatch(html, /id="daily-punch"/, "an unticked section stays closed");
   // A job without a schedule has no Quantities box.
   core.setState(company([job()]));
-  assert.doesNotMatch(reg.views.daily(), /data-daily-section="quantities"/);
+  assert.doesNotMatch(reg.views.daily(), /Quantities put in place today/);
   const body = daily.dailyBody({ notes: "Framing", crew_count: "4", weather: "Rain", qty_l1: "120", qty_l2: "", co_0: "co1", co_desc_0: "Two circuits", co_hours_0: "3",
     punch: "Patch" }, sovJob, new Set(["quantities", "co_work"]));
   assert.deepEqual(body, { notes: "Framing", crew_count: "4", weather: "Rain",
@@ -96,7 +96,11 @@ test("New job record: a section for each document, none behind a dropdown, every
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState(company());
   page.setLocation("daily");
+  const daily = await import("../../static/js/views/daily.js");
+  // Each document is a chip that opens its section (Round 1, item 15); here every one is open.
+  for (const key of ["delivery", "photos", "time_sheets", "invoices", "inspections", "other"]) daily.daily.open.add(key);
   const html = reg.views.daily();
+  daily.daily.open.clear();
   assert.match(html, /<h1>New job record<\/h1>/);
   assert.match(html, /id="daily-date"[^>]*type="date"/);
   for (const title of ["Delivery tickets", "Progress photos", "Time sheets", "Invoices", "Inspections", "Other documents and notes"]) assert.ok(html.includes(`<h3>${title}</h3>`), title);

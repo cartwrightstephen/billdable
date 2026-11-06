@@ -82,6 +82,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(made.drafts, 0, "a job record makes no draft");
     await p.goto(`${BASE}/jobs/${made.id}`);
     const card = p.locator("#sov-card");
+    // Folded on a phone (Round 1, item 13): open it.
+    if (await card.getAttribute("open") === null) await card.locator(":scope > summary").click();
     await card.locator(".sov-period", { hasText: "35 LF" }).waitFor();
     assert.match(await card.locator(".sov-suggested").innerText(), /\$1,750\.00/);
     await p.locator(".next-card .primary-action", { hasText: "Progress pay app" }).click();
@@ -107,8 +109,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const p = await signedInPage({ width: 375, height: 800 });
     await p.goto(`${BASE}/jobs`);
     await p.click('[data-action="toggle-form"][data-form="newjob"]');
-    await p.locator(".nj-sov h3", { hasText: "Schedule of values" }).waitFor();
-    assert.match(await p.locator(".nj-sov").innerText(), /one lump-sum line for the contract amount/);
+    // Folded, saying what a blank schedule becomes (Round 1, item 16).
+    assert.match(await p.locator(".nj-sov > summary").innerText(), /Schedule of values\s+One lump-sum line for the contract amount/);
+    await p.locator(".nj-sov > summary").click();
     await p.fill("#nj-sov-desc-0", "Conduit");
     await p.click('[data-action="nj-sov-add"]');
     assert.equal(await p.inputValue("#nj-sov-desc-0"), "Conduit", "what was typed stays when a line is added");

@@ -385,6 +385,17 @@ td.num, .num { font-variant-numeric: tabular-nums; }
 .playbook-card summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .playbook-card summary .sub { margin: 0; }
 .playbook-card [data-form-key] { margin-top: 12px; }
+/* Round 1, item 18: a client card in three sections, then one full-width Save. */
+.playbook-card [data-form-key] > h3, .playbook-section summary h3 { font-size: 15px; margin: 12px 0 6px; }
+.playbook-section { border-top: 1px solid var(--line); margin: 8px 0; }
+.playbook-section > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-height: 44px; }
+.playbook-section > summary h3 { margin: 10px 0; }
+.btn.full-width { width: 100%; margin-top: 12px; }
+/* New job (Round 1, item 16): Import contract and the schedule folded, each with what it holds. */
+.same-job-q { flex-basis: 100%; margin: 0; font-weight: 600; }
+.contract-fold, .nj-sov { border-top: 1px solid var(--line); margin: 8px 0 12px; }
+.contract-fold > summary, .nj-sov > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.contract-fold > summary .sub, .nj-sov > summary .sub { font-weight: 400; margin: 0; }
 .merge-payer { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
 .merge-payer summary { cursor: pointer; color: var(--muted); }
 .merge-payer .form-inline { margin-top: 8px; }
@@ -518,9 +529,17 @@ textarea { font: inherit; }
 .timeline { list-style: none; margin: 0; padding: 0; }
 .timeline li { padding: 10px 0; border-bottom: 1px solid var(--line); line-height: 1.45; }
 .timeline li:last-child { border-bottom: 0; }
-.money-file > summary { cursor: pointer; }
-.money-file > summary h2 { display: inline; margin: 0 8px 0 0; }
-.money-file[open] > summary { margin-bottom: 8px; }
+.money-file > summary, .sov-file > summary, .job-paperwork > summary, .job-records > summary, .job-history > summary { cursor: pointer; min-height: 44px; }
+.money-file > summary h2, .sov-file > summary h2, .job-paperwork > summary h2, .job-records > summary h2, .job-history > summary h2 { display: inline; margin: 0 8px 0 0; }
+.money-file[open] > summary, .sov-file[open] > summary, .job-paperwork[open] > summary, .job-records[open] > summary, .job-history[open] > summary { margin-bottom: 8px; }
+.record-line .sub { margin-left: 4px; }
+/* Round 1, item 13: on a phone the other actions are one wrapping row, without the group headings. */
+@media (max-width: 600px) {
+  .job-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .job-actions .action-group, .job-actions .action-group .more-actions { display: contents; }
+  .job-actions .action-group h3 { display: none; }
+  .job-actions .btn:not(.small) { flex: 1 1 auto; }
+}
 
 /* Forms built with field() (js/forms.js): label, input, help and error line in one block. */
 .field { min-width: 0; }
@@ -645,6 +664,10 @@ span.due-item { cursor: default; }
 .daily-files li { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
 .record-row { padding: 4px 0 8px; }
 .record-row + .record-row { border-top: 1px solid var(--line); padding-top: 10px; }
+/* New job record (Round 1, item 15): a chip per kind of document opens its section. */
+.record-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.record-chips [aria-pressed="true"] { border-color: var(--copper); }
+.record-files-done { margin: 8px 0 0; }
 .record-files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .file-pick { position: relative; display: inline-flex; align-items: center; }
 .file-pick:focus-within { outline: 2px solid var(--copper); outline-offset: 2px; }
