@@ -132,7 +132,7 @@ class NextStepAgreesTests(unittest.TestCase):
         self.finished(state, job)
         job["contract_cents"] = 500_000
         row, page = self.compare(state, job)
-        self.assertEqual((row["kind"], row["button"]), ("finish_held", "Open Job"))
+        self.assertEqual((row["kind"], row["button"]), ("finish_held", "Open job"))
         self.assertEqual(row["text"], page["line"])
         self.assertIn("overbilled by $5,000.00", row["text"])
 
@@ -225,7 +225,7 @@ class NextStepAgreesTests(unittest.TestCase):
         self.finished(state, job)
         job["change_orders"].append({"id": "co-3", "number": 3, "status": "pending", "included_in_billing": False, "amount_cents": 50_000, "description": "Rail"})
         row, page = self.compare(state, job)
-        self.assertEqual((row["kind"], row["button"]), ("finish_held", "Open Job"))
+        self.assertEqual((row["kind"], row["button"]), ("finish_held", "Open job"))
         self.assertEqual(row["text"], page["line"])
         self.assertIn("CO 3", row["text"])
 

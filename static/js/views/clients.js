@@ -15,6 +15,9 @@ import { sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deleteP
 // (domain.signer_defaulted): its box starts empty, so saving the card doesn't count as an answer.
 const signerDefaulted = (p) => !!p.approver && (p.playbook_missing || []).map(unesc).includes("approver");
 
+// The client's own Usual retainage %, as typed: blank when it goes by its type (domain.jobinfo).
+const usualRetainage = (p) => (p.retainage_pct === undefined || p.retainage_pct === null ? "" : String(p.retainage_pct));
+
 // A client's card for someone without the company permission: its settings to read, and boxes only
 // for what the client is still missing (server.py's /missing, the same rule as New job).
 function clientReadOnlyHtml(p, key, f) {
@@ -37,6 +40,7 @@ function clientReadOnlyHtml(p, key, f) {
     ${row("Pay apps due by", p.payapp_due_day ? `day ${p.payapp_due_day} of the month` : "")}
     ${row("Days they usually take to pay", p.usual_approval_days)}
     ${row("Payment terms", days(p.payment_terms_days))}
+    ${row("Usual retainage %", p.retainage_default != null ? `${p.retainage_default}%` : "")}
     ${row("Supporting documents needed", p.no_paperwork ? "Nothing needed" : p.packet)}
     ${row("They send pay apps back when", p.rejects_when)}
     ${row("Also email (CC)", p.copy)}
@@ -222,7 +226,8 @@ export const views = {
               ${f({ name: "phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off", rule: "phone", value: unesc(clean(p.phone)) })}
               ${f({ name: "payapp_due_day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", value: String(p.payapp_due_day || ""), placeholder: "e.g. 25" })}
               ${f({ name: "payment_terms_days", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", value: String(p.payment_terms_days || ""), placeholder: "30" })}
-              ${/* Money stays in this open section: the client's usual retainage % goes here. */ ""}
+              ${/* Money stays in this open section (Round 1, items 1 and 18). Blank: the client type's. */ ""}
+              ${f({ name: "retainage_pct", label: "Usual retainage %", helpKey: "usual_retainage", inputmode: "decimal", autocomplete: "off", value: usualRetainage(p), placeholder: String(p.retainage_default ?? "") })}
             </div>
             ${playbookSection(`pb-docs-${p.id}`, "Supporting documents", p.no_paperwork ? "Nothing needed" : (p.packet_items || []).join(", ") || "None ticked", `
               ${paperworkHtml(key, p)}
@@ -290,6 +295,8 @@ export const actions = {
     for (const [k, label] of [["follow_up_days", "the days between follow-ups"], ["usual_approval_days", "the days they usually take to pay"], ["payment_terms_days", "the payment terms in days"]]) {
       if (updates[k] && !/^\d+$/.test(updates[k])) errors[k] = `Enter ${label} as a whole number from 1 to 365.`;
     }
+    // Blank goes back to the client type's (domain.update_payer).
+    if (updates.retainage_pct && !(/^\d+$/.test(updates.retainage_pct) && +updates.retainage_pct <= 20)) errors.retainage_pct = "Enter a retainage from 0 to 20 percent, or leave it blank.";
     if (refuseForm(key, errors)) return;
     const r = await post(`/api/payers/${id}/update`, updates, { formKey: key });
     if (r && r.ok) ticks.delete(key);

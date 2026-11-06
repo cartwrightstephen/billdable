@@ -595,6 +595,19 @@ export const CLIENT_TYPES = [
   ["sub", "Another subcontractor (you are a lower tier)"], ["public", "Public agency"],
 ];
 
+// The retainage a new job starts at (domain.jobinfo.default_retainage_pct, Round 1 item 1): the
+// client playbook's Usual retainage %, else 10% for a general contractor, a public agency and a
+// higher-tier sub, none for an owner or homeowner. A type picked on New job (a new client, or a
+// saved one without a type) is that type's. null: no client or type picked yet.
+export const RETAINAGE_BY_TYPE = { gc: 10, public: 10, sub: 10 };
+export function newJobRetainage(known, clientType = "") {
+  const saved = known && known.retainage_pct;
+  if (saved !== undefined && saved !== null && saved !== "") return Number(saved);
+  if (clientType) return RETAINAGE_BY_TYPE[clientType] || 0;
+  if (known && known.retainage_default !== undefined && known.retainage_default !== null) return Number(known.retainage_default);
+  return null;
+}
+
 // The client's type in words; one saved before there were types reads from its role.
 export function clientTypeLabel(p) {
   const kind = unesc((p && p.client_type) || "") || (unesc((p && p.role) || "") === "GC" ? "gc" : "owner");

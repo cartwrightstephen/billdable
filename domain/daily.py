@@ -140,7 +140,7 @@ def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[s
         if not sov.has_sov(job):
             _refuse("", {"quantities": "This job has no schedule of values to add quantities to."})
         by_id = {line["id"]: line for line in sov.lines(job)}
-        rows, seen = [], set()
+        rows, seen, unchanged = [], set(), False
         for entry in _list(raw["quantities"], "quantities", "Quantities"):
             entry = entry if isinstance(entry, dict) else {}
             line = by_id.get(str(entry.get("line_id") or ""))
@@ -153,17 +153,31 @@ def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[s
             field = f"qty_{line['id']}"
             if entry.get("qty") in (None, ""):
                 continue
-            amount = _amount(entry.get("qty"), field, f"{line['description']}: {'% done today' if lump else 'quantity'}")
+            to_date = lump and entry.get("to_date") is True
+            amount = _amount(entry.get("qty"), field, f"{line['description']}: {'% done to date' if to_date else '% done today' if lump else 'quantity'}")
             if lump:
-                # A lump sum is entered as % of the line done today: 1000 thousandths is 100%.
+                # A lump sum is entered as % of the line: 1000 thousandths is 100%.
                 if amount % 100:
                     _refuse("", {field: f"{line['description']}: a % done can have at most one decimal, like 12.5."})
                 amount //= 100
+            if to_date:
+                # New job record asks a lump sum's % done to date, the figure a foreman knows (Round 1):
+                # what is recorded is the step up from the field total. Lower is a correction, not a record.
+                current = sov.field_total(line)
+                if amount < current:
+                    _refuse("", {field: f"{line['description']} is at {sov.fmt_qty(current * 100)}% done already. Enter that or more, "
+                                        "or lower it with Correct field total on the job's Schedule of values card."})
+                if amount > current:
+                    rows.append({"line_id": line["id"], "qty_milli": amount - current, "to_date_milli": amount})
+                else:
+                    unchanged = True
+                continue
             if amount:
                 rows.append({"line_id": line["id"], "qty_milli": amount})
-        if not rows:
+        if rows:
+            sections["quantities"] = rows
+        elif not unchanged:   # a lump sum typed at its own total adds nothing, and isn't a mistake
             _refuse("", {"quantities": "Enter a quantity on at least one line, or untick Quantities."})
-        sections["quantities"] = rows
     if "co_work" in raw:
         cos = {co["id"]: co for co in job.get("change_orders", []) if co.get("status") != "withdrawn"}
         rows = []
@@ -229,7 +243,9 @@ def _qty_words(job: dict[str, Any], rows: list[dict[str, Any]]) -> str:
         line = by_id.get(row["line_id"])
         if not line:
             continue
-        if line["unit"].upper() == "LS" and line["qty_milli"] == 1000:
+        if line["unit"].upper() == "LS" and line["qty_milli"] == 1000 and "to_date_milli" in row:
+            parts.append(f"{line['description']} {sov.fmt_qty(row['to_date_milli'] * 100)}% done to date (+{sov.fmt_qty(row['qty_milli'] * 100)}%)")
+        elif line["unit"].upper() == "LS" and line["qty_milli"] == 1000:
             parts.append(f"{sov.fmt_qty(row['qty_milli'] * 100)}% {line['description']}")
         else:
             parts.append(f"{sov.fmt_qty(row['qty_milli'])} {line['unit']} {line['description']}")

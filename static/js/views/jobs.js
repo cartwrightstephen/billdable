@@ -1,7 +1,7 @@
 // Jobs: the open jobs with New job and New job record, and Job history. The job's own fields
 // are shared with Edit job; Import contract fills New job and Add client.
 import { esc, unesc, escDeep, money, centsFrom, percentFrom, dollarsText, fmtDate } from "../format.js";
-import { nextStep, statusPill, CLIENT_TYPES, clientTypeLabel, openJobs, startDateLimits } from "../jobs.js";
+import { nextStep, statusPill, CLIENT_TYPES, clientTypeLabel, openJobs, startDateLimits, newJobRetainage } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { moreButton } from "../dom.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, formErrors, draftValue } from "../forms.js";
@@ -38,7 +38,7 @@ export function jobFields(form, prefix, j = {}) {
       </div>`,
     contract_number: f({ name: "contract_number", id: `${prefix}-contract`, label: "Contract number", helpKey: "contract_number", rule: "contract_number", value: unesc(j.contract_number || ""), ...mark("contract_number") }),
     contract_cents: moneyField({ form, name: "contract_cents", id: `${prefix}-amount`, label: "Contract amount ($)", helpKey: "contract_amount", required: true, placeholder: "48,500", cents: j.contract_cents, ...mark("contract_cents") }),
-    retainage_pct: f({ name: "retainage_pct", id: `${prefix}-retainage`, label: "Retainage %", helpKey: "retainage_pct", value: String(j.retainage_pct || 0), inputmode: "decimal", autocomplete: "off", ...mark("retainage_pct") }),
+    retainage_pct: f({ name: "retainage_pct", id: `${prefix}-retainage`, label: "Retainage %", helpKey: "retainage_pct", value: String(j.retainage_pct ?? 0), inputmode: "decimal", autocomplete: "off", ...mark("retainage_pct") }),
     // J8: the day the job started; New job starts at today, an older job with none stays blank.
     started_on: f({ name: "started_on", id: `${prefix}-start`, label: "Start date", type: "date", value: unesc(j.started_on || (j.id ? "" : limits.today)),
       ...mark("started_on"), attrs: `min="${limits.min}" max="${limits.max}"${contractMark(form, "started_on").attrs ? " data-from-contract" : ""}` }),
@@ -211,24 +211,25 @@ export function syncNewJobCustomer() {
 
 // Who signs off and the client type are the person's to enter (Decision 4): nothing fills them,
 // and a signer that only defaulted to the client's name is asked for again, not shown to save
-// unchanged. A saved general contractor's retainage starts at what their last job held (R2-01),
-// unless already typed.
+// unchanged. Retainage follows the client picked (prefillRetainage), unless already typed.
 export function prefillApprover() {
   const form = document.querySelector('[data-form-key="newjob"]');
   const customer = form?.querySelector('[data-field="customer"]')?.value.trim();
   if (customer && knownPayer(customer)) prefillRetainage();
 }
 
-// A general contractor usually holds the same retainage job after job: start from their last one.
+// Retainage % follows the client and client type picked (Round 1, item 1): the client's Usual
+// retainage %, or its type's. A box the person typed in, a 0 too, is theirs and stays.
+export function newJobRetainageValue(known, clientType) {
+  const pct = newJobRetainage(known, clientType);
+  return pct === null ? "" : String(pct);
+}
+
 export function prefillRetainage() {
   const form = document.querySelector('[data-form-key="newjob"]');
-  const known = knownPayer(form?.querySelector('[data-field="customer"]')?.value);
-  if (!known || unesc(known.role || "") !== "GC" || (formDraft.newjob || {}).retainage_touched) return;
-  const last = [...state.jobs].reverse().find(j => (j.payer_id || (j.payer && j.payer.id)) === known.id);
-  const box = form.querySelector('[data-field="retainage_pct"]');
-  if (!last || !box) return;
-  box.value = String(last.retainage_pct || 0);
-  (formDraft.newjob ||= {}).retainage_pct = box.value;
+  const box = form?.querySelector('[data-field="retainage_pct"]');
+  if (!box || (formDraft.newjob || {}).retainage_touched) return;
+  box.value = newJobRetainageValue(knownPayer(form.querySelector('[data-field="customer"]')?.value), form.querySelector('[data-field="client_type"]')?.value || "");
 }
 
 // ---------- Import contract (G4, S12) ----------
@@ -354,14 +355,7 @@ async function fileContract(jobId, r) {
   } else if (r.text) {
     await post(`/api/jobs/${jobId}/add-record`, { label: "Contract (pasted)", kind: "contract", note: r.text.slice(0, 5000) }, { quiet: true });
   }
-  if (r.sov && r.useSov === false) {
-    // The person unticked it: nothing to set up.
-  } else if (r.sov) {
-    const res = await post(`/api/jobs/${jobId}/sov`, { lines: r.sov.lines, op_pct: 0, update_contract: !!r.useSovTotal }, { quiet: true });
-    if (res && res.ok) toast(r.useSovTotal ? "Job saved with the schedule of values from the contract and its total as the contract amount"
-      : "Job saved with the schedule of values from the contract");
-    else toast(`The job is saved, but the schedule of values wasn't set up: ${String((res && res.data && res.data.error) || "set it up on the job page").replace(/[.\s]+$/, "")}.`);
-  }
+  // Its schedule of values went with the job itself (create-job).
   if (contractRead === r) contractRead = null;
   clearJobDetails();
   await load();
@@ -418,7 +412,9 @@ export const views = {
     const f = (o) => field({ form: "newjob", ...o });
     const known = knownPayer(draftValue("newjob", "customer"));
     const mode = clientMode();
-    const jf = jobFields("newjob", "nj", { retainage_pct: 0 });
+    // Until typed in, Retainage % is what the client picked usually holds (prefillRetainage).
+    if (formDraft.newjob && !formDraft.newjob.retainage_touched) delete formDraft.newjob.retainage_pct;
+    const jf = jobFields("newjob", "nj", { retainage_pct: newJobRetainageValue(known, draftValue("newjob", "client_type")) });
     const mark = (name) => contractMark("newjob", name);
     const slot = (name, html) => `<div data-payer-slot="${name}"${payerSlotHidden(name, known, mode) ? " hidden" : ""}>${html}</div>`;
     return `
@@ -547,9 +543,21 @@ export const actions = {
       if (asked("ap_email") && (!apEmail || checkFields({ ap_email: apEmail }, { ap_email: "email" }).ap_email)) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
     }
     const amount = centsFrom(v.contract_cents);
+    // The contract read this job is saved with: the save closes the form, which forgets it.
+    const read = contractRead && contractRead.form === "newjob" ? contractRead : null;
+    const useSov = document.getElementById("nj-use-sov");
+    if (read && useSov) read.useSov = useSov.checked;
+    const useTotal = document.getElementById("nj-sov-total");
+    if (read) read.useSovTotal = !!(useTotal && useTotal.checked);
+    // The contract's schedule is saved with the job, in the same request, so whoever may create the
+    // job sets its contract (Round 1): the schedule total, when ticked, is the contract amount.
+    const sovRead = read && read.sov && read.useSov !== false ? read.sov : null;
+    const byTotal = !!(sovRead && read.useSovTotal);
+    if (byTotal) Object.assign(amount, { cents: sovRead.total_cents, error: "" });
     if (amount.error || amount.cents <= 0) errors.contract_cents = v.contract_cents && amount.error ? amount.error : "Enter the contract amount, like 48,500.";
-    const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: 0, error: "" };
-    if (ret.error || !Number.isInteger(ret.value) || ret.value > 20) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
+    // Blank: the server takes what the client usually holds. A typed 0 is sent as 0.
+    const ret = v.retainage_pct ? percentFrom(v.retainage_pct) : { value: "", error: "" };
+    if (ret.error || (ret.value !== "" && (!Number.isInteger(ret.value) || ret.value > 20))) errors.retainage_pct = "Enter a whole percent from 0 to 20.";
     // A new client's pay app day and terms (from the boxes, which an imported contract fills).
     const days = {};
     if (!known) {
@@ -558,20 +566,14 @@ export const actions = {
       if (v.payment_terms_days && !(/^\d+$/.test(v.payment_terms_days) && +v.payment_terms_days >= 1 && +v.payment_terms_days <= 365)) errors.payment_terms_days = "Enter the days they have to pay as a whole number from 1 to 365.";
       else if (v.payment_terms_days) days.payment_terms_days = Number(v.payment_terms_days);
     }
-    // The contract read this job is saved with: the save closes the form, which forgets it.
-    const read = contractRead && contractRead.form === "newjob" ? contractRead : null;
-    const useSov = document.getElementById("nj-use-sov");
-    if (read && useSov) read.useSov = useSov.checked;
-    const useTotal = document.getElementById("nj-sov-total");
-    if (read) read.useSovTotal = !!(useTotal && useTotal.checked);
-    // A schedule that doesn't add up to the amount would be refused after the job is saved (C6).
-    if (read && read.sov && read.useSov !== false && !read.useSovTotal && !errors.contract_cents && amount.cents !== read.sov.total_cents) {
+    // A schedule that doesn't add up to the amount is refused with nothing saved (C6).
+    if (sovRead && !byTotal && !errors.contract_cents && amount.cents !== sovRead.total_cents) {
       errors.contract_cents = `The schedule of values from the contract adds up to ${money(read.sov.total_cents)}. Change the amount, tick Use the schedule total as the contract amount, or untick the schedule.`;
     }
     if (refuseForm("newjob", errors)) return;
     const before = new Set(state.jobs.map(j => j.id));
     const r = await post("/api/jobs", {
-      sov_lines: newJobSovLines(v),
+      sov_lines: sovRead ? sovRead.lines : newJobSovLines(v),
       name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer, approver,
       ...(approver ? { approver_confirmed: true } : {}),   // typed into its box here: a person's answer, even the client's own name
       ap_email: apEmail, phone, client_type: asked("client_type") ? v.client_type : "",
@@ -589,7 +591,8 @@ export const actions = {
     delete keptNames.newjob;
     keptJobName = "";
     njSovRows = 3;
-    toast("Job saved");
+    toast(!sovRead ? "Job saved" : byTotal ? "Job saved with the schedule of values from the contract and its total as the contract amount"
+      : "Job saved with the schedule of values from the contract");
     const made = state.jobs.find(j => !before.has(j.id));
     if (made) {
       await fileContract(made.id, read);

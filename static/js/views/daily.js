@@ -130,14 +130,17 @@ function recordChipsHtml() {
 function sectionHtml(key, j) {
   if (key === "quantities") {
     const lines = ((j.sov_view && j.sov_view.lines) || []).filter(l => l.done_milli < l.qty_milli);
-    return `<div class="daily-section"><h3>Quantities put in place today</h3>
+    // A lump sum asks its % done to date, the figure a foreman knows; the server records the step
+    // up from the field total (domain.daily.clean_daily_details). Other lines take today's quantity.
+    const allLump = lines.length > 0 && lines.every(lumpSum);
+    return `<div class="daily-section"><h3>${allLump ? "Work done to date" : "Quantities put in place today"}</h3>
       <p class="sub">They add to the job's totals for the period.</p>
       ${lines.length ? `<div class="table-wrap sov-wrap"><table class="sov-table">
-        <tr><th>Item</th><th>Description</th><th>Done so far</th><th>Today</th></tr>
+        <tr><th>Item</th><th>Description</th><th>Done so far</th><th>${allLump ? "% done to date" : "Today"}</th></tr>
         ${lines.map(l => `<tr><td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
           <td class="num">${lumpSum(l) ? `${+(l.done_milli / 10).toFixed(1)}%` : `${fmtQty(l.done_milli)} of ${fmtQty(l.qty_milli)} ${l.unit}`}</td>
-          <td data-label="${lumpSum(l) ? "% done today" : `Today (${l.unit})`}"><input class="sov-in sov-num" id="daily-qty-${l.id}" data-field="qty_${l.id}" value="${typed(`qty_${l.id}`)}" inputmode="decimal"
-            aria-label="${l.description}: ${lumpSum(l) ? "% done today" : `${l.unit} put in place today`}"> ${lumpSum(l) ? "%" : l.unit}${errSpan(`daily-qty-${l.id}`, `qty_${l.id}`)}</td></tr>`).join("")}
+          <td data-label="${lumpSum(l) ? "% done to date" : `Today (${l.unit})`}"><input class="sov-in sov-num" id="daily-qty-${l.id}" data-field="qty_${l.id}" value="${typed(`qty_${l.id}`)}" inputmode="decimal"
+            aria-label="${l.description}: ${lumpSum(l) ? "% done to date" : `${l.unit} put in place today`}"> ${lumpSum(l) ? "%" : l.unit}${errSpan(`daily-qty-${l.id}`, `qty_${l.id}`)}</td></tr>`).join("")}
       </table></div>` : `<p class="sub">Every line is done.</p>`}
     </div>`;
   }
@@ -174,6 +177,7 @@ export function recordMeta(r, rj) {
   if (s.quantities) out.push(`Quantities: ${s.quantities.map(q => {
     const l = lines[q.line_id];
     if (!l) return fmtQty(q.qty_milli);
+    if (lumpSum(l) && q.to_date_milli != null) return `${l.description} ${fmtQty(q.to_date_milli * 100)}% done to date (+${fmtQty(q.qty_milli * 100)}%)`;
     return lumpSum(l) ? `${fmtQty(q.qty_milli * 100)}% ${l.description}` : `${fmtQty(q.qty_milli)} ${l.unit} ${l.description}`;
   }).join(", ")}`);
   // Saved, but the quantities couldn't be added (B5 of the Oct 30 review): say why, under them.
@@ -242,7 +246,8 @@ export function dailyBody(v, j, checked) {
   const sections = {};
   // Quantities are always on the form for a job with a schedule: sent when one is typed.
   const qty = j && j.sov_view && j.sov_view.present
-    ? (j.sov_view.lines || []).filter(l => (v[`qty_${l.id}`] || "").trim()).map(l => ({ line_id: unesc(l.id), qty: v[`qty_${l.id}`].trim() })) : [];
+    ? (j.sov_view.lines || []).filter(l => (v[`qty_${l.id}`] || "").trim())
+      .map(l => ({ line_id: unesc(l.id), qty: v[`qty_${l.id}`].trim(), ...(lumpSum(l) ? { to_date: true } : {}) })) : [];
   if (qty.length) sections.quantities = qty;
   if (checked.has("co_work")) sections.co_work = Object.keys(v).filter(k => /^co_desc_\d+$/.test(k)).map(k => k.slice(8))
     .map(n => ({ co_id: v[`co_${n}`] || "", description: v[`co_desc_${n}`] || "", hours: v[`co_hours_${n}`] || "" }));

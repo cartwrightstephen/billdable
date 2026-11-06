@@ -318,7 +318,7 @@ function listenForActions() {
   app.addEventListener("focusout", (e) => { if (e.target.id === "nj-customer") prefillApprover(); });
   app.addEventListener("change", (e) => {
     if (e.target.id === "paste-source") { e.target.dataset.touched = "1"; const hint = document.getElementById("paste-hint"); if (hint) hint.textContent = ""; }
-    if (e.target.id === "nj-role" || e.target.id === "nj-customer" || e.target.id === "nj-client") prefillRetainage();
+    if (e.target.id === "nj-client-type" || e.target.id === "nj-customer" || e.target.id === "nj-client") prefillRetainage();
     if (e.target.id === "match-inv") prefillPaymentAmount(e.target.value);
     // The line under the waiver type follows the type picked (R6-10).
     if (e.target.id && e.target.id.startsWith("waiver-kind-")) {

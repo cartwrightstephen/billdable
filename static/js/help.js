@@ -65,6 +65,7 @@ export const FIELD_HELP = {
   "customer_name": "The name you know them by. A new job for the same name, in any case, goes to this client.",
   "follow_up_days": "Days to wait after sending before a follow-up is due. Set it to the client's normal payment window. Blank goes back to 7.",
   "payapp_due_day": "The day of the month their pay apps are due by, if the contract sets one. Leave it blank if not.",
+  "usual_retainage": "The retainage a new job for this client starts at. Blank: 10% for a general contractor, a public agency or another subcontractor, none for an owner or homeowner.",
   "usual_approval_days": "How long this client usually takes to pay after a pay app is sent. Sets the expected date on the calendar. Blank goes back to 14.",
   "packet": "What this client needs with every pay app: tick each item and add the rest under Other, separated by commas. The closeout items are asked for at closeout. Tick Nothing needed if they need nothing.",
   "rejects_when": "Why this client has sent pay apps back before. It is shown before the next send.",

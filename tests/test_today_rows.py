@@ -282,7 +282,7 @@ class TodayRowsTests(unittest.TestCase):
         self.finished_and_paid()
         self.job["change_orders"].append({"id": "co-3", "number": 3, "status": "pending", "included_in_billing": False, "amount_cents": 50_000, "description": "Rail"})
         r = self.only()
-        self.assertEqual((r["kind"], r["label"], r["tone"], r["button"]), ("finish_held", "Before you finish", "amber", "Open Job"))
+        self.assertEqual((r["kind"], r["label"], r["tone"], r["button"]), ("finish_held", "Before you finish", "amber", "Open job"))
         self.assertEqual(r["text"], "Before you finish: CO 3 is not signed yet.")
         self.job["completed_at"] = iso(NOW)
         self.assertIn("1 job held up before finishing", domain.daily_digest(self.state, "", NOW)[0])

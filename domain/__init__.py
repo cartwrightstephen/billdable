@@ -2535,7 +2535,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         # The work is finished and billed, and nothing is out with the client: closeout, then the
         # money held back, then Finish Job, in the job page's order and words (jobActions).
         elif m["refund_owed_cents"] and not any(i["status"] in OPEN_FOR_PAYMENT for i in invoices):
-            add(4.5, "refund_owed", job, "Owed back", "amber", _owed_text(m), "Open Job")
+            add(4.5, "refund_owed", job, "Owed back", "amber", _owed_text(m), "Open job")
         elif job.get("work_status") == "complete" and m["outstanding_cents"] == 0:
             missing = closeout_missing(job)
             asked = job.get("last_retainage_chase_at")
@@ -2549,7 +2549,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
                     add(5.6, "retainage_wait", job, "Retainage", "copper", f"Asked for the {money(m['retainage_open_cents'])} held back {_day_words(asked)}. "
                         f"Ask again from {_day_words(asked_due.isoformat())}, or Record retainage paid.", "Record retainage paid", due=asked_due.date().isoformat())
             elif close_blockers(job):
-                add(6.5, "finish_held", job, "Before you finish", "amber", "Before you finish: " + close_blockers(job)[0], "Open Job")
+                add(6.5, "finish_held", job, "Before you finish", "amber", "Before you finish: " + close_blockers(job)[0], "Open job")
             else:
                 add(7, "finish", job, "Ready to finish", "green", "Ready to finish the job. Finish job.", "Finish job")
         # A cutoff makes the job's row more urgent, and says so.
