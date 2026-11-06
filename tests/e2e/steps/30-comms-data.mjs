@@ -181,9 +181,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("Reminders start in the app, live on My account under Notifications, and a fired one is a To Do row that Open reads", async () => {  // round 1, item 19
+  await step("Reminders start in the app, live on My account under Notifications, and a fired one is a To do row that Open reads", async () => {  // round 1, item 19
     const { ctx, p } = await newCompany("reminders");
-    // Work on a job record that no change order covers: a reminder the job's own To Do row doesn't say.
+    // Work on a job record that no change order covers: a reminder the job's own To do row doesn't say.
     await p.evaluate(async () => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = (await (await fetch("/api/state")).json()).jobs[0];
@@ -206,7 +206,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await row.getByRole("button", { name: "Open", exact: true }).click();
     await p.locator("#sov-card").waitFor();
     await p.goto(BASE + "/dashboard");
-    await p.getByRole("heading", { name: /To Do/ }).waitFor();
+    await p.getByRole("heading", { name: /To do/ }).waitFor();
     assert.equal(await p.locator(".action-item", { hasText: "Two extra outlets in the hall" }).count(), 0, "read once opened");
     await ctx.close();
   });

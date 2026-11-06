@@ -245,7 +245,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
                     actions.append(_follow_up_btn(r))
                 else:
                     actions.append({"type": "path", "path": r["path"], "label": label})
-        return "Here is your To Do, most urgent first:\n" + "\n".join(lines), actions[:6]
+        return "Here is your To do, most urgent first:\n" + "\n".join(lines), actions[:6]
     if name == "money":
         t = snap["totals"]
         billed_month = sum(i["amount_cents"] for j in snap["jobs"] for i in j["invoices"]

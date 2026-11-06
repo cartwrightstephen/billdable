@@ -449,7 +449,7 @@ def imports(run: Run) -> None:
                        {"text": (IMPORT / "11_text-thread_whitfield-done.txt").read_text(), "source": "sms", "job_id": ""}, quiet=True)
     items = new_items(before, payload)
     it = items[0] if items else {}
-    run.record("Text thread -> WHIT, offers 'Final Pay App'",
+    run.record("Text thread -> WHIT, offers 'Final pay app'",
                run.code_of(it.get("suggested_job_id")) == "WHIT" and run.code_of(it.get("says_done_job_id")) == "WHIT",
                f"suggested {run.code_of(it.get('suggested_job_id'))}, says done {run.code_of(it.get('says_done_job_id'))}")
 
@@ -480,7 +480,7 @@ def imports(run: Run) -> None:
     run.api.cookie = saved_cookie
     items = new_items(before, run.state())
     it = items[0] if items else {}
-    run.record("Inbound email -> GLEN, source email, offers 'Final Pay App'",
+    run.record("Inbound email -> GLEN, source email, offers 'Final pay app'",
                status == 200 and it.get("source") == "email" and run.code_of(it.get("suggested_job_id")) == "GLEN"
                and run.code_of(it.get("says_done_job_id")) == "GLEN",
                f"HTTP {status}, source {it.get('source')}, suggested {run.code_of(it.get('suggested_job_id'))}")

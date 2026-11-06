@@ -86,7 +86,7 @@ function todoCardHtml() {
   const people = assignees(teamData, me, everyone);
   const who = (k, label) => `<button class="${todoWho === k ? "btn" : "btn secondary"} small" data-action="todo-who" data-who="${k}" aria-pressed="${todoWho === k}">${label}</button>`;
   return `<section class="card action-queue" aria-labelledby="needs-action">
-        <div class="top"><h2 id="needs-action">To Do${shown.length ? ` <span class="count-badge">${shown.length}</span>` : ""}</h2>
+        <div class="top"><h2 id="needs-action">To do${shown.length ? ` <span class="count-badge">${shown.length}</span>` : ""}</h2>
           <button class="btn small secondary" data-action="task-new">Add task</button></div>
         <div class="filter-bar todo-filters">
           <span role="group" aria-label="Whose">${who("mine", "Mine")}${who("everyone", "Everyone")}</span>
@@ -209,10 +209,10 @@ function onboardingHtml() {
       label: "Add files", attrs: goJob(hasPaperwork, ".dropzone"), needsJob: true },
     { text: "Bill line by line: replace the job's one lump-sum line with your schedule of values (paste it from your estimate).", optional: true, done: jobs.some(j => j.sov_view && j.sov_view.present && !j.sov_view.auto),
       label: "Open the job", attrs: goJob(j => !(j.sov_view && j.sov_view.present && j.sov_view.auto && j.sov_view.editable), "#sov-card"), needsJob: true },
-    { text: termText("Use Progress Pay App or Final Pay App. Duracash drafts the pay app and lists the supporting documents the client needs."), done: invoices.length > 0,
+    { text: termText("Use Progress pay app or Final pay app. Duracash drafts the pay app and lists the supporting documents the client needs."), done: invoices.length > 0,
       label: "Open the job", attrs: goJob(billed, ".next-card"), needsJob: true },
-    { text: "Add the missing supporting documents, then Review & Send.", done: invoices.some(i => i.sent_at),
-      label: draft ? "Review & Send" : "Open the job",
+    { text: "Add the missing supporting documents, then Review & send.", done: invoices.some(i => i.sent_at),
+      label: draft ? "Review & send" : "Open the job",
       attrs: draft ? `data-action="open-payapp" data-job="${draftJob.id}" data-inv="${draft.id}" data-focus=".send-check"` : goJob(billed, ".next-card"), needsJob: true },
     { text: "Already been paid on some jobs? Import the payments from QuickBooks.", optional: true, done: jobs.some(j => (j.payments || []).length),
       label: "Import payments", attrs: `data-action="onb-go" data-view="import" data-focus="#qbo-csv"`, needsJob: true },
@@ -285,8 +285,8 @@ function resultsHtml() {
       <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}</div>
       ${!m ? `<p class="sub">Loading…</p>` : `
       <div class="metrics">
-        <div class="metric"><div class="k">${termText("Days from Job Completion to Pay App Sent")}</div><div class="v">${num(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
-        <div class="metric"><div class="k">${termText("Days from Pay App Sent to Paid")}</div><div class="v">${num(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${num(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
+        <div class="metric"><div class="k">${termText("Days from job completion to pay app sent")}</div><div class="v">${num(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
+        <div class="metric"><div class="k">${termText("Days from pay app sent to paid")}</div><div class="v">${num(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${num(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
         <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
         <div class="metric"><div class="k">${termText("Pay app rejections by Clients")}</div><div class="v">${m.sent_back}</div><div class="sub row-sub">of ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
       </div>
@@ -322,7 +322,7 @@ export const views = {
       ${isDemo && !helpDismissed && state.jobs.length ? `
         <div class="help-card">
           <button class="help-dismiss" data-action="dismiss-help" aria-label="Hide this tip">×</button>
-          <strong>Try the demo:</strong> open a job, add its missing supporting documents, Review & Send, record the payment, send the waiver, then finish the job.
+          <strong>Try the demo:</strong> open a job, add its missing supporting documents, Review & send, record the payment, send the waiver, then finish the job.
         </div>` : ""}
       ${state.jobs.length || (state.tasks || []).length ? todoCardHtml() : ""}
       <div class="metrics dash-tiles">

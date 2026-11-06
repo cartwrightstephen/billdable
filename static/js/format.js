@@ -155,7 +155,7 @@ export function emailStatusHtml(e) {
   // going out shows only its status.
   const inFlight = (st === "sending" || st === "queued") && !stuck;
   const moot = e.moot && !inFlight ? `<div class="sub">No need to send it now: ${e.moot}</div>` : "";
-  const retry = !moot && (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send Again</button>` : "";
+  const retry = !moot && (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
   return `<span class="pill ${cls}">${words(st)}</span>${when}${moot}${retry}`;
 }
 

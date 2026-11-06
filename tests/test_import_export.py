@@ -117,7 +117,7 @@ class QuantityApplyTests(unittest.TestCase):
         out = qty_import.apply(self.state, self.job["id"], LOG, "Pat", "foreman-log.csv")
         lines = domain.sov.lines(self.job)
         self.assertEqual((domain.sov.field_total(lines[0]), domain.sov.field_total(lines[1])), (30_000, 250))
-        self.assertEqual((self.job["invoices"], out["number"]), ([], ""), "only Progress Pay App makes a draft")
+        self.assertEqual((self.job["invoices"], out["number"]), ([], ""), "only Progress pay app makes a draft")
         self.assertEqual([a["line"] for a in out["added"]], ["1. Rough-in wiring", "2. Panel and feeders"])
         self.assertEqual(out["not_added"][0]["what"], "Gutters")
         record = self.job["records"][-1]

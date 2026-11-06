@@ -99,9 +99,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     // Results is a fold on the Dashboard now (round 1, item 19); its old address opens it.
     await page.goto(BASE + "/dashboard/results");
     await page.locator("details#results[open]").waitFor();
-    await page.locator(".metric .k", { hasText: "Days from Job Completion to Pay App Sent" }).waitFor();
+    await page.locator(".metric .k", { hasText: "Days from job completion to pay app sent" }).waitFor();
     assert.deepEqual((await page.locator("#results .metrics").first().locator(".metric .k").allInnerTexts()).map(s => s.trim()),
-      ["Days from Job Completion to Pay App Sent", "Days from Pay App Sent to Paid", "Follow-ups per pay app", "Pay app rejections by Clients"]);
+      ["Days from job completion to pay app sent", "Days from pay app sent to paid", "Follow-ups per pay app", "Pay app rejections by Clients"]);
     await page.getByRole("heading", { name: "Jobs completed with outstanding billings" }).waitFor();
     for (const gone of ["Nothing here is estimated", "Email me last month's summary", "Every finished job has a pay app out"]) {
       assert.equal(await page.getByText(gone).count(), 0, gone);

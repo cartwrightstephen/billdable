@@ -24,7 +24,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("the Dashboard lists what needs you and opens a job by its address", async () => {
     await page.goto(BASE + "/dashboard");
     await page.getByRole("heading", { name: "Overview" }).waitFor();
-    await page.getByRole("heading", { name: /To Do/ }).waitFor();
+    await page.getByRole("heading", { name: /To do/ }).waitFor();
     await page.locator(".action-item", { hasText: "Oak Street kitchen" }).getByRole("button", { name: "Open" }).click();
     await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/jobs/job-oak");
@@ -127,9 +127,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.goto(BASE + "/dashboard");
     const row = p.locator(".action-item", { hasText: "First porch" });
     await row.locator(".pill", { hasText: "Not billed yet" }).waitFor();
-    await row.getByRole("button", { name: "Progress Pay App" }).click();
+    await row.getByRole("button", { name: "Progress pay app" }).click();
     await p.getByRole("heading", { name: "First porch" }).waitFor();
-    await p.locator(".next-card .primary-action", { hasText: "Progress Pay App" }).click();
+    await p.locator(".next-card .primary-action", { hasText: "Progress pay app" }).click();
     // A new job's one lump-sum line: % done, with the period's total above it.
     await p.locator('[data-form-key="sovprogress"]').waitFor();
     await p.locator(".sov-progress .sov-period", { hasText: "This billing period" }).waitFor();
@@ -301,9 +301,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("heading", { name: "Turner office TI" }).waitFor();
     await page.getByRole("heading", { name: "Before you can finish this job" }).waitFor();
     assert.equal(await page.locator(".close-blocker-list li").count(), 2);
-    await page.locator('.close-blocker-list li[data-blocker="outstanding"]').getByRole("button", { name: "Record a Payment" }).waitFor();
-    await page.locator('.close-blocker-list li[data-blocker="retainage"]').getByRole("button", { name: "Record Retainage Paid" }).waitFor();
-    assert.equal(await page.locator(".next-card .btn", { hasText: "Finish Job" }).count(), 0, "no Finish Job while unsettled");
+    await page.locator('.close-blocker-list li[data-blocker="outstanding"]').getByRole("button", { name: "Record a payment" }).waitFor();
+    await page.locator('.close-blocker-list li[data-blocker="retainage"]').getByRole("button", { name: "Record retainage paid" }).waitFor();
+    assert.equal(await page.locator(".next-card .btn", { hasText: "Finish job" }).count(), 0, "no Finish job while unsettled");
   });
 
   await step("a sent pay app with nothing paid can be pulled back, with a reason first", async () => {
@@ -327,7 +327,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     for (let n = 0; n < 12; n++) {
       await page.getByRole("heading", { name: "Inman Park bath" }).waitFor();
       if (await page.locator(".job-head .pill", { hasText: "Closed" }).count()) break;
-      // While the customer has the pay app and no follow-up is due, Record a Payment is the main button.
+      // While the customer has the pay app and no follow-up is due, Record a payment is the main button.
       await page.locator(".next-card").waitFor();
       const main = page.locator(".next-card .primary-action");
       const label = (await main.innerText()).trim();
@@ -346,10 +346,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
           await page.locator(`#resolve-reason-${item}`).waitFor({ state: "detached" });
         }
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Review & Send") {
+      } else if (label === "Review & send") {
         // Every send passes "Before you send" (R1-06): Today's button opens the pay app there.
         await page.goto(BASE + "/dashboard");
-        await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & Send" }).click();
+        await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & send" }).click();
         await page.locator(".send-check").waitFor({ state: "visible" });
         assert.match(new URL(page.url()).pathname, /^\/money\/pay-app\//);
         await page.click('.send-check [data-action="send"]');
@@ -357,9 +357,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         // The demo never emails, so Today lists the pay app's email as one that didn't go out (R1-11).
         await page.goto(BASE + "/dashboard");
         await page.locator(".action-item", { hasText: "Inman Park bath" }).filter({ hasText: "Didn't go out" })
-          .getByRole("button", { name: "Send Again" }).waitFor();
+          .getByRole("button", { name: "Send again" }).waitFor();
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Choose Waiver and Send") {
+      } else if (label === "Choose waiver and send") {
         await main.click();
         await page.getByRole("heading", { name: /^Closeout: / }).waitFor();
         const sendWaiver = page.locator('[data-action="waiver"]');
@@ -379,7 +379,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await confirmIfAsked(page);
         for (let t = 0; t < 100 && (await sendWaiver.count()) >= before; t++) await new Promise((r) => setTimeout(r, 100));
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Record a Payment") {
+      } else if (label === "Record a payment") {
         await main.click();
         // One open pay app reads as text, not a one-option select (round 1, item 8).
         const option = (await page.locator("#match-inv option").count()) ? await page.locator("#match-inv option").first().innerText()
@@ -390,7 +390,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.fill("#match-ref", "CHK-2201");
         await page.click('[data-action="match"]');
         await page.locator("#match-inv").waitFor({ state: "detached" });
-      } else if (label === "Finish Job" && triedRefusal && !triedCancel) {
+      } else if (label === "Finish job" && triedRefusal && !triedCancel) {
         // Finishing asks first; Cancel changes nothing (R3-03).
         triedCancel = true;
         await main.click();
@@ -400,7 +400,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await confirmDialog(page).waitFor({ state: "detached" });
         const inman = await page.evaluate(async () => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === "job-inman"));
         assert.ok(inman && !inman.closed, "Cancel left the job open");
-      } else if (label === "Finish Job" && !triedRefusal) {
+      } else if (label === "Finish job" && !triedRefusal) {
         // A refusal shows under the button that was tapped: an unsigned change order added
         // behind the page's back makes Close fail, and the card says why.
         triedRefusal = true;
@@ -429,7 +429,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         }
       }
     }
-    for (const want of ["Review & Send", "Record a Payment", "Choose Waiver and Send", "Finish Job"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
+    for (const want of ["Review & send", "Record a payment", "Choose waiver and send", "Finish job"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
     await page.locator(".job-head .pill", { hasText: "Closed" }).waitFor();
   });
 
@@ -457,7 +457,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       await page.locator(".queue-more").waitFor({ state: "detached" });
       assert.ok(await rows.count() > 3);
     }
-    const follow = () => page.locator(".action-item", { hasText: "Turner office TI" }).getByRole("button", { name: "Send Follow-Up" });
+    const follow = () => page.locator(".action-item", { hasText: "Turner office TI" }).getByRole("button", { name: "Send follow-up" });
     if (await follow().count()) {
       await follow().click();
       await confirmDialog(page).waitFor();

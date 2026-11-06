@@ -116,7 +116,7 @@ export function paymentsImportHtml() {
 function noPaymentsButton() {
   const open = openJobs(state.jobs);
   const waiting = open.find(j => j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status)));
-  if (waiting) return `<button class="btn" data-action="record-payment" data-id="${waiting.id}">Record a Payment</button>`;
+  if (waiting) return `<button class="btn" data-action="record-payment" data-id="${waiting.id}">Record a payment</button>`;
   if (payAppStarts(state.jobs, perms()).length) return `<button class="btn" data-action="payapp-new">${termText("New pay app")}</button>`;
   if (open.length) return `<button class="btn" data-action="open-job" data-id="${open[0].id}" data-focus=".next-card">Open ${open[0].name}</button>`;
   return `<button class="btn" data-action="onb-newjob">New job</button>`;

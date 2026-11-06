@@ -1,4 +1,4 @@
-// Browser steps for the tasks-daily stream: To Do, Tasks and New job record. Run by tests/e2e/smoke.mjs.
+// Browser steps for the tasks-daily stream: To do, Tasks and New job record. Run by tests/e2e/smoke.mjs.
 // They sign up a company of their own, so the demo's data stays as the other steps expect it.
 import assert from "node:assert/strict";
 
@@ -21,10 +21,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     }, `tasks-${Date.now()}@example.com`);
   }
 
-  await step("To Do: add a task with Ball in court buttons; a one-person team has no Assignee; Mine (T3, G5, round 1 item 8)", async () => {
+  await step("To do: add a task with Ball in court buttons; a one-person team has no Assignee; Mine (T3, G5, round 1 item 8)", async () => {
     await company();
     await p.goto(BASE + "/dashboard");
-    await p.getByRole("heading", { name: /To Do/ }).waitFor();
+    await p.getByRole("heading", { name: /To do/ }).waitFor();
     for (const head of ["Activity", "Job", "Ball in court"]) await p.locator(".todo-table th", { hasText: head }).first().waitFor();
     // A one-person team has no Assignee select or due box (round 1, item 8).
     assert.equal(await p.locator(".todo-table th", { hasText: "Assignee" }).count(), 0);

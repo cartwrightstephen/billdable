@@ -1,4 +1,4 @@
-"""The To Do list (G5, T3): ball in court, assignees and due dates on the rows the jobs make, tasks
+"""The To do list (G5, T3): ball in court, assignees and due dates on the rows the jobs make, tasks
 added by hand, the daily email per person, and a removed team member's items moving to the owner."""
 
 import sys

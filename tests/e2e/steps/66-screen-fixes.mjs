@@ -132,13 +132,13 @@ export default async function ({ browser, BASE, step, errors }) {
     await p.context().close();
   });
 
-  await step("Send Draft for Their Review shows what goes first; missing documents don't hold it back (criterion 78)", async () => {
+  await step("Send draft for their review shows what goes first; missing documents don't hold it back (criterion 78)", async () => {
     const p = await fresh("pencil");
     const job = await addJob(p);
     await p.evaluate(([id, line]) => fetch(`/api/jobs/${id}/sov-progress`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ done: { [line]: "0.25" } }) }), [job.id, job.sov.lines[0].id]);
     const emails = () => p.evaluate(async () => (await (await fetch("/api/state")).json()).email_log.length);
     await p.goto(`${BASE}/jobs/${job.id}`);
-    await p.locator(".job-actions").getByRole("button", { name: "Send Draft for Their Review" }).click();
+    await p.locator(".job-actions").getByRole("button", { name: "Send draft for their review" }).click();
     const card = p.locator(".pencil-check");
     await card.waitFor();
     assert.equal(await emails(), 0, "nothing goes until the screen's own button");
@@ -148,7 +148,7 @@ export default async function ({ browser, BASE, step, errors }) {
     assert.match(text, /Pencil copy for review/);
     assert.match(text, /Still missing/);
     await card.getByRole("link", { name: "Open the PDF" }).waitFor();
-    await card.getByRole("button", { name: "Send Draft for Their Review" }).click();
+    await card.getByRole("button", { name: "Send draft for their review" }).click();
     await card.waitFor({ state: "detached" });
     assert.equal(await emails(), 1);
     await p.context().close();

@@ -79,7 +79,7 @@ export function notificationsCardHtml() {
   const demo = me && me.company_id === DEMO_COMPANY_ID;
   return `<div class="card" id="notifications" data-form-key="reminders">${formErrorLine("reminders")}
       <h2>Notifications</h2>
-      <p class="sub">For you and your team, never your clients. In the app they are rows on the Dashboard's To Do. Each comes round every ${esc(String(data.repeat_days))} days until it is dealt with; email and text go out at most once a day.</p>
+      <p class="sub">For you and your team, never your clients. In the app they are rows on the Dashboard's To do. Each comes round every ${esc(String(data.repeat_days))} days until it is dealt with; email and text go out at most once a day.</p>
       ${data.kinds.map(k => channelBoxes(k, data)).join("")}
       ${data.can_text ? "" : `<p class="sub">To get texts, add your mobile number above and agree to texts.</p>`}
       ${notes(data)}${lastLine(data.last)}

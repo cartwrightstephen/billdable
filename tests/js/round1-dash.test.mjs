@@ -42,7 +42,7 @@ const tasks = await import("../../static/js/tasks.js");
 const row = (over = {}) => ({ rank: 5, kind: "new_job", job_id: "j1", job: "Porch", label: "Not billed yet", tone: "copper", text: "Porch has no pay app yet.",
   button: "Progress pay app", key: "new_job:j1:", due: "2026-10-30", ball_in_court: "us", assignee_id: "", ...over });
 
-test("a one-person team's To Do rows have no Assignee select or due box; a team of two has both", () => {  // item 8
+test("a one-person team's To do rows have no Assignee select or due box; a team of two has both", () => {  // item 8
   const items = tasks.todoItems({ today_rows: [row()] });
   const solo = today.todoHtml(items, { people: [{ id: "u1", name: "Pat" }], today: "2026-10-28" });
   assert.doesNotMatch(solo, /todo-assign|todo-due-date|<th>Assignee<\/th>|<th>Due<\/th>/);
@@ -102,7 +102,7 @@ test("accessibility: the ? badge clears a sticky Save bar, a disabled button sta
   assert.doesNotMatch(css, /\.toast \{ top: 68px; \}/);
 });
 
-test("the Dashboard on a phone: To Do rows are pill, sentence and one button; tiles 2x2; one line per job", () => {  // item 17
+test("the Dashboard on a phone: To do rows are pill, sentence and one button; tiles 2x2; one line per job", () => {  // item 17
   page.setMe({ id: "u1", name: "Pat", company_id: "co-hartline", role: "owner", onboarding_dismissed: true });
   const j = { id: "a", name: "Turner", code: "TUR", payer_id: "p1", closed: false, invoices: [], payments: [], change_orders: [],
     money: { contract_total_cents: 100, billed_cents: 0, outstanding_cents: 5000, unbilled_completed_cents: 0, retainage_open_cents: 0 } };
@@ -165,7 +165,7 @@ test("My account has the Notifications card with each person's reminder choices,
   dom.answers = [];
 });
 
-test("fired reminders are To Do rows; one about a job that already has a row for its dates or held-up pay app is left off", async () => {  // item 19
+test("fired reminders are To do rows; one about a job that already has a row for its dates or held-up pay app is left off", async () => {  // item 19
   page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner" });
   const j = (id, name) => ({ id, name, code: id.toUpperCase(), payer_id: "p1", closed: false, invoices: [], payments: [], change_orders: [], money: {} });
   core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [j("a", "Oak"), j("b", "Elm")], today_rows: [row({ job_id: "a", job: "Oak", key: "new_job:a:" })] });

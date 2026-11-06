@@ -111,7 +111,7 @@ function fillImportSettings() {
     ? "This is the demo account: nothing is emailed from it."
     : s.mail_configured
       ? `Approved emails are sent from <strong>${s.mail_from}</strong> with your company name, and replies go to the person who approved them. Up to ${s.mail_daily_limit} a day.`
-      : "Email delivery is not set up on this server yet, so nothing here has left Duracash. Once it is, use Send Again on any row.");
+      : "Email delivery is not set up on this server yet, so nothing here has left Duracash. Once it is, use Send again on any row.");
   set("email-webhook", s.email_webhook);
   set("sms-webhook", s.sms_webhook);
   set("email-check", s.email_check === "password" ? "The server asks the email service for its password (INBOUND_WEBHOOK_PASSWORD): put it in the address, as https://duracash:PASSWORD@… ."
@@ -521,7 +521,7 @@ export const actions = {
     const j = it && state.jobs.find(x => x.id === it.says_done_job_id);
     const res = j ? await fetch(`/api/jobs/${encodeURIComponent(j.id)}/final-preview`).catch(() => null) : null;
     const words = res && res.ok ? finalPayAppConfirm(j, await res.json())
-      : { text: `Record ${unesc(j ? j.name : "the job")} as finished? ${termText("This bills the rest of the contract on a final pay app.")}`, button: termText("Final Pay App") };
+      : { text: `Record ${unesc(j ? j.name : "the job")} as finished? ${termText("This bills the rest of the contract on a final pay app.")}`, button: termText("Final pay app") };
     const answer = await askConfirm(words.text, words.button, false, "Just file the message");
     if (!answer) return;
     if (answer === "alt") { if (it) await post(`/api/inbox/${it.id}/file`, { job_id: it.says_done_job_id, kind: it.kind }); return; }

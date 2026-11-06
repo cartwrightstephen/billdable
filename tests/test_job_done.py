@@ -34,7 +34,7 @@ class MarkDoneFromMessageTests(unittest.TestCase):
         self.assertTrue(any(i["status"] in domain.DRAFT_STATUSES for i in grt["invoices"]), "the final pay app is drafted, not sent")
         self.assertIn("+15555550123", grt["done_notes"])
         # The message is on the job record once, as filed; its first line isn't repeated as a note.
-        self.assertEqual([r for r in grt["records"] if r.get("label") == "Notes at Final Pay App"], [])
+        self.assertEqual([r for r in grt["records"] if r.get("label") == "Notes at Final pay app"], [])
 
     def test_not_offered_for_finished_jobs_or_unmatched_messages(self):
         state = seed_state()

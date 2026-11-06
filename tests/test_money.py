@@ -394,7 +394,7 @@ class ReviewFindingTests(unittest.TestCase):
         send_open(state, job)
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"])
-        self.assertIn("Final Pay App", str(raised.exception))
+        self.assertIn("Final pay app", str(raised.exception))
         self.assertFalse([e for e in state["email_log"] if e["kind"] == "retainage"])
 
     def test_co_after_done_billable_on_stale_legacy_record(self):
@@ -727,7 +727,7 @@ def job_route_item(state, job, action, item, body):
 
 
 class FinalPayAppPreviewTests(unittest.TestCase):
-    """Final Pay App's confirm box: the amount and whether it is the final one, with nothing changed."""
+    """Final pay app's confirm box: the amount and whether it is the final one, with nothing changed."""
 
     def setUp(self):
         self.state = new_state()
@@ -801,7 +801,7 @@ class RetainageChangeTests(unittest.TestCase):
         for amount in (None, 500_000):
             with self.assertRaises(domain.GateError) as raised:
                 domain.chase_retainage(state, job["id"], amount_cents=amount)
-            self.assertIn("Use Final Pay App first", str(raised.exception))
+            self.assertIn("Use Final pay app first", str(raised.exception))
         domain.mark_done(state, job["id"])
         for item in job["closeout_packet"]:
             domain.resolve_packet_item(state, job["id"], item["id"], reason="In the binder")

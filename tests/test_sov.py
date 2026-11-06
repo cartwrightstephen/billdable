@@ -793,7 +793,7 @@ class LivingDraftTests(unittest.TestCase):  # M1: the period's pay app is one dr
         self.assertIs(self.draft(), first)
         rec = self.job["records"][-1]
         self.assertEqual(rec["label"], "Diary entry 2026-10-30: 120 ea Rough-in wiring, 25% Panel and feeders")
-        # Progress Pay App brings it in, the same number.
+        # Progress pay app brings it in, the same number.
         domain.record_sov_progress(self.state, self.job["id"], {})
         draft = self.draft()
         self.assertEqual(draft["number"], first["number"])

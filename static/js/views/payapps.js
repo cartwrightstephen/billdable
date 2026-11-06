@@ -39,7 +39,7 @@ function pencilReviewHtml(j, inv, noEmail, locked) {
     ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
     ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
     <div class="form-inline">
-      <button class="btn" data-action="pencil" data-id="${j.id}"${noEmail || locked ? " disabled" : ""}>Send Draft for Their Review</button>
+      <button class="btn" data-action="pencil" data-id="${j.id}"${noEmail || locked ? " disabled" : ""}>Send draft for their review</button>
       <button class="btn secondary" data-action="toggle-form" data-form="pencilreview">Cancel</button>
     </div>
   </div>`;

@@ -93,7 +93,7 @@ function nextStepWords(j, now, listed = false) {
   const draft = j.invoices.find(i => DRAFTS.includes(i.status));
   const number = draft && draft.number || "The draft";
   const client = (j.payer || {}).approver || (j.payer || {}).name || "the client";
-  if (draft && draft.pencil_status === "sent") return `${number} is with ${client} for their review${draft.pencil_sent_at ? ` since ${fmtDate(draft.pencil_sent_at)}` : ""}. When they answer, tap Client Agreed to the Draft or Client Wants Changes.`;
+  if (draft && draft.pencil_status === "sent") return `${number} is with ${client} for their review${draft.pencil_sent_at ? ` since ${fmtDate(draft.pencil_sent_at)}` : ""}. When they answer, tap Client agreed to the draft or Client wants changes.`;
   if (isBlocked(j)) {
     const button = blockerButton(j) || "Fix this";
     const lead = `${button}${button.endsWith("before sending") ? ":" : " before it can go:"}`;
@@ -108,27 +108,27 @@ function nextStepWords(j, now, listed = false) {
     const changes = draft.pencil_status === "corrections";
     const said = draft.pencil_status === "agreed" ? "The client agreed to it. " : changes ? `The client wants changes${draft.pencil_note ? `: ${draft.pencil_note}` : ""}. Fix it, then ` : "";
     const email = unesc((j.payer || {}).ap_email || "").trim() ? "" : `${changes ? "add" : "Add"} the pay app email for ${(j.payer || {}).name || "the client"}, then `;
-    return `${number}${draft.amount_cents != null ? ` for ${money(draft.amount_cents)}` : ""} to ${client} is ready. ${said}${email}Review & Send.`;
+    return `${number}${draft.amount_cents != null ? ` for ${money(draft.amount_cents)}` : ""} to ${client} is ready. ${said}${email}Review & send.`;
   }
-  if (j.waiver_due && !j.waiver_sent) return "Payment received. Choose Waiver and Send.";
-  const notBilled = j.work_status === "complete" && m.unbilled_completed_cents > 0 ? `${money(m.unbilled_completed_cents)} of finished work isn't billed. Draft Pay App.` : "";
+  if (j.waiver_due && !j.waiver_sent) return "Payment received. Choose waiver and send.";
+  const notBilled = j.work_status === "complete" && m.unbilled_completed_cents > 0 ? `${money(m.unbilled_completed_cents)} of finished work isn't billed. Draft pay app.` : "";
   if (j.invoices.some(i => OPEN_FOR_PAYMENT.includes(i.status))) {
     const follow = followUpDue(j);
     const waiting = waitingText(j, now) || "Waiting on the client.";
-    if (follow && follow.due <= now) return `${waiting} Send Follow-Up.`;
-    return notBilled || `${waiting} Record a Payment when it comes in.`;
+    if (follow && follow.due <= now) return `${waiting} Send follow-up.`;
+    return notBilled || `${waiting} Record a payment when it comes in.`;
   }
-  if (j.work_status !== "complete") return "Bill the work so far with Progress Pay App, or use Final Pay App once it is finished." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
+  if (j.work_status !== "complete") return "Bill the work so far with Progress pay app, or use Final pay app once it is finished." + (j.blockers && j.blockers.length ? " The next pay app needs: " + j.blockers.join("; ") : "");
   if (notBilled) return notBilled;
   // The closeout documents come first: domain.chase_retainage refuses before it looks at the wait.
-  if (closeoutMissing(j)) return `Closeout: missing ${j.closeout_missing.join(", ")}. Open Closeout Documents.`;
+  if (closeoutMissing(j)) return `Closeout: missing ${j.closeout_missing.join(", ")}. Open closeout documents.`;
   if (m.retainage_open_cents > 0) {
     const asked = retainageAskWaits(j, now);
-    if (asked) return `Asked for the ${money(m.retainage_open_cents)} held back ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}, or Record Retainage Paid.`;
-    return `${money(m.retainage_open_cents)} held back. Closeout documents are in. Ask for Retainage.`;
+    if (asked) return `Asked for the ${money(m.retainage_open_cents)} held back ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}, or Record retainage paid.`;
+    return `${money(m.retainage_open_cents)} held back. Closeout documents are in. Ask for retainage.`;
   }
   if ((j.close_blockers || []).length) return "Before you finish: " + j.close_blockers[0];
-  return "Ready to finish the job. Finish Job.";
+  return "Ready to finish the job. Finish job.";
 }
 
 // What Final Pay App is about to do, for its confirm box, from the server's
@@ -139,14 +139,14 @@ export function finalPayAppConfirm(j, p) {
   const finishes = j.sov_view && j.sov_view.present
     ? "It marks the work finished and sets every schedule line to 100%."
     : "It marks the work finished and bills the rest of the contract.";
-  if (!p.drafted) return { text: `There is nothing left to bill on ${name}. ${finishes}`, button: "Mark Work Finished" };
+  if (!p.drafted) return { text: `There is nothing left to bill on ${name}. ${finishes}`, button: "Mark work finished" };
   const amount = `${money(p.amount_cents)}${p.retainage_cents ? ` (${money(p.gross_cents)} less ${money(p.retainage_cents)} retainage)` : ""}`;
   const replaces = p.replaces ? ` It replaces draft ${unesc(p.replaces)}.` : "";
-  if (p.final) return { text: `${termText("Final Pay App")} for ${name}: ${amount}. ${finishes}${replaces}`, button: termText("Final Pay App") };
+  if (p.final) return { text: `${termText("Final pay app")} for ${name}: ${amount}. ${finishes}${replaces}`, button: termText("Final pay app") };
   const cos = (p.pending_cos || []).map(c => `CO ${c.number} (${money(c.amount_cents)})`).join(", ");
   return {
     text: `${termText("This won't be the final pay app")} for ${name}${cos ? `: ${cos} isn't signed or on the bill` : ""}. ${termText("Pay app")} ${unesc(p.number)}: ${amount}. ${finishes}${replaces}`,
-    button: termText("Draft Pay App"),
+    button: termText("Draft pay app"),
   };
 }
 
@@ -371,7 +371,7 @@ export function retainageAskWaits(j, now = new Date()) {
 export function retainageNote(j, now = new Date()) {
   if (!(j.money.retainage_open_cents > 0) || j.closed) return "";
   const asked = retainageAskWaits(j, now);
-  if (j.work_status !== "complete") return termText("Asked for after Final Pay App.");
+  if (j.work_status !== "complete") return termText("Asked for after Final pay app.");
   const n = closeoutMissing(j);
   if (n) return `Closeout documents: ${n} item${n === 1 ? "" : "s"} missing.`;
   return asked ? `Asked for it ${fmtDate(asked.last)}; ask again from ${fmtDate(asked.due)}.` : "";
@@ -441,32 +441,32 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
     }
   }
   // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
-  if (draft) add("send", "Review & Send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "bill");
-  if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose Waiver and Send", `data-action="open-waiver" data-id="${j.id}"`, "paid");
-  if (waitingPay) add("match", "Record a Payment", `data-action="toggle-form" data-form="match"`, "paid");
-  if (follow) add("follow", followDue ? "Send Follow-Up" : "Follow Up Now", `data-action="follow-up" data-id="${j.id}"${followDue ? "" : ` data-early="1"`}`, "paid");
+  if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "bill");
+  if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "paid");
+  if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "paid");
+  if (follow) add("follow", followDue ? "Send follow-up" : "Follow up now", `data-action="follow-up" data-id="${j.id}"${followDue ? "" : ` data-early="1"`}`, "paid");
   // A conversation is a record on any open job. While a pay app waits for payment it counts as a
   // follow-up, and its check-again date holds the next one (R4-06).
-  add("conversation", "Log a Conversation", `data-action="toggle-form" data-form="conversation"`, "paid");
-  if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft Pay App", `data-action="draft" data-id="${j.id}"`, "bill");
-  if (j.work_status !== "complete") add("progress", "Progress Pay App", `data-action="toggle-form" data-form="progress"`, "bill");
-  if (j.work_status === "complete" && closeoutMissing(j)) add("closeout", "Open Closeout Documents", closeoutAttrs(j), "close");
-  if (j.work_status !== "complete") add("done", "Final Pay App", `data-action="toggle-form" data-form="done"`, "close");
-  if (canClose) add("close", "Finish Job", `data-action="close" data-id="${j.id}"`, "close");
+  add("conversation", "Log a conversation", `data-action="toggle-form" data-form="conversation"`, "paid");
+  if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "bill");
+  if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "bill");
+  if (j.work_status === "complete" && closeoutMissing(j)) add("closeout", "Open closeout documents", closeoutAttrs(j), "close");
+  if (j.work_status !== "complete") add("done", "Final pay app", `data-action="toggle-form" data-form="done"`, "close");
+  if (canClose) add("close", "Finish job", `data-action="close" data-id="${j.id}"`, "close");
   // Final Pay App by mistake (R4-02): while the final pay app has not gone out.
-  if (j.can_undo_done) add("undo", "Undo Done", `data-action="undo-done" data-id="${j.id}"`, "close", { minor: true });
+  if (j.can_undo_done) add("undo", "Undo done", `data-action="undo-done" data-id="${j.id}"`, "close", { minor: true });
   // Asking for retainage only once the work is done and the closeout documents are in, and not again
   // before the client's days between contacts (chase_retainage); the Money card says why.
-  if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0 && !retainageAskWaits(j, now)) add("retainage", "Ask for Retainage", `data-action="retainage" data-id="${j.id}"`, "paid");
-  if (draft && !pencilOut) add("pencil", "Send Draft for Their Review", `data-action="pencil-review" data-job="${j.id}" data-inv="${draft.id}"`, "bill");
-  if (pencilOut) add("pencil-ok", "Client Agreed to the Draft", `data-action="pencil-agreed" data-id="${j.id}"`, "bill");
-  if (pencilOut) add("pencil-no", "Client Wants Changes", `data-action="toggle-form" data-form="pencilchanges"`, "bill");
-  if (isBlocked(j)) add("sentback", "Client Sent Pay App Back", `data-action="toggle-form" data-form="sentback"`, "bill");
-  if (m.retainage_open_cents > 0) add("retpay", "Record Retainage Paid", `data-action="toggle-form" data-form="retpay"`, "paid");
-  add("co", "New Change Order", `data-action="new-co"`, "bill");
-  if (draft) add("packet", "Open Supporting Documents", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "bill");
-  if (draft) add("void", "Delete Draft", `data-action="void-draft" data-id="${j.id}"`, "bill", { minor: true, danger: true });
-  if (demo) add("qbo", "Import QuickBooks Sample", `data-action="import-qbo" data-id="${j.id}"`, "paid", { minor: true });
+  if (m.retainage_open_cents > 0 && j.work_status === "complete" && closeoutMissing(j) === 0 && !retainageAskWaits(j, now)) add("retainage", "Ask for retainage", `data-action="retainage" data-id="${j.id}"`, "paid");
+  if (draft && !pencilOut) add("pencil", "Send draft for their review", `data-action="pencil-review" data-job="${j.id}" data-inv="${draft.id}"`, "bill");
+  if (pencilOut) add("pencil-ok", "Client agreed to the draft", `data-action="pencil-agreed" data-id="${j.id}"`, "bill");
+  if (pencilOut) add("pencil-no", "Client wants changes", `data-action="toggle-form" data-form="pencilchanges"`, "bill");
+  if (isBlocked(j)) add("sentback", "Client sent pay app back", `data-action="toggle-form" data-form="sentback"`, "bill");
+  if (m.retainage_open_cents > 0) add("retpay", "Record retainage paid", `data-action="toggle-form" data-form="retpay"`, "paid");
+  add("co", "New change order", `data-action="new-co"`, "bill");
+  if (draft) add("packet", "Open supporting documents", `data-action="open-packet" data-job="${j.id}" data-inv="${draft.id}"`, "bill");
+  if (draft) add("void", "Delete draft", `data-action="void-draft" data-id="${j.id}"`, "bill", { minor: true, danger: true });
+  if (demo) add("qbo", "Import QuickBooks sample", `data-action="import-qbo" data-id="${j.id}"`, "paid", { minor: true });
   // A draft out for the client's review waits on their answer: sending comes second.
   const order = pencilOut ? ["pencil-ok", "clear", "send", "waiver"] : ["clear", "send", "waiver"];
   // While the client has the pay app the main step is the follow-up once it is due, then finished
@@ -495,27 +495,27 @@ function closeoutAttrs(j) {
 function closeBlockerButtons(j, b, now) {
   const id = j.id;
   switch (b.kind) {
-    case "not_done": return [{ label: "Final Pay App", attrs: `data-action="toggle-form" data-form="done"` }];
+    case "not_done": return [{ label: "Final pay app", attrs: `data-action="toggle-form" data-form="done"` }];
     case "draft": return [
-      { label: "Review & Send", attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}" data-focus=".send-check"`, needs: "send" },
-      { label: "Delete Draft", attrs: `data-action="void-draft" data-id="${id}"`, needs: "void-draft" }];
+      { label: "Review & send", attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}" data-focus=".send-check"`, needs: "send" },
+      { label: "Delete draft", attrs: `data-action="void-draft" data-id="${id}"`, needs: "void-draft" }];
     case "co": return [
       { label: `Get CO ${b.number} Signed`, attrs: `data-action="open-co" data-job="${id}" data-co="${b.co_id}"` },
       { label: "Withdraw", attrs: `data-action="withdraw-co" data-id="${id}" data-co="${b.co_id}"` }];
-    case "unbilled": return [{ label: "Draft Pay App", attrs: `data-action="draft" data-id="${id}"` }];
+    case "unbilled": return [{ label: "Draft pay app", attrs: `data-action="draft" data-id="${id}"` }];
     case "overbilled": return [
       ...(b.invoice_id ? [{ label: `Open ${b.number}`, attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}"` }] : []),
-      ...(b.creditable_cents ? [{ label: "Take Credit off Retainage", attrs: `data-action="toggle-form" data-form="retcredit"`, needs: "retainage-credit" }] : []),
-      ...(b.settleable === false ? [] : [{ label: "Record Refund or Credit", attrs: `data-action="toggle-form" data-form="overbilled"`, needs: "overbilling-settled" }])];
-    case "outstanding": return [{ label: "Record a Payment", attrs: `data-action="toggle-form" data-form="match"` },
+      ...(b.creditable_cents ? [{ label: "Take credit off retainage", attrs: `data-action="toggle-form" data-form="retcredit"`, needs: "retainage-credit" }] : []),
+      ...(b.settleable === false ? [] : [{ label: "Record refund or credit", attrs: `data-action="toggle-form" data-form="overbilled"`, needs: "overbilling-settled" }])];
+    case "outstanding": return [{ label: "Record a payment", attrs: `data-action="toggle-form" data-form="match"` },
       ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i), needs: "accept-short-pay" }))];
     case "retainage": return [
-      { label: "Record Retainage Paid", attrs: `data-action="toggle-form" data-form="retpay"` },
+      { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"` },
       ...(retainageAskWaits(j, now) && !closeoutMissing(j) ? [] : [closeoutMissing(j)
         // An older job without a closeout packet keeps those items in the job paperwork (as on Closeout).
-        ? { label: "Open Closeout Documents", attrs: closeoutAttrs(j) }
-        : { label: "Ask for Retainage", attrs: `data-action="retainage" data-id="${id}"`, needs: "retainage" }])];
-    case "waiver": return [{ label: "Send Waiver", attrs: `data-action="open-waiver" data-id="${id}"`, needs: "waiver" }];
+        ? { label: "Open closeout documents", attrs: closeoutAttrs(j) }
+        : { label: "Ask for retainage", attrs: `data-action="retainage" data-id="${id}"`, needs: "retainage" }])];
+    case "waiver": return [{ label: "Send waiver", attrs: `data-action="open-waiver" data-id="${id}"`, needs: "waiver" }];
     default: return [];
   }
 }

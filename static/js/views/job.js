@@ -104,7 +104,7 @@ function progressFormHtml(j, openDraft) {
     : progressMode === "total"
       ? moneyField({ form: "progress", name: "completed_cents", id: "progress-amt", label: "Total done so far ($)", help: "All the work done to date, not just this draw." })
       : moneyField({ form: "progress", name: "period_cents", id: "progress-draw", label: "This draw ($)", help: "The work done since the last pay app, before retainage." });
-  return `<div class="card form-card" data-form-key="progress"><h2>${termText("Progress Pay App")}</h2>
+  return `<div class="card form-card" data-form-key="progress"><h2>${termText("Progress pay app")}</h2>
     <p class="sub progress-context">Billed so far ${money(base)} of ${money(m.contract_total_cents)} contract (${pctBilled}%).</p>
     ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">This replaces ${openDraft.number} (${money(openDraft.amount_cents)}). Its number and supporting documents stay.</p>` : ""}
     <div class="filter-bar progress-modes" role="group" aria-label="Enter">${mode("period", "This draw $")}${mode("total", "Total done so far $")}${mode("percent", "% complete")}</div>
@@ -115,8 +115,8 @@ function progressFormHtml(j, openDraft) {
     </div>
     <p class="progress-preview" id="progress-preview" aria-live="polite">${progressPreviewText(j)}</p>
     <div class="form-inline">
-      <button class="btn small" data-action="progress" data-id="${j.id}">${termText("Draft Progress Pay App")}</button>
-      <button class="linkish" data-action="progress-all">${termText("All of it: Final Pay App")}</button>
+      <button class="btn small" data-action="progress" data-id="${j.id}">${termText("Draft progress pay app")}</button>
+      <button class="linkish" data-action="progress-all">${termText("All of it: Final pay app")}</button>
     </div></div>`;
 }
 
@@ -299,18 +299,18 @@ export const views = {
         ${primary ? `<div class="next-actions"><button class="btn primary-action" ${primary.attrs}>${primary.label}</button></div>` : ""}
       </section>
       ${jobActionsHtml(more)}
-      ${formOpen.sentback ? `<div class="card form-card" data-form-key="sentback"><h2>${termText("Client Sent Pay App Back")}</h2>${formErrorLine("sentback")}<div class="form-row">
+      ${formOpen.sentback ? `<div class="card form-card" data-form-key="sentback"><h2>${termText("Client sent pay app back")}</h2>${formErrorLine("sentback")}<div class="form-row">
         ${field({ form: "sentback", name: "reason", id: "learn-reason", label: "Why they sent it back", placeholder: "For example: needs a revised schedule of values", wide: true })}
         <button class="btn small" data-action="learn" data-id="${j.id}">Save to the client playbook</button>
         <button class="btn small secondary" data-action="toggle-form" data-form="sentback">Cancel</button></div></div>` : ""}
       ${formOpen.progress && j.sov_view && j.sov_view.present ? sovProgressHtml(j, periodField("sovprogress", j), formErrorLine("sovprogress")) : ""}
       ${formOpen.progress && !(j.sov_view && j.sov_view.present) ? progressFormHtml(j, openDraft) : ""}
       ${formOpen.pencilchanges ? `<div class="card form-card" data-form-key="pencilchanges"><h2>Client wants changes</h2><div class="form-inline"><input id="pencil-note" data-field="note" value="${esc(draftValue("pencilchanges", "note"))}" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
-      ${formOpen.done ? `<div class="card form-card" data-form-key="done"><h2>${termText("Final Pay App")}</h2>${formErrorLine("done")}<div class="form-row">
+      ${formOpen.done ? `<div class="card form-card" data-form-key="done"><h2>${termText("Final pay app")}</h2>${formErrorLine("done")}<div class="form-row">
         ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true, help: NOTES_HELP })}
         ${periodField("done", j)}
         ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">${openDraft.number} becomes the final pay app. Its number and supporting documents stay.</p>` : ""}
-        <button class="btn small" data-action="done" data-id="${j.id}">${termText("Draft Final Pay App")}</button></div></div>` : ""}
+        <button class="btn small" data-action="done" data-id="${j.id}">${termText("Draft final pay app")}</button></div></div>` : ""}
       ${formOpen.conversation ? conversationFormHtml(j) : ""}
       ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Record a payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
         ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", oneAsText: true, options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${owedText(i)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
@@ -347,7 +347,7 @@ export const views = {
               <div><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}"><strong>${i.number}</strong></a> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
               <div class="sub row-sub">${i.status === "void" ? (i.voided_reason ? "Pulled back: " + i.voided_reason : "Deleted") : missing ? `${missing} supporting document${missing === 1 ? "" : "s"} missing` : (i.packet || []).some(p => p.override) ? "Supporting documents in, with an override" : "Supporting documents complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by && i.sent_at ? " · sent by " + i.approved_by : ""}${i.due_on && ["sent", "approved", "partial"].includes(i.status) ? " · due " + fmtDate(i.due_on) : ""}${i.short_pay_cents ? " · short pay " + money(i.short_pay_cents) : ""}${pencil}</div></div>
             </div>`;
-          }).join("") : `<p class="sub">${termText("No pay apps yet.")} ${j.work_status === "complete" ? "Draft one from the work not billed yet." : termText("Use Progress Pay App or Final Pay App to draft one.")}</p>`}
+          }).join("") : `<p class="sub">${termText("No pay apps yet.")} ${j.work_status === "complete" ? "Draft one from the work not billed yet." : termText("Use Progress pay app or Final pay app to draft one.")}</p>`}
           ${closeout.length ? `<div class="list-item row-link"><div><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout"><strong>Closeout documents</strong></a> <span class="sub">${m.retainage_open_cents > 0 ? "needed before held-back money is paid · " : ""}${closeoutMissing ? closeoutMissing + " missing" : "complete"}</span></div></div>` : ""}
           <h2 class="h2-gap">Change orders</h2>
           ${j.change_orders.length ? j.change_orders.map(co => `
@@ -476,7 +476,7 @@ export const actions = {
     // Missing closeout documents warn and ask; they don't stop it (Nov 3 review).
     const missing = (j && j.closeout_missing || []).map(unesc);
     const warn = missing.length ? `Closeout documents are missing: ${missing.join(", ")}. ` : "";
-    if (!(await askConfirm(`${warn}Finish ${unesc(j ? j.name : "the job")}${warn ? " anyway" : ""}? It moves to Job history and no more payments can be recorded.`, warn ? "Finish Job Anyway" : "Finish Job"))) return;
+    if (!(await askConfirm(`${warn}Finish ${unesc(j ? j.name : "the job")}${warn ? " anyway" : ""}? It moves to Job history and no more payments can be recorded.`, warn ? "Finish job anyway" : "Finish job"))) return;
     await post(`/api/jobs/${id}/close`);
   },
   "learn": async (el, id) => {

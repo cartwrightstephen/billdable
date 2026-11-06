@@ -20,7 +20,7 @@ test("the list has no form; New change order with several open jobs asks for the
   core.setState(company([job("ja", "Oldest job"), job("jb", "Newer job")]));
   let html = reg.views.cos();
   assert.doesNotMatch(html, /data-form-key="newco"/, "the change order form lives on the job page");
-  assert.match(html, /data-action="co-new"[^>]*>New Change Order</);
+  assert.match(html, /data-action="co-new"[^>]*>New change order</);
   page.formOpen.copick = true;
   html = reg.views.cos();
   assert.match(html, /<select id="new-co-job"[^>]*><option value="" selected>Pick a job…<\/option><option value="ja">Oldest job<\/option>/);
@@ -95,7 +95,7 @@ test("a job without change orders: its page points to the job's form instead of 
   page.setLocation("co-detail", "ja", "");
   const html = reg.views.coDetail();
   assert.match(html, /No change orders on A job/);
-  assert.match(html, /data-action="co-open-form" data-id="ja">New Change Order</);
+  assert.match(html, /data-action="co-open-form" data-id="ja">New change order</);
   assert.doesNotMatch(html, /data-form-key="newco"/);
 });
 

@@ -261,7 +261,7 @@ def assign_row(state: dict[str, Any], key: Any, body: dict[str, Any], members: d
     key = str(key or "")
     row = rows.get(key)
     if not row:
-        raise GateError("That item is no longer on the To Do list.")
+        raise GateError("That item is no longer on the To do list.")
     store = state.setdefault("task_assignments", {})
     _prune(store, rows)
     entry = dict(store.get(key) or {})
