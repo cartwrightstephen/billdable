@@ -73,6 +73,27 @@ class Sequence:
             qty = f"{self.rng.randint(1, max(1, line['qty_milli'] // 4)) / 1000:.3f}"
         domain.add_daily_record(self.state, self.id, "Work", details={"sections": {"quantities": [{"line_id": line["id"], "qty": qty}]}})
 
+    def daily_to_date(self):
+        """New job record's lump sum (Round 1): % done to date, which adds the step up from the field
+        total; now and then below it, which is refused with nothing moved."""
+        line = self.line()
+        if not (line["unit"].upper() == "LS" and line["qty_milli"] == 1000):
+            return self.daily()
+        before = sov.field_total(line)
+        pct = self.rng.randint(max(0, before // 10 - 5), 100)
+        try:
+            domain.add_daily_record(self.state, self.id, "Work", details={"sections": {"quantities": [{"line_id": line["id"], "qty": str(pct), "to_date": True}]}})
+        except domain.GateError as exc:
+            assert sov.field_total(line) == before, "a refused record moves nothing"
+            if "done already" in " ".join(str(v) for v in (exc.fields or {}).values()):
+                assert pct * 10 < before, f"refused {pct}% with {before / 10}% recorded"
+            raise
+        assert pct * 10 >= before, f"{pct}% taken below the {before / 10}% recorded"
+        if domain.daily.quantities_blocked(self.job):
+            assert sov.field_total(line) == before
+        else:
+            assert sov.field_total(line) == min(pct * 10, line["qty_milli"]), f"{pct}% to date from {before / 10}%: field at {sov.field_total(line)}"
+
     def import_file(self):
         line = self.line()
         if line.get("co_id"):
@@ -248,7 +269,8 @@ class Sequence:
 
     ACTIONS = ("daily", "daily", "daily", "import_file", "undo_import", "correct", "progress_blank", "progress_blank", "progress_typed", "amounts", "reset", "send", "send", "delete",
                "final", "undo", "pencil", "pencil_answer", "add_co", "sign_co", "include_co", "withdraw_co", "retainage", "contract", "replace_lines", "partial_pay", "pull_back",
-               "waiver_confirmed", "waiver_confirmed", "stored", "settle", "settle", "retainage_paid", "pay_in_full", "pay_in_full", "short_pay", "send_waiver", "send_waiver", "retainage_credit", "pay_back")
+               "waiver_confirmed", "waiver_confirmed", "stored", "settle", "settle", "retainage_paid", "pay_in_full", "pay_in_full", "short_pay", "send_waiver", "send_waiver", "retainage_credit", "pay_back",
+               "daily_to_date", "daily_to_date")
 
     # ---------- what must hold ----------
     def check(self):
