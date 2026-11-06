@@ -60,16 +60,16 @@ test("the Next step names the button under it, and a step that isn't yours says 
   const draft = { id: "i1", number: "PA-01", status: "awaiting_approval", amount_cents: 1091250, packet: [] };
   const ready = job({ invoices: [draft] });
   const o = jobs.jobNextStep(ready, { perms: { owner: true } });
-  assert.equal(o.primary.label, "Review & Send");
-  assert.match(o.line, /Review & Send/);
+  assert.equal(o.primary.label, "Review & send");
+  assert.match(o.line, /Review & send/);
   const m = jobs.jobNextStep(ready, { perms: { list: ["record_payments"] } });
   assert.equal(m.primary, null, "no main button that does something else");
-  assert.match(m.line, /Review & Send takes the “Send pay apps” permission\./);
+  assert.match(m.line, /Review & send takes the “Send pay apps” permission\./);
   assert.ok(!m.more.some(a => a.key === "progress" && a === m.primary));
   // A new job: a Member isn't told to use Final pay app.
   const fresh = jobs.jobNextStep(job(), { perms: { list: [] } });
-  assert.equal(fresh.primary.label, "Progress Pay App");
-  assert.doesNotMatch(fresh.line, /Final Pay App/);
+  assert.equal(fresh.primary.label, "Progress pay app");
+  assert.doesNotMatch(fresh.line, /Final pay app/);
 });
 
 test("Before you can finish this job keeps its list but not the buttons already on the page", () => {
@@ -83,8 +83,8 @@ test("Before you can finish this job keeps its list but not the buttons already 
   const cardEnd = card.indexOf("</section>");
   const inCard = card.slice(0, cardEnd);
   assert.match(inCard, /PA-01 isn/);
-  assert.doesNotMatch(inCard, /Record a Payment/, "it is in Get paid already");
-  assert.doesNotMatch(inCard, /Record Retainage Paid/);
+  assert.doesNotMatch(inCard, /Record a payment/, "it is in Get paid already");
+  assert.doesNotMatch(inCard, /Record retainage paid/);
   assert.equal((html.match(/data-form="match"/g) || []).length, 1, "Record a payment once on the page");
 });
 

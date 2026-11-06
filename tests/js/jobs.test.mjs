@@ -232,10 +232,10 @@ test("a done job asked for part of its retainage early still says the closeout p
 test("only an unsigned change order in the way: Get CO N signed opens it", () => {  // R3-05
   const text = "Change Order 2 is included in the billing amount but has not been signed.";
   const j = job({ blockers: [text], missing_paperwork: [], invoices: [{ id: "d1", status: "draft" }],
-    blocker_items: [{ kind: "co", text, co_id: "co-x-2", number: 2 }], blocked: true, blocker_button: "Get CO 2 Signed" });
-  assert.equal(blockerButton(j), "Get CO 2 Signed");
+    blocker_items: [{ kind: "co", text, co_id: "co-x-2", number: 2 }], blocked: true, blocker_button: "Get CO 2 signed" });
+  assert.equal(blockerButton(j), "Get CO 2 signed");
   const { primary } = jobActions(j);
-  assert.equal(primary.label, "Get CO 2 Signed");
+  assert.equal(primary.label, "Get CO 2 signed");
   assert.match(primary.attrs, /data-action="open-co" data-job="j1" data-co="co-x-2"/);
 });
 
@@ -243,7 +243,7 @@ test("each thing standing between the job and Finish job has its buttons (R3-08)
   const done = jobOf({ work_status: "complete", closeout_packet: [{ required: true, present: false }], closeout_missing: ["Punch-list signoff"] });
   const labels = (b, j = done) => closeBlockerActions(j, b).map(a => a.label);
   assert.deepEqual(labels({ kind: "outstanding", text: "$500.00 is still owed on pay apps sent." }), ["Record a payment"]);
-  assert.deepEqual(labels({ kind: "co", text: "CO 2 is not signed yet.", co_id: "co-2", number: 2 }), ["Get CO 2 Signed", "Withdraw"]);
+  assert.deepEqual(labels({ kind: "co", text: "CO 2 is not signed yet.", co_id: "co-2", number: 2 }), ["Get CO 2 signed", "Withdraw"]);
   assert.match(closeBlockerActions(done, { kind: "co", co_id: "co-2", number: 2 })[1].attrs, /data-action="withdraw-co".*data-co="co-2"/);
   assert.deepEqual(labels({ kind: "retainage" }), ["Record retainage paid", "Open closeout documents"]);
   assert.deepEqual(labels({ kind: "retainage" }, jobOf({ work_status: "complete" })), ["Record retainage paid", "Ask for retainage"]);

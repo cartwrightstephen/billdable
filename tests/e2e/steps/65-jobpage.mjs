@@ -47,7 +47,7 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     assert.equal(await p.locator(".job-actions .action-group h3").first().isVisible(), false, "no group headings on a phone");
     // A fold opened stays open after the page redraws.
     await p.locator("details.money-file > summary").click();
-    await p.getByRole("button", { name: "Log a Conversation" }).click();
+    await p.getByRole("button", { name: "Log a conversation" }).click();
     assert.equal(await p.locator("details.money-file").getAttribute("open"), "");
     await p.context().close();
   });

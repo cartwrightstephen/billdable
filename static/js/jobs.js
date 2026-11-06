@@ -545,7 +545,7 @@ function closeBlockerButtons(j, b, now) {
       { label: "Review & send", attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}" data-focus=".send-check"`, needs: "send" },
       { label: "Delete draft", attrs: `data-action="void-draft" data-id="${id}"`, needs: "void-draft" }];
     case "co": return [
-      { label: `Get CO ${b.number} Signed`, attrs: `data-action="open-co" data-job="${id}" data-co="${b.co_id}"` },
+      { label: `Get CO ${b.number} signed`, attrs: `data-action="open-co" data-job="${id}" data-co="${b.co_id}"` },
       { label: "Withdraw", attrs: `data-action="withdraw-co" data-id="${id}" data-co="${b.co_id}"`, needs: "withdraw-co" }];
     case "unbilled": return [{ label: "Draft pay app", attrs: `data-action="draft" data-id="${id}"` }];
     case "overbilled": return [
