@@ -78,6 +78,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("phone: five sections, with Import/Export under More; the closed menu takes no Tab stop", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
     await phone.goto(BASE + "/dashboard");
+    await phone.getByRole("heading", { name: "Overview" }).waitFor();
     // Closed, the drawer is inert (round 1, item 11).
     assert.equal(await phone.evaluate(() => document.getElementById("rail").inert), true);
     await phone.locator("#menu-btn").click();

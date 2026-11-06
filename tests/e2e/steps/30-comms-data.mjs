@@ -187,7 +187,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.evaluate(async () => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = (await (await fetch("/api/state")).json()).jobs[0];
-      await post(`/api/jobs/${j.id}/daily-record`, { notes: "Hall outlets", co_work: [{ description: "Two extra outlets in the hall" }] });
+      await post(`/api/jobs/${j.id}/daily-record`, { notes: "Hall outlets", sections: { co_work: [{ description: "Two extra outlets in the hall" }] } });
     });
     await p.goto(BASE + "/automations");
     await p.getByRole("heading", { name: "Notifications" }).waitFor();

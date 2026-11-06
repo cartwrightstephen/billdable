@@ -84,7 +84,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const panel = p.locator(".check-email");
     await panel.waitFor();
     // CI has no mail server, so the panel gives the server's reason instead of "We sent a confirmation link".
-    assert.match(await panel.innerText(), new RegExp(`(We sent a confirmation link|No confirmation link went) to ${email.replace(/[.]/g, "\\.")}`));
+    assert.match(await panel.innerText(), new RegExp(`(We sent a confirmation link|no link went) to ${email.replace(/[.]/g, "\\.")}`));
     // One plain line under the heading, not a card above it (round 1, item 9).
     assert.equal(await p.locator("h1 + .check-email").count(), 1);
     await panel.getByRole("button", { name: "Got it" }).click();
