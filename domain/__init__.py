@@ -1012,8 +1012,10 @@ def _say_which(state: dict[str, Any], job: dict[str, Any], record: dict[str, Any
     where: the audit's words for it, or blank when the caller's own audit row says it. An
     unconditional answer is changed to another only by whoever gave it or an owner; any change of
     an answer that stood is audited."""
-    before = waiver_answer(record)
     said = record.get("waiver_answer") or {}
+    # An answer stands for the files it was given for, and for those and more: adding a file to the
+    # record doesn't make it someone else's to take back.
+    before = str(said.get("kind") or "") if set(said.get("file_ids") or []) & set(record.get("file_ids") or []) else ""
     if before == "unconditional" and kind != "unconditional" and answerer is not None and not answerer.owner:
         if not ((said.get("by_id") and said["by_id"] == answerer.id) or (not said.get("by_id") and said.get("by") == actor)):
             raise GateError(f"{record['label']} was marked unconditional by {said.get('by') or 'someone'}. Only {said.get('by') or 'they'} or an owner can change it.")

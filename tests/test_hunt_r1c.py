@@ -216,6 +216,17 @@ class WhoSetsAnAnswer(Case):
                 back(OWNER, "Pat")   # an owner
                 self.assertEqual(self.rec["waiver_answer"]["kind"], "conditional")
 
+    def test_adding_a_file_to_the_record_does_not_hand_the_answer_to_someone_else(self):
+        self.attach_by(SENDER, "unconditional")
+        self.state["files"].append({"id": "file-x", "name": "x.jpg", "ext": ".jpg", "size": 3})
+        self.rec["file_ids"].append("file-x")
+        domain._refresh_draft_gate(self.job, self.state)
+        self.assertFalse(self.waiver["present"], "asked again for the files as they are")
+        with self.assertRaises(domain.GateError):
+            domain.answer_waiver_question(self.state, self.job["id"], self.rec["id"], "conditional", "Lee", shown=self.rec["file_ids"], answerer=OTHER_SENDER)
+        domain.answer_waiver_question(self.state, self.job["id"], self.rec["id"], "conditional", "Pat", shown=self.rec["file_ids"], answerer=OWNER)
+        self.assertEqual(self.rec["waiver_answer"]["kind"], "conditional")
+
     def test_a_conditional_answer_is_changed_to_unconditional_by_a_sender(self):
         self.attach_by(SENDER, "conditional")
         self.attach_by(OTHER_SENDER, "unconditional")
