@@ -123,14 +123,12 @@ function noPaymentsButton() {
 }
 
 // This module's pages, by the name their address opens (routes.js).
-export const views = {
-  payments() {
+// The payments received, newest first: Pay apps' Payments filter (round 1, item 19: once a tab).
+export function paymentsListHtml() {
     const pays = [];
     // A finished job's payments are in its job file (J9).
     openJobs(state.jobs).forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     return `
-      <h1>Payments</h1>
-      <p class="sub">Import payments from QuickBooks, a CSV file or the connection, on <a href="/data/import" data-action="nav" data-view="import">Import</a>.</p>
       ${pays.length ? `<div class="table-wrap">
         <table>
           <tr><th>Job</th><th>Pay app</th><th>Amount</th><th>Reference</th><th>Received</th></tr>
@@ -147,9 +145,11 @@ export const views = {
           }).join("")}
         </table>
       </div>` : emptyState("No payments yet", "", noPaymentsButton())}
+      <p class="sub">Payments from QuickBooks or a CSV file come in on <a href="/data/import" data-action="onb-go" data-view="import" data-focus="#qbo-csv">Import</a>.</p>
     `;
-  },
-};
+}
+
+export const views = {};
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {

@@ -78,9 +78,10 @@ test("a link-like button grows its touch area without changing the line's height
   assert.doesNotMatch(css, /\.linkish, \.tab/);
 });
 
-test("Money has five tabs and Settings is split into Company, Team, My account and Billing", () => {
+test("Money has four tabs and Settings is split into Company, Team, My account and Billing", () => {
   const money = /key: "money", label: "Money", views: (\[.*?\]) \},/.exec(app)[1];
-  assert.deepEqual(JSON.parse(money).map(([, label]) => label), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout"]);
+  // Payments is a filter on Pay apps (round 1, item 19).
+  assert.deepEqual(JSON.parse(money).map(([, label]) => label), ["Pay apps", "Change orders", "Unpaid", "Closeout"]);
   const settings = /key: "settings", label: "Settings", views: (\[.*?\]) \},/.exec(app)[1];
   assert.deepEqual(JSON.parse(settings).slice(0, 4).map(([v]) => v), ["company", "team", "account", "billing"]);
   assert.match(css, /\.tabs\.more-right \{/);
@@ -96,10 +97,10 @@ test("the Inbox opens on Waiting; Import's file box has Take a photo before Choo
   assert.match(css, /@media \(pointer: coarse\), \(max-width: 600px\) \{\s*\.touch-only/);
 });
 
-test("seven sections on a computer; on a phone five, with Import/Export and Automations under More", () => {  // Oct 29 review
+test("six sections on a computer; on a phone five, with Import/Export under More", () => {  // Oct 29 review; round 1 folded Automations into My account
   const sections = [...app.matchAll(/\{ key: "([\w-]+)", label: "([^"]+)"(, more: true)?, views:/g)].map(m => [m[2], !!m[3]]);
-  assert.deepEqual(sections.map(([l]) => l), ["Dashboard", "Jobs", "Communications", "Import/Export", "Money", "Automations", "Settings"]);
-  assert.deepEqual(sections.filter(([, more]) => more).map(([l]) => l), ["Import/Export", "Automations"]);
+  assert.deepEqual(sections.map(([l]) => l), ["Dashboard", "Jobs", "Communications", "Import/Export", "Money", "Settings"]);
+  assert.deepEqual(sections.filter(([, more]) => more).map(([l]) => l), ["Import/Export"]);
   assert.match(css, /\.nav-more \{ display: none; \}/);
   assert.match(css, /@media \(max-width: 800px\) \{\s*\.nav > \.nav-more-item \{ display: none; \}\s*\.nav-more \{ display: block; \}/);
 });

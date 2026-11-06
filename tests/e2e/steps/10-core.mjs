@@ -509,10 +509,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("phone: no page scrolls sideways at 375 px", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
     const wide = [];
-    for (const path of ["/dashboard", "/dashboard/results", "/dashboard/calendar", "/jobs", "/jobs/daily", "/jobs/history", "/jobs/clients", "/jobs/job-oak",
+    for (const path of ["/dashboard", "/dashboard/calendar", "/jobs", "/jobs/daily", "/jobs/history", "/jobs/clients", "/jobs/job-oak",
                         "/communications", "/communications/outbox", "/data/import", "/data/export", "/money", "/money/packets",
-                        "/money/change-orders", "/money/collections", "/money/payments", "/money/waivers", "/money/retainage",
-                        "/automations", "/settings", "/settings/company", "/settings/team", "/settings/account", "/settings/billing",
+                        "/money/change-orders", "/money/collections", "/money/waivers", "/money/retainage",
+                        "/settings", "/settings/company", "/settings/team", "/settings/account", "/settings/billing",
                         "/settings/audit"]) {
       await phone.goto(BASE + path);
       await phone.locator("#view h1").first().waitFor();
@@ -522,10 +522,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.deepEqual(wide, [], "pages wider than the screen");
   });
 
-  await step("Money has five tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03, Oct 29 review
+  await step("Money has four tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03, Oct 29 review; round 1 item 19
     await page.goto(BASE + "/money");
     await page.locator(".tabs .tab", { hasText: "Closeout" }).waitFor();  // allInnerTexts doesn't wait for the page to draw
-    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout"]);
+    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Closeout"]);
     await page.locator("table th", { hasText: "Supporting documents" }).waitFor();
     await page.goto(BASE + "/money/packets");  // the old Paperwork tab's address opens Pay apps
     await page.getByRole("heading", { name: "Pay apps" }).waitFor();

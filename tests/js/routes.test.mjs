@@ -74,17 +74,21 @@ test("the refusal card's button and the toast's both open the page", () => {  //
 });
 
 test("the Oct 29 addresses, and every old one still opens its page", () => {
-  for (const [view, path] of [["dashboard", "/dashboard"], ["results", "/dashboard/results"], ["calendar", "/dashboard/calendar"],
+  for (const [view, path] of [["dashboard", "/dashboard"], ["calendar", "/dashboard/calendar"],
     ["daily", "/jobs/daily"], ["playbook", "/jobs/clients"], ["inbox", "/communications"], ["outbox", "/communications/outbox"],
-    ["import", "/data/import"], ["export", "/data/export"], ["automations", "/automations"]]) {
+    ["import", "/data/import"], ["export", "/data/export"]]) {
     assert.equal(pathFor(view), path);
     assert.deepEqual(routeFromPath(path), { view }, path);
   }
-  for (const [old, view] of [["/today", "dashboard"], ["/today/results", "results"], ["/today/calendar", "calendar"], ["/today/daily", "daily"],
+  // Round 1 folded Results onto the Dashboard, Automations into My account and Payments into Pay apps.
+  assert.deepEqual(routeFromPath("/today/results"), { view: "dashboard", anchor: "results" });
+  assert.deepEqual(routeFromPath("/automations"), { view: "account", anchor: "notifications" });
+  for (const [old, view] of [["/today", "dashboard"], ["/today/calendar", "calendar"], ["/today/daily", "daily"],
     ["/settings/playbook", "playbook"], ["/inbox", "inbox"], ["/money/outbox", "outbox"], ["/settings/help", "account"], ["/settings", "company"]]) {
     assert.deepEqual(routeFromPath(old), { view }, old);
   }
-  for (const [path, view] of Object.entries(PATH_ALIASES)) {
+  for (const [path, to] of Object.entries(PATH_ALIASES)) {
+    const view = to.split("#")[0];
     assert.ok(VIEW_PATHS[view], `${path} opens a page that has an address`);
     assert.equal(Object.values(VIEW_PATHS).includes(path), false, `${path} is only an alias`);
   }

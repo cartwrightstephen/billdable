@@ -1,5 +1,5 @@
-// Dashboard: the overview with the To Do list and the setup checklist, Results, and Calendar
-// with its Tasks block. The Daily record is in daily.js.
+// Dashboard: the overview with the To Do list, the setup checklist and Results (folded), and
+// Calendar with its Tasks block. The Daily record is in daily.js.
 import { unesc, esc, escDeep, money, toDate, fmtDate } from "../format.js";
 import { isBlocked, nextStep, statusPill, openJobs, jobFilterShown } from "../jobs.js";
 import { pathFor } from "../routes.js";
@@ -13,6 +13,7 @@ import { state, me, currentView, formOpen, setMe, queueExpanded, setQueueExpande
 import { toast, render, DEMO_COMPANY_ID, emptyState, nav, post, can, moreDetails } from "../app-core.js";
 import { qboStatus } from "./payments.js";
 import { newAddressButton } from "./inbox.js";
+import { reminderItems } from "./automations.js";
 
 export let metricsData = null;   // {period, data} from /api/metrics
 export let metricsPeriod = "90";
@@ -77,8 +78,10 @@ function taskFormHtml(people) {
 function todoCardHtml() {
   loadTeamOnce();
   const today = localDay(new Date());
-  const everyone = todoItems(state);
-  const items = todoWho === "mine" ? todoItems(state, { who: "mine", meId: me ? me.id : "" }) : everyone;
+  // The reminders fired in the app are this person's own, so they show under Mine too.
+  const fired = reminderItems(state.today_rows || []);
+  const everyone = todoItems(state).concat(fired);
+  const items = todoWho === "mine" ? todoItems(state, { who: "mine", meId: me ? me.id : "" }).concat(fired) : everyone;
   const shown = itemsInPeriod(items, periodRange(todoPeriod, new Date(), todoRange.from, todoRange.to), today);
   const people = assignees(teamData, me, everyone);
   const who = (k, label) => `<button class="${todoWho === k ? "btn" : "btn secondary"} small" data-action="todo-who" data-who="${k}" aria-pressed="${todoWho === k}">${label}</button>`;
@@ -166,8 +169,11 @@ async function setChecklist(show) {
   return true;
 }
 
+let metricsAsking = "";   // the period being asked for, so a redraw meanwhile doesn't ask again
 export async function loadMetrics() {
   const period = metricsPeriod;
+  if (metricsAsking === period) return;
+  metricsAsking = period;
   const asked = me;
   try {
     const res = await fetch(`/api/metrics?period=${period}`);
@@ -176,7 +182,8 @@ export async function loadMetrics() {
     if (me !== asked) return;   // signed out while this was asked: the last company's figures
     metricsData = { period, data: escDeep(data) };
   } catch (_) { setNetBanner(true); return; }
-  if (currentView === "results") render();
+  finally { if (metricsAsking === period) metricsAsking = ""; }
+  if (currentView === "dashboard") render();
 }
 
 // The setup checklist on Today (R2-03). Each step's button goes to where that step is done:
@@ -264,6 +271,40 @@ function filteredJobs() {
   return jobs;
 }
 
+// Results (round 1, item 19: once a tab of its own), folded on the Dashboard under the money tiles
+// once a pay app has gone out; its line says the figure people ask for, sent to paid.
+function resultsHtml() {
+  if (!anyPayAppSent(state)) return "";
+  const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
+  const ready = metricsData && metricsData.period === metricsPeriod;
+  const m = ready ? metricsData.data : null;
+  const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
+  const num = (v) => v === null || v === undefined ? "—" : String(v);
+  const line = m ? ` <span class="sub">· ${termText("sent to paid")}: ${days(m.sent_to_paid_median_days)} median · ${m.pay_apps_paid} paid · ${metricsPeriod === "90" ? "last 90 days" : "all time"}</span>` : "";
+  return `<details class="card dash-results" id="results" data-more="dash-results"${moreDetails["dash-results"] ? " open" : ""}><summary><strong>Results</strong>${line}</summary>
+      <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}</div>
+      ${!m ? `<p class="sub">Loading…</p>` : `
+      <div class="metrics">
+        <div class="metric"><div class="k">${termText("Days from Job Completion to Pay App Sent")}</div><div class="v">${num(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
+        <div class="metric"><div class="k">${termText("Days from Pay App Sent to Paid")}</div><div class="v">${num(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${num(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
+        <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
+        <div class="metric"><div class="k">${termText("Pay app rejections by Clients")}</div><div class="v">${m.sent_back}</div><div class="sub row-sub">of ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} ${termText("pay apps")}</div></div>
+        <div class="metric"><div class="k">Paid</div><div class="v">${money(m.paid_cents)}</div><div class="sub row-sub">${m.pay_apps_paid} ${termText("pay apps")}</div></div>
+        <div class="metric"><div class="k">Change orders billed</div><div class="v">${money(m.change_orders_billed_cents)}</div><div class="sub row-sub">signed, all time</div></div>
+        <div class="metric"><div class="k">Held-back money received</div><div class="v">${money(m.retainage_collected_cents)}</div><div class="sub row-sub">all time</div></div>
+      </div>
+      <h3>Jobs completed with outstanding billings</h3>
+      ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">None.</p>`}
+      ${m.by_payer.length ? `<div class="table-wrap"><table>
+        <tr><th>Client</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
+        ${m.by_payer.map(r => `<tr><td>${r.payer}</td><td class="num">${r.average_days}</td><td class="num">${r.paid}</td></tr>`).join("")}
+      </table></div>` : ""}`}
+    </details>`;
+}
+
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   dashboard() {
@@ -290,6 +331,7 @@ export const views = {
         <div class="metric"><div class="k">Held back, still owed</div><div class="v">${money(t.retainage_cents)}</div></div>
         <div class="metric"><div class="k">Billed this month</div><div class="v">${money(billedThisMonth(state.jobs))}</div></div>
       </div>
+      ${resultsHtml()}
       <p class="sub">${open.length} active job${open.length === 1 ? "" : "s"}${t.blocked_jobs ? ` · ${t.blocked_jobs} can't be sent yet` : ""}</p>
       ${state.jobs.length ? `
       <div class="stages" role="group" aria-label="Show jobs">
@@ -324,36 +366,6 @@ export const views = {
           }).join("")}
         </table>
       </div>` : emptyState("No jobs in this view")}` : ""}
-    `;
-  },
-  results() {
-    const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
-    const head = `<h1>Results</h1>
-      <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}</div>`;
-    if (!metricsData || metricsData.period !== metricsPeriod) return head + `<p class="sub">Loading…</p>`;
-    const m = metricsData.data;
-    const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
-    const num = (v) => v === null || v === undefined ? "—" : String(v);
-    return head + `
-      <div class="metrics">
-        <div class="metric"><div class="k">${termText("Days from Job Completion to Pay App Sent")}</div><div class="v">${num(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
-        <div class="metric"><div class="k">${termText("Days from Pay App Sent to Paid")}</div><div class="v">${num(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${num(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
-        <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
-        <div class="metric"><div class="k">${termText("Pay app rejections by Clients")}</div><div class="v">${m.sent_back}</div><div class="sub row-sub">of ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
-      </div>
-      <div class="metrics">
-        <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} ${termText("pay apps")}</div></div>
-        <div class="metric"><div class="k">Paid</div><div class="v">${money(m.paid_cents)}</div><div class="sub row-sub">${m.pay_apps_paid} ${termText("pay apps")}</div></div>
-        <div class="metric"><div class="k">Change orders billed</div><div class="v">${money(m.change_orders_billed_cents)}</div><div class="sub row-sub">signed, all time</div></div>
-        <div class="metric"><div class="k">Held-back money received</div><div class="v">${money(m.retainage_collected_cents)}</div><div class="sub row-sub">all time</div></div>
-      </div>
-      <div class="card"><h2>Jobs completed with outstanding billings</h2>
-        ${m.waiting_to_bill.length ? m.waiting_to_bill.map(w => `<div class="list-item row-link"><a href="${pathFor("job", w.job_id)}" data-action="open-job" data-id="${w.job_id}">${w.job}</a><span>${days(w.days)} since done</span></div>`).join("") : `<p class="sub">None.</p>`}
-      </div>
-      ${m.by_payer.length ? `<div class="table-wrap"><table>
-        <tr><th>Client</th><th>Average days from sent to paid</th><th>Pay apps paid</th></tr>
-        ${m.by_payer.map(r => `<tr><td>${r.payer}</td><td class="num">${r.average_days}</td><td class="num">${r.paid}</td></tr>`).join("")}
-      </table></div>` : ""}
     `;
   },
   calendar() {

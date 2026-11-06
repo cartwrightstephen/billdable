@@ -153,7 +153,7 @@ Every new job has one (`sov.py`): the lines typed at New job, or one lump-sum li
 
 ## Reminders and texts
 
-Internal only: clients get email, never texts (`sms.py`, `reminders.py`, page: Automations).
+Internal only: clients get email, never texts (`sms.py`, `reminders.py`, page: My account, Notifications).
 
 - Each person picks, for Important dates, Missing information and Change order work, any of in the app, email and text. All are off until turned on. The same item comes round every `REMINDER_REPEAT_DAYS` until it is dealt with, then stops.
 - Email and text go from the hourly loop, at most one message per person per channel per day, from `DAILY_EMAIL_HOUR_UTC`. In the app they are notifications with an unread count on the menu. Nothing goes at start-up: the first run is an hour later. A read-only company is skipped.

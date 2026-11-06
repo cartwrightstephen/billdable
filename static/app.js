@@ -11,46 +11,51 @@ import { formDraft, watchForms } from "./js/forms.js";
 import { pickPayApp } from "./js/payimport.js";
 import { termText } from "./js/terms.js";
 import { state, me, currentView, currentJobId, setMe, clearSession, setAccount, setSignedOutNote, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
-import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage } from "./js/app-core.js";
+import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage, showAnchor } from "./js/app-core.js";
 import { views, actions as pageActions } from "./js/views/index.js";
 import { metricsData, metricsPeriod, loadMetrics, setCalJobFilter } from "./js/views/today.js";
+import { anyPayAppSent } from "./js/today.js";
 import { syncNewJobCustomer, prefillApprover, prefillRetainage, hideSameCustomer } from "./js/views/jobs.js";
 import { updateProgressPreview, prefillPaymentAmount } from "./js/views/job.js";
 import { sovDraft, updateSovTotals } from "./js/views/job-sov.js";
 import { qboStatus, loadQboStatus, paymentImport } from "./js/views/payments.js";
 import { setOutboxJobFilter } from "./js/views/communications.js";
-import { reminderCount, loadReminders } from "./js/views/automations.js";
+import { loadReminders } from "./js/views/automations.js";
 import { newInboxCount, loadImportSettings, guessPasteSource } from "./js/views/inbox.js";
 import { loadHelperReview, loadAdminCompanies, companySwitch, setAuditJobFilter } from "./js/views/settings.js";
 import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml } from "./js/views/auth.js";
 import { setAiVisible, updateAiContext } from "./js/views/helper.js";
 
-// ---------- navigation: seven destinations with tabs; every page has its own address ----------
-// On a phone the menu shows five; the two marked more go under More (styles.css).
+// ---------- navigation: six destinations with tabs; every page has its own address ----------
+// On a phone the menu shows five; Import/Export goes under More (styles.css). Round 1 (item 19)
+// folded Automations into My account as Notifications, Results onto the Dashboard and Payments
+// into a filter on Pay apps; their old addresses land there (routes.js PATH_ALIASES).
 const SECTIONS = [
-  { key: "today", label: "Dashboard", views: [["dashboard", "Overview"], ["results", "Results"], ["calendar", "Calendar"]] },
+  { key: "today", label: "Dashboard", views: [["dashboard", "Overview"], ["calendar", "Calendar"]] },
   { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["daily", "New job record"], ["history", "Job history"], ["playbook", "Client playbook"]] },
   { key: "communications", label: "Communications", views: [["inbox", "Inbox"], ["outbox", "Outbox"]] },
   { key: "data", label: "Import/Export", more: true, views: [["import", "Import"], ["export", "Export"]] },
-  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["payments", "Payments"], ["waivers", "Closeout"]] },
-  { key: "automations", label: "Automations", more: true, views: [["automations", "Automations"]] },
-  { key: "settings", label: "Settings", views: [["company", "Company"], ["team", "Team"], ["account", "My account"], ["billing", "Billing"], ["audit", "Activity log"], ["helper-admin", "Helper answers"]] },
+  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["waivers", "Closeout"]] },
+  { key: "settings", label: "Settings", views: [["company", "Company"], ["team", "Team"], ["account", "My account"], ["billing", "Billing"], ["audit", "Activity log"]] },
 ];
+// The Duracash team's own tab (HELPER_ADMIN_USER_IDS), shown only to them.
+const ADMIN_TAB = ["helper-admin", "Helper answers"];
 
 // One menu button, with its count: new Inbox items on Communications, emails that didn't go out on Dashboard.
 function sectionButton(s, section, counts) {
   const on = s.key === section.key;
   const badge = (n, label) => n ? ` <span class="count" aria-label="${label}">${n}</span>` : "";
-  return `<button class="${on ? "active" : ""}${s.more ? " nav-more-item" : ""}" data-action="section" data-section="${s.key}" ${on ? 'aria-current="page"' : ""}>${s.label}${s.key === "communications" ? badge(counts.inbox, `${counts.inbox} new`) : ""}${s.key === "automations" ? badge(counts.reminders, `${counts.reminders} unread`) : ""}${s.key === "today" ? badge(counts.failed, `${counts.failed} email${counts.failed === 1 ? "" : "s"} didn't go out`) : ""}</button>`;
+  return `<button class="${on ? "active" : ""}${s.more ? " nav-more-item" : ""}" data-action="section" data-section="${s.key}" ${on ? 'aria-current="page"' : ""}>${s.label}${s.key === "communications" ? badge(counts.inbox, `${counts.inbox} new`) : ""}${s.key === "today" ? badge(counts.failed, `${counts.failed} email${counts.failed === 1 ? "" : "s"} didn't go out`) : ""}</button>`;
 }
 
 function sectionOf(view) {
   const v = DETAIL_PARENT[view] || view;
+  if (v === ADMIN_TAB[0]) return SECTIONS.find(s => s.key === "settings");
   return SECTIONS.find(s => s.views.some(([k]) => k === v)) || SECTIONS[0];
 }
 function tabLabel(view) {
   for (const s of SECTIONS) for (const [k, label] of s.views) if (k === view) return termText(label);
-  return "";
+  return view === ADMIN_TAB[0] ? ADMIN_TAB[1] : "";
 }
 // What the menu calls a page, for the Back button (G3): the job's name, a pay app's number, a
 // change order's, else the page's tab ("Dashboard" for the Overview).
@@ -149,7 +154,7 @@ function render() {
   const failedEmails = state.pending_email_failures || 0;
   // Helper answers is for the Duracash team. Billing shows everyone the trial and the
   // subscription; only an owner changes it (R6-10).
-  const tabs = section.views.filter(([v]) => v !== "helper-admin" || helperAdmin);
+  const tabs = section.key === "settings" && helperAdmin ? [...section.views, ADMIN_TAB] : section.views;
   const shell = `
     <a class="skip-link" href="#main">Skip to content</a>
     <div class="shell ${drawerOpen ? "drawer-open" : ""}">
@@ -162,9 +167,9 @@ function render() {
         <div class="brand">Duracash</div>
         <div class="company"><strong>${company.name}</strong>${companyLine(company) ? `<br>${companyLine(company)}` : ""}</div>
         <nav class="nav" aria-label="Main">
-          ${SECTIONS.map(s => sectionButton(s, section, { inbox: inboxCount, failed: failedEmails, reminders: reminderCount() })).join("")}
-          <details class="nav-more"${section.more ? " open" : ""}><summary>More${reminderCount() ? ` <span class="count" aria-label="${reminderCount()} unread">${reminderCount()}</span>` : ""}</summary>
-            ${SECTIONS.filter(s => s.more).map(s => sectionButton(s, section, { reminders: reminderCount() })).join("")}
+          ${SECTIONS.map(s => sectionButton(s, section, { inbox: inboxCount, failed: failedEmails })).join("")}
+          <details class="nav-more"${section.more ? " open" : ""}><summary>More</summary>
+            ${SECTIONS.filter(s => s.more).map(s => sectionButton(s, section, {})).join("")}
           </details>
         </nav>
         <div class="user-meta">
@@ -211,11 +216,12 @@ function render() {
   }
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
   loadReminders();
-  if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
-  if (["payments", "company"].includes(currentView) && !qboStatus) loadQboStatus();
+  if (currentView === "dashboard" && anyPayAppSent(state) && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
+  if (currentView === "company" && !qboStatus) loadQboStatus();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin" && helperAdmin) { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
+  showAnchor();
 }
 
 // The account's notes (email not confirmed, read-only, a share waiting) go just under the page's

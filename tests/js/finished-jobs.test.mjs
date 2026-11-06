@@ -30,9 +30,10 @@ function load() {
   core.setState({ company: { name: "Pine" }, jobs: [open, done], payers: [payer], inbox: [], email_log: [], email_log_total: 0, closed_jobs_total: 1, totals: {} });
 }
 
-test("Money's lists and the Calendar leave out a finished job", () => {
+test("Money's lists and the Calendar leave out a finished job", async () => {
   load();
-  const pages = { payapps: reg.views.payapps(), cos: reg.views.cos(), payments: reg.views.payments(), calendar: reg.views.calendar() };
+  // Payments is a filter on Pay apps now (round 1, item 19).
+  const pages = { payapps: reg.views.payapps(), cos: reg.views.cos(), payments: (await import("../../static/js/views/payments.js")).paymentsListHtml(), calendar: reg.views.calendar() };
   for (const [name, html] of Object.entries(pages)) {
     assert.match(html, /Pine/, `${name} shows the open job`);
     assert.doesNotMatch(html, /Oak/, `${name} leaves out the finished job`);

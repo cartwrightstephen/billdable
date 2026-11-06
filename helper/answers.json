@@ -1255,21 +1255,26 @@
       "questions": [
         "What are automations?",
         "Automations",
-        "Can Duracash do things automatically?"
+        "Can Duracash do things automatically?",
+        "Where are my notifications?",
+        "How do I turn reminders on or off?"
       ],
       "keywords": [
         "automation",
         "automations",
-        "automatic"
+        "automatic",
+        "notifications",
+        "notification",
+        "reminders"
       ],
-      "answer": "Automations is where you choose your own reminders: important dates, missing information, and change order work on a job record that lacks what it needs. Tick In the app, Email or Text for each, then Save. All are off until you turn them on. Each comes round every 3 days until it is dealt with, and email and text go out at most once a day. Notifications in the app are listed there with an unread count. Reminders go to you and your team, never to clients. The Dashboard's To Do still shows each follow-up when it is due.",
+      "answer": "Reminders are on Settings, My account, under Notifications: important dates, missing information, and change order work on a job record that lacks what it needs. Tick In the app, Email or Text for each, then Save. Someone new starts with all three in the app; email and text are off until you tick them. Reminders in the app are rows on the Dashboard's To Do: Open goes to what it is about, Mark read clears it. Each comes round every 3 days until it is dealt with, and email and text go out at most once a day. Reminders go to you and your team, never to clients.",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
-          "view": "automations",
-          "label": "Open Automations"
+          "view": "account",
+          "label": "Open My account"
         }
       ],
       "follow_ups": [
@@ -1290,14 +1295,14 @@
         "texting",
         "opt"
       ],
-      "answer": "No, Duracash never texts clients. Clients hear from you by email. Texts are only for your own team: add your mobile number and agree to texts on Settings, My account, enter the code we text to that number, then tick Text for a reminder on Automations. Reply STOP to any text to turn them off.",
+      "answer": "No, Duracash never texts clients. Clients hear from you by email. Texts are only for your own team: add your mobile number and agree to texts on Settings, My account, enter the code we text to that number, then tick Text for a reminder under Notifications on the same page. Reply STOP to any text to turn them off.",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
-          "view": "automations",
-          "label": "Open Automations"
+          "view": "account",
+          "label": "Open My account"
         }
       ],
       "follow_ups": []
@@ -1594,14 +1599,14 @@
         "takeoff",
         "qty"
       ],
-      "answer": "On Import/Export, Import, under Quantities done, pick the Job (only jobs with a schedule of values are listed), then tap Choose the file for a CSV or Excel file, or paste the rows and tap Read quantities. Each row needs the item number or description of a schedule line and the quantity done this period; a lump sum line takes the % done this period. The table shows each row: the line, Done to date, Add, New total and Scheduled, and why a row can't be added (no line matches, the item number and description name different lines, the quantity is in another unit or is a % on a line that isn't a lump sum, it would go past the scheduled quantity or, with stored materials, past the line's value, the line is twice in the file). Nothing changes until you tap Add to the schedule of values: then the rows that can go on add to each line's total and move the suggested pay app value, the same as a job record's quantities. Progress pay app bills them. What couldn't be added is listed, and the import is kept in the job records.",
+      "answer": "Open the job, and on its Schedule of values card tap Import quantities. Tap Choose the file for a CSV or Excel file, or paste the rows and tap Read quantities. Each row needs the item number or description of a schedule line and the quantity done this period; a lump sum line takes the % done this period. The table shows each row: the line, Done to date, Add, New total and Scheduled, and why a row can't be added (no line matches, the item number and description name different lines, the quantity is in another unit or is a % on a line that isn't a lump sum, it would go past the scheduled quantity or, with stored materials, past the line's value, the line is twice in the file). Nothing changes until you tap Add to the schedule of values: then the rows that can go on add to each line's total and move the suggested pay app value, the same as a job record's quantities. Progress pay app bills them. What couldn't be added is listed, and the import is kept in the job records.",
       "handler": null,
       "needs_job": false,
       "actions": [
         {
           "type": "nav",
-          "view": "import",
-          "label": "Open Import"
+          "view": "jobs",
+          "label": "Open jobs"
         }
       ],
       "follow_ups": [

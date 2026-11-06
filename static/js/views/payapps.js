@@ -15,6 +15,7 @@ import { companyGapsHtml } from "../setup.js";
 import { QBO_READY, qboCsvLink, OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
 import { shortPayCardHtml, owedText, emailFailed, sendsTo } from "./job.js";
 import { beforeYouSendHtml, supportingDocsHtml } from "./paperwork.js";
+import { paymentsListHtml } from "./payments.js";
 
 let payappFilter = "all";
 let payPreselectJob = null;
@@ -187,7 +188,7 @@ export const views = {
     // "Unpaid" (the sent filter) holds every pay app out for payment, part-paid ones too (R3-02).
     const shown = { draft: ["draft", "awaiting_approval"], sent: ["sent", "approved", "partial"] };
     if (payappFilter !== "all") apps = apps.filter(a => (shown[payappFilter] || [payappFilter]).includes(a.status));
-    const f = (key, label) => `<button class="${payappFilter === key ? "btn" : "btn secondary"} small" data-action="payapp-filter" data-filter="${key}" aria-pressed="${payappFilter === key}">${label}</button>`;
+    const f = (key, label) => `<button class="${payappFilter === key ? "btn" : "btn secondary"} small" data-action="payapp-filter" data-filter="${key}"${key === "payments" ? ' data-anchor="payments"' : ""} aria-pressed="${payappFilter === key}">${label}</button>`;
     const starts = payAppStarts(state.jobs, perms());
     const picking = formOpen.papick && starts.length > 1;
     return `
@@ -203,8 +204,8 @@ export const views = {
           <button class="btn small secondary" data-action="toggle-form" data-form="papick">Cancel</button>
         </div>
       </div>` : ""}
-      <div class="filter-bar" role="group" aria-label="Show">${f("all", "All")}${f("draft", "Ready to send")}${f("sent", "Unpaid")}${f("paid", "Paid")}</div>
-      ${apps.length ? `<div class="table-wrap">
+      <div class="filter-bar" role="group" aria-label="Show">${f("all", "All")}${f("draft", "Ready to send")}${f("sent", "Unpaid")}${f("paid", "Paid")}${f("payments", "Payments")}</div>
+      ${payappFilter === "payments" ? paymentsListHtml() : apps.length ? `<div class="table-wrap">
         <table>
           <tr><th>Number</th><th>Job</th><th>Amount</th><th>Status</th><th>Supporting documents</th><th>Sent</th><th>Before it can go</th></tr>
           ${apps.slice().reverse().map(a => `<tr>

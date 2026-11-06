@@ -2939,7 +2939,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         person = auth.session_public(ctx.user["id"]) or ctx.user
         if not person.get("sms_opt_in"):
-            fields = {k: "Add your mobile number and agree to texts on My account first." for k, c in prefs.items() if "text" in c}
+            fields = {k: "Add your mobile number and agree to texts above first." for k, c in prefs.items() if "text" in c}
             if fields:
                 self._json(409, {"error": next(iter(fields.values())), "fields": fields})
                 return
@@ -3209,7 +3209,7 @@ def _sends(what: str, run):
 
 def _import_qbo(h, st, j, i, c):
     if c.company_id != auth.DEMO_COMPANY_ID:
-        raise domain.GateError("The sample import only runs on the demo account. Connect QuickBooks on Payments to read your payments.")
+        raise domain.GateError("The sample import only runs on the demo account. Connect QuickBooks on Settings, Company to read your payments.")
     domain.import_sample_qbo_payment(st, j, c.actor)
 
 

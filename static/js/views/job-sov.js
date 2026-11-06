@@ -8,6 +8,7 @@ import { field, formValues, formErrorLine, refuseForm, clearForm } from "../form
 import { termText } from "../terms.js";
 import { state, formOpen, onSessionEnd } from "../state.js";
 import { perms, post, toast, render, nav } from "../app-core.js";
+import { qtyImportForJob } from "./data.js";
 
 
 export let sovDraft = null; // schedule-of-values editor: { jobId, lines: [{id,item,description,quantity,unit,rate}], op_pct, warnings } (raw text, not escaped)
@@ -194,6 +195,7 @@ export function sovCardHtml(j) {
     </table></div>
     ${v.auto && v.editable ? `<p class="sub">One lump-sum line for the contract amount. Replace it with your own lines any time before the first pay app is sent.</p>` : ""}
     ${v.editable ? `<button class="btn small secondary" data-action="sov-start" data-id="${j.id}">${v.auto ? "Enter schedule lines" : "Edit schedule"}</button>` : fixedNote}
+    ${qtyImportForJob(j)}
     ${sovCorrectHtml(j)}
     ${sovPeriodHtml(j, true)}
   </div>`;

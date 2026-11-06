@@ -121,3 +121,113 @@ test("the Dashboard on a phone: To Do rows are pill, sentence and one button; ti
   assert.match(phone, /table\.todo-table \.action-buttons \.btn\.secondary:not\(:only-child\) \{ display: none; \}/);
   assert.match(phone, /table\.dash-jobs td:not\(\.dj-keep\) \{ display: none; \}/);
 });
+
+// ---- item 19: cut and fold ----
+const routes = await import("../../static/js/routes.js");
+const automations = await import("../../static/js/views/automations.js");
+
+test("the menu: no Automations section, no Results or Payments tab, and Helper answers isn't a tab for everyone", () => {  // item 19
+  const appSrc = src("app.js");
+  const sections = [...appSrc.matchAll(/\{ key: "([\w-]+)", label: "([^"]+)"(, more: true)?, views: (\[.*?\]) \},/g)].map(m => [m[1], JSON.parse(m[4]).map(([v]) => v)]);
+  assert.deepEqual(sections.map(([k]) => k), ["today", "jobs", "communications", "data", "money", "settings"]);
+  const views = Object.fromEntries(sections);
+  assert.deepEqual(views.today, ["dashboard", "calendar"]);
+  assert.deepEqual(views.money, ["payapps", "cos", "collections", "waivers"]);
+  assert.ok(!views.settings.includes("helper-admin"));
+  assert.equal(reg.views.automations, undefined);
+  assert.equal(reg.views.results, undefined);
+  assert.equal(reg.views.payments, undefined);
+});
+
+test("the old addresses land on the new places: Automations on My account's Notifications, Results on the Dashboard, Payments on Pay apps", () => {  // item 19
+  assert.deepEqual(routes.routeFromPath("/automations"), { view: "account", anchor: "notifications" });
+  assert.deepEqual(routes.routeFromPath("/dashboard/results"), { view: "dashboard", anchor: "results" });
+  assert.deepEqual(routes.routeFromPath("/today/results"), { view: "dashboard", anchor: "results" });
+  assert.deepEqual(routes.routeFromPath("/money/payments"), { view: "payapps", anchor: "payments" });
+});
+
+const remindersReply = (over = {}) => ({ kinds: [{ key: "dates", label: "Important dates", help: "Dates." }, { key: "missing", label: "Missing information", help: "Missing." }],
+  channels: [["app", "In the app"], ["email", "Email"], ["text", "Text"]], prefs: { dates: ["app"], missing: ["app", "email"] }, repeat_days: 3,
+  notifications: [], unread: 0, can_text: false, texts_stopped: false, email_ready: true, texts_ready: false, last: null, ...over });
+
+test("My account has the Notifications card with each person's reminder choices, saved with the page", async () => {  // item 19
+  page.setMe({ id: "u1", name: "Pat", email: "pat@example.com", company_id: "co-r", role: "owner", email_verified: true });
+  core.setState(fresh());
+  dom.answers = [(p) => (p === "/api/reminders" ? { status: 200, body: remindersReply() } : undefined)];
+  await automations.loadReminders(true);
+  const html = reg.views.account();
+  const card = html.split('<div class="card" id="notifications"')[1].split('<div class="save-bar">')[0];
+  assert.match(card, /<h2>Notifications<\/h2>/);
+  assert.match(card, /data-reminder="dates" value="app" checked/);
+  assert.match(card, /data-reminder="missing" value="email" checked/);
+  assert.doesNotMatch(card, /data-reminder="dates" value="email" checked/);
+  assert.doesNotMatch(card, /data-action="save-reminders"/, "the page's one Save saves it");
+  dom.answers = [];
+});
+
+test("fired reminders are To Do rows; one about a job that already has a row for its dates or held-up pay app is left off", async () => {  // item 19
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner" });
+  const j = (id, name) => ({ id, name, code: id.toUpperCase(), payer_id: "p1", closed: false, invoices: [], payments: [], change_orders: [], money: {} });
+  core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [j("a", "Oak"), j("b", "Elm")], today_rows: [row({ job_id: "a", job: "Oak", key: "new_job:a:" })] });
+  const note = (id, key, job_id, job, text, over = {}) => ({ id, key, kind: key.split(":")[0], job_id, job, text, path: `/jobs/${job_id}`, at: "2026-11-05T10:00:00+00:00", read: false, done: false, ...over });
+  dom.answers = [(p) => (p === "/api/reminders" ? { status: 200, body: remindersReply({ unread: 4, notifications: [
+    note("n1", "co_records:co:c1", "a", "Oak", "CO-1 has work on a job record and needs a signature."),
+    note("n2", "dates:a-follow", "a", "Oak", "Follow up, Nov 9."),
+    note("n3", "missing:client:p1", "b", "Elm", "GC has no phone on file.", { path: "/jobs/clients" }),
+    note("n4", "missing:client:p2", "b", "Elm", "Read already.", { read: true }),
+  ] }) } : undefined)];
+  await automations.loadReminders(true);
+  const html = reg.views.dashboard();
+  const todo = html.split('<section class="card action-queue"')[1].split("</section>")[0];
+  assert.match(todo, /<span class="pill">Reminder<\/span><div class="next-action">CO-1 has work on a job record and needs a signature\.<\/div>/);
+  assert.match(todo, /GC has no phone on file\./);
+  assert.match(todo, /data-action="reminder-open" data-note="n3" data-path="\/jobs\/clients">Open<\/button>/);
+  assert.match(todo, /data-action="reminder-read" data-note="n3">Mark read<\/button>/);
+  assert.doesNotMatch(todo, /Follow up, Nov 9/, "Oak's own row covers its dates");
+  assert.doesNotMatch(todo, /Read already/);
+  dom.answers = [];
+  await automations.loadReminders(true);
+});
+
+test("Results is a fold on the Dashboard once a pay app has gone out", () => {  // item 19
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner", onboarding_dismissed: true });
+  const j = { id: "a", name: "Oak", code: "OAK", payer_id: "p1", closed: false, payments: [], change_orders: [], money: {},
+    invoices: [{ id: "i1", number: "PA-1", status: "sent", sent_at: "2026-10-01T00:00:00Z", amount_cents: 100 }] };
+  core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [j] });
+  const html = reg.views.dashboard();
+  assert.match(html, /<details class="card dash-results" id="results" data-more="dash-results"><summary><strong>Results<\/strong>/);
+  core.setState(fresh());
+  assert.doesNotMatch(reg.views.dashboard(), /id="results"/);
+});
+
+test("Pay apps has a Payments filter that lists the payments received", () => {  // item 19
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner" });
+  const j = { id: "a", name: "Oak", code: "OAK", payer_id: "p1", closed: false, change_orders: [], money: {}, blockers: [],
+    invoices: [{ id: "i1", number: "PA-1", status: "paid", sent_at: "2026-10-01T00:00:00Z", amount_cents: 10000 }],
+    payments: [{ id: "pay1", invoice_id: "i1", amount_cents: 10000, reference: "CHK-9", matched_at: "2026-10-09T00:00:00Z" }] };
+  core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [j] });
+  assert.match(reg.views.payapps(), /data-action="payapp-filter" data-filter="payments" data-anchor="payments" aria-pressed="false">Payments</);
+  reg.actions["payapp-filter"]({ dataset: { filter: "payments" } });
+  const list = reg.views.payapps();
+  assert.match(list, /<td>CHK-9<\/td>/);
+  assert.match(list, /<th>Reference<\/th>/);
+  reg.actions["payapp-filter"]({ dataset: { filter: "all" } });
+});
+
+test("Quantities import sits on the job's schedule card; Import has no Quantities done or Schedule of values card", () => {  // item 19
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner" });
+  const sov = { present: true, editable: false, auto: false, lines: [], totals: { scheduled_cents: 0, to_date_cents: 0, op_scheduled_cents: 0, op_to_date_cents: 0 }, op_billed_cents: 0 };
+  const j = { id: "a", name: "Oak", code: "OAK", payer_id: "p1", closed: false, invoices: [], payments: [], change_orders: [], money: {}, sov_view: sov };
+  core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [j, { ...j, id: "b", name: "Elm", code: "ELM", sov_view: { present: false, editable: true } }] });
+  const imp = reg.views.import();
+  assert.doesNotMatch(imp, /id="qty-import"|id="sov-import"/);
+  return import("../../static/js/views/job-sov.js").then((m) => {
+    const card = m.sovCardHtml(j);
+    assert.match(card, /data-action="qty-open" data-id="a">Import quantities<\/button>/);
+    page.formOpen.qtyimport = "a";
+    const open = m.sovCardHtml(j);
+    assert.match(open, /<input type="hidden" id="qty-import-job" name="job" data-field="job"[^>]* value="a">/);
+    assert.match(open, /data-action="qty-read"/);
+    page.formOpen.qtyimport = false;
+  });
+});

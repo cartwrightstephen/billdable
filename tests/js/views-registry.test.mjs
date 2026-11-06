@@ -35,6 +35,7 @@ test("no two modules use the same view or action name", () => {
 });
 
 test("every address opens a view", () => {
-  const routed = [...Object.keys(VIEW_PATHS), ...Object.keys(DETAIL_PATHS), ...Object.values(PATH_ALIASES), "job"];
+  // An alias may open part of a page ("view#anchor", round 1).
+  const routed = [...Object.keys(VIEW_PATHS), ...Object.keys(DETAIL_PATHS), ...Object.values(PATH_ALIASES).map(v => v.split("#")[0]), "job"];
   assert.deepEqual(routed.filter(v => typeof reg.views[v] !== "function"), []);
 });

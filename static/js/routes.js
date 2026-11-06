@@ -8,13 +8,12 @@ export const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-
   password: "account", "delete-company": "company" };
 
 export const VIEW_PATHS = {
-  dashboard: "/dashboard", results: "/dashboard/results", calendar: "/dashboard/calendar",
+  dashboard: "/dashboard", calendar: "/dashboard/calendar",
   jobs: "/jobs", daily: "/jobs/daily", history: "/jobs/history", playbook: "/jobs/clients",
   inbox: "/communications", outbox: "/communications/outbox",
   import: "/data/import", export: "/data/export",
   payapps: "/money", packets: "/money/packets", cos: "/money/change-orders", collections: "/money/collections",
-  payments: "/money/payments", waivers: "/money/waivers", retainage: "/money/retainage",
-  automations: "/automations",
+  waivers: "/money/waivers", retainage: "/money/retainage",
   company: "/settings/company", team: "/settings/team", account: "/settings/account", billing: "/settings/billing",
   audit: "/settings/audit", "helper-admin": "/settings/helper-answers",
   password: "/settings/account/password", "delete-company": "/settings/company/delete",
@@ -23,12 +22,15 @@ export const VIEW_PATHS = {
 // Older addresses that still open a page, so links in emails and bookmarks keep working:
 // /settings was one page before it split (R6-03); Today became Dashboard, the Inbox and the
 // Outbox moved to Communications, the Daily record and Customer settings (now the Client playbook)
-// to Jobs, and Help was emptied (its controls are on My account) in Stephen's Oct 29 review.
+// to Jobs, and Help was emptied (its controls are on My account) in Stephen's Oct 29 review. Round
+// 1 (Nov 5 audits) folded Automations into My account's Notifications, Results onto the Dashboard
+// and Payments into a filter on Pay apps: "view#anchor" opens the page at that part (app-core.js).
 export const PATH_ALIASES = {
   "/settings": "company",
-  "/today": "dashboard", "/today/results": "results", "/today/calendar": "calendar", "/today/daily": "daily",
+  "/today": "dashboard", "/today/results": "dashboard#results", "/today/calendar": "calendar", "/today/daily": "daily",
   "/inbox": "inbox", "/money/outbox": "outbox", "/communications/inbox": "inbox", "/data": "import",
   "/settings/playbook": "playbook", "/settings/help": "account",
+  "/automations": "account#notifications", "/dashboard/results": "dashboard#results", "/money/payments": "payapps#payments",
 };
 
 export const DETAIL_PATHS = { "payapp-detail": "/money/pay-app", "packet-detail": "/money/packet", "co-detail": "/money/change-order", "waiver-detail": "/money/waiver" };
@@ -64,7 +66,10 @@ export function routeFromPath(path) {
   if (!parts.length) return { view: "dashboard" };
   const joined = "/" + parts.join("/");
   for (const [v, p] of Object.entries(VIEW_PATHS)) if (p === joined) return { view: v };
-  if (PATH_ALIASES[joined]) return { view: PATH_ALIASES[joined] };
+  if (PATH_ALIASES[joined]) {
+    const [view, anchor] = PATH_ALIASES[joined].split("#");
+    return anchor ? { view, anchor } : { view };
+  }
   if (parts[0] === "jobs" && parts.length === 2) return { view: "job", jobId: parts[1] };
   for (const [v, p] of Object.entries(DETAIL_PATHS)) {
     const base = p.split("/").filter(Boolean);

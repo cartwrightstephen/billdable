@@ -13,6 +13,7 @@ import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, l
 import { THEMES, ACCENTS, applyAppearance, normalizeAppearance, storedAppearance } from "../theme.js";
 import { qboCardHtml } from "./payments.js";
 import { forgetImportSettings } from "./inbox.js";
+import { notificationsCardHtml, saveReminderPrefs } from "./automations.js";
 
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
 let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
@@ -286,6 +287,7 @@ function myAccountView() {
       <div class="money-row"><span class="label">Profile</span><span>${me.profile_name || words(me.role)}${me.company_admin ? ` <span class="pill copper">Company Admin</span>` : ""}</span></div>
       ${isDemo ? "" : `<div class="money-row"><span class="label">Password</span><span><button class="btn small secondary" data-action="nav" data-view="password">Change password</button></span></div>`}
     </div>
+    ${notificationsCardHtml()}
     ${appearanceCardHtml()}
     ${isDemo || twoStepPrompt ? "" : twoStepCardHtml()}
     ${me.onboarding_dismissed && !isDemo ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
@@ -449,7 +451,7 @@ function adminCompaniesHtml() {
 
 let helperReview = null;
 let helperDraft = null;   // the answer being written or edited
-const HELPER_VIEWS = ["dashboard", "results", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "payments", "waivers", "retainage", "automations", "account", "audit"];
+const HELPER_VIEWS = ["dashboard", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "waivers", "retainage", "account", "audit"];
 
 export async function loadHelperReview() {
   const body = document.getElementById("helper-admin-body");
@@ -757,6 +759,7 @@ export const actions = {
       setMe(escDeep(r.data.user));
       applyAppearance(r.data.user.appearance);
     }
+    if (!(await saveReminderPrefs())) return;
     clearForm("account"); clearForm("appearance");
     toast(smsCodeTo ? "Saved. Enter the code we texted you to turn texts on." : "Saved");
     render();

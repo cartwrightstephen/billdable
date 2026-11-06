@@ -331,6 +331,9 @@ details.card > summary { cursor: pointer; }
 .terms-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 8px 0; line-height: 1.4; }
 .terms-check input { width: auto; margin-top: 2px; }
 .reminder-kind { border: 0; padding: 0; margin: 0 0 12px; }
+/* My account's Notifications: a kind's three ways on one line. */
+.reminder-kind .sub { margin: 2px 0 4px; }
+.reminder-kind .terms-check { display: inline-flex; align-items: center; gap: 6px; margin: 0 18px 0 0; }
 .switch-row { font-size: inherit; margin: 12px 0; }
 .switch-row input { margin-top: 5px; }
 .land-legal { margin-top: 8px; font-size: 13px; }

@@ -4,25 +4,27 @@
 import assert from "node:assert/strict";
 
 export default async function ({ browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors }) {
-  await step("the menu has seven sections; each tab's heading matches its tab", async () => {
+  await step("the menu has six sections; each tab's heading matches its tab", async () => {
     await page.goto(BASE + "/dashboard");
     await page.getByRole("heading", { name: "Overview" }).waitFor();
     assert.deepEqual(await page.locator(".nav > button[data-section]").allInnerTexts().then(l => l.map(s => s.split("\n")[0].trim())),
-      ["Dashboard", "Jobs", "Communications", "Import/Export", "Money", "Automations", "Settings"]);
+      ["Dashboard", "Jobs", "Communications", "Import/Export", "Money", "Settings"]);
     for (const [path, tabs] of [["/jobs", ["Open jobs", "New job record", "Job history", "Client playbook"]], ["/communications", ["Inbox", "Outbox"]],
-      ["/data/import", ["Import", "Export"]], ["/dashboard", ["Overview", "Results", "Calendar"]]]) {
+      ["/data/import", ["Import", "Export"]], ["/dashboard", ["Overview", "Calendar"]]]) {
       await page.goto(BASE + path);
       await page.locator(".tabs .tab", { hasText: tabs[tabs.length - 1] }).waitFor();
       assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), tabs, path);
       assert.equal(await page.locator("#view h1").first().innerText(), await page.locator(".tabs .tab.active").innerText(), `${path}: the heading is the tab's name`);
     }
+    // Automations is My account's Notifications now (round 1, item 19): its old address lands there.
     await page.goto(BASE + "/automations");
-    await page.getByRole("heading", { name: "Automations" }).waitFor();
-    await page.getByRole("heading", { name: "Reminders" }).waitFor();
+    await page.getByRole("heading", { name: "Notifications" }).waitFor();
+    assert.equal(new URL(page.url()).pathname, "/settings/account");
   });
 
   await step("old addresses still open their page, at its new address", async () => {
-    for (const [old, now] of [["/today", "/dashboard"], ["/today/results", "/dashboard/results"], ["/today/calendar", "/dashboard/calendar"],
+    for (const [old, now] of [["/today", "/dashboard"], ["/today/results", "/dashboard"], ["/dashboard/results", "/dashboard"], ["/automations", "/settings/account"],
+      ["/money/payments", "/money"], ["/today/calendar", "/dashboard/calendar"],
       ["/today/daily", "/jobs/daily"], ["/inbox", "/communications"], ["/money/outbox", "/communications/outbox"],
       ["/settings/playbook", "/jobs/clients"], ["/settings/help", "/settings/account"]]) {
       await page.goto(BASE + old);
@@ -73,16 +75,19 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     }
   });
 
-  await step("phone: five sections, with Import/Export and Automations under More", async () => {
+  await step("phone: five sections, with Import/Export under More; the closed menu takes no Tab stop", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
     await phone.goto(BASE + "/dashboard");
+    // Closed, the drawer is inert (round 1, item 11).
+    assert.equal(await phone.evaluate(() => document.getElementById("rail").inert), true);
     await phone.locator("#menu-btn").click();
+    assert.equal(await phone.evaluate(() => document.getElementById("rail").inert), false);
     const shown = await phone.locator(".nav > button[data-section]:visible").allInnerTexts();
     assert.deepEqual(shown.map(s => s.split("\n")[0].trim()), ["Dashboard", "Jobs", "Communications", "Money", "Settings"]);
     await phone.locator(".nav-more summary").click();
-    await phone.locator('.nav-more button[data-section="automations"]').click();
-    await phone.getByRole("heading", { name: "Automations" }).waitFor();
-    assert.equal(new URL(phone.url()).pathname, "/automations");
+    await phone.locator('.nav-more button[data-section="data"]').click();
+    await phone.getByRole("heading", { name: "Import" }).waitFor();
+    assert.equal(new URL(phone.url()).pathname, "/data/import");
     await phone.context().close();
   });
 
@@ -90,9 +95,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.goto(BASE + "/dashboard");
     await page.getByRole("heading", { name: "Overview" }).waitFor();
     assert.equal(await page.locator("#view .trial-banner").count(), 0, "no trial banner on the Overview");
+    // Results is a fold on the Dashboard now (round 1, item 19); its old address opens it.
     await page.goto(BASE + "/dashboard/results");
+    await page.locator("details#results[open]").waitFor();
     await page.locator(".metric .k", { hasText: "Days from Job Completion to Pay App Sent" }).waitFor();
-    assert.deepEqual((await page.locator(".metrics").first().locator(".metric .k").allInnerTexts()).map(s => s.trim()),
+    assert.deepEqual((await page.locator("#results .metrics").first().locator(".metric .k").allInnerTexts()).map(s => s.trim()),
       ["Days from Job Completion to Pay App Sent", "Days from Pay App Sent to Paid", "Follow-ups per pay app", "Pay app rejections by Clients"]);
     await page.getByRole("heading", { name: "Jobs completed with outstanding billings" }).waitFor();
     for (const gone of ["Nothing here is estimated", "Email me last month's summary", "Every finished job has a pay app out"]) {
