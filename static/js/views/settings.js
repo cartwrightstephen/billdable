@@ -6,7 +6,7 @@ import { moreButton, askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
 import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
-import { jobFilterOptions } from "../jobs.js";
+import { jobFilterOptions, jobFilterShown } from "../jobs.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
 import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt, helperAdmin } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
@@ -576,13 +576,13 @@ export const views = {
     return `
       <h1>Activity log</h1>
       ${state.audit_chain && !state.audit_chain.ok ? `<p class="blocker">The chain of records is broken at ${state.audit_chain.broken_at}.</p>` : ""}
-      <div class="filter-bar">
+      ${jobFilterShown(state.jobs) ? `<div class="filter-bar">
         <label for="audit-filter" class="inline-label">Job</label>
         <select id="audit-filter" data-filter-for="audit">
           <option value="all">All jobs</option>
           ${jobFilterOptions(state.jobs, auditJobFilter)}
         </select>
-      </div>
+      </div>` : ""}
       ${events.length ? `<div class="table-wrap">
         <table>
           <tr><th>What happened</th><th>When</th><th>Who</th><th>Action</th></tr>

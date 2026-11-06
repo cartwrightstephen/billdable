@@ -36,3 +36,45 @@ test("the email-not-confirmed note is one plain line, not a card", () => {  // i
   assert.match(line, /Got it<\/button><\/p>$/);
   page.setCheckEmail(null);
 });
+
+const today = await import("../../static/js/today.js");
+const tasks = await import("../../static/js/tasks.js");
+const row = (over = {}) => ({ rank: 5, kind: "new_job", job_id: "j1", job: "Porch", label: "Not billed yet", tone: "copper", text: "Porch has no pay app yet.",
+  button: "Progress pay app", key: "new_job:j1:", due: "2026-10-30", ball_in_court: "us", assignee_id: "", ...over });
+
+test("a one-person team's To Do rows have no Assignee select or due box; a team of two has both", () => {  // item 8
+  const items = tasks.todoItems({ today_rows: [row()] });
+  const solo = today.todoHtml(items, { people: [{ id: "u1", name: "Pat" }], today: "2026-10-28" });
+  assert.doesNotMatch(solo, /todo-assign|todo-due-date|<th>Assignee<\/th>|<th>Due<\/th>/);
+  const team = today.todoHtml(items, { people: [{ id: "u1", name: "Pat" }, { id: "u2", name: "Mo" }], today: "2026-10-28" });
+  assert.match(team, /<th>Assignee<\/th><th>Due<\/th>/);
+  assert.match(team, /class="todo-assign"/);
+  assert.match(team, /class="todo-due-date"/);
+});
+
+test("Add task: no Job select with no open job, no Assignee on a one-person team, Ball in court as two buttons", () => {  // item 8
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner" });
+  page.setTeamData({ users: [{ id: "u1", name: "Pat" }] });
+  core.setState({ ...fresh(), tasks: [{ id: "t1", title: "Call", status: "open" }] });
+  page.formOpen.task = true;
+  const html = reg.views.dashboard();
+  assert.doesNotMatch(html, /id="task-job"/);
+  assert.doesNotMatch(html, /id="task-assignee"/);
+  assert.match(html, /data-action="seg-pick" data-for="task-ball" data-value="us" aria-pressed="true">Us</);
+  assert.doesNotMatch(html, /<select id="task-ball"/);
+  page.formOpen.task = false;
+  page.setTeamData(null);
+});
+
+test("a job filter shows only when there are two jobs or more to pick between", () => {  // item 8
+  page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner" });
+  const j = (id) => ({ id, name: `Job ${id}`, code: id.toUpperCase(), payer_id: "p1", closed: false, invoices: [], payments: [], change_orders: [], money: {} });
+  core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [j("a")] });
+  for (const [view, id] of [["calendar", "cal-filter"], ["outbox", "outbox-filter"], ["audit", "audit-filter"], ["export", "sent-filter"]]) {
+    assert.doesNotMatch(reg.views[view](), new RegExp(`id="${id}"`), `${view}: one job, no filter`);
+  }
+  core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [j("a"), j("b")] });
+  for (const [view, id] of [["calendar", "cal-filter"], ["outbox", "outbox-filter"], ["audit", "audit-filter"], ["export", "sent-filter"]]) {
+    assert.match(reg.views[view](), new RegExp(`id="${id}"`), `${view}: two jobs, a filter`);
+  }
+});

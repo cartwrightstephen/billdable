@@ -39,3 +39,21 @@ test("moneyField shows a saved amount as dollars, in a text box", () => {
   assert.match(html, /inputmode="decimal"/);
   assert.match(html, /data-money="1"/);
 });
+
+test("a select with one choice can read as text, and two choices can be two buttons", () => {  // round 1, item 8
+  const one = field({ form: "t", name: "invoice_id", id: "t-inv", label: "Pay app", options: [["i1", "PA-1 · $100.00"]], oneAsText: true });
+  assert.doesNotMatch(one, /<select/);
+  assert.match(one, /<input type="hidden" id="t-inv" name="invoice_id" data-field="invoice_id"[^>]* value="i1">/);
+  assert.match(one, /<span class="field-label">Pay app<\/span><span class="field-value">PA-1 · \$100\.00<\/span>/);
+  const two = field({ form: "t", name: "invoice_id", id: "t-inv", label: "Pay app", options: [["i1", "PA-1"], ["i2", "PA-2"]], oneAsText: true });
+  assert.match(two, /<select id="t-inv"/, "two or more stay a select");
+  const btns = field({ form: "t", name: "ball", id: "t-ball", label: "Ball in court", options: [["us", "Us"], ["client", "Client"]], buttons: true });
+  assert.doesNotMatch(btns, /<select/);
+  assert.match(btns, /<span class="field-label" id="t-ball-label">Ball in court<\/span><div class="seg" role="group" aria-labelledby="t-ball-label">/);
+  assert.match(btns, /<input type="hidden" id="t-ball" name="ball" data-field="ball"[^>]* value="us">/);
+  assert.match(btns, /<button type="button" class="btn small" data-action="seg-pick" data-for="t-ball" data-value="us" aria-pressed="true">Us<\/button>/);
+  assert.match(btns, /<button type="button" class="btn small secondary" data-action="seg-pick" data-for="t-ball" data-value="client" aria-pressed="false">Client<\/button>/);
+  formDraft.t = { ball: "client" };
+  assert.match(field({ form: "t", name: "ball", id: "t-ball", label: "Ball in court", options: [["us", "Us"], ["client", "Client"]], buttons: true }), /value="client">/);
+  clearForm("t");
+});

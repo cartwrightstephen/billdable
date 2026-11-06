@@ -37,6 +37,9 @@ test("the New change order form asks the reason, pricing, cost lines and the day
   assert.match(html, /<select id="co-reason"[^>]*><option value="" selected>Pick why the scope changed…<\/option><option value="owner_request">Owner request<\/option>/);
   for (const s of ["Unforeseen condition", "Design issue", "Value engineering", "Description (required for Other)", "Contract section or original scope it changes",
     "Time and materials", "Add a cost line", "Work started on (optional)", "Backup from the job records"]) assert.ok(html.includes(s), s);
+  // Two pricing choices are two buttons, not a select (round 1, item 8).
+  assert.match(html, /data-action="seg-pick" data-for="co-pricing" data-value="lump_sum" aria-pressed="true">/);
+  assert.doesNotMatch(html, /<select id="co-pricing"/);
   assert.match(html, /data-co-backup="rec-1"/);
   assert.doesNotMatch(html, /data-co-backup="rec-2"/, "a daily record isn't backup");
   assert.doesNotMatch(html, /style=|onclick=/);

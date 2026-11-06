@@ -598,6 +598,9 @@ export function draftFromDailyOn(j, inv) {
   return days.filter(d => d <= made).sort().pop() || "";
 }
 
+// A job filter is worth a select only with two jobs or more to pick between (round 1, item 8).
+export const jobFilterShown = (jobs) => (jobs || []).length > 1;
+
 // A job filter on a page of records (Activity log, Outbox, Everything received, Sent pay apps):
 // the open jobs, then the recently finished ones under "Finished jobs", so an old job's entries
 // can still be found. Names and ids come escaped from the server, as on every other picker.

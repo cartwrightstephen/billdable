@@ -381,7 +381,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.goto(BASE + "/jobs/job-inman");
       } else if (label === "Record a Payment") {
         await main.click();
-        const option = await page.locator("#match-inv option").first().innerText();
+        // One open pay app reads as text, not a one-option select (round 1, item 8).
+        const option = (await page.locator("#match-inv option").count()) ? await page.locator("#match-inv option").first().innerText()
+          : await page.locator('[data-form-key="match"] .field-value').first().innerText();
         // The amount starts at what is still owed on the pay app, and the date at today (R3-02).
         assert.equal((await page.inputValue("#match-amt")).replace(/[$,]/g, ""), option.match(/\$([\d,]+\.\d\d)/)[1].replace(/,/g, ""));
         assert.match(await page.inputValue("#match-date"), /^\d{4}-\d{2}-\d{2}$/);

@@ -29,12 +29,23 @@ export function clearForm(key) {
 // helpKey names the field's FIELD_HELP entry (the (i) text), put on the label as data-help.
 // rule names a check in validate.js (phone, zip, state, email, licence, contract_number, name,
 // street, city): the box is checked and tidied when it is left (watchForms), as the server does.
+// oneAsText: a select with one choice reads as text (its value in a hidden input); buttons: the
+// choices as a row of buttons, the picked one pressed (round 1, item 8: two choices, two buttons).
 export function field({ form, name, id, label, type = "text", required = false, help = "", value = "", placeholder = "",
-  autocomplete = "", inputmode = "", options = null, multiline = false, wide = false, attrs = "", helpKey = "", rule = "" }) {
+  autocomplete = "", inputmode = "", options = null, multiline = false, wide = false, attrs = "", helpKey = "", rule = "",
+  oneAsText = false, buttons = false }) {
   const err = (formErrors[form] || {})[name] || "";
   const current = type === "password" ? "" : String(draftValue(form, name, value ?? ""));
   const describedBy = [help ? `${id}-help` : "", `${id}-err`].filter(Boolean).join(" ");
   const common = `id="${id}" name="${esc(name)}" data-field="${esc(name)}"${required ? " required" : ""}${err ? ' aria-invalid="true"' : ""} aria-describedby="${describedBy}"${placeholder ? ` placeholder="${esc(placeholder)}"` : ""}${autocomplete ? ` autocomplete="${autocomplete}"` : ""}${inputmode ? ` inputmode="${inputmode}"` : ""}${rule ? ` data-rule="${esc(rule)}"` : ""}${attrs ? " " + attrs : ""}`;
+  const tail = `${help ? `<span class="sub field-help" id="${id}-help">${esc(help)}</span>` : ""}<span class="field-error" id="${id}-err">${esc(err)}</span></div>`;
+  if (options && ((oneAsText && options.length === 1) || buttons)) {
+    const picked = options.some(([v]) => String(v) === current) ? current : String(options[0][0]);
+    const hidden = `<input type="hidden" ${common} value="${esc(picked)}">`;
+    if (!buttons) return `<div class="field${wide ? " span-2" : ""}"><span class="field-label">${esc(label)}</span><span class="field-value">${esc(options[0][1])}</span>${hidden}${tail}`;
+    const btn = ([v, text]) => `<button type="button" class="btn small${String(v) === picked ? "" : " secondary"}" data-action="seg-pick" data-for="${id}" data-value="${esc(v)}" aria-pressed="${String(v) === picked}">${esc(text)}</button>`;
+    return `<div class="field${wide ? " span-2" : ""}"><span class="field-label" id="${id}-label">${esc(label)}</span><div class="seg" role="group" aria-labelledby="${id}-label">${hidden}${options.map(btn).join("")}</div>${tail}`;
+  }
   let control;
   if (options) control = `<select ${common}>${options.map(([v, text]) => `<option value="${esc(v)}"${String(v) === current ? " selected" : ""}>${esc(text)}</option>`).join("")}</select>`;
   else if (multiline) control = `<textarea ${common}>${esc(current)}</textarea>`;

@@ -313,7 +313,7 @@ export const views = {
         <button class="btn small" data-action="done" data-id="${j.id}">${termText("Draft Final Pay App")}</button></div></div>` : ""}
       ${formOpen.conversation ? conversationFormHtml(j) : ""}
       ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Record a payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
-        ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${owedText(i)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
+        ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", oneAsText: true, options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${owedText(i)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
         ${moneyField({ form: "match", name: "amount_cents", id: "match-amt", label: "Amount received ($)", cents: (openForPay.find(i => i.id === draftValue("match", "invoice_id", "")) || openForPay[0]).remaining_cents })}
         ${field({ form: "match", name: "received_on", id: "match-date", label: "Date received", type: "date", value: todayIso(), attrs: `max="${todayIso()}"` })}
         ${field({ form: "match", name: "reference", id: "match-ref", label: "Check or reference no. (optional)", placeholder: "CHK 2207" })}

@@ -1,7 +1,7 @@
 // Dashboard: the overview with the To Do list and the setup checklist, Results, and Calendar
 // with its Tasks block. The Daily record is in daily.js.
 import { unesc, esc, escDeep, money, toDate, fmtDate } from "../format.js";
-import { isBlocked, nextStep, statusPill, openJobs } from "../jobs.js";
+import { isBlocked, nextStep, statusPill, openJobs, jobFilterShown } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
 import { TODO_PERIODS, TASK_PERIODS, BALL_WORDS, localDay, periodRange, todoItems, itemsInPeriod, assignees } from "../tasks.js";
@@ -64,10 +64,10 @@ function taskFormHtml(people) {
   return `<div class="card task-form" data-form-key="task">
     <div class="form-grid">
       ${field({ form: "task", name: "title", id: "task-title", label: "What needs doing", required: true, wide: true, placeholder: "Order the tile for the Oak Street bath" })}
-      ${field({ form: "task", name: "job_id", id: "task-job", label: "Job", options: [["", "No job"], ...open.map(j => [j.id, unesc(j.name)])] })}
-      ${field({ form: "task", name: "assignee_id", id: "task-assignee", label: "Assignee", options: [["", "Unassigned"], ...people.map(p => [p.id, unesc(p.name)])], value: me ? me.id : "" })}
+      ${open.length ? field({ form: "task", name: "job_id", id: "task-job", label: "Job", options: [["", "No job"], ...open.map(j => [j.id, unesc(j.name)])] }) : ""}
+      ${people.length > 1 ? field({ form: "task", name: "assignee_id", id: "task-assignee", label: "Assignee", options: [["", "Unassigned"], ...people.map(p => [p.id, unesc(p.name)])], value: me ? me.id : "" }) : `<input type="hidden" data-field="assignee_id" value="${me ? me.id : ""}">`}
       ${field({ form: "task", name: "due", id: "task-due", label: "Due", type: "date" })}
-      ${field({ form: "task", name: "ball_in_court", id: "task-ball", label: "Ball in court", options: Object.entries(BALL_WORDS) })}
+      ${field({ form: "task", name: "ball_in_court", id: "task-ball", label: "Ball in court", options: Object.entries(BALL_WORDS), buttons: true })}
     </div>
     <div class="form-inline"><button class="btn" data-action="task-add">Add task</button><button class="btn secondary" data-action="task-cancel">Cancel</button></div>
   </div>`;
@@ -409,13 +409,13 @@ export const views = {
     return `
       <h1>Calendar</h1>
       <p class="notice" id="cal-not-legal">These are your contract and follow-up dates, not legal deadlines. Check lien and prompt-pay deadlines with your attorney.</p>
-      <div class="filter-bar">
+      ${jobFilterShown(openJobs(state.jobs)) ? `<div class="filter-bar">
         <label for="cal-filter" class="inline-label">Job</label>
         <select id="cal-filter" data-filter-for="calendar">
           <option value="all">All jobs</option>
           ${openJobs(state.jobs).map(j => `<option value="${j.id}" ${calJobFilter === j.id ? "selected" : ""}>${j.name}</option>`).join("")}
         </select>
-      </div>
+      </div>` : ""}
       ${tasksBlockHtml(eventsByDay)}
       ${dayCard}
       <div class="cal-header">

@@ -47,7 +47,7 @@ test("the To Do table has Activity, Job, Ball in court, Assignee and Due columns
 test("a task added by hand is ticked off with Done and opens its job", () => {  // G5
   const items = todoItems({ jobs: [{ id: "j1", name: "Porch rebuild" }], today_rows: [],
     tasks: [{ id: "task-1", title: "Order tile", job_id: "j1", status: "open", ball_in_court: "us", due: "" }] });
-  const html = todoHtml(items);
+  const html = todoHtml(items, { people: [{ id: "u1", name: "Pat" }, { id: "u2", name: "Mo" }] });
   assert.match(html, /<strong>Order tile<\/strong>/);
   assert.match(html, /data-action="task-done" data-id="task-1">Done</);
   assert.match(html, /data-action="open-job" data-id="j1">Open</);

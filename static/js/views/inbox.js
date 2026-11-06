@@ -2,7 +2,7 @@
 // text, and the forwarding addresses for email, texts and the calendar. The Inbox page shows
 // what is waiting and everything received (C1); the file and paste boxes are on Import (data.js).
 import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
-import { RECORD_KINDS, FILE_KINDS, fileKindPick, SOURCE_LABELS, defaultJobId, jobFilterOptions, finalPayAppConfirm } from "../jobs.js";
+import { RECORD_KINDS, FILE_KINDS, fileKindPick, SOURCE_LABELS, defaultJobId, jobFilterOptions, jobFilterShown, finalPayAppConfirm } from "../jobs.js";
 import { readJson, setNetBanner, inBatches } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { webcalUrl } from "../calendar.js";
@@ -166,7 +166,7 @@ export function dropzoneHtml(cameraOnly = false) {
         <button class="btn" id="inbox-camera" data-action="pick-files" data-capture="1">Take a photo</button></div></div>`;
   }
   return `<div class="dropzone" tabindex="0">
-        <label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>
+        ${state.jobs.some(j => !j.closed) ? `<label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>` : ""}
         <div class="capture-buttons touch-only">
           <button class="btn" data-action="pick-files" data-ask-job="1" data-capture="1">Take a photo</button>
           <button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button>
@@ -269,7 +269,7 @@ function receivedHtml() {
       <div class="filter-bar">
         ${receivedSelect("source", "Came in by", "All", SOURCE_OPTIONS())}
         ${receivedSelect("status", "Status", "All", STATUS_OPTIONS)}
-        ${receivedSelect("job", "Job", "All jobs", [], jobFilterOptions(state.jobs, receivedFilter.job))}
+        ${jobFilterShown(state.jobs) ? receivedSelect("job", "Job", "All jobs", [], jobFilterOptions(state.jobs, receivedFilter.job)) : ""}
         ${receivedSelect("sort", "Sort", "", SORT_OPTIONS)}
       </div>
       ${rows.length ? `<div class="table-wrap"><table>

@@ -6,7 +6,7 @@
 // are on Communications.
 import { money, fmtDate, words, esc, escDeep, unesc } from "../format.js";
 import { pathFor } from "../routes.js";
-import { jobFilterOptions, openJobs } from "../jobs.js";
+import { jobFilterOptions, jobFilterShown, openJobs } from "../jobs.js";
 import { moreButton } from "../dom.js";
 import { field, formValues, refuseForm, draftValue, clearForm } from "../forms.js";
 import { postJson } from "../net.js";
@@ -176,13 +176,13 @@ export const views = {
       </div>
       <div class="card" id="export-payapps">
         <h2>Sent pay apps</h2>
-        <div class="filter-bar">
+        ${jobFilterShown(state.jobs) ? `<div class="filter-bar">
           <label for="sent-filter" class="inline-label">Job</label>
           <select id="sent-filter" data-sent-filter="1">
             <option value="all">All jobs</option>
             ${jobFilterOptions(state.jobs, sentJobFilter)}
           </select>
-        </div>
+        </div>` : ""}
         ${rows.length ? `<div class="table-wrap"><table>
           <tr><th>Pay app</th><th>Job</th><th>Sent</th><th>Amount</th><th>Status</th><th>Download</th></tr>
           ${rows.map(sentPayAppRow).join("")}

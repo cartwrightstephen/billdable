@@ -216,6 +216,10 @@ select { max-width: 100%; }
 .land-foot { padding: 24px 32px 40px; color: var(--muted); font-size: 13px; text-align: center; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
 .form-grid label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+/* A one-choice field read as text, and a two-choice field as two buttons (forms.js field). */
+.field-label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.field-value { display: block; padding: 8px 0; }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
 .form-grid input, .form-grid select, .form-grid textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: var(--field-bg); }
 .form-grid [aria-invalid="true"], .form-inline [aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 .form-grid .span-2 { grid-column: span 2; }

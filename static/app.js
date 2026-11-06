@@ -265,6 +265,14 @@ const ACTIONS = {
     catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
   },
   "toggle-form": (el) => toggleForm(el.dataset.form),
+  // Two choices as two buttons (forms.js field({buttons})): the hidden input takes the value, as a select would.
+  "seg-pick": (el) => {
+    const input = document.getElementById(el.dataset.for);
+    if (!input) return;
+    input.value = el.dataset.value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    el.parentElement.querySelectorAll('[data-action="seg-pick"]').forEach(b => { b.classList.toggle("secondary", b !== el); b.setAttribute("aria-pressed", String(b === el)); });
+  },
   // each page's own, from its module in js/views/ (merged in views/index.js)
   ...pageActions,
 };

@@ -21,36 +21,38 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     }, `tasks-${Date.now()}@example.com`);
   }
 
-  await step("To Do: add a task, assign a row, and Mine shows only what is mine (T3, G5)", async () => {
+  await step("To Do: add a task with Ball in court buttons; a one-person team has no Assignee; Mine (T3, G5, round 1 item 8)", async () => {
     await company();
     await p.goto(BASE + "/dashboard");
     await p.getByRole("heading", { name: /To Do/ }).waitFor();
-    for (const head of ["Activity", "Job", "Ball in court", "Assignee", "Due"]) await p.locator(".todo-table th", { hasText: head }).first().waitFor();
+    for (const head of ["Activity", "Job", "Ball in court"]) await p.locator(".todo-table th", { hasText: head }).first().waitFor();
+    // A one-person team has no Assignee select or due box (round 1, item 8).
+    assert.equal(await p.locator(".todo-table th", { hasText: "Assignee" }).count(), 0);
     await p.locator(".action-queue").getByRole("button", { name: "Add task" }).click();
     await p.fill("#task-title", "Order the decking boards");
     await p.selectOption("#task-job", jobId);
+    // Ball in court is two buttons, not a select.
+    await p.locator('[data-action="seg-pick"][data-for="task-ball"][data-value="client"]').click();
+    assert.equal(await p.inputValue("#task-ball"), "client");
     await p.locator('[data-action="task-add"]').click();
     const task = p.locator(".action-item", { hasText: "Order the decking boards" });
     await task.waitFor();
-    assert.equal(await task.locator(".todo-assign").inputValue() !== "", true, "assigned to whoever added it");
-    // The job's own row is whoever has the job: the person who set it up, until it is reassigned.
-    const row = p.locator(".action-item", { hasText: "Not billed yet" });
+    assert.equal(await task.locator(".todo-assign").count(), 0);
+    await task.locator(".pill.ball-client").waitFor();
+    // Assigned to whoever added it, and the job's own row is whoever has the job: Mine shows both.
     await p.locator('[data-action="todo-who"][data-who="mine"]').click();
     await task.waitFor();
-    await row.waitFor();
-    await p.locator('[data-action="todo-who"][data-who="everyone"]').click();
-    const me = await task.locator(".todo-assign").inputValue();
-    await row.locator(".todo-assign").selectOption(me);
-    await p.getByText("Assigned.").waitFor();
-    await p.locator('[data-action="todo-who"][data-who="mine"]').click();
     await p.locator(".action-item", { hasText: "Not billed yet" }).waitFor();
-    // A due date set by hand beside the assignee: saved, and the row reads Overdue once it is past
-    // (an overdue item shows in every period).
+    await p.locator('[data-action="todo-who"][data-who="everyone"]').click();
+    // A due date that has gone by (set over the API: no box on a one-person team) reads Overdue.
     const due = await p.evaluate(() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; });
-    await row.locator(".todo-due-date").fill(due);
-    await row.locator(".todo-due-date").dispatchEvent("change");
-    await p.locator(".action-item.overdue", { hasText: "Not billed yet" }).waitFor();
-    assert.equal(await p.locator(".action-item", { hasText: "Not billed yet" }).locator(".todo-due-date").inputValue(), due);
+    await p.evaluate(async (due) => {
+      const st = await (await fetch("/api/state")).json();
+      const key = st.today_rows.find((r) => r.label === "Not billed yet").key;
+      await fetch("/api/tasks/assign", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, due }) });
+    }, due);
+    await p.reload();
+    await p.locator(".action-item.overdue", { hasText: "Not billed yet" }).locator(".pill.red", { hasText: "Overdue" }).waitFor();
     // The Calendar's Tasks block lists it too.
     await p.goto(BASE + "/dashboard/calendar");
     await p.getByRole("heading", { name: "Tasks" }).waitFor();

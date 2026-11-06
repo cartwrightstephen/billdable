@@ -96,20 +96,22 @@ export function todoHtml(items, { expanded = false, anySent = false, total = ite
     : `<p class="sub">${termText("Work shows up here when a pay app is ready to send, supporting documents are missing, a waiver or a follow-up is due, finished work isn't billed, or the Inbox has something for a job.")}</p>`;
   if (!items.length) return `<p class="sub">Nothing due in this period.</p>`;
   const rows = expanded ? items : items.slice(0, QUEUE_SHOWN);
+  // Who and when are worth a box only once the team has two people (round 1, item 8).
+  const team = people.length > 1;
   const more = items.length - rows.length;
   const activity = (i) => i.source === "row"
     ? `<span class="pill ${i.row.tone || ""}">${i.row.label}</span><div class="next-action">${i.row.text}${i.row.note ? ` <span class="sub">(${i.row.note})</span>` : ""}</div>`
     : `<strong>${i.title}</strong>`;
   return `<div class="table-wrap todo-wrap"><table class="todo-table">
-          <tr><th>Activity</th><th>Job</th><th>Ball in court</th><th>Assignee</th><th>Due</th><th></th></tr>
+          <tr><th>Activity</th><th>Job</th><th>Ball in court</th>${team ? "<th>Assignee</th><th>Due</th>" : ""}<th></th></tr>
           ${rows.map(i => {
             const late = i.due && today && i.due < today;
             return `<tr class="action-item${late ? " overdue" : ""}">
-            <td class="todo-activity">${activity(i)}</td>
+            <td class="todo-activity">${activity(i)}${late && !team ? ` <span class="pill red">Overdue</span>` : ""}</td>
             <td>${i.job_id ? `<a href="${pathFor("job", i.job_id)}" data-action="open-job" data-id="${i.job_id}">${i.job}</a>` : ""}</td>
             <td><span class="pill ball-${i.ball}">${BALL_WORDS[i.ball] || "Us"}</span></td>
-            <td>${assignSelect(i, people)}</td>
-            <td class="todo-due">${dueInput(i)}${late ? ` <span class="pill red">Overdue</span>` : ""}</td>
+            ${team ? `<td>${assignSelect(i, people)}</td>
+            <td class="todo-due">${dueInput(i)}${late ? ` <span class="pill red">Overdue</span>` : ""}</td>` : ""}
             <td><div class="action-buttons">${itemButtons(i)}</div></td>
           </tr>`;
           }).join("")}
