@@ -222,6 +222,28 @@ class WaiverFormsTests(unittest.TestCase):  # M22
         self.assertTrue(forms["other"]["notes"])
         self.assertFalse(forms["other"]["citation"])
 
+    def test_georgias_forms_carry_the_titles_the_statute_gives_them(self):
+        # O.C.G.A. § 44-14-366(d) and (e) as amended from January 1, 2021 (SB 315): both titles
+        # name lien and payment bond rights. "Interim Waiver and Release Upon Payment" was the
+        # title before that and is no longer the form.
+        ga = domain.waiver_forms()["states"]["GA"]["forms"]
+        interim = "Waiver and Release of Lien and Payment Bond Rights Upon Interim Payment"
+        final = "Waiver and Release of Lien and Payment Bond Rights Upon Final Payment"
+        self.assertEqual(ga["conditional_progress"], interim)
+        self.assertEqual(ga["unconditional_progress"], interim)
+        self.assertEqual(ga["conditional_final"], final)
+        self.assertEqual(ga["unconditional_final"], final)
+        notes = " ".join(domain.waiver_forms()["states"]["GA"]["notes"])
+        self.assertIn("90 days", notes)
+
+    def test_georgias_interim_title_reads_as_a_lien_waiver_form(self):
+        import doc_check
+        for title in ("WAIVER AND RELEASE OF LIEN AND PAYMENT BOND RIGHTS UPON INTERIM PAYMENT",
+                      "Interim Waiver and Release Upon Payment"):   # the older title is still in circulation
+            body = "Northline GC\nAcme Electric LLC\n\n" * 6 + title + "\nThe undersigned mechanic and/or materialman has been employed by Northline GC."
+            self.assertTrue(doc_check._STATUTORY_TITLE.search(body), title)
+            self.assertTrue(doc_check.reading(body)["form"], title)
+
     def test_the_jobs_state_comes_from_its_address(self):
         self.assertEqual(domain.job_state({"address": "12 Pine St, Atlanta, GA 30307"}), "GA")
         self.assertEqual(domain.job_state({"address": "Back lot behind the mill"}), "")
