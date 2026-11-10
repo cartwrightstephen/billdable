@@ -7,7 +7,7 @@ import { routeFromPath } from "../routes.js";
 import { readJson, postJson } from "../net.js";
 import { formErrorLine, refuseForm, clearForm } from "../forms.js";
 import { me, currentView, onSessionEnd } from "../state.js";
-import { DEMO_COMPANY_ID, render, toast, nav } from "../app-core.js";
+import { DEMO_COMPANY_ID, render, toast, nav, finishHtml } from "../app-core.js";
 
 const STALE_MS = 15 * 60 * 1000;
 let data = null;      // GET /api/reminders, raw: esc() at the point it is drawn
@@ -27,8 +27,15 @@ export async function loadReminders(force = false) {
     const reply = res.ok ? await readJson(res) : null;
     if (reply && me === asked) {
       data = reply;
-      // Only where it shows: a redraw on another page for nothing new is wasted.
-      if (currentView === "dashboard" || currentView === "account") render();
+      // Only where it shows: a redraw on another page for nothing new is wasted. On My account
+      // only the Notifications card is redrawn: a redraw of the whole page would replace a box
+      // the person is in the middle of (the Theme list they have open, say) and drop the pick.
+      const card = currentView === "account" && globalThis.document && document.querySelector("#notifications");
+      if (card) {
+        card.outerHTML = notificationsCardHtml();
+        const drawn = document.querySelector("#notifications");
+        if (drawn) finishHtml(drawn);
+      } else if (currentView === "dashboard" || currentView === "account") render();
     }
   } catch (_) { /* the card keeps its loading line; the banner covers outages */ }
   finally { asking = false; }

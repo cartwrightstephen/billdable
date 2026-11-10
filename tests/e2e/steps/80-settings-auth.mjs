@@ -10,10 +10,25 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.getByRole("heading", { name: "Appearance" }).waitFor();
     await p.locator("#app-theme").selectOption("dark");
     await p.locator("#app-accent").selectOption("green");
+    // What the page asked the server for, so a failure here can say what the save did.
+    const calls = [];
+    p.on("response", (r) => { const u = new URL(r.url()); if (u.pathname.startsWith("/api/") && r.request().method() !== "GET") calls.push(`${r.request().method()} ${u.pathname} ${r.status()}`); });
+    const picked = await p.evaluate(() => [document.getElementById("app-theme").value, document.getElementById("app-accent").value]);
     await p.locator('.save-bar [data-action="save-account"]').click();
     // The page's CSP forbids evaluating strings, which waitForFunction does once its first check is
     // false (the save now also stores the notification choices): wait on the attribute instead.
-    await p.locator('html[data-theme="dark"]').waitFor({ state: "attached" });
+    await p.locator('html[data-theme="dark"]').waitFor({ state: "attached", timeout: 10000 }).catch(async () => {
+      const seen = await p.evaluate(() => ({
+        theme: document.documentElement.dataset.theme || "(none)",
+        boxes: [document.getElementById("app-theme")?.value, document.getElementById("app-accent")?.value],
+        errors: [...document.querySelectorAll(".form-error, .field-error, [role=alert]")].map((e) => e.textContent.trim()).filter(Boolean),
+        toast: document.querySelector(".toast")?.textContent || "",
+        fields: [...document.querySelectorAll('[data-form-key="account"] [data-field]')].map((e) => e.dataset.field),
+        saveButtons: document.querySelectorAll('[data-action="save-account"]').length,
+        heading: document.querySelector("h1")?.textContent || "",
+      }));
+      throw new Error(`Dark was not applied after Save. Picked ${JSON.stringify(picked)}; page now ${JSON.stringify(seen)}; calls ${JSON.stringify(calls)}`);
+    });
     assert.equal(await p.evaluate(() => document.documentElement.dataset.accent), "green");
     const bg = await p.evaluate(() => getComputedStyle(document.body).backgroundColor);
     await p.reload();

@@ -165,6 +165,22 @@ test("My account has the Notifications card with each person's reminder choices,
   dom.answers = [];
 });
 
+test("on My account the reminders arriving redraw only the Notifications card, so a box being picked elsewhere on the page is left alone", async () => {
+  page.setMe({ id: "u1", name: "Pat", email: "pat@example.com", company_id: "co-r", role: "owner", email_verified: true });
+  core.setState(fresh());
+  page.setLocation("account");
+  const card = { outerHTML: '<div class="card" id="notifications"><h2>Notifications</h2><p class="sub">Loading…</p></div>' };
+  dom.byId.notifications = card;
+  const app = dom.byId.app, before = app ? app.innerHTML : undefined;
+  dom.answers = [(p) => (p === "/api/reminders" ? { status: 200, body: remindersReply() } : undefined)];
+  await automations.loadReminders(true);
+  assert.match(card.outerHTML, /data-reminder="dates" value="app" checked/, "the card itself is redrawn with the choices");
+  if (app) assert.equal(app.innerHTML, before, "the rest of the page is not redrawn");
+  delete dom.byId.notifications;
+  dom.answers = [];
+  page.setLocation("dashboard");
+});
+
 test("fired reminders are To do rows; one about a job that already has a row for its dates or held-up pay app is left off", async () => {  // item 19
   page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner" });
   const j = (id, name) => ({ id, name, code: id.toUpperCase(), payer_id: "p1", closed: false, invoices: [], payments: [], change_orders: [], money: {} });

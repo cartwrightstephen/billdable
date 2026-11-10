@@ -127,7 +127,7 @@ _TICKED = {word: re.compile(rf"(?:{_TICK}|(?:^|(?<=\s))[xX])[ \t]{{0,2}}{pattern
            for word, pattern in (("unconditional", r"un-?conditional"), ("conditional", r"(?<![a-z])(?<!un-)conditional"))}
 _STATUTORY_TITLE = re.compile(r"\b(?:un)?conditional\s+waiver\s+and\s+release\s+(?:on|upon)\s+(?:progress|final)\s+payment"
                               r"|\binterim\s+waiver\s+and\s+release\s+upon\s+payment"
-                              r"|\bwaiver\s+and\s+release\s+of\s+lien\s+(?:and\s+payment\s+bond\s+rights\s+)?upon\s+(?:progress|final)\s+payment", re.I)
+                              r"|\bwaiver\s+and\s+release\s+of\s+lien\s+(?:and\s+payment\s+bond\s+rights\s+)?upon\s+(?:interim|progress|final)\s+payment", re.I)
 # The type within three words of waiver, release or lien, in either order: "Acme - Unconditional
 # Waiver and Release of Lien" (a title too long to be a heading), "waiver (unconditional)".
 _TYPE = rf"(?:{_UN})?conditional(?:ly)?"
