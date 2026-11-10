@@ -115,8 +115,11 @@ class Items(unittest.TestCase):
     def test_a_job_made_with_an_end_date_next_week_gets_a_reminder(self):  # the field New job saves
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         end = (NOW.date() + timedelta(days=5)).isoformat()
+        # The start is given, tied to NOW like the end. Left blank it is the real day (`today` is the
+        # page's date and only counts within a day of the server's), and an end before it is refused.
         made = domain.create_job(state, "Pine deck", "Northline GC", 2_000_000, address="5 Birch Rd", approver="Nia", ap_email="ap@northline.example",
-                                 phone="(404) 555-0177", role="GC", anticipated_end_on=end, today=NOW.date().isoformat())
+                                 phone="(404) 555-0177", role="GC", anticipated_end_on=end, started_on=NOW.date().isoformat())
+        self.assertEqual(made["started_on"], NOW.date().isoformat())
         self.assertEqual(made["anticipated_end_on"], end)
         dates = [i for i in reminders.build(state, NOW) if i["kind"] == "dates"]
         self.assertTrue(any(i["job_id"] == made["id"] and "Anticipated end date" in i["text"] for i in dates), dates)
