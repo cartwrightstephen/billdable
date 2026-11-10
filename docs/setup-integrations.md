@@ -99,6 +99,29 @@ On staging and production, also check that with `TWILIO_AUTH_TOKEN` unset, an in
 
 **After a deploy or a restart.** Nothing is sent at start-up. The first scheduled run is about 5 minutes later, then every hour. Each day's emails go once, even across restarts, because what is done for the day is kept in the data directory.
 
+## Reading scans and photos (OCR)
+
+No account and no keys: two programs on the server itself, `tesseract` and `pdftoppm`, which the Dockerfile installs. Nothing is sent anywhere.
+
+| Setting | Value | Where |
+|---|---|---|
+| `OCR_ENABLED` | `1` to turn it on. `render.yaml` sets it on staging and leaves production unset (`sync: false`), so production stays off until someone sets it in the dashboard. | Environment |
+| `OCR_MAX_PAGES` | Pages read of one PDF. Default 10. | Optional |
+| `OCR_PAGE_SECONDS` | Longest one page may take. Default 60. | Optional |
+| `OCR_DPI` | Resolution a PDF page is rendered at. Default 200. | Optional |
+| `OCR_MAX_PIXELS` | Most pixels read at once; bigger pages and JPEG photos are shrunk to it. Default 8000000. | Optional |
+| `OCR_LANG` | Tesseract's language. Default `eng`; another needs its `tesseract-ocr-<lang>` package in the Dockerfile. | Optional |
+| `OCR_MEMORY_MB` | Memory ceiling for each run of the two programs. Default 400. | Optional |
+
+To check it after a deploy:
+
+1. Open `https://<site>/healthz`. `ocr` reads `ready`. `not installed` means the image was built without the two programs; `off` means `OCR_ENABLED` isn't `1`.
+2. Upload a scanned PDF to the Inbox. `ocr_queue` goes to 1 and back to 0.
+3. In the Shell, `python3 ocr.py status` lists what is waiting, and `uploads/<company>/ocr-queue.json` on the disk shows each file as `read`, or `unread` with the reason.
+4. Files uploaded before it was on are not read. `python3 ocr.py backfill --company <id>` queues a company's older scans and photos (`python3 admin.py companies` lists the ids).
+
+Staging's free instance has a tenth of a CPU, so a page takes several times longer there than on production's Starter instance. The memory and time a read takes are measured by the `ocr` job in GitHub Actions (`scripts/ocr_measure.py`), in this image held to 512 MB and half a CPU; read its log before turning production on. To turn it off again, unset `OCR_ENABLED`: stored text is then ignored and the app behaves as it did before.
+
 ## QuickBooks Online
 
 Duracash only reads from QuickBooks. It never changes the books.

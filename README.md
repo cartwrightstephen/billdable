@@ -77,6 +77,14 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `SMS_ALLOWLIST` | Comma-separated numbers. When set, texts to any other number aren't sent. With `MAIL_ALLOWLIST` or `DURACASH_ENV=staging` in force and this blank, no text goes out. |
 | `SMS_DAILY_LIMIT` | Texts per company per 24 hours, default 20. Counted in `sms_sends.json`. |
 | `REMINDER_REPEAT_DAYS` | Days before the same reminder comes round again, default 3. |
+| `OCR_ENABLED` | `1` reads scans and photos on the server (`ocr.py`): a scanned PDF or a photo is queued when it is uploaded and read in the background by `tesseract` and `pdftoppm`, which must be installed (the Dockerfile installs both). Off by default; without it, or without the programs, nothing changes. `/healthz` says `off`, `not installed` or `ready`. No AI and no outside service: nothing leaves the server. See Importing, below. |
+| `OCR_MAX_PAGES` | Pages read of one PDF, default 10. The rest are left, and the queue's entry says so. |
+| `OCR_PAGE_SECONDS` | The longest one page may take in either program, default 60. Past it the program is stopped and the page is unread. |
+| `OCR_DPI` | Dots per inch a PDF page is rendered at, default 200. |
+| `OCR_MAX_PIXELS` | The most pixels handed to tesseract at once, default 8000000. A bigger page or JPEG photo is shrunk to it first; a PNG or WebP bigger than it, and a JPEG more than 8 times it, is left unread. This is what bounds memory. |
+| `OCR_LANG` | Tesseract's language, default `eng` (the Dockerfile installs English only). |
+| `OCR_MEMORY_MB` | Address-space ceiling for each run of either program, default 400; `0` sets none. Enforced on Linux; macOS has no such limit to set. |
+| `OCR_TESSERACT`, `OCR_PDFTOPPM` | Paths to the two programs, when they aren't on the PATH. |
 | `MAIL_DAILY_LIMIT` | Emails per company per 24 hours, default 50. Sign-up doesn't verify anyone, so this keeps one account from using us to send spam. Counted in `mail_sends.json`. |
 
 ## Importing
@@ -90,6 +98,17 @@ Everything comes into the Inbox, gets a suggested job (job code, address, job na
 - Inbound SMS: `POST /api/inbound/sms/<token>` accepts Twilio's form post and answers with empty TwiML. With `TWILIO_AUTH_TOKEN` set, photos and PDFs sent by text are downloaded into the Inbox item (`twilio_media.py`); when a download fails, they are kept as links. The item reads from the team member whose confirmed number sent it, or **Unknown sender**. The job is only suggested: filing a text needs the permission to edit company details. A one-word STOP turns texts off for that number and isn't filed.
 
 What happened on site goes on **New job record** (Jobs): the Diary, crew, weather and materials; tick boxes for Quantities, Change order work and New punchlist items; and sections for Delivery tickets, Progress photos, Time sheets, Invoices, Inspections and Other documents and notes. Each file makes one job record of its kind, and the diary one labelled "Diary entry <date>" (`domain/daily.py`).
+
+### Scans and photos (OCR)
+
+Off unless `OCR_ENABLED=1` and `tesseract` and `pdftoppm` (poppler-utils) are installed. It is a backend only: no screen, button or message is new.
+
+- **What is queued.** A file is queued when it is stored (an upload, a share from a phone, an email or text attachment) if it is a PDF today's reader gets no text from, or a JPEG, PNG or WebP. Files with text, the demo company's files, and files uploaded before it was turned on are not; `python3 ocr.py backfill --company ID` queues a company's older ones. HEIC and GIF are recorded as unread, not converted.
+- **How it is read.** One worker thread: one file at a time across the whole server, one page at a time. A PDF page is rendered by `pdftoppm` at `OCR_DPI` into a private temporary folder and read by `tesseract`, and its image is deleted before the next page. A JPEG goes through `pdftoppm` too (wrapped in a one-page PDF), which turns it upright by its orientation tag and shrinks it to `OCR_MAX_PIXELS` while decoding. A picture's size is read from its file header before anything decodes it.
+- **Limits on each program.** No shell; arguments as a list; the input is the stored path (`uploads/<company>/<file id>.<ext>`), never a name a person typed; a minimal environment with `OMP_THREAD_LIMIT=1`; its own process group, killed whole after `OCR_PAGE_SECONDS`; at most 1 MB read from it per page; an address-space ceiling of `OCR_MEMORY_MB` on Linux. A page that fails, times out or is too big is unread, and the reason is kept. Nothing raises into a request.
+- **Where it is kept.** The queue is `uploads/<company>/ocr-queue.json` (file id, company id, state `waiting`, `reading`, `read` or `unread` with the reason, pages, seconds), written atomically, so a restart carries on; a file the server stopped on three times is given up. The text is `uploads/<company>/<file id>.ocr.json` under `ocr_text`, capped at 400,000 characters; it is not in the company's data, and no route serves it. Both go with the uploads into backups and are deleted with the company. A queue file that can't be read is copied aside (`.bad-…`), an alert goes out, and a new one starts.
+- **Where the text is used.** Only where the app already reads text, and only when the file has none of its own: the document check on a supporting document (job name, a waiver's amount and wording), the answer picked first on "Which waiver is this?" and whether "Is this a lien waiver?" is asked, a contract read into New job or Add client when the same file is on one of the company's records, and the kind suggested for an Inbox item whose name gave none. Until the text is there, a scan behaves as before ("couldn't be checked"). When it arrives, the Inbox suggestion and what a record reads as are worked out again; an item's check runs again only when a person next acts on it, and an answer already given is never asked again. A person's answer still decides which waiver a file is.
+- **Looking at it.** `/healthz` (`ocr`, `ocr_queue`), `python3 ocr.py status`, the queue files, and one log line per file read (`"msg": "OCR"`, with the state, pages and seconds; never the text).
 
 ## Sending email
 
@@ -136,7 +155,7 @@ Approved pay apps, drafts sent for the client's review, follow-ups, waivers and 
 ## Backups, health and logs
 
 - `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), keeping `BACKUP_KEEP`. They are on the same disk as the data, so when the `BACKUP_S3_*` settings are filled in, each new backup is also encrypted with age and uploaded (`offsite.py`); `python3 backup.py upload [FILE]` does one by hand. To restore an off-site copy: download the `.age` file, `age -d -i key.txt FILE.age > backup.tar.gz`, then `python3 backup.py restore backup.tar.gz`. `python3 backup.py now|list|restore FILE|drill [FILE]` (drill: restore into a temporary folder and check it reads, without touching the live data; runbook 2); restore (server stopped) first unpacks into a staging folder and checks the archive is complete (it must hold `auth.json` and `companies/`, with nothing outside the data directory); only then does it move the current data aside to `pre-restore-<time>/` and swap the backup in. Company snapshots taken before a reset are included.
-- `GET /healthz`: no sign-in; `ok`, whether the data directory is writable and has 200 MB free (503 if not; `disk_free_mb` says how much), whether email is set up, the time of the last backup and of the last off-site upload, and the env. Point an uptime monitor (for example Better Stack's free tier) at it: it is the only thing that notices the server being down.
+- `GET /healthz`: no sign-in; `ok`, whether the data directory is writable and has 200 MB free (503 if not; `disk_free_mb` says how much), whether email is set up, the time of the last backup and of the last off-site upload, `ocr` (`off`, `not installed` or `ready`) with `ocr_queue` (files waiting to be read), and the env. Point an uptime monitor (for example Better Stack's free tier) at it: it is the only thing that notices the server being down.
 - Logs: one JSON line per request on stderr (time, method, path, status, milliseconds, request id). Query strings and the secret parts of inbound and calendar addresses are removed. A crash logs its traceback with the request id, and the user sees the same id to quote. With `ALERT_WEBHOOK_URL` set, each crash also posts a one-line alert (`alerts.py`).
 
 ## Schedule of values
@@ -183,6 +202,8 @@ python3 -m unittest discover -s tests -v
 
 Browser test: `DURACASH_DATA_DIR=$(mktemp -d) BACKUP_HOURS=0 HOST=127.0.0.1 PORT=8873 python3 server.py`, then `DURACASH_URL_UNDER_TEST=http://127.0.0.1:8873 node tests/e2e/smoke.mjs`. Keep a Mac awake for it (run both under `caffeinate -s -i -m`): when it sleeps, the browser's waits run out and steps fail with timeouts that have nothing to do with the app. `pmset -g log` shows whether it slept.
 
+OCR's tests (`tests/test_ocr.py`, `tests/test_ocr_http.py`) use stand-ins for tesseract and pdftoppm, so they run anywhere. `tests/test_ocr_real.py` uses the real programs and skips without them (or without Pillow, which only draws its test documents); the `ocr` job in `.github/workflows/tests.yml` installs them, runs it, and prints what a read costs in seconds and memory (`scripts/ocr_measure.py`), on the runner and in the Docker image held to 512 MB and half a CPU.
+
 Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github/workflows/tests.yml`) runs them on every push and pull request; protect `main` so a red run blocks the merge (Settings, Branches, require the `unittest` check).
 
 ## Project layout
@@ -196,7 +217,8 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `sov.py`: schedule-of-values arithmetic and the paste reader
 - `qty_import.py`: quantities from a contractor's own file, added to the field totals
 - `contract_import.py`: reads a contract's Word, PDF or text, for New job and Add client
-- `doc_check.py`: reads a file attached as a supporting document: blank, job name, a waiver's amount and wording. Warnings only; no OCR
+- `doc_check.py`: reads a file attached as a supporting document: blank, job name, a waiver's amount and wording. Warnings only. A scan or a photo has no text unless `ocr.py` has stored it
+- `ocr.py`: reads scans and photos in the background with tesseract and pdftoppm, when `OCR_ENABLED=1`; the queue, the limits on each program, and `python3 ocr.py status|backfill --company ID`
 - `sms.py`, `twilio_media.py`: internal texts out, and files from texts in
 - `reminders.py`: reminders by app, email and text
 - `exports.py`, `job_archive.py`: the CSV lists and a finished job's zip
