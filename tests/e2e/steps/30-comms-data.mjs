@@ -89,6 +89,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const phone = await signedInPage({ width: 375, height: 812 });
     await phone.goto(BASE + "/communications");
     await phone.locator("#received-sort").waitFor();
+    // The list's first page arrives a moment later and redraws the filters: measure the settled page.
+    await phone.waitForLoadState("networkidle");
     for (const name of ["source", "status", "job", "sort"]) {
       const label = await phone.locator(`label[for="received-${name}"]`).boundingBox();
       const box = await phone.locator(`#received-${name}`).boundingBox();
