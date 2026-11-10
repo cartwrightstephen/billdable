@@ -37,3 +37,39 @@ jobs:
         run: python3 -m unittest discover -s tests
         env:
           DURACASH_STORAGE: json
+
+  # Reading scans (ocr.py) with the real programs. The two jobs above have neither tesseract nor
+  # pdftoppm: there the OCR tests run on stand-ins and tests/test_ocr_real.py is skipped. Here both
+  # are installed, those tests run, and scripts/ocr_measure.py prints what a read costs in seconds
+  # and memory: on the runner, then in the production image held to 512 MB and half a CPU
+  # (Render's Starter instance). Pillow draws the test documents, in this job only.
+  ocr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tesseract and pdftoppm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng poppler-utils
+          tesseract --version | head -n 1
+          pdftoppm -v 2>&1 | head -n 1
+      - name: Pillow, to draw the test documents (this job only)
+        run: python3 -m pip install --quiet pillow
+      - name: OCR tests with the real programs
+        run: python3 -m unittest -v tests.test_ocr_real
+      - name: Draw the documents to measure
+        run: python3 scripts/ocr_measure.py make-docs "$RUNNER_TEMP/ocr-docs"
+      - name: Measurements on the runner
+        run: python3 scripts/ocr_measure.py run "$RUNNER_TEMP/ocr-docs" --label "GitHub runner, no limits" 2> "$RUNNER_TEMP/measure-runner.log"
+      - name: Measurements in the production image at 512 MB and half a CPU
+        run: |
+          docker build --quiet --tag duracash-ocr .
+          docker run --rm --memory=512m --memory-swap=512m --cpus=0.5 --volume "$RUNNER_TEMP/ocr-docs:/docs:ro" duracash-ocr \
+            python3 scripts/ocr_measure.py run /docs --label "production image (Dockerfile), 512 MB, 0.5 CPU" 2> "$RUNNER_TEMP/measure-image.log"
+      - name: What the measuring runs logged
+        if: always()
+        run: tail -n 60 "$RUNNER_TEMP"/measure-*.log || true

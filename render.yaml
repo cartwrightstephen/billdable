@@ -30,6 +30,10 @@ services:
       # Set to 1 only after a deploy has been seen to keep accounts and data.
       - key: DURACASH_DATA_PERSISTENT
         sync: false
+      # Reading scans and photos on the server (ocr.py). Off until someone sets it to 1 in the
+      # Render dashboard, after it has been watched on staging; /healthz says off, not installed or ready.
+      - key: OCR_ENABLED
+        sync: false
 
   # Staging (P1-13): deploys dev, so a change is tried on a real server before main.
   # Free plan, no disk: its data is throwaway and the landing page says so.
@@ -48,6 +52,9 @@ services:
       - key: DURACASH_ENV
         value: staging
       - key: COOKIE_SECURE
+        value: "1"
+      # Scans and photos are read on the server here (ocr.py), so it is tried before production.
+      - key: OCR_ENABLED
         value: "1"
       - key: DURACASH_URL
         sync: false

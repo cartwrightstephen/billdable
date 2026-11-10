@@ -1,6 +1,7 @@
 FROM python:3.12.7-slim
-# age encrypts backups before they are uploaded off the server (offsite.py).
-RUN apt-get update && apt-get install -y --no-install-recommends age && rm -rf /var/lib/apt/lists/*
+# age encrypts backups before they are uploaded off the server (offsite.py). tesseract and pdftoppm
+# (poppler-utils) read scans and photos on the server (ocr.py); they are used only with OCR_ENABLED=1.
+RUN apt-get update && apt-get install -y --no-install-recommends age tesseract-ocr tesseract-ocr-eng poppler-utils && rm -rf /var/lib/apt/lists/*
 # The server runs as duracash, not root (R6-09). The code stays root's and read-only to it;
 # only the data directory is its own. /app/data is the default; Render mounts /var/data.
 RUN groupadd --system duracash && useradd --system --gid duracash --home-dir /app --no-create-home duracash
