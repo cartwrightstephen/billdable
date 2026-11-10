@@ -3,7 +3,9 @@
 doesn't match is a warning naming it, for a person to look at; it never blocks on its own. Which
 waiver a file is, and whether a file is a lien waiver at all, is the person's answer (reading()). Text
 comes from contract_import's readers, which stay small whatever the file inflates to. A scan or a
-photo has none, so it says it couldn't be checked; there is no OCR here.
+photo has none, so it says it couldn't be checked, unless the background reader (ocr.py, off unless
+OCR_ENABLED=1) has stored its text: with_stored_text() then puts that text on what prepare() got,
+and everything after it treats the file like any other with text.
 
 prepare() does the reading, so a caller can do it before taking a company's lock and hand what it
 got to check() in place of the file's bytes (server._read_ahead). Whatever goes wrong in here is a
@@ -26,10 +28,12 @@ BLANK_LETTERS = 8   # fewer letters than this is a blank page's stray marks
 @dataclass
 class ReadFile:
     """What prepare() got from a file: its text (None for a type that isn't read), whether it
-    couldn't be opened, and whether a PDF has pictures in it."""
+    couldn't be opened, whether a PDF has pictures in it, and whether the text is what the
+    background reader (ocr.py) got from a scan or a photo."""
     text: str | None = None
     failed: bool = False
     has_image: bool = False
+    ocr: bool = False
 
 
 def _text(ext: str, data: bytes) -> str | None:
@@ -51,6 +55,26 @@ def prepare(ext: str, data: bytes) -> ReadFile:
         return ReadFile(text=_text(ext, data), has_image=ext == ".pdf" and b"/Image" in data)
     except Exception:
         return ReadFile(failed=True)
+
+
+def with_stored_text(read: ReadFile, ext: str, ocr_text: Any) -> ReadFile:
+    """What prepare() got, with the text the background reader stored for the file (ocr.py) when
+    the file had none of its own: a photo, or a PDF with no text in it. ocr_text() gives that
+    text, "" when there is none; it is asked only then. Never raises."""
+    if read.failed or not (ext in PICTURES or ext == ".pdf") or not no_text(read):
+        return read
+    try:
+        stored = str(ocr_text() or "")[:contract_import.MAX_TEXT]
+    except Exception:
+        stored = ""
+    if _letters(stored) >= BLANK_LETTERS:
+        read.text, read.ocr = stored, True
+    return read
+
+
+def no_text(read: ReadFile) -> bool:
+    """Nothing to compare came out of the file: a photo, a scan, a blank page."""
+    return _letters(read.text or "") < BLANK_LETTERS
 
 
 def _letters(text: str) -> int:
@@ -215,10 +239,10 @@ def waiver_reading(files: list[tuple[str, str, Any]]) -> dict[str, Any]:
     try:
         guesses = set()
         for _name, ext, data in files:
-            if data is None or ext in PICTURES:
+            if data is None:
                 continue
             read = data if isinstance(data, ReadFile) else prepare(ext, data)
-            if not read.text:
+            if not read.text:   # a photo or a scan, unless its text was read in the background
                 continue
             got = reading(read.text)
             out["form"] = out["form"] or got["form"]
@@ -278,11 +302,11 @@ def _check(files: list[tuple[str, str, Any]], job_name: str, money_text: str, ce
         if data is None:
             problems.append(f"{name} couldn't be opened.")
             continue
-        if ext in PICTURES:
-            unchecked.append(f"{name} is a photo or a scan, so it couldn't be checked.")
-            continue
         read = data if isinstance(data, ReadFile) else prepare(ext, data)
         text = read.text
+        if ext in PICTURES and not text:
+            unchecked.append(f"{name} is a photo or a scan, so it couldn't be checked.")
+            continue
         if read.failed:
             problems.append(f"{name} couldn't be opened.")
         elif text is None:

@@ -8,7 +8,8 @@ the project's name and address, the client, the start and completion dates, the 
 are due, the payment terms and a schedule of values (through sov.parse_rows).
 
 Nothing is saved here: the answer is what the form fills in, for the person to check before
-Save. A scanned PDF has no text to read, so it says so; a broken file never raises.
+Save. A scanned PDF has no text to read, so it says so, unless the caller hands in the text the
+background reader (ocr.py) stored for the same file; a broken file never raises.
 """
 
 from __future__ import annotations
@@ -36,9 +37,12 @@ MAX_ZIP_DIRECTORY = 1024 * 1024  # how big a .docx's list of parts may be; a rea
 MIN_LETTERS = 40            # fewer letters than this is no text (a scan's stray marks)
 
 
-def read(name: str, data: bytes, company_name: str = "") -> dict[str, Any]:
-    """{ok, fields, found, sov, notes} from a contract file, or {ok: False, error}."""
+def read(name: str, data: bytes, company_name: str = "", ocr_text: Any = None) -> dict[str, Any]:
+    """{ok, fields, found, sov, notes} from a contract file, or {ok: False, error}. ocr_text()
+    gives the text stored for a scan of the same PDF, if any; it is asked only when no text is
+    found in the PDF itself."""
     ext = ("." + str(name or "").rsplit(".", 1)[-1].lower()) if "." in str(name or "") else ".txt"
+    error = ""
     try:
         if ext == ".docx":
             text = docx_text(data)
@@ -49,13 +53,22 @@ def read(name: str, data: bytes, company_name: str = "") -> dict[str, Any]:
         else:
             return {"ok": False, "error": WRONG_TYPE}
     except (zipfile.BadZipFile, KeyError, ValueError):
-        return {"ok": False, "error": NOT_OPENED if ext == ".docx" else NO_TEXT}
+        text, error = "", NOT_OPENED if ext == ".docx" else NO_TEXT
     except Exception:  # a file this reader doesn't understand is never a crash
-        return {"ok": False, "error": NO_TEXT}
+        text, error = "", NO_TEXT
     text = (text or "")[:MAX_TEXT]
-    if len(re.findall(r"[A-Za-z]", text)) < MIN_LETTERS:
-        return {"ok": False, "error": NO_TEXT}
+    if _too_few_letters(text) and ext == ".pdf" and ocr_text is not None:
+        try:
+            text = str(ocr_text() or "")[:MAX_TEXT]
+        except Exception:
+            text = ""
+    if _too_few_letters(text):
+        return {"ok": False, "error": error or NO_TEXT}
     return {"ok": True, **suggest(text, company_name)}
+
+
+def _too_few_letters(text: str) -> bool:
+    return len(re.findall(r"[A-Za-z]", text)) < MIN_LETTERS
 
 
 # ---------- Word ----------

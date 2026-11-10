@@ -52,6 +52,7 @@ import metrics
 import migrations
 from domain import profiles
 import monthly
+import ocr
 import offsite
 import outbox
 import payapp_pdf
@@ -1076,6 +1077,9 @@ class Handler(BaseHTTPRequestHandler):
             "email": "configured" if mailer.configured() else "not set up",
             "last_backup": backup.newest_time(),
             "offsite_backup": offsite.last_upload() if offsite.configured() else "not set up",
+            # Reading scans and photos (ocr.py): off, not installed (on, but tesseract or pdftoppm is missing) or ready.
+            "ocr": ocr.status(),
+            "ocr_queue": ocr.queue_length(),
             "env": "production" if production() else "development",
         })
 
@@ -1240,9 +1244,14 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             self._json(401, {"error": "Sign in required."})
             return
-        with company_lock(user["company_id"]):
-            company = load_company(user["company_id"]).get("company", {})
-        self._json(200, contract_import.read(name, data, company_name=company.get("name", "")))
+        company_id = user["company_id"]
+        with company_lock(company_id):
+            state = load_company(company_id)
+        company = state.get("company", {})
+        # A scan has no text of its own: what the background reader stored for the same file, kept
+        # on one of this company's records, is used instead (ocr.py). Nothing is stored here.
+        stored_text = (lambda: ocr.text_for_bytes(company_id, state.get("files", []), hashlib.sha256(data).hexdigest())) if ocr.enabled() else None
+        self._json(200, contract_import.read(name, data, company_name=company.get("name", ""), ocr_text=stored_text))
 
     def _g_log_page(self, m, user) -> None:
         offset, limit, q = self._paging()
@@ -2344,6 +2353,8 @@ class Handler(BaseHTTPRequestHandler):
         status, payload = self._mutate(company_id, add)
         if status != 200:
             importer.discard(company_id, stored)
+        else:
+            _queue_for_ocr(company_id, stored)
         if status == 200 and notes:
             payload = {**payload, "message": " ".join(notes)}
         self._json(status, {**payload, "uploaded_record_ids": made} if status == 200 and made else payload)
@@ -2433,6 +2444,7 @@ class Handler(BaseHTTPRequestHandler):
             importer.discard(company_id, stored)
             self._json(status, payload)
             return
+        _queue_for_ocr(company_id, stored)
         self._json(200, {"ok": True})
 
     def _mail_events(self, token: str) -> None:
@@ -2651,6 +2663,8 @@ class Handler(BaseHTTPRequestHandler):
         status, payload = self._mutate(company_id, add)
         if status != 200:
             importer.discard(company_id, stored)
+        else:
+            _queue_for_ocr(company_id, stored)
         return status, payload
 
     def _p_share_claim(self, m, ctx: "Ctx") -> None:
@@ -2781,6 +2795,8 @@ class Handler(BaseHTTPRequestHandler):
         status, _ = self._mutate(company_id, add)
         if status != 200:
             importer.discard(company_id, stored)
+        else:
+            _queue_for_ocr(company_id, stored)
         body = b'<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
         self._send(200 if status == 200 else 409, body, "text/xml; charset=utf-8")
 
@@ -3397,12 +3413,53 @@ def may_take(user: dict, action: str, state: dict) -> bool:
 
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
 def _read_stored(company_id: str, meta: dict) -> "doc_check.ReadFile | None":
-    """A stored file read for the document check; None if it is gone."""
+    """A stored file read for the document check; None if it is gone. A scan or a photo has no text
+    of its own: what the background reader stored for it, if it has, is read in its place (ocr.py)."""
     ext = str(meta.get("ext") or "").lower()
     try:
-        return doc_check.prepare(ext, b"" if ext in doc_check.PICTURES else importer.file_path(company_id, meta).read_bytes())
+        read = doc_check.prepare(ext, b"" if ext in doc_check.PICTURES else importer.file_path(company_id, meta).read_bytes())
     except OSError:
         return None
+    return doc_check.with_stored_text(read, ext, lambda: ocr.text_for(company_id, meta.get("id")))
+
+
+def _queue_for_ocr(company_id: str, stored: list) -> None:
+    """Scans and photos just stored wait for the background reader, when it is on (ocr.enqueue
+    decides: OCR ready, no text by today's reader, not the demo). Never raises."""
+    for meta in stored:
+        ocr.enqueue(company_id, meta)
+
+
+def _ocr_text_arrived(company_id: str, file_id: str) -> None:
+    """A scan or a photo's text was just stored by the background reader (ocr.after_read). Two things
+    worked out without it when the file came in are worked out again, under the company's lock:
+    the kind suggested for an Inbox item nobody has filed, when its name gave none
+    (importer.text_arrived), and what a record's files read as for the waiver question
+    (waiver_read: the answer picked first, and whether "Is this a lien waiver?" is asked). Nothing
+    else changes: a person's answer, an item's check, what is in or missing and anything filed stay
+    as they are, and a company that can't be changed is left alone."""
+    text = ocr.text_for(company_id, file_id)
+    if not text or company_id in deleted_companies() or not company_exists(company_id):
+        return
+    with company_lock(company_id):
+        state = load_company(company_id)
+        if read_only_reason(company_id, state):
+            return
+        changed = importer.text_arrived(state, file_id, text)
+        for job in state.get("jobs", []):
+            for rec in job.get("records", []):
+                was = domain._read_now(rec)
+                if not was or file_id not in (rec.get("file_ids") or []):
+                    continue
+                del rec["waiver_read"]
+                if not domain._read_waiver(state, rec, _file_reader(company_id)):
+                    rec["waiver_read"] = was
+                changed = changed or rec["waiver_read"] != was
+        if changed:
+            save_company(company_id, state)
+
+
+ocr.after_read(_ocr_text_arrived)
 
 
 def _read_ahead(company_id: str, job_id: str, item_id: str, record_id: str = "", file_id: str = "", stored: tuple | list = ()) -> dict:
@@ -3448,7 +3505,11 @@ def _file_reader(company_id: str, ahead: dict | None = None):
     or for a file that came onto the item since, read now."""
     def read(meta: dict) -> "doc_check.ReadFile | None":
         if ahead and meta["id"] in ahead:
-            return ahead[meta["id"]]
+            got = ahead[meta["id"]]
+            # Read before the lock with no text, and the background reader has stored its text since:
+            # read again here, under the lock, so its own update of the record can't be lost in between.
+            if got is None or got.failed or not doc_check.no_text(got) or not ocr.text_for(company_id, meta["id"]):
+                return got
         return _read_stored(company_id, meta)
     return read
 
@@ -3567,6 +3628,7 @@ def main() -> None:
         log=lambda msg: log_json("info", msg=msg),
     )
     monthly.start(SITE)
+    ocr.start()   # reads scans and photos in the background, when OCR_ENABLED=1 and its programs are installed
     server.serve_forever()
 
 

@@ -404,6 +404,26 @@ def guess_kind(name: str, text: str, exts: str | list[str] | tuple = ()) -> str:
     return "note"
 
 
+FALLBACK_KINDS = {"note", "photo"}   # what guess_kind says when no word in the name or the message names a kind
+
+
+def text_arrived(state: dict[str, Any], file_id: str, text: str) -> bool:
+    """A scan or a photo's text was read after it reached the Inbox (ocr.py). An item still waiting
+    there whose kind was only the fallback (no word in its name or message named one) is guessed
+    again with that text. A kind the name or the message gave stands, and so does anything filed or
+    dismissed. Returns whether an item changed."""
+    changed = False
+    for item in state.get("inbox", []):
+        if item.get("status") != "new" or file_id not in (item.get("file_ids") or []) or item.get("kind") not in FALLBACK_KINDS:
+            continue
+        files = [f for f in state.get("files", []) if f["id"] in item["file_ids"]]
+        kind = guess_kind(f"{item.get('subject') or ''} {' '.join(f['name'] for f in files)}", text, [f["ext"] for f in files])
+        if kind != item["kind"]:
+            item["kind"] = kind
+            changed = True
+    return changed
+
+
 # ---------- matching to a job ----------
 
 def _norm(s: str) -> str:
