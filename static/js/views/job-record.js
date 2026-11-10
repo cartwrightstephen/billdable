@@ -1,9 +1,8 @@
-// The job page's Job records card: New job record, the drop zone, a link to Import, and the
+// The job page's Job records card: New job record (files are dropped on its form, Yusuf 10 Nov) and the
 // records in groups by kind (J5) with a filter, each record with Edit.
 import { esc, unesc, fmtDate } from "../format.js";
 import { RECORD_KINDS, groupRecords, recordFace, recordKindWord, shortDay } from "../jobs.js";
 import { draftValue, clearForm } from "../forms.js";
-import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
 import { state, onSessionEnd } from "../state.js";
@@ -86,14 +85,6 @@ export function recordCardHtml(j, open = true) {
   return `<details class="card job-records" data-more="job-records"${open || editingRecord ? " open" : ""}>
         <summary><h2>Job records</h2><span class="sub">${recordSummary(j)}</span></summary>
         ${j.closed ? "" : `<div class="form-inline"><button class="btn small" data-action="daily-for-job" data-id="${j.id}">New job record</button></div>`}
-        ${j.closed ? "" : `<div class="dropzone small" data-job="${j.id}">
-          <div class="capture-buttons">
-            <button class="btn small" data-action="pick-files" data-job="${j.id}" data-capture="1">Take a photo</button>
-            <button class="btn small secondary" data-action="pick-files" data-job="${j.id}">Add a file</button>
-          </div>
-          <span class="sub pointer-only">Or drop files here.</span>
-        </div>
-        <p class="sub">Emails, text threads and notes go in on <a href="${pathFor("import")}" data-action="import-for-job" data-id="${j.id}">Import</a>.</p>`}
         ${recordGroupsHtml(j)}
       </details>
       `;

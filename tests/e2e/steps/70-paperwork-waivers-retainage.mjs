@@ -3,13 +3,14 @@
 import assert from "node:assert/strict";
 
 export default async function ({ browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors }) {
-  await step("a job holding retainage has an open Retainage card", async () => {  // M23, M25, M26
+  await step("retainage is one line in Money, its rate; no Retainage card (Yusuf, 10 Nov)", async () => {
     await page.goto(BASE + "/jobs/job-turner");
-    const card = page.locator(".retainage-card");
-    await card.waitFor();
-    const text = await card.innerText();
-    for (const want of ["Retainage", "Retainage held", "Retainage released", "Still held", "Times asked", "Pay apps holding it", "Releases"])
-      assert.ok(text.includes(want), want);
+    const money = page.locator("details.money-file");
+    await money.waitFor();
+    if (await money.getAttribute("open") === null) await money.locator(":scope > summary").click();
+    assert.match(await money.locator(".retainage-rate").innerText(), /^Retainage\s+\d+(\.\d+)?%$/);
+    assert.equal(await page.locator(".retainage-card").count(), 0);
+    assert.equal(await page.getByText("Pay apps holding it").count(), 0);
   });
 
   await step("Closeout lists a waiver row per pay app and when retainage was asked for", async () => {  // M20, M25

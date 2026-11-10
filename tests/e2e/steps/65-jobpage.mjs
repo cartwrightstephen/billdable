@@ -44,7 +44,13 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     for (const card of ["money-file", "sov-file", "job-records", "job-history"]) {
       assert.ok(await p.locator(`details.${card} > summary .sub`).isVisible(), `${card} shows its summary`);
     }
-    assert.equal(await p.locator(".job-actions .action-group h3").first().isVisible(), false, "no group headings on a phone");
+    assert.equal(await p.locator(".job-actions h3").count(), 0, "no group headings");
+    // The four buttons two by two on a phone, each the same width.
+    const boxes = await p.locator(".main-actions .main-action").evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.width)]; }));
+    assert.equal(boxes.length, 4);
+    assert.equal(boxes[0][0], boxes[1][0], "first row");
+    assert.equal(boxes[2][0], boxes[3][0], "second row");
+    assert.ok(Math.abs(boxes[0][1] - boxes[3][1]) <= 1, "same width");
     // A fold opened stays open after the page redraws.
     await p.locator("details.money-file > summary").click();
     await p.getByRole("button", { name: "Log a conversation" }).click();
@@ -57,7 +63,7 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     const id = await waitingJob(p);
     await p.goto(`${BASE}/jobs/${id}`);
     await p.locator(".job-actions").waitFor();
-    await p.locator('.job-actions [data-action="daily-for-job"], .next-card [data-action="daily-for-job"], [data-action="daily-for-job"]').first().click();
+    await p.locator('[data-action="daily-for-job"]').first().click();
     await p.getByRole("heading", { name: "New job record" }).waitFor();
     await p.fill("#daily-notes", "Typed before the call");
     await p.getByRole("button", { name: "Log a conversation" }).click();
@@ -78,7 +84,7 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     const id = await p.evaluate(async () => (await (await fetch("/api/state")).json()).jobs.find((j) => !j.closed && !j.sov_view.present && j.work_status !== "complete" && !j.invoices.some((i) => ["draft", "awaiting_approval"].includes(i.status)))?.id);
     assert.ok(id, "the demo has a job with no schedule");
     await p.goto(`${BASE}/jobs/${id}`);
-    await p.locator('.job-actions [data-form="progress"], .next-card [data-form="progress"]').first().click();
+    await p.locator('.main-actions [data-form="progress"]').click();
     await p.locator(".progress-context", { hasText: "Billed so far" }).waitFor();
     await p.fill("#progress-draw", "3,000");
     assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $3,000.00.");
@@ -93,8 +99,8 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
       return st.jobs.find((j) => j.name === "Final check").id;
     });
     await p.goto(`${BASE}/jobs/${id}`);
-    assert.match(await p.locator(".next-card strong").first().innerText(), /Progress pay app/);
-    await p.locator('.job-actions [data-form="done"]').click();
+    assert.equal(await p.locator(".task-card").count(), 0, "nothing to do yet: no banner");
+    await p.locator('.main-actions [data-form="done"]').click();
     await p.locator('[data-form-key="done"] h2', { hasText: "Final pay app" }).waitFor();
     await p.click('[data-action="done"]');
     await confirmDialog(p).waitFor();
@@ -102,6 +108,33 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     await confirmDialog(p).getByRole("button", { name: "Cancel" }).click();
     const job = await p.evaluate(async (jid) => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === jid), id);
     assert.notEqual(job.work_status, "complete", "Cancel left the job open");
+    await p.context().close();
+  });
+
+  await step("Job records has New job record and the records only; files dropped on the job open New job record with them", async () => {  // Yusuf, 10 Nov
+    const p = await signedInPage({ width: 1280, height: 900 });
+    const id = await waitingJob(p);
+    await p.goto(`${BASE}/jobs/${id}`);
+    const card = p.locator("details.job-records");
+    await card.waitFor();
+    assert.equal(await card.locator(".dropzone, [data-action='pick-files'], [data-action='import-for-job']").count(), 0);
+    await card.getByRole("button", { name: "New job record" }).waitFor();
+    const drop = (names) => p.evaluate((list) => {
+      const dt = new DataTransfer();
+      for (const [name, type] of list) dt.items.add(new File(["x"], name, { type }));
+      document.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, names);
+    await drop([["delivery-ticket.pdf", "application/pdf"], ["site.png", "image/png"]]);
+    await p.getByRole("heading", { name: "New job record" }).waitFor();
+    assert.equal(await p.inputValue("#daily-job"), id, "on the job it was dropped on");
+    await p.locator('[data-record-section="other"] .daily-files', { hasText: "delivery-ticket.pdf" }).waitFor();
+    await p.locator('[data-record-section="photos"] .daily-files', { hasText: "site.png" }).waitFor();
+    // The form has its own drop area; a file dropped there joins the others.
+    await p.locator(".record-drop", { hasText: "Drop files here" }).waitFor();
+    await drop([["invoice.pdf", "application/pdf"]]);
+    await p.locator('[data-record-section="other"] .daily-files', { hasText: "invoice.pdf" }).waitFor();
+    const job = await p.evaluate(async (jid) => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === jid), id);
+    assert.ok(!job.records.some((r) => /delivery-ticket\.pdf|invoice\.pdf/.test(`${r.label} ${r.file_name || ""}`)), "nothing uploads until Save");
     await p.context().close();
   });
 }

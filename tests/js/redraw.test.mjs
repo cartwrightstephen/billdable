@@ -150,14 +150,13 @@ test("New job record: a failed upload keeps what was typed and the files; the re
   forms.clearForm("daily");
 });
 
-test("the Job records card: the list, New job record and a link to Import; the old note and paste boxes are gone", async () => {
+test("the Job records card: New job record and the records, nothing else; files are dropped on New job record (Yusuf, 10 Nov)", async () => {
   const { recordCardHtml } = await import("../../static/js/views/job-record.js");
   const html = recordCardHtml(job());
   assert.match(html, /<h2>Job records<\/h2>/);
   assert.match(html, /data-action="daily-for-job" data-id="j1">New job record</);
-  assert.match(html, /href="\/data\/import" data-action="import-for-job" data-id="j1">Import</);
   assert.match(html, /Rough-in passed/);
-  assert.doesNotMatch(html, /Add a note to the record|Paste an email|paste-text/);
+  assert.doesNotMatch(html, /Add a note to the record|Paste an email|paste-text|dropzone|Take a photo|Add a file|import-for-job/);
   const closed = recordCardHtml(job({ closed: true }));
   assert.doesNotMatch(closed, /New job record/);
 });

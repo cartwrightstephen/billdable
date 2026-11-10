@@ -4,7 +4,7 @@
 import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
 import { activityAlsoHtml } from "../activity.js";
 import { deleteDraftText } from "../payapp-text.js";
-import { isBlocked, shortDay, jobNextStep, oneLumpLine, lumpDollars, ACTION_GROUPS, closeBlockerActions, finalPayAppConfirm, retainageNote, closeoutMissing as closeoutMissingCount, closeoutShown, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
+import { shortDay, jobPageActions, oneLumpLine, lumpDollars, closeBlockerActions, finalPayAppConfirm, closeoutMissing as closeoutMissingCount, closeoutShown, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
 import { sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { moreButton, askConfirm, focusAfterDraw } from "../dom.js";
@@ -222,24 +222,36 @@ function archiveHtml(j) {
     </div>`;
 }
 
-// The job page's buttons and the Next step line come from jobs.js (R3-04, Round 1 item 6); the
-// sample company also gets the QuickBooks sample.
+// The job page's buttons come from jobs.js (jobPageActions); the sample company also gets the
+// QuickBooks sample.
 function jobActions(j) {
-  return jobNextStep(j, { demo: !!(me && me.company_id === DEMO_COMPANY_ID), perms: perms() });
+  return jobPageActions(j, { demo: !!(me && me.company_id === DEMO_COMPANY_ID), perms: perms() });
 }
 
 // One job-page button. A rare or destructive one is smaller, and still shown.
 function actionButton(a) {
-  return `<button class="btn secondary${a.minor ? " small" : ""}${a.danger ? " danger-text" : ""}" ${a.attrs}>${a.label}</button>`;
+  return `<button class="btn secondary small${a.danger ? " danger-text" : ""}" ${a.attrs}>${a.label}</button>`;
 }
 
-// The buttons other than the main one, every one showing, under Bill, Get paid and Close out.
-export function jobActionsHtml(actions) {
-  if (!actions.length) return "";
-  return `<section class="job-actions" aria-label="Actions">${ACTION_GROUPS.map(([g, title]) => {
-    const list = actions.filter(a => a.group === g);
-    return list.length ? `<div class="action-group"><h3>${title}</h3><div class="more-actions" role="group" aria-label="${title}">${list.map(actionButton).join("")}</div></div>` : "";
-  }).join("")}</section>`;
+// The banner (Yusuf, 10 Nov): only while the job has something to do now. What the pay app is
+// missing, then each task as its own button; a task this person may not take is listed without one.
+export function jobTasksHtml(tasks, blockers) {
+  if (!tasks.length && !blockers.length) return "";
+  return `<section class="task-card${blockers.length ? " is-blocked" : ""}" aria-label="To do">
+      ${blockers.length ? `<ul class="blocker-list">${blockers.map(b => `<li>${b}</li>`).join("")}</ul>` : ""}
+      ${tasks.length ? `<div class="task-actions">${tasks.map(t => t.allowed
+        ? `<button class="btn task-action" ${t.attrs}>${t.label}</button>`
+        : `<span class="task-waiting">${t.label}</span>`).join("")}</div>` : ""}
+    </section>`;
+}
+
+// The four buttons, side by side, each its own colour; then the occasional ones in one row.
+export function jobActionsHtml(main, others = []) {
+  if (!main.length && !others.length) return "";
+  return `<section class="job-actions" aria-label="Actions">
+      ${main.length ? `<div class="main-actions">${main.map(a => `<button class="btn main-action main-${a.key}" ${a.enabled ? a.attrs : "disabled"}>${a.label}</button>`).join("")}</div>` : ""}
+      ${others.length ? `<div class="more-actions">${others.map(actionButton).join("")}</div>` : ""}
+    </section>`;
 }
 
 // The progress form's preview follows what is typed, without a redraw.
@@ -268,20 +280,18 @@ export const views = {
     if (!j && jobDetailFailed === currentJobId) return backButton("jobs", "Open jobs") + emptyState("Couldn't load this job", "Check your connection, then try again.", `<button class="btn" data-action="nav" data-view="job" data-id="${esc(currentJobId)}">Try again</button>`);
     if (!j) return backButton("jobs", "Open jobs") + emptyState("Job not found", "It may have been deleted, or the link belongs to another company.", `<button class="btn" data-action="nav" data-view="jobs">Go to Jobs</button>`);
     const m = j.money;
-    const blocked = isBlocked(j);
     const openDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
     const openForPay = j.invoices.filter(i => ["sent", "approved", "partial"].includes(i.status) || i.refund_owed_cents);
     const closeout = closeoutShown(j) ? j.closeout_packet : [];
     const closeoutMissing = closeoutMissingCount(j);
-    const { primary, more, line: nextLine } = jobActions(j);
-    const retNote = retainageNote(j);
+    const { main, tasks, blockers, others } = jobActions(j);
     const hasPayApps = j.invoices.some(i => i.status !== "void");
     const ejf = jobFields("editjob", "ej", j);
     // A one-line schedule can be billed in dollars instead (the dollar form, sent as the line's % done).
     const lump = oneLumpLine(j);
     const sovForm = !!(j.sov_view && j.sov_view.present) && !(lump && lumpInDollars);
     // What the actions above already offer isn't offered again beside Before you can finish (item 6).
-    const shown = new Set([primary, ...more].filter(Boolean).map(a => a.attrs));
+    const shown = new Set([...main.filter(a => a.enabled), ...tasks.filter(t => t.allowed), ...others].map(a => a.attrs));
     const head = `
       ${j.closed ? backButton("history", "Job history") : backButton("jobs", "Open jobs")}
       <div class="job-head">
@@ -330,12 +340,8 @@ export const views = {
         </div>` : ""}
       ${playbookMissingHtml(j)}
       ${standingCardHtml(j)}
-      <section class="next-card${blocked ? " is-blocked" : ""}" aria-label="Next step">
-        <div class="next-text"><span class="eyebrow">Next step</span><strong>${nextLine}</strong>
-          ${blocked ? `<ul class="blocker-list">${j.blockers.map(b => `<li>${b}</li>`).join("")}</ul>` : ""}</div>
-        ${primary ? `<div class="next-actions"><button class="btn primary-action" ${primary.attrs}>${primary.label}</button></div>` : ""}
-      </section>
-      ${jobActionsHtml(more)}
+      ${jobTasksHtml(tasks, blockers)}
+      ${jobActionsHtml(main, others)}
       ${formOpen.sentback ? `<div class="card form-card" data-form-key="sentback"><h2>${termText("Client sent pay app back")}</h2>${formErrorLine("sentback")}<div class="form-row">
         ${field({ form: "sentback", name: "reason", id: "learn-reason", label: "Why they sent it back", placeholder: "For example: needs a revised schedule of values", wide: true })}
         <button class="btn small" data-action="learn" data-id="${j.id}">Save to the client playbook</button>
@@ -385,7 +391,7 @@ export const views = {
               <div><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}"><strong>${i.number}</strong></a> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
               <div class="sub row-sub">${i.status === "void" ? (i.voided_reason ? "Pulled back: " + i.voided_reason : "Deleted") : missing ? `${missing} supporting document${missing === 1 ? "" : "s"} missing` : (i.packet || []).some(p => p.override) ? "Supporting documents in, with an override" : "Supporting documents complete"}${i.sent_at ? " · sent " + fmtDate(i.sent_at) : ""}${emailFailed(i.id) ? " · email failed" : ""}${i.received_at ? " · received " + fmtDate(i.received_at) : ""}${i.approved_by && i.sent_at ? " · sent by " + i.approved_by : ""}${i.due_on && ["sent", "approved", "partial"].includes(i.status) ? " · due " + fmtDate(i.due_on) : ""}${i.short_pay_cents ? " · short pay " + money(i.short_pay_cents) : ""}${pencil}</div></div>
             </div>`;
-          }).join("") : `<p class="sub">${termText("No pay apps yet.")} ${j.work_status === "complete" ? "Draft one from the work not billed yet." : termText("Use Progress pay app or Final pay app to draft one.")}</p>`}
+          }).join("") : `<p class="sub">${termText("No pay apps yet.")}</p>`}
           ${closeout.length ? `<div class="list-item row-link"><div><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout"><strong>Closeout documents</strong></a> <span class="sub">${m.retainage_open_cents > 0 ? "needed before held-back money is paid · " : ""}${closeoutMissing ? closeoutMissing + " missing" : "complete"}</span></div></div>` : ""}
           <h2 class="h2-gap">Change orders</h2>
           ${j.change_orders.length ? j.change_orders.map(co => `

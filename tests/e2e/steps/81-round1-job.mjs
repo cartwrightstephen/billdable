@@ -37,11 +37,10 @@ export default async function ({ BASE, step, signedInPage }) {
       return st.jobs.find((j) => j.name.startsWith("Dollar job")).id;
     });
     await p.goto(`${BASE}/jobs/${id}`);
-    // Item 6: the line names the button under it.
-    const line = await p.locator(".next-card strong").first().innerText();
-    const button = await p.locator(".next-card .primary-action").innerText();
-    assert.ok(line.toLowerCase().includes(button.toLowerCase()), `${line} / ${button}`);
-    await p.locator(".next-card .primary-action").click();
+    // A new job has nothing to do yet: no banner, no Next step line, the four buttons (Yusuf, 10 Nov).
+    assert.equal(await p.locator(".task-card").count(), 0);
+    assert.equal(await p.getByText("Next step").count(), 0);
+    await p.locator(".main-actions .main-progress").click();
     assert.equal(await p.locator('[data-sovp][data-lump="1"]').getAttribute("aria-label"), "Contract amount: % done to date");
     await p.getByRole("button", { name: "Bill by dollars instead" }).click();
     await p.fill("#progress-draw", "10,000");

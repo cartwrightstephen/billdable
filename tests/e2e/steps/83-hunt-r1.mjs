@@ -12,7 +12,7 @@ export default async function ({ browser, BASE, step, signedInPage, errors }) {
       return (await r.json()).jobs.find((j) => j.name.startsWith("Tiny draw")).id;
     });
     await p.goto(`${BASE}/jobs/${id}`);
-    await p.locator(".next-card .primary-action").click();
+    await p.locator(".main-actions .main-progress").click();
     await p.locator('[data-sovp][data-lump="1"]').waitFor();
     assert.ok((await p.locator(".help-list").count()) <= 1, "at most one What do these mean? on the page");
     assert.equal(await p.getByText("Each line is filled in", { exact: false }).count(), 0);

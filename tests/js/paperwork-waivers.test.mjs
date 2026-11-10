@@ -9,7 +9,7 @@ const dom = installFakeDom();
 const core = await import("../../static/js/app-core.js");
 const page = await import("../../static/js/state.js");
 const reg = await import("../../static/js/views/index.js");
-const { retainageCardHtml } = await import("../../static/js/views/job-money.js");
+const { moneyCardHtml, retainagePctText } = await import("../../static/js/views/job-money.js");
 const { waiverRows } = await import("../../static/js/views/closeout.js");
 const { beforeYouSendHtml, recordWaiverKind, setWaiverForms } = await import("../../static/js/views/paperwork.js");
 const { retainageFacts, daysAgoText, waiverStageText } = await import("../../static/js/jobs.js");
@@ -33,15 +33,15 @@ const job = (over = {}) => ({
   ...over,
 });
 
-test("the Retainage card has the rate, the money, the asks and the releases", () => {
+test("retainage is one line in Money, its rate; there is no Retainage card (Yusuf, 10 Nov)", () => {
   core.setState({ company: { name: "Pine" }, jobs: [job()], payers: [], files: [] });
   const now = new Date("2026-10-30T12:00:00Z");
   const f = retainageFacts(job(), now);
   assert.deepEqual([f.pct, f.asked, f.doneDays, f.askedDays, f.payApps.map(i => i.number)], [10, 2, 29, 10, ["PA-1", "PA-2"]]);
-  const html = retainageCardHtml(job(), now);
-  for (const want of ["Retainage held", "$1,000.00", "Retainage released", "$400.00", "Still held", "$600.00", "29 days ago", "Times asked",
-    "Next ask allowed", "PA-1</a> · $500.00", "CHK-9", "Sam", "waiver due"]) assert.ok(html.includes(want), want);
-  assert.equal(retainageCardHtml(job({ retainage_pct: 0, money: { ...money, retainage_held_cents: 0 } })), "");
+  const html = moneyCardHtml(job());
+  assert.match(html, /<div class="money-row retainage-rate"><span class="label">Retainage<\/span><span>10%<\/span><\/div>\s*<\/details>/);
+  assert.doesNotMatch(html, /retainage-card|Times asked|Pay apps holding it|Releases/);
+  assert.deepEqual([retainagePctText({ retainage_pct: 0 }), retainagePctText({ retainage_pct: 5 }), retainagePctText({ retainage_pct: 7.5 }), retainagePctText({})], ["0%", "5%", "7.5%", "0%"]);
   assert.equal(daysAgoText(1), "1 day ago");
 });
 

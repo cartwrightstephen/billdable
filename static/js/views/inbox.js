@@ -13,10 +13,10 @@ import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from
 import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can, may } from "../app-core.js";
 import { moreButton } from "../dom.js";
 import { printSheet } from "./communications.js";
+import { stageRecordFiles, rememberDailyJob } from "./daily.js";
 
 // Which job? on Import starts on "Not sure, file later", so nothing skips the Inbox without someone
-// choosing a job here. The one other start is a job's own Import link (import-for-job).
-let linkedJob = "";
+// choosing a job here. A job's own files go in through New job record (Yusuf, 10 Nov).
 const FILE_ACCEPT = document.getElementById("file-input")?.getAttribute("accept") || "";
 let importSettings = null;
 // The addresses changed on the server (a team member removed): ask for them again when shown.
@@ -143,11 +143,10 @@ export function newAddressButton(kind) {
   return can("company") ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
 }
 
-// Import's "Which job?": what the box on screen shows (a redraw keeps a pick), else the job whose
-// Import link was followed, else Not sure.
+// Import's "Which job?": what the box on screen shows (a redraw keeps a pick), else Not sure.
 function uploadJobPick() {
   const onScreen = document.getElementById("upload-job");
-  return onScreen ? onScreen.value : linkedJob;
+  return onScreen ? onScreen.value : "";
 }
 
 function uploadJobOptions() {
@@ -348,7 +347,7 @@ function dropOverlay(on) {
   }
   if (!el) return;
   const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId && !j.closed);
-  el.textContent = job ? `Drop to add to ${job.name}` : "Drop to add to the Inbox";
+  el.textContent = currentView === "daily" ? "Drop to add to this job record" : job ? `Drop to start a job record for ${job.name}` : "Drop to add to the Inbox";
   el.style.display = on ? "flex" : "none";
 }
 function importTargetJob() {
@@ -378,8 +377,12 @@ document.addEventListener("drop", (e) => {
     return;
   }
   e.preventDefault();
+  // A job's files go in through New job record (Yusuf, 10 Nov): dropped on its form, or on the
+  // job's page, which opens the form for that job with the files in it.
+  if (currentView === "daily") { stageRecordFiles(e.dataTransfer.files); return; }
   const jobId = importTargetJob();
-  uploadFiles(e.dataTransfer.files, jobId || inboxUploadJob(), !!jobId);
+  if (jobId) { const files = [...e.dataTransfer.files]; rememberDailyJob(jobId); nav("daily"); stageRecordFiles(files); return; }
+  uploadFiles(e.dataTransfer.files, inboxUploadJob(), false);
 });
 window.addEventListener("blur", () => { dragDepth = 0; dropOverlay(false); });
 document.addEventListener("dragend", () => { dragDepth = 0; dropOverlay(false); });
@@ -472,7 +475,6 @@ export const actions = {
     }
   },
   // Import from a job's Job records card: Which job? starts on that job.
-  "import-for-job": (el, id) => { linkedJob = unesc(id); nav("import"); linkedJob = ""; },
   "import-text": async (el) => {
     const text = document.querySelector("#paste-text")?.value || "";
     const source = document.querySelector("#paste-source")?.value || "paste";

@@ -524,7 +524,38 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   // The next step is someone else's to take: no main button, and the line says whose it is.
   const primary = step && step.allowed ? step : null;
   const more = all.filter(a => a !== step && a.allowed).sort((a, b) => SECONDARY_ORDER.indexOf(a.key) - SECONDARY_ORDER.indexOf(b.key));
-  return { primary, more, step };
+  return { primary, more, step, all };
+}
+
+// The job page's buttons (Yusuf, 10 Nov 2026): four always in the same place, in the same order;
+// a banner only while the job has something to do now, each task its own button; and the
+// occasional ones in one quiet row. No sentence about what to do next.
+// main: [{key, label, attrs, enabled}] — hidden from someone without the permission, shown and
+// disabled while it doesn't apply (no pay app to record a payment on; the work is finished).
+// tasks: [{key, label, attrs, allowed}] — one this person may not take is listed without a button.
+// blockers: what the pay app is missing, listed in the banner. others: the rest, allowed only.
+export const MAIN_BUTTONS = [["co", "New Change Order"], ["progress", "Progress Pay App"], ["done", "Final Pay App"], ["match", "Record a Payment"]];
+const TASK_ORDER = ["clear", "pencil-ok", "pencil-no", "send", "waiver", "follow", "draft", "closeout", "retainage", "close"];
+export function jobPageActions(j, { now = new Date(), demo = false, perms = null } = {}) {
+  if (j.closed) return { main: [], tasks: [], blockers: [], others: [] };
+  const { all } = jobActions(j, { now, demo, perms });
+  const draft = (j.invoices || []).find(i => DRAFTS.includes(i.status));
+  const follow = followUpDue(j);
+  const isTask = (a) => TASK_ORDER.includes(a.key)
+    && !(a.key === "follow" && !(follow && follow.due <= now))
+    && !(a.key === "close" && j.work_status !== "complete");
+  const main = MAIN_BUTTONS.map(([key, label]) => {
+    const a = all.find(x => x.key === key);
+    if (!mayTake(KEY_ACTION[key], perms)) return null;
+    return { key, label: termText(label), attrs: a ? a.attrs : "", enabled: !!a };
+  }).filter(Boolean);
+  const named = (a) => a.key === "send" && draft ? { ...a, label: `${a.label} ${draft.number}` } : a;
+  const tasks = all.filter(isTask).sort((a, b) => TASK_ORDER.indexOf(a.key) - TASK_ORDER.indexOf(b.key)).map(named);
+  const mainKeys = new Set(MAIN_BUTTONS.map(([k]) => k));
+  const taskKeys = new Set(tasks.map(t => t.key));
+  const others = all.filter(a => a.allowed && !mainKeys.has(a.key) && !taskKeys.has(a.key))
+    .sort((a, b) => SECONDARY_ORDER.indexOf(a.key) - SECONDARY_ORDER.indexOf(b.key));
+  return { main, tasks, blockers: isBlocked(j) ? (j.blockers || []) : [], others };
 }
 
 // The permission a job-page action takes, in the Team page's words (domain/profiles.py PERMISSIONS).
@@ -540,8 +571,6 @@ export function jobNextStep(j, { now = new Date(), demo = false, perms = null } 
   if (step && !step.allowed) line += ` ${step.label} takes the “${PERM_NAMES[ACTION_PERM[KEY_ACTION[step.key]]] || "right"}” permission.`;
   return { line, primary, more };
 }
-
-export const ACTION_GROUPS = [["bill", "Bill"], ["paid", "Get paid"], ["close", "Close out"]];
 
 // The buttons beside one thing that stands between the job and Finish job (R3-08), from the
 // server's close_blocker_items ({kind, text, invoice_id, co_id, number}): [{label, attrs}].

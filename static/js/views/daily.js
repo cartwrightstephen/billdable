@@ -121,6 +121,18 @@ function sectionOpen(s) {
     || Object.entries(formDraft.daily || {}).some(([k, v]) => String(v || "").trim() && s.fields.some(f => f.name !== "kind" && k.startsWith(`${at}${f.name}_`)));
 }
 
+// Files dropped on the form, or on a job's page (which opens this form for that job): photos go to
+// Progress photos and anything else to Other documents, each section opened (Yusuf, 10 Nov: the
+// drop area is on New job record only).
+export function stageRecordFiles(files) {
+  const list = [...(files || [])];
+  const images = list.filter(f => /^image\//.test(f.type || ""));
+  const rest = list.filter(f => !/^image\//.test(f.type || ""));
+  if (images.length) { (daily.files.photos_0 ||= []).push(...images); daily.open.add("photos"); daily.photosDone.delete("photos_0"); }
+  if (rest.length) { (daily.files.other_0 ||= []).push(...rest); daily.open.add("other"); }
+  render();
+}
+
 // The chips that open the document sections; tapped again, a section that takes more adds a row.
 function recordChipsHtml() {
   return `<div class="record-chips" role="group" aria-label="Add to this record">${RECORD_SECTIONS.map(s =>
@@ -234,6 +246,7 @@ export const views = {
         ${j && hasSov ? sectionHtml("quantities", j) : ""}
         ${j ? SECTIONS.filter(([k]) => k !== "quantities" && daily.checked.has(k)).map(([k]) => sectionHtml(k, j)).join("") : ""}
         ${recordChipsHtml()}
+        <div class="dropzone small record-drop pointer-only">Drop files here</div>
         ${RECORD_SECTIONS.filter(sectionOpen).map(recordSectionHtml).join("")}
         <button class="btn" data-action="daily-save">Save job record</button>` : emptyState("No open jobs", "", `<button class="btn" data-action="onb-newjob">New job</button>`)}
       </div>

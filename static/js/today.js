@@ -27,15 +27,15 @@ const ACTIONS = {
   ready: (r) => `data-action="open-payapp" data-job="${r.job_id}" data-inv="${r.invoice_id}" data-focus=".send-check"`,
   waiver: (r) => `data-action="open-waiver" data-id="${r.job_id}"`,
   not_billed: (r) => `data-action="draft" data-id="${r.job_id}"`,
-  due_soon: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
-  new_job: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
+  due_soon: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".task-card, .job-actions"`,
+  new_job: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".task-card, .job-actions"`,
   follow_up: (r) => `data-action="follow-up" data-id="${r.job_id}"`,
   inbox: (r) => `data-action="inbox-file-suggested" data-item="${r.item_id}" data-job="${r.job_id}"`,
-  closeout: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
-  retainage: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
-  finish: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
+  closeout: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".task-card, .job-actions"`,
+  retainage: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".task-card, .job-actions"`,
+  finish: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".task-card, .job-actions"`,
   finish_held: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".close-blockers"`,
-  retainage_wait: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".next-card"`,
+  retainage_wait: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".task-card, .job-actions"`,
 };
 const OPENS_JOB = ["ready", "waiver", "due_soon", "new_job", "closeout", "retainage", "finish", "finish_held", "retainage_wait"];
 

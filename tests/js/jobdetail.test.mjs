@@ -54,7 +54,7 @@ const fullJob = (over = {}) => ({
   ...over,
 });
 
-test("the job page: where it stands, and one Next step card that lists every blocker (J6, J7)", () => {
+test("the job page: where it stands, and one To do banner that lists every blocker, with no Next step line (J6, J7)", () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   const blocked = fullJob({ blocked: true, blockers: ["Signed contract", "Daily tickets"], invoices: [{ id: "i1", number: "PA-1", status: "awaiting_approval", amount_cents: 100000 }] });
   core.setState({ ...company(), jobs: [blocked], payers: [blocked.payer] });
@@ -64,8 +64,10 @@ test("the job page: where it stands, and one Next step card that lists every blo
   assert.match(html, /aria-current="step">Work in progress, 40% billed/);
   assert.match(html, /Pay app due by<\/dt><dd>Nov 25, 2026/);
   assert.match(html, /Homeowner/, "the client's type beside its name");
-  assert.equal((html.match(/class="next-card/g) || []).length, 1);
-  assert.match(html, /<strong>Fix this before it can go:<\/strong>\s*<ul class="blocker-list"><li>Signed contract<\/li><li>Daily tickets<\/li><\/ul>/);
+  assert.equal((html.match(/class="task-card/g) || []).length, 1);
+  assert.match(html, /<ul class="blocker-list"><li>Signed contract<\/li><li>Daily tickets<\/li><\/ul>/);
+  assert.doesNotMatch(html, /Next step|next-card|Fix this before it can go|action-group/);
+  assert.match(html, /<button class="btn task-action" data-action="open-packet"/, "the task is its own button");
   assert.doesNotMatch(html, /blockers-card/);
   assert.match(html, /<h2>Activity<\/h2>/);
 });
@@ -82,7 +84,7 @@ test("a finished job is its job file: Download job file, Add more work, no worki
   assert.match(html, /Add more work/);
   assert.match(html, /href="\/api\/jobs\/j-1\/payapp\/i1\.pdf"/);
   assert.doesNotMatch(html, /Reopen/);
-  assert.doesNotMatch(html, /Edit job|next-card|Take a photo/);
+  assert.doesNotMatch(html, /Edit job|task-card|main-actions|Take a photo/);
   page.setMe({ name: "Sam", company_id: "co-p", role: "member", perms: ["record_payments"] });
   assert.doesNotMatch(reg.views.job(), /Add more work/, "only with Finish and reopen jobs, as the server");
   page.setMe({ name: "Lee", company_id: "co-p", role: "member", perms: ["close_jobs"] });

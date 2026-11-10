@@ -115,7 +115,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(await p.inputValue("#daily-notes"), "", "the form is empty for the next one");
     assert.equal(await p.inputValue("#daily-job"), jobId, "stays on the job");
 
-    // The Job records card lists them under their own groups and links to Import.
+    // The Job records card lists them under their own groups.
     await p.goto(`${BASE}/jobs/${jobId}`);
     const card = p.locator(".job-records");
     await card.locator(".record-group", { hasText: "Time sheets" }).waitFor();
@@ -127,12 +127,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator("#paste-text").waitFor();
     assert.equal(await p.inputValue("#upload-job"), "");
     await p.locator("#paste-add", { hasText: "Add to Inbox" }).waitFor();
-    // A job's Import link starts on that job, and the paste box files onto the job picked.
-    await p.goto(`${BASE}/jobs/${jobId}`);
-    await card.getByRole("link", { name: "Import" }).click();
-    await p.locator("#paste-text").waitFor();
-    assert.equal(new URL(p.url()).pathname, "/data/import");
-    assert.equal(await p.inputValue("#upload-job"), jobId);
+    // The paste box files onto the job picked.
+    await p.selectOption("#upload-job", jobId);
     await p.fill("#paste-text", "Gate code is 4411");
     await p.getByRole("button", { name: "Add to job" }).click();
     await p.locator(".toast", { hasText: "Added to the job records" }).waitFor();

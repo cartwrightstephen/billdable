@@ -86,7 +86,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     if (await card.getAttribute("open") === null) await card.locator(":scope > summary").click();
     await card.locator(".sov-period", { hasText: "35 LF" }).waitFor();
     assert.match(await card.locator(".sov-suggested").innerText(), /\$1,750\.00/);
-    await p.locator(".next-card .primary-action", { hasText: "Progress pay app" }).click();
+    await p.locator(".main-actions .main-progress").click();
     assert.equal(await p.inputValue(`#sovp-done-${made.conduit}`), "35");
     await p.click('[data-action="sov-progress"]');
     await p.locator(`#sova-${made.conduit}`).waitFor();

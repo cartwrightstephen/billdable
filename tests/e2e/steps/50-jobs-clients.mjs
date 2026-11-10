@@ -155,19 +155,21 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.context().close();
   });
 
-  await step("a blocked job: one Next step card that lists every blocker; Activity at the bottom (J6, J7)", async () => {
+  await step("a blocked job: one To do banner that lists every blocker, with its button; Activity at the bottom (J6, J7)", async () => {
     await page.goto(BASE + "/jobs/job-oak");
-    const card = page.locator(".next-card");
+    const card = page.locator(".task-card");
     await card.waitFor();
     assert.equal(await page.locator(".blockers-card").count(), 0);
-    if (await card.locator(".blocker-list li").count()) assert.match(await card.locator("strong").first().innerText(), /( before it can go|before sending):$/);
+    assert.ok(await card.locator(".blocker-list li").count() > 0, "what is missing is listed");
+    await card.locator(".task-action").first().waitFor();
+    assert.equal(await card.getByText("Next step").count(), 0);
     await page.getByRole("heading", { name: "Activity" }).waitFor();
   });
 
   await step("a finished job is its job file: Download job file and Add more work (J9)", async () => {
     await page.goto(BASE + "/jobs/job-hist-maple");
     await page.getByRole("heading", { name: "Job file" }).waitFor();
-    assert.equal(await page.locator(".next-card").count(), 0);
+    assert.equal(await page.locator(".task-card, .main-actions").count(), 0);
     await page.getByRole("button", { name: "Add more work" }).waitFor();
     const res = await page.evaluate(async () => {
       const r = await fetch("/api/jobs/job-hist-maple/archive/job-file.zip");

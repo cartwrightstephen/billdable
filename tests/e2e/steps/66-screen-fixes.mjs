@@ -73,7 +73,7 @@ export default async function ({ browser, BASE, step, errors }) {
     }, [job.id, job.sov.lines[0].id]);
     assert.ok(first.item_id);
     await p.goto(`${BASE}/jobs/${job.id}`);
-    await p.locator(".next-card .primary-action").click();
+    await p.locator(".task-card .task-action").first().click();
     const row = p.locator(`#packet-item-${first.item_id}`);
     await row.waitFor();
     await p.waitForFunction((id) => document.activeElement && document.activeElement.id === id, `packet-item-${first.item_id}`);

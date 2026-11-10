@@ -34,7 +34,7 @@ test("a new job shows Not billed yet; its button opens the job at its next step,
   // The job's name leads the cell too, shown only on a phone where the Job column is hidden (Round 1 acceptance, item 15).
   assert.match(html, /<td class="todo-activity"><span class="todo-job-inline">Porch rebuild<\/span><span class="pill copper">Not billed yet<\/span><div class="next-action">Porch rebuild has no pay app yet\. Bill the work done so far with Progress pay app, or use Final pay app\.<\/div><\/td>/);
   assert.match(html, /<a href="\/jobs\/j1" data-action="open-job" data-id="j1">Porch rebuild<\/a>/);
-  assert.match(html, /<button class="btn small" data-action="open-job" data-id="j1" data-focus="\.next-card">Progress pay app<\/button><\/div>/);
+  assert.match(html, /<button class="btn small" data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Progress pay app<\/button><\/div>/);
   assert.doesNotMatch(html, />Open</);
 });
 
@@ -73,12 +73,12 @@ test("each kind of row has its one main button, with the ids it needs", () => {
     [row({ kind: "ready", button: "Review &amp; send", invoice_id: "d1" }), /data-action="open-payapp" data-job="j1" data-inv="d1" data-focus="\.send-check">Review &amp; send</, false],
     [row({ kind: "waiver", button: "Review waiver" }), /data-action="open-waiver" data-id="j1">Review waiver</, false],
     [row({ kind: "not_billed", button: "Draft pay app" }), /data-action="draft" data-id="j1">Draft pay app</, true],
-    [row({ kind: "due_soon", button: "Progress pay app" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Progress pay app</, false],
+    [row({ kind: "due_soon", button: "Progress pay app" }), /data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Progress pay app</, false],
     [row({ kind: "follow_up", button: "Send follow-up" }), /data-action="follow-up" data-id="j1">Send follow-up</, true],
     [row({ kind: "inbox", button: "Add to this job", item_id: "x2" }), /data-action="inbox-file-suggested" data-item="x2" data-job="j1">Add to this job</, true],
-    [row({ kind: "closeout", button: "Open closeout documents" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Open closeout documents</, false],
-    [row({ kind: "retainage", button: "Ask for retainage" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Ask for retainage</, false],
-    [row({ kind: "finish", button: "Finish job" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Finish job</, false],
+    [row({ kind: "closeout", button: "Open closeout documents" }), /data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Open closeout documents</, false],
+    [row({ kind: "retainage", button: "Ask for retainage" }), /data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Ask for retainage</, false],
+    [row({ kind: "finish", button: "Finish job" }), /data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Finish job</, false],
   ];
   for (const [r, pattern, open] of cases) {
     const html = rowButtons(r);

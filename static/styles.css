@@ -367,17 +367,8 @@ td.num, .num { font-variant-numeric: tabular-nums; }
 .row-sub { margin: 2px 0 0; font-size: 12px; }
 .job-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .job-head .sub { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.next-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; background: var(--copper-soft); border: 1px solid var(--copper-line); border-left: 4px solid var(--copper); border-radius: 12px; padding: 14px 16px; margin: 4px 0 16px; }
-.next-text { display: grid; gap: 2px; min-width: 0; }
-.next-text .eyebrow { margin: 0; }
-.next-text .sub { margin: 2px 0 0; font-size: 13px; }
-.next-card .btn { white-space: nowrap; padding: 10px 18px; font-weight: 600; }
 .more-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
-/* Job page (R3-04): the main button in the Next step card, the rest shown below it in groups */
-.next-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; justify-content: flex-end; }
 .job-actions { margin: 0 0 16px; }
-.action-group h3 { font-size: 13px; margin: 8px 0 6px; color: var(--muted); font-weight: 600; }
-.action-group .more-actions { margin-bottom: 8px; align-items: center; }
 .retainage-note { margin: 4px 0 0; }
 .also-blocking { border-color: var(--red); }
 .form-card h2 { font-size: 16px; }
@@ -437,10 +428,6 @@ textarea { font: inherit; }
   .metrics { grid-template-columns: 1fr 1fr; gap: 8px; }
   .metric .v { font-size: 22px; }
   .detail-grid { grid-template-columns: 1fr; }
-  .next-card { flex-direction: column; align-items: stretch; }
-  .next-card .btn { width: 100%; }
-  .next-actions { flex-direction: column; }
-  .job-actions .btn:not(.small) { flex: 1 1 100%; }
   .job-head { flex-direction: column; }
   .action-item { align-items: stretch; flex-direction: column; }
   .tabs { margin: -4px -16px 16px; padding: 0 8px; }
@@ -543,12 +530,32 @@ textarea { font: inherit; }
 .money-file > summary h2, .sov-file > summary h2, .job-paperwork > summary h2, .job-records > summary h2, .job-history > summary h2 { display: inline; margin: 0 8px 0 0; }
 .money-file[open] > summary, .sov-file[open] > summary, .job-paperwork[open] > summary, .job-records[open] > summary, .job-history[open] > summary { margin-bottom: 8px; }
 .record-line .sub { margin-left: 4px; }
-/* Round 1, item 13: on a phone the other actions are one wrapping row, without the group headings. */
+/* Job page (Yusuf, 10 Nov 2026): four buttons side by side, each its own colour, the same in
+   every theme and accent; a banner only while there is something to do now. */
+:root { --act-co: #8a5a12; --act-progress: #8c3f1d; --act-final: #1f4f8a; --act-pay: #1f6b45; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --act-co: #e3b366; --act-progress: #e09468; --act-final: #86b4ec; --act-pay: #72c89b; }
+}
+:root[data-theme="dark"] { --act-co: #e3b366; --act-progress: #e09468; --act-final: #86b4ec; --act-pay: #72c89b; }
+.main-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 0 12px; }
+.main-action { padding: 12px 14px; font-weight: 600; border-radius: 10px; color: var(--on-accent); box-shadow: 0 1px 3px var(--shadow); }
+.main-action:hover:not(:disabled) { filter: brightness(1.1); }
+.main-co { --act: var(--act-co); }
+.main-progress { --act: var(--act-progress); }
+.main-done { --act: var(--act-final); }
+.main-match { --act: var(--act-pay); }
+.main-action { background: var(--act); }
+/* Off while it doesn't apply: its own colour, faint, with the words still readable. */
+.btn.main-action:disabled { background: color-mix(in srgb, var(--act) 10%, var(--card)); color: var(--act); border: 1px dashed color-mix(in srgb, var(--act) 45%, var(--card)); box-shadow: none; }
+.task-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; background: var(--amber-soft); border: 1px solid var(--amber-line); border-left: 4px solid var(--amber); border-radius: 12px; padding: 12px 16px; margin: 4px 0 14px; }
+.task-card.is-blocked { border-left-color: var(--red); }
+.task-card .blocker-list { margin: 0; padding-left: 20px; font-size: 14px; flex: 1 1 240px; }
+.task-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.task-action { font-weight: 600; white-space: nowrap; }
+.task-waiting { font-size: 14px; color: var(--muted); padding: 8px 0; }
 @media (max-width: 600px) {
-  .job-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .job-actions .action-group, .job-actions .action-group .more-actions { display: contents; }
-  .job-actions .action-group h3 { display: none; }
-  .job-actions .btn:not(.small) { flex: 1 1 auto; }
+  .main-actions { grid-template-columns: 1fr 1fr; }
+  .task-actions, .task-action { width: 100%; }
 }
 
 /* Forms built with field() (js/forms.js): label, input, help and error line in one block. */
@@ -710,9 +717,6 @@ span.due-item { cursor: default; }
 .form-grid [data-from-contract] { border-color: var(--copper); box-shadow: 0 0 0 1px var(--copper-line); }
 /* New job record on a row of Open jobs. */
 .row-record { font-size: 13px; }
-/* The Next step card holds the blockers (J6). */
-.next-card.is-blocked { border-left-color: var(--red); flex-wrap: wrap; }
-.next-card .blocker-list { margin: 4px 0 2px; padding-left: 20px; font-size: 14px; }
 /* Where this job stands (J7). */
 .stage-line { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .stage-step { font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
@@ -786,7 +790,7 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .file-link { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; }
 .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
 .period-record { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.period-records h3, .retainage-card h3, .client-needs h3, .waiver-check h3, .waiver-form-state h3, .send-attachments h3 { margin: 12px 0 4px; font-size: 15px; }
+.period-records h3, .client-needs h3, .waiver-check h3, .waiver-form-state h3, .send-attachments h3 { margin: 12px 0 4px; font-size: 15px; }
 .client-needs-box { border-top: 1px solid var(--line); margin-top: 10px; }
 .unconditional-warning { background: var(--red-soft); border: 1px solid var(--red); border-radius: 6px; padding: 8px 10px; margin: 10px 0; }
 .waiver-details { margin-top: 6px; }

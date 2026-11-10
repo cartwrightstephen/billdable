@@ -391,7 +391,7 @@ function showRefusal(anchor, data) {
     a.textContent = link.label;
     card.append(a);
   }
-  const host = anchor.closest(".action-item, .next-card, .more-actions, .form-inline, .form-row, .list-item") || anchor;
+  const host = anchor.closest(".action-item, .task-card, .main-actions, .more-actions, .form-inline, .form-row, .list-item") || anchor;
   host.insertAdjacentElement("afterend", card);
   card.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
