@@ -59,8 +59,11 @@ jobs:
           pdftoppm -v 2>&1 | head -n 1
       - name: Pillow, to draw the test documents (this job only)
         run: python3 -m pip install --quiet pillow
-      - name: OCR tests with the real programs
-        run: python3 -m unittest -v tests.test_ocr_real
+      - name: OCR tests with the real programs (none may be skipped here)
+        shell: bash
+        run: |
+          python3 -m unittest -v tests.test_ocr_real 2>&1 | tee "$RUNNER_TEMP/real-ocr.log"
+          ! grep -q "skipped" "$RUNNER_TEMP/real-ocr.log"
       - name: Draw the documents to measure
         run: python3 scripts/ocr_measure.py make-docs "$RUNNER_TEMP/ocr-docs"
       - name: Measurements on the runner
