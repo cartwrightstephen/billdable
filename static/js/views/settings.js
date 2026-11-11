@@ -219,11 +219,11 @@ function companyView() {
       ${owner ? "" : `<p class="sub">Your profile doesn't include changing these.</p>`}
       <div class="form-grid">
         ${box("name", "co-name", "Company name", "name", { required: true, autocomplete: "organization" })}
-        ${box("phone", "co-phone", "Phone", "phone", { type: "tel", inputmode: "tel", autocomplete: "tel", placeholder: "(404) 555-0123" })}
+        ${box("phone", "co-phone", "Phone", "phone", { type: "tel", inputmode: "tel", autocomplete: "tel" })}
         ${box("street", "co-address", "Street address", "street", { wide: true, autocomplete: "address-line1" })}
         ${box("city", "co-city", "City", "city", { autocomplete: "address-level2" })}
         ${box("state", "co-state", "State", "state", { options: [["", "Pick a state"], ...US_STATES.map(c => [c, c])] })}
-        ${box("zip", "co-zip", "ZIP code", "zip", { inputmode: "numeric", autocomplete: "postal-code", placeholder: "30303" })}
+        ${box("zip", "co-zip", "ZIP code", "zip", { inputmode: "numeric", autocomplete: "postal-code" })}
         ${box("license", "co-license", "Contractor licence number", "licence")}
         ${box("legal_name", "co-legal-name", "Legal name (on contracts and lien waivers)", undefined, { wide: true, placeholder: "Same as the company name" })}
       </div>
@@ -311,7 +311,7 @@ function textsHtml() {
   return `<div class="form-grid">${field({ form: "account", name: "phone", id: "my-phone", label: "Mobile phone", value: shownPhone(smsCodeTo || me.phone), autocomplete: "tel", inputmode: "tel", rule: "phone" })}</div>
       <label class="terms-check"><input type="checkbox" id="my-sms-opt-in"${ticked ? " checked" : ""}> Text me Duracash work reminders at this number: important dates and missing information, up to one message a day per company. Message and data rates may apply. Reply STOP to stop, HELP for help. Agreeing is not a condition of using Duracash.</label>
       ${smsCodeTo ? `<div class="invite-result" role="status" data-form-key="smscode"><strong>Enter the code we texted to ${esc(shownPhone(smsCodeTo))}.</strong> Texts turn on once it is confirmed.
-        <div class="form-grid">${field({ form: "smscode", name: "sms_code", id: "my-sms-code", label: "Code from the text", autocomplete: "one-time-code", inputmode: "numeric", placeholder: "123456" })}</div>
+        <div class="form-grid">${field({ form: "smscode", name: "sms_code", id: "my-sms-code", label: "Code from the text", autocomplete: "one-time-code", inputmode: "numeric" })}</div>
         ${formErrorLine("smscode")}
         <div class="form-inline"><button class="btn small" data-action="sms-confirm">Confirm number</button><button class="btn small secondary" data-action="sms-resend">Send a new code</button></div></div>` : ""}
       ${me.sms_stopped ? `<p class="sub">You replied STOP, so texts are off. To turn them back on, text START to ${me.texts_number ? esc(shownPhone(me.texts_number)) : "the Duracash number"} first, then tick the box and save.</p>` : ""}
@@ -344,7 +344,7 @@ function twoStepCardHtml(prompt = false) {
           <li>In an authenticator app (Google Authenticator, 1Password, Authy, Microsoft Authenticator), add an account and scan this code. ${/Mobi|Android|iPhone/.test(navigator.userAgent) ? `On this phone, <a href="${esc(unesc(twoStepSetup.uri))}">open it in the app</a> instead.` : ""}
             ${twoStepSetup.qr ? `<img class="qr-code" id="2fa-qr" src="${twoStepSetup.qr}" alt="QR code of the two-step key" width="180" height="180">` : ""}</li>
           <li>Can't scan it? Choose to enter a key and type this one: <code id="2fa-key">${twoStepSetup.secret.match(/.{1,4}/g).join(" ")}</code> <button class="btn small secondary" data-action="copy" data-target="2fa-key">Copy</button></li>
-          <li>Type the 6-digit code the app shows: <span class="form-inline"><input id="2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"><button class="btn small" data-action="2fa-enable">Turn on</button></span></li>
+          <li>Type the 6-digit code the app shows: <span class="form-inline"><input id="2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"><button class="btn small" data-action="2fa-enable">Turn on</button></span></li>
         </ol>` : "";
   let body;
   if (recoveryCodes) {
@@ -383,7 +383,7 @@ function passwordView() {
         ${codeSentTo ? `<span class="sub long-word" role="status">Code sent to ${codeSentTo}. It works for 15 minutes.</span>` : `<span class="sub long-word">To ${me.email}</span>`}
       </div>` : ""}
       <div class="form-grid">
-        ${codesByEmail ? field({ form: "password", name: "code", id: "pw-code", label: "Code from the email", autocomplete: "one-time-code", inputmode: "numeric", placeholder: "123456" }) : ""}
+        ${codesByEmail ? field({ form: "password", name: "code", id: "pw-code", label: "Code from the email", autocomplete: "one-time-code", inputmode: "numeric" }) : ""}
         ${field({ form: "password", name: "current", id: "pw-current", label: "Current password", type: "password", autocomplete: "current-password" })}
         ${field({ form: "password", name: "new", id: "pw-new", label: "New password (10+ characters)", type: "password", autocomplete: "new-password" })}
       </div>

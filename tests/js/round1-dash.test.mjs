@@ -205,15 +205,22 @@ test("fired reminders are To do rows; one about a job that already has a row for
   await automations.loadReminders(true);
 });
 
-test("Results is a fold on the Dashboard once a pay app has gone out", () => {  // item 19
+test("Results shows on the Dashboard, open, whenever the company has a job (Stephen, 10 Nov)", () => {  // item 19
   page.setMe({ id: "u1", name: "Pat", company_id: "co-r", role: "owner", onboarding_dismissed: true });
   const j = { id: "a", name: "Oak", code: "OAK", payer_id: "p1", closed: false, payments: [], change_orders: [], money: {},
     invoices: [{ id: "i1", number: "PA-1", status: "sent", sent_at: "2026-10-01T00:00:00Z", amount_cents: 100 }] };
   core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [j] });
   const html = reg.views.dashboard();
-  assert.match(html, /<details class="card dash-results" id="results" data-more="dash-results"><summary><strong>Results<\/strong>/);
+  assert.match(html, /<details class="card dash-results" id="results" data-more="dash-results" open><summary><strong>Results<\/strong>/);
+  // Before any pay app has gone out it shows too, so a new company sees what it will measure.
+  core.setState({ ...fresh(), payers: [{ id: "p1", name: "GC" }], jobs: [{ ...j, invoices: [] }] });
+  assert.match(reg.views.dashboard(), /id="results" data-more="dash-results" open>/);
+  // Folded by the person, it stays folded.
+  core.moreDetails["dash-results"] = false;
+  assert.match(reg.views.dashboard(), /id="results" data-more="dash-results">/);
+  delete core.moreDetails["dash-results"];
   core.setState(fresh());
-  assert.doesNotMatch(reg.views.dashboard(), /id="results"/);
+  assert.doesNotMatch(reg.views.dashboard(), /id="results"/, "no jobs yet: nothing to measure");
 });
 
 test("Pay apps has a Payments filter that lists the payments received", () => {  // item 19

@@ -17,7 +17,7 @@ __all__ = [
     "RETAINAGE_BY_TYPE", "default_retainage_pct",
 ]
 
-# Client type (J2): five kinds of client, each mapped onto the two sets of defaults the app
+# Client type (J2): six kinds of client ("Other" added 10 Nov 2026, Stephen), each mapped onto the two sets of defaults the app
 # already has (the paperwork a new client starts with, follow-up and approval days). The payer
 # keeps role "GC" or "Owner" as before; client_type is the finer word shown on the page.
 CLIENT_TYPES: dict[str, tuple[str, str]] = {
@@ -26,6 +26,7 @@ CLIENT_TYPES: dict[str, tuple[str, str]] = {
     "homeowner": ("Homeowner", "Owner"),
     "sub": ("Another subcontractor (you are a lower tier)", "GC"),
     "public": ("Public agency", "Owner"),
+    "other": ("Other", "Owner"),
 }
 
 

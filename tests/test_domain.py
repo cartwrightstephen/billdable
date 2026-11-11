@@ -450,12 +450,14 @@ class JobFieldsTests(unittest.TestCase):
 
     def test_client_type_maps_onto_the_two_sets_of_defaults(self):
         state = blank_company()
-        for n, (kind, role, follow) in enumerate([("gc", "GC", 5), ("sub", "GC", 5), ("owner", "Owner", 7), ("homeowner", "Owner", 7), ("public", "Owner", 7)]):
+        for n, (kind, role, follow) in enumerate([("gc", "GC", 5), ("sub", "GC", 5), ("owner", "Owner", 7), ("homeowner", "Owner", 7), ("public", "Owner", 7), ("other", "Owner", 7)]):
             payer = domain.add_payer(state, {"name": f"Client {n}", "client_type": kind, "approver_confirmed": True, "approver": f"Client {n}", "ap_email": "ap@client.example", "phone": "(404) 555-0100"})
             self.assertEqual((payer["client_type"], payer["role"], payer["follow_up_days"]), (kind, role, follow), kind)
         with self.assertRaises(domain.GateError) as raised:
             domain.add_payer(state, {"name": "Odd one", "client_type": "landlord", "approver_confirmed": True, "approver": "Odd one", "ap_email": "ap@client.example", "phone": "(404) 555-0100"})
         self.assertIn("client_type", raised.exception.fields)
+        # Other (Stephen, 10 Nov): an owner's defaults and no retainage unless the playbook says.
+        self.assertEqual(domain.jobinfo.default_retainage_pct({"client_type": "other"}), 0)
         # New job: a new client takes the type asked; a saved client keeps its own.
         job = domain.create_job(state, "School gym", "Fulton County", 100_000, address_parts=PARTS, client_type="public", approver="School gym", ap_email="ap@client.example", phone="(404) 555-0100")
         self.assertEqual((state["payers"][-1]["client_type"], job["payer_role"]), ("public", "Owner"))

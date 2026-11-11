@@ -116,7 +116,7 @@ function progressFormHtml(j, openDraft, lump = null) {
   if (lump && progressMode === "percent") progressMode = "period";
   const mode = (key, label) => `<button class="${progressMode === key ? "btn" : "btn secondary"} small" data-action="progress-mode" data-mode="${key}" aria-pressed="${progressMode === key}">${label}</button>`;
   const input = progressMode === "percent"
-    ? field({ form: "progress", name: "percent", id: "progress-pct", label: "% complete", inputmode: "decimal", placeholder: "50", help: "How much of the whole contract is done." })
+    ? field({ form: "progress", name: "percent", id: "progress-pct", label: "% complete", inputmode: "decimal", help: "How much of the whole contract is done." })
     : progressMode === "total"
       ? moneyField({ form: "progress", name: "completed_cents", id: "progress-amt", label: "Total done so far ($)", help: "All the work done to date, not just this draw." })
       : moneyField({ form: "progress", name: "period_cents", id: "progress-draw", label: "This draw ($)", help: "The work done since the last pay app, before retainage." });

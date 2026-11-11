@@ -40,7 +40,7 @@ function clientReadOnlyHtml(p, key, f) {
     ${row("Pay apps due by", p.payapp_due_day ? `day ${p.payapp_due_day} of the month` : "")}
     ${row("Days they usually take to pay", p.usual_approval_days)}
     ${row("Payment terms", days(p.payment_terms_days))}
-    ${row("Usual retainage %", p.retainage_default != null ? `${p.retainage_default}%` : "")}
+    ${row("Usual retainage", p.retainage_default != null ? `${p.retainage_default}%` : "")}
     ${row("Supporting documents needed", p.no_paperwork ? "Nothing needed" : p.packet)}
     ${row("They send pay apps back when", p.rejects_when)}
     ${row("Also email (CC)", p.copy)}
@@ -178,8 +178,8 @@ export const views = {
           ${field({ form: "addpayer", name: "approver", id: "ap-approver", label: "Who signs off on your bills", helpKey: "approver", required: true, placeholder: "Sam Jones" })}
           ${field({ form: "addpayer", name: "ap_email", id: "ap-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", required: true, autocomplete: "off", rule: "email", placeholder: "name@example.com" , ...contractMark("addpayer", "ap_email") })}
           ${field({ form: "addpayer", name: "phone", id: "ap-phone", label: "Phone", helpKey: "customer_phone", type: "tel", required: true, autocomplete: "off", rule: "phone" , ...contractMark("addpayer", "phone") })}
-          ${field({ form: "addpayer", name: "payapp_due_day", id: "ap-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25" , ...contractMark("addpayer", "payapp_due_day") })}
-          ${field({ form: "addpayer", name: "payment_terms_days", id: "ap-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30" , ...contractMark("addpayer", "payment_terms_days") })}
+          ${field({ form: "addpayer", name: "payapp_due_day", id: "ap-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", ...contractMark("addpayer", "payapp_due_day") })}
+          ${field({ form: "addpayer", name: "payment_terms_days", id: "ap-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", ...contractMark("addpayer", "payment_terms_days") })}
           ${paperworkHtml("addpayer")}
         </div>
         <div class="form-inline"><button class="btn" data-action="add-payer">Add client</button></div>
@@ -224,17 +224,17 @@ export const views = {
               ${f({ name: "approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "Sam Jones", value: signerDefaulted(p) ? "" : unesc(clean(p.approver)) })}
               ${f({ name: "ap_email", label: "Email for pay apps", helpKey: "ap_email", type: "email", autocomplete: "off", rule: "email", value: unesc(clean(p.ap_email)) })}
               ${f({ name: "phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off", rule: "phone", value: unesc(clean(p.phone)) })}
-              ${f({ name: "payapp_due_day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", value: String(p.payapp_due_day || ""), placeholder: "e.g. 25" })}
-              ${f({ name: "payment_terms_days", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", value: String(p.payment_terms_days || ""), placeholder: "30" })}
+              ${f({ name: "payapp_due_day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", value: String(p.payapp_due_day || "") })}
+              ${f({ name: "payment_terms_days", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", value: String(p.payment_terms_days || "") })}
               ${/* Money stays in this open section (Round 1, items 1 and 18). Blank: the client type's. */ ""}
-              ${f({ name: "retainage_pct", label: "Usual retainage %", helpKey: "usual_retainage", inputmode: "decimal", autocomplete: "off", value: usualRetainage(p), placeholder: String(p.retainage_default ?? "") })}
+              ${f({ name: "retainage_pct", label: "Usual retainage", suffix: "%", helpKey: "usual_retainage", inputmode: "decimal", autocomplete: "off", value: usualRetainage(p) })}
             </div>
             ${playbookSection(`pb-docs-${p.id}`, "Supporting documents", p.no_paperwork ? "Nothing needed" : (p.packet_items || []).join(", ") || "None ticked", `
               ${paperworkHtml(key, p)}
               ${f({ name: "rejects_when", label: "They send pay apps back when", helpKey: "rejects_when", multiline: true, wide: true, value: unesc(clean(p.rejects_when)) })}`, key, ["packet", "rejects_when"])}
             ${playbookSection(`pb-follow-${p.id}`, "Follow-ups and copies", `Every ${p.follow_up_days || 7} days${clean(p.copy) ? ` · CC ${p.copy}` : ""}`, `
-              ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || ""), placeholder: "7" })}
-              ${f({ name: "usual_approval_days", label: "Days they usually take to pay", helpKey: "usual_approval_days", inputmode: "numeric", autocomplete: "off", value: String(p.usual_approval_days || ""), placeholder: "14" })}
+              ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || "") })}
+              ${f({ name: "usual_approval_days", label: "Days they usually take to pay", helpKey: "usual_approval_days", inputmode: "numeric", autocomplete: "off", value: String(p.usual_approval_days || "") })}
               ${f({ name: "copy", label: "Also email (CC)", helpKey: "copy", wide: true, autocomplete: "off", value: unesc(clean(p.copy)), placeholder: "other@example.com, pm@example.com" })}
               ${f({ name: "escalation_email", label: "Also email from the third follow-up", helpKey: "escalation_email", type: "email", autocomplete: "off", value: unesc(clean(p.escalation_email)), placeholder: "owner@example.com" })}`, key, ["follow_up_days", "usual_approval_days", "copy", "escalation_email"])}
             <button type="button" class="btn full-width" data-action="save-playbook" data-id="${p.id}">Save client</button>

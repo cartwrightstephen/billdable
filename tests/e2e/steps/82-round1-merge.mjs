@@ -48,7 +48,8 @@ export default async function ({ BASE, step, signedInPage }) {
     const card = p.locator(`[data-payer-card="${payerId}"]`);
     await card.locator(":scope > summary").click();
     const box = card.locator('input[data-field="retainage_pct"]');
-    assert.equal(await box.getAttribute("placeholder"), "0", "an owner holds none unless the playbook says");
+    assert.equal(await box.inputValue(), "", "blank: an owner holds none unless the playbook says");
+    assert.equal(await box.getAttribute("placeholder"), null, "no gray example number (Stephen, 10 Nov)");
     await box.fill("5");
     await card.getByRole("button", { name: "Save client" }).click();
     await p.waitForFunction(async (id) => (await (await fetch("/api/state")).json()).payers.find((x) => x.id === id).retainage_default === 5, payerId);

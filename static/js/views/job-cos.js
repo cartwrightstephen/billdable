@@ -114,7 +114,7 @@ export function coFormFields(j) {
       ${coItemRows < MAX_CO_ITEMS ? `<button class="btn small secondary" data-action="co-add-item">Add a cost line</button>` : ""}
     </fieldset>
     <div class="form-grid">
-      ${field({ form: "newco", name: "schedule_days", id: "co-days", label: "Schedule change, days (optional)", inputmode: "numeric", placeholder: "3" })}
+      ${field({ form: "newco", name: "schedule_days", id: "co-days", label: "Schedule change, days (optional)", inputmode: "numeric" })}
       ${field({ form: "newco", name: "work_started_on", id: "co-started", label: "Work started on (optional)", type: "date", attrs: `max="${localToday()}"` })}
     </div>
     ${backup.length ? `<fieldset class="co-backup"><legend>Backup from the job records (optional)</legend>

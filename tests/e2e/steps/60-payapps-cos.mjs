@@ -110,7 +110,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.goto(`${BASE}/jobs`);
     await p.click('[data-action="toggle-form"][data-form="newjob"]');
     // Folded, saying what a blank schedule becomes (Round 1, item 16).
-    assert.match(await p.locator(".nj-sov > summary").innerText(), /Schedule of values\s+One lump-sum line for the contract amount/);
+    assert.equal((await p.locator(".nj-sov > summary").innerText()).trim(), "Schedule of values");
     await p.locator(".nj-sov > summary").click();
     await p.fill("#nj-sov-desc-0", "Conduit");
     await p.click('[data-action="nj-sov-add"]');

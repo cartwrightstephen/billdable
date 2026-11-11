@@ -1218,7 +1218,7 @@
         "punch",
         "closeout"
       ],
-      "answer": "Retainage is paid at closeout, so it is asked for after Final pay app. The closeout documents is the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties; mark one Not needed on this job if it doesn't apply. Tap Final pay app, add those items (Open closeout documents), then tap Ask for retainage and confirm, or type part of it in the amount box on Money, Closeout. The job's Retainage card shows what is held, the pay apps holding it, how often you asked and when you can ask again. When the money arrives, tap Record retainage paid on the job (offered once the work is done, or once you asked for it, with the amount held filled in); each release then needs its lien waiver.",
+      "answer": "Retainage is paid at closeout, so it is asked for after Final pay app. The closeout documents is the client's closeout items, or punch list sign-off, completion certificate, final lien waivers, as-builts and warranties; mark one Not needed on this job if it doesn't apply. Tap Final pay app, add those items (Open closeout documents), then tap Ask for retainage and confirm, or type part of it in the amount box on Money, Closeout. The job's Money section shows the retainage rate and what is still held; Money, Closeout shows the pay apps holding it, how often you asked and when you can ask again. When the money arrives, tap Record retainage paid on the job (offered once the work is done, or once you asked for it, with the amount held filled in); each release then needs its lien waiver.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1470,7 +1470,7 @@
         "file",
         "photo"
       ],
-      "answer": "Three ways:\n- Drop files anywhere, or tap Take a photo or Add a file on a job (photos, PDFs, Word, Excel, CSV, saved emails). On a job page they go straight onto that job; Jobs, New job record has a place for each kind of document on the job you pick; elsewhere they wait in the Inbox. Import/Export, Import has Which job?, Take a photo and Choose files.\n- Paste an email, a text thread or your notes on Import/Export, Import and tap Add to Inbox.\n- Forward email and texts automatically once an owner connects an email service and a Twilio number (Inbox, Bring emails and texts in automatically).\nThe Inbox suggests the job from the job code, address, job name or sender; tap Add to (the job) to file it.",
+      "answer": "Three ways:\n- Drop files on a job's page, or tap New job record, which has a place for each kind of document (photos, delivery tickets, time sheets, invoices, inspections) and a drop area for files; they go onto the job you pick. Elsewhere, files wait in the Inbox. Import/Export, Import has Which job?, Take a photo and Choose files.\n- Paste an email, a text thread or your notes on Import/Export, Import and tap Add to Inbox.\n- Forward email and texts automatically once an owner connects an email service and a Twilio number (Inbox, Bring emails and texts in automatically).\nThe Inbox suggests the job from the job code, address, job name or sender; tap Add to (the job) to file it.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1858,7 +1858,7 @@
         "sync",
         "accounting"
       ],
-      "answer": "Yes. On Import/Export, Import, under Payments from QuickBooks, paste or choose a QuickBooks payments export (CSV or Excel) and tap Read payments: each payment is matched to its pay app where Duracash can tell (pick one from the Pick a pay app… list for the rest), and Record the ticked payments records the ones you tick. Or an owner taps Connect QuickBooks (when it is set up on the server): Then tap Read payments from QuickBooks, tick the ones to keep and tap Record the ticked payments. Duracash never changes your books. Each sent pay app also has Download for QuickBooks, a file QuickBooks imports as an invoice.",
+      "answer": "Yes. On Import/Export, Import, under Import payments received (QuickBooks or CSV), paste or choose a QuickBooks payments export (CSV or Excel) and tap Read payments: each payment is matched to its pay app where Duracash can tell (pick one from the Pick a pay app… list for the rest), and Record the ticked payments records the ones you tick. Or an owner taps Connect QuickBooks (when it is set up on the server): Then tap Read payments from QuickBooks, tick the ones to keep and tap Record the ticked payments. Duracash never changes your books. Each sent pay app also has Download for QuickBooks, a file QuickBooks imports as an invoice.",
       "handler": null,
       "needs_job": false,
       "actions": [],

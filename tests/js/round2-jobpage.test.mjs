@@ -97,3 +97,14 @@ test("a finished job has none of it", () => {
   const r = jobs.jobPageActions(job({ closed: true }), { perms: { owner: true } });
   assert.deepEqual(r, { main: [], tasks: [], blockers: [], others: [] });
 });
+
+// ---------- Stephen's 10 Nov to-dos: the ZIP and the state ----------
+const validate = await import("../../static/js/validate.js");
+test("a ZIP from another state is questioned, in words; one that fits, a blank or a military ZIP isn't (to-do 5)", () => {
+  assert.equal(validate.zipStateQuestion("30303", "FL"), "ZIP 30303 is in Georgia, not Florida. Check the state or the ZIP.");
+  assert.equal(validate.zipStateQuestion("10001-1234", "nj"), "ZIP 10001-1234 is in New York, not New Jersey. Check the state or the ZIP.");
+  for (const [zip, st] of [["30303", "GA"], ["30303", ""], ["", "GA"], ["3030", "FL"], ["09012", "GA"], ["96910", "MP"], ["73301", "TX"], ["20146", "VA"], ["05501", "MA"]])
+    assert.equal(validate.zipStateQuestion(zip, st), "", `${zip} ${st}`);
+  assert.deepEqual(validate.zipStates("99501"), ["AK"]);
+  assert.equal(validate.zipStates("00012"), null, "an unassigned prefix");
+});

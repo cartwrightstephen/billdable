@@ -13,8 +13,7 @@ import { termText } from "./js/terms.js";
 import { state, me, currentView, currentJobId, setMe, clearSession, setAccount, setSignedOutNote, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
 import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage, showAnchor } from "./js/app-core.js";
 import { views, actions as pageActions } from "./js/views/index.js";
-import { metricsData, metricsPeriod, loadMetrics, setCalJobFilter } from "./js/views/today.js";
-import { anyPayAppSent } from "./js/today.js";
+import { metricsData, metricsPeriod, loadMetrics, setCalJobFilter, hasResults } from "./js/views/today.js";
 import { syncNewJobCustomer, prefillApprover, prefillRetainage, hideSameCustomer } from "./js/views/jobs.js";
 import { updateProgressPreview, prefillPaymentAmount } from "./js/views/job.js";
 import { sovDraft, updateSovTotals } from "./js/views/job-sov.js";
@@ -216,7 +215,7 @@ function render() {
   }
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
   loadReminders();
-  if (currentView === "dashboard" && anyPayAppSent(state) && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
+  if (currentView === "dashboard" && hasResults(state) && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
   if (currentView === "company" && !qboStatus) loadQboStatus();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin" && helperAdmin) { loadHelperReview(); loadAdminCompanies(); }

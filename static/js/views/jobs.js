@@ -37,8 +37,8 @@ export function jobFields(form, prefix, j = {}) {
         ${f({ name: "zip", id: `${prefix}-zip`, label: "ZIP", required: true, autocomplete: "postal-code", inputmode: "numeric", rule: "zip", value: part("zip"), ...mark("zip") })}
       </div>`,
     contract_number: f({ name: "contract_number", id: `${prefix}-contract`, label: "Contract number", helpKey: "contract_number", rule: "contract_number", value: unesc(j.contract_number || ""), ...mark("contract_number") }),
-    contract_cents: moneyField({ form, name: "contract_cents", id: `${prefix}-amount`, label: "Contract amount ($)", helpKey: "contract_amount", required: true, placeholder: "48,500", cents: j.contract_cents, ...mark("contract_cents") }),
-    retainage_pct: f({ name: "retainage_pct", id: `${prefix}-retainage`, label: "Retainage %", helpKey: "retainage_pct", value: String(j.retainage_pct ?? 0), inputmode: "decimal", autocomplete: "off", ...mark("retainage_pct") }),
+    contract_cents: moneyField({ form, name: "contract_cents", id: `${prefix}-amount`, label: "Contract amount ($)", helpKey: "contract_amount", required: true, cents: j.contract_cents, ...mark("contract_cents") }),
+    retainage_pct: f({ name: "retainage_pct", id: `${prefix}-retainage`, label: "Retainage", suffix: "%", helpKey: "retainage_pct", value: String(j.retainage_pct ?? 0), inputmode: "decimal", autocomplete: "off", ...mark("retainage_pct") }),
     // J8: the day the job started; New job starts at today, an older job with none stays blank.
     started_on: f({ name: "started_on", id: `${prefix}-start`, label: "Start date", type: "date", value: unesc(j.started_on || (j.id ? "" : limits.today)),
       ...mark("started_on"), attrs: `min="${limits.min}" max="${limits.max}"${contractMark(form, "started_on").attrs ? " data-from-contract" : ""}` }),
@@ -376,13 +376,13 @@ function newJobSovHtml() {
   const box = (i, name, label, cls, extra = "") => `<td data-label="${label}"><input id="nj-sov-${name}-${i}" class="sov-in ${cls}" data-field="sov_${name}_${i}" value="${esc(draftValue("newjob", `sov_${name}_${i}`))}" aria-label="Line ${i + 1}: ${label}"${extra}></td>`;
   const rows = Array.from({ length: njSovRows }, (_, i) => `<tr>
       <td class="sov-desc-cell"><input id="nj-sov-desc-${i}" class="sov-in sov-desc" data-field="sov_desc_${i}" value="${esc(draftValue("newjob", `sov_desc_${i}`))}" placeholder="Conduit" aria-label="Line ${i + 1}: description"></td>
-      ${box(i, "qty", "Qty", "sov-num", ' inputmode="decimal" placeholder="1"')}${box(i, "unit", "Unit", "sov-unit", ' placeholder="LS"')}${box(i, "rate", "Unit rate $", "sov-num", ' inputmode="decimal" placeholder="0.00"')}
+      ${box(i, "qty", "Qty", "sov-num", ' inputmode="decimal"')}${box(i, "unit", "Unit", "sov-unit", ' placeholder="LS"')}${box(i, "rate", "Unit rate $", "sov-num", ' inputmode="decimal"')}
     </tr>`).join("");
   // Folded (Round 1, item 16): most jobs start on the one lump-sum line. Open once lines are typed.
   const typedLines = newJobSovLines(formDraft.newjob || {}).length;
   const open = "nj-sov" in moreDetails ? moreDetails["nj-sov"] : typedLines > 0;
   return `<details class="nj-sov" data-more="nj-sov"${open ? " open" : ""}>
-    <summary>Schedule of values <span class="sub">${typedLines ? `${typedLines} line${typedLines === 1 ? "" : "s"}` : "One lump-sum line for the contract amount"}</span></summary>
+    <summary>Schedule of values${typedLines ? ` <span class="sub">${typedLines} line${typedLines === 1 ? "" : "s"}</span>` : ""}</summary>
     <p class="sub">Leave the lines blank for one lump-sum line. You can change the schedule on the job page until the first pay app is sent.</p>
     <p class="form-error" id="nj-sov-err" role="alert" hidden></p>
     <div class="table-wrap sov-wrap"><table class="sov-table sov-edit"><tr class="head-row"><th>Description</th><th>Qty</th><th>Unit</th><th>Unit rate $</th></tr>${rows}</table></div>
@@ -463,8 +463,8 @@ export const views = {
           <div class="form-grid">
             ${jf.started_on}
             ${jf.anticipated_end_on}
-            ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25", ...mark("payapp_due_day") }))}
-            ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30", ...mark("payment_terms_days") }))}
+            ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", ...mark("payapp_due_day") }))}
+            ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", ...mark("payment_terms_days") }))}
             ${jf.contract_number}
             ${assigneeField("newjob", "nj")}
             ${f({ name: "note", id: "nj-note", label: "Notes (kept in the job records)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}

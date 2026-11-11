@@ -78,7 +78,7 @@ export function renderLanding() {
           ${!signup && signedOutNote ? `<p class="notice signed-out-note" role="status">${esc(signedOutNote)}</p>` : ""}
           ${!signup && loginCode ? `<form id="auth-form">
             <label for="login-code">${loginCode.method === "email" ? "Code from the email" : "Code from your authenticator app"}</label>
-            <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" placeholder="123456" />
+            <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" />
             ${loginNote ? `<p class="sub" role="status">${esc(loginNote)}</p>` : ""}
             ${loginCode.method === "email" ? `<label class="terms-check"><input type="checkbox" id="login-remember" name="remember" checked> Don't ask again on this device for 30 days</label>
             <p class="sub">No email? Check the spam folder, or go back and sign in again for a new code.</p>`

@@ -635,11 +635,11 @@ export function canPullBack(j, inv) {
 
 // ---------- jobs-clients (Stephen's Oct 29 review) ----------
 
-// Client type (J2): the five kinds of client, as domain.CLIENT_TYPES has them. GC and another
+// Client type (J2): the six kinds of client, as domain.CLIENT_TYPES has them ("Other", 10 Nov). GC and another
 // subcontractor start with a general contractor's paperwork and timing; the rest, an owner's.
 export const CLIENT_TYPES = [
   ["gc", "General contractor"], ["owner", "Owner or developer"], ["homeowner", "Homeowner"],
-  ["sub", "Another subcontractor (you are a lower tier)"], ["public", "Public agency"],
+  ["sub", "Another subcontractor (you are a lower tier)"], ["public", "Public agency"], ["other", "Other"],
 ];
 
 // The retainage a new job starts at (domain.jobinfo.default_retainage_pct, Round 1 item 1): the

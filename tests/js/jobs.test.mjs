@@ -349,8 +349,10 @@ test("the job page lists the blockers under the Next step line, so the line does
   assert.doesNotMatch(nextStep(paperwork, new Date(), { listed: true }), /Photos/);
 });
 
-test("client type: five kinds, and a client saved before types reads from its role (J2)", () => {
-  assert.equal(CLIENT_TYPES.length, 5);
+test("client type: six kinds, Other last, and a client saved before types reads from its role (J2)", () => {
+  assert.equal(CLIENT_TYPES.length, 6);
+  assert.deepEqual(CLIENT_TYPES[5], ["other", "Other"]);  // Stephen, 10 Nov
+  assert.equal(clientTypeLabel({ client_type: "other", role: "Owner" }), "Other");
   assert.equal(clientTypeLabel({ client_type: "sub" }), "Another subcontractor (you are a lower tier)");
   assert.equal(clientTypeLabel({ role: "GC" }), "General contractor");
   assert.equal(clientTypeLabel({ role: "Owner" }), "Owner or developer");

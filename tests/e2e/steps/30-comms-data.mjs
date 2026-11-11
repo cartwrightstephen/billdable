@@ -136,7 +136,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       return id;
     });
     await p.goto(BASE + "/data/import");
-    await p.getByRole("heading", { name: "Import" }).waitFor();
+    await p.getByRole("heading", { name: "Import", exact: true }).waitFor();
     assert.equal(await p.locator("#qty-import").count(), 0, "Import has no Quantities card");
     await p.goto(BASE + `/jobs/${jobId}`);
     await p.locator("#sov-card").getByRole("button", { name: "Import quantities" }).click();

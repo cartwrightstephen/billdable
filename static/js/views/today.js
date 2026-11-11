@@ -271,17 +271,19 @@ function filteredJobs() {
   return jobs;
 }
 
-// Results (round 1, item 19: once a tab of its own), folded on the Dashboard under the money tiles
-// once a pay app has gone out; its line says the figure people ask for, sent to paid.
+// Results (round 1, item 19: once a tab of its own), on the Dashboard under the money tiles
+// whenever the company has a job, open unless the person folded it (Stephen, 10 Nov: the page shows
+// the value it delivers); its line says the figure people ask for, sent to paid.
+export function hasResults(st) { return !!((st.jobs || []).length || st.closed_jobs_total); }
 function resultsHtml() {
-  if (!anyPayAppSent(state)) return "";
+  if (!hasResults(state)) return "";
   const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
   const ready = metricsData && metricsData.period === metricsPeriod;
   const m = ready ? metricsData.data : null;
   const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
   const num = (v) => v === null || v === undefined ? "—" : String(v);
   const line = m ? ` <span class="sub">· ${termText("sent to paid")}: ${days(m.sent_to_paid_median_days)} median · ${m.pay_apps_paid} paid · ${metricsPeriod === "90" ? "last 90 days" : "all time"}</span>` : "";
-  return `<details class="card dash-results" id="results" data-more="dash-results"${moreDetails["dash-results"] ? " open" : ""}><summary><strong>Results</strong>${line}</summary>
+  return `<details class="card dash-results" id="results" data-more="dash-results"${moreDetails["dash-results"] === false ? "" : " open"}><summary><strong>Results</strong>${line}</summary>
       <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}</div>
       ${!m ? `<p class="sub">Loading…</p>` : `
       <div class="metrics">

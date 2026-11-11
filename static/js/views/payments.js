@@ -79,7 +79,7 @@ function qboPayAppCell(row, n) {
 export function qboCardHtml(onImport) {
   const q = qboStatus;
   const owner = can("company");   // connect and disconnect need Edit company details and connections
-  return !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
+  return !q || q.loading ? "" : `<div class="card"><h2>Connect QuickBooks</h2>${
       !q.configured ? `<p class="sub">The QuickBooks connection isn't available yet. Use the CSV import ${onImport ? "below" : "on Import"}.</p>`
       : !q.connected ? (owner
         ? `<p class="sub">Read-only: Duracash reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
@@ -97,7 +97,7 @@ export function qboCardHtml(onImport) {
 export function paymentsImportHtml() {
   const imp = paymentImport;
   return `<div class="card" id="qbo-import">
-      <h2>Payments from QuickBooks</h2>
+      <h2>Import payments received (QuickBooks or CSV)</h2>
       <p class="sub">Paste a QuickBooks report with payments in it (CSV), or choose the file. Nothing is recorded until you tick and apply.</p>
       ${imp ? `${imp.warnings.length ? `<div class="sov-warn">${imp.warnings.map(w => `<div>${w}</div>`).join("")}</div>` : ""}
         <div class="table-wrap"><table>

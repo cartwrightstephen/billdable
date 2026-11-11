@@ -219,7 +219,8 @@ test("New job: required fields first with retainage beside the amount; Import co
   for (const id of ["nj-start", "nj-end", "nj-contract", "nj-note"]) assert.ok(at(id) > lastRequired, `${id} comes after the required fields`);
   assert.ok(at("nj-retainage") < at("nj-start"), "retainage is with the money, before the optional fields");
   assert.match(html, /<details class="contract-fold" data-more="nj-import">\s*<summary>Import contract <span class="sub">[^<]+<\/span><\/summary>/);
-  assert.match(html, /<details class="nj-sov" data-more="nj-sov">\s*<summary>Schedule of values <span class="sub">One lump-sum line for the contract amount<\/span><\/summary>/);
+  assert.match(html, /<details class="nj-sov" data-more="nj-sov">\s*<summary>Schedule of values<\/summary>/);
+  assert.doesNotMatch(html, /One lump-sum line/, "Stephen, 10 Nov: the text beside it is gone");
   assert.ok(html.indexOf('data-action="create-job"') > html.indexOf('data-more="nj-sov"'));
   page.formOpen.newjob = false;
 });

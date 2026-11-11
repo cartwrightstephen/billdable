@@ -229,6 +229,8 @@ select { max-width: 100%; }
 .req { color: var(--copper); }
 .form-error { background: var(--error-soft); border: 1px solid var(--red); color: var(--red); padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
 .field-error { display: block; color: var(--red); font-size: 12px; margin-top: 2px; }
+.field-ask { display: block; color: var(--amber); font-size: 12px; margin-top: 2px; }
+.field-ask:empty { display: none; }
 .empty-state { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 28px 20px; text-align: center; color: var(--muted); margin: 12px 0; }
 .empty-state strong { display: block; color: var(--ink); margin-bottom: 6px; }
 .empty-state p { margin: 0 0 12px; }
@@ -268,6 +270,10 @@ a.reset-btn { display: block; text-decoration: none; text-align: left; }
 /* Import */
 .dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; margin: 12px 0; background: var(--card); display: flex; flex-direction: column; gap: 6px; }
 .dropzone.small { padding: 12px; }
+/* A unit after a box: Retainage [ 10 ] % */
+.with-suffix { display: flex; align-items: center; gap: 6px; }
+.with-suffix input { flex: 1 1 auto; min-width: 0; }
+.with-suffix .suffix { color: var(--muted); font-weight: 600; }
 /* The camera is a phone's way in (R6-04): Take a photo and Choose files as buttons on a touch
    screen; the drop-and-paste sentence only where there is a mouse to drop with. */
 .capture-buttons { display: flex; flex-wrap: wrap; gap: 8px; }

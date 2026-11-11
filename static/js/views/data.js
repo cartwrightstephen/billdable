@@ -112,11 +112,11 @@ export const views = {
     return `
       <h1>Import</h1>
       <div class="card">
-        <h2>Files and photos</h2>
+        <h2>Upload documents and photos to the Inbox</h2>
         ${dropzoneHtml()}
       </div>
       <div class="card">
-        <h2>Paste an email, a text thread, or notes</h2>
+        <h2>Paste an email, text thread or site notes</h2>
         ${pasteBoxHtml()}
       </div>
       ${qboCardHtml(true)}

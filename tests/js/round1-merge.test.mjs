@@ -106,7 +106,7 @@ test("an imported schedule goes with the job itself, its total as the contract w
   assert.equal(dom.requests.filter(r => /\/sov$/.test(r.path)).length, 0, "no separate schedule request");
 });
 
-test("the client card asks Usual retainage % in Contact and billing, and the read-only card shows it", () => {
+test("the client card asks Usual retainage [ ] % in Contact and billing, and the read-only card shows it", () => {
   page.setMe(owner);
   core.setState(company({ payers: [{ ...gc, retainage_pct: 5, retainage_default: 5 }] }));
   core.moreDetails[`payer-card-${gc.id}`] = true;
@@ -114,14 +114,15 @@ test("the client card asks Usual retainage % in Contact and billing, and the rea
   let html = reg.views.playbook();
   const contact = html.slice(html.indexOf("<h3>Contact and billing</h3>"), html.indexOf("Supporting documents</"));
   assert.match(contact, /<input id="[^"]*retainage_pct[^"]*"[^>]*data-field="retainage_pct"[^>]*value="5"/);
-  assert.match(contact, /Usual retainage %/);
+  assert.match(contact, />Usual retainage<\/label><span class="with-suffix"><input [^>]*data-field="retainage_pct"[^>]*><span class="suffix" aria-hidden="true">%<\/span><\/span>/);
   core.setState(company());
   html = reg.views.playbook();
-  assert.match(html, /data-field="retainage_pct"[^>]*value=""[^>]*placeholder="10"|data-field="retainage_pct"[^>]*placeholder="10"[^>]*value=""/, "blank: goes by the type, shown as the placeholder");
+  assert.match(html, /data-field="retainage_pct"[^>]*value=""/, "blank: goes by the type");
+  assert.doesNotMatch(html, /data-field="retainage_pct"[^>]*placeholder=/, "Stephen, 10 Nov: no gray example number");
   page.setMe(member);
   html = reg.views.playbook();
   assert.doesNotMatch(html, /data-field="retainage_pct"/);
-  assert.match(html, /<span class="label">Usual retainage %<\/span><span>10%<\/span>/);
+  assert.match(html, /<span class="label">Usual retainage<\/span><span>10%<\/span>/);
 });
 
 test("the client card's Save sends Usual retainage %, and a figure past 20 is refused in place", async () => {

@@ -87,7 +87,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.deepEqual(shown.map(s => s.split("\n")[0].trim()), ["Dashboard", "Jobs", "Communications", "Money", "Settings"]);
     await phone.locator(".nav-more summary").click();
     await phone.locator('.nav-more button[data-section="data"]').click();
-    await phone.getByRole("heading", { name: "Import" }).waitFor();
+    await phone.getByRole("heading", { name: "Import", exact: true }).waitFor();
     assert.equal(new URL(phone.url()).pathname, "/data/import");
     await phone.context().close();
   });
