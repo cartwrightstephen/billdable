@@ -49,6 +49,7 @@ import legal
 import mail_events
 import mailer
 import metrics
+import financials
 import migrations
 from domain import profiles
 import monthly
@@ -990,6 +991,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(403, {"error": why, "read_only": True})
                     return
         if route.access == "user":
+            if route.perm and not has_perm(user, route.perm):
+                self._json(403, {"error": NO_PERMISSION})
+                return
             handler(m, user)
             return
         body = self._read_json()
@@ -1469,6 +1473,19 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         self._json(200, metrics.compute(state, since=since))
+
+    def _g_financials(self, m, user) -> None:
+        """Money > Financials: the company's picture as a bank asks for it (financials.py)."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        self._json(200, financials.compute(state))
+
+    def _g_financials_csv(self, m, user) -> None:
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        f = financials.compute(state)
+        self._send(200, financials.to_csv(f).encode("utf-8"), "text/csv; charset=utf-8",
+                   {"Content-Disposition": f'attachment; filename="financials-{f["as_of"]}.csv"'})
 
     def _g_import_settings(self, m, user) -> None:
         tokens = importer.company_tokens(user["company_id"])
@@ -3082,6 +3099,8 @@ ROUTES = [
     Route("GET", r"/api/export", "_g_export", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
     Route("GET", r"/api/metrics", "_g_metrics", "user"),
+    Route("GET", r"/api/financials\.csv", "_g_financials_csv", "user", perm="financials"),
+    Route("GET", r"/api/financials", "_g_financials", "user", perm="financials"),
     Route("GET", r"/api/qbo/status", "_g_qbo_status", "user"),
     Route("GET", r"/api/billing", "_g_billing", "user"),
     Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user"),

@@ -34,6 +34,7 @@ PERMISSIONS: list[tuple[str, str]] = [
     ("team", "Manage the team and permissions"),
     ("billing", "Manage billing"),
     ("data", "Export and reset data"),
+    ("financials", "See company financials"),
 ]
 PERM_KEYS = [k for k, _ in PERMISSIONS]
 PERM_WORDS = dict(PERMISSIONS)

@@ -78,10 +78,10 @@ test("a link-like button grows its touch area without changing the line's height
   assert.doesNotMatch(css, /\.linkish, \.tab/);
 });
 
-test("Money has four tabs and Settings is split into Company, Team, My account and Billing", () => {
+test("Money has five tabs and Settings is split into Company, Team, My account and Billing", () => {
   const money = /key: "money", label: "Money", views: (\[.*?\]) \},/.exec(app)[1];
   // Payments is a filter on Pay apps (round 1, item 19).
-  assert.deepEqual(JSON.parse(money).map(([, label]) => label), ["Pay apps", "Change orders", "Unpaid", "Closeout"]);
+  assert.deepEqual(JSON.parse(money).map(([, label]) => label), ["Pay apps", "Change orders", "Unpaid", "Closeout", "Financials"]);
   const settings = /key: "settings", label: "Settings", views: (\[.*?\]) \},/.exec(app)[1];
   assert.deepEqual(JSON.parse(settings).slice(0, 4).map(([v]) => v), ["company", "team", "account", "billing"]);
   assert.match(css, /\.tabs\.more-right \{/);

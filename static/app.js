@@ -11,7 +11,8 @@ import { formDraft, watchForms } from "./js/forms.js";
 import { pickPayApp } from "./js/payimport.js";
 import { termText } from "./js/terms.js";
 import { state, me, currentView, currentJobId, setMe, clearSession, setAccount, setSignedOutNote, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
-import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage, showAnchor } from "./js/app-core.js";
+import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage, showAnchor, can } from "./js/app-core.js";
+import { moneyStripHtml, loadFinancials } from "./js/views/financials.js";
 import { views, actions as pageActions } from "./js/views/index.js";
 import { metricsData, metricsPeriod, loadMetrics, setCalJobFilter, hasResults } from "./js/views/today.js";
 import { syncNewJobCustomer, prefillApprover, prefillRetainage, hideSameCustomer } from "./js/views/jobs.js";
@@ -34,7 +35,7 @@ const SECTIONS = [
   { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["daily", "New job record"], ["history", "Job history"], ["playbook", "Client playbook"]] },
   { key: "communications", label: "Communications", views: [["inbox", "Inbox"], ["outbox", "Outbox"]] },
   { key: "data", label: "Import/Export", more: true, views: [["import", "Import"], ["export", "Export"]] },
-  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["waivers", "Closeout"]] },
+  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["waivers", "Closeout"], ["financials", "Financials"]] },
   { key: "settings", label: "Settings", views: [["company", "Company"], ["team", "Team"], ["account", "My account"], ["billing", "Billing"], ["audit", "Activity log"]] },
 ];
 // The Duracash team's own tab (HELPER_ADMIN_USER_IDS), shown only to them.
@@ -153,7 +154,8 @@ function render() {
   const failedEmails = state.pending_email_failures || 0;
   // Helper answers is for the Duracash team. Billing shows everyone the trial and the
   // subscription; only an owner changes it (R6-10).
-  const tabs = section.key === "settings" && helperAdmin ? [...section.views, ADMIN_TAB] : section.views;
+  // Financials is for those who may see the company's figures (an owner, or a profile given it).
+  const tabs = (section.key === "settings" && helperAdmin ? [...section.views, ADMIN_TAB] : section.views).filter(([v]) => v !== "financials" || can("financials"));
   const shell = `
     <a class="skip-link" href="#main">Skip to content</a>
     <div class="shell ${drawerOpen ? "drawer-open" : ""}">
@@ -178,6 +180,7 @@ function render() {
       </aside>
       <div class="scrim" id="scrim" data-action="scrim" aria-hidden="true"></div>
       <main class="main" id="main" tabindex="-1">
+        <div id="money-strip"></div>
         ${tabs.length > 1 ? `<nav class="tabs" aria-label="${section.label}">${tabs.map(([v, label]) => `<button class="tab ${v === tabView ? "active" : ""}" data-action="tab" data-tab="${v}" ${v === tabView ? 'aria-current="page"' : ""}>${termText(label)}</button>`).join("")}</nav>` : ""}
         <div id="view"></div>
       </main>
@@ -197,6 +200,9 @@ function render() {
     showActiveTab(tabRow, tabsLeft);
   }
   syncDrawer();
+  const strip = document.getElementById("money-strip");
+  const stripHtml = moneyStripHtml();
+  if (strip && strip.innerHTML !== stripHtml) strip.innerHTML = stripHtml;
   const view = document.getElementById("view");
   view.innerHTML = withBanners(verifyBannerHtml() + heldShareHtml(), views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`));
   if (keep && !document.activeElement?.id) {
@@ -217,6 +223,7 @@ function render() {
   loadReminders();
   if (currentView === "dashboard" && hasResults(state) && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
   if (currentView === "company" && !qboStatus) loadQboStatus();
+  if (currentView === "financials" && can("financials")) loadFinancials();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin" && helperAdmin) { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();

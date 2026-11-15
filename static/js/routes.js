@@ -13,7 +13,7 @@ export const VIEW_PATHS = {
   inbox: "/communications", outbox: "/communications/outbox",
   import: "/data/import", export: "/data/export",
   payapps: "/money", packets: "/money/packets", cos: "/money/change-orders", collections: "/money/collections",
-  waivers: "/money/waivers", retainage: "/money/retainage",
+  waivers: "/money/waivers", retainage: "/money/retainage", financials: "/money/financials",
   company: "/settings/company", team: "/settings/team", account: "/settings/account", billing: "/settings/billing",
   audit: "/settings/audit", "helper-admin": "/settings/helper-answers",
   password: "/settings/account/password", "delete-company": "/settings/company/delete",

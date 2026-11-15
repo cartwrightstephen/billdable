@@ -544,10 +544,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.deepEqual(wide, [], "pages wider than the screen");
   });
 
-  await step("Money has four tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03, Oct 29 review; round 1 item 19
+  await step("Money has five tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03, Oct 29 review; round 1 item 19
     await page.goto(BASE + "/money");
     await page.locator(".tabs .tab", { hasText: "Closeout" }).waitFor();  // allInnerTexts doesn't wait for the page to draw
-    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Closeout"]);
+    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Closeout", "Financials"]);
     await page.locator("table th", { hasText: "Supporting documents" }).waitFor();
     await page.goto(BASE + "/money/packets");  // the old Paperwork tab's address opens Pay apps
     await page.getByRole("heading", { name: "Pay apps" }).waitFor();

@@ -20,6 +20,7 @@ import * as changeorders from "./changeorders.js";
 import * as collections from "./collections.js";
 import * as payments from "./payments.js";
 import * as closeout from "./closeout.js";
+import * as financials from "./financials.js";
 import * as automations from "./automations.js";
 import * as settings from "./settings.js";
 import * as auth from "./auth.js";
@@ -28,7 +29,7 @@ import * as auth from "./auth.js";
 export const MODULES = {
   dashboard, daily, jobs, job, jobCos, jobSov, jobRecord, jobPaperwork, clients,
   inbox, communications, data,
-  payapps, paperwork, changeorders, collections, payments, closeout,
+  payapps, paperwork, changeorders, collections, payments, closeout, financials,
   automations, settings, auth,
 };
 

@@ -2482,8 +2482,15 @@ def job_state(job: dict[str, Any]) -> str:
     return found if re.fullmatch(r"[A-Z]{2}", found) else ""
 
 
+def backlog_cents(m: dict[str, int]) -> int:
+    """Signed work not done yet on a job (its job_money): the contract with signed change orders,
+    less what is billed, drafted, and done but not billed yet (Money > Financials)."""
+    return max(0, m["contract_total_cents"] - m["billed_gross_cents"] - m["draft_cents"] - m["unbilled_completed_cents"])
+
+
 def _totals(views: list[dict[str, Any]]) -> dict[str, Any]:
     return {
+        "backlog_cents": sum(backlog_cents(j["money"]) for j in views if not j.get("closed") and "money" in j),
         "unbilled_cents": sum(j["money"]["unbilled_completed_cents"] for j in views),
         "outstanding_cents": sum(j["money"]["outstanding_cents"] for j in views),
         "retainage_cents": sum(j["money"]["retainage_open_cents"] for j in views),

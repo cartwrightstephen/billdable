@@ -132,7 +132,7 @@ test("the menu: no Automations section, no Results or Payments tab, and Helper a
   assert.deepEqual(sections.map(([k]) => k), ["today", "jobs", "communications", "data", "money", "settings"]);
   const views = Object.fromEntries(sections);
   assert.deepEqual(views.today, ["dashboard", "calendar"]);
-  assert.deepEqual(views.money, ["payapps", "cos", "collections", "waivers"]);
+  assert.deepEqual(views.money, ["payapps", "cos", "collections", "waivers", "financials"]);   // Financials: Stephen, Nov 13
   assert.ok(!views.settings.includes("helper-admin"));
   assert.equal(reg.views.automations, undefined);
   assert.equal(reg.views.results, undefined);

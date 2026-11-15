@@ -1750,6 +1750,37 @@
       "follow_ups": []
     },
     {
+      "id": "financials",
+      "category": "Money",
+      "questions": [
+        "Where are my financials?",
+        "What will the bank want to see?",
+        "Show my receivables aging",
+        "What is my backlog?",
+        "Financial summary for a loan"
+      ],
+      "keywords": [
+        "financials",
+        "bank",
+        "loan",
+        "backlog",
+        "aging",
+        "receivables",
+        "line of credit"
+      ],
+      "answer": "Open Money, Financials. It shows what clients owe, aged by days since each pay app was sent; retainage held; backlog (signed work not done yet); work done and not billed; what was billed and collected each month for the last 12 months; days to get paid; and how much of what is owed sits with each client. Download CSV gives the same figures for a spreadsheet, and Print or save as PDF gives a copy to hand to a bank. The line at the top of every page shows the main figures. Owners see both; an owner can give a profile See company financials on Settings, Team.",
+      "handler": null,
+      "needs_job": false,
+      "actions": [
+        {
+          "type": "nav",
+          "view": "financials",
+          "label": "Open Financials"
+        }
+      ],
+      "follow_ups": []
+    },
+    {
       "id": "reset",
       "category": "Account and data",
       "questions": [
