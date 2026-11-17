@@ -68,10 +68,15 @@ function renderHelper() {
   box.scrollTop = box.scrollHeight;
 }
 
-async function helperAsk(q) {
+// jobId: a "Which job?" choice asks about that job by its id (the page's own job otherwise).
+export function helperAskBody(q, jobId = "") {
+  return { q, view: currentView, job_id: jobId || (currentView === "job" ? currentJobId : "") };
+}
+
+async function helperAsk(q, jobId = "", label = "") {
   q = (q || "").trim();
   if (!q || helperBusy) return;
-  helperLog.push({ who: "you", text: q });
+  helperLog.push({ who: "you", text: jobId && label ? `${q} (${label})` : q });
   helperBusy = true;
   renderHelper();
   let reply;
@@ -79,7 +84,7 @@ async function helperAsk(q) {
     const res = await fetch("/api/helper/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q, view: currentView, job_id: currentView === "job" ? currentJobId : "" }),
+      body: JSON.stringify(helperAskBody(q, jobId)),
     });
     reply = await readJson(res);
     if (res.status === 401) { helperBusy = false; clearSession(); renderLanding(); return; }
@@ -134,7 +139,7 @@ export async function helperRunAction(a) {
   else if (a.type === "form") await openHelperForm(a);
   else if (a.type === "packet") openSupportingDocs(a.job_id, a.inv || null);
   else if (a.type === "path") { const r = routeFromPath(a.path); if (r) nav(r.view, r.jobId || null, r.detailId || null); }
-  else if (a.type === "ask") helperAsk(a.q);
+  else if (a.type === "ask") helperAsk(a.q, a.job_id || "", a.label || "");
   else if (a.type === "copy") {
     try { await navigator.clipboard.writeText(a.text); toast("Copied"); }
     catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }

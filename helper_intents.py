@@ -67,8 +67,9 @@ FORMS = {
 # A prepared answer about doing one of these also offers its form.
 FORM_FOR_ANSWER = {"create-job": "newjob", "change-orders": "newco", "match-payment": "match", "daily-record": "daily", "progress": "progress"}
 
-_QUESTION = re.compile(r"^(?:how|what|whats|what's|why|when|where|which|who|whose|can|could|do|does|did|is|are|was|should|would|will|am)\b")
-_NAV = re.compile(r"^(?:please\s+|can you\s+|could you\s+)?(?:take me to|bring me to|bring up|go to|goto|open up|open|show me|show|pull up|jump to|navigate to)\s+(.+)$")
+# Case-blind: the command keeps its capitals, so a job code typed in capitals (TRN) still reads as one.
+_QUESTION = re.compile(r"^(?:how|what|whats|what's|why|when|where|which|who|whose|can|could|do|does|did|is|are|was|should|would|will|am)\b", re.I)
+_NAV = re.compile(r"^(?:please\s+|can you\s+|could you\s+)?(?:take me to|bring me to|bring up|go to|goto|open up|open|show me|show|pull up|jump to|navigate to)\s+(.+)$", re.I)
 # Words around a page's name that say nothing about which page; around a job's or client's, more.
 _SOFT = {"the", "my", "our", "a", "an", "page", "tab", "screen", "please", "me", "up", "to", "now", "thanks"}
 _FILLER = _SOFT | {"list", "for", "of", "job", "jobs", "project", "client", "clients", "customer", "s", "on", "in", "card"}
@@ -91,10 +92,14 @@ def _close(a: str, b: str) -> bool:
 
 def _name_hits(name: str, code: str, words: list[str], codes: set[str]) -> int:
     """How many of a name's telling words the text has, typos allowed; a job's code typed in
-    capitals (OAK, TRN: helper.find_job's rule) counts as all."""
+    capitals (OAK, TRN: helper.find_job's rule) counts as all. A name of common words only
+    ("Kitchen remodel") counts when the text has the whole of it, so it can be named at all."""
     if code and code in codes:
         return 99
-    telling = [w for w in _words(name) if len(w) >= 3 and w not in _GENERIC and not w.isdigit()]
+    own = _words(name)
+    telling = [w for w in own if len(w) >= 3 and w not in _GENERIC and not w.isdigit()]
+    if not telling:
+        return 1 if own and f" {' '.join(own)} " in f" {' '.join(words)} " else 0
     return sum(1 for t in telling if any(_close(t, w) for w in words))
 
 
@@ -177,49 +182,68 @@ def _may(perms: set[str], form: str) -> bool:
 
 # ---------- the task a command names ----------
 
-_TASKS = [
-    # (form, words that name it). Job record first: "new job record" is not New job.
-    ("daily", re.compile(r"\b(?:job|daily|site)\s+records?\b|\bdiary\b|\bdaily\s+log\b")),
-    ("newco", re.compile(r"\bchange\s+orders?\b|^(?:new|add|create|start)\s+(?:a\s+)?co\b")),
-    ("match", re.compile(r"\bpayments?\b")),
-    ("progress", re.compile(r"\bprogress\b|\bpay\s*apps?\b|\bpay application\b|\bdraws?\b|\binvoice\b|\bbill\b")),
-    # New job only as the thing made: "new job", "add a job", not "draft a follow-up for a job".
-    ("newjob", re.compile(r"^(?:new|add|create|start|make|begin|open)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:job|project)\b")),
-]
-_TASK_VERB = re.compile(r"^(?:please\s+|can you\s+|could you\s+|let me\s+|i want to\s+|i need to\s+|help me\s+)?"
-                        r"(?:new|add|create|start|make|enter|log|record|write|draft|begin|open (?:a|an|the)?\s*new|open an?)\b")
+# The form a command makes is its verb's object: verb, then a/an/the/new, then the form's words
+# ("new change order for Oak", "record a payment on Turner"). A form word further on is something
+# else the sentence is about ("draft a follow-up for the Turner pay app").
+_OBJECTS = (
+    # Job record first: "new job record" is not New job.
+    ("daily", r"(?:job|daily|site)\s+records?|diary|daily\s+log"),
+    ("newco", r"change\s+orders?|co"),
+    ("match", r"payments?"),
+    ("progress", r"(?:progress\s+)?(?:pay\s*apps?|pay\s+applications?|draws?|invoices?|bill)|progress\s+billing"),
+    ("newjob", r"job|project"),
+)
+_TASK = re.compile(
+    r"^(?:please\s+|can you\s+|could you\s+|let me\s+|i want to\s+|i need to\s+|help me\s+)?"
+    r"(?P<verb>(?:new|add|create|start|make|enter|log|record|write|draft|begin)\s+|open\s+(?=(?:a|an|new|the\s+new)\b))"
+    r"(?:(?:a|an|the|new)\s+)*"
+    r"(?:" + "|".join(f"(?P<{form}>{words})" for form, words in _OBJECTS) + r")\b", re.I)
+# New job only as the thing made ("new job", "add a job"), not "log a job".
+_MAKES = {"new", "add", "create", "start", "make", "begin", "open"}
+# Words that say the command is about something no form here makes: a follow-up, a reminder, an
+# email, a note, a photo; and the final pay app, which is a prepared answer (its own step).
+_NOT_A_FORM = re.compile(r"\b(?:follow[\s-]*ups?|followups?|reminders?|e-?mails?|notes?|photos?|final)\b", re.I)
+
+
+def _task_match(q: str) -> re.Match[str] | None:
+    if _NOT_A_FORM.search(q):
+        return None
+    m = _TASK.search(q)
+    if not m:
+        return None
+    form = next(f for f, _ in _OBJECTS if m.group(f))
+    if form == "newjob" and m.group("verb").split()[0].lower() not in _MAKES:
+        return None
+    return m
 
 
 def _task(q: str) -> str | None:
-    if not _TASK_VERB.search(q):
-        return None
-    for form, words in _TASKS:
-        if words.search(q):
-            # A pay app without "progress" names the Progress Pay App only on a named job (below);
-            # "new pay app on Money" is the prepared answer about the Pay apps list.
-            return form
-    return None
+    m = _task_match(q)
+    return next(f for f, _ in _OBJECTS if m.group(f)) if m else None
 
 
 def _strip_task_words(q: str) -> str:
-    q = _TASK_VERB.sub(" ", q)
-    for _, words in _TASKS:
-        q = words.sub(" ", q)
-    return q
+    """What follows the form's words: where the job (or client) is named."""
+    m = _task_match(q)
+    return q[m.end():] if m else q
 
 
-def _which_job(question: str, jobs: list[dict[str, Any]], why: str) -> tuple[str, list[dict[str, Any]]]:
+def _which_job(form: str, jobs: list[dict[str, Any]], why: str, style: str) -> tuple[str, list[dict[str, Any]]]:
+    """Each choice opens the form on that job, by its id: asking again by name went round in a
+    circle for a name that doesn't pick out one job ("Kitchen remodel", or two jobs named alike)."""
     if not jobs:
         return why, []
-    return "Which job?", [{"type": "ask", "q": f"{question.rstrip(' ?.')} for {j['name']}", "label": j["name"]} for j in jobs[:6]]
+    return "Which job?", [{**form_action(form, j, style), "label": j["name"]} for j in jobs[:6]]
 
 
-def _task_reply(form: str, question: str, q: str, snap: dict[str, Any], perms: set[str], style: str) -> dict[str, Any] | None:
+def _task_reply(form: str, question: str, q: str, snap: dict[str, Any], perms: set[str], style: str,
+                context_job_id: str = "") -> dict[str, Any] | None:
     open_jobs = [j for j in snap.get("jobs", []) if not j.get("closed")]
     pay_app = domain.term_text("pay app", style)
     rest = _strip_task_words(q)
     if form == "newjob":
-        payer, _ = find_client(snap, rest)
+        # The new job's own name isn't a client's ("new job called Granite Tower" is not Granite Row's).
+        payer, _ = find_client(snap, re.sub(r"\b(?:called|named)\s+.+?(?=\s+for\s+|$)", " ", rest, flags=re.I))
         named = re.search(r"\b(?:called|named)\s+[\"“']?(.+?)[\"”']?(?:\s+for\s+.*)?\s*$", question, re.I)
         action = form_action("newjob", None, style, client=payer["name"] if payer else "", name=named.group(1).strip() if named else "")
         return {"text": "Here is New job" + (f" for {payer['name']}" if payer else "") + ". Nothing is saved until you save it.", "actions": [action], "go": 0}
@@ -227,7 +251,11 @@ def _task_reply(form: str, question: str, q: str, snap: dict[str, Any], perms: s
         return {"text": f"Your permissions don't cover {FORMS[form][0]}. Someone who manages the team can change them.", "actions": []}
     job, tied = find_job(snap, rest, open_only=False)
     tied = [j for j in tied if not j.get("closed")]
-    if form == "progress" and not job and not tied and not re.search(r"\bprogress\b", q):
+    # No job named: the job whose page is open is the one meant.
+    here = next((j for j in snap.get("jobs", []) if context_job_id and j["id"] == context_job_id), None)
+    if not job and here and (not tied or here in tied):
+        job, tied = here, []
+    if form == "progress" and not job and not tied and not re.search(r"\bprogress\b", q, re.I):
         return None   # "new pay app" with no job named: the prepared answer about the Pay apps list
     eligible = {
         "match": lambda j: any(i["status"] in domain.OPEN_FOR_PAYMENT for i in j["invoices"]),
@@ -236,7 +264,7 @@ def _task_reply(form: str, question: str, q: str, snap: dict[str, Any], perms: s
     if not job:
         pool = [j for j in (tied or open_jobs) if eligible(j)]
         why = {"match": f"No {pay_app} is waiting for payment.", "progress": "Every open job's work is marked done."}.get(form, "There are no open jobs.")
-        text, actions = _which_job(question, pool, why)
+        text, actions = _which_job(form, pool, why, style)
         return {"text": text, "actions": actions}
     if job.get("closed"):
         return {"text": f"{job['name']} is finished.", "actions": [job_action(job)]}
@@ -276,17 +304,18 @@ def _nav_reply(target: str, snap: dict[str, Any], perms: set[str]) -> dict[str, 
     return _page_reply(view, perms) if view else None
 
 
-def intent(question: str, snap: dict[str, Any], perms: set[str]) -> tuple[str, dict[str, Any]] | None:
+def intent(question: str, snap: dict[str, Any], perms: set[str], context_job_id: str = "") -> tuple[str, dict[str, Any]] | None:
     """A plain command the helper can carry out by opening something: (kind, reply) or None.
-    kind is "open-page" or "start-task", logged as what the question matched."""
-    q = " ".join((question or "").lower().replace("’", "'").split()).strip(" ?.!")
-    q = re.sub(r"^(?:please|can you|could you|would you)\s+", "", q)
+    kind is "open-page" or "start-task", logged as what the question matched. context_job_id: the
+    job whose page is open, meant when the command names none."""
+    q = " ".join((question or "").replace("’", "'").split()).strip(" ?.!")
+    q = re.sub(r"^(?:please|can you|could you|would you)\s+", "", q, flags=re.I)
     if not q or _QUESTION.match(q):
         return None
     style = domain.billing_style(snap)
     form = _task(q)
     if form:
-        reply = _task_reply(form, question, q, snap, perms, style)
+        reply = _task_reply(form, question, q, snap, perms, style, context_job_id)
         if reply:
             return "start-task", reply
     m = _NAV.match(q)
@@ -314,13 +343,19 @@ def answer_form(entry_id: str, snap: dict[str, Any], job: dict[str, Any] | None,
     return form_action(form, job, style)
 
 
-def closest(question: str, snap: dict[str, Any]) -> list[dict[str, Any]]:
+def may_open(action: dict[str, Any], perms: set[str] | None) -> bool:
+    """A page button only for someone who may open the page (PAGE_PERM); None: every permission."""
+    need = PAGE_PERM.get(action.get("view", "")) if action.get("type") == "nav" else None
+    return not need or perms is None or need in perms
+
+
+def closest(question: str, snap: dict[str, Any], perms: set[str] | None = None) -> list[dict[str, Any]]:
     """Pages, jobs and clients close to what was asked, for "I don't know that yet"."""
     words = [w for w in _words(question) if w not in _FILLER and len(w) >= 3]
     out: list[dict[str, Any]] = []
     for w in words:
         view = page_for(w)
-        if view and nav_action(view) not in out:
+        if view and nav_action(view) not in out and may_open(nav_action(view), perms):
             out.append(nav_action(view))
     job, tied = find_job(snap, question)
     for j in ([job] if job else tied)[:2]:

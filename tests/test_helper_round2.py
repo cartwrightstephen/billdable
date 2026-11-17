@@ -52,7 +52,8 @@ class OpenAPage(Base):
         r = self.ask("open the Oak Street job")
         self.assertEqual(r["actions"], [{"type": "job", "job_id": "job-oak", "label": "Open Oak Street kitchen"}])
         self.assertEqual(self.ask("open turnr office")["actions"][0]["job_id"], "job-turner")
-        self.assertEqual(self.ask("open TRN")["actions"][0]["job_id"], "job-turner")
+        r = self.ask("open TRN")
+        self.assertEqual((r["matched"], r.get("go"), r["actions"][0]["job_id"]), ("open-page", 0, "job-turner"))
         r = self.ask("open Northline")
         self.assertEqual((r["text"], r["actions"]), ("Opening Northline GC in the Client playbook.", [{"type": "client", "payer_id": "payer-north", "label": "Open Northline GC"}]))
 
@@ -99,12 +100,12 @@ class StartATask(Base):
         self.assertEqual(self.form("add a job")[1], {"type": "form", "form": "newjob", "label": "New job"})
 
     def test_without_a_job_it_asks_which_listing_only_jobs_the_form_fits(self):
-        r, a = self.form("record a payment")
-        self.assertIsNone(a)
+        r = self.ask("record a payment")
+        self.assertNotIn("go", r, "nothing opens until a job is picked")
         self.assertEqual(r["text"], "Which job?")
         self.assertEqual([x["label"] for x in r["actions"]], ["Turner office TI", "Brookhaven kitchen"], "only jobs with a pay app waiting")
-        self.assertEqual(r["actions"][0]["q"], "record a payment for Turner office TI")
-        self.assertEqual(self.form(r["actions"][0]["q"])[1]["job_id"], "job-turner")
+        # Each choice opens the form on that job by its id (asking again by name could go round in a circle).
+        self.assertEqual(r["actions"][0], {"type": "form", "form": "match", "label": "Turner office TI", "job_id": "job-turner"})
 
     def test_a_form_that_doesnt_fit_the_job_opens_the_job_instead(self):
         r, a = self.form("record a payment on oak street")

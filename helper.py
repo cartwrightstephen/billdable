@@ -254,13 +254,19 @@ def _row_action(r: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _due_week(snap: dict[str, Any], state: dict[str, Any] | None) -> tuple[str, list[dict[str, Any]]]:
+def _my_rows(state: dict[str, Any] | None, perms: set[str]) -> list[dict[str, Any]]:
+    """The Dashboard's To Do rows this person is shown: a row kept for a permission (a change order
+    to price, decision 2) only for those who hold it, as on the Dashboard."""
+    return domain.rows_with_perms(domain.today_rows(state), sorted(perms)) if state is not None else []
+
+
+def _due_week(snap: dict[str, Any], state: dict[str, Any] | None, perms: set[str] | None = None) -> tuple[str, list[dict[str, Any]]]:
     """To Do rows and tasks due in the next seven days, and pay apps whose payment is due then
     (payment terms): the dates the Dashboard and the Calendar keep. No money in it."""
     today = datetime.now(timezone.utc).date()
     first, last = today.isoformat(), (today + timedelta(days=6)).isoformat()
     items: list[tuple[str, str, dict[str, Any] | None]] = []
-    for r in (domain.today_rows(state) if state is not None else []):
+    for r in _my_rows(state, set(profiles.PERM_KEYS) if perms is None else perms):
         due = r.get("due") or first
         if due <= last:
             items.append((max(due, first), f"{r['job']}: {r['label']}", _row_action(r)))
@@ -302,10 +308,11 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
     if name == "today":
         # Today's own queue (domain.today_rows), so the helper, the Today page and the daily email
         # never disagree on what is due.
-        rows = domain.today_rows(state) if state is not None else []
+        rows = _my_rows(state, perms)
         if not rows:
             return f"Nothing needs action right now at {company}. Nice.", [{"type": "nav", "view": "dashboard", "label": "Open Dashboard"}]
-        lines = [f"- {r['job']}: {r['label']}. {r['text']}" for r in rows[:8]]
+        # A row's text can carry amounts: without "See company financials" only its label (decision 12).
+        lines = [f"- {r['job']}: {r['label']}. {r['text']}" if money_ok else f"- {r['job']}: {r['label']}" for r in rows[:8]]
         actions, seen = [], set()
         for r in rows:
             a = _row_action(r)
@@ -315,8 +322,10 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         return "Here is your To do, most urgent first:\n" + "\n".join(lines), actions[:6]
     if name == "money":
         t = snap["totals"]
-        billed_month = sum(i["amount_cents"] for j in snap["jobs"] for i in j["invoices"]
-                           if i["status"] in domain.BILLED_STATUSES and i.get("sent_at") and i["sent_at"][:7] == datetime.now(timezone.utc).strftime("%Y-%m"))
+        # Billed this month as Financials counts it (financials.compute), so the two agree.
+        this_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        billed_month = next((m["billed_cents"] for m in financials.compute(state if state is not None else snap)["monthly"]
+                             if m["month"] == this_month), 0)
         return (f"Across open jobs:\n- Finished but not billed: {domain.money(t['unbilled_cents'])}\n"
                 f"- Billed and not paid: {domain.money(t['outstanding_cents'])}\n- Retainage still held: {domain.money(t['retainage_cents'])}\n"
                 f"- Backlog: {domain.money(t.get('backlog_cents', 0))}\n"
@@ -373,10 +382,10 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         return (f"Backlog (signed work not done yet): {domain.money(f['backlog_cents'])}.\n" + "\n".join(lines),
                 [helper_intents.nav_action("financials")] + [{"type": "job", "job_id": r["job_id"], "label": f"Open {r['job']}"} for r in rows[:2]])
     if name == "due_week":
-        return _due_week(snap, state)
+        return _due_week(snap, state, perms)
     if name == "followups":
         # The same follow-up rule as Today, including a call noted with a date to check again.
-        due = [r for r in domain.today_rows(state) if r["kind"] == "follow_up"] if state is not None else []
+        due = [r for r in _my_rows(state, perms) if r["kind"] == "follow_up"]
         if not due:
             return ("No follow-ups are due. Each client's wait comes from Days between follow-ups in the Client playbook.",
                     [{"type": "nav", "view": "collections", "label": "Open Unpaid"}])
@@ -453,7 +462,9 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         rows = [(j, co) for j in jobs for co in j["change_orders"] if co["status"] == "pending"]
         if not rows:
             return "No change orders are waiting on a signature.", []
-        return "Change orders waiting on a signature:\n" + "\n".join(f"- {j['name']}: CO {co['number']} {co['title']} ({'no price yet' if co.get('unpriced') else domain.money(co['amount_cents'])})" for j, co in rows), \
+        # Amounts only for someone who may see the company's money (decision 12).
+        price = lambda co: f" ({'no price yet' if co.get('unpriced') else domain.money(co['amount_cents'])})" if money_ok else ""
+        return "Change orders waiting on a signature:\n" + "\n".join(f"- {j['name']}: CO {co['number']} {co['title']}{price(co)}" for j, co in rows), \
             [{"type": "nav", "view": "cos", "label": "Open Change orders"}]
     if name == "closeable":
         rows = [j for j in jobs if not j.get("close_blockers")]
@@ -494,7 +505,7 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
     top_score, top = ranked[0] if ranked else (0.0, None)
     reply: dict[str, Any] = {"actions": [], "suggestions": []}
     matched = None
-    command = helper_intents.intent(question, snap, perms)
+    command = helper_intents.intent(question, snap, perms, context_job_id)
     if command:
         # A plain command (Round 2, decision 12): open a page or a form, and nothing else.
         kind, done = command
@@ -513,7 +524,9 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
                 job = found
             if top.get("needs_job") and not job:
                 text = "Which job do you mean?"
-                actions = [{"type": "ask", "q": f"{question} {j['name']}", "label": j["name"]} for j in (tied or [j for j in snap["jobs"] if not j.get("closed")])][:6]
+                # Each choice asks again with that job's id, so a name that doesn't pick out one
+                # job (two alike, or common words only) doesn't ask "Which job?" forever.
+                actions = [{"type": "ask", "q": question, "job_id": j["id"], "label": j["name"]} for j in (tied or [j for j in snap["jobs"] if not j.get("closed")])][:6]
             else:
                 live = handle(top["handler"], snap, job, state, perms, question)
                 if live:
@@ -528,10 +541,10 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
         if close:
             reply["text"] = "I'm not sure I understood. Did you mean one of these?"
             reply["suggestions"] = [e["questions"][0] for e in close]
-            reply["actions"] = helper_intents.closest(question, snap)
+            reply["actions"] = helper_intents.closest(question, snap, perms)
         else:
             # The closest pages, jobs and clients as buttons, the closest answers as questions.
-            near = helper_intents.closest(question, snap)
+            near = helper_intents.closest(question, snap, perms)
             guesses = [e["questions"][0] for s, e in ranked[:3] if s > 0]
             reply["text"] = ("I don't know that yet. I've saved the question so the Duracash team can add an answer. "
                              + ("These are the closest I have." if near or guesses else "Try asking what to do today, who owes you, or how to import an email."))
@@ -539,7 +552,10 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
             reply["suggestions"] = guesses or ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"]
     # The rail itself: whatever an answer (shipped or added in the app) carries, only buttons that
     # open something go out (decision 12).
-    reply["actions"] = [a for a in reply["actions"] if isinstance(a, dict) and a.get("type") in helper_intents.SAFE_ACTIONS]
+    # A page button only for someone who may open it ("Open Financials" without the permission
+    # would only lead to a refusal).
+    reply["actions"] = [a for a in reply["actions"] if isinstance(a, dict) and a.get("type") in helper_intents.SAFE_ACTIONS
+                        and helper_intents.may_open(a, perms)]
     log_id = "q-" + secrets.token_hex(6)
     _log({
         "id": log_id, "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "company_id": company_id, "user_id": user_id,
