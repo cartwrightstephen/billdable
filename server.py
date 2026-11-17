@@ -2954,6 +2954,12 @@ class Handler(BaseHTTPRequestHandler):
         except auth.AuthError as exc:
             self._json(409, {"error": str(exc), "fields": {"name": str(exc)}})
             return
+        if ctx.company_id:
+            # Pay app approvers lists show the name as it is now (B25).
+            with company_lock(ctx.company_id):
+                state = load_company(ctx.company_id)
+                if domain.rename_approver(state, user["id"], user.get("name", "")):
+                    save_company(ctx.company_id, state)
         self._json(200, {"user": self._me_user(user)})
 
     def _p_my_sms(self, m, ctx: "Ctx") -> None:
@@ -3619,7 +3625,8 @@ JOB_ACTIONS = {
     # Round 2 (Stephen, 10 Nov): price a change order saved without one (decision 2), and a named
     # approver approves the draft pay app (decision 8).
     "co-price": (True, lambda h, st, j, i, c: _price_co(st, j, i, c)),
-    "payapp-approve": (False, lambda h, st, j, i, c: domain.approve_payapp(st, j, c.actor, c.user.get("id", ""))),
+    "payapp-approve": (False, lambda h, st, j, i, c: domain.approve_payapp(st, j, c.actor, c.user.get("id", ""),
+                                                                          invoice_id=_text(c.body, "invoice_id"), seen=_text(c.body, "stamp"))),
     "reopen": (False, lambda h, st, j, i, c: domain.reopen_job(st, j, _text(c.body, "reason"), c.actor)),
     "undo-done": (False, lambda h, st, j, i, c: domain.undo_mark_done(st, j, c.actor)),
     "accept-short-pay": (True, lambda h, st, j, i, c: domain.settle_short_pay(st, j, i, _text(c.body, "reason"), c.actor)),

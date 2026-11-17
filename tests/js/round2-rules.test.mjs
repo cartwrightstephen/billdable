@@ -106,7 +106,10 @@ test("Review & send lists the approvers; Approve is for the one signed in, once 
   const forBen = approvalHtml(inv, "u-ben", true);
   assert.match(forBen, /Ana Ruiz<\/span><span>Approved /);
   assert.match(forBen, /Ben Ode<\/span><span><span class="pill amber">Waiting/);
-  assert.match(forBen, /data-action="payapp-approve" data-id="j-1">Approve PA-1</);
+  assert.match(forBen, /data-action="payapp-approve" data-id="j-1" data-inv="" data-stamp="">Approve PA-1</);
+  // The version shown goes with the click, so a draft changed since isn't approved (B13).
+  const shown = approvalHtml({ ...inv, id: "inv-1", approval: { ...inv.approval, stamp: "abc123" } }, "u-ben", true);
+  assert.match(shown, /data-inv="inv-1" data-stamp="abc123">Approve PA-1</);
   assert.doesNotMatch(approvalHtml(inv, "u-ana", true), /payapp-approve/);
   assert.doesNotMatch(approvalHtml(inv, "u-ben", false), /payapp-approve/);
   assert.doesNotMatch(approvalHtml({ ...inv, status: "draft" }, "u-ben", true), /payapp-approve/);

@@ -614,6 +614,10 @@ class ReopenAndUndoTests(unittest.TestCase):  # R4-02
         self.assertEqual(state["audit"][-1]["action"], "reopen_job")
         domain.match_payment(state, job["id"], 100_000, "CHK 2")
         self.assertEqual((inv["short_pay_cents"], domain.job_money(job)["collected_cents"]), (0, 1_000_000))
+        # The late money owes its own waiver (decision 5) before the job closes again.
+        self.assertEqual((inv["waiver_due"], inv["waiver_sent"], domain.waiver_cents(job, inv)), (True, False, 100_000))
+        signed_waiver(state, job["id"], label="Waiver for the touch-up money")
+        domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
         domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
         with self.assertRaises(domain.GateError):

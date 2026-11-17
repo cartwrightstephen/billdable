@@ -124,7 +124,7 @@ export function approvalHtml(inv, meId = (me || {}).id, mayApprove = may("payapp
   return `<div class="payapp-approvals">
     <h3>Approvals</h3>
     ${people.map(p => `<div class="money-row"><span class="label">${p.name}</span><span>${p.approved_at ? `Approved ${fmtDateTime(p.approved_at)}` : `<span class="pill amber">Waiting</span>`}</span></div>`).join("")}
-    ${mine && mayApprove && ready ? `<button class="btn small" data-action="payapp-approve" data-id="${inv.job_id || ""}">Approve ${inv.number}</button>` : ""}
+    ${mine && mayApprove && ready ? `<button class="btn small" data-action="payapp-approve" data-id="${inv.job_id || ""}" data-inv="${inv.id || ""}" data-stamp="${a.stamp || ""}">Approve ${inv.number}</button>` : ""}
   </div>`;
 }
 
@@ -341,7 +341,12 @@ export const actions = {
     }
     return r;
   },
-  "payapp-approve": (el, id) => post(`/api/jobs/${id}/payapp-approve`),
+  // The version shown is the one approved: a draft changed since is refused (B13).
+  "payapp-approve": async (el, id) => {
+    const r = await post(`/api/jobs/${id}/payapp-approve`, { invoice_id: el.dataset.inv || "", stamp: el.dataset.stamp || "" });
+    if (r && r.data && r.data.review_changed) { await load(); render(); }   // show the version there is now
+    return r;
+  },
   // "Review & send" with no email yet (R1-05): saved to the client's settings, then send unlocks.
   "save-send-email": async (el, id) => {
     const v = formValues("sendemail");

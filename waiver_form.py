@@ -249,11 +249,10 @@ def render(paragraphs: list[str], title: str, values: dict[str, str]) -> bytes:
     acro = add(b"<< /Fields [%s] /DA (/Helv %d Tf 0 g) /DR << /Font << /Helv %d 0 R >> >> >>"
                % (b" ".join(b"%d 0 R" % f for f in fields), SIZE, helv))
     catalog = add(b"<< /Type /Catalog /Pages %d 0 R /AcroForm %d 0 R >>" % (pages_id, acro))
-    # Each widget names its page.
-    for i, obj in enumerate(objects):
-        m = re.search(rb"PAGEREF(\d+)", obj)
-        if m:
-            objects[i] = obj.replace(m.group(0), b"%d 0 R" % (first_page + int(m.group(1))))
+    # Each widget names its page. Only the widgets, and only their /P: the looks hold what people
+    # typed, which may read "PAGEREF9" too and must print as typed (B35).
+    for wid in fields:
+        objects[wid - 1] = re.sub(rb"/P PAGEREF(\d+) >>$", lambda m: b"/P %d 0 R >>" % (first_page + int(m.group(1))), objects[wid - 1])
 
     out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
     offsets = []

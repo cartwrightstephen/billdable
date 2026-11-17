@@ -201,6 +201,10 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
         "contract_total_cents": contract_total,
         "billed_cents": billed,
         "draft_cents": draft,
+        # Backlog's inputs (B0, B12): a draft's gross, and the unsigned change orders on pay apps
+        # sent or drafted, which aren't signed work until they are signed.
+        "draft_gross_cents": draft + retainage_on_drafts,
+        "unsigned_co_billed_cents": _unsigned_co_billed(job),
         "payments_cents": payments,
         "collected_cents": max(0, payments - returned),
         "refunded_cents": returned,
@@ -218,6 +222,12 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
         "retainage_credited_cents": credited,
         "retainage_open_cents": max(0, retainage_held - retainage_released - credited),
     }
+
+
+def _unsigned_co_billed(job: dict[str, Any]) -> int:
+    pending = {co.get("id") for co in job["change_orders"] if co["status"] == "pending"} - {None}
+    return sum(int(line.get("amount_cents") or 0) for inv in job["invoices"] if inv["status"] in BILLED_STATUSES | DRAFT_STATUSES
+               for line in inv.get("lines") or [] if line.get("co_id") in pending)
 
 
 def _owed_text(m: dict[str, int]) -> str:
@@ -702,7 +712,15 @@ def draft_invoice(
     # The override to draft the final pay app with an earlier one unpaid goes on that pay app, so
     # its page shows who, when and why (decision 6): the one mark_done drafts, and the same pay app
     # drafted again. A pay app drafted later (after a reopen, say) was never overridden.
-    override = final_override or (replaces or {}).get("final_override")
+    # Drafted again after Delete draft or a pull-back, the job is still done and still carries the
+    # override (reopen and undo clear it): the redraft keeps it only while a pay app it names is
+    # still unpaid (R4). Once those are paid nobody overrode anything for the new one.
+    unpaid_now = {inv["number"] for inv in unpaid_pay_apps(job) if inv is not invoice}
+    carried = (replaces or {}).get("final_override") or (
+        job.get("final_override") if invoice["final"] and job.get("work_status") == "complete" else None)
+    if carried and not unpaid_now & set(carried.get("unpaid") or []):
+        carried = None
+    override = final_override or carried
     if override:
         invoice["final_override"] = dict(override)
     if invoice["packet_id"] != "job-packet":
@@ -1086,6 +1104,13 @@ def _say_which(state: dict[str, Any], job: dict[str, Any], record: dict[str, Any
         record["waiver_kind"] = f"{kind}_{stage}"
 
 
+def _answer_stage(record: dict[str, Any], stage: str) -> str:
+    """The stage an answer types a record at: a form already typed final stays final. The answer
+    says conditional or unconditional only, and a final lien release answered on a progress pay
+    app is still a final release (decision 6 gates it as one)."""
+    return "final" if record_waiver_kind(record).endswith("_final") else stage
+
+
 def _filed_records(job: dict[str, Any], item: dict[str, Any]) -> list[dict[str, Any]]:
     """The records on an item that have files."""
     records = {r["id"]: r for r in job.get("records", [])}
@@ -1208,6 +1233,40 @@ def _unconditional_going(job: dict[str, Any], packet: list[dict[str, Any]], extr
     return out
 
 
+def _finals_going(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any = (), excluded: Any = (), retainage: bool = False) -> list[dict[str, Any]]:
+    """Unconditional final waivers going out with a send, on whatever item they sit, an item that
+    asks for an unconditional waiver for an earlier payment included (B2, B32): the record's own
+    type says it is the final lien release, not the item's word. The final waiver already sent
+    for this job goes with the retainage request it fills the closeout for."""
+    excluded = set(excluded or [])
+    out: list[dict[str, Any]] = []
+    for rec, _item in _going_records(job, packet, extra_ids):
+        kind = record_waiver_kind(rec)
+        if rec in out or not kind.endswith("_final") or not (kind.startswith("unconditional") or _is_unconditional(rec)):
+            continue
+        if (retainage and _sent_for_this_job(job, rec)) or _left_out(rec, excluded):
+            continue
+        out.append(rec)
+    return out
+
+
+def _no_early_final_waiver(job: dict[str, Any], finals: list[dict[str, Any]], where: str) -> None:
+    """An unconditional final waiver going with a send is the final lien release going out: it
+    waits for all the money, with no override (Stephen, 10 Nov, decision 6), as send_waiver does.
+    The owner's reason still covers an unconditional progress waiver going with it."""
+    left = final_waiver_holds(job) if finals else []
+    if left:
+        raise GateError(f"A final waiver can't go out until all the money on {job['name']} is in: {', '.join(left)}. "
+                        f"Take {_numbers_of(finals)} off to send {where}.",
+                        [f"{r['label']} ({_why_unconditional(r)})" for r in finals],
+                        extra={"final_waiver_held": left}, keep_changes=True)
+
+
+def _numbers_of(records: list[dict[str, Any]]) -> str:
+    names = [r["label"] for r in records]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
 def unconditional_waivers_attached(job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, Any]]:
     """The unconditional waivers going out with this pay app where it needs the conditional one
     (M14): sending them takes an owner and a reason."""
@@ -1258,6 +1317,7 @@ def answer_waiver_question(state: dict[str, Any], job_id: str, record_id: str, a
         raise GateError(f"{rec['label']} has changed since this page was opened. Look at its files again.", extra={"review_changed": True})
     draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     stage = "final" if (draft or {}).get("final") or (not draft and job.get("work_status") == "complete") else "progress"
+    stage = _answer_stage(rec, stage)
     _say_which(state, job, rec, answer, actor, stage, f" going with {draft['number']}" if draft else " going with the closeout documents", answerer)
     if not job.get("closed"):
         _refresh_draft_gate(job, state)
@@ -1347,6 +1407,8 @@ def approve_and_send(
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
     _need_waiver_answers(state, job, invoice.get("packet") or [], invoice.get("extra_record_ids") or [], invoice.get("excluded_file_ids") or [], read_file)
+    _no_early_final_waiver(job, _finals_going(job, invoice.get("packet") or [], invoice.get("extra_record_ids") or [],
+                                              invoice.get("excluded_file_ids") or []), f"with {invoice['number']}")
     unconditional = unconditional_waivers_attached(job, invoice)
     override = _reason(unconditional_override) if unconditional else ""
     if unconditional and not override:
@@ -1651,6 +1713,11 @@ def match_payment(
         was_short = int(invoice.get("short_pay_cents") or 0)
         invoice["short_pay_cents"] = max(0, invoice["amount_cents"] - collected_for_invoice)
         late = f" Short pay now {money(invoice['short_pay_cents'])}." if was_short else " Refund paid back."
+        # Money in after the short pay names its own waiver (decision 5): the one before covers
+        # only what had come in then.
+        if was_short and waiver_cents(job, invoice) > 0:
+            due = _paid_waiver_comes_due(state, job, invoice)
+            job["external_status"] = "Payment received, waiver not sent" if due else "Payment received"
     elif collected_for_invoice >= invoice["amount_cents"]:
         if _legacy_waiver_pending(job):
             job["legacy_waiver_pending"] = True
@@ -1761,8 +1828,12 @@ def received_for(job: dict[str, Any], invoice: dict[str, Any]) -> int:
 
 def waiver_cents(job: dict[str, Any], invoice: dict[str, Any]) -> int:
     """What the waiver owed on a pay app covers: what came in since the last waiver on it, so a
-    part payment's waiver and the one for the rest each name their own money."""
-    return max(0, received_for(job, invoice) - int(invoice.get("waiver_covered_cents") or 0))
+    part payment's waiver and the one for the rest each name their own money. The final waiver
+    owed on a pay app whose money its progress waivers already cover names all it received."""
+    left = max(0, received_for(job, invoice) - int(invoice.get("waiver_covered_cents") or 0))
+    if not left and invoice.get("final_waiver_owed") and invoice.get("waiver_due") and not invoice.get("waiver_sent"):
+        return received_for(job, invoice)
+    return left
 
 
 def _partial_waiver_due(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> bool:
@@ -1779,22 +1850,70 @@ def _partial_waiver_due(state: dict[str, Any], job: dict[str, Any], invoice: dic
 def _paid_waiver_comes_due(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> bool:
     """A pay app now paid owes a waiver for the money no waiver covers yet. When part-payment
     waivers already cover all it received (the rest settled short), nothing is left to waive: a
-    $0 waiver would be a form with nothing on it (decision 5), so the pay app's waiver is settled."""
+    $0 waiver would be a form with nothing on it (decision 5), so the pay app's waiver is settled.
+    Unless its waiver is the job's final one: the final lien release still has to go out before
+    the job closes (decision 6), and only progress waivers covered this money."""
     if waiver_cents(job, invoice) <= 0:
-        invoice["waiver_due"] = False
-        _sync_waiver(job)
-        return False
+        if not still_open(job, invoice) and not _final_waiver_went(job):
+            invoice["final_waiver_owed"] = True
+        else:
+            _shelve_waiver(invoice)
+            invoice["waiver_due"] = False
+            invoice["waiver_sent"] = False
+            _sync_waiver(job)
+            return False
     due = _waiver_comes_due(state, job, invoice, invoice["number"])
     _sync_waiver(job)
     return due
+
+
+def _final_waiver_went(job: dict[str, Any]) -> bool:
+    """A final waiver already went out (or was settled) on this job."""
+    for inv in job["invoices"]:
+        if inv.get("status") == "void":
+            continue
+        if inv.get("waiver_sent") and str(inv.get("waiver_kind", "")).endswith("_final"):
+            return True
+        if any(str(pw.get("kind", "")).endswith("_final") for pw in inv.get("partial_waivers") or []):
+            return True
+    return any(r.get("waiver_sent") and str(r.get("kind", "")).endswith("_final") for r in job.get("retainage_waivers", [])) \
+        or any(r.get("sent_as_final") for r in job.get("records", []))
 
 
 def _part_waiver_kept(invoice: dict[str, Any], entry: dict[str, Any]) -> None:
     """A part payment's waiver settled (sent, or not needed): kept on the pay app, since the one
     for the rest of its money comes due on the same pay app later."""
     invoice["waiver_covered_cents"] = invoice.get("waiver_covered_cents", 0) + entry["cents"]
+    invoice["waiver_cents"] = entry["cents"]
     if invoice.get("status") == "partial":
         invoice.setdefault("partial_waivers", []).append(entry)
+
+
+def _settled_at(invoice: dict[str, Any]) -> str:
+    """When the pay app's own waiver was settled (sent or not needed), blank if it wasn't."""
+    if invoice.get("waiver_sent"):
+        return str(invoice.get("waiver_sent_at") or "")
+    return str((invoice.get("waiver_not_needed") or {}).get("at") or "")
+
+
+def _shelve_waiver(invoice: dict[str, Any]) -> None:
+    """Move the pay app's settled waiver into partial_waivers before another settles or comes due
+    on it (decision 5): late money after a short pay owes its own waiver, and the one before it
+    stays listed once, not on the pay app and again in partial_waivers. While the pay app is
+    part paid its settled waiver is in both already (_part_waiver_kept)."""
+    at = _settled_at(invoice)
+    done = invoice.get("waiver_sent") or invoice.get("waiver_not_needed")
+    history = invoice.get("partial_waivers") or []
+    if done and not (history and history[-1].get("at") == at):
+        off = invoice.get("waiver_not_needed")
+        entry = {"cents": int(invoice.get("waiver_cents") or 0), "at": at}
+        if off:
+            entry.update({**off, "not_needed": True})
+        else:
+            entry.update(kind=invoice.get("waiver_kind") or "", record_id=invoice.get("waiver_record_id") or "")
+        invoice.setdefault("partial_waivers", []).append(entry)
+    for key in ("waiver_not_needed", "waiver_sent_at", "waiver_kind", "waiver_record_id", "final_waiver_owed"):
+        invoice.pop(key, None)
 
 
 def still_open(job: dict[str, Any], invoice: dict[str, Any] | None = None) -> list[str]:
@@ -1957,13 +2076,18 @@ def waiver_on_file(state: dict[str, Any], job: dict[str, Any], kind: str, invoic
 
 def _waiver_on_file(state: dict[str, Any], job: dict[str, Any], kind: str, tied: Any) -> dict[str, Any] | None:
     sent = _sent_file_ids(state, job)
+    # A form a waiver was already settled with (sent, or marked not needed) isn't the next one.
+    used = {pw.get("record_id") for inv in job["invoices"] for pw in inv.get("partial_waivers") or []} \
+        | {(inv.get("waiver_not_needed") or {}).get("record_id") for inv in job["invoices"]}
+    used.discard(None)
+    used.discard("")
     # A waiver put on a conditional waiver item (a pay app's or the closeout one) is that
     # conditional waiver, even when its type was never said: never the one sent after payment.
     conditional = {a.get("record_id") for packet in [inv.get("packet") or [] for inv in job["invoices"] if inv.get("status") != "void"]
                    + [job.get("closeout_packet") or []] for item in packet
                    if str(item.get("waiver_kind", "")).startswith("conditional") for a in item.get("attachments", [])}
     for record in reversed(job.get("records", [])):
-        if record.get("kind") != "waiver" or record.get("number_only") or waiver_answer(record) == "no":
+        if record.get("kind") != "waiver" or record.get("number_only") or waiver_answer(record) == "no" or record["id"] in used:
             continue
         has = record_waiver_kind(record)
         if not has and record["id"] in conditional:
@@ -1986,17 +2110,26 @@ def _waiver_comes_due(state: dict[str, Any], job: dict[str, Any], what: dict[str
     with its own audited way out (waiver_not_needed). Returns whether one is due."""
     payer = _payer(state, job["payer_id"])
     skip = payer.get("waiver_not_needed")
+    invoice = what in job["invoices"]
+    final_owed = what.get("final_waiver_owed")
+    if invoice:
+        # A waiver settled earlier on this pay app is kept in partial_waivers; this is a new one.
+        _shelve_waiver(what)
+        if final_owed:
+            what["final_waiver_owed"] = True
     what["waiver_sent"] = False
-    # A part payment's waiver settled earlier is kept in partial_waivers; this is a new one.
-    for key in ("waiver_not_needed", "waiver_sent_at", "waiver_kind", "waiver_record_id"):
-        if key in what and what.get("partial_waivers"):
-            what.pop(key)
     if not skip:
         what["waiver_due"] = True
         return True
     reason = skip.get("reason") or "Not needed for this client"
+    what.pop("final_waiver_owed", None)
+    cents = waiver_cents(job, what) if invoice else 0
     what["waiver_due"] = False
     what["waiver_not_needed"] = {"by": "duracash", "at": utcnow(), "reason": reason, "client": True}
+    if invoice:
+        # Settled like any other (B5): the waiver for money that comes in later names only that
+        # money, and its page doesn't keep this client's mark once the client takes waivers again.
+        _part_waiver_kept(what, {"cents": cents, **what["waiver_not_needed"], "not_needed": True})
     audit(state, job["id"], "waiver_not_needed", f"No lien waiver is due for {which}: {payer['name']} does not take them ({reason}).", "duracash")
     return False
 
@@ -2195,6 +2328,13 @@ def waiver_not_needed(
         raise GateError("No waiver is due there.")
     _hold_unclear_waivers(job)
     mark = {"by": actor, "at": utcnow(), "reason": reason}
+    if target in job["invoices"]:
+        # The signed form that would have gone for this pay app is used up with it (B33): tied to
+        # it, else the untied one waiver_on_file falls back to (Choose file leaves it so) when it
+        # can only be this one's. The waiver for money that comes in later needs its own form.
+        found = waiver_on_file(state, job, suggested_waiver_kind(job, target), invoice_id=target["id"])
+        if found and not found["ambiguous"]:
+            mark["record_id"] = found["record"]["id"]
     if target is job:
         which = "the earlier payment"
         job["legacy_waiver_pending"] = False
@@ -2296,6 +2436,7 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
     if missing:
         raise GateError("The closeout documents aren't complete.", [_blocker_text(job, item) for item in missing], keep_changes=bool(asked))
     _need_waiver_answers(state, job, closeout, (), (), read_file)
+    _no_early_final_waiver(job, _finals_going(job, closeout, retainage=True), "with the retainage request")
     unconditional = _unconditional_going(job, closeout, retainage=True)
     override = _reason(unconditional_override) if unconditional else ""
     if unconditional and not override:
@@ -2607,8 +2748,11 @@ def job_state(job: dict[str, Any]) -> str:
 
 def backlog_cents(m: dict[str, int]) -> int:
     """Signed work not done yet on a job (its job_money): the contract with signed change orders,
-    less what is billed, drafted, and done but not billed yet (Money > Financials)."""
-    return max(0, m["contract_total_cents"] - m["billed_gross_cents"] - m["draft_cents"] - m["unbilled_completed_cents"])
+    less what is billed, drafted, and done but not billed yet (Money > Financials). Billed and
+    drafted are gross, retainage in, and leave out unsigned change orders on them, which the
+    contract total doesn't hold either."""
+    signed_billed = m["billed_gross_cents"] + m.get("draft_gross_cents", m["draft_cents"]) - m.get("unsigned_co_billed_cents", 0)
+    return max(0, m["contract_total_cents"] - signed_billed - m["unbilled_completed_cents"])
 
 
 def _totals(views: list[dict[str, Any]]) -> dict[str, Any]:
@@ -3039,7 +3183,8 @@ def _digest_week_day(job: dict[str, Any] | None, today: date) -> bool:
 
 
 def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = None, user_id: str | None = None,
-                 owner: bool = True, perms: list[str] | None = None) -> tuple[str, str] | None:
+                 owner: bool = True, perms: list[str] | None = None,
+                 team_perms: dict[str, list[str]] | None = None) -> tuple[str, str] | None:
     """The daily "due today" email (R4-10): (subject, body) listing every Today row that needs a
     person, each with its link, and the open tasks due today or before; None on a day with nothing
     due. A pay app the customer approved with a date to pay is waiting, not due, and is left out.
@@ -3060,7 +3205,13 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     def this_week(r: dict[str, Any]) -> bool:
         return r["kind"] not in WEEKLY_DIGEST_KINDS or _digest_week_day(by_id.get(r["job_id"]), now.date())
 
-    rows = rows_for_user([r for r in rows_with_perms(today_rows(state, now), perms) if r["kind"] in DIGEST_NOUNS and due_now(r) and this_week(r)], user_id, owner)
+    rows = [r for r in rows_with_perms(today_rows(state, now), perms) if r["kind"] in DIGEST_NOUNS and due_now(r) and this_week(r)]
+    if team_perms is not None:
+        # A row assigned to someone whose permissions don't cover it (a change order to price, for
+        # a Member) is nobody's to them, so it goes to the owners as an unassigned one (B23).
+        rows = [dict(r, assignee_id="") if r.get("perm") and r.get("assignee_id") and r["perm"] not in team_perms.get(r["assignee_id"], [])
+                else r for r in rows]
+    rows = rows_for_user(rows, user_id, owner)
     tasks = rows_for_user(tasks_due_by(state, now.date()), user_id, owner)
     if not rows and not tasks:
         return None
@@ -5191,7 +5342,7 @@ def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any]
         stage = "final" if str(item.get("waiver_kind") or "").endswith("_final") else "progress"
         for rec in filed:
             if answer:
-                _say_which(state, job, rec, answer, actor, stage, answerer=answerer)
+                _say_which(state, job, rec, answer, actor, _answer_stage(rec, stage), answerer=answerer)
         item["looked_as"] = answer or waiver_answer(filed[0])
         audit(state, job["id"], "packet_confirmed", f"{actor} said {names} is the {item['looked_as']} waiver for {item['label']} on {which}{warned}.", actor)
         return

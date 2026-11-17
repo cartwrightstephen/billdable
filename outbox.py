@@ -19,8 +19,15 @@ import domain
 import importer
 import mailer
 import payapp_pdf
+from domain import profiles
 
 STUCK_MINUTES = 30  # an email still "sending" after this long died mid-send and can be retried
+
+
+def _snapshot(state: dict, user: dict | None) -> dict:
+    """The reply, with only the To Do rows this person's permissions cover, as /api/state sends
+    them (Round 2 decision 2: a change order to price is for those who can manage jobs)."""
+    return domain.light_snapshot(state, perms=profiles.perms_of(user, state) if user else None)
 
 
 def deliver_queued(site, company_id: str, user: dict, only: set | None = None, rid: str = "") -> dict | None:
@@ -45,7 +52,7 @@ def deliver_queued(site, company_id: str, user: dict, only: set | None = None, r
             for e in queued:
                 e["status"] = reason
             site.save(company_id, state)
-            return domain.light_snapshot(state)
+            return _snapshot(state, user)
         # Off the allow-list (Decision 8): stays here, marked, and takes no room in the daily limit.
         for e in queued:
             if not mailer.allowed(e.get("to", "")):
@@ -93,7 +100,7 @@ def deliver_queued(site, company_id: str, user: dict, only: set | None = None, r
         inbound = site.inbound(company_id)
         site.save(company_id, state)
         if not work:
-            return domain.light_snapshot(state)
+            return _snapshot(state, user)
     # Outside the lock: read attachments and talk to the mail server.
     outcome: dict = {}
     try:
@@ -133,7 +140,7 @@ def deliver_queued(site, company_id: str, user: dict, only: set | None = None, r
                 else:
                     e["failed_at"] = done_at
         site.save(company_id, state)
-        return domain.light_snapshot(state)
+        return _snapshot(state, user)
 
 
 def retry_email(site, company_id: str, user: dict, email_id: str, rid: str = "") -> tuple:
@@ -155,6 +162,6 @@ def retry_email(site, company_id: str, user: dict, email_id: str, rid: str = "")
         entry["status"] = "queued"
         entry["retried"] = entry.get("retried", 0) + 1
         site.save(company_id, state)
-        payload = domain.light_snapshot(state)
+        payload = _snapshot(state, user)
     # Delivery happens after the lock is released.
     return 200, deliver_queued(site, company_id, user, {email_id}, rid) or payload
