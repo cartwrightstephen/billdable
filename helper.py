@@ -7,9 +7,10 @@ Answers live in a database the team keeps growing:
 Every question is logged to <data dir>/helper_log.json with what it matched,
 so unanswered and unhelpful questions show up for the founders to answer.
 
-There is no AI model here. Matching is word overlap with synonyms; "agentic"
-answers read the company's own jobs and offer buttons that call the same
-endpoints as the rest of the app, so every gate and confirmation still applies.
+There is no AI model here. Matching is word overlap with synonyms; live answers
+read the company's own jobs. Since Round 2 (Stephen, 10 Nov, decision 12) it also
+opens pages and forms on a plain command (helper_intents.py), and every button it
+offers only opens something: the helper never changes data itself (SAFE_ACTIONS).
 """
 
 from __future__ import annotations
@@ -24,7 +25,10 @@ from pathlib import Path
 from typing import Any
 
 import domain
+import financials
+import helper_intents
 import storage
+from domain import profiles
 
 ROOT = Path(__file__).resolve().parent
 SHIPPED_KB = ROOT / "helper" / "answers.json"
@@ -227,28 +231,69 @@ def _job_btn(j: dict[str, Any]) -> dict[str, Any]:
     return {"type": "job", "job_id": j["id"], "label": f"Open {j['name']}"}
 
 
-def _followup_due(snap: dict[str, Any], j: dict[str, Any]) -> tuple[dict[str, Any], int] | None:
-    """The oldest pay app out for payment and the days since the last contact, when the server's
-    rule (domain.follow_up_due: the customer's days between follow-ups, a date noted after a call,
-    a promised pay date) says a follow-up is due now."""
-    unpaid = [i for i in j["invoices"] if i["status"] in domain.OPEN_FOR_PAYMENT]
-    due = domain.follow_up_due(j, j["payer"]) if unpaid else None
-    if not due or datetime.now(timezone.utc) < due:
-        return None
-    return unpaid[0], _days_since(unpaid[0].get("last_follow_up_at") or unpaid[0].get("sent_at")) or 0
-
-
-def _follow_up_btn(r: dict[str, Any]) -> dict[str, Any]:
-    return {"type": "post", "path": f"/api/jobs/{r['job_id']}/follow-up", "label": f"Follow up: {r['job']}",
-            "confirm": f"Send a follow-up on {r['job']}? It is emailed when email is set up, and listed in the Outbox either way."}
-
-
 # A Today row whose button is on Today or in the Inbox opens that page.
 PAGE_LABELS = {"/dashboard": "Open Dashboard", "/communications": "Open Inbox"}
 
 
+# Said instead of a company-wide money figure to someone without "See company financials" (decision 12).
+NO_MONEY = "Company money figures need the \"See company financials\" permission. Ask an owner."
+# The answers that are company-wide money figures (decision 12's rails): who owes, unbilled,
+# retainage held, backlog, the totals. A job's own figures stay, as its page shows them to all.
+MONEY_HANDLERS = {"money", "who_owes", "unbilled", "retainage_list", "backlog"}
+
+
+def _row_action(r: dict[str, Any]) -> dict[str, Any] | None:
+    """A Today row's page: its own when it has one, else its job's, where its button is. Never the
+    button itself: the helper opens, the person acts (decision 12)."""
+    if r["path"] in PAGE_LABELS:
+        return {"type": "path", "path": r["path"], "label": PAGE_LABELS[r["path"]]}
+    if r["path"]:
+        return {"type": "path", "path": r["path"], "label": f"{r['button']}: {r['job']}" if r["button"] else f"Open {r['job']}"}
+    if r.get("job_id"):
+        return {"type": "job", "job_id": r["job_id"], "label": f"Open {r['job']}"}
+    return None
+
+
+def _due_week(snap: dict[str, Any], state: dict[str, Any] | None) -> tuple[str, list[dict[str, Any]]]:
+    """To Do rows and tasks due in the next seven days, and pay apps whose payment is due then
+    (payment terms): the dates the Dashboard and the Calendar keep. No money in it."""
+    today = datetime.now(timezone.utc).date()
+    first, last = today.isoformat(), (today + timedelta(days=6)).isoformat()
+    items: list[tuple[str, str, dict[str, Any] | None]] = []
+    for r in (domain.today_rows(state) if state is not None else []):
+        due = r.get("due") or first
+        if due <= last:
+            items.append((max(due, first), f"{r['job']}: {r['label']}", _row_action(r)))
+    jobs = {j["id"]: j for j in snap["jobs"]}
+    for t in (state or {}).get("tasks", []):
+        if t.get("status") != "done" and t.get("due") and t["due"] <= last:
+            j = jobs.get(t.get("job_id") or "")
+            items.append((max(t["due"], first), t.get("title", "") + (f" ({j['name']})" if j else ""), helper_intents.nav_action("dashboard")))
+    for j in snap["jobs"]:
+        for inv in j["invoices"]:
+            if inv["status"] in domain.OPEN_FOR_PAYMENT and first <= str(inv.get("due_on") or "") <= last:
+                items.append((inv["due_on"], f"{j['name']}: {inv['number']} payment due", helper_intents.job_action(j)))
+    if not items:
+        return "Nothing is due in the next seven days.", [helper_intents.nav_action("calendar")]
+    items.sort(key=lambda i: i[0])
+    day = lambda iso: "today" if iso == first else (lambda d: f"{d:%a %b} {d.day}")(datetime.fromisoformat(iso))
+    lines = [f"- {day(d)}: {text}" for d, text, _ in items[:10]]
+    actions, seen = [], set()
+    for _, _, a in items:
+        if a and a["label"] not in seen and len(actions) < 4:
+            seen.add(a["label"])
+            actions.append(a)
+    return "Due this week:\n" + "\n".join(lines), actions + [helper_intents.nav_action("calendar")]
+
+
 def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
-           state: dict[str, Any] | None = None) -> tuple[str, list[dict[str, Any]]] | None:
+           state: dict[str, Any] | None = None, perms: set[str] | None = None, question: str = "") -> tuple[str, list[dict[str, Any]]] | None:
+    """A live answer from the company's own data. perms: what the person asking may do (None: all,
+    for the tests and the founders' review); without "financials" no company-wide money figure."""
+    perms = set(profiles.PERM_KEYS) if perms is None else perms
+    if name in MONEY_HANDLERS and "financials" not in perms:
+        return NO_MONEY, []
+    money_ok = "financials" in perms
     jobs = [j for j in snap["jobs"] if not j.get("closed")]
     company = snap.get("company", {}).get("name", "your company")
     # The helper's own words in the company's word for a pay app (R6-01); names stay as typed.
@@ -263,13 +308,10 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         lines = [f"- {r['job']}: {r['label']}. {r['text']}" for r in rows[:8]]
         actions, seen = [], set()
         for r in rows:
-            label = PAGE_LABELS.get(r["path"]) or (f"{r['button']}: {r['job']}" if r["button"] else "")
-            if label and label not in seen:
-                seen.add(label)
-                if r["kind"] == "follow_up":
-                    actions.append(_follow_up_btn(r))
-                else:
-                    actions.append({"type": "path", "path": r["path"], "label": label})
+            a = _row_action(r)
+            if a and a["label"] not in seen:
+                seen.add(a["label"])
+                actions.append(a)
         return "Here is your To do, most urgent first:\n" + "\n".join(lines), actions[:6]
     if name == "money":
         t = snap["totals"]
@@ -277,19 +319,61 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
                            if i["status"] in domain.BILLED_STATUSES and i.get("sent_at") and i["sent_at"][:7] == datetime.now(timezone.utc).strftime("%Y-%m"))
         return (f"Across open jobs:\n- Finished but not billed: {domain.money(t['unbilled_cents'])}\n"
                 f"- Billed and not paid: {domain.money(t['outstanding_cents'])}\n- Retainage still held: {domain.money(t['retainage_cents'])}\n"
-                f"- Billed this month: {domain.money(billed_month)}"), [{"type": "nav", "view": "dashboard", "label": "Open Dashboard"},
+                f"- Backlog: {domain.money(t.get('backlog_cents', 0))}\n"
+                f"- Billed this month: {domain.money(billed_month)}"), [{"type": "nav", "view": "financials", "label": "Open Financials"},
                                                                        {"type": "nav", "view": "collections", "label": "Open Unpaid"}]
     if name == "who_owes":
-        owing = sorted((j for j in jobs if j["money"]["outstanding_cents"] > 0), key=lambda j: -j["money"]["outstanding_cents"])
-        if not owing:
+        # Money > Financials' own figures (financials.compute), so the helper, the page and the
+        # money strip never disagree. A client named in the question gets just theirs.
+        f = financials.compute(state if state is not None else snap)
+        rows = [c for c in f["clients"] if c["owed_cents"] > 0]
+        # Only a job the question names: on a job's page "who owes me?" still means everyone.
+        job = job if job and question and find_job(snap, question) else None
+        payer, _ = helper_intents.find_client(snap, question) if question and not job else (None, [])
+        if job:
+            # "How much does Turner owe?" names the job: what is owed on it, pay app by pay app.
+            mine = [r for r in f["aging_rows"] if r["job_id"] == job["id"]]
+            if not mine:
+                return f"Nothing is owed on {job['name']} right now.", [_job_btn(job)]
+            return (f"{job['name']} ({job['payer']['name']}) owes {domain.money(sum(r['cents'] for r in mine))}:\n"
+                    + "\n".join(f"- {r['pay_app']}: {domain.money(r['cents'])}, {r['days']} days" for r in mine), [_job_btn(job), helper_intents.nav_action("collections")])
+        if payer:
+            rows = [c for c in rows if c["client"] == payer["name"]]
+            if not rows:
+                return f"{payer['name']} owes you nothing on a sent {pay_app} right now.", [helper_intents.client_action(payer)]
+        if not rows:
             return f"Nobody owes you on a sent {pay_app} right now.", []
+        total = sum(c["owed_cents"] for c in rows)
         lines = []
-        for j in owing[:8]:
-            inv = next((i for i in j["invoices"] if i["status"] in {"sent", "partial", "approved"}), None)
-            since = _days_since(inv.get("sent_at")) if inv else None
-            lines.append(f"- {j['payer']['name']} on {j['name']}: {domain.money(j['money']['outstanding_cents'])}"
-                         + (f", sent {since} days ago" if since is not None else ""))
-        return "Who owes you, largest first:\n" + "\n".join(lines), [{"type": "nav", "view": "collections", "label": "Open Unpaid"}] + [_job_btn(j) for j in owing[:3]]
+        for c in rows[:8]:
+            oldest = max((r["days"] for r in f["aging_rows"] if r["client"] == c["client"]), default=None)
+            lines.append(f"- {c['client']}: {domain.money(c['owed_cents'])}" + (f", oldest {oldest} days" if oldest else ""))
+        head = f"{payer['name']} owes you {domain.money(total)}:" if payer else f"Owed to you: {domain.money(total)}, largest first:"
+        owing = sorted({r["job_id"]: r for r in f["aging_rows"] if not payer or r["client"] == payer["name"]}.values(), key=lambda r: -r["cents"])
+        return head + "\n" + "\n".join(lines), [helper_intents.nav_action("collections")] + [
+            {"type": "job", "job_id": r["job_id"], "label": f"Open {r['job']}"} for r in owing[:3]]
+    if name == "unpaid":
+        # Each pay app still owed on, by days since it was sent (financials' aging): with amounts
+        # for someone who may see the company's money, without for anyone else.
+        f = financials.compute(state if state is not None else snap)
+        rows = sorted(f["aging_rows"], key=lambda r: -r["days"])
+        if not rows:
+            return f"No sent {pay_app} is waiting for payment.", [helper_intents.nav_action("collections")]
+        lines = [f"- {r['pay_app']}, {r['job']}: " + (f"{domain.money(r['cents'])}, " if money_ok else "") + f"{r['days']} days" for r in rows[:10]]
+        head = domain.term_text("Unpaid pay apps", style) + ", oldest first" + (f" ({domain.money(f['receivable_cents'])} in all)" if money_ok else "") + ":"
+        jobs_seen = list({r["job_id"]: r for r in rows}.values())[:3]
+        return head + "\n" + "\n".join(lines), [helper_intents.nav_action("collections")] + [
+            {"type": "job", "job_id": r["job_id"], "label": f"Open {r['job']}"} for r in jobs_seen]
+    if name == "backlog":
+        f = financials.compute(state if state is not None else snap)
+        rows = [r for r in f["backlog_jobs"] if r["left_cents"] > 0]
+        if not f["backlog_cents"]:
+            return "No signed work is left to do on open jobs.", [helper_intents.nav_action("financials")]
+        lines = [f"- {r['job']}: {domain.money(r['left_cents'])}" for r in rows[:6]]
+        return (f"Backlog (signed work not done yet): {domain.money(f['backlog_cents'])}.\n" + "\n".join(lines),
+                [helper_intents.nav_action("financials")] + [{"type": "job", "job_id": r["job_id"], "label": f"Open {r['job']}"} for r in rows[:2]])
+    if name == "due_week":
+        return _due_week(snap, state)
     if name == "followups":
         # The same follow-up rule as Today, including a call noted with a date to check again.
         due = [r for r in domain.today_rows(state) if r["kind"] == "follow_up"] if state is not None else []
@@ -297,7 +381,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
             return ("No follow-ups are due. Each client's wait comes from Days between follow-ups in the Client playbook.",
                     [{"type": "nav", "view": "collections", "label": "Open Unpaid"}])
         lines = [f"- {r['job']}: {r['text']}" for r in due]
-        actions = [_follow_up_btn(r) for r in due[:4]]
+        actions = [a for a in (_row_action(r) for r in due[:4]) if a]
         return "These follow-ups are due now:\n" + "\n".join(lines), actions
     if name == "draft_followup":
         if not job:
@@ -308,10 +392,8 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         p = job["payer"]
         note = (f"Hi {p.get('approver') or p['name']},\n\nChecking on {inv['number']} for {job['name']} "
                 f"({domain.money(inv['amount_cents'])}), sent {(inv.get('sent_at') or '')[:10]}. Is anything missing on your side?\n\nThanks,\n{company}")
+        # Sending it is the job page's Send follow-up: the helper only opens the job (decision 12).
         actions = [{"type": "copy", "text": note, "label": "Copy note"}]
-        if _followup_due(snap, job):
-            actions.append({"type": "post", "path": f"/api/jobs/{job['id']}/follow-up", "label": "Send the follow-up",
-                            "confirm": f"Send a follow-up on {inv['number']} to {p.get('ap_email') or 'the client'}? It is emailed when email is set up, and listed in the Outbox either way."})
         return f"Here is a follow-up for {job['name']}:\n\n{note}", actions + [_job_btn(job)]
     if name == "blockers":
         if not job:
@@ -338,7 +420,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         if not rows:
             return f"All finished work is on a {pay_app}.", []
         return "Finished work not billed yet:\n" + "\n".join(f"- {j['name']}: {domain.money(j['money']['unbilled_completed_cents'])}" for j in rows), \
-            [{"type": "post", "path": f"/api/jobs/{j['id']}/draft", "label": f"Draft for {j['name']}", "confirm": f"Draft a {pay_app} for {j['name']}?"} for j in rows[:4]]
+            [_job_btn(j) for j in rows[:4]]
     if name == "retainage_list":
         rows = [j for j in jobs if j["money"]["retainage_open_cents"] > 0]
         if not rows:
@@ -354,7 +436,8 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
                 if datetime.now(timezone.utc) < due:
                     state_txt = f"asked {last[:10]}, ask again from {due.date().isoformat()}"
             lines.append(f"- {j['name']}: {domain.money(j['money']['retainage_open_cents'])}, {state_txt}")
-        return "Retainage held:\n" + "\n".join(lines), [{"type": "nav", "view": "retainage", "label": "Open Closeout"}]
+        total = sum(j["money"]["retainage_open_cents"] for j in rows)
+        return f"Retainage held: {domain.money(total)}\n" + "\n".join(lines), [{"type": "nav", "view": "retainage", "label": "Open Closeout"}]
     if name == "waivers_due":
         rows = [j for j in jobs if j.get("waiver_due") and not j.get("waiver_sent")]
         if not rows:
@@ -389,41 +472,74 @@ def _log(entry: dict[str, Any]) -> None:
         storage.write_json(LOG_PATH, data[-LOG_LIMIT:])
 
 
-def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, view: str = "", context_job_id: str = "") -> dict[str, Any]:
+def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, view: str = "", context_job_id: str = "",
+           user: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The helper's reply to one question, from this company's state only. user: who asks (the
+    server always passes it), for their permissions; None means every permission."""
     question = (question or "").strip()[:500]
     if not question:
         raise domain.GateError("Type a question.")
+    perms = set(profiles.perms_of(user, state)) if user is not None else set(profiles.PERM_KEYS)
     snap = domain.snapshot(state)
     job = find_job(snap, question)
     if not job and context_job_id:
         job = next((j for j in snap["jobs"] if j["id"] == context_job_id), None)
-    ranked = rank(question)
+    # A job's name says which job, not what is asked ("how much does Turner office owe?"): ranked
+    # without it, so a word of it that some answer uses ("office") doesn't lead the question astray.
+    asked = question
+    if job and find_job(snap, question):
+        names = {w for w in re.findall(r"[a-z0-9]+", job["name"].lower()) if len(w) >= 3} | {str(job.get("code") or "").lower()}
+        asked = " ".join(w for w in re.findall(r"[\w'’-]+", question) if w.lower() not in names) or question
+    ranked = rank(asked)
     top_score, top = ranked[0] if ranked else (0.0, None)
     reply: dict[str, Any] = {"actions": [], "suggestions": []}
     matched = None
-    if top and top_score >= ANSWER_AT:
+    command = helper_intents.intent(question, snap, perms)
+    if command:
+        # A plain command (Round 2, decision 12): open a page or a form, and nothing else.
+        kind, done = command
+        matched = {"id": kind}
+        reply.update(text=done["text"], actions=done["actions"])
+        if "go" in done:
+            reply["go"] = done["go"]
+    elif top and top_score >= ANSWER_AT:
         matched = top
         text = top.get("answer", "")
         actions = list(top.get("actions", []))
         if top.get("handler"):
+            tied: list[dict[str, Any]] = []
+            if top.get("needs_job") and not job:
+                found, tied = helper_intents.find_job(snap, question)   # a name typed with a typo
+                job = found
             if top.get("needs_job") and not job:
                 text = "Which job do you mean?"
-                actions = [{"type": "ask", "q": f"{question} {j['name']}", "label": j["name"]} for j in snap["jobs"] if not j.get("closed")][:6]
+                actions = [{"type": "ask", "q": f"{question} {j['name']}", "label": j["name"]} for j in (tied or [j for j in snap["jobs"] if not j.get("closed")])][:6]
             else:
-                live = handle(top["handler"], snap, job, state)
+                live = handle(top["handler"], snap, job, state, perms, question)
                 if live:
                     text, extra = live
                     actions = extra + actions
+        form = helper_intents.answer_form(top["id"], snap, job, perms)
+        if form:
+            actions = [form] + actions
         reply.update(text=text, actions=actions[:7], suggestions=top.get("follow_ups", [])[:3])
     else:
         close = [e for s, e in ranked[:3] if s >= SUGGEST_AT]
         if close:
             reply["text"] = "I'm not sure I understood. Did you mean one of these?"
             reply["suggestions"] = [e["questions"][0] for e in close]
+            reply["actions"] = helper_intents.closest(question, snap)
         else:
+            # The closest pages, jobs and clients as buttons, the closest answers as questions.
+            near = helper_intents.closest(question, snap)
+            guesses = [e["questions"][0] for s, e in ranked[:3] if s > 0]
             reply["text"] = ("I don't know that yet. I've saved the question so the Duracash team can add an answer. "
-                             "Try asking what to do today, who owes you, or how to import an email.")
-            reply["suggestions"] = ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"]
+                             + ("These are the closest I have." if near or guesses else "Try asking what to do today, who owes you, or how to import an email."))
+            reply["actions"] = near
+            reply["suggestions"] = guesses or ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"]
+    # The rail itself: whatever an answer (shipped or added in the app) carries, only buttons that
+    # open something go out (decision 12).
+    reply["actions"] = [a for a in reply["actions"] if isinstance(a, dict) and a.get("type") in helper_intents.SAFE_ACTIONS]
     log_id = "q-" + secrets.token_hex(6)
     _log({
         "id": log_id, "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "company_id": company_id, "user_id": user_id,
@@ -472,7 +588,7 @@ def review() -> dict[str, Any]:
                   "unhelpful": len([e for e in data if e.get("helpful") is False])},
         "answers": [{k: e.get(k) for k in ("id", "category", "questions", "keywords", "answer", "handler", "needs_job", "actions", "follow_ups", "origin")} for e in load_kb()],
         "handlers": ["today", "money", "who_owes", "followups", "draft_followup", "blockers", "job_status", "unbilled",
-                     "retainage_list", "waivers_due", "inbox", "pending_cos", "closeable"],
+                     "retainage_list", "waivers_due", "inbox", "pending_cos", "closeable", "unpaid", "backlog", "due_week"],
     }
 
 

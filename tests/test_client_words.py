@@ -21,6 +21,7 @@ ALLOWED = {
     "contact.py": (" on the (?:payer",),
     "qbo_csv.py": ("customer name", "payer name", "No header row with an Amount column and a Customer or Num column"),
     "server.py": ("payer question emailed",),
+    "helper_intents.py": ("customer list",),   # what a person may type to open the Client playbook
 }
 
 

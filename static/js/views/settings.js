@@ -456,7 +456,7 @@ function adminCompaniesHtml() {
 
 let helperReview = null;
 let helperDraft = null;   // the answer being written or edited
-const HELPER_VIEWS = ["dashboard", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "waivers", "retainage", "account", "audit"];
+const HELPER_VIEWS = ["dashboard", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "waivers", "retainage", "financials", "account", "audit"];
 
 export async function loadHelperReview() {
   const body = document.getElementById("helper-admin-body");

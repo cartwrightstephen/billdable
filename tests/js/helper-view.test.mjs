@@ -1,50 +1,86 @@
-// The helper's buttons that change something ("Send the follow-up"): it says Done only when the
-// server did it, and a refusal is told in the helper, not under some other button on the page.
+// The helper's buttons (Round 2, Stephen 10 Nov, decision 12): each opens a page or a form and none
+// changes data; a reply with `go` opens its first button at once.
 // node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { installFakeDom, stubEl } from "./fakedom.mjs";
 
 const dom = installFakeDom();
+globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+const settle = () => new Promise(r => setTimeout(r, 5));
 const handlers = {};
 dom.byId["ai-panel"] = stubEl({ addEventListener: (kind, fn) => { handlers[kind] = fn; } });
 const core = await import("../../static/js/app-core.js");
 const page = await import("../../static/js/state.js");
+const forms = await import("../../static/js/forms.js");
 const helper = await import("../../static/js/views/helper.js");
 
-const company = () => ({ company: { name: "Pine" }, jobs: [], payers: [], inbox: [], email_log: [], email_log_total: 0 });
+const job = (id, name, extra = {}) => ({ id, name, closed: false, work_status: "in_progress", invoices: [], change_orders: [], payments: [], money: {}, ...extra });
+const company = () => ({ company: { name: "Pine" }, jobs: [job("j1", "Oak Street kitchen")], payers: [{ id: "p1", name: "Northline GC" }], inbox: [], email_log: [], email_log_total: 0 });
 
-async function tapPost(answer) {
+function signedIn() {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState(company());
+  core.nav("dashboard");
   helper.helperLog.length = 0;
-  helper.helperLog.push({ who: "helper", text: "OAK-1 is due a follow-up.", actions: [{ type: "post", label: "Send the follow-up", path: "/api/jobs/j1/follow-up" }] });
-  dom.answers = [answer];
-  // The last button tapped on the page itself, still there: a refusal must not land under it.
-  const placed = [];
-  core.setActionEl(stubEl({ dataset: { action: "tab" }, closest: () => stubEl({ insertAdjacentElement: (_, card) => placed.push(card) }) }));
-  const btn = { dataset: { helperMsg: "0", helperAction: "0" } };
-  await handlers.click({ target: { closest: (sel) => (sel === "[data-helper-action]" ? btn : null) } });
-  return { said: helper.helperLog.at(-1).text, placed };
+  dom.requests.length = 0;
 }
 
-test("a refused follow-up is not reported as done, and the reasons show in the helper", async () => {
-  const { said, placed } = await tapPost(() => ({ status: 409, body: { error: "Confirm your email first.", blockers: ["Nothing is sent until your email is confirmed."] } }));
-  assert.doesNotMatch(said, /^Done/);
-  assert.match(said, /Not done\. Confirm your email first\./);
-  assert.match(said, /- Nothing is sent until your email is confirmed\./);
-  assert.deepEqual(placed, []);
+async function tap(action) {
+  helper.helperLog.push({ who: "helper", text: "x", actions: [action] });
+  const btn = { dataset: { helperMsg: String(helper.helperLog.length - 1), helperAction: "0" } };
+  await handlers.click({ target: { closest: (sel) => (sel === "[data-helper-action]" ? btn : null) } });
+}
+
+test("a button that would post is never run: the helper changes nothing", async () => {
+  signedIn();
+  await tap({ type: "post", label: "Send the follow-up", path: "/api/jobs/j1/follow-up" });
+  assert.deepEqual(dom.requests.filter(r => r.method === "POST"), []);
+  assert.equal(page.currentView, "dashboard");
+  assert.ok(!helper.OPENS.has("post"));
 });
 
-test("offline, the helper says it wasn't done", async () => {
-  const { said } = await tapPost(() => "offline");
-  assert.doesNotMatch(said, /^Done/);
-  assert.match(said, /^Not done\./);
+test("a page, a job and a client open from their buttons", async () => {
+  signedIn();
+  await tap({ type: "nav", view: "collections", label: "Open Unpaid" });
+  assert.equal(page.currentView, "collections");
+  await tap({ type: "job", job_id: "j1", label: "Open Oak Street kitchen" });
+  assert.deepEqual([page.currentView, page.currentJobId], ["job", "j1"]);
+  await tap({ type: "client", payer_id: "p1", label: "Open Northline GC" });
+  assert.equal(page.currentView, "playbook");
 });
 
-test("a follow-up that went out says Done", async () => {
-  const { said } = await tapPost((p) => (p === "/api/jobs/j1/follow-up" ? { status: 200, body: company() } : undefined));
-  assert.match(said, /^Done\. The page is updated/);
+test("each form opens on its job, empty but for what is obvious, and nothing is posted", async () => {
+  signedIn();
+  await tap({ type: "form", form: "newco", job_id: "j1", label: "New Change Order: Oak Street kitchen" });
+  assert.deepEqual([page.currentView, page.currentJobId, page.formOpen.newco], ["job", "j1", true]);
+  await tap({ type: "form", form: "match", job_id: "j1", label: "Record a Payment: Oak Street kitchen" });
+  assert.deepEqual([page.currentView, page.formOpen.match], ["job", true]);
+  await tap({ type: "form", form: "progress", job_id: "j1", label: "Progress Pay App: Oak Street kitchen" });
+  assert.deepEqual([page.currentView, page.formOpen.progress], ["job", true]);
+  await tap({ type: "form", form: "daily", job_id: "j1", label: "New job record: Oak Street kitchen" });
+  assert.equal(page.currentView, "daily");
+  await tap({ type: "form", form: "newjob", client: "Northline GC", name: "Elm Street", label: "New job" });
+  assert.deepEqual([page.currentView, page.formOpen.newjob], ["jobs", true]);
+  assert.equal(forms.draftValue("newjob", "customer"), "Northline GC");
+  assert.equal(forms.draftValue("newjob", "client_mode"), "existing");
+  assert.equal(forms.draftValue("newjob", "name"), "Elm Street");
+  assert.deepEqual(dom.requests.filter(r => r.method === "POST"), []);
+});
+
+test("\"take me to Unpaid\": a reply with go opens the page straight away", async () => {
+  signedIn();
+  dom.answers = [(p) => (p === "/api/helper/ask" ? { status: 200, body: { text: "Opening Unpaid.", actions: [{ type: "nav", view: "collections", label: "Open Unpaid" }], go: 0, log_id: "q-1" } } : undefined)];
+  await handlers.click({ target: { closest: (sel) => (sel === "[data-helper-ask]" ? { textContent: "take me to unpaid" } : null) } });
+  await settle();
+  assert.equal(page.currentView, "collections");
+  assert.equal(helper.helperLog.at(-1).text, "Opening Unpaid.");
+  // A post the server should never send is dropped before it is drawn.
+  dom.answers = [(p) => (p === "/api/helper/ask" ? { status: 200, body: { text: "x", actions: [{ type: "post", path: "/api/jobs/j1/follow-up", label: "Send" }], go: 0 } } : undefined)];
+  await handlers.click({ target: { closest: (sel) => (sel === "[data-helper-ask]" ? { textContent: "anything" } : null) } });
+  await settle();
+  assert.deepEqual(helper.helperLog.at(-1).actions, []);
+  assert.deepEqual(dom.requests.filter(r => r.method === "POST").map(r => r.path), ["/api/helper/ask", "/api/helper/ask"]);
 });
 
 test("Settings, Helper answers is Page not found for anyone but the Duracash team (D6)", async () => {

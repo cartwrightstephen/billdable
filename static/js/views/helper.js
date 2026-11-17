@@ -2,10 +2,11 @@
 import { esc, unesc, helperFormat } from "../format.js";
 import { routeFromPath } from "../routes.js";
 import { readJson } from "../net.js";
-import { askConfirm } from "../dom.js";
+import { formDraft } from "../forms.js";
 import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
-import { post, renderLanding, nav, toast } from "../app-core.js";
+import { render, renderLanding, nav, toast } from "../app-core.js";
 import { openSupportingDocs } from "./paperwork.js";
+import { startPayApp } from "./payapps.js";
 
 export function setAiVisible(on) {
   const badge = document.getElementById("ai-badge");
@@ -16,9 +17,11 @@ export function setAiVisible(on) {
 
 // ----- Helper chat -----
 // Answers come from the prepared-answers database on the server, which reads
-// this company's jobs for questions like "what should I do today". Action
-// buttons call the same endpoints as the rest of the app, so every gate and
-// confirmation still applies.
+// this company's jobs for questions like "what should I do today". Its buttons
+// only open a page or a form (Stephen, 10 Nov, decision 12): the helper never
+// changes anything itself; the person saves the form, through the page's own
+// gates. A reply with `go` opens its first button straight away ("take me to
+// Unpaid").
 export const helperLog = [];   // {who: "you"|"helper", text, actions, suggestions, logId, rated}
 let helperBusy = false;
 let aiOpen = false;
@@ -42,19 +45,19 @@ function helperStarters() {
   if (job) { const n = unesc(job.name); return [`What's blocking ${n}?`, `Draft a follow-up for ${n}`, `Status of ${n}`]; }
   if (currentView === "inbox") return ["How does it know which job?", "How do I import 30 days of notes?", "How do I forward emails to Duracash?"];
   if (currentView === "retainage") return ["How do I get retainage released?", "Which jobs are holding my retainage?"];
-  return ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"];
+  return ["What should I do today?", "What's due this week?", "Who owes me money?"];
 }
 
 function renderHelper() {
   const box = document.getElementById("ai-replies");
   const chips = document.getElementById("ai-chips");
   if (!box || !chips) return;
-  const greeting = `<div class="msg helper"><p>Hi${me && me.name ? " " + me.name.split(" ")[0] : ""}. Ask me how to do something in Duracash, or about your own jobs: what to do today, who owes you, what's blocking a job.</p></div>`;
+  const greeting = `<div class="msg helper"><p>Hi${me && me.name ? " " + me.name.split(" ")[0] : ""}. Ask me about your jobs, or tell me where to go: “take me to Unpaid”, “new change order”.</p></div>`;
   {
     box.innerHTML = greeting + helperLog.map((m, idx) => m.who === "you"
       ? `<div class="msg you">${esc(m.text)}</div>`
       : `<div class="msg helper">${helperFormat(m.text)}
-          ${(m.actions || []).length ? `<div class="msg-actions">${m.actions.map((a, i) => `<button class="btn small ${a.type === "post" ? "" : "secondary"}" data-helper-msg="${idx}" data-helper-action="${i}">${esc(a.label)}</button>`).join("")}</div>` : ""}
+          ${(m.actions || []).length ? `<div class="msg-actions">${m.actions.map((a, i) => `<button class="btn small ${a.type === "form" ? "" : "secondary"}" data-helper-msg="${idx}" data-helper-action="${i}">${esc(a.label)}</button>`).join("")}</div>` : ""}
           ${m.logId ? `<div class="msg-rate">${m.rated === "asking" ? `<form class="ai-why" data-helper-why="${idx}"><label for="why-${idx}">What were you looking for? (optional)</label><input id="why-${idx}" maxlength="300"><button class="btn small" type="submit">Send</button></form>`
             : m.rated ? (m.rated === "yes" ? "Thanks." : "Thanks, the team will improve this answer.") : `Helpful? <button class="linkish" data-helper-rate="${idx}" data-value="yes">Yes</button> <button class="linkish" data-helper-rate="${idx}" data-value="no">No</button>`}</div>` : ""}
         </div>`).join("") + (helperBusy ? `<div class="msg helper typing" aria-label="Looking that up">Looking that up…</div>` : "");
@@ -85,36 +88,56 @@ async function helperAsk(q) {
     reply = { text: "I can't reach Duracash right now. Check your connection and try again." };
   }
   helperBusy = false;
-  helperLog.push({ who: "helper", text: reply.text, actions: reply.actions || [], suggestions: reply.suggestions || [], logId: reply.log_id });
+  const actions = (reply.actions || []).filter(a => a && OPENS.has(a.type));
+  helperLog.push({ who: "helper", text: reply.text, actions, suggestions: reply.suggestions || [], logId: reply.log_id });
   if (helperLog.length > 60) helperLog.splice(0, helperLog.length - 60);
   renderHelper();
+  const go = Number.isInteger(reply.go) ? actions[reply.go] : null;
+  if (go) await helperRunAction(go);
 }
 
-// Why a helper button's change wasn't made: the server's reason and what blocks it, as a list.
-function notDoneText(r) {
-  if (!r) return "Not done. Duracash couldn't be reached. Check your connection and try again.";
-  const d = r.data || {};
-  const reason = String(d.error || "Something went wrong. Try again.");
-  const lines = (Array.isArray(d.blockers) ? d.blockers : []).map(String).filter(b => b && b !== reason);
-  return [`Not done. ${reason}`, ...lines.map(l => `- ${l}`)].join("\n");
+// The only buttons the helper runs: each opens a page or a form, none changes data (decision 12,
+// mirrored by helper_intents.SAFE_ACTIONS on the server). Anything else is dropped.
+export const OPENS = new Set(["nav", "job", "client", "form", "ask", "copy", "packet", "path"]);
+
+// The page modules' actions, loaded on first use: index.js reaches this module through other views,
+// so a static import would be a cycle.
+const pageActions = async () => (await import("./index.js")).actions;
+
+// A form the helper starts, opened the way its own page opens it, with what is obvious filled in.
+// Nothing is saved: the person saves it, through the form's own checks.
+export async function openHelperForm(a) {
+  const el = { dataset: {} };
+  const actions = await pageActions();
+  if (a.form === "newjob") {
+    actions["onb-newjob"](el);
+    if (a.client || a.name) {
+      const d = (formDraft.newjob ||= {});
+      if (a.client) { d.client_mode = "existing"; d.customer = String(a.client); }
+      if (a.name) d.name = String(a.name);
+      render();
+    }
+    return;
+  }
+  if (!a.job_id) return;
+  if (a.form === "newco") { nav("job", a.job_id); actions["new-co"](el); }
+  else if (a.form === "match") actions["record-payment"](el, a.job_id);
+  else if (a.form === "daily") actions["daily-for-job"](el, a.job_id);
+  else if (a.form === "progress") startPayApp(a.job_id, "progress");
 }
 
-async function helperRunAction(a) {
+export async function helperRunAction(a) {
+  if (!a || !OPENS.has(a.type)) return;
   if (a.type === "nav") nav(a.view);
   else if (a.type === "job") nav("job", a.job_id);
+  else if (a.type === "client") (await pageActions())["open-client-card"]({ dataset: {} }, a.payer_id);
+  else if (a.type === "form") await openHelperForm(a);
   else if (a.type === "packet") openSupportingDocs(a.job_id, a.inv || null);
   else if (a.type === "path") { const r = routeFromPath(a.path); if (r) nav(r.view, r.jobId || null, r.detailId || null); }
   else if (a.type === "ask") helperAsk(a.q);
   else if (a.type === "copy") {
     try { await navigator.clipboard.writeText(a.text); toast("Copied"); }
     catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
-  } else if (a.type === "post") {
-    if (a.confirm && !(await askConfirm(unesc(a.confirm), "Go ahead"))) return;
-    // A refusal is told here, in the helper, not under a button on the page (ownRefusal).
-    const r = await post(a.path, {}, { ownRefusal: true });
-    if (!me) return;   // the session ran out: the sign-in page shows
-    helperLog.push({ who: "helper", text: r && r.ok ? "Done. The page is updated; the Outbox and Activity log show what happened." : notDoneText(r) });
-    renderHelper();
   }
 }
 
