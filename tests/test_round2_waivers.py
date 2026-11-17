@@ -37,6 +37,20 @@ def owed_waivers(job):
     return [inv["number"] for inv in job["invoices"] if inv.get("waiver_due") and not inv.get("waiver_sent")]
 
 
+
+_ESCAPES = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b", b"f": b"\f", b"(": b"(", b")": b")", b"\\": b"\\"}
+
+
+def pdf_fields(pdf: bytes) -> dict[str, str]:
+    """Each form field's name and value as a viewer reads it: a literal string unescaped, then
+    UTF-16BE after its byte order mark (or PDFDocEncoding, which is Latin-1 for these)."""
+    out = {}
+    for name, value in re.findall(rb"/FT /Tx /T \(([a-z_]+)\) /TU \((?:\\.|[^\\)])*\) /V \(((?:\\.|[^\\)])*)\)", pdf, re.S):
+        raw = re.sub(rb"\\(.)", lambda m: _ESCAPES.get(m.group(1), m.group(1)), value, flags=re.S)
+        out[name.decode()] = raw[2:].decode("utf-16-be") if raw.startswith(b"\xfe\xff") else raw.decode("latin-1")
+    return out
+
+
 class PartPaymentWaiverTests(unittest.TestCase):  # decision 5
     def setUp(self):
         self.state = new_state()
@@ -290,15 +304,15 @@ class GeorgiaFormTests(unittest.TestCase):  # decision 1
         self.assertEqual(set(re.findall(rb"/F[12] (\d+(?:\.\d+)?) Tf", pdf)), {b"12"})
         self.assertEqual(set(re.findall(rb"/Helv (\d+(?:\.\d+)?) Tf", pdf)), {b"12"})
         self.assertIn(b"/AcroForm", pdf)
-        fields = dict(re.findall(rb"/FT /Tx /T \(([a-z_]+)\) /TU \([^)]*\) /V \(([^)]*)\)", pdf))
-        self.assertEqual(fields[b"amount"], b"4,000.00")
-        self.assertEqual(fields[b"project"], b"Peachtree clinic")
-        self.assertEqual(fields[b"contractor"], b"Jones GC")
-        self.assertEqual(fields[b"claimant"], b"Volt Electric LLC")
-        self.assertEqual(fields[b"city"], b"Atlanta")
-        self.assertEqual(fields[b"property"], GA_ADDRESS.encode())
-        self.assertEqual(fields[b"through"], self.inv["period_to"].encode())
-        self.assertEqual(fields[b"by"], b"")
+        fields = pdf_fields(pdf)
+        self.assertEqual(fields["amount"], "4,000.00")
+        self.assertEqual(fields["project"], "Peachtree clinic")
+        self.assertEqual(fields["contractor"], "Jones GC")
+        self.assertEqual(fields["claimant"], "Volt Electric LLC")
+        self.assertEqual(fields["city"], "Atlanta")
+        self.assertEqual(fields["property"], GA_ADDRESS)
+        self.assertEqual(fields["through"], self.inv["period_to"])
+        self.assertEqual(fields["by"], "")
         self.assertIn(b"(WAIVER AND RELEASE OF LIEN AND PAYMENT BOND RIGHTS UPON INTERIM) Tj", pdf)
 
     def test_a_part_payment_form_names_what_came_in(self):

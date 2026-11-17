@@ -53,6 +53,16 @@ def _pdf_str(text: str) -> bytes:
     return b"(" + raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)").replace(b"\r", b" ").replace(b"\n", b" ") + b")"
 
 
+def _pdf_text(text: str) -> bytes:
+    """A field's value or tooltip as a PDF text string: UTF-16BE with its byte order mark, so
+    curly quotes, dashes and accents read as typed in any viewer (the PDF spec's text strings;
+    cp1252 stays for what is drawn, whose font is WinAnsi). Escaped byte by byte: a backslash or
+    parenthesis, and a CR or LF byte, which a reader would otherwise take as a line end."""
+    raw = b"\xfe\xff" + str(text).replace("\r", " ").replace("\n", " ").encode("utf-16-be")
+    out = raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)").replace(b"\r", b"\\r").replace(b"\n", b"\\n")
+    return b"(" + out + b")"
+
+
 def states_on() -> set[str]:
     """The states whose form customers see: DURACASH_WAIVER_FORMS, a list like "GA", or "on" for
     all. Off unless set (decision 1: held back until an attorney approves the wording)."""
@@ -97,6 +107,10 @@ def prefill(state: dict[str, Any], job: dict[str, Any], for_id: str, which: str)
         due = invoice.get("waiver_due") and not invoice.get("waiver_sent")
         cents = domain.waiver_cents(job, invoice) if due else \
             invoice["amount_cents"] - int(invoice.get("short_pay_cents") or 0) - int(invoice.get("waiver_covered_cents") or 0)
+        if not due and cents <= 0:
+            # Its waivers are all sent: the form shows the sum of the last one that went, not $0.00.
+            sent_parts = invoice.get("partial_waivers") or []
+            cents = int(invoice.get("waiver_cents") or (sent_parts[-1]["cents"] if sent_parts else 0))
         amount = _money(max(0, cents))
     elif release:
         amount = _money(release["amount_cents"])
@@ -217,7 +231,7 @@ def render(paragraphs: list[str], title: str, values: dict[str, str]) -> bytes:
             ap = add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 %.2f %.2f] /Resources << /Font << /Helv %d 0 R >> >> /Length %d >>\nstream\n"
                      % (w, h, helv, len(look)) + look + b"\nendstream")
             widget = add(b"<< /Type /Annot /Subtype /Widget /FT /Tx /T %s /TU %s /V %s /DA (/Helv %d Tf 0 g) /Rect [%.2f %.2f %.2f %.2f] /F 4%s /AP << /N %d 0 R >> /P PAGEREF%d >>"
-                         % (_pdf_str(name), _pdf_str(name.replace("_", " ")), _pdf_str(value), SIZE, x, y, x + w, y + h,
+                         % (_pdf_str(name), _pdf_text(name.replace("_", " ")), _pdf_text(value), SIZE, x, y, x + w, y + h,
                             b" /Ff 4096" if multi else b"", ap, n))
             widgets.append(widget)
             fields.append(widget)

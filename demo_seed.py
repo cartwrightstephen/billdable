@@ -582,10 +582,12 @@ def _kirkwood(b: _Builder) -> None:
                 delivery="LED fixtures, 210 ea", photo="Reading room before")
     inv1 = b.bill(job, 75)
     b.send(job, 75)
-    b.paid(job, inv1, 36, waiver_days_ago=35)
     b.field_day(job, 46, "Second floor done. Sensors, control panel and exit lights in. Punch list walked.",
                 {"Remove existing fixtures": 90, "LED fixtures, install": 120, "Occupancy sensors": 46, "Lighting control panel": 100,
                  "Exit and emergency lights": 18}, crew=3, delivery="Occupancy sensors, 46 ea; exit lights, 18 ea", photo="Reading room after")
+    # The first pay app is paid before the final one goes out (Stephen, 10 Nov, decision 6: a final
+    # pay app over an unpaid one needs an override, which this story doesn't have).
+    b.paid(job, inv1, 44, waiver_days_ago=43)
     inv2 = b.bill(job, 42, final=True)
     b.send(job, 42)
     b.paid(job, inv2, 12, waiver_days_ago=11)
