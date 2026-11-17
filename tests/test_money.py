@@ -86,7 +86,7 @@ class RetainageTests(unittest.TestCase):
         self.assertIn("A lien waiver is still due.", raised.exception.blockers)
         signed_waiver(state, job["id"], "unconditional_final")
         domain.send_waiver(state, job["id"], "Owner", release_id=job["retainage_waivers"][-1]["id"])
-        domain.close_job(state, job["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
 
 
@@ -272,7 +272,8 @@ class ChangeOrderTests(unittest.TestCase):
         state = new_state()
         job = new_job(state)
         # A negative amount is a credit (R3-06), refused only when larger than the contract.
-        for title, amount in [("", 1000), ("Tile", 0), ("Tile", -job["contract_cents"] - 1)]:
+        # No amount saves it without a price (Round 2 decision 2), so 0 is no longer refused here.
+        for title, amount in [("", 1000), ("Tile", -job["contract_cents"] - 1)]:
             with self.assertRaises(domain.GateError):
                 domain.add_change_order(state, job["id"], title, amount)
         with self.assertRaises(domain.GateError):
@@ -556,7 +557,7 @@ class ShortPayTests(unittest.TestCase):  # R4-01
         self.assertEqual([b["kind"] for b in domain.close_blocker_items(job)], ["waiver"])
         signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
-        domain.close_job(state, job["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
 
     def test_short_pay_needs_a_payment_and_a_reason(self):
@@ -601,7 +602,7 @@ class ReopenAndUndoTests(unittest.TestCase):  # R4-02
         domain.settle_short_pay(state, job["id"], inv["id"], "Customer held $1,000 for touch-ups")
         signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
-        domain.close_job(state, job["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         with self.assertRaises(domain.GateError):
             domain.match_payment(state, job["id"], 100_000, "CHK 2")
         with self.assertRaises(domain.GateError) as raised:
@@ -613,7 +614,7 @@ class ReopenAndUndoTests(unittest.TestCase):  # R4-02
         self.assertEqual(state["audit"][-1]["action"], "reopen_job")
         domain.match_payment(state, job["id"], 100_000, "CHK 2")
         self.assertEqual((inv["short_pay_cents"], domain.job_money(job)["collected_cents"]), (0, 1_000_000))
-        domain.close_job(state, job["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
         with self.assertRaises(domain.GateError):
             domain.reopen_job(state, "job-none", "x")

@@ -13,7 +13,7 @@ import { termText, actionWords } from "../terms.js";
 import { state, me, currentJobId, formOpen } from "../state.js";
 import { may, listPage, DEMO_COMPANY_ID, perms, post, toast, render, jobDetailLoading, jobDetailFailed, backButton, emptyState, nav, moreDetails } from "../app-core.js";
 import { jobFields, jobFieldErrors, savedJobFields, assigneeField } from "./jobs.js";
-import { coSignControls, newCoCardHtml } from "./job-cos.js";
+import { coSignControls, newCoCardHtml, coAmountText } from "./job-cos.js";
 import { sovCardHtml } from "./job-sov.js";
 import { recordCardHtml } from "./job-record.js";
 import { moneyCardHtml } from "./job-money.js";
@@ -205,6 +205,7 @@ function archiveHtml(j) {
         ${formOpen.editstart && may("edit") ? `<div class="form-row" data-form-key="editstart">${formErrorLine("editstart")}${jobFields("editstart", "es", j).started_on}
           <button class="btn small" data-action="save-start" data-id="${j.id}">Save start date</button></div>` : ""}
         ${row("Finished", fmtDate(j.closed_at || j.completed_at))}
+        ${closeoutOverrideNote(j)}
         <div class="form-inline"><a class="btn secondary small" href="/api/jobs/${j.id}/archive/job-file.zip" download>Download job file</a></div>
       </div>
       <div class="card">
@@ -214,7 +215,7 @@ function archiveHtml(j) {
         <h2 class="h2-gap">Payments received</h2>
         ${received.length ? received.map(p => `<div class="list-item">${fmtDate(p.at)} · ${p.what ? p.what + " · " : ""}${money(p.cents)}${p.reference ? ` · ${p.reference}` : ""}</div>`).join("") : `<p class="sub">None.</p>`}
         <h2 class="h2-gap">Change orders</h2>
-        ${(j.change_orders || []).length ? j.change_orders.map(co => `<div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill">${coStatusWords(co.status)}</span></div>`).join("") : `<p class="sub">None.</p>`}
+        ${(j.change_orders || []).length ? j.change_orders.map(co => `<div class="list-item">CO ${co.number} · ${co.title} · ${coAmountText(co)} <span class="pill">${coStatusWords(co.status)}</span></div>`).join("") : `<p class="sub">None.</p>`}
         <h2 class="h2-gap">Waivers sent</h2>
         ${waivers.length ? waivers.map(w => `<div class="list-item">${w.what} · ${waiverKindLabel(w.kind)} · ${fmtDate(w.at)}</div>`).join("")
           : j.waiver_sent_at ? `<div class="list-item">${j.waiver_kind || "Waiver"} · ${fmtDate(j.waiver_sent_at)}</div>` : `<p class="sub">None.</p>`}
@@ -273,6 +274,25 @@ export function prefillPaymentAmount(invoiceId) {
 }
 
 // This module's pages, by the name their address opens (routes.js).
+// Finish job while closeout documents are missing (Stephen, 10 Nov, decision 4): the reason, then Finish job.
+function closeOverrideHtml(j) {
+  const missing = (j.closeout_missing || []).join(", ");
+  return `<div class="card form-card close-override" data-form-key="closeoverride"><h2>Finish without closeout documents</h2>${formErrorLine("closeoverride")}
+    <p class="blocker">Missing: ${missing}.</p>
+    <div class="form-row">
+      ${field({ form: "closeoverride", name: "closeout_override", id: "close-override-reason", label: "Why it can finish without them", required: true, wide: true })}
+      <button class="btn small" data-action="close-override" data-id="${j.id}">Finish job</button>
+      <button class="btn small secondary" data-action="toggle-form" data-form="closeoverride">Cancel</button>
+    </div></div>`;
+}
+
+// The override, on the job file: who, when and why (as "I have this" on a pay app).
+export function closeoutOverrideNote(j) {
+  const o = j.closeout_override;
+  if (!o) return "";
+  return `<p class="override-note closeout-override">Finished without ${(o.missing || []).join(", ") || "closeout documents"}. Override by ${o.by}, ${fmtDateTime(o.at)}: ${o.reason}</p>`;
+}
+
 export const views = {
   job() {
     const j = state.jobs.find(x => x.id === currentJobId);
@@ -355,6 +375,7 @@ export const views = {
         ${periodField("done", j)}
         ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">${openDraft.number} becomes the final pay app. Its number and supporting documents stay.</p>` : ""}
         <button class="btn small" data-action="done" data-id="${j.id}">${termText("Draft final pay app")}</button></div></div>` : ""}
+      ${formOpen.closeoverride && may("close") ? closeOverrideHtml(j) : ""}
       ${formOpen.conversation ? conversationFormHtml(j) : ""}
       ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Record a payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
         ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", oneAsText: true, options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${owedText(i)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
@@ -395,7 +416,7 @@ export const views = {
           ${closeout.length ? `<div class="list-item row-link"><div><a href="${pathFor("packet-detail", j.id, "closeout")}" data-action="open-packet" data-job="${j.id}" data-inv="closeout"><strong>Closeout documents</strong></a> <span class="sub">${m.retainage_open_cents > 0 ? "needed before held-back money is paid · " : ""}${closeoutMissing ? closeoutMissing + " missing" : "complete"}</span></div></div>` : ""}
           <h2 class="h2-gap">Change orders</h2>
           ${j.change_orders.length ? j.change_orders.map(co => `
-            <div class="list-item">CO ${co.number} · ${co.title} · ${money(co.amount_cents)} <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${coStatusWords(co.status)}</span>${co.included_in_billing ? ` <span class="sub">${termText("on a pay app")}</span>` : ""}
+            <div class="list-item">CO ${co.number} · ${co.title} · ${coAmountText(co)} <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${coStatusWords(co.status)}</span>${co.included_in_billing ? ` <span class="sub">${termText("on a pay app")}</span>` : ""}
               ${coSignControls(j, co, !co.included_in_billing && !(openDraft && openDraft.pencil_status === "sent") && co.amount_cents > 0 && may("include-co") ? `<button class="btn small secondary" data-action="include-co" data-id="${j.id}" data-co="${co.id}">Bill now (send waits for signature)</button>` : "")}
             </div>`).join("") : `<p class="sub">None.</p>`}
         </div>
@@ -530,11 +551,22 @@ export const actions = {
   "import-qbo": (el, id) => post(`/api/jobs/${id}/import-qbo`),
   "close": async (el, id) => {
     const j = state.jobs.find(x => x.id === id);
-    // Missing closeout documents warn and ask; they don't stop it (Nov 3 review).
-    const missing = (j && j.closeout_missing || []).map(unesc);
-    const warn = missing.length ? `Closeout documents are missing: ${missing.join(", ")}. ` : "";
-    if (!(await askConfirm(`${warn}Finish ${unesc(j ? j.name : "the job")}${warn ? " anyway" : ""}? It moves to Job history and no more payments can be recorded.`, warn ? "Finish job anyway" : "Finish job"))) return;
+    // Missing closeout documents take an override with a reason, recorded like "I have this"
+    // (Stephen, 10 Nov, decision 4; a warning before): the job page asks for it.
+    if (j && (j.closeout_missing || []).length) {
+      if (currentJobId !== id) nav("job", id);
+      formOpen.closeoverride = true;
+      render();
+      focusAfterDraw(() => document.getElementById("close-override-reason"));
+      return;
+    }
+    if (!(await askConfirm(`Finish ${unesc(j ? j.name : "the job")}? It moves to Job history and no more payments can be recorded.`, "Finish job"))) return;
     await post(`/api/jobs/${id}/close`);
+  },
+  "close-override": async (el, id) => {
+    const v = formValues("closeoverride");
+    if (refuseForm("closeoverride", v.closeout_override ? {} : { closeout_override: "Enter why the job can finish without them." })) return;
+    await post(`/api/jobs/${id}/close`, { closeout_override: v.closeout_override }, { formKey: "closeoverride", close: "closeoverride" });
   },
   "learn": async (el, id) => {
     const v = formValues("sentback");

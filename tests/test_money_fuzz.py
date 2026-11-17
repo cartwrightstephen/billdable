@@ -415,7 +415,7 @@ class Sequence:
         for _ in range(60):
             items = domain.close_blocker_items(self.job)
             if not items:
-                domain.close_job(self.state, self.id, "Sam")
+                domain.close_job(self.state, self.id, "Sam", closeout_override="Closeout documents handled outside Duracash")
                 self.check()
                 return
             kind = items[0]["kind"]

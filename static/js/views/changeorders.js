@@ -9,7 +9,8 @@ import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
 import { render, toast, post, backButton, emptyState, nav } from "../app-core.js";
-import { coSignControls, workStartedPill, localToday, CO_REASONS, CO_PRICING } from "./job-cos.js";
+import { coSignControls, workStartedPill, localToday, coAmountText, CO_REASONS, CO_PRICING } from "./job-cos.js";
+import { fmtQty } from "../sov.js";
 import { recordFiles } from "./job-record.js";
 
 let coPreselectJob = null;
@@ -22,7 +23,7 @@ const days = (n) => `${n > 0 ? "+" : ""}${n} day${Math.abs(n) === 1 ? "" : "s"}`
 const HISTORY_WORDS = {
   created: "Created", included: termText("Put on the next pay app"), off_draft: "Taken off the deleted draft",
   signature_requested: "Signature requested", signed_copy_filed: "Signed copy filed", signed: "Signed", withdrawn: "Withdrawn",
-  work_started: "Work started", client_logged: "Client logged it on their end", client_logged_undone: "Client logged it: taken off",
+  work_started: "Work started", priced: "Priced", client_logged: "Client logged it on their end", client_logged_undone: "Client logged it: taken off",
 };
 
 // Who did what and when, oldest first. A change order from before its own history has only what
@@ -37,6 +38,21 @@ export function coHistoryHtml(co) {
   if (!rows.length) return "";
   return `<div class="card co-history"><h2>History</h2>
     ${rows.map(r => `<div class="money-row"><span class="label">${HISTORY_WORDS[unesc(r.what)] || r.what}${r.note ? ` · ${unesc(r.what) === "work_started" ? fmtDate(r.note) : r.note}` : ""}</span><span>${r.by ? r.by + ", " : ""}${fmtDateTime(r.at)}</span></div>`).join("")}
+  </div>`;
+}
+
+// What the job records have gathered for this change order (decision 2: it keeps collecting hours
+// and materials while it has no price): Change order work rows that name it, and the tickets,
+// time sheets and invoices tied to it (domain.co_accrued; the Backup card has those picked as backup).
+export function coAccruedHtml(j, co) {
+  const a = co.accrued || {};
+  const entries = a.entries || [];
+  const records = (a.record_ids || []).map(id => (j.records || []).find(r => r.id === id)).filter(Boolean);
+  if (!entries.length && !records.length) return "";
+  return `<div class="card co-accrued"><h2>From job records</h2>
+    ${a.hours_milli ? `<div class="money-row strong"><span class="label">Hours</span><span>${fmtQty(a.hours_milli)} h</span></div>` : ""}
+    ${entries.map(e => `<div class="money-row"><span class="label">${fmtDate(e.at)} · ${e.description}</span><span>${e.hours_milli ? `${fmtQty(e.hours_milli)} h` : ""}</span></div>`).join("")}
+    ${records.map(r => `<div class="list-item"><span class="pill">${termText(RECORD_KINDS[unesc(r.kind)] || r.kind)}</span> ${r.label}</div>`).join("")}
   </div>`;
 }
 
@@ -75,6 +91,7 @@ export function coContractHtml(j, co) {
 // What the change order is waiting on: the signature, then the client logging it (M8).
 function waitingOn(co) {
   if (co.waiting_on) return co.waiting_on;
+  if ((co.needs || []).length) return `${co.needs.join(" and ").replace(/^a /, "A ")}`;
   if (co.status === "pending") return "Client signature";
   if (co.status === "approved" && !co.client_logged_at) return "Client to log it on their end";
   return "Nothing";
@@ -98,7 +115,7 @@ export const views = {
     return `
       ${backButton("cos", "Change orders")}
       <h1>CO ${co.number}: ${co.title}</h1>
-      <p class="sub"><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(co.amount_cents)} · <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${coStatusWords(co.status)}</span>${workStartedPill(co)}</p>
+      <p class="sub"><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${coAmountText(co)} · <span class="pill ${co.status === "approved" ? "green" : co.status === "withdrawn" ? "" : "amber"}">${coStatusWords(co.status)}</span>${workStartedPill(co)}</p>
       <div class="card">
         <h2>Summary</h2>
         ${co.reason ? `<div class="money-row"><span class="label">Reason</span><span>${CO_REASONS[unesc(co.reason)] || co.reason}</span></div>` : ""}
@@ -125,7 +142,8 @@ export const views = {
       ${backup.length ? `<div class="card co-backup-list"><h2>Backup</h2>
         ${backup.map(r => `<div class="list-item"><span class="pill">${termText(RECORD_KINDS[unesc(r.kind)] || r.kind)}</span> ${r.label}${recordFiles(r) ? `<div class="sub">${recordFiles(r)}</div>` : ""}</div>`).join("")}
       </div>` : ""}
-      ${coContractHtml(j, co)}
+      ${coAccruedHtml(j, co)}
+      ${co.unpriced ? "" : coContractHtml(j, co)}
       ${coHistoryHtml(co)}
     `;
   },
@@ -154,9 +172,9 @@ export const views = {
           ${cos.slice().reverse().map(c => `<tr>
             <td><a href="${pathFor("co-detail", c.jobId, c.id)}" data-action="open-co" data-job="${c.jobId}" data-co="${c.id}">CO ${c.number}: ${c.title}</a>${c.reason || c.description ? `<div class="sub row-sub">${[c.reason ? CO_REASONS[unesc(c.reason)] || c.reason : "", c.description ? esc(unesc(c.description).slice(0, 80)) : ""].filter(Boolean).join(" · ")}</div>` : ""}</td>
             <td>${c.job}</td>
-            <td class="num">${money(c.amount_cents)}</td>
+            <td class="num">${coAmountText(c)}</td>
             <td><span class="pill ${c.status === "approved" ? "green" : c.status === "withdrawn" ? "" : "amber"}">${coStatusWords(c.status)}</span>${workStartedPill(c)}</td>
-            <td>${c.status === "pending" && !c.waiting_on ? "Signature" : c.status === "withdrawn" ? "—" : waitingOn(c)}</td>
+            <td>${c.status === "pending" && !c.waiting_on && !(c.needs || []).length ? "Signature" : c.status === "withdrawn" ? "—" : waitingOn(c)}</td>
             <td>${c.included_in_billing ? "Yes" : "No"}</td>
           </tr>`).join("")}
         </table>

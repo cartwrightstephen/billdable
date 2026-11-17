@@ -844,7 +844,8 @@ class Handler(BaseHTTPRequestHandler):
                 # The first paid pay app ends the free trial (trial.py): tell Stripe, once.
                 trial_sub = billing.trial_end_due(state) if end_trial and billing.configured() else None
                 save_company(company_id, state)
-                payload = domain.light_snapshot(state)
+                # A To Do row is for those whose permissions cover it (a change order to price, Round 2 decision 2).
+                payload = domain.light_snapshot(state, perms=profiles.perms_of(user, state) if user else None)
                 # Only the emails this change queued: one another person approved (queued, not yet
                 # delivered by their own request) goes out under their name, not this user's.
                 # Most changes queue none: then the company isn't loaded again just to find that out.
@@ -1166,7 +1167,7 @@ class Handler(BaseHTTPRequestHandler):
     def _g_state(self, m, user) -> None:
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
-        self._json(200, domain.light_snapshot(state))
+        self._json(200, domain.light_snapshot(state, perms=profiles.perms_of(user, state)))
 
     def _paging(self, default_limit: int = 50) -> tuple:
         q = parse_qs(urlparse(self.path).query)
@@ -2168,7 +2169,9 @@ class Handler(BaseHTTPRequestHandler):
                     "The inbound email, text and calendar addresses were changed."), {"rotated": True}
 
         # Their open tasks, To Do rows and jobs go to the owner who removed them (G5).
-        self._team_change(ctx, remove, also=lambda st: gone and domain.reassign_open_tasks(st, gone[0], ctx.user["id"], ctx.user["name"], ctx.user["name"]))
+        # They come off every pay app approvers list too, so no pay app waits on them (Round 2 decision 8).
+        self._team_change(ctx, remove, also=lambda st: gone and (domain.reassign_open_tasks(st, gone[0], ctx.user["id"], ctx.user["name"], ctx.user["name"]),
+                                                                 domain.drop_approver(st, gone[0])))
 
     def _p_account_delete(self, m, ctx: "Ctx") -> None:
         if ctx.company_id == auth.DEMO_COMPANY_ID:
@@ -2889,6 +2892,16 @@ class Handler(BaseHTTPRequestHandler):
     def _m_company_update(self, state: dict, m, ctx: "Ctx") -> None:
         domain.update_company(state, ctx.body, ctx.actor)
 
+    def _m_approvers(self, state: dict, m, ctx: "Ctx") -> None:
+        """Who approves pay apps before they go (Round 2 decision 8): the company's list, or one
+        client's, which replaces it (same_as_company takes it off)."""
+        ids = _list(ctx.body, "user_ids") or []
+        if any(not isinstance(x, str) for x in ids):
+            raise BadRequest(NOT_UNDERSTOOD)
+        payer_id = m.group(1) if m.groups() else ""
+        domain.set_payapp_approvers(state, ids, approver_pool(ctx.company_id, state), payer_id=payer_id,
+                                    same_as_company=ctx.body.get("same_as_company") is True, actor=ctx.actor)
+
     def _p_my_name(self, m, ctx: "Ctx") -> None:
         # The name rule (G1): at least one letter or number. Refused under the box (409 fields).
         wrong = domain.check_field("name", ctx.body.get("name") if isinstance(ctx.body.get("name"), str) else "", "name", required=True)
@@ -3173,6 +3186,8 @@ ROUTES = [
     Route("POST", r"/api/import/text", "_m_import_text", "mutate"),
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_m_inbox", "mutate"),
     Route("POST", r"/api/company", "_m_company_update", "mutate", perm="company"),
+    Route("POST", r"/api/approvers", "_m_approvers", "mutate", perm="company"),
+    Route("POST", r"/api/payers/([^/]+)/approvers", "_m_approvers", "mutate", perm="company"),
     Route("POST", r"/api/auth/name", "_p_my_name", "body"),
     Route("POST", r"/api/auth/sms", "_p_my_sms", "body"),
     Route("POST", r"/api/auth/sms/confirm", "_p_my_sms_confirm", "body"),
@@ -3215,6 +3230,22 @@ def _add_co(st: dict, job_id: str, c: Ctx) -> None:
                for n, x in enumerate(items)],
         support_record_ids=support, work_started_on=_text(body, "work_started_on"),
     )
+
+
+def _price_co(st: dict, job_id: str, co_id: str, c: Ctx) -> None:
+    items = _list(c.body, "items") or []
+    if any(not isinstance(x, dict) for x in items):
+        raise BadRequest(NOT_UNDERSTOOD)
+    domain.price_change_order(st, job_id, co_id, _number(c.body, "amount_cents", "the change order amount", 0),
+                              [{"label": _text(x, "label"), "amount_cents": domain.parse_int(x.get("amount_cents"), "the amount", f"item_amount_{n}", 0)}
+                               for n, x in enumerate(items)], c.actor)
+
+
+def approver_pool(company_id: str, state: dict) -> dict:
+    """{user id: name} of the team members whose permissions include approving pay apps (Round 2
+    decision 8): the only people who can be named as approvers."""
+    return {u["id"]: u.get("name") or u.get("email") or "" for u in auth.team(company_id)["users"]
+            if profiles.has_perm(u, domain.APPROVE_PERM, state)}
 
 
 def _co_args(ctx: Ctx) -> dict:
@@ -3539,7 +3570,12 @@ JOB_ACTIONS = {
     "packet-skip": (True, lambda h, st, j, i, c: _skip_item(st, j, i, c)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),
     "import-qbo": (False, _import_qbo),
-    "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),
+    # Closeout documents missing take a reason (Round 2 decision 4), recorded like "I have this".
+    "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor, closeout_override=_text(c.body, "closeout_override"))),
+    # Round 2 (Stephen, 10 Nov): price a change order saved without one (decision 2), and a named
+    # approver approves the draft pay app (decision 8).
+    "co-price": (True, lambda h, st, j, i, c: _price_co(st, j, i, c)),
+    "payapp-approve": (False, lambda h, st, j, i, c: domain.approve_payapp(st, j, c.actor, c.user.get("id", ""))),
     "reopen": (False, lambda h, st, j, i, c: domain.reopen_job(st, j, _text(c.body, "reason"), c.actor)),
     "undo-done": (False, lambda h, st, j, i, c: domain.undo_mark_done(st, j, c.actor)),
     "accept-short-pay": (True, lambda h, st, j, i, c: domain.settle_short_pay(st, j, i, _text(c.body, "reason"), c.actor)),

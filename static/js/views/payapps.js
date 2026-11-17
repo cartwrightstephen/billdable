@@ -8,7 +8,7 @@ import { pathFor } from "../routes.js";
 import { askConfirm, focusAfterDraw } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
-import { state, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd, mailReady } from "../state.js";
+import { state, me, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd, mailReady } from "../state.js";
 import { may, can, perms, render, post, load, backButton, emptyState, nav, EMAIL_PATTERN, moreDetails } from "../app-core.js";
 import { continuationHtml } from "../sov.js";
 import { companyGapsHtml } from "../setup.js";
@@ -112,6 +112,22 @@ function retainageZeroHtml(j) {
   return `<p class="notice retainage-zero">Retainage is 0% on this job. ${j.payer.name || "The client"} usually holds ${Number(j.retainage_usual)}%.</p>`;
 }
 
+// Who must approve it before it goes (Stephen, 10 Nov, decision 8; domain.approval_view): each
+// named person, approved or not, and Approve for the one signed in once it is ready to send. The
+// server refuses the send until all have, and clears an approval when the pay app changes.
+export function approvalHtml(inv, meId = (me || {}).id, mayApprove = may("payapp-approve")) {
+  const a = inv.approval || {};
+  const people = a.required || [];
+  if (!people.length) return "";
+  const mine = people.find(p => p.id === meId && !p.approved_at);
+  const ready = inv.status === "awaiting_approval";
+  return `<div class="payapp-approvals">
+    <h3>Approvals</h3>
+    ${people.map(p => `<div class="money-row"><span class="label">${p.name}</span><span>${p.approved_at ? `Approved ${fmtDateTime(p.approved_at)}` : `<span class="pill amber">Waiting</span>`}</span></div>`).join("")}
+    ${mine && mayApprove && ready ? `<button class="btn small" data-action="payapp-approve" data-id="${inv.job_id || ""}">Approve ${inv.number}</button>` : ""}
+  </div>`;
+}
+
 // The numbers, folded under one line (round 1, item 4): the summary, lines, continuation sheet
 // and approval. The fold stays as the person left it (moreDetails).
 function numbersHtml(j, inv) {
@@ -201,12 +217,13 @@ export const views = {
         ${inv.final ? `<p class="sub final-note">${termText("The final pay app: the PDF is marked FINAL APPLICATION.")}</p>` : ""}
         ${missingDocsHtml(j, inv)}
         ${beforeYouSendHtml(j, inv)}
+        ${approvalHtml({ ...inv, job_id: j.id })}
         ${companyGapsHtml(state.company)}
         ${retainageZeroHtml(j)}
         ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger.${can("company") ? ` Change it in <button class="linkish tall" data-action="nav" data-view="playbook">Client playbook</button>.` : ""}</p>` : ""}
         ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
         ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
-        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}"${missing || (j.blockers || []).length || noEmail || locked ? ' data-blocked="1"' : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
+        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}"${missing || (j.blockers || []).length || noEmail || locked || ((inv.approval || {}).waiting || []).length ? ' data-blocked="1"' : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
       </div>` : ""}
       ${supportingDocsHtml(j, inv)}
       ${!draft ? `<div class="card">
@@ -323,6 +340,7 @@ export const actions = {
     }
     return r;
   },
+  "payapp-approve": (el, id) => post(`/api/jobs/${id}/payapp-approve`),
   // "Review & send" with no email yet (R1-05): saved to the client's settings, then send unlocks.
   "save-send-email": async (el, id) => {
     const v = formValues("sendemail");

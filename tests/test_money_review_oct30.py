@@ -202,7 +202,7 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         self.assertNotEqual(domain.status_label(job), "Payment received, waiver not sent")
         domain.mark_done(s, job["id"])
         self.assertNotIn("A lien waiver is still due.", domain.close_blockers(job))
-        domain.close_job(s, job["id"])
+        domain.close_job(s, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
 
     def test_no_waiver_due_on_a_retainage_release_for_that_client(self):
@@ -239,7 +239,7 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         self.assertIn("Handed the signed form to Sam on site", row["detail"])
         self.assertIn("PA-PINE-01", row["detail"])
         domain.mark_done(s, job["id"])
-        domain.close_job(s, job["id"])
+        domain.close_job(s, job["id"], closeout_override="Closeout binder handed over")
 
     def test_an_older_job_level_waiver_can_be_settled_the_same_way(self):
         s = seed_state()

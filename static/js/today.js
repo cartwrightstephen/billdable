@@ -36,6 +36,8 @@ const ACTIONS = {
   finish: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".task-card, .job-actions"`,
   finish_held: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".close-blockers"`,
   retainage_wait: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".task-card, .job-actions"`,
+  // A change order still missing its price (decision 2): to the change order, where it is priced.
+  co_info: (r) => `data-action="open-co" data-job="${r.job_id}" data-co="${r.co_id}"`,
 };
 const OPENS_JOB = ["ready", "waiver", "due_soon", "new_job", "closeout", "retainage", "finish", "finish_held", "retainage_wait"];
 

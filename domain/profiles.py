@@ -24,6 +24,8 @@ from typing import Any
 # (key, the words on the Team page), in the order the page lists them.
 PERMISSIONS: list[tuple[str, str]] = [
     ("send_payapps", "Send pay apps"),
+    # Stephen, 10 Nov, decision 8: the people named to approve a pay app before it goes hold this.
+    ("approve_payapps", "Approve pay apps before they go"),
     ("send_waivers", "Send lien waivers"),
     ("ask_retainage", "Ask for retainage"),
     ("record_payments", "Record payments"),
@@ -72,6 +74,9 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     # records, conversations, drafts, progress and documents.
     "done": "manage_jobs", "undo-done": "manage_jobs", "edit": "manage_jobs",
     "approve-co": "manage_jobs", "withdraw-co": "manage_jobs", "include-co": "manage_jobs",
+    # Round 2 (Stephen, 10 Nov): pricing a change order saved without one changes the contract
+    # (decision 2); approving a pay app is the named approvers' own permission (decision 8).
+    "co-price": "manage_jobs", "payapp-approve": "approve_payapps",
     # Drafting, records, paperwork and follow-ups: everyone on the team.
     "sov-amounts": None, "sov-correct": None, "quantities-undo": None, "waiver-needed": None,
     "progress": None, "sov": None, "sov-progress": None, "draft": None,

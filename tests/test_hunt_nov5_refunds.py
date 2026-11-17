@@ -80,7 +80,7 @@ class RefundIsMoneyReturned(unittest.TestCase):
         m = self.money()
         self.assertEqual((m["outstanding_cents"], m["overbilled_cents"], m["collected_cents"]), (0, 0, 9_500_000))
         waivers_out(self.state, self.job)
-        domain.close_job(self.state, self.id)
+        domain.close_job(self.state, self.id, closeout_override="Closeout binder handed over")
         self.assertTrue(self.job["closed"])
 
     def test_or_the_client_keeps_it_with_a_signed_credit(self):
@@ -157,7 +157,7 @@ class CreditOffRetainage(unittest.TestCase):
         self.assertIn("No money was received", row["detail"])
         self.assertIn("CO 1 comes off retainage", row["detail"])
         waivers_out(self.state, self.job)
-        domain.close_job(self.state, self.id)
+        domain.close_job(self.state, self.id, closeout_override="Closeout binder handed over")
 
     def test_a_reason_is_required(self):
         with self.assertRaises(domain.GateError) as refused:

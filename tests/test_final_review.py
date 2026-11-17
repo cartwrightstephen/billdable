@@ -278,7 +278,7 @@ class CreditOffRetainageAndTheFinalWaiver(unittest.TestCase):
         self.assertTrue(release["waiver_due"])
         signed_waiver(self.s, self.i, "unconditional_final")
         domain.send_waiver(self.s, self.i, "Sam", release_id=release["id"])
-        domain.close_job(self.s, self.i, "Sam")
+        domain.close_job(self.s, self.i, "Sam", closeout_override="Closeout binder handed over")
         self.assertTrue(self.j["closed"])
 
     def test_a_final_waiver_already_sent_isnt_owed_twice(self):

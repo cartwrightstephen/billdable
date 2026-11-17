@@ -9,7 +9,25 @@ import { readJson } from "../net.js";
 import { pathFor } from "../routes.js";
 import { state, me, formOpen, onSessionEnd } from "../state.js";
 import { post, render, emptyState, can, nav, moreDetails } from "../app-core.js";
+import { approverBoxes, approverIds, approverNames, forgetApprovers } from "../approvers.js";
 import { sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount, contractImportHtml, contractMark, forgetClosedContract } from "./jobs.js";
+
+// Who approves this client's pay apps before they go (Stephen, 10 Nov, decision 8): the company's
+// list, unless the client has its own, which replaces it.
+function clientApproversHtml(p, edits) {
+  const own = Array.isArray(p.payapp_approvers);
+  const list = own ? p.payapp_approvers : ((state.company || {}).payapp_approvers || []);
+  const key = `clientappr-${p.id}`;
+  const picking = edits && (own || formOpen[key]);
+  return `<div class="client-approvers" data-form-key="${key}"><h3>Pay app approvers</h3>${formErrorLine(key)}
+    ${picking ? `${approverBoxes(`client-${p.id}`, own ? list : [], render)}
+      <div class="form-inline"><button type="button" class="btn small" data-action="client-approvers-save" data-id="${p.id}">Save approvers</button>
+      ${own ? `<button type="button" class="btn small secondary" data-action="client-approvers-company" data-id="${p.id}">Use the company's list</button>`
+        : `<button type="button" class="btn small secondary" data-action="toggle-form" data-form="${key}">Cancel</button>`}</div>`
+    : `<p class="sub">${approverNames(list)}${own ? "" : " (the company's list)"}</p>
+      ${edits ? `<button type="button" class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="false">Own list for this client</button>` : ""}`}
+  </div>`;
+}
 
 // Who signs off reads as the client's own name only because a blank box used to save that way
 // (domain.signer_defaulted): its box starts empty, so saving the card doesn't count as an answer.
@@ -239,6 +257,7 @@ export const views = {
               ${f({ name: "escalation_email", label: "Also email from the third follow-up", helpKey: "escalation_email", type: "email", autocomplete: "off", value: unesc(clean(p.escalation_email)), placeholder: "owner@example.com" })}`, key, ["follow_up_days", "usual_approval_days", "copy", "escalation_email"])}
             <button type="button" class="btn full-width" data-action="save-playbook" data-id="${p.id}">Save client</button>
           </div>` : clientReadOnlyHtml(p, key, f)}
+          ${clientApproversHtml(p, edits)}
           ${edits && others.length ? `<details class="merge-payer">
             <summary>Same client as another one?</summary>
             <div class="form-inline">
@@ -257,6 +276,16 @@ export const views = {
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
+  "client-approvers-save": async (el, id) => {
+    const p = (state.payers || []).find(x => x.id === id) || {};
+    const key = `clientappr-${id}`;
+    const r = await post(`/api/payers/${id}/approvers`, { user_ids: approverIds(`client-${id}`, Array.isArray(p.payapp_approvers) ? p.payapp_approvers : []) }, { formKey: key });
+    if (r && r.ok) { forgetApprovers(`client-${id}`); formOpen[key] = false; render(); }
+  },
+  "client-approvers-company": async (el, id) => {
+    const r = await post(`/api/payers/${id}/approvers`, { same_as_company: true }, { formKey: `clientappr-${id}` });
+    if (r && r.ok) { forgetApprovers(`client-${id}`); formOpen[`clientappr-${id}`] = false; render(); }
+  },
   "use-approval-days": async (el, id) => { await post(`/api/payers/${id}/update`, { usual_approval_days: Number(el.dataset.days) }); },
   "client-waiver-needed": async (el, id) => {
     const p = (state.payers || []).find(x => x.id === id);

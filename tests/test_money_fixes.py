@@ -631,7 +631,7 @@ class CreditAfterFinalTests(unittest.TestCase):  # item 9
         self.assertEqual(domain.job_money(job)["overbilled_cents"], 0)
         self.assertIn("Refund check 1044", actions(state, "overbilling_settled")[-1])
         self.assertIn("$500.00", actions(state, "overbilling_settled")[-1])
-        domain.close_job(state, job["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
 
     def test_pulling_it_back_and_drafting_again_clears_it(self):
