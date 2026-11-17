@@ -25,7 +25,7 @@ from typing import Any
 __all__ = [
     "co_needs", "co_accrued", "co_view_extras", "co_info_rows", "price_change_order", "need_price",
     "closeout_override_needed", "record_closeout_override",
-    "APPROVE_PERM", "payapp_approvers", "set_payapp_approvers", "approval_stamp", "approval_view", "approvals_missing",
+    "APPROVE_PERM", "payapp_approvers", "set_payapp_approvers", "rename_approver", "approval_stamp", "approval_view", "approvals_missing",
     "approve_payapp", "clear_stale_approvals", "drop_approver", "drop_approvers_without",
 ]
 
@@ -227,6 +227,18 @@ def drop_approver(state: dict[str, Any], user_id: str, why: str = "left the team
         audit(state, "", "approvers_set", f"{gone[0]['name']} {why} and no longer approves {whose}.", "duracash")
 
 
+def rename_approver(state: dict[str, Any], user_id: str, name: str) -> bool:
+    """Someone on an approvers list changed their name (My account): the lists say the new one,
+    so a pay app doesn't wait on a name nobody on the team has (B25). True when one changed."""
+    changed = False
+    for holder in [state.get("company", {}), *state.get("payers", [])]:
+        for p in holder.get("payapp_approvers") or []:
+            if isinstance(p, dict) and p.get("id") == user_id and p.get("name") != name:
+                p["name"] = name
+                changed = True
+    return changed
+
+
 def drop_approvers_without(state: dict[str, Any], pool: dict[str, str]) -> None:
     """After a profile change or a permissions edit: anyone named who no longer holds Approve pay
     apps (pool is {user id: name} of those who do) comes off the lists (decision 8)."""
@@ -255,21 +267,30 @@ def approval_view(state: dict[str, Any], job: dict[str, Any], invoice: dict[str,
     valid = _valid(state, job, invoice)
     required = [{"id": p["id"], "name": p["name"], "approved_at": valid[p["id"]]["at"] if p["id"] in valid else ""}
                 for p in payapp_approvers(state, job)]
-    return {"required": required, "waiting": [p["name"] for p in required if not p["approved_at"]]}
+    # stamp: the version shown, which the Approve button sends back (approve_payapp's seen).
+    return {"required": required, "waiting": [p["name"] for p in required if not p["approved_at"]],
+            "stamp": approval_stamp(state, job, invoice)}
 
 
 def approvals_missing(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> list[str]:
     return approval_view(state, job, invoice)["waiting"]
 
 
-def approve_payapp(state: dict[str, Any], job_id: str, actor: str = "owner", actor_id: str = "") -> dict[str, Any]:
-    """One named approver approves the open draft as it is now. Only once it is ready to send
-    (awaiting_approval): a draft still missing paperwork will change before it goes."""
+def approve_payapp(state: dict[str, Any], job_id: str, actor: str = "owner", actor_id: str = "",
+                   invoice_id: str | None = None, seen: str | None = None) -> dict[str, Any]:
+    """One named approver approves the open draft, as the version they looked at: invoice_id and
+    seen (approval_view's stamp) are what the page showed, and a draft changed or replaced since
+    is refused, as Review & send refuses a stale send (B13). None is for callers with no page.
+    Only once it is ready to send (awaiting_approval): a draft still missing paperwork will change
+    before it goes."""
     from domain import GateError, _open_job, audit, utcnow, money
     job = _open_job(state, job_id)
     invoice = next((i for i in reversed(job["invoices"]) if i["status"] in {"draft", "awaiting_approval"}), None)
     if not invoice:
         raise GateError("No draft pay app to approve.")
+    if (invoice_id is not None and invoice_id != invoice["id"]) or (seen is not None and seen != approval_stamp(state, job, invoice)):
+        raise GateError(f"{invoice['number']} changed since you opened it. Look it over again, then approve.",
+                        extra={"review_changed": True, "invoice_id": invoice["id"]})
     if not any(p["id"] == actor_id for p in payapp_approvers(state, job)):
         raise GateError(f"You aren't one of the people who approve {invoice['number']}.")
     if invoice["status"] != "awaiting_approval":

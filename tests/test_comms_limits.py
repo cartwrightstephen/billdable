@@ -129,7 +129,7 @@ class AllowListTests(unittest.TestCase):
         site.load.return_value = state
         site.inbound.return_value = ""
         with tempfile.TemporaryDirectory() as tmp, env(MAIL_ALLOWLIST="@team.example", SMTP_HOST="h", MAIL_FROM="b@duracash.example"), \
-                mock.patch.object(storage, "DATA_DIR", Path(tmp)), mock.patch.object(domain, "light_snapshot", lambda s: s), \
+                mock.patch.object(storage, "DATA_DIR", Path(tmp)), mock.patch.object(domain, "light_snapshot", lambda s, **kw: s), \
                 mock.patch.object(mailer, "send", side_effect=lambda msgs, cfg: [None] * len(msgs)) as send:
             outbox.deliver_queued(site, "co-x", {"email_verified": True, "email": "me@team.example"})
         self.assertEqual(state["email_log"][0]["status"], mailer.NOT_ALLOWED)

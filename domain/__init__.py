@@ -3161,7 +3161,8 @@ def _digest_week_day(job: dict[str, Any] | None, today: date) -> bool:
 
 
 def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = None, user_id: str | None = None,
-                 owner: bool = True, perms: list[str] | None = None) -> tuple[str, str] | None:
+                 owner: bool = True, perms: list[str] | None = None,
+                 team_perms: dict[str, list[str]] | None = None) -> tuple[str, str] | None:
     """The daily "due today" email (R4-10): (subject, body) listing every Today row that needs a
     person, each with its link, and the open tasks due today or before; None on a day with nothing
     due. A pay app the customer approved with a date to pay is waiting, not due, and is left out.
@@ -3182,7 +3183,13 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     def this_week(r: dict[str, Any]) -> bool:
         return r["kind"] not in WEEKLY_DIGEST_KINDS or _digest_week_day(by_id.get(r["job_id"]), now.date())
 
-    rows = rows_for_user([r for r in rows_with_perms(today_rows(state, now), perms) if r["kind"] in DIGEST_NOUNS and due_now(r) and this_week(r)], user_id, owner)
+    rows = [r for r in rows_with_perms(today_rows(state, now), perms) if r["kind"] in DIGEST_NOUNS and due_now(r) and this_week(r)]
+    if team_perms is not None:
+        # A row assigned to someone whose permissions don't cover it (a change order to price, for
+        # a Member) is nobody's to them, so it goes to the owners as an unassigned one (B23).
+        rows = [dict(r, assignee_id="") if r.get("perm") and r.get("assignee_id") and r["perm"] not in team_perms.get(r["assignee_id"], [])
+                else r for r in rows]
+    rows = rows_for_user(rows, user_id, owner)
     tasks = rows_for_user(tasks_due_by(state, now.date()), user_id, owner)
     if not rows and not tasks:
         return None

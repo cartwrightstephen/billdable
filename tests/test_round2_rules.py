@@ -293,7 +293,11 @@ class Round2RulesHttpTests(ServerCase):
         self.assertTrue(out.get("approvals_missing"), out)
         res, out = self.request("POST", f"/api/jobs/{self.job_id}/payapp-approve", {}, cookie=self.member)
         self.assertEqual((res.status, out.get("error")), (403, server.NO_PERMISSION))
-        res, out = self.request("POST", f"/api/jobs/{self.job_id}/payapp-approve", {}, cookie=pm)
+        # The version the page showed is what is approved (B13): a stale stamp is refused.
+        res, out = self.request("POST", f"/api/jobs/{self.job_id}/payapp-approve", {"invoice_id": inv["id"], "stamp": "stale"}, cookie=pm)
+        self.assertEqual(res.status, 409, out)
+        self.assertTrue(out.get("review_changed"), out)
+        res, out = self.request("POST", f"/api/jobs/{self.job_id}/payapp-approve", {"invoice_id": inv["id"], "stamp": inv["approval"]["stamp"]}, cookie=pm)
         self.assertEqual(res.status, 200, out)
         self.assertEqual(self.job(out)["invoices"][-1]["approval"]["waiting"], [])
         res, out = self.request("POST", f"/api/jobs/{self.job_id}/send", {"reviewed": stamp}, cookie=self.owner)
