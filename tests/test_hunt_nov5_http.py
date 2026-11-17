@@ -14,6 +14,7 @@ from urllib.parse import quote, urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hartline_demo import hartline_demo
 
 import auth
 import doc_check
@@ -27,6 +28,7 @@ import storage
 PASSWORD = "correct horse battery"
 
 
+@hartline_demo
 class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

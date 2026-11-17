@@ -30,6 +30,7 @@ import server
 import storage
 from dollar_jobs import dollar_jobs
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hartline_demo import hartline_demo
 from review_help import reviewed
 
 PASSWORD = "correct horse battery"
@@ -237,6 +238,7 @@ class EmailFailureTests(unittest.TestCase):
                          "each change order counts on its own, and a signed one no longer matters")
 
 
+@hartline_demo
 @dollar_jobs
 class MailHttpTests(unittest.TestCase):
     @classmethod

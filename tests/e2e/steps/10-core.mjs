@@ -8,7 +8,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const p = await ctx.newPage();
     await p.goto(BASE + "/jobs/job-oak");
     await p.getByText("Sign in to open that page.").waitFor();
-    await p.fill("#auth-form input[name=email]", "owner@hartline.example");
+    await p.fill("#auth-form input[name=email]", "owner@redbudelectric.example");
     await p.fill("#auth-form input[name=password]", "demo");
     await p.click("#auth-form button[type=submit]");
     await p.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
