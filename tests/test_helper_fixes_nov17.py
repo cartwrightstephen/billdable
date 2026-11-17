@@ -69,7 +69,8 @@ class FormCommands(Base):
 
     def test_r11_still_no_form_when_the_thing_made_is_a_reminder_or_a_note(self):
         snap = domain.snapshot(self.state)
-        for q in ("add a payment reminder for Turner", "new change order email for Turner", "add a job record note for Turner",
+        # A job record holds notes and photos, so "add a job record note" is that form (round 2, R11).
+        for q in ("add a payment reminder for Turner", "new change order email for Turner", "add a change order note for Turner",
                   "Draft a follow-up for the Turner pay app", "new final pay app for Turner"):
             self.assertIsNone(helper_intents.intent(q, snap, ALL), q)
 

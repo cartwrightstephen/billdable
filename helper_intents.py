@@ -57,8 +57,12 @@ PAGES: dict[str, tuple[str, tuple[str, ...]]] = {
 # settings.js), so only Financials is held back.
 PAGE_PERM = {"financials": "financials"}
 # A menu section the helper opens at its first page: Money starts at Pay apps (static/app.js SECTIONS).
-# Only after a verb that opens ("open money", "go to money"): "show me the money" is the money answer.
+# After any verb that opens or shows ("open money", "go to money", "show money"), or named as a tab,
+# page or section ("money tab", "show me the money page"). Only "show me the money", a prepared
+# example question, is the money answer (Round 2 review, B37).
 SECTIONS = {"money": "payapps"}
+_SECTION_WORDS = {"tab", "page", "section", "menu", "screen"}
+_MONEY_ANSWER = re.compile(r"^show\s+me\s+(?:the|my|our)\s+money$", re.I)
 
 # The forms it opens, with the permission each save needs (domain/profiles.py JOB_ACTION_PERMS:
 # New job and a job record are anyone's; a change order and a progress pay app too).
@@ -170,10 +174,12 @@ def page_for(text: str) -> str | None:
     for view, (_, aliases) in PAGES.items():
         if phrase in {_bare(a) for a in aliases}:
             return view
+    # A typo is measured against the alias as written: "to do list" cut to "do list" is near "docs
+    # list" and "done list", which name no page (Round 2 review, B19).
     best, best_ratio = None, 0.0
     for view, (label, aliases) in PAGES.items():
         for alias in aliases + (label.lower(),):
-            r = SequenceMatcher(None, phrase, _bare(alias)).ratio()
+            r = SequenceMatcher(None, phrase, alias).ratio()
             if r > best_ratio:
                 best, best_ratio = view, r
     return best if best_ratio >= 0.85 else None
@@ -226,17 +232,24 @@ _TASK = re.compile(
 # New job only as the thing made ("new job", "add a job"), not "log a job".
 _MAKES = {"new", "add", "create", "start", "make", "begin", "open"}
 # Words that say the thing made is something no form here makes: a follow-up, a reminder, an email,
-# a note, a photo ("add a payment reminder", "new change order email"). Only right after the form's
-# words, where they would be the thing made: further on they are part of a job's or client's name
-# or of the change's description ("new change order for the final punch at Summit", "new job for
-# Notes Inc"), and the form opens. "new final pay app" never reads as a form: "final" is not one
-# of the words allowed between the verb and the form's.
-_NOT_A_FORM = re.compile(r"[\s-]*(?:follow[\s-]*ups?|followups?|reminders?|e-?mails?|notes?|photos?)\b", re.I)
+# a note, a photo ("add a payment reminder", "new change order email for Turner"). Only right after
+# the form's words and ending that phrase (the end, a comma or colon, or "for", "to", "on" ...), where
+# they would be the thing made. Followed by another word they start a name or a description ("new
+# job Notes Inc", "new change order email room at Westside"); after a dash or further on they are
+# part of one ("new change order - notes panel", "new job for Notes Inc"), and the form opens. A job
+# record holds notes and photos, so "new job record photos for Summit" is that form (Round 2 review,
+# R11). "new final pay app" never reads as a form: "final" is not one of the words allowed between
+# the verb and the form's.
+_NOT_A_FORM = re.compile(r"\s*(?:follow[\s-]*ups?|followups?|reminders?|e-?mails?|(?P<held>notes?|photos?))\b"
+                         r"(?=\s*$|\s*[,:;]|\s+(?:for|to|on|about|at|with|from|in|of|re|regarding|please|now|and)\b)", re.I)
 
 
 def _task_match(q: str) -> re.Match[str] | None:
     m = _TASK.search(q)
-    if not m or _NOT_A_FORM.match(q, m.end()):
+    if not m:
+        return None
+    other = _NOT_A_FORM.match(q, m.end())
+    if other and not (other.group("held") and m.group("daily")):
         return None
     form = next(f for f, _ in _OBJECTS if m.group(f))
     if form == "newjob" and m.group("verb").split()[0].lower() not in _MAKES:
@@ -295,17 +308,11 @@ def _task_reply(form: str, question: str, q: str, snap: dict[str, Any], perms: s
         job, tied = here, []
     if form == "progress" and not job and not tied and not payer and not re.search(r"\bprogress\b", q, re.I):
         return None   # "new pay app" with no job named: the prepared answer about the Pay apps list
+    if form == "match" and _retainage_received(q, paying=True):
+        return _retainage_reply(q, snap, perms, context_job_id)
     if not job and not open_jobs:
         # Nothing to pick from (a new company, or every job finished): say so, not that every job is done.
         return {"text": "There are no open jobs.", "actions": [form_action("newjob", None, style)]}
-    # Retainage received is the job page's Record retainage paid, not the pay app's Record a Payment,
-    # whose amount starts at what the pay app owes (Round 2 review, B38).
-    if form == "match" and re.search(r"\b(?:retainage|retention)\b", q, re.I):
-        where = "Retainage received is recorded with Record retainage paid on the job's page."
-        if job and not job.get("closed"):
-            return {"text": where, "actions": [job_action(job)], "go": 0}
-        held = [j for j in (tied or [j for j in open_jobs if not payer or j["payer_id"] == payer["id"]]) if j["money"]["retainage_open_cents"] > 0]
-        return {"text": where + (" Which job?" if held else " No open job has retainage held."), "actions": [job_action(j) for j in held[:6]]}
     if not job:
         if payer:
             pool = [j for j in open_jobs if j["payer_id"] == payer["id"] and eligible(j)]
@@ -325,6 +332,73 @@ def _task_reply(form: str, question: str, q: str, snap: dict[str, Any], perms: s
         return {"text": f"The work on {job['name']} is marked done, so its next {pay_app} is drafted from its page.", "actions": [job_action(job)]}
     return {"text": f"Here is {domain.term_text(FORMS[form][0], style)} for {job['name']}. Nothing is saved until you save it.",
             "actions": [form_action(form, job, style), job_action(job)], "go": 0}
+
+
+# ---------- retainage received ----------
+
+_RET = r"(?:retainage|retention)"
+# Retainage taken off a payment: "record a payment for Turner less retainage", "net of retainage",
+# "minus 10% retainage", "retention withheld". That is a pay app's payment, so Record a Payment.
+_RET_KEPT = re.compile(
+    rf"\b(?:less|minus|net\s+of|after|excluding|without|withholding|deducting)\s+(?:the\s+|\d+(?:\.\d+)?\s*%\s*|any\s+)?{_RET}\b"
+    rf"|\b{_RET}\s+(?:withheld|held\s+back|deducted|taken\s+out|kept|retained)\b", re.I)
+# Retainage as the money that came in, said on its own: "record retainage paid", "retainage came in
+# for Decatur", "the retainage was paid on Turner".
+_RET_IN = re.compile(
+    rf"\b(?:record|log|enter)\s+(?:the\s+|a\s+)?{_RET}\b"
+    rf"|\b{_RET}\s+(?:has\s+|have\s+|just\s+)?(?:came|come|arrived)\b"
+    rf"|\b{_RET}\s+(?:was|has\s+been|got)\s+(?:paid|received|released)\b", re.I)
+# Or as what a payment is for: "record a payment for the retainage on Turner", "a retainage check".
+_RET_PAID = re.compile(
+    rf"\b(?:for|of)\s+(?:the\s+|my\s+|our\s+|their\s+)?{_RET}\b"
+    rf"|\b{_RET}\s+(?:payment|check|cheque|money|release)s?\b|\b{_RET}\s+(?:paid|received)\b", re.I)
+
+
+def _retainage_received(q: str, paying: bool = False) -> bool:
+    """Whether a command records retainage that came in (Round 2 review, B38). Only that is the job
+    page's Record retainage paid; a payment with retainage held back ("less retainage") is the pay
+    app's payment. paying: the command is already Record a Payment's ("record a payment for ...")."""
+    return bool(_RET_IN.search(q) or (paying and _RET_PAID.search(q))) and not _RET_KEPT.search(q)
+
+
+def retainage_releasable(job: dict[str, Any]) -> bool:
+    """When the job page offers Record retainage paid: static/js/jobs.js retainageReleasable."""
+    m = job.get("money") or {}
+    if not m.get("retainage_open_cents", 0) > 0:
+        return False
+    paid_holding = any(i["status"] in ("paid", "partial") and int(i.get("retainage_cents") or 0) > 0
+                       for i in job.get("invoices", []))
+    return (job.get("work_status") == "complete" or bool(job.get("closed")) or int(job.get("retainage_chases") or 0) > 0
+            or m.get("retainage_released_cents", 0) > 0 or paid_holding)
+
+
+def _retainage_reply(q: str, snap: dict[str, Any], perms: set[str], context_job_id: str = "") -> dict[str, Any]:
+    """Retainage received: the job whose page has Record retainage paid, only where it is offered."""
+    where = "Retainage received is recorded with Record retainage paid on the job's page."
+    if "record_payments" not in perms:
+        return {"text": "Your permissions don't cover Record retainage paid. Someone who manages the team can change them.", "actions": []}
+    open_jobs = [j for j in snap.get("jobs", []) if not j.get("closed")]
+    job, tied = find_job(snap, q, open_only=False)
+    payer = client_named(snap, q)
+    if payer:
+        job, tied = None, []
+    here = next((j for j in open_jobs if context_job_id and j["id"] == context_job_id), None)
+    if not job and here and (here["payer_id"] == payer["id"] if payer else (not tied or here in tied)):
+        job = here
+    if job:
+        if job.get("closed"):
+            return {"text": f"{job['name']} is finished.", "actions": [job_action(job)]}
+        if not job["money"].get("retainage_open_cents", 0) > 0:
+            return {"text": f"{job['name']} has no retainage held.", "actions": [job_action(job)]}
+        if not retainage_releasable(job):
+            return {"text": f"Record retainage paid shows on {job['name']} once its work is marked done or its retainage is asked for.",
+                    "actions": [job_action(job)]}
+        return {"text": f"Retainage received is recorded with Record retainage paid on {job['name']}.", "actions": [job_action(job)], "go": 0}
+    pool = [j for j in (tied or open_jobs) if (not payer or j["payer_id"] == payer["id"]) and retainage_releasable(j)]
+    if not pool:
+        who = f" for {payer['name']}" if payer else ""
+        return {"text": f"No open job{who} has retainage ready to record as paid.", "actions": [client_action(payer)] if payer else []}
+    return {"text": where + " Which job?", "actions": [job_action(j) for j in pool[:6]]}
 
 
 def _page_reply(view: str, perms: set[str]) -> dict[str, Any]:
@@ -364,16 +438,20 @@ def intent(question: str, snap: dict[str, Any], perms: set[str], context_job_id:
     if not q or _QUESTION.match(q):
         return None
     style = domain.billing_style(snap)
+    if _retainage_received(q):
+        # "record retainage paid", "retainage came in for Decatur" (Round 2 review, B38).
+        return "start-task", _retainage_reply(q, snap, perms, context_job_id)
     form = _task(q)
     if form:
         reply = _task_reply(form, question, q, snap, perms, style, context_job_id)
         if reply:
             return "start-task", reply
     m = _NAV.match(q)
+    target = m.group("target") if m else q
+    section = SECTIONS.get(" ".join(w for w in _words(target) if w not in _SOFT | _SECTION_WORDS))
+    if section and (m or set(_words(target)) & _SECTION_WORDS) and not _MONEY_ANSWER.match(q):
+        return "open-page", _page_reply(section, perms)
     if m:
-        section = SECTIONS.get(" ".join(w for w in _words(m.group("target")) if w not in _SOFT | {"section"}))
-        if section and not m.group("verb").lower().startswith("show"):
-            return "open-page", _page_reply(section, perms)
         reply = _nav_reply(m.group("target"), snap, perms)
         if reply:
             return "open-page", reply

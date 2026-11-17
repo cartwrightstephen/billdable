@@ -84,12 +84,10 @@
       "questions": [
         "Which follow-ups are due?",
         "Who should I chase?",
-        "Who do I need to follow up with?",
-        "Any overdue pay apps?"
+        "Who do I need to follow up with?"
       ],
       "keywords": [
         "followup",
-        "overdue",
         "due"
       ],
       "answer": "",
@@ -157,7 +155,8 @@
       ],
       "keywords": [
         "status",
-        "summary"
+        "summary",
+        "\"this job\""
       ],
       "answer": "",
       "handler": "job_status",
@@ -680,6 +679,7 @@
       ],
       "answer": "Open the job and tap Review & send. The pay app page shows what the client will get: who it goes to, Also email (CC), the amount, the subject, the PDF to open, every file the email carries with a link to open it and Leave out or Put back, Add from the job records for an extra photo or receipt, the email's text, and any overrides and warnings. If your company address, phone or licence number is blank, it says so there with a Company details button; you can still send. Anything still missing is listed in Review & send, above the button, with Take a photo and Choose file. Then tap Approve & send to: it always asks first, naming who it goes to, the amount and the period. While something is missing or an unsigned change order is on the pay app, it then says why under the button instead of sending, and the job shows Fix N things before sending (or Add N missing documents, or Get CO N signed). The amounts, lines and approval are under Show the numbers. A General contractor, Public agency or Another subcontractor job at 0% retainage is named there too. If the email didn't go out, the page says so under the Sent pill. It goes to the client's Email for pay apps with the PDF and supporting documents attached, from your company name, and replies come back to you. A signed unconditional waiver attached to a pay app gives up your lien rights before you are paid, whatever it was filed as (a waiver filed as an insurance certificate counts too), so sending is refused until you take it off or an owner types why and taps Send anyway. A file that only says one comes later, or a daily log that mentions one in passing, is shown with the words found: anyone who can send opens it and taps It's right. Who can send is set by each person's profile on Settings, Team. Communications, Outbox shows whether it was delivered.",
       "handler": "blockers",
+      "how_to": true,
       "needs_job": false,
       "actions": [],
       "follow_ups": [
@@ -1073,7 +1073,7 @@
         "paid",
         "deposit"
       ],
-      "answer": "Open the job and tap Record a payment. Pick the Pay app, check Amount received ($) (it starts at what is owed), Date received and Check or reference no. (optional), then tap Record. Less than owed leaves the pay app Partly paid; paid in full opens the waiver step for that pay app. The amount can't be more than what is owed, and a reference can only be used once per job. Many payments at once? Read a QuickBooks export on Import/Export, Import.",
+      "answer": "Open the job and tap Record a payment. Pick the Pay app, check Amount received ($) (it starts at what is owed), Date received and Check or reference no. (optional), then tap Record. Less than owed leaves the pay app Partly paid; either way the waiver step opens for that pay app, unless the client has Lien waiver on each part payment set to No in the Client playbook, when it opens only once the pay app is paid in full. The amount can't be more than what is owed, and a reference can only be used once per job. Many payments at once? Read a QuickBooks export on Import/Export, Import.",
       "handler": null,
       "needs_job": false,
       "actions": [],
@@ -1091,13 +1091,14 @@
         "Short pay",
         "The customer paid half",
         "They paid only part of the pay app",
-        "Customer paid less than the bill"
+        "Customer paid less than the bill",
+        "Is a waiver due after a partial payment?"
       ],
       "keywords": [
         "partial",
         "short"
       ],
-      "answer": "Record what came in with Record a payment. The pay app shows Partly paid with the rest still owed, and no waiver is due until it's paid in full. Follow up on the balance from Money, Unpaid. If the rest won't come, an owner taps Accept $X short pay…, gives the reason and confirms.",
+      "answer": "Record what came in with Record a payment. The pay app shows Partly paid with the rest still owed, and a lien waiver for the part paid is due, unless the client has Lien waiver on each part payment set to No in the Client playbook. Follow up on the balance from Money, Unpaid. If the rest won't come, an owner taps Accept $X short pay…, gives the reason and confirms.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1142,7 +1143,7 @@
       "keywords": [
         "send waiver"
       ],
-      "answer": "When a pay app is paid in full, the job shows Choose waiver and send (the Dashboard shows Waiver due). Put the signed waiver of that type in the job records first (New job record, Other documents and notes, kind: Lien waiver), or tap Take a photo on the waiver page; until it is there, Approve & send says so under the button. Pick the type; the line under it says when it fits, and Check the signed form shows lists what the form must carry. Then tap Approve & send: any look a mismatch needs comes first, then one confirm sends it. State form starts at the job's state. The email attaches that signed waiver, never one that already went out with a pay app. One waiver per paid pay app and per retainage release, and only after the payment is recorded. Take the photo from that pay app's row so the waiver is tied to it; when a signed waiver isn't tied and more than one is due, the page asks which pay app it is for before it can go. Handed the waiver over yourself, or the client doesn't need one? Open Not needed, or handed over outside Duracash…, say why and tap Mark not needed: it is kept on the pay app and in the activity log, and the job can be finished. A client marked Not needed for this client on the conditional waiver owes no waiver after payment either. Duracash doesn't write waiver forms; states set them. Duracash reads the file as it goes: if it is blank, a scan, or says another type, job or amount, it names what didn't match, and the waiver goes only once you say you opened it and it's right. A final waiver is suggested only when nothing is left to bill or collect on the job.",
+      "answer": "When a pay app is paid, in full or in part (unless the client has Lien waiver on each part payment set to No), the job shows Choose waiver and send (the Dashboard shows Waiver due). Put the signed waiver of that type in the job records first (New job record, Other documents and notes, kind: Lien waiver), or tap Take a photo on the waiver page; until it is there, Approve & send says so under the button. Pick the type; the line under it says when it fits, and Check the signed form shows lists what the form must carry. Then tap Approve & send: any look a mismatch needs comes first, then one confirm sends it. State form starts at the job's state. The email attaches that signed waiver, never one that already went out with a pay app. One waiver per paid pay app and per retainage release, and only after the payment is recorded. Take the photo from that pay app's row so the waiver is tied to it; when a signed waiver isn't tied and more than one is due, the page asks which pay app it is for before it can go. Handed the waiver over yourself, or the client doesn't need one? Open Not needed, or handed over outside Duracash…, say why and tap Mark not needed: it is kept on the pay app and in the activity log, and the job can be finished. A client marked Not needed for this client on the conditional waiver owes no waiver after payment either. Duracash doesn't write waiver forms; states set them. Duracash reads the file as it goes: if it is blank, a scan, or says another type, job or amount, it names what didn't match, and the waiver goes only once you say you opened it and it's right. A final waiver is suggested only when nothing is left to bill or collect on the job.",
       "handler": null,
       "needs_job": false,
       "actions": [
@@ -1527,7 +1528,7 @@
         "Why didn't it suggest a job?"
       ],
       "keywords": [
-        "which job",
+        "\"which job\"",
         "suggest",
         "match"
       ],
@@ -2104,6 +2105,7 @@
       ],
       "answer": "Finishing a job takes the Finish and reopen jobs permission, which owners have. Finish job appears when the work is done and nothing is left: no open draft, no unsigned change order, nothing unbilled or unpaid, retainage paid and waivers sent. Until then the job page shows Before you can finish this job, one line per thing with a button for each. Tap Finish job and confirm: the job moves to Jobs, Job history and leaves the working lists. Its page becomes its job file: what it came to, every pay app with its PDF, payments, change orders, waivers sent, the job records and its activity, with Download job file for all of it in one zip. Anyone with that permission can tap Add more work to open the same job again, for more work or a late payment.",
       "handler": "closeable",
+      "how_to": true,
       "needs_job": false,
       "actions": [],
       "follow_ups": []
@@ -2304,7 +2306,10 @@
         "List my unpaid pay apps",
         "Which pay apps are past due?",
         "What's overdue?",
-        "Is anything overdue?"
+        "Is anything overdue?",
+        "Any overdue pay apps?",
+        "Which pay apps are late?",
+        "Any late payments?"
       ],
       "keywords": [
         "overdue",

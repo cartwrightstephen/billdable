@@ -136,8 +136,7 @@ class StartATask(Base):
         self.state["company"]["billing_style"] = "draws"
         r, a = self.form("start a progress pay app for grant park")
         self.assertEqual(a["label"], "Progress Draw: Grant Park addition")
-        # After the prepared text, which comes first (B26).
-        self.assertIn("\n\nUnpaid draws, oldest first", self.ask("which pay apps are unpaid")["text"])
+        self.assertTrue(self.ask("which pay apps are unpaid")["text"].startswith("Unpaid draws, oldest first"))
 
 
 class LiveData(Base):
@@ -180,8 +179,7 @@ class LiveData(Base):
         self.assertTrue(r["text"].startswith(f"Retainage held: {domain.money(snap['totals']['retainage_cents'])}"))
         r = self.ask("what's my backlog")
         self.assertEqual(r["matched"], "backlog")
-        # The prepared text first, then the live figure (B26).
-        self.assertIn(f"\n\nBacklog (signed work not done yet): {domain.money(self.f['backlog_cents'])}.", r["text"])
+        self.assertTrue(r["text"].startswith(f"Backlog (signed work not done yet): {domain.money(self.f['backlog_cents'])}."))
         self.assertEqual(r["actions"][0], helper_intents.nav_action("financials"))
 
     def test_due_this_week(self):
@@ -229,9 +227,7 @@ class Rails(Base):
     def test_no_company_money_without_see_company_financials(self):
         for q in ("who owes me money", "how much is owed", "what's done but not billed", "how much retainage is held", "what's my backlog", "show me the money"):
             r = self.ask(q, MEMBER)
-            # A prepared how-to keeps its text, before the refusal (backlog; B26), and has no figure.
-            self.assertTrue(r["text"].endswith(helper.NO_MONEY), q)
-            self.assertNotIn("$", r["text"], q)
+            self.assertEqual(r["text"], helper.NO_MONEY, q)
             self.assertEqual(r["actions"], [], q)
         r = self.ask("which pay apps are unpaid", MEMBER)
         self.assertIn("PA-TRN-01, Turner office TI: 60 days" if "60 days" in r["text"] else "PA-TRN-01, Turner office TI:", r["text"])
