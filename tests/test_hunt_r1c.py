@@ -318,7 +318,8 @@ class RetainageRequestOnAnOlderJob(unittest.TestCase):
         domain.mark_done(st, job["id"])
         inv = send_open(st, job)
         domain.match_payment(st, job["id"], inv["amount_cents"], "c", invoice_id=inv["id"])
-        rec = signed_waiver(st, job["id"], "unconditional_final", "Final waiver")
+        # A progress one: an unconditional final waiver never goes before the retainage (decision 6).
+        rec = signed_waiver(st, job["id"], "unconditional_progress", "Lien waiver")
         rec["waiver_answer"] = {"kind": "unconditional", "by": "Sam", "at": "x", "file_ids": list(rec["file_ids"])}
         job.pop("closeout_packet", None)
         job["packet"] = [{"id": "pk-old", "kind": "waiver", "label": "Final lien waivers", "required": True, "present": True, "blocker": "x",
@@ -605,7 +606,7 @@ class ThroughRetainage(HttpBase):
         self.assertEqual(self.rec(rid)["waiver_answer"]["by"], "Dee Member")
         status, data = self.P("retainage", {}, cookie=self.dee)
         self.assertEqual(status, 409)
-        self.assertTrue(data.get("unconditional_waiver"), data)
+        self.assertTrue(data.get("final_waiver_held"), data)   # the final release waits for the money (decision 6)
         status, _ = self.P(f"waiver-answer/{other}", {"answer": "no", "shown": self.rec(other)["file_ids"]}, cookie=self.dee)
         self.assertEqual(status, 409, "not on the request: only someone who can send pay apps answers it")
         self.assertEqual(self.P(f"waiver-answer/{other}", {"answer": "no", "shown": self.rec(other)["file_ids"]}, cookie=self.bob)[0], 403)

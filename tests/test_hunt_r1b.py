@@ -150,15 +150,17 @@ class ClosingOut(unittest.TestCase):
         self.assertEqual(rec["waiver_kind"], "unconditional_final")
         with self.assertRaises(domain.GateError) as refused:
             domain.chase_retainage(self.state, self.job["id"], "Sam")
-        self.assertEqual(str(refused.exception), domain.UNCONDITIONAL_ATTACHED)
+        self.assertTrue(str(refused.exception).startswith("A final waiver can't go out until all the money"))
         view = domain.job_view(self.state, self.job)
         self.assertEqual([r["record_id"] for r in view["closeout_unconditional"]], [rec["id"]])
         member = server.Ctx(user={"role": "member"}, body={"unconditional_override": "Because"}, company_id="co", actor="Mo")
         with self.assertRaises(domain.GateError):
             server._retainage(None, self.state, self.job["id"], None, member)
-        domain.chase_retainage(self.state, self.job["id"], "Owner", unconditional_override="Retainage paid by wire already")
-        self.assertEqual(self.job["retainage_overrides"][0]["reason"], "Retainage paid by wire already")
-        self.assertTrue(any(a["action"] == "unconditional_override" for a in self.state["audit"]))
+        # It is the final lien release: no reason sends it before the retainage is in (decision 6).
+        with self.assertRaises(domain.GateError) as held:
+            domain.chase_retainage(self.state, self.job["id"], "Owner", unconditional_override="Retainage paid by wire already")
+        self.assertEqual(held.exception.extra["final_waiver_held"], ["$1,000.00 of retainage is still held"])
+        self.assertNotIn("retainage_overrides", self.job)
 
     def test_a_conditional_one_goes_with_the_request(self):
         rec = signed_waiver(self.state, self.job["id"], None, "Final waiver")
