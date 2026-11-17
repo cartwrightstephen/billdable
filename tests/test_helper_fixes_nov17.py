@@ -135,5 +135,124 @@ class Pages(Base):
         self.assertEqual(self.ask("show me the money", state=st)["matched"], "money")
 
 
+class LiveAnswers(Base):
+    def test_b7_a_client_named_is_not_its_jobs_namesake(self):
+        r = self.ask("What does Ponce Property owe")
+        self.assertEqual(r["matched"], "who-owes")
+        self.assertIn("Ponce Property Co. owes you $57,950.00", r["text"])
+        r = self.ask("What does Ponce Property owe", job_id="job-turner")
+        self.assertIn("Ponce Property Co. owes you $57,950.00", r["text"], "a client named beats the page's job")
+        r = self.ask("What is blocking Ponce Property")
+        self.assertNotIn("Ponce bath has nothing blocking", r["text"])
+        # A job named still wins over its client.
+        self.assertTrue(self.ask("how much does Turner owe")["text"].startswith("Turner office TI"))
+
+    def test_b8_co_in_a_clients_name_is_not_a_change_order(self):
+        for q in ("how much does Ponce Property Co owe me", "how much does Ponce Property Co. owe me"):
+            r = self.ask(q)
+            self.assertEqual(r["matched"], "who-owes", q)
+            self.assertIn("$57,950.00", r["text"], q)
+        self.assertEqual(self.ask("how do I add a co")["matched"], "change-orders")
+
+    def test_b10_not_billed_is_the_unbilled_answer(self):
+        st = self.demo()
+        for q in ("What's not billed yet?", "what's not billed yet", "What work isn't billed", "which jobs have unbilled work",
+                  "What hasn't been billed?"):
+            self.assertEqual(self.ask(q, state=st)["matched"], "unbilled", q)
+        self.assertEqual(self.ask("Who hasn't paid me yet?", state=st)["matched"], "who-owes")
+
+    def test_b17_follow_up_note_quotes_whats_owed_on_every_unpaid_pay_app(self):
+        st = self.demo()
+        summit = self.job(st, "Summit")
+        inv = next(i for i in summit["invoices"] if i["number"] == "PA-SUMM-01")
+        domain.match_payment(st, summit["id"], 3_000_000, "chk 1", invoice_id=inv["id"])
+        text = self.ask("Draft a follow-up for Summit Ridge", state=st)["text"]
+        self.assertIn("PA-SUMM-01 $10,554.00", text)
+        self.assertNotIn("$40,554.00", text)
+        second = next(i for i in summit["invoices"] if i["number"] == "PA-SUMM-02")
+        second.update(status="sent", sent_at=datetime.now(timezone.utc).isoformat())
+        r = self.ask("Draft a follow-up for Summit Ridge", state=st)
+        self.assertIn("PA-SUMM-02 $44,048.70", r["text"])
+        self.assertIn("total $54,602.70", r["text"])
+        self.assertIn("total $54,602.70", next(a for a in r["actions"] if a["type"] == "copy")["text"])
+
+    def test_b18_overdue_lists_only_pay_apps_past_their_due_date(self):
+        st = self.demo()
+        today = datetime.now(timezone.utc).date().isoformat()
+        late = [i["number"] for j in st["jobs"] for i in j["invoices"] if i["status"] in domain.OPEN_FOR_PAYMENT and str(i.get("due_on") or "9") < today]
+        early = [i["number"] for j in st["jobs"] for i in j["invoices"] if i["status"] in domain.OPEN_FOR_PAYMENT and str(i.get("due_on") or "9") >= today]
+        self.assertTrue(late and early, "the demo has one of each")
+        for q in ("Is anything overdue?", "Which pay apps are past due?", "What's overdue?"):
+            text = self.ask(q, state=st)["text"]
+            for n in late:
+                self.assertIn(n, text, q)
+            for n in early:
+                self.assertNotIn(n, text, q)
+        # Every unpaid one when the question isn't about overdue.
+        text = self.ask("Which pay apps are unpaid?", state=st)["text"]
+        self.assertTrue(all(n in text for n in late + early))
+        for j in st["jobs"]:
+            for i in j["invoices"]:
+                i["due_on"] = "2999-01-01"
+        self.assertIn("Nothing is overdue", self.ask("Is anything overdue?", state=st)["text"])
+
+    def test_b21_waivers_due_mentions_part_payments(self):
+        for j in self.state["jobs"]:
+            j["waiver_due"] = False
+            for i in j["invoices"]:
+                i["waiver_due"] = False
+        text, _ = helper.handle("waivers_due", domain.snapshot(self.state), None, self.state)
+        self.assertNotIn("paid in full.", text)
+        self.assertIn("in part", text)
+
+    def test_b26_how_to_text_comes_first_then_the_live_lines(self):
+        st = self.demo()
+        kb = {e["id"]: e for e in helper.load_kb()}
+        westside = self.job(st, "Westside")
+        for q, entry, job_id in (("How do I send a pay app?", "send", ""), ("How do I send a pay app?", "send", westside["id"]),
+                                 ("How do I close a job?", "close-job", "")):
+            r = self.ask(q, state=st, job_id=job_id)
+            self.assertEqual(r["matched"], entry, q)
+            self.assertTrue(r["text"].startswith(kb[entry]["answer"]), q)
+            self.assertGreater(len(r["text"]), len(kb[entry]["answer"]), "the live lines follow")
+
+    def test_b27_today_includes_the_dashboards_tasks(self):
+        st = server.empty_state("E Co")
+        today = datetime.now(timezone.utc).date().isoformat()
+        domain_tasks.add_task(st, {"title": "Call the inspector", "due": today}, None)
+        domain_tasks.add_task(st, {"title": "Order panels", "due": (date.fromisoformat(today) + timedelta(days=20)).isoformat()}, None)
+        r = self.ask("What should I do today?", state=st)
+        self.assertIn("Call the inspector", r["text"])
+        self.assertNotIn("Nothing needs action", r["text"])
+        self.assertLess(r["text"].index("Call the inspector"), r["text"].index("Order panels"))
+
+    def test_b28_which_job_keyword_only_for_which_job(self):
+        for q in ("How is this job doing?", "Where are we on this job?"):
+            r = self.ask(q, job_id="job-turner")
+            self.assertEqual(r["matched"], "job-status", q)
+        self.assertEqual(self.ask("How does it know which job?")["matched"], "import-match")
+
+    def test_b29_finishing_takes_the_permission_not_the_owner(self):
+        for j in self.state["jobs"]:
+            j["work_status"] = "in_progress"
+        r = self.ask("How do I close a job?")
+        self.assertNotIn("Only an owner", r["text"])
+        text, _ = helper.handle("closeable", domain.snapshot(self.state), None, self.state)
+        self.assertNotIn("Only an owner", text)
+        self.assertIn("Finish and reopen jobs", text)
+
+    def test_b31_no_open_jobs_doesnt_ask_which_job(self):
+        st = server.empty_state("Acme")
+        for q in ("Draft a follow-up", "Status of this job"):
+            r = self.ask(q, state=st)
+            self.assertEqual(r["text"], "There are no open jobs.", q)
+            self.assertIn("newjob", [a.get("form") for a in r["actions"]], q)
+        for j in self.state["jobs"]:
+            j["closed"] = True
+        r = self.ask("Status of this job")
+        self.assertEqual(r["text"], "There are no open jobs.")
+        self.assertIn(helper_intents.nav_action("history"), r["actions"])
+
+
 if __name__ == "__main__":
     unittest.main()

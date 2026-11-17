@@ -175,7 +175,9 @@
         "What's unbilled?",
         "Is there money I forgot to bill?",
         "What can I bill now?",
-        "What's done but not billed?"
+        "What's done but not billed?",
+        "What's not billed yet?",
+        "Which jobs have unbilled work?"
       ],
       "keywords": [
         "unbilled",
