@@ -21,6 +21,7 @@ from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hartline_demo import hartline_demo
 
 import auth
 import backup
@@ -40,6 +41,7 @@ PASSWORD = "correct horse battery"
 ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "DURACASH_URL", "HELPER_ADMIN_USER_IDS", "BACKUP_KEEP")
 
 
+@hartline_demo
 class ServerCase(unittest.TestCase):
     """A server on a temporary data directory, a local mail server, and request helpers."""
     @classmethod

@@ -66,7 +66,7 @@ _CODE_WRONG: dict[str, int] = {}
 class AuthError(ValueError):
     pass
 
-DEMO_EMAIL = "owner@hartline.example"
+DEMO_EMAIL = "owner@redbudelectric.example"  # demo_seed.OWNER_EMAIL; was owner@hartline.example (renamed by migrations)
 DEMO_PASSWORD = "demo"
 DEMO_COMPANY_ID = "co-hartline"
 SESSION_DAYS = 14

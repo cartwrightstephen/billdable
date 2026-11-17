@@ -68,6 +68,7 @@ import storage
 import store
 import trial
 import twilio_media
+import demo_seed
 from seed import seed_state
 
 ROOT = Path(__file__).resolve().parent
@@ -574,17 +575,36 @@ class Site:
 SITE = Site()
 
 
+def demo_state() -> dict:
+    """A fresh demo company: Redbud Electric (demo_seed, Stephen, 10 Nov, decision 11) with its
+    files written to the demo's uploads, or with DURACASH_DEMO_SEED=hartline the Hartline
+    Remodeling data the tests and the browser suite are written against."""
+    if demo_seed.legacy():
+        return seed_state()
+    state, files = demo_seed.build(link_base=app_url() or "", company_id=auth.DEMO_COMPANY_ID)
+    demo_seed.write_files(auth.DEMO_COMPANY_ID, files, state.get("files", []))
+    return state
+
+
 def ensure_demo() -> None:
     if not auth.user_by_email(auth.DEMO_EMAIL):
         auth.create_user(
             auth.DEMO_EMAIL,
             auth.DEMO_PASSWORD,
-            "Alex Hartline",
+            demo_seed.OLD_OWNER_NAME if demo_seed.legacy() else demo_seed.OWNER_NAME,
             auth.DEMO_COMPANY_ID,
             enforce_policy=False,
         )
     if not company_exists(auth.DEMO_COMPANY_ID):
-        save_company(auth.DEMO_COMPANY_ID, seed_state())
+        save_company(auth.DEMO_COMPANY_ID, demo_state())
+    elif not demo_seed.legacy():
+        # A demo made from an older seed (Hartline Remodeling, before decision 11) is made again
+        # once; after that it keeps what people do in it until someone resets it.
+        with company_lock(auth.DEMO_COMPANY_ID):
+            current = (company_store().load(auth.DEMO_COMPANY_ID) or {}).get("company", {}).get("demo_seed")
+            if current != demo_seed.SEED_VERSION:
+                save_company(auth.DEMO_COMPANY_ID, demo_state())
+                log_json("info", msg="demo company made again from the new seed", seed=demo_seed.SEED_VERSION, was=current or "hartline")
 
 
 def _text(body: dict, key: str, default: str = "", limit: int = MAX_TEXT_CHARS) -> str:
@@ -2809,7 +2829,7 @@ class Handler(BaseHTTPRequestHandler):
     def _m_reset(self, state: dict, m, ctx: "Ctx") -> dict:
         company_id = ctx.company_id
         if company_id == auth.DEMO_COMPANY_ID:
-            return seed_state()
+            return demo_state()
         name = state.get("company", {}).get("name", "New company")
         if _text(ctx.body, "confirm").strip() != name:
             raise domain.GateError("Reset not done. Type your company name exactly to confirm.",

@@ -17,6 +17,8 @@ import auth
 import helper
 import importer
 import server
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hartline_demo import hartline_demo
 import storage
 
 PASSWORD = "correct horse battery"
@@ -33,6 +35,7 @@ class DemoModeTests(unittest.TestCase):
                 self.assertEqual(server.demo_mode(), want, env)
 
 
+@hartline_demo
 class ReadOnlyHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
 import server
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hartline_demo import hartline_demo
 import storage
 
 GOOD = {
@@ -71,6 +73,7 @@ class ConfigTests(unittest.TestCase):
             self.assertFalse(server.data_notice())
 
 
+@hartline_demo
 class ProductionHttpTests(unittest.TestCase):
     """A demo account left on the disk can't be used once DURACASH_ENV=production."""
 

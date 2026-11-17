@@ -12,7 +12,7 @@ Then open http://127.0.0.1:8765
 
 The public landing page is the front door. Create a company there, or sign in.
 
-- Demo: **Look around a sample company** on the landing page opens Hartline Remodeling's sample data with no account, or sign in as `owner@hartline.example` / `demo`. Anyone can look around and reset it (see `DURACASH_DEMO` for production).
+- Demo: **Look around a sample company** on the landing page opens Redbud Electric Co., a small electrical subcontractor (demo_seed.py), with no account, or sign in as `owner@redbudelectric.example` / `demo`. Anyone can look around and reset it (see `DURACASH_DEMO` for production).
 - Create account: a blank company space. Your name, email and a password of 10+ characters; the company name can wait (the company is named after you until it is typed in Settings › Company). At most 5 sign-ups an hour from one network. The Dashboard's setup checklist then leads to the company details, the first job, its supporting documents and the first send.
 
 ## Data
@@ -40,6 +40,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | --- | --- |
 | `DURACASH_DATA_DIR` | Where all data lives (see above). |
 | `DURACASH_DEMO` | `readonly` keeps the demo for prospects in production: anyone can sign in and look around, and nothing can be changed (no edits, reset, password or two-step changes). `off` removes it anywhere. The default is a writable demo outside production and none in production. |
+| `DURACASH_DEMO_SEED` | `hartline` makes the demo company the Hartline Remodeling data the tests are written against (seed.py) instead of Redbud Electric (demo_seed.py). The browser suite's server sets it. A demo company from an older seed is made again from the current one once, on start. |
 | `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` | Billing (billing.py). With them, Settings › Billing shows everyone the subscription, and owners get Subscribe (Stripe Checkout, the free trial carried over) and Manage billing (Stripe's Customer Portal). Point a Stripe webhook at `<DURACASH_URL>/api/stripe/webhook`; see runbook 7. |
 | `BILLING_DAY`, `STRIPE_PARTNER_PRICE_ID` | Charges land on `BILLING_DAY` of the month (default 5, after the contractor's own 1st-of-the-month pay app is out): a trial ends on it, and a later subscription is anchored to it with the first part-month prorated. Design partners (`admin.py partner COMPANY_ID on`) pay `STRIPE_PARTNER_PRICE_ID`. |
 | `MONTHLY_SUMMARY_EMAILS` | `1`: the server emails each owner last month's summary on the 1st to the 3rd, once. The monthly restore drill runs by itself whenever backups exist, with an alert if it fails. |
@@ -181,7 +182,7 @@ The ? badge opens the helper. It answers from a database of prepared answers, no
 python3 -m unittest discover -s tests -v
 ```
 
-Browser test: `DURACASH_DATA_DIR=$(mktemp -d) BACKUP_HOURS=0 HOST=127.0.0.1 PORT=8873 python3 server.py`, then `DURACASH_URL_UNDER_TEST=http://127.0.0.1:8873 node tests/e2e/smoke.mjs`. Keep a Mac awake for it (run both under `caffeinate -s -i -m`): when it sleeps, the browser's waits run out and steps fail with timeouts that have nothing to do with the app. `pmset -g log` shows whether it slept.
+Browser test: `DURACASH_DEMO_SEED=hartline DURACASH_DATA_DIR=$(mktemp -d) BACKUP_HOURS=0 HOST=127.0.0.1 PORT=8873 python3 server.py`, then `DURACASH_URL_UNDER_TEST=http://127.0.0.1:8873 node tests/e2e/smoke.mjs`. The steps are written against the Hartline Remodeling data (seed.py), which `DURACASH_DEMO_SEED=hartline` makes the demo company. The live demo's own steps (86-demo.mjs) need a second server started without it, named by `DURACASH_DEMO_URL_UNDER_TEST`; `DURACASH_STEPS=86` runs only those. Keep a Mac awake for it (run both under `caffeinate -s -i -m`): when it sleeps, the browser's waits run out and steps fail with timeouts that have nothing to do with the app. `pmset -g log` shows whether it slept.
 
 Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github/workflows/tests.yml`) runs them on every push and pull request; protect `main` so a red run blocks the merge (Settings, Branches, require the `unittest` check).
 
@@ -221,7 +222,8 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `docs/runbooks.md`: deploy, restore, rotate a secret, delete a company, incident
 - `legal.py`, `legal/`: the Terms of Service and Privacy Policy
 - `mailer.py`: outgoing email over SMTP
-- `seed.py`: Hartline Remodeling sample data
+- `demo_seed.py`: the live demo, Redbud Electric Co., built through the domain functions with its PDFs
+- `seed.py`: Hartline Remodeling sample data, the tests' fixture
 - `server.py`: stdlib HTTP server and cookie sessions. Every URL is one line in its `ROUTES` table, naming the handler and who may call it (public, signed in, or a change to the company's data, which runs under that company's lock and returns the updated state)
 - `store.py`: company storage, SQLite or JSON files (see Data)
 - `static/`: `index.html`, `styles.css` and the app, an ES module (`app.js`, which holds the views, imports the helpers in `static/js/`: formatting, job status, schedule of values, routes, help text, network and DOM helpers; no bundler). The only files served. The page's Content-Security-Policy allows scripts and styles only from these files: no inline scripts, `onclick=` or `style=""`; server-written pages allow their own `<style>` block by its hash.
@@ -262,7 +264,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `GET /api/outbox?offset=&limit=&job=` and `GET /api/audit?…`: the Outbox and the audit trail, newest first
 - `GET /api/timeline?job=&offset=&limit=`: one job's history for its page: audit rows and emails (with delivery status, without bodies), newest first
 - `GET /api/export`: download the company's data file
-- `POST /api/reset`: demo company returns to the Hartline seed. Any other company needs `{confirm: "<exact company name>"}` and gets a snapshot first.
+- `POST /api/reset`: demo company returns to the Redbud Electric seed (Hartline with `DURACASH_DEMO_SEED=hartline`). Any other company needs `{confirm: "<exact company name>"}` and gets a snapshot first.
 - `POST /api/jobs`: create a job. Required: `name`, the address (`street`, `city`, `state`, `zip`), `customer`, `contract_cents`, and for a new client or what a saved one lacks: `client_type`, `approver`, `ap_email`, `phone`. Optional: `approver_confirmed` (the signer was typed, even as the client's own name), `sov_lines` (blank makes one lump-sum line; New job sends an imported contract's lines here, with its total as `contract_cents` when asked, so whoever may create the job sets its contract), `anticipated_end_on`, `retainage_pct` (0–20; blank or left out: the client's Usual retainage %, else 10 for a general contractor, public agency or another subcontractor and 0 for an owner or homeowner), `new_job` (keep it even though an open job has the same name), `note` (kept on the job record as "Job notes"; the old `packet_notes` key is read the same way), `contract_number`. The paperwork list for each pay app comes from the customer's settings, not from the job.
 - `GET /api/jobs/{id}/final-preview`: what Final pay app would bill; `POST /api/jobs/{id}/done`: `{notes, period_to}`
 - `POST /api/jobs/{id}/progress`: `{completed_cents, notes}` (jobs without a schedule of values)

@@ -16,6 +16,8 @@ import domain
 import helper
 import importer
 import server
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hartline_demo import hartline_demo
 import storage
 
 PASSWORD = "correct horse battery"
@@ -23,6 +25,7 @@ GC = {"address": "9 Elm Street", "contract_cents": 2_000_000, "retainage_pct": 0
       "approver": "Kim", "ap_email": "ap@park.example", "phone": "(404) 555-0100"}
 
 
+@hartline_demo
 class ClientSettingsBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
