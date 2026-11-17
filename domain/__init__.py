@@ -1304,6 +1304,11 @@ def approve_and_send(
     if not invoice:
         raise GateError("No draft pay app to send.")
     _need_playbook(state, job)
+    # Named approvers (Stephen, 10 Nov, decision 8): every one has approved this version of it.
+    waiting = approvals_missing(state, job, invoice)
+    if waiting:
+        raise GateError(f"{invoice['number']} needs approval from {', '.join(waiting)} before it goes.",
+                        [f"{name} hasn't approved it." for name in waiting], extra={"approvals_missing": True})
     if reviewed is not None and reviewed != review_stamp(state, job, invoice):
         raise GateError(f"{invoice['number']} changed since you opened it. Look it over again, then send." if reviewed
                         else f"Open {invoice['number']} and look it over, then send.", extra={"review_changed": True, "invoice_id": invoice["id"]})
@@ -2355,6 +2360,12 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
             last["refund_owed_cents"] = out["money"]["refund_owed_cents"]
     _payapp_figures(job, out)
     _co_flags(out)
+    co_view_extras(state, job, out)
+    # Who has approved the open draft, of those named (Stephen, 10 Nov, decision 8).
+    for stored, inv in zip(job.get("invoices", []), out.get("invoices", [])):
+        if stored.get("status") in DRAFT_STATUSES:
+            inv["approval"] = approval_view(state, job, stored)
+            inv.pop("approvals", None)
     # Money > Unpaid's Recent contact (M11), only on jobs with money owed, to keep the page light.
     if out["money"]["outstanding_cents"] > 0:
         out["recent_contact"], out["contact_total"] = contact_log(state, job["id"])
@@ -2615,8 +2626,9 @@ def email_moot(job: dict[str, Any], e: dict[str, Any]) -> str:
     return ""
 
 
-def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
-    """What /api/state sends: bounded by the open work, not by the company's whole history."""
+def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: list[str] | None = None) -> dict[str, Any]:
+    """What /api/state sends: bounded by the open work, not by the company's whole history.
+    perms: the signed-in person's permissions; a To Do row for one they don't hold is left out."""
     since = ((now or datetime.now(timezone.utc)) - timedelta(days=RECENT_CLOSED_DAYS)).isoformat()
     heavy = {"jobs", "audit", "email_log", "inbox"}
     out = {k: deepcopy(v) for k, v in state.items() if k not in heavy}
@@ -2664,7 +2676,7 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     out["pending_email_failures"] = len(failures)
     out["audit_total"] = len(state.get("audit", []))
     # Today's queue, drawn from the same rows as the daily email (R4-10).
-    out["today_rows"] = today_rows(state, now)
+    out["today_rows"] = rows_with_perms(today_rows(state, now), perms)
     # The To Do list's own tasks (G5): open ones, and those done in the last 30 days.
     out["tasks"] = visible_tasks(state, now)
     out["task_assignments"] = deepcopy(state.get("task_assignments") or {})
@@ -2675,6 +2687,12 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None) -> dict[s
     out["trial"] = trial.status(state)
     out["totals"] = {**_totals(full), "closed_collected_cents": closed_collected}
     return out
+
+
+def rows_with_perms(rows: list[dict[str, Any]], perms: list[str] | None) -> list[dict[str, Any]]:
+    """The rows this person is shown: a row with a perm (a change order to price, decision 2) only
+    for those who hold it. None: everyone's rows (tests, scripts)."""
+    return rows if perms is None else [r for r in rows if not r.get("perm") or r["perm"] in perms]
 
 
 def _day_words(value: Any) -> str:
@@ -2847,6 +2865,11 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             if cutoff not in row["text"]:
                 row["text"] += f" {cutoff} {payer.get('name', '')} by {_day_words(due[0].isoformat())}."
             row["rank"] = min(row["rank"], 1.5)
+        # A change order still missing its price (Stephen, 10 Nov, decision 2): its own row, for
+        # those who can manage jobs (rows_with_perms).
+        for info in co_info_rows(job):
+            add(3.2, "co_info", job, "Change order", "amber", info["text"], info["button"], f"/money/change-order/{job['id']}/{info['co_id']}",
+                co_id=info["co_id"], perm="manage_jobs")
         # A pay app sent and unpaid past the payer's follow-up window is its own row. One follow-up
         # names every unpaid pay app; after a logged conversation the row waits for the date
         # noted (R4-06).
@@ -2884,6 +2907,7 @@ DIGEST_NOUNS = {
     "not_billed": ("job to bill", "jobs to bill"), "new_job": ("new job to bill", "new jobs to bill"), "inbox": ("Inbox item", "Inbox items"),
     "closeout": ("job missing closeout documents", "jobs missing closeout documents"), "retainage": ("retainage to ask for", "retainages to ask for"),
     "finish": ("job ready to finish", "jobs ready to finish"), "finish_held": ("job held up before finishing", "jobs held up before finishing"),
+    "co_info": ("change order to price", "change orders to price"),
 }
 # Finishing is never urgent: these rows stay on the Dashboard, and the email names them once a week.
 WEEKLY_DIGEST_KINDS = {"finish", "finish_held"}
@@ -2901,7 +2925,7 @@ def _digest_week_day(job: dict[str, Any] | None, today: date) -> bool:
 
 
 def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = None, user_id: str | None = None,
-                 owner: bool = True) -> tuple[str, str] | None:
+                 owner: bool = True, perms: list[str] | None = None) -> tuple[str, str] | None:
     """The daily "due today" email (R4-10): (subject, body) listing every Today row that needs a
     person, each with its link, and the open tasks due today or before; None on a day with nothing
     due. A pay app the customer approved with a date to pay is waiting, not due, and is left out.
@@ -2922,7 +2946,7 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     def this_week(r: dict[str, Any]) -> bool:
         return r["kind"] not in WEEKLY_DIGEST_KINDS or _digest_week_day(by_id.get(r["job_id"]), now.date())
 
-    rows = rows_for_user([r for r in today_rows(state, now) if r["kind"] in DIGEST_NOUNS and due_now(r) and this_week(r)], user_id, owner)
+    rows = rows_for_user([r for r in rows_with_perms(today_rows(state, now), perms) if r["kind"] in DIGEST_NOUNS and due_now(r) and this_week(r)], user_id, owner)
     tasks = rows_for_user(tasks_due_by(state, now.date()), user_id, owner)
     if not rows and not tasks:
         return None
@@ -3039,6 +3063,8 @@ def _refresh_draft_gate(job: dict[str, Any], state: dict[str, Any] | None = None
     _ask_which_waiver(job, invoice.get("packet") or [])
     _items_follow_files(job, invoice)  # an item whose files are all left out of the email stays missing (M4)
     invoice["status"] = "draft" if blocker_lines(job) else "awaiting_approval"
+    if state is not None:
+        clear_stale_approvals(state, job, invoice)
 
 
 def _send_to(payer: dict[str, Any]) -> str:
@@ -3744,8 +3770,12 @@ def add_change_order(
             errors["amount_cents"] = f"The cost lines add up to {money(total)}. Make the amount match, or leave it blank."
         else:
             amount_cents = total
-    if "amount_cents" in errors:
-        pass
+    # "Change orders are allowed to accrue hours without the price being filled in" (Stephen, 10 Nov,
+    # decision 2): no amount and no cost lines saves it without a price, which counts for nothing
+    # until it is priced (jobrules.price_change_order).
+    unpriced = not lines and amount_cents in (None, 0) and not isinstance(amount_cents, bool)
+    if "amount_cents" in errors or unpriced:
+        amount_cents = 0 if unpriced else amount_cents
     elif not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents == 0:
         errors["amount_cents"] = "Enter the change order amount, like 1,250, or -1,250 for a credit."
     elif abs(amount_cents) > MAX_AMOUNT_CENTS:
@@ -3776,6 +3806,8 @@ def add_change_order(
         "included_in_billing": False,
         "pricing": pricing,
     }
+    if unpriced:
+        co["unpriced"] = True
     if reason:
         co["reason"] = reason
     if lines:
@@ -3789,7 +3821,7 @@ def add_change_order(
     co["created_at"] = co_event(co, "created", actor)
     co["created_by"] = actor
     job["change_orders"].append(co)
-    what = f"a credit of {money(-amount_cents)}" if amount_cents < 0 else money(amount_cents)
+    what = "no price yet" if unpriced else f"a credit of {money(-amount_cents)}" if amount_cents < 0 else money(amount_cents)
     days = f", {schedule_days:+d} day{'' if abs(schedule_days) == 1 else 's'} on the schedule" if schedule_days else ""
     audit(state, job_id, "add_co", f"{actor} added CO {number} — {title} for {what}{days}.", actor)
     if started:
@@ -3879,6 +3911,7 @@ def _pending_co(state: dict[str, Any], job_id: str, co_id: str) -> tuple[dict[st
         raise GateError("Change order not found.")
     if co["status"] != "pending":
         raise GateError(f"CO {co['number']} is {co['status']}; only a pending change order can be signed.")
+    need_price(co)
     return job, co
 
 
@@ -3922,6 +3955,7 @@ def sign_change_order(
     name = " ".join(str(name or "").split())[:120]
     if co.get("status") != "pending":
         raise GateError(f"CO {co['number']} is already {co['status']}.")
+    need_price(co)
     if len(name) < 2:
         raise GateError("Type your full name to sign.")
     if not agreed:
@@ -4247,6 +4281,7 @@ def include_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
         raise GateError(f"CO {co['number']} is already approved; it is billed as contract work.")
     if co["amount_cents"] < 0:
         raise GateError(f"CO {co['number']} is a credit. It comes off the contract once it is signed.")
+    need_price(co)
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if _with_client(open_draft):
         raise GateError(f"{open_draft['number']} is with the client for their review. Record their answer or delete the draft, "
@@ -4281,11 +4316,14 @@ def learn_rejection(state: dict[str, Any], job_id: str, reason: str, actor: str 
     return job
 
 
-def close_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
+def close_job(state: dict[str, Any], job_id: str, actor: str = "owner", closeout_override: Any = "") -> dict[str, Any]:
+    """Finish the job. Closeout documents still missing need closeout_override, the reason it
+    finishes without them (Stephen, 10 Nov, decision 4; a warning before)."""
     job = _job(state, job_id)
     blockers = close_blockers(job)
     if blockers:
         raise GateError("This job can't be finished yet.", blockers)
+    record_closeout_override(state, job, closeout_override, actor)
     job["closed"] = True
     job["closed_at"] = utcnow()
     audit(state, job_id, "close_job", f"{actor} finished {job['name']}.", actor)
@@ -6818,3 +6856,4 @@ from .daily import *  # noqa: E402,F401,F403
 from .comms import *  # noqa: E402,F401,F403
 from .contact import *  # noqa: E402,F401,F403
 from .jobinfo import *  # noqa: E402,F401,F403
+from .jobrules import *  # noqa: E402,F401,F403

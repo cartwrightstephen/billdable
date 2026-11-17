@@ -446,6 +446,7 @@ export const ACTION_PERM = {
   "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",
   close: "close_jobs", reopen: "close_jobs",
   done: "manage_jobs", "undo-done": "manage_jobs", edit: "manage_jobs", "approve-co": "manage_jobs", "withdraw-co": "manage_jobs", "include-co": "manage_jobs",
+  "co-price": "manage_jobs", "payapp-approve": "approve_payapps",
 };
 
 // perms: {list: the signed-in person's permissions (me.perms)}; {owner: true} allows all.
@@ -459,10 +460,13 @@ export function mayTake(action, perms) {
 
 // The job-page button keys that need a permission.
 const KEY_ACTION = { send: "send", waiver: "waiver", retainage: "retainage", void: "void-draft", close: "close", match: "match-payment", retpay: "retainage-paid",
-  draft: "draft", progress: "progress", done: "done", undo: "undo-done" };
+  draft: "draft", progress: "progress", done: "done", undo: "undo-done", coprice: "co-price" };
 
-const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "conversation", "pencil", "pencil-ok", "pencil-no", "sentback", "packet", "closeout",
+const SECONDARY_ORDER = ["clear", "coprice", "send", "waiver", "match", "follow", "conversation", "pencil", "pencil-ok", "pencil-no", "sentback", "packet", "closeout",
   "draft", "progress", "done", "retainage", "retpay", "co", "close", "undo", "void", "qbo"];
+
+// The button for a change order still missing its price: the same words as its Dashboard row.
+export function coPriceLabel(co) { return `Add the price to CO ${co.number}`; }
 
 export function jobActions(j, { now = new Date(), demo = false, perms = null } = {}) {
   if (j.closed) return { primary: null, more: [] };
@@ -487,6 +491,10 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
       add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}${first ? ` data-item="${first.item_id}"` : ""}`, "bill");
     }
   }
+  // A change order saved without a price (Stephen, 10 Nov, decision 2): one task each, in the
+  // words of its Dashboard row (domain.today_rows "co_info"). Not the job's main step.
+  (j.change_orders || []).filter(c => c.status === "pending" && (c.needs || []).length)
+    .forEach(co => add("coprice", coPriceLabel(co), `data-action="open-co" data-job="${j.id}" data-co="${co.id}"`, "bill"));
   // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
   if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "bill");
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "paid");
@@ -535,7 +543,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
 // tasks: [{key, label, attrs, allowed}] — one this person may not take is listed without a button.
 // blockers: what the pay app is missing, listed in the banner. others: the rest, allowed only.
 export const MAIN_BUTTONS = [["co", "New Change Order"], ["progress", "Progress Pay App"], ["done", "Final Pay App"], ["match", "Record a Payment"]];
-const TASK_ORDER = ["clear", "pencil-ok", "pencil-no", "send", "waiver", "follow", "draft", "closeout", "retainage", "close"];
+const TASK_ORDER = ["clear", "coprice", "pencil-ok", "pencil-no", "send", "waiver", "follow", "draft", "closeout", "retainage", "close"];
 export function jobPageActions(j, { now = new Date(), demo = false, perms = null } = {}) {
   if (j.closed) return { main: [], tasks: [], blockers: [], others: [] };
   const { all } = jobActions(j, { now, demo, perms });
@@ -559,7 +567,7 @@ export function jobPageActions(j, { now = new Date(), demo = false, perms = null
 }
 
 // The permission a job-page action takes, in the Team page's words (domain/profiles.py PERMISSIONS).
-const PERM_NAMES = { send_payapps: "Send pay apps", send_waivers: "Send lien waivers", ask_retainage: "Ask for retainage",
+const PERM_NAMES = { send_payapps: "Send pay apps", approve_payapps: "Approve pay apps before they go", send_waivers: "Send lien waivers", ask_retainage: "Ask for retainage",
   record_payments: "Record payments", void: "Delete drafts, pull back sent pay apps and accept short pays", close_jobs: "Finish and reopen jobs",
   manage_jobs: "Change a job's contract, change orders and mark work done" };
 

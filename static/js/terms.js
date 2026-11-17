@@ -44,6 +44,8 @@ export const ACTION_WORDS = {
   withdraw_co: "Change order withdrawn", include_co: "Change order put on the bill", change_order_off_draft: "Change order taken off the draft",
   request_co_signature: "Signature requested", co_signed_copy: "Signed copy filed", co_work_started: "Change order work started",
   co_signed_after_start: "Change order signed after work started", co_client_logged: "Client logged the change order",
+  price_co: "Change order priced", closeout_override: "Override: finished without closeout documents",
+  payapp_approved: "Pay app approved", payapp_approval_cleared: "Pay app approval cleared", approvers_set: "Pay app approvers changed",
   add_record: "Added to the job records", edit_record: "Job record changed",
   add_evidence: "Added to the job records", attach_record: "Supporting documents added", packet_attachment: "Supporting documents added",
   packet_resolved: "Override: I have this", packet_confirmed: "Document checked", document_flagged: "Document check warning", paperwork_detached: "Supporting documents taken off", paperwork_not_needed: "Supporting documents not needed", paperwork_needed: "Supporting document needed again",

@@ -298,7 +298,7 @@ def setup(run: Run) -> None:
     run.post("PEAC: match payment ACH 7781", f"/api/jobs/{j['PEAC']}/match-payment", {"amount_cents": 3_850_000, "reference": "ACH 7781"})
     signed_waiver(run, "PEAC")
     run.send_waiver("PEAC: send waiver", j['PEAC'], {})
-    run.post("PEAC: close for record", f"/api/jobs/{j['PEAC']}/close")
+    run.post("PEAC: close for record", f"/api/jobs/{j['PEAC']}/close", {"closeout_override": "Closeout binder handed over at the walk"})
     # DECA: finished, paid less retainage, waiver sent, retainage held.
     run.post("DECA: mark done", f"/api/jobs/{j['DECA']}/done", {"notes": "Substantially complete; punch walk pending."})
     run.clear_packet("DECA")

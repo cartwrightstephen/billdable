@@ -24,6 +24,7 @@ import alerts
 import auth
 import backup
 import domain
+from domain import profiles
 import mailer
 import metrics
 import reminders
@@ -144,10 +145,11 @@ def _digests(state: dict, company_id: str, base: str, now: datetime) -> list:
     out = []
     for addr in auth.owner_emails(company_id):
         user = auth.user_by_email(addr)
-        out.append((addr, domain.daily_digest(state, base, now, user_id=user["id"] if user else None)))
+        out.append((addr, domain.daily_digest(state, base, now, user_id=user["id"] if user else None,
+                                              perms=profiles.perms_of(user, state) if user else None)))
     for user in auth.all_users():
         if user.get("company_id") == company_id and user.get("role") != "owner" and user.get("email_verified"):
-            out.append((user["email"], domain.daily_digest(state, base, now, user_id=user["id"], owner=False)))
+            out.append((user["email"], domain.daily_digest(state, base, now, user_id=user["id"], owner=False, perms=profiles.perms_of(user, state))))
     return out
 
 

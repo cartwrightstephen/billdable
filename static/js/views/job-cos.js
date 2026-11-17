@@ -46,6 +46,7 @@ export function workStartedPill(co) {
 export function coSignControls(j, co, extra = "", opts = {}) {
   const flag = opts.flag === false ? "" : workStartedPill(co);
   if (co.status !== "pending" || j.closed) return flag;
+  if (co.unpriced) return flag + coPriceHtml(j, co, extra);
   const key = `cosign-${co.id}`;
   const records = j.records || [];
   // The signed copy is most likely the newest change-order record (R3-06).
@@ -72,12 +73,29 @@ export function coSignControls(j, co, extra = "", opts = {}) {
       </div>` : ""}`;
 }
 
+// A change order saved without a price (Stephen, 10 Nov, decision 2): it is priced before it can
+// be signed or billed. Pricing takes manage_jobs, as the server's co-price does.
+export function coAmountText(co) {
+  return co.unpriced ? "No price yet" : money(co.amount_cents);
+}
+
+function coPriceHtml(j, co, extra = "") {
+  const key = `coprice-${co.id}`;
+  const withdraw = may("withdraw-co") ? `<button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>` : "";
+  if (!may("co-price")) return `<p class="sub co-needs">No price yet.</p><div class="form-inline">${withdraw}${extra}</div>`;
+  return `<div class="co-price" data-form-key="${key}">${formErrorLine(key)}<div class="form-inline">
+      ${moneyField({ form: key, name: "amount_cents", id: `co-price-${co.id}`, label: "Price ($), negative for a credit", inputmode: "text" })}
+      <button class="btn small" data-action="co-price" data-id="${j.id}" data-co="${co.id}">Save price</button>
+      ${withdraw}${extra}
+    </div></div>`;
+}
+
 // The job page's New change order card (R3-06). Once saved, it shows the change order with the
 // ways to get it signed in place of the form.
 export function newCoCardHtml(j) {
   const made = newCoMade && newCoMade.job === j.id && j.change_orders.find(c => c.id === newCoMade.co);
   if (made) return `<div class="card form-card new-co-card"><h2>CO ${made.number}: ${made.title}</h2>
-    <p class="sub">${made.amount_cents < 0 ? `A credit of ${money(-made.amount_cents)}` : money(made.amount_cents)}${made.schedule_days ? ` · ${made.schedule_days > 0 ? "+" : ""}${made.schedule_days} days on the schedule` : ""}. ${made.status === "pending" ? "Saved. Now get it signed." : "Signed."}</p>
+    <p class="sub">${made.unpriced ? "No price yet" : made.amount_cents < 0 ? `A credit of ${money(-made.amount_cents)}` : money(made.amount_cents)}${made.schedule_days ? ` · ${made.schedule_days > 0 ? "+" : ""}${made.schedule_days} days on the schedule` : ""}. ${made.unpriced ? "Saved. Add the price before it is signed." : made.status === "pending" ? "Saved. Now get it signed." : "Signed."}</p>
     ${made.status === "pending" ? coSignControls(j, made) : coSignature(made)}
     <div class="form-inline"><button class="btn small secondary" data-action="new-co-done">Done</button></div></div>`;
   return `<div class="card form-card" data-form-key="newco"><h2>New change order</h2>${formErrorLine("newco")}
@@ -107,7 +125,7 @@ export function coFormFields(j) {
       ${field({ form: "newco", name: "description", id: "co-desc", label: "Description (required for Other)", wide: true, multiline: true })}
       ${field({ form: "newco", name: "contract_ref", id: "co-ref", label: "Contract section or original scope it changes (optional)", wide: true, placeholder: "Section 09 30 00, tile in baths 1-3" })}
       ${field({ form: "newco", name: "pricing", id: "co-pricing", label: "Pricing", options: Object.entries(CO_PRICING), buttons: true })}
-      ${moneyField({ form: "newco", name: "amount_cents", id: "co-amt", label: coItemRows ? "Amount ($), blank adds up the cost lines" : "Amount ($), negative for a credit", inputmode: "text" })}
+      ${moneyField({ form: "newco", name: "amount_cents", id: "co-amt", label: coItemRows ? "Amount ($), blank adds up the cost lines" : "Amount ($), blank if not priced yet", inputmode: "text" })}
     </div>
     <fieldset class="co-items"><legend>Cost breakdown (optional)</legend>
       ${items.join("")}
@@ -145,11 +163,13 @@ export async function addChangeOrder(jobId) {
   const sum = items.reduce((s, i) => s + i.amount_cents, 0);
   const typed = String(v.amount_cents || "").trim();
   const amount = typed ? centsFrom(typed) : { cents: items.length ? sum : 0 };
+  // No amount and no cost lines: saved without a price (decision 2), which the server keeps at $0.
+  const unpriced = !typed && !items.length;
   const days = String(v.schedule_days || "").trim();
   if (!v.title) errors.title = "Enter a title for the change order.";
   if (!CO_REASONS[v.reason]) errors.reason = "Pick why the scope changed.";
   else if (v.reason === "other" && !v.description) errors.description = "Enter a description: what changed and why.";
-  if (amount.error || amount.cents === 0) errors.amount_cents = "Enter the change order amount in dollars, like 1,250, or -1,250 for a credit.";
+  if (!unpriced && (amount.error || amount.cents === 0)) errors.amount_cents = "Enter the change order amount in dollars, like 1,250, or -1,250 for a credit.";
   else if (items.length && !Object.keys(errors).some(k => k.startsWith("item_")) && amount.cents !== sum) errors.amount_cents = `The cost lines add up to ${money(sum)}. Make the amount match, or leave it blank.`;
   if (days && !/^[-+]?\d{1,3}$/.test(days)) errors.schedule_days = "Enter the schedule change in whole days, like 3, or leave it blank.";
   if (refuseForm("newco", errors)) return null;
@@ -165,6 +185,12 @@ export async function addChangeOrder(jobId) {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
   "include-co": (el, id) => post(`/api/jobs/${id}/include-co/${el.dataset.co}`),
+  "co-price": async (el, id) => {
+    const key = `coprice-${el.dataset.co}`;
+    const amount = centsFrom(formValues(key).amount_cents || "");
+    if (refuseForm(key, amount.error || !amount.cents ? { amount_cents: "Enter the change order amount in dollars, like 1,250, or -1,250 for a credit." } : {})) return;
+    await post(`/api/jobs/${id}/co-price/${el.dataset.co}`, { amount_cents: amount.cents }, { formKey: key });
+  },
   "new-co": () => { newCoMade = null; coItemRows = 0; coBackup = new Set(); toggleForm("newco"); focusAfterDraw(() => document.getElementById("co-title")); },
   "new-co-done": () => { newCoMade = null; coItemRows = 0; coBackup = new Set(); formOpen.newco = false; clearForm("newco"); render(); },
   "co-add-item": () => {
