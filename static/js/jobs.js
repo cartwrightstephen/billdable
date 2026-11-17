@@ -625,10 +625,10 @@ function closeBlockerButtons(j, b, now) {
       ...(b.invoice_id ? [{ label: `Open ${b.number}`, attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}"` }] : []),
       ...(b.creditable_cents ? [{ label: "Take credit off retainage", attrs: `data-action="toggle-form" data-form="retcredit"`, needs: "retainage-credit" }] : []),
       ...(b.settleable === false ? [] : [{ label: "Record refund or credit", attrs: `data-action="toggle-form" data-form="overbilled"`, needs: "overbilling-settled" }])];
-    case "outstanding": return [{ label: "Record a payment", attrs: `data-action="toggle-form" data-form="match"` },
+    case "outstanding": return [{ label: "Record a payment", attrs: `data-action="toggle-form" data-form="match"`, needs: "match-payment" },
       ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i), needs: "accept-short-pay" }))];
     case "retainage": return [
-      { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"` },
+      { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"`, needs: "retainage-paid" },
       ...(retainageAskWaits(j, now) && !closeoutMissing(j) ? [] : [closeoutMissing(j)
         // An older job without a closeout packet keeps those items in the job paperwork (as on Closeout).
         ? { label: "Open closeout documents", attrs: closeoutAttrs(j) }

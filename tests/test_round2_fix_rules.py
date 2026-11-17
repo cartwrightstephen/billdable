@@ -11,13 +11,14 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import auth
 import domain
 import importer
 import outbox
 from domain import profiles
 from seed import seed_state
 from test_accounts import ServerCase
-from test_team import TeamHttpTests
+import test_team
 from test_money import clear_packet, new_job, new_state, send_open
 from test_round2_review_rules import says_done_item
 
@@ -153,7 +154,7 @@ class ApproverRenamed(unittest.TestCase):  # B25
 
 
 class ApproverRenamedHttp(ServerCase):  # B25, through My account
-    join = TeamHttpTests.join
+    join = test_team.TeamHttpTests.join
 
     def test_my_name_renames_me_on_the_approvers_list(self):
         owner, _ = self.signup("owner-rename@appr.example", "Rename Co")
@@ -166,6 +167,25 @@ class ApproverRenamedHttp(ServerCase):  # B25, through My account
         self.assertEqual(res.status, 200, out)
         _, state = self.request("GET", "/api/state", cookie=owner)
         self.assertEqual([p["name"] for p in state["company"]["payapp_approvers"]], ["Pam Ortiz"])
+
+
+class DemoAddressKept(ServerCase):  # B15
+    join = test_team.TeamHttpTests.join
+
+    def test_nobody_signs_up_with_or_is_invited_to_a_demo_address(self):
+        for addr in (auth.DEMO_EMAIL, "Owner@Hartline.example"):
+            res, out = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": addr, "password": "correct horse battery",
+                                                                  "name": "Mallory", "company_name": "Squat Co"})
+            self.assertEqual(res.status, 400, out)
+            self.assertEqual(out["error"], auth.RESERVED_WORDS)
+        self.assertIsNone(auth.user_by_email("owner@hartline.example"))
+        owner, _ = self.signup("owner-demo-squat@pine.example")
+        res, out = self.request("POST", "/api/team/invite", {"email": auth.DEMO_EMAIL, "profile_id": "member"}, cookie=owner)
+        self.assertEqual(res.status, 409, out)
+
+    def test_the_demo_account_itself_is_still_made(self):
+        user = auth.user_by_email(auth.DEMO_EMAIL) or auth.create_user(auth.DEMO_EMAIL, "demo", "Dana", auth.DEMO_COMPANY_ID, enforce_policy=False)
+        self.assertEqual(user["company_id"], auth.DEMO_COMPANY_ID)
 
 
 if __name__ == "__main__":

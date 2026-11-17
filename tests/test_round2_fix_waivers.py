@@ -2,6 +2,7 @@
 payment, short pay, late money after it), the final lien release is still owed before close, and a
 form settled with one waiver isn't sent again for another (decisions 5 and 6)."""
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import waiver_form
 from test_money import clear_packet, new_job, new_state, send_open
 from waiver_help import signed_waiver
 
@@ -188,6 +190,18 @@ class NoFinalWaiverAttachedEarly(unittest.TestCase):  # B2, B32: decision 6 has 
             domain.chase_retainage(state, job["id"], "Owner", unconditional_override="Retainage paid by wire already")
         self.assertEqual(refused.exception.extra["final_waiver_held"], ["$1,000.00 of retainage is still held"])
         self.assertFalse(job.get("retainage_chases"))
+
+
+class GeorgiaFormTypedText(unittest.TestCase):  # B35
+    def test_a_value_reading_like_the_page_marker_prints_as_typed(self):
+        form = domain.waiver_forms()["states"]["GA"]["statutory_forms"]["interim"]
+        pdf = waiver_form.render(form["paragraphs"], form["title"], {"project": "Tower PAGEREF9 annex"})
+        self.assertIn(b"(Tower PAGEREF9 annex) Tj", pdf)
+        for head, body in re.findall(rb"/Length (\d+) >>\nstream\n(.*?)\nendstream", pdf, re.S):
+            self.assertEqual(int(head), len(body))
+        widgets = re.findall(rb"/Subtype /Widget .*? /P ([^>]*) >>", pdf)
+        self.assertTrue(widgets)
+        self.assertTrue(all(re.fullmatch(rb"\d+ 0 R", w) for w in widgets), widgets)
 
 
 if __name__ == "__main__":
