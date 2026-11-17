@@ -53,6 +53,20 @@ class FinalOverrideOnARedraft(unittest.TestCase):  # R4, B6 (decision 6)
         domain.draft_invoice(self.state, self.job["id"], strict=True)
         self.assertNotIn("final_override", self.job["invoices"][-1])
 
+    def test_a_later_final_pay_app_skips_an_override_whose_pay_apps_are_paid(self):  # R4 round 2
+        # The final PA-02 is unpaid, but the PA-01 the override named is paid: the next pay app
+        # (a change order after the final one) was never overridden.
+        send_open(self.state, self.job)
+        domain.match_payment(self.state, self.job["id"], self.first["amount_cents"], "c1", invoice_id=self.first["id"])
+        domain.add_change_order(self.state, self.job["id"], "Extra", 50_000)
+        co = self.job["change_orders"][-1]
+        domain.approve_change_order(self.state, self.job["id"], co["id"], "Owner")
+        self.assertTrue(domain.unpaid_pay_apps(self.job))
+        domain.draft_invoice(self.state, self.job["id"], strict=True)
+        later = self.job["invoices"][-1]
+        self.assertTrue(later["final"])
+        self.assertNotIn("final_override", later)
+
 
 class InboxMarkDoneOnAFinishedJob(unittest.TestCase):  # R1
     def test_a_job_marked_done_since_says_so_and_keeps_the_message(self):

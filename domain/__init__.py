@@ -713,10 +713,14 @@ def draft_invoice(
     # its page shows who, when and why (decision 6): the one mark_done drafts, and the same pay app
     # drafted again. A pay app drafted later (after a reopen, say) was never overridden.
     # Drafted again after Delete draft or a pull-back, the job is still done and still carries the
-    # override (reopen and undo clear it): the redraft keeps it while an earlier one is unpaid.
-    override = final_override or (replaces or {}).get("final_override") or (
-        job.get("final_override") if invoice["final"] and job.get("work_status") == "complete"
-        and any(inv is not invoice for inv in unpaid_pay_apps(job)) else None)
+    # override (reopen and undo clear it): the redraft keeps it only while a pay app it names is
+    # still unpaid (R4). Once those are paid nobody overrode anything for the new one.
+    unpaid_now = {inv["number"] for inv in unpaid_pay_apps(job) if inv is not invoice}
+    carried = (replaces or {}).get("final_override") or (
+        job.get("final_override") if invoice["final"] and job.get("work_status") == "complete" else None)
+    if carried and not unpaid_now & set(carried.get("unpaid") or []):
+        carried = None
+    override = final_override or carried
     if override:
         invoice["final_override"] = dict(override)
     if invoice["packet_id"] != "job-packet":
@@ -1229,11 +1233,27 @@ def _unconditional_going(job: dict[str, Any], packet: list[dict[str, Any]], extr
     return out
 
 
-def _no_early_final_waiver(job: dict[str, Any], going: list[dict[str, Any]], where: str) -> None:
-    """An unconditional final waiver attached to a send is the final lien release going out: it
+def _finals_going(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any = (), excluded: Any = (), retainage: bool = False) -> list[dict[str, Any]]:
+    """Unconditional final waivers going out with a send, on whatever item they sit, an item that
+    asks for an unconditional waiver for an earlier payment included (B2, B32): the record's own
+    type says it is the final lien release, not the item's word. The final waiver already sent
+    for this job goes with the retainage request it fills the closeout for."""
+    excluded = set(excluded or [])
+    out: list[dict[str, Any]] = []
+    for rec, _item in _going_records(job, packet, extra_ids):
+        kind = record_waiver_kind(rec)
+        if rec in out or not kind.endswith("_final") or not (kind.startswith("unconditional") or _is_unconditional(rec)):
+            continue
+        if (retainage and _sent_for_this_job(job, rec)) or _left_out(rec, excluded):
+            continue
+        out.append(rec)
+    return out
+
+
+def _no_early_final_waiver(job: dict[str, Any], finals: list[dict[str, Any]], where: str) -> None:
+    """An unconditional final waiver going with a send is the final lien release going out: it
     waits for all the money, with no override (Stephen, 10 Nov, decision 6), as send_waiver does.
     The owner's reason still covers an unconditional progress waiver going with it."""
-    finals = [r for r in going if record_waiver_kind(r).endswith("_final")]
     left = final_waiver_holds(job) if finals else []
     if left:
         raise GateError(f"A final waiver can't go out until all the money on {job['name']} is in: {', '.join(left)}. "
@@ -1387,8 +1407,9 @@ def approve_and_send(
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
     _need_waiver_answers(state, job, invoice.get("packet") or [], invoice.get("extra_record_ids") or [], invoice.get("excluded_file_ids") or [], read_file)
+    _no_early_final_waiver(job, _finals_going(job, invoice.get("packet") or [], invoice.get("extra_record_ids") or [],
+                                              invoice.get("excluded_file_ids") or []), f"with {invoice['number']}")
     unconditional = unconditional_waivers_attached(job, invoice)
-    _no_early_final_waiver(job, unconditional, f"with {invoice['number']}")
     override = _reason(unconditional_override) if unconditional else ""
     if unconditional and not override:
         raise GateError(UNCONDITIONAL_ATTACHED, [f"{r['label']} ({_why_unconditional(r)})" for r in unconditional],
@@ -2308,11 +2329,12 @@ def waiver_not_needed(
     _hold_unclear_waivers(job)
     mark = {"by": actor, "at": utcnow(), "reason": reason}
     if target in job["invoices"]:
-        # The signed form tied to this pay app is used up with it (B33): the waiver for money that
-        # comes in later needs its own, not this one sent again for a different sum.
-        tied = _waiver_on_file(state, job, suggested_waiver_kind(job, target), lambda tie: tie == target["id"])
-        if tied:
-            mark["record_id"] = tied["record"]["id"]
+        # The signed form that would have gone for this pay app is used up with it (B33): tied to
+        # it, else the untied one waiver_on_file falls back to (Choose file leaves it so) when it
+        # can only be this one's. The waiver for money that comes in later needs its own form.
+        found = waiver_on_file(state, job, suggested_waiver_kind(job, target), invoice_id=target["id"])
+        if found and not found["ambiguous"]:
+            mark["record_id"] = found["record"]["id"]
     if target is job:
         which = "the earlier payment"
         job["legacy_waiver_pending"] = False
@@ -2414,8 +2436,8 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
     if missing:
         raise GateError("The closeout documents aren't complete.", [_blocker_text(job, item) for item in missing], keep_changes=bool(asked))
     _need_waiver_answers(state, job, closeout, (), (), read_file)
+    _no_early_final_waiver(job, _finals_going(job, closeout, retainage=True), "with the retainage request")
     unconditional = _unconditional_going(job, closeout, retainage=True)
-    _no_early_final_waiver(job, unconditional, "with the retainage request")
     override = _reason(unconditional_override) if unconditional else ""
     if unconditional and not override:
         raise GateError(UNCONDITIONAL_ATTACHED, [f"{r['label']} ({_why_unconditional(r)})" for r in unconditional],

@@ -100,6 +100,20 @@ class PayAppWaivers(unittest.TestCase):
         with self.assertRaises(domain.GateError):
             domain.send_waiver(self.state, self.job["id"], "Sam", invoice_id=self.inv["id"])
 
+    def test_an_untied_form_for_a_part_marked_not_needed_is_not_sent_for_the_rest(self):  # B33 round 2
+        for kind in ("unconditional_progress", None):   # typed, or as Choose file leaves it
+            with self.subTest(kind=kind):
+                self.setUp()
+                self.pay(200_000, "c1")
+                rec = signed_waiver(self.state, self.job["id"], kind, "Waiver for $2,000")
+                self.assertEqual(domain.waiver_on_file(self.state, self.job, "unconditional_progress", self.inv["id"])["record"], rec)
+                domain.waiver_not_needed(self.state, self.job["id"], "Handed the signed form to the GC on site", invoice_id=self.inv["id"], actor="Sam")
+                self.pay(200_000, "c2")
+                self.assertIsNone(domain.waiver_on_file(self.state, self.job, "unconditional_progress", self.inv["id"]))
+                self.assertEqual(domain.waiver_stages(self.state, self.job, self.inv)["unconditional"]["status"], "Needed")
+                with self.assertRaises(domain.GateError):
+                    domain.send_waiver(self.state, self.job["id"], "Sam", invoice_id=self.inv["id"])
+
 
 class FinalWaiverAfterShortPay(unittest.TestCase):  # R2 (b)
     def test_a_final_pay_app_part_paid_then_settled_short_still_owes_the_final_waiver(self):
@@ -164,6 +178,27 @@ class NoFinalWaiverAttachedEarly(unittest.TestCase):  # B2, B32: decision 6 has 
         self.assertEqual(str(refused.exception), domain.UNCONDITIONAL_ATTACHED)
         domain.approve_and_send(state, job["id"], "Owner", unconditional_override="GC asked")
         self.assertEqual(inv["status"], "sent")
+
+    def test_a_final_waiver_on_the_earlier_payment_item_waits_for_the_money(self):  # B2, B32 round 2
+        # The client's list asks for an unconditional waiver for the earlier payment: a form typed
+        # unconditional final on that item is still the final lien release.
+        from test_packet import new_job as packet_job
+        state = new_state()
+        job = packet_job(state, contract=1_000_000, packet="Signed contract\nConditional waiver\nUnconditional waiver for previous payment")
+        domain.record_progress(state, job["id"], 400_000)
+        inv = next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)
+        target = next(it for it in inv["packet"] if str(it.get("waiver_kind", "")).startswith("unconditional"))
+        for it in inv["packet"]:
+            if it is not target:
+                domain.resolve_packet_item(state, job["id"], it["id"], reason="x")
+        rec = signed_waiver(state, job["id"], "unconditional_final", "Unconditional final release")
+        domain.attach_record_to_packet(state, job["id"], target["id"], rec["id"], "Sam")
+        domain.confirm_packet_item(state, job["id"], target["id"], "Sam", answer="unconditional")
+        with self.assertRaises(domain.GateError) as refused:
+            domain.approve_and_send(state, job["id"], "Owner", unconditional_override="GC asked")
+        self.assertTrue(refused.exception.extra["final_waiver_held"])
+        self.assertIn(inv["status"], domain.DRAFT_STATUSES)
+        self.assertEqual(state["email_log"], [])
 
     def retainage_job(self, kind):
         state = new_state()

@@ -143,7 +143,12 @@ def compute(state: dict[str, Any], today: date | None = None) -> dict[str, Any]:
         # the month it happened, as the payments CSV adds up (B1, B11).
         moves = [(p.get("matched_at"), p["amount_cents"]) for p in job.get("payments", [])]
         moves += [(p.get("at"), int(p.get("amount_cents") or 0)) for p in job.get("retainage_payments", [])]
-        moves += [(s.get("at"), -int(s.get("returned_cents", s.get("cents") or 0))) for s in job.get("overbilling_settled") or []]
+        # Only money that came in can go back, as job_money caps it.
+        came_in = sum(cents for _at, cents in moves)
+        for s in job.get("overbilling_settled") or []:
+            back = max(0, min(int(s.get("returned_cents", s.get("cents") or 0)), came_in))
+            came_in -= back
+            moves.append((s.get("at"), -back))
         for at, cents in moves:
             d = _day(at)
             key = d and f"{d.year:04d}-{d.month:02d}"

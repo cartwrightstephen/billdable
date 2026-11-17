@@ -68,6 +68,13 @@ class Collected(unittest.TestCase):
         months = {r["month"]: r["collected_cents"] for r in f["monthly"]}
         self.assertEqual((months["2026-09"], months["2026-11"]), (9_000_000, -200_000))
 
+    def test_no_more_goes_back_than_came_in(self):  # B11, as job_money caps it
+        j = money_job(payments=[{"amount_cents": 100_000, "invoice_id": "a", "matched_at": "2026-09-20T12:00:00+00:00"}],
+                      overbilling_settled=[{"cents": 300_000, "returned_cents": 300_000, "at": "2026-11-02T12:00:00+00:00", "reason": "bad"}])
+        f = financials.compute({"payers": [{"id": "p1", "name": "Park GC"}], "jobs": [j]}, today=TODAY)
+        self.assertEqual(f["collected_12m_cents"], 0)
+        self.assertEqual(f["collected_12m_cents"], domain.job_money(j)["collected_cents"])
+
 
 class CsvNames(unittest.TestCase):  # B3
     def test_names_go_as_text(self):
