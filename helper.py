@@ -453,7 +453,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         rows = [(j, co) for j in jobs for co in j["change_orders"] if co["status"] == "pending"]
         if not rows:
             return "No change orders are waiting on a signature.", []
-        return "Change orders waiting on a signature:\n" + "\n".join(f"- {j['name']}: CO {co['number']} {co['title']} ({domain.money(co['amount_cents'])})" for j, co in rows), \
+        return "Change orders waiting on a signature:\n" + "\n".join(f"- {j['name']}: CO {co['number']} {co['title']} ({'no price yet' if co.get('unpriced') else domain.money(co['amount_cents'])})" for j, co in rows), \
             [{"type": "nav", "view": "cos", "label": "Open Change orders"}]
     if name == "closeable":
         rows = [j for j in jobs if not j.get("close_blockers")]

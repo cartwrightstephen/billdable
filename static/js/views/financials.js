@@ -134,7 +134,7 @@ function reportHtml(f) {
       </table></div>` : `<p class="sub">No signed work waiting.</p>`}
       <dl class="fin-facts">
         <dt>Contract value of open jobs</dt><dd>${money(f.open_contract_cents)}</dd>
-        <dt>Change orders waiting for signature</dt><dd>${money(f.pending_co_cents)}</dd>
+        <dt>Change orders waiting for signature</dt><dd>${money(f.pending_co_cents)}${f.unpriced_cos ? `, and ${f.unpriced_cos} with no price yet` : ""}</dd>
         <dt>Billed ahead of the contract</dt><dd>${money(f.overbilled_cents)}</dd>
         <dt>Jobs completed, last 12 months</dt><dd>${f.completed_jobs_12m}</dd>
       </dl>

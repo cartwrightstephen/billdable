@@ -64,6 +64,20 @@ class FiguresTests(unittest.TestCase):
         closed = dict(j, closed=True)
         self.assertEqual(financials.compute({"payers": [], "jobs": [closed]}, today=TODAY)["backlog_cents"], 0, "a finished job has no backlog")
 
+    def test_a_change_order_without_a_price_reads_no_price_yet_not_zero(self):
+        import exports, helper
+        j = job(contract_cents=100_000, change_orders=[
+            {"id": "c1", "number": 1, "title": "Extra outlets", "reason": "", "amount_cents": 0, "status": "pending", "unpriced": True},
+            {"id": "c2", "number": 2, "title": "Panel move", "reason": "", "amount_cents": 7_500, "status": "pending"}])
+        state = {"payers": [{"id": "p1", "name": "Park GC"}], "jobs": [j]}
+        f = financials.compute(state, today=TODAY)
+        self.assertEqual((f["pending_co_cents"], f["unpriced_cos"]), (7_500, 1))
+        self.assertIn("Change orders without a price yet,1", financials.to_csv(f))
+        rows = exports.change_orders_rows(state)
+        self.assertEqual([r[4] for r in rows[1:]], ["No price yet", "75.00"])
+        text, _ = helper.handle("pending_cos", {"jobs": [j], "company": {"name": "Pine"}}, None, state)
+        self.assertIn("CO 1 Extra outlets (no price yet)", text)
+
     def test_the_page_load_carries_the_backlog_for_the_strip(self):
         state = seed_state()
         view = domain.light_snapshot(state)

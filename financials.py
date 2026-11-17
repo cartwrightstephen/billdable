@@ -94,7 +94,7 @@ def compute(state: dict[str, Any], today: date | None = None) -> dict[str, Any]:
     aging = {k: 0 for k, *_ in BUCKETS}
     by_client: dict[str, dict[str, Any]] = {}
     aging_rows = []
-    backlog = unbilled = overbilled = pending_co = retainage = open_contract = 0
+    backlog = unbilled = overbilled = pending_co = retainage = open_contract = unpriced_cos = 0
     open_jobs = completed_12 = 0
     backlog_jobs = []
 
@@ -127,6 +127,9 @@ def compute(state: dict[str, Any], today: date | None = None) -> dict[str, Any]:
             unbilled += m["unbilled_completed_cents"]
             overbilled += m["overbilled_cents"]
             pending_co += m["pending_co_cents"]
+            # Round 2 decision 2: a change order saved before it has a price counts nowhere in the
+            # money, so it is listed by number rather than as $0.
+            unpriced_cos += sum(1 for co in job.get("change_orders", []) if co.get("status") == "pending" and co.get("unpriced"))
         for inv in job.get("invoices", []):
             d = _day(inv.get("sent_at"))
             if inv.get("status") in BILLED and d and d >= first_month:
@@ -163,6 +166,7 @@ def compute(state: dict[str, Any], today: date | None = None) -> dict[str, Any]:
         "unbilled_cents": unbilled,
         "overbilled_cents": overbilled,
         "pending_co_cents": pending_co,
+        "unpriced_cos": unpriced_cos,
         "open_jobs": open_jobs,
         "open_contract_cents": open_contract,
         "completed_jobs_12m": completed_12,
@@ -189,6 +193,7 @@ def to_csv(f: dict[str, Any]) -> str:
                        ("Done, not billed", "unbilled_cents"), ("Billed ahead of the contract", "overbilled_cents"), ("Change orders waiting for signature", "pending_co_cents"),
                        ("Open contract value", "open_contract_cents"), ("Billed, last 12 months", "billed_12m_cents"), ("Collected, last 12 months", "collected_12m_cents")]:
         w.writerow([label, d(f[key])])
+    w.writerow(["Change orders without a price yet", f["unpriced_cos"]])
     w.writerow(["Open jobs", f["open_jobs"]])
     w.writerow(["Jobs completed, last 12 months", f["completed_jobs_12m"]])
     w.writerow(["Days from sent to paid, median", "" if f["paid_median_days"] is None else f["paid_median_days"]])

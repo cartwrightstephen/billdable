@@ -126,7 +126,7 @@ def change_orders_rows(state: dict[str, Any]) -> list[list[str]]:
         for co in job.get("change_orders", []):
             reason = co.get("reason") or ""
             rows.append([f"CO {co.get('number', '')}", text(job.get("name")), text(co.get("title")),
-                         text(domain.CO_REASONS.get(reason, reason)), dollars(co.get("amount_cents")),
+                         text(domain.CO_REASONS.get(reason, reason)), ("No price yet" if co.get("unpriced") else dollars(co.get("amount_cents"))),   # Round 2 decision 2: not $0
                          CO_WORDS.get(co.get("status"), text(co.get("status"))), domain.co_signed_on(co),
                          "Yes" if co.get("included_in_billing") else "No"])
     return rows
