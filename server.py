@@ -1842,7 +1842,7 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(ctx.company_id):
             state = load_company(ctx.company_id)
         try:
-            reply = helper.answer(_text(ctx.body, "q"), state, ctx.company_id, ctx.user["id"], _text(ctx.body, "view"), _text(ctx.body, "job_id"))
+            reply = helper.answer(_text(ctx.body, "q"), state, ctx.company_id, ctx.user["id"], _text(ctx.body, "view"), _text(ctx.body, "job_id"), user=ctx.user)
         except domain.GateError as exc:
             self._json(409, {"error": str(exc)})
             return

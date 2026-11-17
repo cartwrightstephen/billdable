@@ -60,7 +60,8 @@
         "What's unpaid?",
         "Who is late paying?",
         "Show my receivables",
-        "Who hasn't paid me yet?"
+        "Who hasn't paid me yet?",
+        "How much am I owed, and by whom?"
       ],
       "keywords": [
         "owed",
@@ -173,7 +174,8 @@
         "What work haven't I billed?",
         "What's unbilled?",
         "Is there money I forgot to bill?",
-        "What can I bill now?"
+        "What can I bill now?",
+        "What's done but not billed?"
       ],
       "keywords": [
         "unbilled",
@@ -193,7 +195,8 @@
       "questions": [
         "Which jobs are holding my retainage?",
         "Where is my retainage?",
-        "How much retainage is held?"
+        "How much retainage is held?",
+        "How much retainage am I owed?"
       ],
       "keywords": [
         "retainage held",
@@ -1756,14 +1759,12 @@
         "Where are my financials?",
         "What will the bank want to see?",
         "Show my receivables aging",
-        "What is my backlog?",
         "Financial summary for a loan"
       ],
       "keywords": [
         "financials",
         "bank",
         "loan",
-        "backlog",
         "aging",
         "receivables",
         "line of credit"
@@ -2290,6 +2291,75 @@
       "needs_job": false,
       "actions": [],
       "follow_ups": []
+    },
+    {
+      "id": "unpaid-payapps",
+      "category": "Your jobs",
+      "questions": [
+        "Which pay apps are unpaid?",
+        "How old are my unpaid pay apps?",
+        "Which pay apps haven't been paid?",
+        "List my unpaid pay apps",
+        "Which pay apps are past due?",
+        "What's overdue?"
+      ],
+      "keywords": [
+        "overdue",
+        "past due",
+        "how old",
+        "aging"
+      ],
+      "answer": "Money, Unpaid lists every pay app sent and not paid yet.",
+      "handler": "unpaid",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "Who owes me money?"
+      ]
+    },
+    {
+      "id": "backlog",
+      "category": "Your jobs",
+      "questions": [
+        "What is my backlog?",
+        "What's my backlog?",
+        "How much signed work is left?",
+        "How much work do we have left on our contracts?"
+      ],
+      "keywords": [
+        "backlog",
+        "work left",
+        "signed work"
+      ],
+      "answer": "Backlog is signed work not done yet: each open job's contract with its signed change orders, less what is billed, drafted, and done but not billed. Money, Financials shows it by job.",
+      "handler": "backlog",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "Where are my financials?"
+      ]
+    },
+    {
+      "id": "due-this-week",
+      "category": "Your jobs",
+      "questions": [
+        "What's due this week?",
+        "What is coming up this week?",
+        "What do I have due this week?",
+        "What's due in the next few days?"
+      ],
+      "keywords": [
+        "this week",
+        "coming up",
+        "due"
+      ],
+      "answer": "The Dashboard's To do list and the Calendar show what is due and when.",
+      "handler": "due_week",
+      "needs_job": false,
+      "actions": [],
+      "follow_ups": [
+        "What should I do today?"
+      ]
     }
   ]
 }
