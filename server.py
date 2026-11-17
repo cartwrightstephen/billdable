@@ -2190,7 +2190,9 @@ class Handler(BaseHTTPRequestHandler):
             name = profiles.profile_name(company_state(user["company_id"]), changed["profile_id"])
             return f"{user['name']} gave {changed['name']} the {name} profile.", None
 
-        self._team_change(ctx, role)
+        # A profile without Approve pay apps takes them off the approvers lists, so no pay app
+        # waits on someone who can't approve (Round 2 decision 8).
+        self._team_change(ctx, role, also=lambda st: domain.drop_approvers_without(st, approver_pool(ctx.company_id, st)))
 
     def _p_team_remove(self, m, ctx: "Ctx") -> None:
         gone: list = []
@@ -2232,6 +2234,8 @@ class Handler(BaseHTTPRequestHandler):
 
         def change(st: dict) -> None:
             saved.update(profiles.save_profile(st, profile_id, ctx.body.get("name"), ctx.body.get("perms"), ctx.actor))
+            # Approve pay apps taken off the profile: its holders come off the approvers lists (decision 8).
+            domain.drop_approvers_without(st, approver_pool(ctx.company_id, st))
 
         status, payload = self._mutate(ctx.company_id, change, ctx.user, deliver=False)
         if status != 200:

@@ -224,7 +224,9 @@ class ApproverTests(unittest.TestCase):
         domain.set_payapp_approvers(self.state, ["u-ana", "u-ben"], self.POOL)
         domain.set_payapp_approvers(self.state, ["u-ana"], self.POOL, payer_id=self.job["payer_id"])
         domain.drop_approver(self.state, "u-ana")
-        self.assertEqual(domain.approvals_missing(self.state, self.job, self.inv), [])
+        # The client's list she emptied comes off, so the company's applies (not "nobody").
+        self.assertNotIn("payapp_approvers", self.state["payers"][0])
+        self.assertEqual(domain.approvals_missing(self.state, self.job, self.inv), ["Ben Ode"])
         self.assertEqual([p["id"] for p in self.state["company"]["payapp_approvers"]], ["u-ben"])
 
     def test_the_permission(self):

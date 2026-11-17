@@ -557,10 +557,11 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         job["final_override"] = {"by": actor, "at": utcnow(), "reason": reason, "unpaid": [inv["number"] for inv in unpaid]}
         audit(state, job_id, "final_override", f"{actor} overrode the unpaid {_numbers(unpaid)} to draft the final pay app: {reason}.", actor)
     _ensure_closeout_packet(state, job)
+    override = job.get("final_override") if unpaid and reason else None
     if replaced:
         audit(state, job_id, "draft_replaced", f"{replaced['number']} ({money(replaced['amount_cents'])}) replaced by the final pay app.", "duracash")
-        return draft_invoice(state, job_id, actor="duracash", replaces=replaced, period_end=runs_to, notes=notes)
-    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
+        return draft_invoice(state, job_id, actor="duracash", replaces=replaced, period_end=runs_to, notes=notes, final_override=override)
+    return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes, final_override=override)
 
 
 def final_pay_app_preview(state: dict[str, Any], job_id: str) -> dict[str, Any]:
@@ -571,7 +572,7 @@ def final_pay_app_preview(state: dict[str, Any], job_id: str) -> dict[str, Any]:
     unpaid = [inv["number"] for inv in unpaid_pay_apps(_job(trial_state, job_id))]
     job = mark_done(trial_state, job_id, "preview", preview=True)
     draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
-    pending = [{"number": co["number"], "amount_cents": co["amount_cents"]}
+    pending = [{"number": co["number"], "amount_cents": co["amount_cents"], "unpriced": bool(co.get("unpriced"))}
                for co in job["change_orders"] if co["status"] == "pending" and not co.get("included_in_billing")]
     if not draft:
         return {"drafted": False, "final": is_final(job), "pending_cos": pending, "unpaid": unpaid}
@@ -583,7 +584,7 @@ def final_pay_app_preview(state: dict[str, Any], job_id: str) -> dict[str, Any]:
 
 def draft_invoice(
     state: dict[str, Any], job_id: str, actor: str = "duracash", strict: bool = False, replaces: dict[str, Any] | None = None,
-    period_end: str = "", notes: str = "",
+    period_end: str = "", notes: str = "", final_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Draft a pay app for unbilled completed work, withholding retainage.
 
@@ -698,10 +699,12 @@ def draft_invoice(
         _audit_kept_amounts(state, job, invoice, replaces, period)
     job["invoices"].append(invoice)
     invoice["final"] = is_final(job)
-    if job.get("final_override") and job.get("work_status") == "complete":
-        # The override to draft the final pay app with an earlier one unpaid goes on each pay app
-        # drafted under it, so its page shows who, when and why (decision 6).
-        invoice["final_override"] = dict(job["final_override"])
+    # The override to draft the final pay app with an earlier one unpaid goes on that pay app, so
+    # its page shows who, when and why (decision 6): the one mark_done drafts, and the same pay app
+    # drafted again. A pay app drafted later (after a reopen, say) was never overridden.
+    override = final_override or (replaces or {}).get("final_override")
+    if override:
+        invoice["final_override"] = dict(override)
     if invoice["packet_id"] != "job-packet":
         _name_conditional_waiver(job, invoice)
         if _add_ticket_item(job, invoice, _payer(state, job["payer_id"])):
@@ -1652,8 +1655,7 @@ def match_payment(
         if _legacy_waiver_pending(job):
             job["legacy_waiver_pending"] = True
         invoice["status"] = "paid"
-        due = _waiver_comes_due(state, job, invoice, invoice["number"])
-        _sync_waiver(job)
+        due = _paid_waiver_comes_due(state, job, invoice)
         job["external_status"] = "Payment received, waiver not sent" if due else "Payment received"
     elif collected_for_invoice > 0:
         invoice["status"] = "partial"
@@ -1696,8 +1698,7 @@ def settle_short_pay(state: dict[str, Any], job_id: str, invoice_id: str, reason
     if _legacy_waiver_pending(job):
         job["legacy_waiver_pending"] = True
     invoice["status"] = "paid"
-    due = _waiver_comes_due(state, job, invoice, invoice["number"])
-    _sync_waiver(job)
+    due = _paid_waiver_comes_due(state, job, invoice)
     job["external_status"] = "Short pay accepted, waiver not sent" if due else "Short pay accepted"
     _refresh_draft_gate(job, state)
     audit(
@@ -1771,6 +1772,19 @@ def _partial_waiver_due(state: dict[str, Any], job: dict[str, Any], invoice: dic
     if _legacy_waiver_pending(job):
         job["legacy_waiver_pending"] = True
     due = _waiver_comes_due(state, job, invoice, f"the part payment on {invoice['number']}")
+    _sync_waiver(job)
+    return due
+
+
+def _paid_waiver_comes_due(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> bool:
+    """A pay app now paid owes a waiver for the money no waiver covers yet. When part-payment
+    waivers already cover all it received (the rest settled short), nothing is left to waive: a
+    $0 waiver would be a form with nothing on it (decision 5), so the pay app's waiver is settled."""
+    if waiver_cents(job, invoice) <= 0:
+        invoice["waiver_due"] = False
+        _sync_waiver(job)
+        return False
+    due = _waiver_comes_due(state, job, invoice, invoice["number"])
     _sync_waiver(job)
     return due
 
@@ -4454,6 +4468,10 @@ def reopen_job(state: dict[str, Any], job_id: str, reason: str, actor: str = "ow
     job["closed"] = False
     job.pop("closed_at", None)
     job["reopened_at"] = utcnow()
+    # The overrides were for the finish that came before: the audit log keeps them, and the next
+    # finish answers for itself (decisions 4 and 6).
+    job.pop("final_override", None)
+    job.pop("closeout_override", None)
     audit(state, job_id, "reopen_job", f"{actor} opened {job['name']} again to add more work: {reason}.", actor)
     return job
 

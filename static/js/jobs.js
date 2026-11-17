@@ -143,7 +143,8 @@ export function finalPayAppConfirm(j, p) {
   const amount = `${money(p.amount_cents)}${p.retainage_cents ? ` (${money(p.gross_cents)} less ${money(p.retainage_cents)} retainage)` : ""}`;
   const replaces = p.replaces ? ` It replaces draft ${unesc(p.replaces)}.` : "";
   if (p.final) return { text: `${termText("Final pay app")} for ${name}: ${amount}. ${finishes}${replaces}`, button: termText("Final pay app") };
-  const cos = (p.pending_cos || []).map(c => `CO ${c.number} (${money(c.amount_cents)})`).join(", ");
+  // An unpriced change order has no amount to state (decision 2), not $0.00.
+  const cos = (p.pending_cos || []).map(c => `CO ${c.number} (${c.unpriced ? "no price yet" : money(c.amount_cents)})`).join(", ");
   return {
     text: `${termText("This won't be the final pay app")} for ${name}${cos ? `: ${cos} isn't signed or on the bill` : ""}. ${termText("Pay app")} ${unesc(p.number)}: ${amount}. ${finishes}${replaces}`,
     button: termText("Draft pay app"),

@@ -26,7 +26,7 @@ __all__ = [
     "co_needs", "co_accrued", "co_view_extras", "co_info_rows", "price_change_order", "need_price",
     "closeout_override_needed", "record_closeout_override",
     "APPROVE_PERM", "payapp_approvers", "set_payapp_approvers", "approval_stamp", "approval_view", "approvals_missing",
-    "approve_payapp", "clear_stale_approvals", "drop_approver",
+    "approve_payapp", "clear_stale_approvals", "drop_approver", "drop_approvers_without",
 ]
 
 
@@ -141,6 +141,9 @@ def record_closeout_override(state: dict[str, Any], job: dict[str, Any], reason:
     from domain import GateError, _reason, audit, utcnow
     missing = closeout_override_needed(job)
     if not missing:
+        # A clean finish: an override from an earlier finish (before a reopen) no longer speaks
+        # for this one. The audit log keeps it.
+        job.pop("closeout_override", None)
         return
     why = _reason(reason)
     if not why:
@@ -199,12 +202,38 @@ def set_payapp_approvers(state: dict[str, Any], user_ids: Any, pool: dict[str, s
     return people
 
 
-def drop_approver(state: dict[str, Any], user_id: str) -> None:
-    """Someone left the team: they come off every approvers list, so no pay app waits on them."""
+def drop_approver(state: dict[str, Any], user_id: str, why: str = "left the team") -> None:
+    """Someone left the team, or no longer holds Approve pay apps: they come off every approvers
+    list, so no pay app waits on them. A client's own list they emptied comes off too, so the
+    company's applies again: an empty list there reads as "nobody needs to approve", which no one
+    chose. A list an owner saved empty on purpose has no one to remove and stays as it is."""
+    from domain import audit
     company = state.get("company", {})
     for holder in [company, *state.get("payers", [])]:
-        if "payapp_approvers" in holder:
-            holder["payapp_approvers"] = [p for p in _people(holder["payapp_approvers"]) if p["id"] != user_id]
+        if "payapp_approvers" not in holder:
+            continue
+        before = _people(holder["payapp_approvers"])
+        gone = [p for p in before if p["id"] == user_id]
+        if not gone:
+            continue
+        kept = [p for p in before if p["id"] != user_id]
+        whose = "pay apps" if holder is company else f"{holder['name']}'s pay apps"
+        if holder is not company and not kept:
+            holder.pop("payapp_approvers")
+            audit(state, "", "approvers_set", f"{gone[0]['name']} {why} and no longer approves {whose}. "
+                  "No one is left on that list, so the company's approvers apply.", "duracash")
+            continue
+        holder["payapp_approvers"] = kept
+        audit(state, "", "approvers_set", f"{gone[0]['name']} {why} and no longer approves {whose}.", "duracash")
+
+
+def drop_approvers_without(state: dict[str, Any], pool: dict[str, str]) -> None:
+    """After a profile change or a permissions edit: anyone named who no longer holds Approve pay
+    apps (pool is {user id: name} of those who do) comes off the lists (decision 8)."""
+    company = state.get("company", {})
+    named = {p["id"] for holder in [company, *state.get("payers", [])] for p in _people(holder.get("payapp_approvers"))}
+    for user_id in sorted(named - set(pool)):
+        drop_approver(state, user_id, why="no longer holds Approve pay apps")
 
 
 def approval_stamp(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:
