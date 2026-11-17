@@ -75,7 +75,7 @@ class ReadOnlyHttpTests(unittest.TestCase):
 
     def test_a_held_company_keeps_its_data_but_takes_no_changes(self):
         cookie, user = self.signup("hold@example.com")
-        job = {"name": "Ash", "customer": "Ash GC", "contract_cents": 100000, "address": "1 Ash St", "approver": "Al Ash", "ap_email": "ap@ashgc.com"}
+        job = {"name": "Ash", "customer": "Ash GC", "contract_cents": 100000, "address": "1 Ash St", "approver": "Al Ash", "ap_email": "ap@ashgc.com", "phone": "(404) 555-0100", "role": "Owner"}
         res, _ = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.assertEqual(res.status, 200)
         with mock.patch("builtins.print"):
@@ -104,7 +104,8 @@ class ReadOnlyHttpTests(unittest.TestCase):
 
         with mock.patch("builtins.print"):
             self.assertEqual(admin.main(["admin.py", "writable", user["company_id"]]), 0)
-        res, _ = self.request("POST", "/api/jobs", job, cookie=cookie)
+        # The same name again: kept as a new job on purpose (Round 1 asks about a job of the same name).
+        res, _ = self.request("POST", "/api/jobs", {**job, "new_job": True}, cookie=cookie)
         self.assertEqual(res.status, 200)
         res, page = self.request("GET", "/api/audit?limit=3", cookie=cookie)
         self.assertEqual([e["action"] for e in page["entries"][1:3]], ["writable", "read_only"])

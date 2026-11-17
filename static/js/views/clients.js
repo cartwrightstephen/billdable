@@ -4,11 +4,56 @@ import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
 import { askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues, formErrors, clearForm } from "../forms.js";
 import { CLIENT_TYPES, clientTypeLabel, paperworkChoices, packetChoices, packetText } from "../jobs.js";
+import { checkFields } from "../validate.js";
 import { readJson } from "../net.js";
 import { pathFor } from "../routes.js";
 import { state, me, formOpen, onSessionEnd } from "../state.js";
-import { post, render, emptyState, can } from "../app-core.js";
+import { post, render, emptyState, can, nav, moreDetails } from "../app-core.js";
 import { sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount, contractImportHtml, contractMark, forgetClosedContract } from "./jobs.js";
+
+// Who signs off reads as the client's own name only because a blank box used to save that way
+// (domain.signer_defaulted): its box starts empty, so saving the card doesn't count as an answer.
+const signerDefaulted = (p) => !!p.approver && (p.playbook_missing || []).map(unesc).includes("approver");
+
+// The client's own Usual retainage %, as typed: blank when it goes by its type (domain.jobinfo).
+const usualRetainage = (p) => (p.retainage_pct === undefined || p.retainage_pct === null ? "" : String(p.retainage_pct));
+
+// A client's card for someone without the company permission: its settings to read, and boxes only
+// for what the client is still missing (server.py's /missing, the same rule as New job).
+function clientReadOnlyHtml(p, key, f) {
+  const row = (label, value) => value && unesc(String(value)) !== "None" ? `<div class="money-row"><span class="label">${label}</span><span>${value}</span></div>` : "";
+  const days = (n) => (n ? `${n} days` : "");
+  const missing = (p.playbook_missing || []).map(unesc);
+  const boxes = {
+    client_type: () => f({ name: "client_type", label: "Client type", helpKey: "role", options: [["", "Choose…"], ...CLIENT_TYPES], required: true }),
+    approver: () => f({ name: "approver", label: "Who signs off on your bills", helpKey: "approver", required: true, placeholder: "Sam Jones" }),
+    ap_email: () => f({ name: "ap_email", label: "Email for pay apps", helpKey: "ap_email", type: "email", required: true, autocomplete: "off", rule: "email", placeholder: "name@example.com" }),
+    phone: () => f({ name: "phone", label: "Phone", helpKey: "customer_phone", type: "tel", required: true, autocomplete: "off", rule: "phone" }),
+  };
+  const asked = Object.keys(boxes).filter(k => missing.includes(k));
+  return `<div class="client-settings-read">
+    ${row("Client type", missing.includes("client_type") ? "" : clientTypeLabel(p))}
+    ${row("Who signs off on your bills", missing.includes("approver") ? "" : p.approver)}
+    ${row("Email for pay apps", p.ap_email)}
+    ${row("Phone", p.phone)}
+    ${row("Days between follow-ups", p.follow_up_days)}
+    ${row("Pay apps due by", p.payapp_due_day ? `day ${p.payapp_due_day} of the month` : "")}
+    ${row("Days they usually take to pay", p.usual_approval_days)}
+    ${row("Payment terms", days(p.payment_terms_days))}
+    ${row("Usual retainage", p.retainage_default != null ? `${p.retainage_default}%` : "")}
+    ${row("Supporting documents needed", p.no_paperwork ? "Nothing needed" : p.packet)}
+    ${row("They send pay apps back when", p.rejects_when)}
+    ${row("Also email (CC)", p.copy)}
+    ${row("Also email from the third follow-up", p.escalation_email)}
+    <p class="sub">Changing these takes the permission to edit client settings.</p>
+    ${asked.length ? `<div data-form-key="${key}">
+      <h3>Still missing</h3>
+      ${formErrorLine(key)}
+      <div class="form-grid">${asked.map(k => boxes[k]()).join("")}</div>
+      <div class="form-inline"><button type="button" class="btn small" data-action="save-client-missing" data-id="${p.id}">Save</button></div>
+    </div>` : ""}
+  </div>`;
+}
 
 // Each client's jobs, finished ones too (S10), asked for when its card opens:
 // payer id -> { forState, jobs } (jobs escaped). Asked again once the page's data changes.
@@ -51,12 +96,12 @@ function clientJobsHtml(p, open) {
 // The paperwork a client needs (S11): a checkbox per typical item, Other for the rest, and
 // Nothing needed. What is ticked and not saved yet stays through a redraw.
 const ticks = new Map();   // form key -> { checked: [labels], none: bool }
-function paperworkHtml(key, p = null) {
+export function paperworkHtml(key, p = null, legend = "Supporting documents needed with each pay app") {
   const catalog = state.paperwork_catalog;
   const saved = p ? packetChoices(p.packet_items || [], catalog) : { checked: [], other: "" };
   const t = ticks.get(key) || { checked: saved.checked, none: !!(p && p.no_paperwork) };
   return `<fieldset class="span-2 paperwork-choices" data-paperwork="${key}">
-      <legend data-help="packet">Paperwork needed with each pay app</legend>
+      <legend data-help="packet">${legend}</legend>
       ${paperworkChoices(catalog).map(([title, list]) => `<div class="paperwork-group"><h4>${title}</h4>${list.map((label, n) => {
         const id = `${key}-pw-${title === "At closeout" ? "c" : "p"}${n}`;
         // Stephen's rule (M16): the conditional waiver is asked for with every pay app; the way out
@@ -64,19 +109,33 @@ function paperworkHtml(key, p = null) {
         const always = label === "Conditional waiver" ? `<span class="sub check-note">Asked for with every pay app, ticked or not. If this client doesn't take one, tap Not needed for this client on it.</span>` : "";
         return `<label class="check-line" for="${id}"><input type="checkbox" id="${id}" data-packet-choice="${esc(label)}"${t.checked.includes(label) ? " checked" : ""}${t.none ? " disabled" : ""}> ${esc(label)}</label>${always}`;
       }).join("")}</div>`).join("")}
-      ${field({ form: key, name: "packet_other", id: `${key}-pw-other`, label: "Other", value: saved.other, placeholder: "Certified payroll", wide: true })}
+      ${field({ form: key, name: "packet_other", id: `${key}-pw-other`, label: "Other", value: saved.other, placeholder: "Subcontractor list", wide: true })}
       <label class="check-line" for="${key}-pw-none"><input type="checkbox" id="${key}-pw-none" data-no-paperwork${t.none ? " checked" : ""}> Nothing needed</label>
       <p class="sub">Nothing needed still asks for the conditional waiver, unless it was marked Not needed for this client.</p>
     </fieldset>`;
 }
 
 // The ticked labels, Other and Nothing needed of a form, as the save sends them.
-function paperworkValue(key, other) {
+export function paperworkValue(key, other) {
   const box = document.querySelector(`[data-paperwork="${key}"]`);
   if (!box) return null;
   const none = !!box.querySelector("[data-no-paperwork]")?.checked;
   const checked = [...box.querySelectorAll("[data-packet-choice]")].filter(i => i.checked).map(i => unesc(i.dataset.packetChoice));
   return { none, text: none ? "" : packetText(checked, other, state.paperwork_catalog) };
+}
+
+// Forget what was ticked and not saved, once it is saved.
+export function forgetPaperworkTicks(key) { ticks.delete(key); }
+
+// A client card's section (Round 1, item 18): folded with a one-line summary, open while one of its
+// boxes has an error. Its boxes stay in the form, so Save client reads them folded or not.
+function playbookSection(more, title, summary, body, key, fields) {
+  const errs = formErrors[key] || {};
+  const open = fields.some(k => errs[k]) || !!moreDetails[more];
+  return `<details class="playbook-section" data-more="${more}"${open ? " open" : ""}>
+              <summary><h3>${title}</h3><span class="sub">${summary}</span></summary>
+              <div class="form-grid">${body}</div>
+            </details>`;
 }
 
 // The open cards, kept open through a redraw.
@@ -115,12 +174,12 @@ export const views = {
         <div class="form-grid">
           ${field({ form: "addpayer", name: "name", id: "ap-name", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off", rule: "name" , ...contractMark("addpayer", "name") })}
           ${sameCustomerBox("addpayer")}
-          ${field({ form: "addpayer", name: "client_type", id: "ap-client-type", label: "Client type", helpKey: "role", options: CLIENT_TYPES, value: "gc", ...contractMark("addpayer", "client_type") })}
-          ${field({ form: "addpayer", name: "approver", id: "ap-approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "The client, unless you say otherwise" })}
-          ${field({ form: "addpayer", name: "ap_email", id: "ap-email", label: "Email for pay apps (can add later)", helpKey: "ap_email", type: "email", autocomplete: "off", rule: "email", placeholder: "name@example.com" , ...contractMark("addpayer", "ap_email") })}
-          ${field({ form: "addpayer", name: "phone", id: "ap-phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off", rule: "phone" , ...contractMark("addpayer", "phone") })}
-          ${field({ form: "addpayer", name: "payapp_due_day", id: "ap-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", placeholder: "e.g. 25" , ...contractMark("addpayer", "payapp_due_day") })}
-          ${field({ form: "addpayer", name: "payment_terms_days", id: "ap-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", placeholder: "30" , ...contractMark("addpayer", "payment_terms_days") })}
+          ${field({ form: "addpayer", name: "client_type", id: "ap-client-type", label: "Client type", helpKey: "role", options: [["", "Choose…"], ...CLIENT_TYPES], required: true, ...contractMark("addpayer", "client_type") })}
+          ${field({ form: "addpayer", name: "approver", id: "ap-approver", label: "Who signs off on your bills", helpKey: "approver", required: true, placeholder: "Sam Jones" })}
+          ${field({ form: "addpayer", name: "ap_email", id: "ap-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", required: true, autocomplete: "off", rule: "email", placeholder: "name@example.com" , ...contractMark("addpayer", "ap_email") })}
+          ${field({ form: "addpayer", name: "phone", id: "ap-phone", label: "Phone", helpKey: "customer_phone", type: "tel", required: true, autocomplete: "off", rule: "phone" , ...contractMark("addpayer", "phone") })}
+          ${field({ form: "addpayer", name: "payapp_due_day", id: "ap-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", ...contractMark("addpayer", "payapp_due_day") })}
+          ${field({ form: "addpayer", name: "payment_terms_days", id: "ap-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", ...contractMark("addpayer", "payment_terms_days") })}
           ${paperworkHtml("addpayer")}
         </div>
         <div class="form-inline"><button class="btn" data-action="add-payer">Add client</button></div>
@@ -138,42 +197,49 @@ export const views = {
         const others = state.payers.filter(o => o.id !== p.id);
         const n = jobsOf(p);
         const open = (p.packet_suggestions || []).some(x => x.status === "open") || !!formErrors[key] || openCards.has(p.id);
+        const edits = can("company");
         return `
         <details class="card playbook-card" data-payer-card="${p.id}"${open ? " open" : ""}>
           <summary><strong>${p.name}</strong> <span class="sub">${clientTypeLabel(p)} · ${p.approver || "no one signs off yet"} · ${p.ap_email || "no email yet"} · ${n === 1 ? "1 job" : `${n} jobs`}</span>${(p.packet_suggestions || []).some(x => x.status === "open") ? ` <span class="pill copper">${p.packet_suggestions.filter(x => x.status === "open").length} suggested</span>` : ""}</summary>
           ${(p.packet_suggestions || []).filter(x => x.status === "open").map(x => `<div class="list-item suggestion">
-            <div><strong>Add to the paperwork?</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
-            <div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to paperwork</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>
+            <div><strong>${edits ? "Add to the supporting documents?" : "Suggested for the supporting documents:"}</strong> “${x.text}” <span class="sub">from ${x.source}${x.job ? " on " + x.job : ""}, ${fmtDate(x.at)}</span></div>
+            ${edits ? `<div class="form-inline"><button class="btn small" data-action="sug-add" data-id="${p.id}" data-sug="${x.id}">Add to supporting documents</button><button class="btn small secondary" data-action="sug-dismiss" data-id="${p.id}" data-sug="${x.id}">Dismiss</button></div>` : ""}
           </div>`).join("")}
           ${clientJobsHtml(p, open)}
+          ${p.waiver_not_needed ? `<p class="override-note">Lien waivers not needed for this client. Marked by ${p.waiver_not_needed.by} on ${fmtDate(p.waiver_not_needed.at)}: ${p.waiver_not_needed.reason || "no reason given"} ${edits ? `<button type="button" class="btn small secondary" data-action="client-waiver-needed" data-id="${p.id}">Needed after all</button>` : ""}</p>` : ""}
           ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${(n => n === 1 ? "1 day" : `${n} days`)(Math.round(Number(unesc(String(p.paid_days_avg)))))} after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
             const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
             if (!(p.paid_count >= 2 && Math.abs(avg - set) >= 2)) return "That matches your setting.";
             // Offered only for a number the server takes: 1 to 365 days (domain.update_payer).
-            return avg >= 1 && avg <= 365
+            return edits && avg >= 1 && avg <= 365
               ? `Your setting says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} day${avg === 1 ? "" : "s"}</button>`
               : `Your setting says ${set}.`;
           })()}</p>` : ""}
-          <div data-form-key="${key}">
+          ${edits ? `<div data-form-key="${key}">
             ${formErrorLine(key)}
+            <h3>Contact and billing</h3>
             <div class="form-grid">
               ${f({ name: "name", label: "Client name", helpKey: "customer_name", required: true, autocomplete: "off", rule: "name", value: unesc(p.name) })}
               ${f({ name: "client_type", label: "Client type", helpKey: "role", options: CLIENT_TYPES, value: unesc(p.client_type || (unesc(p.role || "") === "GC" ? "gc" : "owner")) })}
-              ${f({ name: "approver", label: "Who signs off on your bills", helpKey: "approver", value: unesc(clean(p.approver)) })}
+              ${f({ name: "approver", label: "Who signs off on your bills", helpKey: "approver", placeholder: "Sam Jones", value: signerDefaulted(p) ? "" : unesc(clean(p.approver)) })}
               ${f({ name: "ap_email", label: "Email for pay apps", helpKey: "ap_email", type: "email", autocomplete: "off", rule: "email", value: unesc(clean(p.ap_email)) })}
               ${f({ name: "phone", label: "Phone", helpKey: "customer_phone", type: "tel", autocomplete: "off", rule: "phone", value: unesc(clean(p.phone)) })}
-              ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || ""), placeholder: "7" })}
-              ${f({ name: "payapp_due_day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", value: String(p.payapp_due_day || ""), placeholder: "e.g. 25" })}
-              ${f({ name: "usual_approval_days", label: "Days they usually take to pay", helpKey: "usual_approval_days", inputmode: "numeric", autocomplete: "off", value: String(p.usual_approval_days || ""), placeholder: "14" })}
-              ${f({ name: "payment_terms_days", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", value: String(p.payment_terms_days || ""), placeholder: "30" })}
-              ${paperworkHtml(key, p)}
-              ${f({ name: "rejects_when", label: "They send pay apps back when", helpKey: "rejects_when", multiline: true, wide: true, value: unesc(clean(p.rejects_when)) })}
-              ${f({ name: "copy", label: "Also email (CC)", helpKey: "copy", wide: true, autocomplete: "off", value: unesc(clean(p.copy)), placeholder: "other@example.com, pm@example.com" })}
-              ${f({ name: "escalation_email", label: "Also email from the third follow-up", helpKey: "escalation_email", type: "email", autocomplete: "off", value: unesc(clean(p.escalation_email)), placeholder: "owner@example.com" })}
+              ${f({ name: "payapp_due_day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", value: String(p.payapp_due_day || "") })}
+              ${f({ name: "payment_terms_days", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", value: String(p.payment_terms_days || "") })}
+              ${/* Money stays in this open section (Round 1, items 1 and 18). Blank: the client type's. */ ""}
+              ${f({ name: "retainage_pct", label: "Usual retainage", suffix: "%", helpKey: "usual_retainage", inputmode: "decimal", autocomplete: "off", value: usualRetainage(p) })}
             </div>
-            <div class="form-inline"><button type="button" class="btn small" data-action="save-playbook" data-id="${p.id}">Save client</button></div>
-          </div>
-          ${others.length ? `<details class="merge-payer">
+            ${playbookSection(`pb-docs-${p.id}`, "Supporting documents", p.no_paperwork ? "Nothing needed" : (p.packet_items || []).join(", ") || "None ticked", `
+              ${paperworkHtml(key, p)}
+              ${f({ name: "rejects_when", label: "They send pay apps back when", helpKey: "rejects_when", multiline: true, wide: true, value: unesc(clean(p.rejects_when)) })}`, key, ["packet", "rejects_when"])}
+            ${playbookSection(`pb-follow-${p.id}`, "Follow-ups and copies", `Every ${p.follow_up_days || 7} days${clean(p.copy) ? ` · CC ${p.copy}` : ""}`, `
+              ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || "") })}
+              ${f({ name: "usual_approval_days", label: "Days they usually take to pay", helpKey: "usual_approval_days", inputmode: "numeric", autocomplete: "off", value: String(p.usual_approval_days || "") })}
+              ${f({ name: "copy", label: "Also email (CC)", helpKey: "copy", wide: true, autocomplete: "off", value: unesc(clean(p.copy)), placeholder: "other@example.com, pm@example.com" })}
+              ${f({ name: "escalation_email", label: "Also email from the third follow-up", helpKey: "escalation_email", type: "email", autocomplete: "off", value: unesc(clean(p.escalation_email)), placeholder: "owner@example.com" })}`, key, ["follow_up_days", "usual_approval_days", "copy", "escalation_email"])}
+            <button type="button" class="btn full-width" data-action="save-playbook" data-id="${p.id}">Save client</button>
+          </div>` : clientReadOnlyHtml(p, key, f)}
+          ${edits && others.length ? `<details class="merge-payer">
             <summary>Same client as another one?</summary>
             <div class="form-inline">
               <label for="merge-${p.id}" class="inline-label">Merge into</label>
@@ -182,7 +248,7 @@ export const views = {
             </div>
             <p class="sub">Every job of ${p.name} moves to the client you pick, which keeps its own settings. ${p.name} is then removed.</p>
           </details>` : ""}
-          ${deletePayerHtml(p, { owner: can("company"), jobs: state.jobs, canMerge: others.length > 0 })}
+          ${deletePayerHtml(p, { owner: edits, jobs: state.jobs, canMerge: others.length > 0 })}
         </details>`;
       }).join("") : emptyState("No clients yet", "", `<button class="btn" data-action="toggle-form" data-form="addpayer">Add client</button>`)}
     `;
@@ -192,15 +258,32 @@ export const views = {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
   "use-approval-days": async (el, id) => { await post(`/api/payers/${id}/update`, { usual_approval_days: Number(el.dataset.days) }); },
+  "client-waiver-needed": async (el, id) => {
+    const p = (state.payers || []).find(x => x.id === id);
+    if (await askConfirm(`Ask for lien waivers from ${unesc((p || {}).name || "this client")} again? New pay apps and their open drafts will need one.`, "Needed after all")) await post(`/api/payers/${id}/waiver-needed`, {});
+  },
   "sug-add": (el, id) => post(`/api/payers/${id}/suggestion/${el.dataset.sug}/add`),
   "sug-dismiss": (el, id) => post(`/api/payers/${id}/suggestion/${el.dataset.sug}/dismiss`),
   "save-playbook": async (el, id) => {
     const key = `payer-${id}`;
     const updates = formValues(key);
-    // Blank clears a field (the day fields go back to the usual number), except who signs off and
-    // the email, which a send needs (R3-07). The paperwork is the ticked boxes and Other (S11);
-    // nothing ticked is refused unless Nothing needed is, which the server keeps as no paperwork.
-    for (const k of ["approver", "ap_email"]) if (!updates[k]) delete updates[k];
+    // Blank clears a field (the day fields go back to the usual number), except who signs off, the
+    // email and the phone: once saved they can be changed, not removed (the server refuses it under
+    // the box), and a client saved before they were needed can stay without them until its next
+    // new job. The paperwork is the ticked boxes and Other (S11); nothing ticked is refused unless
+    // Nothing needed is, which the server keeps as no paperwork.
+    const saved = (state.payers || []).find(p => p.id === id) || {};
+    for (const k of ["approver", "ap_email", "phone"]) if (!updates[k] && (!saved[k] || (k === "approver" && signerDefaulted(saved)))) delete updates[k];
+    // The box started empty and something was typed: a person's answer, even the client's own name.
+    if (updates.approver && signerDefaulted(saved)) updates.approver_confirmed = true;
+    // Typed over a real signer: the client's own name is usually a slip, so this save asks.
+    else if (updates.approver && updates.approver.toLowerCase() === (updates.name || "").toLowerCase() && updates.approver !== unesc(saved.approver || "")) {
+      if (!(await askConfirm(`${updates.approver} is the client's own name. Does ${updates.approver} sign off on your bills?`, "Yes, they sign off"))) {
+        refuseForm(key, { approver: "Enter who signs off on your bills, or confirm it is the client." });
+        return;
+      }
+      updates.approver_confirmed = true;
+    }
     const paperwork = paperworkValue(key, updates.packet_other);
     delete updates.packet_other;
     const errors = {};
@@ -212,23 +295,46 @@ export const actions = {
     for (const [k, label] of [["follow_up_days", "the days between follow-ups"], ["usual_approval_days", "the days they usually take to pay"], ["payment_terms_days", "the payment terms in days"]]) {
       if (updates[k] && !/^\d+$/.test(updates[k])) errors[k] = `Enter ${label} as a whole number from 1 to 365.`;
     }
+    // Blank goes back to the client type's (domain.update_payer).
+    if (updates.retainage_pct && !(/^\d+$/.test(updates.retainage_pct) && +updates.retainage_pct <= 20)) errors.retainage_pct = "Enter a retainage from 0 to 20 percent, or leave it blank.";
     if (refuseForm(key, errors)) return;
     const r = await post(`/api/payers/${id}/update`, updates, { formKey: key });
     if (r && r.ok) ticks.delete(key);
   },
+  "save-client-missing": async (el, id) => {
+    const key = `payer-${id}`, v = formValues(key), body = {};
+    for (const k of ["client_type", "approver", "ap_email", "phone"]) if (v[k]) body[k] = v[k];
+    const errors = checkFields(body, { phone: "phone", ap_email: "email" });
+    if (refuseForm(key, Object.keys(body).length ? errors : { _form: "Enter what is missing." })) return;
+    // The box started empty: a person's answer, even the client's own name.
+    if (body.approver) body.approver_confirmed = true;
+    await post(`/api/payers/${id}/missing`, body, { formKey: key });
+  },
   "add-payer": async () => {
     const v = formValues("addpayer");
-    if (refuseForm("addpayer", v.name ? {} : { name: "Enter the client's name." })) return;
+    const errors = checkFields({ phone: v.phone, ap_email: v.ap_email }, { phone: "phone", ap_email: "email" });
+    if (!v.name) errors.name = "Enter the client's name.";
+    if (!v.client_type) errors.client_type = "Pick the client type.";
+    if (!v.approver) errors.approver = "Enter who signs off on your bills.";
+    if (!v.ap_email || errors.ap_email) errors.ap_email = "Enter the email pay apps go to, like ap@builder.com.";
+    if (!v.phone) errors.phone = "Enter the client's phone number.";
+    // A near match is asked about first, so a name kept as new has all of these already.
+    if (refuseForm("addpayer", errors)) return;
     const paperwork = paperworkValue("addpayer", v.packet_other);
     delete v.packet_other;
     // Nothing ticked: the client starts with the usual paperwork for its type.
-    const body = { ...v, new_customer: keptNames.addpayer === v.name };
+    const body = { ...v, approver_confirmed: true, new_customer: keptNames.addpayer === v.name };
     if (paperwork && paperwork.none) body.no_paperwork = true;
     else if (paperwork && paperwork.text) body.packet = paperwork.text;
     for (const k of ["payapp_due_day", "payment_terms_days"]) if (!body[k]) delete body[k];
     const r = await post("/api/payers", body, { formKey: "addpayer", close: "addpayer" });
     if (r && !r.ok) showSameCustomer("addpayer", "ap", r.data);
     if (r && r.ok) { delete keptNames.addpayer; ticks.delete("addpayer"); }
+  },
+  // The job page's way to what its client is missing: that client's card, opened.
+  "open-client-card": (el, id) => {
+    openCards.add(unesc(id));
+    nav("playbook");
   },
   // "Same as ABC Builders?" while adding a client: open the saved one instead...
   "ap-same-use": (el) => {

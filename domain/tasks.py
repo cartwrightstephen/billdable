@@ -33,8 +33,9 @@ __all__ = [
 
 BALL_SIDES = ("us", "client")
 # Rows that wait on the client: a pay app they approved with a date to pay, and one sent and
-# unpaid past their follow-up window (the follow-up is a nudge; the payment is theirs to make).
-CLIENT_KINDS = {"approved", "follow_up"}
+# unpaid past their follow-up window (the follow-up is a nudge; the payment is theirs to make),
+# and retainage asked for, before it can be asked again.
+CLIENT_KINDS = {"approved", "follow_up", "retainage_wait"}
 TASK_TITLE_MAX = 200
 # Done tasks stay on the list (struck through) this long; older ones are kept but not sent.
 DONE_TASKS_SHOWN_DAYS = 30
@@ -260,7 +261,7 @@ def assign_row(state: dict[str, Any], key: Any, body: dict[str, Any], members: d
     key = str(key or "")
     row = rows.get(key)
     if not row:
-        raise GateError("That item is no longer on the To Do list.")
+        raise GateError("That item is no longer on the To do list.")
     store = state.setdefault("task_assignments", {})
     _prune(store, rows)
     entry = dict(store.get(key) or {})

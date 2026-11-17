@@ -113,6 +113,8 @@ def month_summary(state: dict[str, Any], year: int, month: int) -> tuple[str, st
                 sd = _day(inv.get("sent_at")) if inv else None
                 if sd:
                     days.append((d - sd).days)
+    refunded = sum(int(s.get("returned_cents", s.get("cents") or 0)) for job in state.get("jobs", []) for s in job.get("overbilling_settled") or []
+                   if first <= (_day(s.get("at")) or date.min) < nxt)
     follow = sum(1 for e in state.get("email_log", []) if e.get("kind") == "follow_up" and first <= (_day(e.get("at")) or date.min) < nxt)
     # As of the month's end: jobs finished after it belong to next month's email.
     waiting = [w for w in compute(state, today=nxt)["waiting_to_bill"] if w["days"] > 0]
@@ -122,6 +124,7 @@ def month_summary(state: dict[str, Any], year: int, month: int) -> tuple[str, st
         f"Pay apps sent: {len(sent)}, for {domain.money(sum(i['amount_cents'] for i in sent))}.",
         f"Payments received: {len(paid)}, for {domain.money(sum(p['amount_cents'] for p in paid))}"
         + (f"; on average {round(sum(days) / len(days), 1)} days from sending to payment." if days else "."),
+        *([f"Refunded or credited: {domain.money(refunded)}."] if refunded else []),
         f"Follow-ups sent: {follow}.",
     ]
     if waiting:

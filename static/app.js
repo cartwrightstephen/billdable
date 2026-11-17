@@ -11,30 +11,35 @@ import { formDraft, watchForms } from "./js/forms.js";
 import { pickPayApp } from "./js/payimport.js";
 import { termText } from "./js/terms.js";
 import { state, me, currentView, currentJobId, setMe, clearSession, setAccount, setSignedOutNote, helperAdmin, setPending, drawerOpen, cameraAsk, setCameraAsk, setDrawerOpen } from "./js/state.js";
-import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage } from "./js/app-core.js";
+import { nav, DEMO_COMPANY_ID, applyLocation, load, toast, hideHelpTip, jobDetails, missingJobs, jobDetailLoading, jobDetailFailed, loadJobDetail, emptyState, finishHtml, listPages, loadListPage, toggleForm, runAction, moreDetails, setPage, showAnchor, can } from "./js/app-core.js";
+import { moneyStripHtml, loadFinancials } from "./js/views/financials.js";
 import { views, actions as pageActions } from "./js/views/index.js";
-import { metricsData, metricsPeriod, loadMetrics, setCalJobFilter } from "./js/views/today.js";
+import { metricsData, metricsPeriod, loadMetrics, setCalJobFilter, hasResults } from "./js/views/today.js";
 import { syncNewJobCustomer, prefillApprover, prefillRetainage, hideSameCustomer } from "./js/views/jobs.js";
 import { updateProgressPreview, prefillPaymentAmount } from "./js/views/job.js";
 import { sovDraft, updateSovTotals } from "./js/views/job-sov.js";
 import { qboStatus, loadQboStatus, paymentImport } from "./js/views/payments.js";
 import { setOutboxJobFilter } from "./js/views/communications.js";
-import { newInboxCount, loadImportSettings, guessPasteSource, rememberUploadJob } from "./js/views/inbox.js";
+import { loadReminders } from "./js/views/automations.js";
+import { newInboxCount, loadImportSettings, guessPasteSource } from "./js/views/inbox.js";
 import { loadHelperReview, loadAdminCompanies, companySwitch, setAuditJobFilter } from "./js/views/settings.js";
 import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml } from "./js/views/auth.js";
 import { setAiVisible, updateAiContext } from "./js/views/helper.js";
 
-// ---------- navigation: seven destinations with tabs; every page has its own address ----------
-// On a phone the menu shows five; the two marked more go under More (styles.css).
+// ---------- navigation: six destinations with tabs; every page has its own address ----------
+// On a phone the menu shows five; Import/Export goes under More (styles.css). Round 1 (item 19)
+// folded Automations into My account as Notifications, Results onto the Dashboard and Payments
+// into a filter on Pay apps; their old addresses land there (routes.js PATH_ALIASES).
 const SECTIONS = [
-  { key: "today", label: "Dashboard", views: [["dashboard", "Overview"], ["results", "Results"], ["calendar", "Calendar"]] },
-  { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["daily", "Daily record"], ["history", "Job history"], ["playbook", "Client playbook"]] },
+  { key: "today", label: "Dashboard", views: [["dashboard", "Overview"], ["calendar", "Calendar"]] },
+  { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["daily", "New job record"], ["history", "Job history"], ["playbook", "Client playbook"]] },
   { key: "communications", label: "Communications", views: [["inbox", "Inbox"], ["outbox", "Outbox"]] },
   { key: "data", label: "Import/Export", more: true, views: [["import", "Import"], ["export", "Export"]] },
-  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["payments", "Payments"], ["waivers", "Closeout"]] },
-  { key: "automations", label: "Automations", more: true, views: [["automations", "Automations"]] },
-  { key: "settings", label: "Settings", views: [["company", "Company"], ["team", "Team"], ["account", "My account"], ["billing", "Billing"], ["audit", "Activity log"], ["helper-admin", "Helper answers"]] },
+  { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["waivers", "Closeout"], ["financials", "Financials"]] },
+  { key: "settings", label: "Settings", views: [["company", "Company"], ["team", "Team"], ["account", "My account"], ["billing", "Billing"], ["audit", "Activity log"]] },
 ];
+// The Duracash team's own tab (HELPER_ADMIN_USER_IDS), shown only to them.
+const ADMIN_TAB = ["helper-admin", "Helper answers"];
 
 // One menu button, with its count: new Inbox items on Communications, emails that didn't go out on Dashboard.
 function sectionButton(s, section, counts) {
@@ -45,11 +50,12 @@ function sectionButton(s, section, counts) {
 
 function sectionOf(view) {
   const v = DETAIL_PARENT[view] || view;
+  if (v === ADMIN_TAB[0]) return SECTIONS.find(s => s.key === "settings");
   return SECTIONS.find(s => s.views.some(([k]) => k === v)) || SECTIONS[0];
 }
 function tabLabel(view) {
   for (const s of SECTIONS) for (const [k, label] of s.views) if (k === view) return termText(label);
-  return "";
+  return view === ADMIN_TAB[0] ? ADMIN_TAB[1] : "";
 }
 // What the menu calls a page, for the Back button (G3): the job's name, a pay app's number, a
 // change order's, else the page's tab ("Dashboard" for the Overview).
@@ -58,7 +64,7 @@ function pageName(e) {
   const j = e.jobId && state.jobs.find(x => x.id === e.jobId);
   if (e.view === "job") return j ? j.name : "Job";
   if (e.view === "payapp-detail") { const i = j && j.invoices.find(x => x.id === e.detailId); return i ? i.number : termText("Pay app"); }
-  if (e.view === "packet-detail") return e.detailId === "closeout" ? "Closeout paperwork" : "Paperwork";
+  if (e.view === "packet-detail") return e.detailId === "closeout" ? "Closeout documents" : "Supporting documents";
   if (e.view === "co-detail") { const co = j && j.change_orders.find(x => x.id === e.detailId); return co ? `CO ${co.number}` : "Change order"; }
   if (e.view === "waiver-detail") return j ? `Closeout: ${j.name}` : "Closeout";   // as its heading and tab title
   if (e.view === "dashboard") return "Dashboard";
@@ -66,7 +72,7 @@ function pageName(e) {
 }
 
 // The tab's title: the page's own name, not its section's (D9). Pages without a tab of their own
-// take their heading, or the tab they are drawn on (Paperwork on Pay apps, Retainage on Closeout).
+// take their heading, or the tab they are drawn on (Supporting documents on Pay apps, Retainage on Closeout).
 const OWN_TITLE = { password: "Change password", "delete-company": "Delete the company" };
 function pageTitle() {
   if (!state) return "Duracash";
@@ -148,7 +154,8 @@ function render() {
   const failedEmails = state.pending_email_failures || 0;
   // Helper answers is for the Duracash team. Billing shows everyone the trial and the
   // subscription; only an owner changes it (R6-10).
-  const tabs = section.views.filter(([v]) => v !== "helper-admin" || helperAdmin);
+  // Financials is for those who may see the company's figures (an owner, or a profile given it).
+  const tabs = (section.key === "settings" && helperAdmin ? [...section.views, ADMIN_TAB] : section.views).filter(([v]) => v !== "financials" || can("financials"));
   const shell = `
     <a class="skip-link" href="#main">Skip to content</a>
     <div class="shell ${drawerOpen ? "drawer-open" : ""}">
@@ -173,6 +180,7 @@ function render() {
       </aside>
       <div class="scrim" id="scrim" data-action="scrim" aria-hidden="true"></div>
       <main class="main" id="main" tabindex="-1">
+        <div id="money-strip"></div>
         ${tabs.length > 1 ? `<nav class="tabs" aria-label="${section.label}">${tabs.map(([v, label]) => `<button class="tab ${v === tabView ? "active" : ""}" data-action="tab" data-tab="${v}" ${v === tabView ? 'aria-current="page"' : ""}>${termText(label)}</button>`).join("")}</nav>` : ""}
         <div id="view"></div>
       </main>
@@ -184,12 +192,19 @@ function render() {
   const keep = was && was.id && app.contains(was) ? { id: was.id, start: was.selectionStart, end: was.selectionEnd } : null;
   const whole = shell !== shellHtml || !document.getElementById("view");
   if (whole) {
+    const tabsLeft = document.querySelector(".tabs")?.scrollLeft || 0;
     app.innerHTML = shell;
     shellHtml = shell;
-    document.querySelector(".tabs")?.addEventListener("scroll", fadeTabs, { passive: true });
+    const tabRow = document.querySelector(".tabs");
+    tabRow?.addEventListener("scroll", fadeTabs, { passive: true });
+    showActiveTab(tabRow, tabsLeft);
   }
+  syncDrawer();
+  const strip = document.getElementById("money-strip");
+  const stripHtml = moneyStripHtml();
+  if (strip && strip.innerHTML !== stripHtml) strip.innerHTML = stripHtml;
   const view = document.getElementById("view");
-  view.innerHTML = verifyBannerHtml() + heldShareHtml() + (views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`));
+  view.innerHTML = withBanners(verifyBannerHtml() + heldShareHtml(), views[currentView] ? views[currentView]() : emptyState("Page not found", "There is nothing at this address.", `<button class="btn" data-action="nav" data-view="dashboard">Go to Dashboard</button>`));
   if (keep && !document.activeElement?.id) {
     const again = document.getElementById(keep.id);
     if (again && again !== document.activeElement) {
@@ -205,11 +220,39 @@ function render() {
     document.querySelector('.dropzone [data-capture="1"]')?.focus();
   }
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
-  if (currentView === "results" && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
-  if (["payments", "company"].includes(currentView) && !qboStatus) loadQboStatus();
+  loadReminders();
+  if (currentView === "dashboard" && hasResults(state) && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
+  if (currentView === "company" && !qboStatus) loadQboStatus();
+  if (currentView === "financials" && can("financials")) loadFinancials();
   if (sovDraft) updateSovTotals();
   if (currentView === "helper-admin" && helperAdmin) { loadHelperReview(); loadAdminCompanies(); }
   updateAiContext();
+  showAnchor();
+}
+
+// The account's notes (email not confirmed, read-only, a share waiting) go just under the page's
+// heading, so the page still opens with its own name (round 1, item 9).
+function withBanners(banners, html) {
+  const at = banners ? html.indexOf("</h1>") : -1;
+  return at < 0 ? banners + html : html.slice(0, at + 5) + banners + html.slice(at + 5);
+}
+
+// On a phone the menu is a drawer: closed, nothing in it takes a Tab stop (round 1, item 11).
+const phoneLayout = window.matchMedia("(max-width: 800px)");
+function syncDrawer() {
+  const rail = document.getElementById("rail");
+  if (rail) rail.inert = !drawerOpen && phoneLayout.matches;
+}
+phoneLayout.addEventListener?.("change", syncDrawer);
+
+// A new tab row starts where the last one was, and moves only if the active tab is out of view,
+// so a redraw on the same tab doesn't jump.
+function showActiveTab(row, left) {
+  const tab = row?.querySelector(".tab.active");
+  if (!tab) return;
+  row.scrollLeft = left;
+  const r = row.getBoundingClientRect(), t = tab.getBoundingClientRect();
+  if (t.left < r.left || t.right > r.right - 48) row.scrollLeft += t.left - r.left - (r.width - t.width) / 2;
 }
 
 // The tab row scrolls sideways on a phone: it fades at the right edge until its last tab is in
@@ -243,6 +286,14 @@ const ACTIONS = {
     catch (_) { toast("Copy blocked by the browser. Select the text and copy it."); }
   },
   "toggle-form": (el) => toggleForm(el.dataset.form),
+  // Two choices as two buttons (forms.js field({buttons})): the hidden input takes the value, as a select would.
+  "seg-pick": (el) => {
+    const input = document.getElementById(el.dataset.for);
+    if (!input) return;
+    input.value = el.dataset.value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    el.parentElement.querySelectorAll('[data-action="seg-pick"]').forEach(b => { b.classList.toggle("secondary", b !== el); b.setAttribute("aria-pressed", String(b === el)); });
+  },
   // each page's own, from its module in js/views/ (merged in views/index.js)
   ...pageActions,
 };
@@ -265,16 +316,15 @@ function listenForActions() {
   });
   app.addEventListener("input", (e) => {
     if (e.target.closest && e.target.closest('[data-form-key="progress"]')) updateProgressPreview();
-    if (e.target.id === "nj-customer") syncNewJobCustomer();
+    if (e.target.id === "nj-customer" || e.target.id === "nj-client") syncNewJobCustomer();
     if (e.target.id === "ap-name") hideSameCustomer("addpayer");
     if (e.target.id === "paste-text") guessPasteSource();
     if (e.target.id === "nj-retainage") (formDraft.newjob ||= {}).retainage_touched = true;
   });
   app.addEventListener("focusout", (e) => { if (e.target.id === "nj-customer") prefillApprover(); });
   app.addEventListener("change", (e) => {
-    if (e.target.id === "upload-job") rememberUploadJob(e.target.value);
     if (e.target.id === "paste-source") { e.target.dataset.touched = "1"; const hint = document.getElementById("paste-hint"); if (hint) hint.textContent = ""; }
-    if (e.target.id === "nj-role" || e.target.id === "nj-customer") prefillRetainage();
+    if (e.target.id === "nj-client-type" || e.target.id === "nj-customer" || e.target.id === "nj-client") prefillRetainage();
     if (e.target.id === "match-inv") prefillPaymentAmount(e.target.value);
     // The line under the waiver type follows the type picked (R6-10).
     if (e.target.id && e.target.id.startsWith("waiver-kind-")) {

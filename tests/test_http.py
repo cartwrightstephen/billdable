@@ -14,10 +14,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import auth
 import server
 import trial
+from dollar_jobs import dollar_jobs
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 
 
+@dollar_jobs
 class HttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -98,7 +102,7 @@ class HttpTests(unittest.TestCase):
 
     def test_bad_request_says_nothing_about_python(self):
         cookie, _ = self.signup("not-understood@example.com")
-        job = {"name": "Ash deck", "customer": "Ash GC", "address": "1 Ash", "approver": "Kim", "ap_email": "ap@ash.example", "contract_cents": 500_000}
+        job = {"name": "Ash deck", "customer": "Ash GC", "address": "1 Ash", "approver": "Kim", "ap_email": "ap@ash.example", "contract_cents": 500_000, "phone": "(404) 555-0100", "role": "Owner"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         jid = state["jobs"][0]["id"]
         res, data = self.request("POST", f"/api/jobs/{jid}/sov", {"lines": "x"}, cookie=cookie)
@@ -110,11 +114,11 @@ class HttpTests(unittest.TestCase):
     def test_refusals_name_the_field(self):
         cookie, _ = self.signup("fields@example.com")
         res, data = self.request("POST", "/api/jobs", {"name": "Oak", "customer": "Oak GC", "address": "1 Oak", "approver": "Kim",
-                                                       "ap_email": "not an email", "contract_cents": 100_000}, cookie=cookie)
+                                                       "ap_email": "not an email", "contract_cents": 100_000, "phone": "(404) 555-0100", "role": "Owner"}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertEqual(list(data["fields"]), ["ap_email"])
         self.assertEqual(data["error"], data["fields"]["ap_email"], "one bad field: the message is that field's")
-        res, data = self.request("POST", "/api/jobs", {"name": "", "customer": "", "contract_cents": "lots"}, cookie=cookie)
+        res, data = self.request("POST", "/api/jobs", {"name": "", "customer": "", "contract_cents": "lots", "approver": "", "ap_email": "ap@client.example", "phone": "(404) 555-0100", "role": "Owner"}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertEqual(data["fields"], {"contract_cents": "Enter the contract amount as a number."})
 
@@ -247,7 +251,7 @@ class HttpTests(unittest.TestCase):
 
     def test_actor_comes_from_session_and_reset_needs_confirmation(self):
         cookie, user = self.signup("actor@example.com", company="Actor Co")
-        job = {"name": "Oak deck", "customer": "Lee", "address": "1 Oak St", "approver": "Lee", "ap_email": "ap@lee.example", "contract_cents": 500000, "actor": "The CEO"}
+        job = {"name": "Oak deck", "customer": "Lee", "address": "1 Oak St", "approver_confirmed": True, "approver": "Lee", "ap_email": "ap@lee.example", "contract_cents": 500000, "actor": "The CEO", "phone": "(404) 555-0100", "role": "Owner"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.assertEqual(res.status, 200, state)
         _, page = self.request("GET", "/api/audit?limit=1", cookie=cookie)
@@ -294,7 +298,7 @@ class HttpTests(unittest.TestCase):
     def test_full_loop_over_http(self):
         cookie, _ = self.signup("loop@example.com")
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC", "note": "Site contact: Kim, gate code 1234."}
+               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC", "note": "Site contact: Kim, gate code 1234.", "phone": "(404) 555-0100"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         jid = state["jobs"][0]["id"]
         self.assertEqual([r["label"] for r in state["jobs"][0]["records"]], ["Job notes"])
@@ -305,7 +309,7 @@ class HttpTests(unittest.TestCase):
         inv = state["jobs"][0]["invoices"][0]
         self.assertEqual(inv["amount_cents"], 3_600_000)
         self.assertEqual([p["label"] for p in inv["packet"]], ["Pay app", "Lien waiver"])
-        res, data = self.request("POST", f"/api/jobs/{jid}/send", {}, cookie=cookie)
+        res, data = self.request("POST", f"/api/jobs/{jid}/send", reviewed(self, jid, cookie), cookie=cookie)
         self.assertEqual(res.status, 409)
         for item in inv["packet"]:
             # Where it is is optional now (R3-05); a bad item id is still refused.
@@ -313,7 +317,12 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(res.status, 409)
             res, state = self.request("POST", f"/api/jobs/{jid}/resolve/{item['id']}", {"reason": "Sent by email"}, cookie=cookie)
             self.assertEqual(res.status, 200)
-        res, state = self.request("POST", f"/api/jobs/{jid}/send", {}, cookie=cookie)
+        # Sending takes the stamp of what Review & send showed (acceptance 80).
+        res, data = self.request("POST", f"/api/jobs/{jid}/send", {}, cookie=cookie)
+        self.assertEqual(res.status, 409)
+        self.assertTrue(data["review_changed"])
+        self.assertEqual(data["invoice_id"], inv["id"])
+        res, state = self.request("POST", f"/api/jobs/{jid}/send", reviewed(self, jid, cookie), cookie=cookie)
         self.assertEqual(res.status, 200)
         res, data = self.request("POST", f"/api/jobs/{jid}/match-payment", {"amount_cents": -5, "reference": ""}, cookie=cookie)
         self.assertEqual(res.status, 409)
@@ -326,7 +335,10 @@ class HttpTests(unittest.TestCase):
                                   cookie=cookie, headers={"Content-Type": "application/pdf", "X-Filename": "signed-waiver.pdf"})
         self.assertEqual(res.status, 200, state)
         self.assertEqual(state["jobs"][0]["records"][-1]["waiver_kind"], "unconditional_progress")
-        res, state = self.request("POST", f"/api/jobs/{jid}/waiver", {}, cookie=cookie)
+        res, data = self.request("POST", f"/api/jobs/{jid}/waiver", {}, cookie=cookie)
+        self.assertEqual(res.status, 409, "whatever its label says, it is read: this one is blank")
+        self.assertTrue(data["look_warning"])
+        res, state = self.request("POST", f"/api/jobs/{jid}/waiver", {"looked_at": data["record_id"]}, cookie=cookie)
         self.assertEqual(res.status, 200)
         res, data = self.request("POST", f"/api/jobs/{jid}/close", {}, cookie=cookie)
         self.assertEqual(res.status, 409)

@@ -19,10 +19,12 @@ import importer
 import server
 import storage
 from seed import seed_state
+from dollar_jobs import dollar_jobs
 
 PASSWORD = "correct horse battery"
 
 
+@dollar_jobs
 class UiServerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -74,7 +76,7 @@ class UiServerTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         res, state = self.post("/api/jobs", {"name": "Oak kitchen", "address": "1 Oak St", "customer": "Ellison",
                                              "approver": "Mara", "ap_email": "ap@ellison.example", "contract_cents": 1_000_000,
-                                             "retainage_pct": 10}, cookie)
+                                             "retainage_pct": 10, "phone": "(404) 555-0100", "role": "Owner"}, cookie)
         self.assertEqual(res.status, 200, state)
         return cookie, state["jobs"][-1]
 
@@ -164,7 +166,7 @@ class UiServerTests(unittest.TestCase):
         _, body = self.get("/manifest.webmanifest")
         manifest = json.loads(body)
         names = [s["name"] for s in manifest["shortcuts"]]
-        self.assertEqual(names, ["Take a photo", "Daily record", "New job"])
+        self.assertEqual(names, ["Take a photo", "New job record", "New job"])
         for shortcut in manifest["shortcuts"]:
             self.assertTrue(shortcut["url"].startswith("/"), shortcut)
             res, page = self.get(shortcut["url"])
@@ -229,8 +231,13 @@ class UiServerTests(unittest.TestCase):
         res, state = self.post(f"/api/jobs/{job['id']}/edit", {"retainage_pct": 10}, cookie)
         self.assertEqual(res.status, 200, state)
         self.assertEqual(state["jobs"][-1]["invoices"][-1]["retainage_cents"], 40_000)
-        res, body = self.post(f"/api/jobs/{job['id']}/note-contact", {"text": "Pays Friday"}, cookie)
-        self.assertEqual((res.status, body["error"]), (409, "No sent pay app is waiting for payment."))
+        # A conversation is a record on any open job; a date to check again needs a follow-up to hold.
+        res, body = self.post(f"/api/jobs/{job['id']}/note-contact", {"text": "Pays Friday", "next_on": "2099-01-01"}, cookie)
+        self.assertEqual(res.status, 409)
+        self.assertIn("next_on", body["fields"])
+        res, state = self.post(f"/api/jobs/{job['id']}/note-contact", {"text": "Pays Friday"}, cookie)
+        self.assertEqual(res.status, 200)
+        self.assertEqual(state["jobs"][-1]["records"][-1]["kind"], "conversation")
         res, body = self.post(f"/api/jobs/{job['id']}/retainage", {"amount_cents": "lots"}, cookie)
         self.assertEqual(res.status, 409)
         self.assertIn("amount_cents", body["fields"])
@@ -275,7 +282,7 @@ class WaiverKindTests(unittest.TestCase):
     def test_kind_is_recorded_on_the_pay_app_and_in_the_email(self):
         state, job, inv = self.paid_job()
         signed_waiver(state, job["id"])
-        domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"], kind="conditional_final")
+        domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"], kind="conditional_final", confirm_final=True)
         self.assertEqual(inv["waiver_kind"], "conditional_final")
         self.assertEqual(job["waiver_kind"], "Conditional waiver on final payment")
         self.assertTrue(state["email_log"][-1]["subject"].startswith("Conditional waiver on final payment"))

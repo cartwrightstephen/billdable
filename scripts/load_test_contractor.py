@@ -195,6 +195,20 @@ class Run:
             self.record(step, ok, detail)
         return payload
 
+    def send(self, step: str, job_id: str) -> Dict[str, Any]:
+        """Approve & send, with the stamp of what Review & send shows."""
+        invoices = self.get(f"/api/jobs/{job_id}")["job"]["invoices"]
+        stamp = next((i["email_preview"]["stamp"] for i in invoices if i["status"] in ("draft", "awaiting_approval")), "")
+        return self.post(step, f"/api/jobs/{job_id}/send", {"reviewed": stamp})
+
+    def send_waiver(self, step: str, job_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """The waiver step. The stand-in file doesn't read as a waiver, so the send warns, and this
+        says what a person says on the page: they opened it and it's right."""
+        status, payload = self.api.call("POST", f"/api/jobs/{job_id}/waiver", body)
+        if status == 409 and payload.get("look_warning"):
+            body = {**body, "looked_at": payload["record_id"]}
+        return self.post(step, f"/api/jobs/{job_id}/waiver", body)
+
     def get(self, path: str) -> Dict[str, Any]:
         status, payload = self.api.call("GET", path)
         if status != 200:
@@ -280,31 +294,37 @@ def setup(run: Run) -> None:
     # PEAC: finished, paid, waiver sent, closed.
     run.post("PEAC: mark done (drafts the final pay app)", f"/api/jobs/{j['PEAC']}/done", {"notes": "All four baths set, grouted and sealed."})
     run.clear_packet("PEAC")
-    run.post("PEAC: approve & send PA-PEAC-01", f"/api/jobs/{j['PEAC']}/send")
+    run.send("PEAC: approve & send PA-PEAC-01", j['PEAC'])
     run.post("PEAC: match payment ACH 7781", f"/api/jobs/{j['PEAC']}/match-payment", {"amount_cents": 3_850_000, "reference": "ACH 7781"})
     signed_waiver(run, "PEAC")
-    run.post("PEAC: send waiver", f"/api/jobs/{j['PEAC']}/waiver")
+    run.send_waiver("PEAC: send waiver", j['PEAC'], {})
     run.post("PEAC: close for record", f"/api/jobs/{j['PEAC']}/close")
     # DECA: finished, paid less retainage, waiver sent, retainage held.
     run.post("DECA: mark done", f"/api/jobs/{j['DECA']}/done", {"notes": "Substantially complete; punch walk pending."})
     run.clear_packet("DECA")
-    run.post("DECA: approve & send PA-DECA-01", f"/api/jobs/{j['DECA']}/send")
+    run.send("DECA: approve & send PA-DECA-01", j['DECA'])
     run.post("DECA: match payment CHK 40871", f"/api/jobs/{j['DECA']}/match-payment", {"amount_cents": 5_760_000, "reference": "CHK 40871"})
     signed_waiver(run, "DECA")
-    run.post("DECA: send waiver", f"/api/jobs/{j['DECA']}/waiver", {"kind": "unconditional_progress"})
-    # VEST, GLEN, WHIT: progress in dollars, pay app sent.
+    run.send_waiver("DECA: send waiver", j['DECA'], {"kind": "unconditional_progress"})
+    # VEST, GLEN, WHIT: no schedule was pasted, so each has the one lump-sum line a new job gets. The
+    # payment files name these exact amounts, so the percent done is followed by the amount billed.
     for code, cents, note in (("VEST", 4_200_000, "Corridors and rooms 101-118 set."),
                               ("GLEN", 3_000_000, "Storefront entry and restrooms set."),
                               ("WHIT", 841_250, "Kitchen backsplash done; baths half done.")):
-        run.post(f"{code}: progress {money(cents)} to date (drafts a pay app)", f"/api/jobs/{j[code]}/progress", {"completed_cents": cents, "notes": note})
+        line = run.job(code)["sov"]["lines"][0]
+        share = cents / line["scheduled_cents"]
+        run.post(f"{code}: progress {share:.1%} of the lump sum (drafts a pay app)", f"/api/jobs/{j[code]}/sov-progress", {"done": {line["id"]: f"{share:.3f}"}, "notes": note})
+        drafted = next(i for i in run.job(code)["invoices"] if i["status"] in ("draft", "awaiting_approval"))
+        if drafted["gross_cents"] != cents:
+            run.post(f"{code}: bill {money(cents)} on it", f"/api/jobs/{j[code]}/sov-amounts", {"amounts": {line["id"]: f"{cents / 100:.2f}"}})
         run.clear_packet(code)
-        run.post(f"{code}: approve & send", f"/api/jobs/{j[code]}/send")
+        run.send(f"{code}: approve & send", j[code])
     # ASHB: SOV progress, sent.
     ids = run.sov_lines_by_desc("ASHB")
     run.post("ASHB: SOV progress (pavers 1,400 sf, coping 340 lf)", f"/api/jobs/{j['ASHB']}/sov-progress",
              {"done": {ids.get("Travertine pool deck pavers", "?"): "1400", ids.get("Coping stone", "?"): "340"}, "notes": "Pavers half down; coping complete."})
     run.clear_packet("ASHB")
-    run.post("ASHB: approve & send PA-ASHB-01", f"/api/jobs/{j['ASHB']}/send")
+    run.send("ASHB: approve & send PA-ASHB-01", j['ASHB'])
     # MILL: SOV progress with stored materials; draft left blocked (pay app due on the 25th).
     ids = run.sov_lines_by_desc("MILL")
     run.post("MILL: SOV progress with $4,000 stored wall tile (drafts PA-MILL-01)", f"/api/jobs/{j['MILL']}/sov-progress", {
@@ -354,9 +374,10 @@ def check_setup(run: Run) -> None:
     run.record("DECA: retainage $6,400.00 held and open", deca.get("money", {}).get("retainage_open_cents") == 640_000,
                money(deca.get("money", {}).get("retainage_open_cents", 0)))
     mill = run.job("MILL")
-    # The pay app and schedule of values are made by Duracash, so only the waiver and insurance wait (R1-08).
-    run.record("MILL: draft waits on the waiver and insurance certificate only",
-               mill.get("missing_paperwork") == ["Conditional lien waiver", "Insurance certificate"] and len(mill.get("blockers", [])) == 2,
+    # The pay app and schedule of values are made by Duracash, so the waiver and insurance wait (R1-08),
+    # and the daily tickets and time sheets behind the unit-price lines it bills (M6).
+    run.record("MILL: draft waits on the waiver, insurance certificate, and daily tickets and time sheets",
+               mill.get("missing_paperwork") == ["Conditional lien waiver", "Insurance certificate", "Daily tickets and time sheets"] and len(mill.get("blockers", [])) == 3,
                f"{len(mill.get('blockers', []))} blockers: {'; '.join(mill.get('blockers', []))}")
     broo = run.job("BROO")
     run.record("BROO: SOV $46,068.00 and CO 1 pending", broo.get("contract_cents") == 4_606_800
@@ -428,7 +449,7 @@ def imports(run: Run) -> None:
                        {"text": (IMPORT / "11_text-thread_whitfield-done.txt").read_text(), "source": "sms", "job_id": ""}, quiet=True)
     items = new_items(before, payload)
     it = items[0] if items else {}
-    run.record("Text thread -> WHIT, offers 'Mark done and draft'",
+    run.record("Text thread -> WHIT, offers 'Final pay app'",
                run.code_of(it.get("suggested_job_id")) == "WHIT" and run.code_of(it.get("says_done_job_id")) == "WHIT",
                f"suggested {run.code_of(it.get('suggested_job_id'))}, says done {run.code_of(it.get('says_done_job_id'))}")
 
@@ -459,7 +480,7 @@ def imports(run: Run) -> None:
     run.api.cookie = saved_cookie
     items = new_items(before, run.state())
     it = items[0] if items else {}
-    run.record("Inbound email -> GLEN, source email, offers 'Mark done and draft'",
+    run.record("Inbound email -> GLEN, source email, offers 'Final pay app'",
                status == 200 and it.get("source") == "email" and run.code_of(it.get("suggested_job_id")) == "GLEN"
                and run.code_of(it.get("says_done_job_id")) == "GLEN",
                f"HTTP {status}, source {it.get('source')}, suggested {run.code_of(it.get('suggested_job_id'))}")
@@ -507,8 +528,10 @@ def bad_files(run: Run) -> None:
     status, payload = upload(run, BAD / "bad_03_empty-file.txt")
     run.record("bad_03_empty-file.txt refused", status == 409 and "is empty" in payload.get("error", ""), f"HTTP {status} {payload.get('error', '')}")
     parsed = run.post("bad_04 SOV read", "/api/sov/parse", {"text": (BAD / "bad_04_sov-quantity-without-rate.txt").read_text()}, quiet=True)
-    run.record("bad_04_sov-quantity-without-rate.txt: no lines, a warning per row",
-               not parsed.get("lines") and len(parsed.get("warnings", [])) == 3, " | ".join(parsed.get("warnings", [])))
+    # The rows come in with the rate blank and needs_price: the server refuses to save until each has one.
+    run.record("bad_04_sov-quantity-without-rate.txt: no prices made up, a warning per row",
+               len(parsed.get("lines", [])) == 3 and all(l.get("needs_price") and not l.get("rate") for l in parsed["lines"])
+               and len(parsed.get("warnings", [])) == 3, " | ".join(parsed.get("warnings", [])))
     before = {i["id"] for i in run.state().get("inbox", [])}
     status, payload = upload(run, BAD / "bad_05_email-with-zip-attachment.eml")
     items = new_items(before, payload) if status == 200 else []

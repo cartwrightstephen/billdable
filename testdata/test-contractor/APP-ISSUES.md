@@ -77,7 +77,9 @@ uploaded on its own is a **Photo**.)
 
 **Fix idea:** guess from the attachments' extensions when the email text gives no kind.
 
-## 4. A blocked, unsent draft hides the payer's cutoff on Today (medium)
+## 4. A blocked, unsent draft hides the payer's cutoff on Today (medium) — fixed
+
+Fixed: only a pay app that went out counts as billed this cycle (`today_rows`), so a blocked draft keeps the cutoff (MANUAL-TEST 1.5). The report as it was:
 
 **Where:** `static/app.js:590-594`. `billedThisCycle` counts any non-void pay app created since
 the last cutoff, drafts included. So once a progress pay app is drafted, the "Pay app due to ..."
@@ -108,7 +110,7 @@ here so testers don't report it again.
 
 * Payments read from the CSV are dated as QuickBooks shows them (Oct 14 to 21, 2026). The loader
   sends the pay apps on the day it runs, so those payments predate the send and are left out of
-  "Pays in about N days" (`domain.py:1016` skips negative gaps). Expected with test data.
+  "Pays in about N days" (negative gaps are skipped). Expected with test data.
 * An uploaded `.eml` reply to a pay app is never auto-filed; only the inbound webhook runs
-  `capture_reply` (`server.py:1807`), and only for an email whose Outbox status is `sent`,
-  which a server without email never has (`importer.py:513`).
+  `importer.capture_reply`, and only for an email whose Outbox status is `sent`, which a server
+  without email never has.

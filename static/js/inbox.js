@@ -49,7 +49,7 @@ export function pasteGuess(text) {
   // An exported chat: "[10/21/26, 3:58 PM] Luis Ortega: Whitfield is done".
   if (lines.filter(l => /^\s*\[[^\]]{4,40}\]\s*[^:\]]{1,40}:/.test(l)).length >= 2) return { source: "sms", hint: "Looks like a text thread." };
   const days = dateLines(text);
-  if (days >= 2) return { source: "notes", hint: `Looks like notes from ${days} days. One daily record per date.` };
+  if (days >= 2) return { source: "notes", hint: `Looks like notes from ${days} days. One job record per date.` };
   const head = lines.slice(0, 10).filter(l => HEADER.test(l)).map(l => HEADER.exec(l)[1].toLowerCase());
   if (head.length >= 2 && (head.includes("from") || head.includes("subject"))) return { source: "email", hint: "Looks like an email. The sender and subject are read from it." };
   return { source: "paste", hint: "" };

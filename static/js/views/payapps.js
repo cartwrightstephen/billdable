@@ -1,19 +1,24 @@
-// Money, Pay apps: the list and each pay app's page (Before you send, lines, payments, approval).
+// Money, Pay apps: the list and each pay app's page (Review & send, supporting documents, lines,
+// payments, approval).
 // A pay app is drafted on its job's page; New pay app here asks for the job and opens that job's
 // step for it, the progress form or Draft pay app (Stephen's Oct 29 review, G10).
-import { unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
+import { esc, unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
 import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn, payAppStarts, defaultJobId } from "../jobs.js";
 import { pathFor } from "../routes.js";
-import { askConfirm } from "../dom.js";
+import { askConfirm, focusAfterDraw } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
-import { state, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
-import { may, perms, render, post, backButton, emptyState, nav, EMAIL_PATTERN } from "../app-core.js";
+import { state, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd, mailReady } from "../state.js";
+import { may, can, perms, render, post, load, backButton, emptyState, nav, EMAIL_PATTERN, moreDetails } from "../app-core.js";
 import { continuationHtml } from "../sov.js";
 import { companyGapsHtml } from "../setup.js";
 import { QBO_READY, qboCsvLink, OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
 import { shortPayCardHtml, owedText, emailFailed, sendsTo } from "./job.js";
-import { beforeYouSendHtml } from "./paperwork.js";
+import { beforeYouSendHtml, supportingDocsHtml, missingDocsHtml } from "./paperwork.js";
+import { sendConfirmText } from "../payapp-text.js";
+
+export { sendConfirmText, deleteDraftText } from "../payapp-text.js";
+import { paymentsListHtml } from "./payments.js";
 
 let payappFilter = "all";
 let payPreselectJob = null;
@@ -21,6 +26,28 @@ let payPreselectJob = null;
 onSessionEnd(() => { payPreselectJob = null; });
 
 // The email subject the pay app goes out with (domain.pay_app_subject, R4-05).
+// What a pencil copy will be before it goes: who to, how much, the PDF and the email. Missing
+// documents are listed but don't hold it back: it is a check of the numbers.
+function pencilReviewHtml(j, inv, noEmail, locked) {
+  const preview = inv.pencil_preview || {};
+  const missing = (inv.packet || j.packet || []).filter(p => p.required && !p.present);
+  return `<div class="card pencil-check">
+    <h2>Send draft for their review</h2>
+    <div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email || '<span class="blocker">no email yet</span>'}</span></div>
+    <div class="money-row"><span class="label">Amount</span><span>${money(inv.amount_cents)}</span></div>
+    <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a></p>
+    <div class="money-row"><span class="label">Subject</span><span>${preview.subject || ""}</span></div>
+    <pre class="inbox-text">${preview.body || ""}</pre>
+    ${missing.length ? `<p class="sub">Still missing:</p><ul class="plain-list">${missing.map(p => `<li>${p.label}</li>`).join("")}</ul>` : ""}
+    ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
+    ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
+    <div class="form-inline">
+      <button class="btn" data-action="pencil" data-id="${j.id}"${noEmail || locked ? " disabled" : ""}>Send draft for their review</button>
+      <button class="btn secondary" data-action="toggle-form" data-form="pencilreview">Cancel</button>
+    </div>
+  </div>`;
+}
+
 function subjectPreview(j, inv) {
   const company = (state.company || {}).name || "";
   return [`${inv.final ? "Final pay application" : "Pay application"} ${inv.number}`, j.name, money(inv.amount_cents), company,
@@ -45,7 +72,7 @@ function paperworkCell(a) {
   const pkt = a.packet || a.jobPacket || [];
   if (!pkt.length && !a.packet) return "—";
   const missing = pkt.filter(p => p.required && !p.present).length;
-  return `<a href="${pathFor("packet-detail", a.jobId, a.id)}" data-action="open-packet" data-job="${a.jobId}" data-inv="${a.id}">${missing ? `<span class="pill red">${missing} missing</span>` : `<span class="pill green">Complete</span>`}</a>`;
+  return `<a href="${pathFor("payapp-detail", a.jobId, a.id)}" data-action="open-packet" data-job="${a.jobId}" data-inv="${a.id}">${missing ? `<span class="pill red">${missing} missing</span>` : pkt.some(p => p.override) ? `<span class="pill amber">Complete, overridden</span>` : `<span class="pill green">Complete</span>`}</a>`;
 }
 
 // The pay app's summary, lines 1-9 as its PDF prints them (Stephen's Oct 29 review, M2), from
@@ -70,6 +97,63 @@ export function payappSummaryHtml(inv) {
   </div>`;
 }
 
+// A pay app marked sent whose email didn't go out (round 1, item 7): said under its pill, with
+// Send again only where the server sends mail.
+function undeliveredHtml(inv) {
+  const e = (state.email_failures || []).find(x => x.payapp_invoice_id === inv.id);
+  if (!e) return "";
+  const why = unesc(e.status || "").replace(/^(failed|not sent):\s*/, "");
+  return `<p class="notice email-undelivered" role="status">Marked sent · the email to ${e.to} was not delivered: ${esc(why)}.${mailReady && !why.includes("demo account") ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : ""}</p>`;
+}
+
+// A GC, public or lower-tier job billed at 0% when the client usually holds some (round 1, item 1).
+function retainageZeroHtml(j) {
+  if (Number(j.retainage_pct) || !Number(j.retainage_usual)) return "";
+  return `<p class="notice retainage-zero">Retainage is 0% on this job. ${j.payer.name || "The client"} usually holds ${Number(j.retainage_usual)}%.</p>`;
+}
+
+// The numbers, folded under one line (round 1, item 4): the summary, lines, continuation sheet
+// and approval. The fold stays as the person left it (moreDetails).
+function numbersHtml(j, inv) {
+  // The schedule's lines, as its card counts them: not the retainage held or an unsigned change order.
+  const lines = (inv.sov_lines || []).length || (inv.lines || []).filter(l => l.amount_cents > 0 && !l.co_id).length;
+  const draft = ["draft", "awaiting_approval"].includes(inv.status);
+  const period = draft && j.sov_view && j.sov_view.period && j.sov_view.period.draft && j.sov_view.period.draft.id === inv.id;
+  const key = `payapp-numbers-${inv.id}`;
+  return `<details class="card payapp-numbers" data-more="${key}"${moreDetails[key] ? " open" : ""}>
+      <summary>Show the numbers · ${money(inv.amount_cents)} due · ${lines} line${lines === 1 ? "" : "s"}</summary>
+      ${payappSummaryHtml(inv)}
+      <div class="card">
+        <h2>Lines</h2>
+        ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
+        ${inv.progress_notes ? `<p class="payapp-notes"><span class="label">Notes</span> ${inv.progress_notes}</p>` : ""}
+        ${period ? `<button class="btn small secondary" data-action="open-job" data-id="${j.id}" data-focus="#sov-card">Change this period's amounts</button>` : ""}
+      </div>
+      ${continuationHtml(inv, j)}
+      <div class="card">
+        <h2>Approval</h2>
+        <div class="money-row"><span class="label">Sent by</span><span>${inv.approved_by || "—"}</span></div>
+        <div class="money-row"><span class="label">Sent</span><span>${fmtDateTime(inv.sent_at)}</span></div>
+        ${inv.period_to ? `<div class="money-row"><span class="label">Period to</span><span>${fmtDate(inv.period_to)}</span></div>` : ""}
+        ${inv.due_on ? `<div class="money-row"><span class="label">Payment due</span><span>${fmtDate(inv.due_on)}</span></div>` : ""}
+        <div class="money-row"><span class="label">Received by the client</span><span>${inv.received_at ? `${inv.received_by || "the client"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
+        ${inv.approved_at ? `<div class="money-row"><span class="label">Approved by the client</span><span>${inv.approved_by_payer || "the client"}, ${fmtDateTime(inv.approved_at)}</span></div>
+        <div class="money-row"><span class="label">Payment expected by</span><span>${fmtDate(inv.expected_payment_on)}</span></div>` : ""}
+        ${inv.customer_page ? `<p class="sub">The client's page for this pay app: <a href="/api/jobs/${j.id}/payapp/${inv.id}/page" target="_blank" rel="noopener">open it</a>.</p>` : ""}
+      </div>
+    </details>`;
+}
+
+// A fold of this page opened or closed stays that way through a redraw.
+if (typeof document !== "undefined" && document.addEventListener) document.addEventListener("toggle", (e) => {
+  const fold = e.target;
+  if (fold && fold.dataset && String(fold.dataset.more || "").startsWith("payapp-numbers-")) moreDetails[fold.dataset.more] = fold.open;
+}, true);
+
+// Why Review & send was refused for a fresh look, kept on the page until the next send (or sign out).
+let reviewAgain = null;
+onSessionEnd(() => { reviewAgain = null; });
+
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   payappDetail() {
@@ -77,9 +161,9 @@ export const views = {
     const inv = j && (j.invoices.find(i => i.id === currentDetailId) || j.invoices[j.invoices.length - 1]);
     if (!j || !inv) return backButton("payapps", "Pay apps") + emptyState("Pay app not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="payapps">Go to Pay apps</button>`);
     const pays = j.payments.filter(p => p.invoice_id === inv.id);
-    const pkt = inv.packet || j.packet || [];
-    const missing = pkt.filter(p => p.required && !p.present).length;
+    const missing = (inv.packet || j.packet || []).filter(p => p.required && !p.present).length;
     const draft = ["draft", "awaiting_approval"].includes(inv.status);
+    const currentDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
     const fromDaily = draftFromDailyOn(j, inv);
     const copies = (j.payer.copy && unesc(j.payer.copy) !== "None") ? j.payer.copy : "";
     const firstSend = draft && !j.payer.sent_before && !state.jobs.some(x => x.payer_id === j.payer_id && x.invoices.some(i => i.sent_at));
@@ -94,12 +178,16 @@ export const views = {
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
       <p class="sub">${invoicePill(inv)} <a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(inv.amount_cents)}</p>
-      ${fromDaily ? `<p class="sov-daily payapp-daily">Updated from daily records on ${fmtDate(fromDaily)}</p>` : ""}
+      ${inv.sent_at && inv.status !== "void" ? undeliveredHtml(inv) : ""}
+      ${fromDaily ? `<p class="sov-daily payapp-daily">Updated from job records on ${fmtDate(fromDaily)}</p>` : ""}
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a></p>
       ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
+      ${inv.status === "void" && currentDraft ? `<p class="notice"><a href="${pathFor("payapp-detail", j.id, currentDraft.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${currentDraft.id}">Go to the current draft, ${currentDraft.number}</a></p>` : ""}
+      ${draft && formOpen.pencilreview === inv.id && inv.pencil_status !== "sent" ? pencilReviewHtml(j, inv, noEmail, locked) : ""}
       ${draft ? `<div class="card send-check">
-        <h2>Before you send</h2>
+        <h2>Review &amp; send</h2>
+        ${reviewAgain && reviewAgain.jobId === j.id ? `<p class="form-error review-again" role="alert">${esc(reviewAgain.text)}</p>` : ""}
         <div class="money-row"><span class="label">To</span><span>${j.payer.approver ? j.payer.approver + " · " : ""}${j.payer.ap_email || '<span class="blocker">no email yet</span>'}</span></div>
         ${noEmail ? `<div class="send-email" data-form-key="sendemail">${formErrorLine("sendemail")}
           <div class="form-grid">${field({ form: "sendemail", name: "ap_email", id: "send-email", label: "Email for pay apps", helpKey: "ap_email", type: "email", autocomplete: "off", placeholder: "name@example.com" })}</div>
@@ -111,48 +199,25 @@ export const views = {
         ${terms ? `<div class="money-row"><span class="label">Payment due</span><span>${fmtDate(dueIso)}, ${terms} days after it goes out</span></div>` : ""}
         <div class="money-row"><span class="label">Subject</span><span>${subjectPreview(j, inv)}</span></div>
         ${inv.final ? `<p class="sub final-note">${termText("The final pay app: the PDF is marked FINAL APPLICATION.")}</p>` : ""}
+        ${missingDocsHtml(j, inv)}
         ${beforeYouSendHtml(j, inv)}
         ${companyGapsHtml(state.company)}
-        ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger. Change it in <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>` : ""}
-        ${missing ? `<p class="blocker">${missing} paperwork item${missing === 1 ? " is" : "s are"} missing. Add ${missing === 1 ? "it" : "them"}, then send.</p>` : ""}
+        ${retainageZeroHtml(j)}
+        ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger.${can("company") ? ` Change it in <button class="linkish tall" data-action="nav" data-view="playbook">Client playbook</button>.` : ""}</p>` : ""}
         ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
         ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
-        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" ${missing || (j.blockers || []).length || noEmail || locked ? "disabled" : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
+        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}"${missing || (j.blockers || []).length || noEmail || locked ? ' data-blocked="1"' : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
       </div>` : ""}
-      ${payappSummaryHtml(inv)}
-      <div class="card">
-        <h2>Lines</h2>
-        ${(inv.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
-        ${inv.progress_notes ? `<p class="payapp-notes"><span class="label">Notes</span> ${inv.progress_notes}</p>` : ""}
-      </div>
-      ${continuationHtml(inv, j)}
-      <div class="card">
-        <h2>Paperwork</h2>
-        ${pkt.length ? pkt.map(p => {
-          const skipped = !p.required && !p.present;
-          return `<div class="list-item"><span aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> ${p.label}${skipped ? ` <span class="sub">not needed</span>` : `<span class="visually-hidden">${p.present ? " in" : " missing"}</span>`}</div>`;
-        }).join("") : `<p class="sub">${termText("This pay app needs no paperwork.")}</p>`}
-        <button class="btn secondary small" data-action="open-packet" data-job="${j.id}" data-inv="${inv.id}">Open paperwork</button>
-      </div>
-      <div class="card">
+      ${supportingDocsHtml(j, inv)}
+      ${!draft ? `<div class="card">
         <h2>Payments received</h2>
         ${pays.length ? pays.map(p => `<div class="list-item">${money(p.amount_cents)} · ${p.reference} · ${fmtDate(p.matched_at)}</div>`).join("") : `<p class="sub">None yet.</p>`}
         ${inv.short_pay_cents ? `<p class="sub">Short pay accepted ${fmtDate(inv.short_pay_at)}: ${money(inv.short_pay_cents)} not paid. ${inv.short_pay_reason || ""}</p>` : ""}
         ${inv.status === "partial" && inv.remaining_cents > 0 && !formOpen[`shortpay-${inv.id}`] && may("accept-short-pay") ? `<p class="sub short-pay-row">Paid short, and the rest won't come? <button class="btn small secondary" ${shortPayAttrs(j, inv)}>${shortPayLabel(inv)}</button></p>` : ""}
         ${inv.status === "partial" ? shortPayCardHtml(j, inv) : ""}
-      </div>
-      <div class="card">
-        <h2>Approval</h2>
-        <div class="money-row"><span class="label">Sent by</span><span>${inv.approved_by || "—"}</span></div>
-        <div class="money-row"><span class="label">Sent</span><span>${fmtDateTime(inv.sent_at)}</span></div>
-        ${inv.period_to ? `<div class="money-row"><span class="label">Period to</span><span>${fmtDate(inv.period_to)}</span></div>` : ""}
-        ${inv.due_on ? `<div class="money-row"><span class="label">Payment due</span><span>${fmtDate(inv.due_on)}</span></div>` : ""}
-        <div class="money-row"><span class="label">Received by the client</span><span>${inv.received_at ? `${inv.received_by || "the client"}, ${fmtDateTime(inv.received_at)}` : inv.sent_at ? "Not confirmed yet" : "—"}</span></div>
-        ${inv.approved_at ? `<div class="money-row"><span class="label">Approved by the client</span><span>${inv.approved_by_payer || "the client"}, ${fmtDateTime(inv.approved_at)}</span></div>
-        <div class="money-row"><span class="label">Payment expected by</span><span>${fmtDate(inv.expected_payment_on)}</span></div>` : ""}
-        ${inv.customer_page ? `<p class="sub">The client's page for this pay app: <a href="/api/jobs/${j.id}/payapp/${inv.id}/page" target="_blank" rel="noopener">open it</a>.</p>` : ""}
-        ${canPullBack(j, inv) && may("void-sent") ? pullBackHtml(j, inv) : ""}
-      </div>
+      </div>` : ""}
+      ${numbersHtml(j, inv)}
+      ${canPullBack(j, inv) && may("void-sent") ? `<div class="pull-back-row">${pullBackHtml(j, inv)}</div>` : ""}
     `;
   },
   "payapp-detail": function() { return views.payappDetail(); },
@@ -163,7 +228,7 @@ export const views = {
     // "Unpaid" (the sent filter) holds every pay app out for payment, part-paid ones too (R3-02).
     const shown = { draft: ["draft", "awaiting_approval"], sent: ["sent", "approved", "partial"] };
     if (payappFilter !== "all") apps = apps.filter(a => (shown[payappFilter] || [payappFilter]).includes(a.status));
-    const f = (key, label) => `<button class="${payappFilter === key ? "btn" : "btn secondary"} small" data-action="payapp-filter" data-filter="${key}" aria-pressed="${payappFilter === key}">${label}</button>`;
+    const f = (key, label) => `<button class="${payappFilter === key ? "btn" : "btn secondary"} small" data-action="payapp-filter" data-filter="${key}"${key === "payments" ? ' data-anchor="payments"' : ""} aria-pressed="${payappFilter === key}">${label}</button>`;
     const starts = payAppStarts(state.jobs, perms());
     const picking = formOpen.papick && starts.length > 1;
     return `
@@ -179,10 +244,10 @@ export const views = {
           <button class="btn small secondary" data-action="toggle-form" data-form="papick">Cancel</button>
         </div>
       </div>` : ""}
-      <div class="filter-bar" role="group" aria-label="Show">${f("all", "All")}${f("draft", "Ready to send")}${f("sent", "Unpaid")}${f("paid", "Paid")}</div>
-      ${apps.length ? `<div class="table-wrap">
+      <div class="filter-bar" role="group" aria-label="Show">${f("all", "All")}${f("draft", "Ready to send")}${f("sent", "Unpaid")}${f("paid", "Paid")}${f("payments", "Payments")}</div>
+      ${payappFilter === "payments" ? paymentsListHtml() : apps.length ? `<div class="table-wrap">
         <table>
-          <tr><th>Number</th><th>Job</th><th>Amount</th><th>Status</th><th>Paperwork</th><th>Sent</th><th>Before it can go</th></tr>
+          <tr><th>Number</th><th>Job</th><th>Amount</th><th>Status</th><th>Supporting documents</th><th>Sent</th><th>Before it can go</th></tr>
           ${apps.slice().reverse().map(a => `<tr>
             <td><a href="${pathFor("payapp-detail", a.jobId, a.id)}" data-action="open-payapp" data-job="${a.jobId}" data-inv="${a.id}">${a.number}</a></td>
             <td><a href="${pathFor("job", a.jobId)}" data-action="open-job" data-id="${a.jobId}">${a.job}</a></td>
@@ -193,7 +258,7 @@ export const views = {
             <td>${a.blockers.join("; ") || "—"}</td>
           </tr>`).join("")}
         </table>
-      </div>` : emptyState(payappFilter === "all" ? termText("No pay apps yet") : "None in this view")}
+      </div>` : emptyState(payappFilter === "all" ? termText("No pay apps yet") : "None in this view", "", payappFilter !== "all" ? "" : starts.length ? `<button class="btn" data-action="payapp-new">${termText("New pay app")}</button>` : openJobs(state.jobs).length ? "" : `<button class="btn" data-action="onb-newjob">New job</button>`)}
     `;
   },
   // Paperwork is a column of Pay apps now (R6-03); /money/packets still opens it.
@@ -207,19 +272,26 @@ export async function startPayApp(jobId, step) {
   if (step === "draft") return post(`/api/jobs/${jobId}/draft`);
   formOpen.progress = true;
   render();
-  requestAnimationFrame(() => document.querySelector('[data-form-key="progress"] input, [data-form-key="sovprogress"] input:not([disabled])')?.focus());
+  focusAfterDraw(() => document.querySelector('[data-form-key="progress"] input, [data-form-key="sovprogress"] input:not([disabled])'));
   return null;
 }
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
   // New pay app on the list (G10): with one job to bill its step opens; else pick the job first.
+  // Send Draft for Their Review opens this first: nothing is emailed until its own button.
+  "pencil-review": (el) => {
+    nav("payapp-detail", el.dataset.job, el.dataset.inv);
+    formOpen.pencilreview = el.dataset.inv;
+    render();
+    requestAnimationFrame(() => document.querySelector(".pencil-check")?.scrollIntoView({ block: "start" }));
+  },
   "payapp-new": () => {
     const starts = payAppStarts(state.jobs, perms());
     if (starts.length === 1) return startPayApp(starts[0].job.id, starts[0].step);
     formOpen.papick = !formOpen.papick;
     render();
-    requestAnimationFrame(() => document.getElementById("new-payapp-job")?.focus());
+    focusAfterDraw(() => document.getElementById("new-payapp-job"));
     return null;
   },
   "payapp-new-open": () => {
@@ -230,12 +302,32 @@ export const actions = {
     formOpen.papick = false;
     return startPayApp(start.job.id, start.step);
   },
-  "send": (el, id) => post(`/api/jobs/${id}/send`),
-  // "Before you send" with no email yet (R1-05): saved to the client's settings, then send unlocks.
+  // What was on the screen goes with it: a pay app changed since asks for a fresh look (reloaded here).
+  // A draft replaced since has a new id, so this lands on the one that goes now, with why on the page.
+  // It asks first, naming who, how much and the period (round 1, item 5), whatever the page was
+  // drawn with: something fixed in another tab can make it go. What can't go yet the server
+  // refuses, and its refusal shows under the button (Round 1 hunt).
+  "send": async (el, id) => {
+    reviewAgain = null;
+    const j = state.jobs.find(x => x.id === id);
+    const inv = j && j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
+    if (j && inv && !(await askConfirm(sendConfirmText(j, inv), "Send"))) return null;
+    const r = await post(`/api/jobs/${id}/send`, { reviewed: el.dataset.reviewed || "" });
+    // A file read only now: the warning and the way past it go on the page.
+    if (r && r.data && (r.data.unconditional_waiver || r.data.waiver_question)) { await load(); render(); }
+    if (r && r.data && r.data.review_changed) {
+      await load();
+      reviewAgain = { jobId: id, text: String(r.data.error || "Look it over again, then send.") };
+      if (r.data.invoice_id && r.data.invoice_id !== currentDetailId) nav("payapp-detail", id, r.data.invoice_id, { replace: true });
+      else render();
+    }
+    return r;
+  },
+  // "Review & send" with no email yet (R1-05): saved to the client's settings, then send unlocks.
   "save-send-email": async (el, id) => {
     const v = formValues("sendemail");
     if (refuseForm("sendemail", EMAIL_PATTERN.test(v.ap_email) ? {} : { ap_email: "Enter the email pay apps go to, like ap@builder.com." })) return;
-    await post(`/api/payers/${id}/update`, { ap_email: v.ap_email }, { formKey: "sendemail" });
+    await post(`/api/payers/${id}/missing`, { ap_email: v.ap_email }, { formKey: "sendemail" });
   },
   // Short pay (R4-01): the card opens where the button was, or on the pay app's page.
   "short-pay-open": (el) => {

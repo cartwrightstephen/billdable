@@ -1,8 +1,9 @@
 // Where a job stands: node --test tests/js
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, coStatusWords, waiverSendForm, waiverHint, waiverTypeText, WAIVER_KINDS, WAIVER_HINTS, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
+import { recordFace, FILE_KINDS, fileKindPick, finalPayAppConfirm, jobStatus, isBlocked, needsPaperwork, blockerButton, nextStep, waiverKindLabel, coStatusWords, waiverSendForm, waiverHint, waiverTypeText, WAIVER_KINDS, WAIVER_HINTS, defaultJobId, billedWork, progressFigures, followUpDue, jobActions, retainageNote, waitingText, closeBlockerActions, mayTake, shortPayable, shortPayLabel, canPullBack, payAppList } from "../../static/js/jobs.js";
 import { invoicePill } from "../../static/js/format.js";
+import { setBillingStyle } from "../../static/js/terms.js";
 
 const job = (over = {}) => ({
   id: "j1", closed: false, work_status: "in_progress", blockers: [], close_blockers: [], invoices: [],
@@ -14,7 +15,7 @@ const inv = (status) => ({ id: `i-${status}`, status });
 
 test("a new job is in progress and asks for progress", () => {
   assert.deepEqual(jobStatus(job()), ["In progress", ""]);
-  assert.match(nextStep(job()), /^Record progress/);
+  assert.match(nextStep(job()), /^Bill the work so far with Progress pay app/);
 });
 
 // Whether a job is blocked, and by paperwork only, is the server's answer (domain.is_blocked,
@@ -27,15 +28,15 @@ test("blocked is the server's flag; before that the blockers are what the next p
   assert.equal(isBlocked(drafted), true);
   assert.equal(isBlocked(job({ blockers: ["Signed contract"], invoices: [inv("draft")] })), false, "no flag, not blocked");
   assert.deepEqual(jobStatus(drafted), ["Blocked", "red"]);
-  assert.equal(nextStep(drafted), "Before it can go: Signed contract");
+  assert.equal(nextStep(drafted), "Clear 1 blocker before it can go: Signed contract");
 });
 
 test("missing paperwork alone is amber and says what to attach; an unsigned CO stays red", () => {  // R1-08
   const paper = job({ blockers: ["Signed contract is missing.", "Completion photos are missing."], missing_paperwork: ["Signed contract", "Completion photos"], invoices: [inv("draft")],
     blocked: true, needs_paperwork: true, blocker_button: "Add 2 missing documents" });
   assert.equal(needsPaperwork(paper), true);
-  assert.deepEqual(jobStatus(paper), ["Needs paperwork", "amber"]);
-  assert.equal(nextStep(paper), "Attach the paperwork, then send: Signed contract, Completion photos");
+  assert.deepEqual(jobStatus(paper), ["Needs supporting documents", "amber"]);
+  assert.equal(nextStep(paper), "Add 2 missing documents before it can go: Signed contract, Completion photos");
   assert.equal(blockerButton(paper), "Add 2 missing documents");
   const co = job({ blockers: ["Signed contract is missing.", "Change Order 2 is included in the billing amount but has not been signed."], missing_paperwork: ["Signed contract"], invoices: [inv("draft")],
     blocked: true, needs_paperwork: false, blocker_button: "Clear 2 blockers" });
@@ -55,7 +56,7 @@ test("each stage of the money path has one status and one next step", () => {
   assert.deepEqual(jobStatus(job({ ...done, invoices: [inv("paid")], money: { unbilled_completed_cents: 0, retainage_open_cents: 100, outstanding_cents: 0 } })), ["Held back", "amber"]);
   const paid = job({ ...done, invoices: [inv("paid")] });
   assert.deepEqual(jobStatus(paid), ["Paid", "green"]);
-  assert.equal(nextStep(paid), "Ready to finish the job.");
+  assert.equal(nextStep(paid), "Ready to finish the job. Finish job.");
   assert.equal(nextStep(job({ ...done, invoices: [inv("paid")], close_blockers: ["Final waiver"] })), "Before you finish: Final waiver");
   assert.deepEqual(jobStatus(job({ closed: true })), ["Closed", "green"]);
 });
@@ -148,26 +149,26 @@ test("follow-up due date follows the customer's days", () => {
   assert.equal(followUpDue(job({ invoices: [{ status: "paid", sent_at: "2026-10-01" }] })), null);
 });
 
-// The job page's buttons (R3-04): one main, two more beside it, the rest grouped under More.
+// The job page's buttons (R3-04): one main, the rest all shown in their groups.
 const keys = (list) => list.map(a => a.key);
 
 test("an in-progress job with a draft: Review & send, then the draft's two next steps", () => {
   const j = job({ invoices: [{ id: "d1", status: "draft" }], close_blockers: ["Work is not marked done."] });
   const { primary, more } = jobActions(j);
   assert.equal(primary.label, "Review & send");
-  assert.deepEqual(keys(more.slice(0, 2)), ["pencil", "packet"]);
-  assert.deepEqual(keys(more.slice(2)), ["progress", "done", "co", "void"]);
-  assert.ok(more.every(a => ["bill", "paid", "close"].includes(a.group) && a.why));
+  assert.deepEqual(keys(more), ["conversation", "pencil", "packet", "progress", "done", "co", "void"]);
+  assert.ok(more.every(a => ["bill", "paid", "close"].includes(a.group) && !("why" in a)));
+  assert.deepEqual(more.filter(a => a.minor).map(a => a.label), ["Delete draft"], "smaller, but shown");
   assert.equal(jobActions(job({ closed: true })).primary, null);
 });
 
-test("waiting on the customer: no main button until the follow-up is due", () => {
+test("waiting on the customer: Record a payment is the main button until the follow-up is due", () => {
   const sent = { id: "s1", status: "sent", number: "PA-1", sent_at: "2026-10-01T12:00:00+00:00" };
   const j = job({ payer: { approver: "Sam Jones", follow_up_days: "5" }, invoices: [sent] });
   const before = jobActions(j, { now: new Date("2026-10-03T12:00:00Z") });
-  assert.equal(before.primary, null);
-  assert.deepEqual(before.more.slice(0, 2).map(a => a.label), ["Record a payment", "Follow up now"]);
-  assert.match(before.more[1].attrs, /data-early="1"/);
+  assert.equal(before.primary.label, "Record a payment");
+  assert.equal(before.more[0].label, "Follow up now");
+  assert.match(before.more[0].attrs, /data-early="1"/);
   assert.match(waitingText(j, new Date("2026-10-03T12:00:00Z")), /^Waiting on Sam Jones\. Sent .+; follow-up due .+\.$/);
   // Once the date has passed the card says so, beside the main Send follow-up.
   assert.match(waitingText(j, new Date("2026-10-07T12:00:00Z")), /; a follow-up has been due since .+\.$/);
@@ -184,10 +185,10 @@ test("Ask for retainage shows only once the work is done and the closeout paperw
   const job = (over) => jobOf({ close_blockers: ["$500.00 of retainage is still open."], ...over });
   const running = job({ money });
   assert.ok(!keys(jobActions(running).more).includes("retainage"));
-  assert.equal(retainageNote(running), "Asked for once the job is marked done.");  // M24
+  assert.equal(retainageNote(running), "Asked for after Final pay app.");  // M24
   const missing = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: false }], closeout_missing: ["Punch-list signoff"] });
   assert.ok(!keys([jobActions(missing).primary, ...jobActions(missing).more].filter(Boolean)).includes("retainage"));
-  assert.equal(retainageNote(missing), "Closeout paperwork: 1 item missing.");
+  assert.equal(retainageNote(missing), "Closeout documents: 1 item missing.");
   const ready = job({ money, work_status: "complete", closeout_packet: [{ required: true, present: true }], closeout_missing: [] });
   assert.equal(jobActions(ready).primary.key, "retainage");
   assert.equal(retainageNote(ready), "");
@@ -202,19 +203,19 @@ test("after a retainage request, Ask for retainage waits for the customer's days
     last_retainage_chase_at: "2026-10-28T15:00:00+00:00" });
   const a = jobActions(asked, { now });
   assert.ok(!keys([a.primary, ...a.more].filter(Boolean)).includes("retainage"), "the server would refuse it until Nov 4");
-  assert.ok(keys(a.more).includes("retpay"), "recording it paid stays");
-  assert.match(nextStep(asked, now), /^Asked for the money held back Oct 28, 2026\. Ask again from Nov 4, 2026/);
+  assert.ok(keys([a.primary, ...a.more]).includes("retpay"), "recording it paid stays");
+  assert.match(nextStep(asked, now), /^Asked for the \$[\d,.]+ held back Oct 28, 2026\. Ask again from Nov 4, 2026, or Record retainage paid\.$/);
   assert.match(retainageNote(asked, now), /Asked for it Oct 28, 2026; ask again from Nov 4, 2026\./);
   assert.deepEqual(closeBlockerActions(asked, { kind: "retainage" }, null, now).map(x => x.label), ["Record retainage paid"]);
   // From the due moment on, it is the main step again.
   const later = new Date("2026-11-04T15:00:00Z");
   assert.equal(jobActions(asked, { now: later }).primary.key, "retainage");
-  assert.equal(nextStep(asked, later), "Ask for the money held back once the closeout paperwork is in.");
+  assert.match(nextStep(asked, later), /^\$[\d,.]+ held back\. Closeout documents are in\. Ask for retainage\.$/);
   assert.equal(retainageNote(asked, later), "");
   assert.deepEqual(closeBlockerActions(asked, { kind: "retainage" }, null, later).map(x => x.label), ["Record retainage paid", "Ask for retainage"]);
   // Before the job is done nothing is asked for (M24), whatever an older request says.
   const part = jobOf({ money, payer: { follow_up_days: 7 }, last_retainage_chase_at: "2026-10-28T15:00:00+00:00" });
-  assert.equal(retainageNote(part, now), "Asked for once the job is marked done.");
+  assert.equal(retainageNote(part, now), "Asked for after Final pay app.");
 });
 
 // domain.chase_retainage refuses a done job with closeout paperwork missing before it looks at the wait.
@@ -223,9 +224,9 @@ test("a done job asked for part of its retainage early still says the closeout p
   const now = new Date("2026-10-29T15:00:00Z");
   const asked = jobOf({ money, work_status: "complete", closeout_missing: ["Punch-list signoff"], invoices: [inv("paid")],
     payer: { name: "ABC", follow_up_days: 7 }, last_retainage_chase_at: "2026-10-28T15:00:00+00:00" });
-  assert.equal(nextStep(asked, now), "Ask for the money held back once the closeout paperwork is in.");
+  assert.equal(nextStep(asked, now), "Closeout: missing Punch-list signoff. Open closeout documents.");
   assert.doesNotMatch(nextStep(asked, now), /Ask again from/);
-  assert.equal(retainageNote(asked, now), "Closeout paperwork: 1 item missing.");
+  assert.equal(retainageNote(asked, now), "Closeout documents: 1 item missing.");
 });
 
 test("only an unsigned change order in the way: Get CO N signed opens it", () => {  // R3-05
@@ -244,7 +245,7 @@ test("each thing standing between the job and Finish job has its buttons (R3-08)
   assert.deepEqual(labels({ kind: "outstanding", text: "$500.00 is still owed on pay apps sent." }), ["Record a payment"]);
   assert.deepEqual(labels({ kind: "co", text: "CO 2 is not signed yet.", co_id: "co-2", number: 2 }), ["Get CO 2 signed", "Withdraw"]);
   assert.match(closeBlockerActions(done, { kind: "co", co_id: "co-2", number: 2 })[1].attrs, /data-action="withdraw-co".*data-co="co-2"/);
-  assert.deepEqual(labels({ kind: "retainage" }), ["Record retainage paid", "Open closeout paperwork"]);
+  assert.deepEqual(labels({ kind: "retainage" }), ["Record retainage paid", "Open closeout documents"]);
   assert.deepEqual(labels({ kind: "retainage" }, jobOf({ work_status: "complete" })), ["Record retainage paid", "Ask for retainage"]);
   assert.deepEqual(labels({ kind: "waiver" }), ["Send waiver"]);
   assert.deepEqual(labels({ kind: "draft", invoice_id: "i1", number: "PA-1" }), ["Review & send", "Delete draft"]);
@@ -288,12 +289,12 @@ test("follow-ups name every unpaid pay app, and a noted call waits for its date"
   assert.equal(f.invoice, a, "the oldest, approved counts too");
   assert.equal(payAppList(f.invoices), "PA-1 and PA-2");
   assert.equal(payAppList([a, b, { number: "PA-3" }]), "PA-1, PA-2 and PA-3");
-  assert.ok(jobActions(j, { now: new Date("2026-10-28T12:00:00Z") }).more.some(x => x.key === "contact" && x.label === "Spoke to them…"));
+  assert.ok(jobActions(j, { now: new Date("2026-10-28T12:00:00Z") }).more.some(x => x.key === "conversation" && x.label === "Log a conversation"));
   const called = job({ ...j, contact_noted_at: "2026-10-28T12:00:00+00:00", expected_payment_on: "2026-11-04",
     invoices: [{ ...a, last_follow_up_at: "2026-10-28T12:00:00+00:00" }, { ...b, last_follow_up_at: "2026-10-28T12:00:00+00:00" }] });
   assert.equal(followUpDue(called).day.getDate(), 4);
   assert.equal(followUpDue(called).noted, true);
-  assert.match(waitingText(called, new Date("2026-10-29T12:00:00")), /^Waiting on Sam Jones\. Spoke to them .+; check again Nov 4, 2026\.$/);
+  assert.match(waitingText(called, new Date("2026-10-29T12:00:00")), /^Waiting on Sam Jones\. Conversation .+; check again Nov 4, 2026\.$/);
   // A follow-up emailed since (later than the call) goes back to the usual days.
   const later = job({ ...called, invoices: [{ ...a, last_follow_up_at: "2026-10-29T12:00:00+00:00" }] });
   assert.equal(followUpDue(later).noted, undefined);
@@ -303,7 +304,9 @@ test("follow-ups name every unpaid pay app, and a noted call waits for its date"
 test("a final pay app says Final and preselects a final waiver", () => {
   assert.match(invoicePill({ status: "sent", final: true }), /Final/);
   assert.doesNotMatch(invoicePill({ status: "void", final: true }), /Final/);
-  assert.match(waiverSendForm(job(), { id: "inv-3", final: true }), /<option value="unconditional_final" selected>/);
+  const done = (left) => ({ ...job(), work_status: "complete", money: { ...job().money, unbilled_completed_cents: left, outstanding_cents: 0, retainage_open_cents: 0, draft_cents: 0 } });
+  assert.match(waiverSendForm(done(0), { id: "inv-3", final: true }), /<option value="unconditional_final" selected>/);
+  assert.match(waiverSendForm(done(100), { id: "inv-3", final: true }), /<option value="unconditional_progress" selected>/, "a final waiver gives up what is left");
 });
 
 test("a person sees only the job actions their profile allows (S6)", () => {
@@ -336,18 +339,20 @@ test("a change order's pill reads Signed or Unsigned, never Approved or Pending 
 });
 
 // ---------- jobs-clients (Stephen's Oct 29 review) ----------
-import { clientTypeLabel, CLIENT_TYPES, openJobs, groupRecords, RECORD_GROUPS, RECORD_KINDS, packetChoices, packetText, paperworkChoices, startDateLimits } from "../../static/js/jobs.js";
+import { clientTypeLabel, CLIENT_TYPES, openJobs, groupRecords, recordKindWord, RECORD_GROUPS, RECORD_KINDS, packetChoices, packetText, paperworkChoices, startDateLimits } from "../../static/js/jobs.js";
 
 test("the job page lists the blockers under the Next step line, so the line doesn't repeat the first (J6)", () => {
   const drafted = job({ blockers: ["Signed contract", "Daily tickets"], invoices: [inv("awaiting_approval")], blocked: true });
-  assert.equal(nextStep(drafted), "Before it can go: Signed contract");
-  assert.equal(nextStep(drafted, new Date(), { listed: true }), "Before it can go:");
+  assert.equal(nextStep(drafted), "Fix this before it can go: Signed contract");
+  assert.equal(nextStep(drafted, new Date(), { listed: true }), "Fix this before it can go:");
   const paperwork = job({ blockers: ["Photos"], missing_paperwork: ["Photos"], needs_paperwork: true, blocked: true, invoices: [inv("awaiting_approval")] });
   assert.doesNotMatch(nextStep(paperwork, new Date(), { listed: true }), /Photos/);
 });
 
-test("client type: five kinds, and a client saved before types reads from its role (J2)", () => {
-  assert.equal(CLIENT_TYPES.length, 5);
+test("client type: six kinds, Other last, and a client saved before types reads from its role (J2)", () => {
+  assert.equal(CLIENT_TYPES.length, 6);
+  assert.deepEqual(CLIENT_TYPES[5], ["other", "Other"]);  // Stephen, 10 Nov
+  assert.equal(clientTypeLabel({ client_type: "other", role: "Owner" }), "Other");
   assert.equal(clientTypeLabel({ client_type: "sub" }), "Another subcontractor (you are a lower tier)");
   assert.equal(clientTypeLabel({ role: "GC" }), "General contractor");
   assert.equal(clientTypeLabel({ role: "Owner" }), "Owner or developer");
@@ -359,11 +364,14 @@ test("a finished job leaves the working lists (J9)", () => {
   assert.deepEqual(openJobs(undefined), []);
 });
 
-test("the job record groups by kind with counts, newest first; every kind has a group (J5)", () => {
-  const recs = [{ id: 1, kind: "photo" }, { id: 2, kind: "ticket" }, { id: 3, kind: "photo" }, { id: 4, kind: "mystery" }, { id: 5, kind: "supplier_invoice" }];
+test("the job records group by kind with counts, newest first; every kind has a group (J5)", () => {
+  const recs = [{ id: 1, kind: "photo" }, { id: 2, kind: "ticket" }, { id: 3, kind: "photo" }, { id: 4, kind: "mystery" }, { id: 5, kind: "supplier_invoice" },
+    { id: 6, kind: "ticket", ticket_type: "time_sheet" }, { id: 7, kind: "ticket", ticket_type: "delivery" }, { id: 8, kind: "inspection" }];
   const groups = groupRecords(recs);
-  assert.deepEqual(groups.map(g => [g.key, g.records.length]), [["photo", 2], ["tickets", 2], ["other", 1]]);
-  assert.deepEqual(groups[0].records.map(r => r.id), [3, 1]);
+  assert.deepEqual(groups.map(g => [g.key, g.records.length]), [["delivery", 1], ["photo", 2], ["time_sheets", 1], ["tickets", 1], ["invoices", 1], ["inspections", 1], ["other", 1]]);
+  assert.deepEqual(groups[1].records.map(r => r.id), [3, 1]);
+  assert.equal(recordKindWord({ kind: "ticket", ticket_type: "time_sheet" }), "Time sheet");
+  assert.equal(recordKindWord({ kind: "ticket" }), "Delivery ticket or time sheet");
   const grouped = new Set(RECORD_GROUPS.flatMap(([, , kinds]) => kinds));
   assert.deepEqual(Object.keys(RECORD_KINDS).filter(k => !grouped.has(k)), []);
   assert.deepEqual(groupRecords([]), []);
@@ -387,4 +395,100 @@ test("the paperwork checkboxes are the server's catalog, save as the comma list 
 test("the start date box takes about 10 years back and 2 ahead (J8)", () => {
   const l = startDateLimits(new Date(2026, 9, 30));
   assert.deepEqual(l, { min: "2016-10-30", max: "2028-10-29", today: "2026-10-30" });
+});
+
+// The Next step line names the main button under it, in the same words (Nov 3 review, criteria 60, 61).
+const fullMoney = (over = {}) => ({ unbilled_completed_cents: 0, retainage_open_cents: 0, outstanding_cents: 0, ...over });
+const sent = { id: "s1", status: "sent", number: "PA-1", sent_at: "2026-10-01T12:00:00+00:00" };
+const now = new Date("2026-10-03T12:00:00Z");
+const cases = {
+  "new job in progress": [job(), "Progress pay app"],
+  "draft ready": [job({ invoices: [{ id: "d", status: "awaiting_approval", number: "PA-1", amount_cents: 500000 }] }), "Review & send"],
+  "draft missing a document": [job({ blocked: true, needs_paperwork: true, blockers: ["Conditional waiver"], missing_paperwork: ["Conditional waiver"],
+    blocker_button: "Add 1 missing document", invoices: [{ id: "d", status: "draft", number: "PA-1" }] }), "Add 1 missing document"],
+  "unsigned change order": [job({ blocked: true, blockers: ["Change Order 2 ..."], blocker_items: [{ kind: "co", co_id: "c2", number: 2 }],
+    blocker_button: "Get CO 2 signed", invoices: [{ id: "d", status: "draft", number: "PA-1" }] }), "Get CO 2 signed"],
+  "draft out for client review": [job({ invoices: [{ id: "d", status: "awaiting_approval", number: "PA-1", pencil_status: "sent" }] }), "Client agreed to the draft"],
+  "sent, follow-up not due": [job({ payer: { approver: "Sam", follow_up_days: "5" }, invoices: [sent] }), "Record a payment"],
+  "sent, follow-up due": [job({ payer: { approver: "Sam", follow_up_days: "1" }, invoices: [sent] }), "Send follow-up"],
+  "paid, waiver due": [job({ waiver_due: true, invoices: [inv("paid")] }), "Choose waiver and send"],
+  "finished work to bill, retainage held too": [job({ work_status: "complete", money: fullMoney({ unbilled_completed_cents: 5000, retainage_open_cents: 900 }) }), "Draft pay app"],
+  "retainage held, closeout documents missing": [job({ work_status: "complete", closeout_missing: ["Punch list"], close_blockers: ["x"], money: fullMoney({ retainage_open_cents: 900 }) }), "Open closeout documents"],
+  "retainage held, closeout documents in": [job({ work_status: "complete", closeout_missing: [], close_blockers: ["x"], money: fullMoney({ retainage_open_cents: 900 }) }), "Ask for retainage"],
+  "no retainage, closeout documents missing": [job({ work_status: "complete", closeout_missing: ["Punch list"], money: fullMoney() }), "Open closeout documents"],
+  "complete with nothing owed": [job({ work_status: "complete", money: fullMoney() }), "Finish job"],
+};
+for (const [name, [j, label]] of Object.entries(cases)) {
+  test(`next step names its main button: ${name}`, () => {
+    assert.equal(jobActions(j, { now }).primary.label, label);
+    assert.ok(nextStep(j, now).includes(label), nextStep(j, now));
+  });
+}
+
+test("next step: a draft out for review isn't ready to send, and the wrong retainage and finish lines are gone", () => {
+  const out = cases["draft out for client review"][0];
+  assert.doesNotMatch(nextStep(out, now), /is ready|Review & send/);
+  assert.ok(jobActions(out, { now }).more.some(a => a.key === "send"), "send stays, second");
+  assert.match(nextStep(cases["retainage held, closeout documents in"][0], now), /Closeout documents are in/);
+  assert.doesNotMatch(nextStep(cases["no retainage, closeout documents missing"][0], now), /Ready to finish/);
+  assert.match(nextStep(cases["no retainage, closeout documents missing"][0], now), /missing Punch list/);
+  assert.ok(jobActions(cases["no retainage, closeout documents missing"][0], { now }).more.some(a => a.key === "close"), "it can still be finished, with a warning");
+});
+
+test("Final pay app's confirm says the amount, what it does, and when it isn't the final one", () => {
+  const j = { name: "Oak kitchen", sov_view: { present: true } };
+  const p = { drafted: true, final: true, number: "PA-3", amount_cents: 4500000, gross_cents: 5000000, retainage_cents: 500000, replaces: "", pending_cos: [] };
+  const yes = finalPayAppConfirm(j, p);
+  assert.equal(yes.button, "Final pay app");
+  assert.match(yes.text, /^Final pay app for Oak kitchen: \$45,000\.00 \(\$50,000\.00 less \$5,000\.00 retainage\)\. It marks the work finished and sets every schedule line to 100%\.$/);
+  const no = finalPayAppConfirm(j, { ...p, final: false, pending_cos: [{ number: 2, amount_cents: 1000000 }] });
+  assert.equal(no.button, "Draft pay app");
+  assert.match(no.text, /^This won't be the final pay app for Oak kitchen: CO 2 \(\$10,000\.00\) isn't signed or on the bill\./);
+  assert.match(finalPayAppConfirm({ name: "A" }, { drafted: false }).text, /nothing left to bill/);
+  setBillingStyle("draws");
+  try { assert.equal(finalPayAppConfirm(j, p).button, "Final draw"); } finally { setBillingStyle("pay_apps"); }
+});
+
+test("Next step: the wording after the acceptance test (criteria 59, 61)", () => {
+  const base = { id: "j1", blocked: true, needs_paperwork: true, invoices: [{ id: "a", number: "PA-1", status: "draft", amount_cents: 100 }], money: { unbilled_completed_cents: 0, retainage_open_cents: 0 }, payer: { name: "Oak", ap_email: "a@b.co" } };
+  // A missing document's button lands on it.
+  const missing = job({ ...base, blockers: ["Conditional waiver is missing."], blocker_button: "Add 1 missing document", missing_paperwork: ["Conditional waiver"],
+    blocker_items: [{ kind: "paperwork", text: "Conditional waiver is missing.", item_id: "p1", waiting: false }] });
+  assert.equal(nextStep(missing), "Add 1 missing document before it can go: Conditional waiver");
+  assert.match(jobActions(missing).primary.attrs, /data-action="open-packet" data-job="j1" data-inv="a" data-item="p1"/);
+  // A file waiting for a person says to look and confirm.
+  const waiting = job({ ...missing, blockers: ["Conditional waiver: look at scan.pdf and confirm it."], blocker_button: "Check 1 document",
+    blocker_items: [{ kind: "paperwork", text: "Conditional waiver: look at scan.pdf and confirm it.", item_id: "p1", waiting: true }] });
+  assert.equal(nextStep(waiting), "Conditional waiver: look at scan.pdf and confirm it.");
+  assert.equal(nextStep(waiting, new Date(), { listed: true }), "Check 1 document before it can go:");
+  // Several things, not all documents.
+  const fix = job({ ...base, needs_paperwork: false, blockers: ["Change Order 2 is unsigned."], blocker_button: "Fix 3 things before sending", blocker_items: [] });
+  assert.equal(nextStep(fix), "Fix 3 things before sending: Change Order 2 is unsigned.");
+  // A draft to a client with no email names it.
+  const draft = job({ ...base, blocked: false, needs_paperwork: false, blockers: [], payer: { name: "Oak", ap_email: "" }, invoices: [{ id: "a", number: "PA-1", status: "draft", amount_cents: 3600000 }] });
+  assert.equal(nextStep(draft), "PA-1 for $36,000.00 to Oak is ready. Add the pay app email for Oak, then Review & send.");
+});
+
+test("a note from before conversations were records reads and files as a conversation", () => {
+  const old = { id: "r1", kind: "note", label: "Spoke to Sam", note: "Friday" };
+  assert.deepEqual(recordFace(old), { ...old, kind: "conversation", label: "Conversation with Sam" });
+  const other = { id: "r2", kind: "note", label: "Gate code", note: "1234" };
+  assert.equal(recordFace(other), other);
+  assert.deepEqual(groupRecords([old, other]).map(g => [g.key, g.records.length]), [["conversation", 1], ["other", 1]]);
+});
+
+test("Inbox filing offers Delivery ticket and Time sheet; an old ticket keeps its label", () => {
+  assert.deepEqual(FILE_KINDS.filter(([k]) => k.startsWith("ticket")), [["ticket:delivery", "Delivery ticket"], ["ticket:time_sheet", "Time sheet"]]);
+  assert.equal(fileKindPick("ticket", "Time sheet week 3"), "ticket:time_sheet");
+  assert.equal(fileKindPick("ticket", "Tile delivered"), "ticket:delivery");
+  assert.equal(fileKindPick("waiver"), "waiver");
+  assert.equal(recordKindWord({ kind: "ticket" }), "Delivery ticket or time sheet");
+  assert.equal(recordKindWord({ kind: "ticket", ticket_type: "time_sheet" }), "Time sheet");
+});
+
+test("Send draft for their review opens the review screen; it emails nothing itself", () => {
+  const j = job({ invoices: [{ id: "a", number: "PA-1", status: "draft", amount_cents: 100 }], payer: { name: "Oak", ap_email: "a@b.co" } });
+  const { primary, more } = jobActions(j);
+  const pencil = [primary, ...more].find(a => a.key === "pencil");
+  assert.equal(pencil.attrs, 'data-action="pencil-review" data-job="j1" data-inv="a"');
 });

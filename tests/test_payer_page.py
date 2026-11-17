@@ -20,11 +20,15 @@ import domain
 import importer
 import server
 import storage
+from dollar_jobs import dollar_jobs
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 SITE = "https://app.duracash.example"
 
 
+@dollar_jobs
 class PayerPageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -69,7 +73,7 @@ class PayerPageTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         res, raw = self.request("POST", "/api/jobs", {"name": "Elm <b>addition</b>", "customer": "Park GC", "address": "9 Elm",
                                                       "approver": "Kim", "ap_email": "ap@park.example", "contract_cents": 1_000_000,
-                                                      "retainage_pct": 0, "note": "Invoice only"}, cookie)
+                                                      "retainage_pct": 0, "note": "Invoice only", "phone": "(404) 555-0100", "role": "Owner"}, cookie)
         job = json.loads(raw)["jobs"][-1]
         self.request("POST", f"/api/jobs/{job['id']}/progress", {"completed_cents": 400_000}, cookie)
         res, raw = self.request("GET", "/api/state", cookie=cookie)
@@ -77,7 +81,7 @@ class PayerPageTests(unittest.TestCase):
         for item in state["jobs"][-1]["invoices"][-1].get("packet") or []:
             if not item["present"]:
                 self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "Attached to the email"}, cookie)
-        res, raw = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+        res, raw = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie)
         self.assertEqual(res.status, 200, raw)
         state = json.loads(raw)
         body = state["email_log"][-1]["body"]
@@ -115,7 +119,7 @@ class PayerPageTests(unittest.TestCase):
         self.assertIn("Mark as received", page)
         self.assertIn("Pine &lt;Builders&gt;", page)
         self.assertNotIn("<b>addition</b>", page, "job names are escaped")
-        self.assertNotIn("packet", re.sub(r'(href|src|action)="[^"]*"', "", page).lower(), "the customer reads Paperwork")
+        self.assertNotIn("packet", re.sub(r'(href|src|action)="[^"]*"', "", page).lower(), "the customer reads Supporting documents")
         res, raw = self.request("GET", link + "/pdf")
         self.assertEqual((res.status, raw[:4]), (200, b"%PDF"))
         self.assertEqual(self.request("GET", link + "/file/not-in-this-packet")[0].status, 404)
@@ -206,13 +210,13 @@ class PayerPageTests(unittest.TestCase):
                                                                "name": "Pat", "company_name": "Pine"})
             cookie = res.getheader("Set-Cookie").split(";")[0]
             res, raw = self.request("POST", "/api/jobs", {"name": "Oak", "customer": "Park GC", "address": "1 Oak", "approver": "Kim",
-                                                          "ap_email": "ap@park.example", "contract_cents": 500_000}, cookie)
+                                                          "ap_email": "ap@park.example", "contract_cents": 500_000, "phone": "(404) 555-0100", "role": "Owner"}, cookie)
             job = json.loads(raw)["jobs"][-1]
             self.request("POST", f"/api/jobs/{job['id']}/progress", {"completed_cents": 100_000}, cookie)
             res, raw = self.request("GET", "/api/state", cookie=cookie)
             for item in json.loads(raw)["jobs"][-1]["invoices"][-1].get("packet") or []:
                 self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "ok"}, cookie)
-            res, raw = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+            res, raw = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie)
             self.assertNotIn("/p/", json.loads(raw)["email_log"][-1]["body"])
 
 

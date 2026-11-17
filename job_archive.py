@@ -19,10 +19,10 @@ import domain
 import payapp_pdf
 
 RECORD_WORDS = {
-    "note": "Notes", "daily": "Daily records", "photo": "Photos", "contract": "Contract", "change_order": "Change orders",
+    "note": "Notes", "conversation": "Conversations", "daily": "Diary entries", "photo": "Photos", "contract": "Contract", "change_order": "Change orders",
     "waiver": "Lien waivers", "pay_app": "Pay app backup", "ticket": "Tickets and time sheets",
     "supplier_invoice": "Supplier invoices", "insurance": "Insurance", "inspection": "Inspections", "stored": "Stored materials",
-    "punch": "Punch list", "completion": "Completion certificate", "asbuilt": "As-builts", "warranty": "Warranties", "other": "Other",
+    "payroll": "Certified payroll", "notarized": "Notarized pay applications", "punch": "Punch list", "completion": "Completion certificate", "asbuilt": "As-builts", "warranty": "Warranties", "other": "Other",
 }
 
 
@@ -44,7 +44,8 @@ def summary_text(state: dict[str, Any], job: dict[str, Any]) -> str:
         f"Client: {payer.get('name', '')}",
         f"Contract number: {job.get('contract_number') or '-'}",
         f"Started: {_day(domain.job_started_on(state, job))}",
-        f"Marked done: {_day(job.get('completed_at'))}",
+        f"Anticipated end: {_day(job.get('anticipated_end_on'))}",
+        f"Work finished: {_day(job.get('completed_at'))}",
         f"Finished: {_day(job.get('closed_at'))}",
         "",
         f"Contract: {money(m['contract_cents'])}",
@@ -64,13 +65,15 @@ def summary_text(state: dict[str, Any], job: dict[str, Any]) -> str:
     lines += ["", "Payments:"]
     lines += [f"  {_day(p.get('matched_at'))}  {money(p['amount_cents'])}  {p.get('reference') or ''}".rstrip()
               for p in job.get("payments", [])] or ["  None"]
+    lines += [f"  {_day(e.get('at'))}  -{money(int(e.get('returned_cents', e['cents'])))}  refunded or credited: {e.get('reason') or ''}".rstrip()
+              for e in job.get("overbilling_settled") or [] if int(e.get("returned_cents", e["cents"]))]
     lines += ["", "Change orders:"]
     lines += [f"  CO {co.get('number')}  {co.get('title', '')}  {money(co['amount_cents'])}  {co.get('status', '')}"
               for co in job.get("change_orders", [])] or ["  None"]
     waivers = [e for e in state.get("email_log", []) if e.get("job_id") == job["id"] and e.get("kind") == "waiver"]
     lines += ["", "Waivers sent:"]
     lines += [f"  {_day(e.get('at'))}  {e.get('subject', '')}" for e in waivers] or ["  None"]
-    lines += ["", "Job record:"]
+    lines += ["", "Records:"]
     lines += [f"  {_day(r.get('added_at'))}  {RECORD_WORDS.get(r.get('kind'), r.get('kind', ''))}: {r.get('label', '')}"
               for r in job.get("records", [])] or ["  None"]
     return "\n".join(lines) + "\n"

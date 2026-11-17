@@ -11,7 +11,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Cora Comms", company_name: "Comms Builders" });
-      await post("/api/jobs", { name: "Birch deck", address: "5 Birch Rd", customer: "Northline GC", role: "GC", ap_email: "ap@northline.example", contract_cents: 2000000 });
+      await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Northline GC", name: "Birch deck", address: "5 Birch Rd", customer: "Northline GC", role: "GC", ap_email: "ap@northline.example", contract_cents: 2000000 });
     }, `${prefix}-${Date.now()}@example.com`);
     return { ctx, p };
   }
@@ -19,12 +19,15 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("Import: notes pasted there wait in the Inbox, and Everything received lists them with a filter", async () => {  // C1, I1
     const { ctx, p } = await newCompany("received");
     await p.goto(BASE + "/data/import");
+    await p.selectOption("#upload-job", "");   // Not sure, file later: it waits in the Inbox
     await p.locator("#paste-text").fill("Railing posts set on the Birch deck today.");
     await p.getByRole("button", { name: "Add to Inbox" }).click();
     await p.getByText("Added to the Inbox.").waitFor();
     await p.locator("#paste-text").fill("Gate code 4411");
     await p.getByRole("button", { name: "Add to Inbox" }).click();
-    await p.goto(BASE + "/communications");
+    // The toast goes to the Inbox (round 1, item 20).
+    await p.locator("#toast").getByRole("button", { name: "Open the Inbox" }).click();
+    await p.waitForURL(/\/communications$/);
     const gate = p.locator(".inbox-item", { hasText: "Gate code 4411" });
     await gate.getByRole("button", { name: "Dismiss" }).click();
     await gate.waitFor({ state: "detached" });
@@ -39,9 +42,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("Import: a QuickBooks payments CSV is read there; Payments links to it", async () => {  // I1
+  await step("Import: a QuickBooks payments CSV is read there; Pay apps' Payments filter links to it", async () => {  // I1, round 1 item 19
     const { ctx, p } = await newCompany("qbo-import");
     await p.goto(BASE + "/money/payments");
+    await p.locator('[data-action="payapp-filter"][data-filter="payments"][aria-pressed="true"]').waitFor();
     await p.locator("#view").getByRole("link", { name: "Import" }).click();
     await p.waitForURL(/\/data\/import$/);
     await p.locator("#qbo-csv").fill('Date,Transaction Type,Num,Name,Memo/Description,Amount\n10/09/2026,Payment,4417,Northline GC,,"1,000.00"\n');
@@ -85,6 +89,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const phone = await signedInPage({ width: 375, height: 812 });
     await phone.goto(BASE + "/communications");
     await phone.locator("#received-sort").waitFor();
+    // The list's first page arrives a moment later and redraws the filters: measure the settled page.
+    await phone.waitForLoadState("networkidle");
     for (const name of ["source", "status", "job", "sort"]) {
       const label = await phone.locator(`label[for="received-${name}"]`).boundingBox();
       const box = await phone.locator(`#received-${name}`).boundingBox();
@@ -116,11 +122,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("Import: quantities from a CSV file show row by row, then go onto the job's schedule of values and its draft", async () => {  // M1
+  await step("Import quantities on the job's schedule card: a CSV file shows row by row, then goes onto the schedule of values", async () => {  // M1, round 1 item 19
     const { ctx, p } = await newCompany("qty");
     const jobId = await p.evaluate(async () => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const st = await (await post("/api/jobs", { name: "Elm wiring", address: "9 Elm St", customer: "Park GC", role: "GC",
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Park GC", name: "Elm wiring", address: "9 Elm St", customer: "Park GC", role: "GC",
         ap_email: "ap@park.example", contract_cents: 3450000 })).json();
       const id = st.jobs.find((j) => j.name === "Elm wiring").id;
       await post(`/api/jobs/${id}/sov`, { op_pct: "15", lines: [
@@ -130,9 +136,12 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       return id;
     });
     await p.goto(BASE + "/data/import");
+    await p.getByRole("heading", { name: "Import", exact: true }).waitFor();
+    assert.equal(await p.locator("#qty-import").count(), 0, "Import has no Quantities card");
+    await p.goto(BASE + `/jobs/${jobId}`);
+    await p.locator("#sov-card").getByRole("button", { name: "Import quantities" }).click();
     const card = p.locator("#qty-import");
-    await card.getByRole("heading", { name: "Quantities done" }).waitFor();
-    await p.selectOption("#qty-import-job", jobId);
+    await card.getByRole("heading", { name: "Import quantities" }).waitFor();
     const [chooser] = await Promise.all([p.waitForEvent("filechooser"), card.getByRole("button", { name: "Choose the file" }).click()]);
     await chooser.setFiles({ name: "foreman-log.csv", mimeType: "text/csv",
       buffer: Buffer.from("Item,Description,Qty this period\n1,Rough-in wiring,30\n2,Panel and feeders,25%\n9,Gutters,4\n") });
@@ -143,12 +152,12 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const before = await p.evaluate(async (id) => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === id).invoices.length, jobId);
     assert.equal(before, 0, "the preview changes nothing");
     await card.getByRole("button", { name: "Add 2 to the schedule of values" }).click();
-    await card.getByText(/2 lines added to PA-/).waitFor();
+    await card.getByText(/2 lines added\./).waitFor();
     await card.locator(".qty-result").getByText(/Row 4 \(Gutters\)/).waitFor();
     const job = await p.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()), jobId);
     const j = job.job || job;
-    assert.deepEqual(j.sov.lines.map((l) => l.done_milli), [30000, 250]);
-    assert.equal(j.invoices.filter((i) => i.status === "draft").length, 1, "the living draft");
+    assert.deepEqual(j.sov.lines.map((l) => l.field_milli), [30000, 250]);
+    assert.equal(j.invoices.length, 0, "only Progress pay app makes a draft");
     await ctx.close();
   });
 
@@ -171,6 +180,125 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.match(files.payapps[1], /^Number,Job,Client,Period to,Amount,Retainage,Status/);
     assert.match(files.payments[1], /^Date,Job,Client,Pay app,For,Amount,Reference$/);
     assert.match(files["change-orders"][1], /^Number,Job,Title,Reason,Amount,Status,Signed on,On a pay app$/);
+    await ctx.close();
+  });
+
+  await step("Reminders start in the app, live on My account under Notifications, and a fired one is a To do row that Open reads", async () => {  // round 1, item 19
+    const { ctx, p } = await newCompany("reminders");
+    // Work on a job record that no change order covers: a reminder the job's own To do row doesn't say.
+    await p.evaluate(async () => {
+      const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const j = (await (await fetch("/api/state")).json()).jobs[0];
+      await post(`/api/jobs/${j.id}/daily-record`, { notes: "Hall outlets", sections: { co_work: [{ description: "Two extra outlets in the hall" }] } });
+    });
+    await p.goto(BASE + "/automations");
+    await p.getByRole("heading", { name: "Notifications" }).waitFor();
+    assert.equal(new URL(p.url()).pathname, "/settings/account");
+    // The card says Loading… under its heading until the reminders arrive: count once the boxes are in.
+    await p.locator('#notifications input[data-reminder]').first().waitFor();
+    assert.equal(await p.locator('input[data-reminder][value="app"]:checked').count(), 3, "in the app, from the start");
+    assert.equal(await p.locator('input[data-reminder][value="email"]:checked, input[data-reminder][value="text"]:checked').count(), 0);
+    // No phone yet: Text is refused under its box, and nothing is saved.
+    const box = (kind, channel) => p.locator(`input[data-reminder="${kind}"][value="${channel}"]`);
+    await box("missing", "text").check();
+    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
+    await p.locator("#reminder-missing-err").getByText("agree to texts", { exact: false }).waitFor();
+    await box("missing", "text").uncheck();
+    await p.goto(BASE + "/dashboard");
+    const row = p.locator(".action-item", { hasText: "Two extra outlets in the hall" });
+    await row.locator(".pill", { hasText: "Reminder" }).waitFor();
+    await row.getByRole("button", { name: "Open", exact: true }).click();
+    await p.locator("#sov-card").waitFor();
+    await p.goto(BASE + "/dashboard");
+    await p.getByRole("heading", { name: /To do/ }).waitFor();
+    assert.equal(await p.locator(".action-item", { hasText: "Two extra outlets in the hall" }).count(), 0, "read once opened");
+    await ctx.close();
+  });
+
+  await step("My account: a mobile number is kept, and Text can't be picked until the number is confirmed", async () => {
+    const { ctx, p } = await newCompany("texts");
+    await p.goto(BASE + "/settings/account");
+    await p.locator("#my-phone").fill("555-01");
+    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
+    await p.locator("#my-phone-err").filter({ hasText: /\S/ }).waitFor();
+    await p.locator("#my-phone").fill("(404) 555-0142");
+    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
+    await p.getByText("Saved", { exact: true }).first().waitFor();
+    await p.reload();
+    assert.equal(await p.locator("#my-phone").inputValue(), "(404) 555-0142");
+    assert.equal(await p.locator("#my-sms-opt-in").isChecked(), false);
+    await p.goto(BASE + "/settings/account");
+    await p.locator('input[data-reminder="dates"][value="text"]').check();
+    await p.locator(".save-bar").getByRole("button", { name: "Save" }).click();
+    await p.getByText("agree to texts", { exact: false }).first().waitFor();
+    await ctx.close();
+  });
+
+  await step("My account: texts turn on only once a code texted to the number comes back", async () => {
+    const { ctx, p } = await newCompany("smscode");
+    await p.goto(BASE + "/settings/account");
+    await p.locator("#my-phone").waitFor();
+    // This server has no Twilio, so it says the number can't be confirmed and saves nothing.
+    await p.fill("#my-phone", "(404) 555-0143");
+    await p.locator("#my-sms-opt-in").check();
+    await p.locator('[data-action="save-account"]').click();
+    await p.locator("#my-phone-err", { hasText: "can't be confirmed" }).waitFor();
+    assert.equal(await p.locator("#my-sms-code").count(), 0);
+    // As a server with Twilio answers (the whole path is tested against a stand-in in test_sms_proof.py).
+    await p.evaluate(() => {
+      const real = window.fetch;
+      const answer = (status, body) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      window.fetch = async (path, options) => {
+        if (path === "/api/auth/sms") {
+          const user = (await (await real("/api/auth/me")).json()).user;
+          return answer(200, { user, code_sent: true, sent_to: "+14045550143" });
+        }
+        if (path === "/api/auth/sms/confirm") {
+          const { code } = JSON.parse(options.body);
+          if (code !== "123456") return answer(409, { error: "That code didn't match, or it has expired. Ask for a new one.", fields: { sms_code: "That code didn't match, or it has expired. Ask for a new one." } });
+          const user = (await (await real("/api/auth/me")).json()).user;
+          return answer(200, { user: { ...user, phone: "+14045550143", sms_opt_in: true } });
+        }
+        return real(path, options);
+      };
+    });
+    await p.locator('[data-action="save-account"]').click();
+    await p.locator("#my-sms-code").waitFor();
+    assert.equal(await p.inputValue("#my-phone"), "(404) 555-0143");
+    await p.fill("#my-sms-code", "000000");
+    await p.locator('[data-action="sms-confirm"]').click();
+    await p.locator("#my-sms-code-err", { hasText: "didn't match" }).waitFor();
+    await p.fill("#my-sms-code", "123456");
+    await p.locator('[data-action="sms-confirm"]').click();
+    await p.locator("#my-sms-code").waitFor({ state: "detached" });
+    assert.equal(await p.inputValue("#my-phone"), "(404) 555-0143");
+    assert.ok(await p.locator("#my-sms-opt-in").isChecked());
+    await ctx.close();
+  });
+
+  await step("A text to Duracash waits in the Inbox saying who sent it, and is filed to a job with a chosen kind", async () => {
+    const { ctx, p } = await newCompany("textin");
+    await p.goto(BASE + "/");
+    await p.evaluate(async () => {
+      const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      await post("/api/auth/sms", { phone: "(404) 555-0143", sms_opt_in: false });
+      const settings = await (await fetch("/api/import/settings")).json();
+      const path = "/api/inbound/sms/" + settings.sms_webhook.split("/").pop();
+      const send = (From, Body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ From, Body }) });
+      await send("+14045550143", "Footings poured, tickets to follow");
+      await send("+14045550144", "Who is this for");
+      await send("+14045550143", "STOP");
+    });
+    await p.goto(BASE + "/communications");
+    const item = p.locator(".inbox-item", { hasText: "Footings poured" });
+    await item.getByText("from Cora Comms (+14045550143)").waitFor();
+    await p.locator(".inbox-item", { hasText: "Who is this for" }).getByText("from Unknown sender (+14045550144)").waitFor();
+    assert.equal(await p.locator(".inbox-item", { hasText: "STOP" }).count(), 0, "STOP isn't a message to file");
+    const id = await item.getAttribute("data-item");
+    await p.locator(`#inb-kind-${id}`).selectOption("ticket:delivery");
+    await item.getByRole("button", { name: "Add to job" }).click();
+    await item.waitFor({ state: "detached" });
     await ctx.close();
   });
 }

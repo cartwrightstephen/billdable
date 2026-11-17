@@ -14,6 +14,7 @@ data/
 !helper/answers.json
 # The lien waiver forms by state (M22) ship with the code too.
 !helper/waiver_forms.json
+!tests/fixtures/old_company_cd935f5.json
 # The wireframes' layout (docs/wireframes) is source, not data.
 !docs/wireframes/canvas.json
 

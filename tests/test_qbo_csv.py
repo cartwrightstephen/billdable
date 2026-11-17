@@ -1,6 +1,9 @@
 """Payments from a QuickBooks CSV export (P2-1, CSV half)."""
 
 import sys
+import io
+import tracemalloc
+import zipfile
 import unittest
 from pathlib import Path
 
@@ -264,6 +267,99 @@ def _sheet_zip(cells_xml, styles=False):
         if styles:
             z.writestr("xl/styles.xml", f'<styleSheet {ns}><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>')
     return buf.getvalue()
+
+
+def _peak(fn):
+    tracemalloc.start()
+    try:
+        out = fn()
+        return out, tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+def _xl_zip(parts):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        for name, xml in parts.items():
+            z.writestr(name, xml)
+    return buf.getvalue()
+
+
+NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+MB = 1024 * 1024
+
+
+class XlsxLimitsTests(unittest.TestCase):
+    """A small file that inflates to a great deal: no tree is built, whatever is inside."""
+
+    def small_memory(self, data, most=8):
+        text, used = _peak(lambda: qbo_csv.xlsx_to_csv(data))
+        self.assertLess(used, most * MB)
+        return text
+
+    def test_empty_cells_stay_small(self):
+        cells = "<c/>" * ((qbo_csv.MAX_XLSX_XML - 200) // 4)
+        data = _xl_zip({"xl/worksheets/sheet1.xml": f"<worksheet {NS}><sheetData><row>{cells}</row></sheetData></worksheet>"})
+        self.assertLess(len(data), 40_000)
+        self.assertEqual(self.small_memory(data), "")
+
+    def test_each_part_is_bounded(self):
+        for part in ("xl/sharedStrings.xml", "xl/styles.xml"):
+            xml = f"<x {NS}>" + "<si/>" * ((qbo_csv.MAX_XLSX_XML - 200) // 5) + "</x>"
+            data = _xl_zip({part: xml, "xl/worksheets/sheet1.xml": f'<worksheet {NS}><row><c r="A1"><v>1</v></c></row></worksheet>'})
+            self.assertEqual(self.small_memory(data), "", part)
+
+    def test_past_the_size_cap_is_refused_unread(self):
+        data = _xl_zip({"xl/worksheets/sheet1.xml": f"<worksheet {NS}>" + " " * (qbo_csv.MAX_XLSX_XML + 1) + "</worksheet>"})
+        self.assertEqual(self.small_memory(data), "")
+
+    def test_deep_nesting_is_refused(self):
+        depth = qbo_csv.MAX_XLSX_DEPTH + 5
+        data = _xl_zip({"xl/worksheets/sheet1.xml": f"<worksheet {NS}>" + "<a>" * depth + "</a>" * depth + "</worksheet>"})
+        self.assertEqual(self.small_memory(data), "")
+
+    def test_one_long_string_in_every_cell_stops_at_the_text_limit(self):
+        long = "x" * 30_000
+        cells = "".join(f'<c r="{chr(65 + c)}{{r}}" t="s"><v>0</v></c>' for c in range(26))
+        rows = "".join(f'<row r="{r}">{cells.format(r=r)}</row>' for r in range(1, 2000))
+        data = _xl_zip({"xl/sharedStrings.xml": f"<sst {NS}><si><t>{long}</t></si></sst>", "xl/worksheets/sheet1.xml": f"<worksheet {NS}>{rows}</worksheet>"})
+        self.assertEqual(self.small_memory(data, most=30), "")
+
+    def test_a_doctype_is_refused(self):
+        for xml in (f'<!DOCTYPE w [<!ENTITY a "aaaa">]><worksheet {NS}><row><c r="A1" t="inlineStr"><is><t>&a;</t></is></c></row></worksheet>',):
+            self.assertEqual(self.small_memory(_xl_zip({"xl/worksheets/sheet1.xml": xml})), "")
+
+    def test_a_stuffed_zip_directory_is_refused(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("xl/worksheets/sheet1.xml", f'<worksheet {NS}><row><c r="A1"><v>1</v></c></row></worksheet>')
+            for n in range(25_000):
+                z.writestr(f"x/{'y' * 20}{n}", "")
+        self.assertEqual(self.small_memory(buf.getvalue(), most=20), "")
+
+    def test_damaged_files_give_nothing_and_no_exception(self):
+        good = _sheet_zip('<row r="1"><c r="A1"><v>1</v></c></row>')
+        self.assertEqual(qbo_csv.xlsx_to_csv(good), "1\n")
+        self.assertEqual(qbo_csv.xlsx_to_csv(good[:len(good) // 2]), "")
+        self.assertEqual(qbo_csv.xlsx_to_csv(_xl_zip({"xl/worksheets/sheet1.xml": "<not xml"})), "")
+        at = good.find(b"PK\x01\x02")
+        self.assertEqual(qbo_csv.xlsx_to_csv(good[:40] + bytes(b ^ 0xFF for b in good[40:at]) + good[at:]), "")
+
+    def test_a_normal_sheet_at_the_row_limit_reads_as_before(self):
+        strings = "".join(f"<si><t>Customer {n} &amp; Sons</t></si>" for n in range(3000))
+        rows = "".join(f'<row r="{r}"><c r="A{r}" s="1"><v>46309</v></c><c r="B{r}" t="s"><v>{r}</v></c><c r="C{r}"><v>{r}.5</v></c>'
+                       f'<c r="E{r}" t="inlineStr"><is><r><t>rich </t></r><r><t>text</t></r></is></c></row>' for r in range(1, 3000))
+        data = _xl_zip({"xl/sharedStrings.xml": f"<sst {NS}>{strings}</sst>", "xl/worksheets/sheet1.xml": f"<worksheet {NS}><sheetData>{rows}</sheetData></worksheet>",
+                        "xl/styles.xml": f'<styleSheet {NS}><numFmts><numFmt numFmtId="170" formatCode="d/m/yy"/></numFmts><cellFormats><xf numFmtId="14"/></cellFormats>'
+                                         f'<cellXfs><xf numFmtId="0"><alignment/></xf><xf numFmtId="170"/></cellXfs></styleSheet>'})
+        lines = self.small_memory(data).splitlines()
+        self.assertEqual(lines[0], '10/14/2026,Customer 1 & Sons,1.5,,rich text')
+        self.assertEqual(len(lines), qbo_csv.MAX_ROWS + 21, "the rows past the limit are left, as before")
+
+    def test_rounding_and_the_first_sheet_by_name_still_work(self):
+        data = _xl_zip({"xl/worksheets/sheet2.xml": f'<worksheet {NS}><row><c r="B1"><v>0.30000000000000004</v></c></row></worksheet>'})
+        self.assertEqual(qbo_csv.xlsx_to_csv(data, digits=3), ",0.3\n")
 
 
 class UnsafeFilesTests(unittest.TestCase):

@@ -1,5 +1,5 @@
-"""The server's background jobs: the hourly loop, the daily "due today" email, and once a month
-the restore drill and last month's summary to each owner.
+"""The server's background jobs: the hourly loop, the daily "due today" email, each person's
+reminders (reminders.py), and once a month the restore drill and last month's summary to each owner.
 
 Moved out of server.py (R6-08). The server hands in `site`, looked up when called:
 company_ids(), read(company_id) (the company's state under its lock, or None when it is missing),
@@ -12,7 +12,9 @@ email address (R6-09).
 
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 import os
 import threading
 import time
@@ -24,9 +26,12 @@ import backup
 import domain
 import mailer
 import metrics
+import reminders
 import storage
 
 DAILY_PATH_NAME = "daily_jobs.json"
+TICK_SECONDS = 3600
+BOOT_QUIET_SECONDS = 300   # nothing is sent this soon after start-up
 MONTHLY_PATH_NAME = "monthly_jobs.json"
 
 
@@ -42,12 +47,65 @@ def _failed(site, company_id: str, what: str, exc: Exception) -> None:
     alerts.notify(f"monthly-jobs:{company_id}", f"the {what} for {company_id} failed ({exc.__class__.__name__}); see the server log")
 
 
-def send_monthly_summaries(site, year: int, month: int) -> list:
+def _key(address: str) -> str:
+    """How an address is kept in the jobs' files: enough to tell them apart, and not the address."""
+    return hashlib.sha256(address.strip().lower().encode()).hexdigest()[:16]
+
+
+def _read_done(path: Path, what: str) -> dict | None:
+    """What was already done, {} before the first run. A file that can't be read or isn't the right
+    shape could mean sending twice: None, with a copy kept and an alert, and nothing goes out."""
+    try:
+        done = json.loads(path.read_text())
+        sending = done.get("sending", {}) if isinstance(done, dict) else None
+        if isinstance(sending, dict) and all(isinstance(v, dict) for v in sending.values()):
+            return done
+        why = "not the right shape"
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        why = exc.__class__.__name__
+    storage.set_aside(path)
+    alerts.notify(f"monthly-state:{path.name}", f"{path.name} can't be read ({why}), so the {what} aren't going out. A copy is kept beside it. Fix or remove the file to start again.")
+    return None
+
+
+def _send_once(site, path, done: dict, company_id: str, mark: str, what: str, emails: list) -> list:
+    """Send (address, subject, body) each at most once for `mark` (a day or a month), and return the
+    results. A kill can come at any moment, and a person getting an email twice is the worse of the
+    two ways to fail: so each address is written down before it is handed to the mailer. On the
+    next run the addresses written down are skipped and everyone else in the company still gets
+    theirs. The one address in hand when the process died may go without; the alert says so."""
+    sending = done.setdefault("sending", {})
+    entry = sending.get(company_id)
+    if entry and entry.get("for") == mark:
+        if not entry.get("done"):
+            alerts.notify(f"monthly-jobs:{company_id}", f"the {what} for {company_id} was cut short by a restart. It went on with the people not reached yet; the last one in hand may not have got it")
+    else:
+        entry = sending[company_id] = {"for": mark, "to": []}
+    results = []
+    for address, subject, body in emails:
+        key = _key(address)
+        if key in entry["to"]:
+            continue
+        entry["to"].append(key)
+        storage.write_json(path, done)
+        results.append(site.send(address, subject, body, company_id))
+    return results
+
+
+def send_monthly_summaries(site, year: int, month: int, path=None, done: dict | None = None, mark: str = "") -> list:
     """Email each company's owners (confirmed addresses) their summary of that month. Returns
-    one line per company that has an owner to send to: "company: N of M sent"."""
+    one line per company that has an owner to send to: "company: N of M sent". path, done and mark
+    are run_monthly_jobs' file, what is in it and this run's month: a run cut short goes on from
+    where it was (_send_once)."""
     lines = []
+    done = {} if done is None else done
     for company_id in site.company_ids():
         if company_id == auth.DEMO_COMPANY_ID:
+            continue
+        entry = done.get("sending", {}).get(company_id) or {}
+        if entry.get("for") == mark and entry.get("done"):
             continue
         try:
             state = site.read(company_id)
@@ -57,9 +115,16 @@ def send_monthly_summaries(site, year: int, month: int) -> list:
             if not to:
                 continue
             subject, body = metrics.month_summary(state, year, month)
-            lines.append(f"{company_id}: {_sent([site.send(addr, subject, body, company_id) for addr in to])}")
+            if path is None:
+                results = [site.send(addr, subject, body, company_id) for addr in to]
+            else:
+                results = _send_once(site, path, done, company_id, mark, "monthly summary", [(addr, subject, body) for addr in to])
+            lines.append(f"{company_id}: {_sent(results)}")
         except Exception as exc:
             _failed(site, company_id, "monthly summary", exc)
+        if path is not None:
+            done.setdefault("sending", {}).setdefault(company_id, {"for": mark, "to": []})["done"] = True
+            storage.write_json(path, done)
     return lines
 
 
@@ -89,32 +154,33 @@ def _digests(state: dict, company_id: str, base: str, now: datetime) -> list:
 def send_daily_digests(site, now: datetime | None = None) -> list:
     """Once a day per company, from the hourly loop (R4-10): what's due today to each owner with
     a confirmed email, and to each member with something assigned to them (G5), unless the company turned "Daily email of what's due" off. Nothing on a
-    day with nothing due. The day each company got it is kept in <data dir>/daily_jobs.json so a
-    restart doesn't repeat it. Returns one line per company emailed, for the log."""
+    day with nothing due. The day each company got it is kept in <data dir>/daily_jobs.json, saved
+    as each company finishes and each address as it goes (_send_once), so a restart or a kill
+    doesn't repeat it. Returns one line per company emailed, for the log."""
     now = now or datetime.now(timezone.utc)
     if not mailer.configured() or now.hour < daily_email_hour():
         return []
     day = now.date().isoformat()
     path = storage.DATA_DIR / DAILY_PATH_NAME
-    try:
-        done = json.loads(path.read_text())
-    except (OSError, ValueError):
-        done = {}
+    done = _read_done(path, "daily emails")
+    if done is None:
+        return []
     lines, base, deleted = [], site.app_url() or "", site.deleted()
     for company_id in site.company_ids():
         if company_id == auth.DEMO_COMPANY_ID or done.get(company_id) == day or company_id in deleted:
             continue
-        done[company_id] = day
         try:
             state = site.read(company_id)
-            if state is None or state.get("company", {}).get("daily_email") is False:
-                continue
-            results = [site.send(addr, d[0], d[1], company_id) for addr, d in _digests(state, company_id, base, now) if d]
-            if results:
-                lines.append(f"{company_id}  daily email: {_sent(results)}")
+            if state is not None and state.get("company", {}).get("daily_email") is not False:
+                emails = [(addr, d[0], d[1]) for addr, d in _digests(state, company_id, base, now) if d]
+                results = _send_once(site, path, done, company_id, day, "daily email", emails)
+                if results:
+                    lines.append(f"{company_id}  daily email: {_sent(results)}")
         except Exception as exc:
             _failed(site, company_id, "daily email", exc)
-    storage.write_json(path, done)
+        done[company_id] = day
+        done.get("sending", {}).pop(company_id, None)
+        storage.write_json(path, done)
     return lines
 
 
@@ -126,10 +192,9 @@ def run_monthly_jobs(site, now: datetime | None = None) -> list:
     now = now or datetime.now(timezone.utc)
     month = now.strftime("%Y-%m")
     path = storage.DATA_DIR / MONTHLY_PATH_NAME
-    try:
-        done = json.loads(path.read_text())
-    except (OSError, ValueError):
-        done = {}
+    done = _read_done(path, "monthly jobs")
+    if done is None:
+        return []
     did = []
     newest = (backup.backups() or [None])[0]
     if done.get("drill") != month and newest is not None:
@@ -147,10 +212,11 @@ def run_monthly_jobs(site, now: datetime | None = None) -> list:
     if (os.environ.get("MONTHLY_SUMMARY_EMAILS") == "1" and mailer.configured() and now.day <= 3
             and done.get("summaries") != month):
         last = now.date().replace(day=1) - timedelta(days=1)
-        lines = send_monthly_summaries(site, last.year, last.month)
+        lines = send_monthly_summaries(site, last.year, last.month, path, done, month)
         did.append(f"monthly summaries for {last:%Y-%m}: {len(lines)} companies")
         did.extend(lines)
         done["summaries"] = month
+        done.pop("sending", None)
     if did:
         storage.write_json(path, done)
     return did
@@ -160,7 +226,8 @@ def run_once(site, now: datetime | None = None) -> None:
     """One turn of the hourly loop: the monthly jobs, then the daily emails, each line logged.
     A failure is logged and alerted; the loop keeps going, and a failure in the monthly jobs
     doesn't stop the daily emails."""
-    for key, what, job in (("monthly-jobs", "monthly jobs", run_monthly_jobs), ("daily-emails", "daily emails", send_daily_digests)):
+    for key, what, job in (("monthly-jobs", "monthly jobs", run_monthly_jobs), ("daily-emails", "daily emails", send_daily_digests),
+                           ("reminders", "reminders", reminders.run)):
         try:
             for line in job(site, now):
                 site.log("info", msg=line)
@@ -169,11 +236,19 @@ def run_once(site, now: datetime | None = None) -> None:
             alerts.notify(key, f"{what} failed ({exc.__class__.__name__}); see the server log")
 
 
+def first_wait(now: datetime | None = None) -> int:
+    """Seconds from start-up to the first run: BOOT_QUIET_SECONDS, so booting alone sends nothing,
+    and a process restarted more often than hourly (a plan that spins down) still gets its runs.
+    Done-for-the-day is kept on disk, so a restart never sends a day's emails twice."""
+    return BOOT_QUIET_SECONDS
+
+
 def start(site) -> threading.Thread:
     def loop() -> None:
+        time.sleep(first_wait())
         while True:
             run_once(site)
-            time.sleep(3600)
+            time.sleep(TICK_SECONDS)
 
     thread = threading.Thread(target=loop, name="monthly-jobs", daemon=True)
     thread.start()

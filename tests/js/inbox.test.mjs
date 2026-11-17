@@ -31,7 +31,7 @@ test("lines that start a day are counted; sizes and crew counts are not", () => 
 
 test("a paste picks Notes, an email, a text thread or Something else", () => {
   assert.deepEqual(pasteGuess("10/12 Framing done, 4 crew\n10/13 Inspector passed rough-in"),
-    { source: "notes", hint: "Looks like notes from 2 days. One daily record per date." });
+    { source: "notes", hint: "Looks like notes from 2 days. One job record per date." });
   assert.equal(pasteGuess("FYI\n---------- Forwarded message ---------\nFrom: Kim <ap@park.example>\nSubject: Backup\n\nhi").source, "email");
   assert.equal(pasteGuess("[10/21/26, 3:58 PM] Luis: done\n[10/21/26, 3:59 PM] Nadia: thanks").source, "sms");
   assert.deepEqual(pasteGuess("10/12 one date only\nTo: Mike"), { source: "paste", hint: "" });

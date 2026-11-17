@@ -22,7 +22,8 @@ ROUTES = ROOT / "static" / "js" / "routes.js"
 
 # Old word -> what the app says now. Case-insensitive unless the pattern sets (?-i).
 OLD = {
-    r"\bpackets?\b": "Paperwork / Open paperwork",
+    r"\bpackets?\b": "Supporting documents",
+    r"\bpaperwork\b": "Supporting documents",
     r"\bpayers?\b": "client",
     r"\bcustomers?('s)?\b": "client (Oct 29 review: Clients pay the Users)",
     r"\bcustomer settings\b": "Client playbook",
@@ -39,7 +40,7 @@ OLD = {
     r"\bfile to job record\b|\bto file \(": "Add to job / Waiting (N)",
     r"\bcompleted[- ]to[- ]date\b": "Total done so far $",
     r"\bcompletion notes\b": "Anything to note? (optional)",
-    r"\bnotes for the job record\b": "Notes (kept on the job record)",
+    r"\bnotes for the job record\b": "Notes (kept in the job records)",
     r"\bowners should turn this on\b": "Recommended for owners.",
     r"\bap (email|address|contact)\b": "Email for pay apps",
     r"\bapprover\b": "Who signs off on your bills",
@@ -51,14 +52,14 @@ OLD = {
     r"\baudit\b": "Activity log",
     r"\bblockers?\b": "Fix N things before sending / Before you can finish this job",
     r"\bchase retainage\b": "Ask for retainage",
-    r"\bteach (the )?playbook\b": "Client sent a pay app back? Note why.",
+    r"\bteach (the )?playbook\b": "Client sent pay app back",
     r"\bleft rail\b": "Settings, Company",
     r"(?-i:\bChange Orders\b)": "Change orders",
-    r"(?-i:\bDaily Record\b)": "Daily record",
+    r"(?-i:\bDaily [Rr]ecord\b)(?=,| and| saved| page| tab)|\bsave to job record\b|\badd a note to the record\b|\battach files\b": "New job record (Nov 3 overhaul)",
     r"\bwho pays you\?": "Client type (J2, Oct 29 review)",
     r"\breopen job\b": "Add more work (J9, Oct 29 review)",
     r"\bai assisted\b": "(never used)",
-    r"(?-i:\bNeeds you\b)": "To Do",
+    r"(?-i:\bNeeds you\b)": "To do",
 }
 
 PARENTHESES = re.compile(r"\([^()]*\)")
@@ -94,8 +95,8 @@ class HelperAnswersWordingTests(unittest.TestCase):
         cls.answers = json.loads(ANSWERS.read_text(encoding="utf-8"))["answers"]
 
     def test_the_old_word_check_works(self):
-        self.assertEqual(old_words("Open the packet and click Match payment."), [("packet", "Paperwork / Open paperwork"), ("Match payment", "Record a payment / Payments received")])
-        self.assertEqual(old_words("Paperwork (packet) and a draft for their review (pencil copy)."), [])
+        self.assertEqual(old_words("Open the packet and click Match payment."), [("packet", "Supporting documents"), ("Match payment", "Record a payment / Payments received")])
+        self.assertEqual(old_words("Supporting documents (packet) and a draft for their review (pencil copy)."), [])
         self.assertTrue(old_words("Void draft"))
         self.assertTrue(old_words("Open Change Orders"))
         self.assertFalse(old_words("Open Change orders"))

@@ -53,6 +53,8 @@ def events(state: dict[str, Any]) -> list[dict[str, Any]]:
     for j in state.get("jobs", []):
         payer = payers.get(j.get("payer_id"), {})
         add(j.get("completed_at"), f"{j['name']}: work complete", f"{j['id']}-done")
+        if not j.get("closed"):
+            add(j.get("anticipated_end_on"), f"{j['name']}: anticipated end", f"{j['id']}-end")
         # One follow-up per job, on the day Today raises it (domain.follow_up_due): the oldest unpaid
         # pay app, after its last follow-up, or the date noted after a call, or after a promised date.
         due = domain.follow_up_due(j, payer)

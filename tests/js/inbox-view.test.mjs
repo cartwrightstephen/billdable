@@ -49,7 +49,7 @@ test("each row of Everything received says what became of it", () => {
   assert.equal(inbox.receivedStatus({ status: "auto", job_name: "Oak" }), "Filed automatically to Oak");
   assert.equal(inbox.receivedStatus({ status: "dismissed" }), "Dismissed");
   assert.equal(inbox.receivedFilesHtml({ files: [{ id: "f1", name: "co2.pdf" }], files_gone: 1 }),
-    `<div class="sub">Files: <a href="/api/files/f1" target="_blank" rel="noopener">co2.pdf</a> · 1 file no longer on the job record</div>`);
+    `<div class="sub">Files: <a href="/api/files/f1" target="_blank" rel="noopener">co2.pdf</a> · 1 file no longer in the job records</div>`);
   assert.equal(inbox.receivedFilesHtml({ files: [], files_gone: 0 }), "");
 });
 
@@ -81,7 +81,7 @@ test("the filters and sort go to the server; the default sort is left out", asyn
 test("an Outbox entry links its files, says when one is gone, and links the pay app PDF", () => {
   const e = { job_id: "j1", payapp_invoice_id: "inv-1", attachments: ["f1", "f-gone"], not_attached: [] };
   assert.equal(comms.attachmentsHtml(e, [{ id: "f1", name: "COI.pdf" }]),
-    `<div class="sub email-files">Attached: <a href="/api/jobs/j1/payapp/inv-1.pdf" target="_blank" rel="noopener">Pay app PDF</a> · <a href="/api/files/f1" target="_blank" rel="noopener">COI.pdf</a> · A file no longer on the job record</div>`);
+    `<div class="sub email-files">Attached: <a href="/api/jobs/j1/payapp/inv-1.pdf" target="_blank" rel="noopener">Pay app PDF</a> · <a href="/api/files/f1" target="_blank" rel="noopener">COI.pdf</a> · A file no longer in the job records</div>`);
   assert.equal(comms.attachmentsHtml({ attachments: [] }, []), "");
 });
 
@@ -107,13 +107,15 @@ test("Print puts one message on a sheet and marks the page printing", async () =
   delete window.print;
 });
 
-test("Import has the file box, the paste box, the payments import and the schedule picker; Export hides Everything from a member", () => {
+test("Import has the file box, the paste box and the payments import; Export hides Everything from a member", () => {
   page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState({ ...company(), jobs: [{ id: "j1", name: "Oak", code: "OAK", closed: false, invoices: [], payments: [], sov_view: { present: false, editable: true } }] });
   dom.answers = [];
   const imp = data.views.import();
-  for (const part of ['class="dropzone"', 'id="paste-text"', 'id="qbo-csv"', 'id="sov-import-job"', 'data-action="import-sov"'])
+  for (const part of ['class="dropzone"', 'id="paste-text"', 'id="qbo-csv"'])
     assert.ok(imp.includes(part), part);
+  // The schedule is set on the job itself (round 1, item 19).
+  assert.doesNotMatch(imp, /id="sov-import"|data-action="import-sov"/);
   page.setLocation("export");
   assert.match(data.views.export(), /href="\/api\/export" download>Download everything</);
   page.setMe({ name: "Sam", company_id: "co-p", role: "member" });
@@ -130,15 +132,3 @@ test("the setup step Import payments opens Import at the payments box", async ()
   assert.match(src, /label: "Import payments", attrs: `data-action="onb-go" data-view="import" data-focus="#qbo-csv"`/);
 });
 
-test("Import's Schedule of values lists only jobs whose schedule can still be set (D4)", () => {
-  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
-  const j = (id, editable) => ({ id, name: id, code: id.toUpperCase(), closed: false, invoices: [], payments: [], sov_view: { present: false, editable } });
-  core.setState({ ...company(), jobs: [j("oak", true), j("elm", false)] });
-  const imp = data.views.import().split('id="sov-import"')[1];
-  assert.match(imp, /<option value="oak">/);
-  assert.doesNotMatch(imp, /<option value="elm">/);
-  core.setState({ ...company(), jobs: [j("elm", false)] });
-  const none = data.views.import();
-  assert.doesNotMatch(none, /id="sov-import-job"/);
-  assert.match(none, /Every open job has a pay app out or its work done/);
-});

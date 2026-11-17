@@ -55,22 +55,38 @@ def _status(job: dict[str, Any]) -> str:
 def jobs_rows(state: dict[str, Any]) -> list[list[str]]:
     style = (state.get("company") or {}).get("billing_style", "pay_apps")
     rows = [["Job", "Code", "Client", "Address", "Contract", "Signed change orders", "Contract total", "Billed", "Received",
-             "Outstanding", "Retainage held", "Retainage still owed", "Status", "Where it stands", "Started", "Done", "Finished"]]
+             "Outstanding", "Retainage held", "Retainage still owed", "Status", "Where it stands", "Started", "Anticipated end", "Done", "Finished"]]
     for job in state.get("jobs", []):
         m = domain.job_money(job)
         rows.append([text(job.get("name")), text(job.get("code")), text(_client(state, job)), text(job.get("address")),
                      dollars(m["contract_cents"]), dollars(m["approved_co_cents"]), dollars(m["contract_total_cents"]),
                      dollars(m["billed_cents"]), dollars(m["collected_cents"]), dollars(m["outstanding_cents"]),
                      dollars(m["retainage_held_cents"]), dollars(m["retainage_open_cents"]), _status(job),
-                     text(domain.status_label(job, style)), _day(job_started_on(state, job)),
+                     text(domain.status_label(job, style)), _day(job_started_on(state, job)), _day(job.get("anticipated_end_on")),
                      _day(job.get("completed_at")) if job.get("work_status") == "complete" else "", _day(job.get("closed_at"))])
     return rows
+
+
+def _received_by_pay_app(job: dict[str, Any]) -> dict[str, int]:
+    """What each pay app received, with money refunded taken off the newest first, so the column
+    adds up to the job's Received."""
+    net: dict[str, int] = {}
+    for p in job.get("payments", []):
+        net[p.get("invoice_id")] = net.get(p.get("invoice_id"), 0) + int(p.get("amount_cents") or 0)
+    back = domain.job_money(job)["refunded_cents"]
+    for inv in reversed(job.get("invoices", [])):
+        take = min(back, net.get(inv["id"], 0))
+        if take:
+            net[inv["id"]] -= take
+            back -= take
+    return net
 
 
 def payapps_rows(state: dict[str, Any]) -> list[list[str]]:
     """Every pay app but a deleted draft or one pulled back (Cancelled), drafts included."""
     rows = [["Number", "Job", "Client", "Period to", "Amount", "Retainage", "Status", "Final", "Sent", "Received", "Paid on"]]
     for job in state.get("jobs", []):
+        net = _received_by_pay_app(job)
         for inv in job.get("invoices", []):
             if inv.get("status") == "void":
                 continue
@@ -79,12 +95,14 @@ def payapps_rows(state: dict[str, Any]) -> list[list[str]]:
             rows.append([text(inv.get("number")), text(job.get("name")), text(_client(state, job)), _day(inv.get("period_to")),
                          dollars(inv.get("amount_cents")), dollars(inv.get("retainage_cents")),
                          PAYAPP_WORDS.get(inv.get("status"), text(inv.get("status"))), "Yes" if inv.get("final") else "",
-                         _day(inv.get("sent_at")), dollars(sum(int(p.get("amount_cents") or 0) for p in pays)), paid_on])
+                         _day(inv.get("sent_at")), dollars(net.get(inv["id"], 0)), paid_on])
     return rows
 
 
 def payments_rows(state: dict[str, Any]) -> list[list[str]]:
-    """Payments on pay apps, then retainage the client released, oldest first."""
+    """Payments on pay apps, retainage the client released, and money refunded (as a minus, so the
+    Amount column adds up to what the job has really received), oldest first. The payment records
+    themselves stay as they were."""
     rows = []
     for job in state.get("jobs", []):
         numbers = {inv["id"]: inv.get("number", "") for inv in job.get("invoices", [])}
@@ -94,6 +112,10 @@ def payments_rows(state: dict[str, Any]) -> list[list[str]]:
         for p in job.get("retainage_payments", []):
             rows.append([_day(p.get("at")), text(job.get("name")), text(_client(state, job)), "", "Retainage",
                          dollars(p.get("amount_cents")), text(p.get("reference"))])
+        for s in job.get("overbilling_settled") or []:
+            back = int(s.get("returned_cents", s.get("cents") or 0))
+            if back:
+                rows.append([_day(s.get("at")), text(job.get("name")), text(_client(state, job)), "", "Refund or credit", dollars(-back), text(s.get("reason"))])
     rows.sort(key=lambda r: r[0])
     return [["Date", "Job", "Client", "Pay app", "For", "Amount", "Reference"]] + rows
 

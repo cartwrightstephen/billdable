@@ -317,6 +317,11 @@ def apply(state: dict[str, Any], event: dict[str, Any]) -> str:
 
 # ----- where the company stands -----
 
+def read_only_why(state: dict[str, Any]) -> str:
+    """Why this company is read-only (set by hand, or its billing); "" when it isn't."""
+    return str((state.get("company") or {}).get("read_only") or "").strip() or standing(state)["hold"]
+
+
 def standing(state: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """{"configured", "enforced", "status", "hold", "warning"}: hold is the read-only reason."""
     now = now or datetime.now(timezone.utc)

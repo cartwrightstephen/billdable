@@ -1,4 +1,4 @@
-// The To Do list (R2-04, R4-10, T3): node --test tests/js
+// The To do list (R2-04, R4-10, T3): node --test tests/js
 // The rules are the server's (domain.today_rows; tests/test_today_rows.py). Here: the rows it sends
 // become one main button each, Open where the button doesn't open the job, a table with the
 // activity, job, ball in court, assignee and due date, three rows until "and N more", and the
@@ -8,14 +8,17 @@ import assert from "node:assert/strict";
 import { todayQueue, rowButtons, todoHtml, assignSelect, anyPayAppSent, QUEUE_SHOWN } from "../../static/js/today.js";
 import { todoItems } from "../../static/js/tasks.js";
 import { RECORD_KINDS } from "../../static/js/jobs.js";
+import { setAccount } from "../../static/js/state.js";
+
+setAccount({ mailReady: true });   // Send again shows only where the server sends mail (payapp-page.test.mjs)
 
 const row = (over = {}) => ({
   rank: 5, kind: "new_job", job_id: "j1", job: "Porch rebuild", payer: "Dana Lee", label: "Not billed yet", tone: "copper",
-  text: "Porch rebuild has no pay app yet. Bill the work done so far, or mark it done.", note: "", button: "Bill progress",
+  text: "Porch rebuild has no pay app yet. Bill the work done so far with Progress pay app, or use Final pay app.", note: "", button: "Progress pay app",
   path: "/jobs/j1", invoice_id: "", co_id: "", email_id: "", item_id: "", key: "new_job:j1:", due: "2026-10-30", ball_in_court: "us",
   assignee_id: "", assignee_name: "", ...over,
 });
-// The rows as the To Do table draws them.
+// The rows as the To do table draws them.
 const queueHtml = (rows, opts = {}) => todoHtml(todoItems({ today_rows: rows }), { total: rows.length, ...opts });
 const state = (rows, over = {}) => ({ jobs: [], today_rows: rows, closed_jobs_total: 0, ...over });
 const mainButtons = (html) => (html.match(/class="btn small"/g) || []).length;
@@ -28,13 +31,14 @@ test("the queue is the server's rows, in the order sent", () => {
 
 test("a new job shows Not billed yet; its button opens the job at its next step, so no Open", () => {
   const html = queueHtml([row()]);
-  assert.match(html, /<td class="todo-activity"><span class="pill copper">Not billed yet<\/span><div class="next-action">Porch rebuild has no pay app yet\. Bill the work done so far, or mark it done\.<\/div><\/td>/);
+  // The job's name leads the cell too, shown only on a phone where the Job column is hidden (Round 1 acceptance, item 15).
+  assert.match(html, /<td class="todo-activity"><span class="todo-job-inline">Porch rebuild<\/span><span class="pill copper">Not billed yet<\/span><div class="next-action">Porch rebuild has no pay app yet\. Bill the work done so far with Progress pay app, or use Final pay app\.<\/div><\/td>/);
   assert.match(html, /<a href="\/jobs\/j1" data-action="open-job" data-id="j1">Porch rebuild<\/a>/);
-  assert.match(html, /<button class="btn small" data-action="open-job" data-id="j1" data-focus="\.next-card">Bill progress<\/button><\/div>/);
+  assert.match(html, /<button class="btn small" data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Progress pay app<\/button><\/div>/);
   assert.doesNotMatch(html, />Open</);
 });
 
-test("the To Do table has Activity, Job, Ball in court, Assignee and Due columns", () => {  // T3
+test("the To do table has Activity, Job, Ball in court, Assignee and Due columns", () => {  // T3
   const html = todoHtml(todoItems({ today_rows: [row({ ball_in_court: "client", assignee_id: "u2", due: "2026-10-20" })] }),
     { people: [{ id: "u1", name: "Pat" }, { id: "u2", name: "Mo" }], today: "2026-10-28" });
   assert.match(html, /<tr><th>Activity<\/th><th>Job<\/th><th>Ball in court<\/th><th>Assignee<\/th><th>Due<\/th><th><\/th><\/tr>/);
@@ -47,7 +51,7 @@ test("the To Do table has Activity, Job, Ball in court, Assignee and Due columns
 test("a task added by hand is ticked off with Done and opens its job", () => {  // G5
   const items = todoItems({ jobs: [{ id: "j1", name: "Porch rebuild" }], today_rows: [],
     tasks: [{ id: "task-1", title: "Order tile", job_id: "j1", status: "open", ball_in_court: "us", due: "" }] });
-  const html = todoHtml(items);
+  const html = todoHtml(items, { people: [{ id: "u1", name: "Pat" }, { id: "u2", name: "Mo" }] });
   assert.match(html, /<strong>Order tile<\/strong>/);
   assert.match(html, /data-action="task-done" data-id="task-1">Done</);
   assert.match(html, /data-action="open-job" data-id="j1">Open</);
@@ -63,15 +67,18 @@ test("with items but none in the period, it says so", () => {
 test("each kind of row has its one main button, with the ids it needs", () => {
   const cases = [
     [row({ kind: "email_failed", button: "Send again", email_id: "e1" }), /data-action="email-retry" data-email="e1">Send again</, true],
-    [row({ kind: "says_done", button: "Mark done and draft", item_id: "x1" }), /data-action="inbox-mark-done" data-item="x1">Mark done and draft</, true],
+    [row({ kind: "says_done", button: "Final pay app", item_id: "x1" }), /data-action="inbox-mark-done" data-item="x1">Final pay app</, true],
     [row({ kind: "blocked", button: "Add 1 missing document", invoice_id: "d1" }), /data-action="open-packet" data-job="j1" data-inv="d1">Add 1 missing document</, true],
     [row({ kind: "blocked", button: "Clear 1 blocker" }), /data-action="open-packet" data-job="j1">Clear 1 blocker</, true],
     [row({ kind: "ready", button: "Review &amp; send", invoice_id: "d1" }), /data-action="open-payapp" data-job="j1" data-inv="d1" data-focus="\.send-check">Review &amp; send</, false],
     [row({ kind: "waiver", button: "Review waiver" }), /data-action="open-waiver" data-id="j1">Review waiver</, false],
     [row({ kind: "not_billed", button: "Draft pay app" }), /data-action="draft" data-id="j1">Draft pay app</, true],
-    [row({ kind: "due_soon", button: "Bill progress" }), /data-action="open-job" data-id="j1" data-focus="\.next-card">Bill progress</, false],
+    [row({ kind: "due_soon", button: "Progress pay app" }), /data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Progress pay app</, false],
     [row({ kind: "follow_up", button: "Send follow-up" }), /data-action="follow-up" data-id="j1">Send follow-up</, true],
     [row({ kind: "inbox", button: "Add to this job", item_id: "x2" }), /data-action="inbox-file-suggested" data-item="x2" data-job="j1">Add to this job</, true],
+    [row({ kind: "closeout", button: "Open closeout documents" }), /data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Open closeout documents</, false],
+    [row({ kind: "retainage", button: "Ask for retainage" }), /data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Ask for retainage</, false],
+    [row({ kind: "finish", button: "Finish job" }), /data-action="open-job" data-id="j1" data-focus="\.task-card, \.job-actions">Finish job</, false],
   ];
   for (const [r, pattern, open] of cases) {
     const html = rowButtons(r);
@@ -81,9 +88,9 @@ test("each kind of row has its one main button, with the ids it needs", () => {
   }
 });
 
-test("a follow-up offers Spoke to them as a second button", () => {  // R4-06
+test("a follow-up offers Log a conversation as a second button", () => {  // R4-06
   const html = rowButtons(row({ kind: "follow_up", button: "Send follow-up" }));
-  assert.match(html, /<button class="btn small secondary" data-action="spoke" data-id="j1">Spoke to them…<\/button>/);
+  assert.match(html, /<button class="btn small secondary" data-action="log-conversation" data-id="j1">Log a conversation<\/button>/);
 });
 
 test("a pay app the customer approved has no main button, only Open", () => {  // R4-08
@@ -128,11 +135,19 @@ test("an Inbox row shows the kind it files as, in a select to change it first", 
   assert.match(html, /data-item="x2" data-job="j1">Add to this job<\/button><label class="row-kind">as <select id="inb-kind-x2" aria-label="File as">/);
   assert.match(html, /<option value="waiver" selected>Lien waiver<\/option>/);
   assert.equal((html.match(/ selected>/g) || []).length, 1);
-  assert.equal((html.match(/<option /g) || []).length, Object.keys(RECORD_KINDS).length, "the Inbox's kinds list");
+  assert.equal((html.match(/<option /g) || []).length, Object.keys(RECORD_KINDS).length + 1, "the Inbox's kinds list");
   assert.ok(html.indexOf("inb-kind-x2") < html.indexOf(">Open<"));
   // A kind the list doesn't have starts at Note rather than showing one thing and filing another.
   assert.match(rowButtons(row({ kind: "inbox", button: "Add to this job", item_id: "x3", item_kind: "nope" })), /<option value="note" selected>Note<\/option>/);
   // Other rows have no kind select.
-  assert.doesNotMatch(rowButtons(row({ kind: "says_done", button: "Mark done and draft", item_id: "x1" })), /<select/);
+  assert.doesNotMatch(rowButtons(row({ kind: "says_done", button: "Final pay app", item_id: "x1" })), /<select/);
   assert.doesNotMatch(queueHtml([row()]), /<select id="inb-kind/);
+});
+
+test("a row held up only by a change order opens the change order, as the job page's button does", () => {
+  const html = rowButtons(row({ kind: "blocked", button: "Get CO 2 signed", invoice_id: "i1", co_id: "co-2" }));
+  assert.match(html, /data-action="open-co" data-job="j1" data-co="co-2"/);
+  assert.doesNotMatch(html, /open-packet/);
+  const docs = rowButtons(row({ kind: "blocked", button: "Add 1 missing document", invoice_id: "i1", packet_item_id: "p1" }));
+  assert.match(docs, /data-action="open-packet" data-job="j1" data-inv="i1" data-item="p1"/);
 });

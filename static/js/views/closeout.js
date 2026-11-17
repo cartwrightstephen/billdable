@@ -7,7 +7,7 @@ import { askConfirm } from "../dom.js";
 import { moneyField, field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentJobId } from "../state.js";
-import { may, post, backButton, emptyState, nav } from "../app-core.js";
+import { may, perms, post, load, render, showRefused, backButton, emptyState, nav } from "../app-core.js";
 import { OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
 import { sendsTo } from "./job.js";
 import { waiverChecklistHtml, waiverFormHtml } from "./paperwork.js";
@@ -16,14 +16,20 @@ import { waiverChecklistHtml, waiverFormHtml } from "./paperwork.js";
 // for all of it.
 function retainageAskHtml(j) {
   const key = `retask-${j.id}`;
-  if (j.work_status !== "complete") return `<span class="sub">Once the job is marked done.</span>`;
+  if (j.work_status !== "complete") return `<span class="sub">After Final pay app.</span>`;
   if (!may("retainage")) return `<span class="sub">An owner asks for it.</span>`;
   // chase_retainage waits the client's days between contacts after the last request.
   const asked = retainageAskWaits(j);
   if (asked) return `<span class="sub">Asked ${fmtDate(asked.last)}. Ask again from ${fmtDate(asked.due)}.</span>`;
-  return `<div class="retainage-ask" data-form-key="${key}">${formErrorLine(key)}<div class="form-inline">
+  // An unconditional waiver in the closeout documents (M14): an owner asks with the reason.
+  const unconditional = j.closeout_unconditional || [];
+  const owner = perms().owner;
+  return `<div class="retainage-ask" data-form-key="${key}">${formErrorLine(key)}
+    ${unconditional.length ? `<p class="blocker">An unconditional waiver is in the closeout documents: ${unconditional.map(r => r.label).join(", ")}. It gives up your lien rights before you are paid.${owner ? "" : " Only an owner can ask for retainage with it."}</p>` : ""}
+    <div class="form-inline">
     ${moneyField({ form: key, name: "amount_cents", id: `${key}-amt`, label: "Amount ($), blank for all" })}
-    <button class="btn small" data-action="retainage" data-id="${j.id}">Ask for retainage</button></div></div>`;
+    ${unconditional.length && owner ? field({ form: key, name: "unconditional_override", id: `${key}-why`, label: "Why it goes with the request" }) : ""}
+    ${unconditional.length && !owner ? "" : `<button class="btn small" data-action="retainage" data-id="${j.id}">Ask for retainage</button>`}</div></div>`;
 }
 
 // Everything that owes or owed a lien waiver on a job (M20): each paid pay app, each retainage
@@ -80,7 +86,7 @@ function waiverForHtml(j, r, rows) {
   const options = rows.filter(x => x.due && (x.inv || x.release || x.legacy)).map(x =>
     `<option value="${rowId(x)}"${rowId(x) === rowId(r) ? " selected" : ""}>${x.label}</option>`).join("");
   return `<div data-form-key="${key}">${formErrorLine(key)}
-    <p class="blocker">${r.record} is on the job record. More than one waiver is due: say which one it is for, then send.</p>
+    <p class="blocker">${r.record} is in the job records. More than one waiver is due: say which one it is for, then send.</p>
     <div class="form-inline"><select id="${key}" aria-label="Which pay app this signed waiver is for">${options}</select>
     <button class="btn small" data-action="waiver-for" data-id="${j.id}" data-record="${r.recordId}" data-row="${rowId(r)}" data-kind="${r.kind}">This waiver is for it</button></div></div>`;
 }
@@ -105,7 +111,6 @@ export const views = {
     const rows = waiverRows(j);
     const owed = rows.some(r => r.due);
     const first = rows.find(r => r.due);
-    const off = locked || !j.payer.ap_email;
     const payApps = (j.invoices || []).filter(i => i.status !== "void" && i.waiver_stages);
     return `
       ${backButton("waivers", "Closeout")}
@@ -122,9 +127,9 @@ export const views = {
         ${rows.length ? rows.map(r => `<div class="list-item waiver-row">
             <div><strong>${r.label}</strong>${r.amount != null ? " · " + money(r.amount) : ""} · ${r.due ? `<span class="pill amber">Due</span>` : r.notNeeded ? `<span class="pill">Not needed</span> ${r.notNeeded}` : `sent ${fmtDate(r.sent_at)}${r.kind ? " · " + waiverKindLabel(r.kind) : ""}`}</div>
             ${r.due && !j.summary && r.which && r.recordId && may("waiver") ? waiverForHtml(j, r, rows) : ""}
-            ${r.due && !j.summary && !r.onFile && !r.which ? `<p class="blocker">Add the signed ${waiverTypeWords(r.kind)} waiver to the job record, then send.</p>${uploadButtons(j, r.kind, rowId(r))}` : ""}
-            ${r.due && r.onFile && r.record ? `<p class="sub">Sends ${r.record} from the job record.</p>` : ""}
-            ${r.due ? (may("waiver") ? waiverSendForm(j, r.inv || null, off || !r.onFile, r.release || null) + (j.summary ? "" : waiverNotNeededHtml(j, r)) : OWNER_SENDS) : ""}
+            ${r.due && !j.summary && !r.onFile && !r.which ? `<p class="blocker">Add the signed ${waiverTypeWords(r.kind)} waiver to the job records, then send.</p>${uploadButtons(j, r.kind, rowId(r))}` : ""}
+            ${r.due && r.onFile && r.record ? `<p class="sub">Sends ${r.record} from the job records.</p>` : ""}
+            ${r.due ? (may("waiver") ? waiverSendForm(j, r.inv || null, false, r.release || null) + (j.summary ? "" : waiverNotNeededHtml(j, r)) : OWNER_SENDS) : ""}
           </div>`).join("")
           : `<p class="sub">${termText("No waiver is due yet. One is due after each paid pay app.")}</p>`}
       </div>
@@ -183,8 +188,8 @@ export const views = {
                 <td>${f.doneDays != null ? daysAgoText(f.doneDays) : "Not yet"}</td>
                 <td class="num">${f.asked}</td>
                 <td>${f.last ? `${fmtDate(f.last.toISOString())}<div class="sub row-sub">${daysAgoText(f.askedDays)}</div>` : "—"}</td>
-                <td>${missing.length ? missing.join(", ") : (j.work_status === "complete" ? "Closeout paperwork complete" : "Job still in progress")}</td>
-                <td>${j.work_status === "complete" && missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}" ${j.closeout_packet && j.closeout_packet.length ? `data-inv="closeout"` : ""}>Open closeout paperwork</button>` : retainageAskHtml(j)}</td>
+                <td>${missing.length ? missing.join(", ") : (j.work_status === "complete" ? "Closeout documents complete" : "Job still in progress")}</td>
+                <td>${j.work_status === "complete" && missing.length ? `<button class="btn small" data-action="open-packet" data-job="${j.id}" ${j.closeout_packet && j.closeout_packet.length ? `data-inv="closeout"` : ""}>Open closeout documents</button>` : retainageAskHtml(j)}</td>
                 <td>${j.payer.approver}<div class="sub row-sub"><a href="mailto:${j.payer.ap_email}">${j.payer.ap_email}</a></div></td>
               </tr>`;
             }).join("")}
@@ -198,17 +203,32 @@ export const views = {
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
-  // A person approves each waiver (M21): the confirm names the type, what it covers and who gets it.
+  // A person approves each waiver (M21). A final waiver while a progress one is due warns, and so
+  // does a file that doesn't match what it goes as (blank, other wording, another job or amount, a
+  // scan): those looks come first, each for what it names (accept. 67, 76), read with nothing sent;
+  // then one confirm names the type, what it covers and who gets it (Round 1 acceptance, item 17).
   "waiver": async (el, id) => {
     const key = el.dataset.release || el.dataset.inv || "job";
     const kind = document.getElementById(`waiver-kind-${key}`)?.value;
     const j = state.jobs.find(x => x.id === id);
+    const body = { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) };
+    const said = {};
+    let r = await post(`/api/jobs/${id}/waiver`, { ...body, check_only: true }, { quiet: true, ownRefusal: true });
+    while (r && r.data && (r.data.final_waiver_warning || r.data.look_warning)) {
+      if (!(await askConfirm(r.data.error, r.data.confirm_label || "Send the final waiver", true))) return;
+      if (r.data.final_waiver_warning) said.confirm_final = true;
+      if (r.data.look_warning) said.looked_at = r.data.record_id;
+      r = await post(`/api/jobs/${id}/waiver`, { ...body, ...said, check_only: true }, { quiet: true, ownRefusal: true });
+    }
+    // Anything else it can't go for, or a check that didn't come back: say why and stop. The send
+    // only ever follows the confirm.
+    if (!r || !r.ok) { if (r && r.status === 409) showRefused(r.data, el); return; }
     if (j) {
-      const row = waiverRows(j).find(r => r.due && rowId(r) === key) || waiverRows(j).find(r => r.due);
+      const row = waiverRows(j).find(x => x.due && rowId(x) === key) || waiverRows(j).find(x => x.due);
       const what = row ? `${unesc(row.label)}${row.amount != null ? ", " + money(row.amount) : ""}` : j.name;
       if (!(await askConfirm(`Email the signed ${waiverTypeWords(kind || (row && row.kind) || "")} waiver for ${what} to ${sendsTo(j)}?`, "Send the waiver"))) return;
     }
-    await post(`/api/jobs/${id}/waiver`, { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) });
+    await post(`/api/jobs/${id}/waiver`, { ...body, ...said });
   },
   // All of the retainage, or the part typed in the box, once the job is done (M24).
   "retainage": async (el, id) => {
@@ -224,8 +244,12 @@ export const actions = {
       if (typed) cents = a.cents;
     }
     const part = cents != null && cents < open;
-    if (j && !(await askConfirm(`Email a request for ${part ? `${money(cents)} of the ${money(open)}` : `the ${money(open)}`} retainage to ${sendsTo(j)}?`, "Send the request"))) return;
-    await post(`/api/jobs/${id}/retainage`, cents != null ? { amount_cents: cents } : {}, form ? { formKey: key } : {});
+    const why = form ? String(formValues(key).unconditional_override || "").trim() : "";
+    if (j && form && (j.closeout_unconditional || []).length && !why) { refuseForm(key, { unconditional_override: "Enter why it goes with the request, or take it off the closeout documents." }); return; }
+    if (j && !(await askConfirm(`Email a request for ${part ? `${money(cents)} of the ${money(open)}` : `the ${money(open)}`} retainage to ${sendsTo(j)}?`, "Send the request", !!why))) return;
+    const r = await post(`/api/jobs/${id}/retainage`, { ...(cents != null ? { amount_cents: cents } : {}), ...(why ? { unconditional_override: why } : {}) }, form ? { formKey: key } : {});
+    // What the closeout documents were read as goes on the page: the question, or the owner's reason.
+    if (r && r.data && (r.data.waiver_question || r.data.unconditional_waiver)) { await load(); render(); }
   },
   "open-waiver": (el, id) => nav("waiver-detail", id),
   // Say which paid pay app or release a signed waiver is for (B1), keeping its type.

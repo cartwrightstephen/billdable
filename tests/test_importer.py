@@ -280,14 +280,14 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
     def test_a_draft_links_to_its_paperwork_page_where_remove_is(self):
         for status in ("draft", "awaiting_approval"):
             exc = self.refusal(self.state(status))
-            self.assertEqual(str(exc), "The paperwork for PA-OAK-3 uses this record. Tap Remove on it there first.")
-            self.assertEqual(exc.action, {"label": "Open the paperwork for PA-OAK-3", "view": "packet-detail", "job_id": "j1", "detail": "inv1"})
+            self.assertEqual(str(exc), "The supporting documents for PA-OAK-3 use this record. Tap Remove on it there first.")
+            self.assertEqual(exc.action, {"label": "Open PA-OAK-3", "view": "payapp-detail", "job_id": "j1", "detail": "inv1"})
 
     def test_the_job_and_closeout_paperwork_link_to_their_pages(self):
         exc = self.refusal(self.state(where="job"))
         self.assertEqual((exc.action["view"], exc.action["detail"]), ("packet-detail", ""))
         exc = self.refusal(self.state(where="closeout"))
-        self.assertEqual((str(exc), exc.action["detail"]), ("The closeout paperwork uses this record. Tap Remove on it there first.", "closeout"))
+        self.assertEqual((str(exc), exc.action["detail"]), ("The closeout documents use this record. Tap Remove on it there first.", "closeout"))
 
     def test_a_sent_pay_app_says_pull_it_back_and_links_to_it(self):
         for status in ("sent", "approved"):
@@ -308,7 +308,7 @@ class UndoRefusalTests(unittest.TestCase):  # Oct 23 note #13
         # The draft's paperwork has Remove for everyone: same words either way.
         with self.assertRaises(importer.domain.GateError) as caught:
             importer.undo_item(self.state("draft"), "inb1", "member", can_pull_back=False)
-        self.assertEqual(str(caught.exception), "The paperwork for PA-OAK-3 uses this record. Tap Remove on it there first.")
+        self.assertEqual(str(caught.exception), "The supporting documents for PA-OAK-3 use this record. Tap Remove on it there first.")
 
     def test_a_paid_or_pulled_back_pay_app_does_not_offer_pulling_back(self):
         state = self.state("sent")

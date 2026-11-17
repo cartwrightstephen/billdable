@@ -1,17 +1,18 @@
 // Import/Export: every manual import and export of data, one tab each (I1). Import gathers the
-// file box, the paste box, the QuickBooks payments import, the quantities done from the
-// contractor's own records (M1) and a way to a job's schedule paste; Export gathers the company
+// file box, the paste box and the QuickBooks payments import; the quantities done from the
+// contractor's own records (M1) come in on the job's schedule card (round 1, item 19), drawn here
+// (qtyImportForJob) so the import keeps one home. Export gathers the company
 // file, the CSV lists (jobs, pay apps, payments, change orders), each sent pay app's PDF and
 // QuickBooks file, the calendar feed and the logs. Emails and texts that come in by themselves
 // are on Communications.
 import { money, fmtDate, words, esc, escDeep, unesc } from "../format.js";
 import { pathFor } from "../routes.js";
-import { jobFilterOptions, openJobs } from "../jobs.js";
+import { jobFilterOptions, jobFilterShown, openJobs } from "../jobs.js";
 import { moreButton } from "../dom.js";
 import { field, formValues, refuseForm, draftValue, clearForm } from "../forms.js";
 import { postJson } from "../net.js";
 import { termText } from "../terms.js";
-import { state, me, onSessionEnd } from "../state.js";
+import { state, me, formOpen, onSessionEnd } from "../state.js";
 import { toast, nav, emptyState, listPage, render, can, setState } from "../app-core.js";
 import { dropzoneHtml, pasteBoxHtml, calendarFeedHtml } from "./inbox.js";
 import { paymentsImportHtml, qboCardHtml, qboStatus, loadQboStatus } from "./payments.js";
@@ -41,16 +42,15 @@ export function qtyJobs(jobs) {
   return openJobs(jobs).filter(j => j.sov_view && j.sov_view.present);
 }
 
-// Import's Quantities done card (M1): a job, then a CSV or Excel file (or rows pasted), a preview
-// row by row, and Add to the schedule of values for the rows that can go on.
-export function qtyImportHtml() {
-  const jobs = qtyJobs(state.jobs);
-  if (!jobs.length) return emptyState("No job has a schedule of values", "", `<button class="btn" data-action="nav" data-view="jobs">Go to Jobs</button>`);
+// The Quantities import on a job's schedule card (M1): a CSV or Excel file (or rows pasted), a
+// preview row by row, and Add to the schedule of values for the rows that can go on.
+export function qtyImportHtml(jobId) {
+  const jobs = qtyJobs(state.jobs).filter(j => j.id === jobId);
+  if (!jobs.length) return "";
   const done = qtyResult ? `<div class="qty-result">
       <p><strong>${qtyResult.added.length} line${qtyResult.added.length === 1 ? "" : "s"} added${qtyResult.number ? ` to ${qtyResult.number}` : ""}.</strong></p>
       ${qtyResult.added.map(a => `<div class="list-item">${a.line}: +${a.add} (now ${a.new_total})</div>`).join("")}
       ${qtyResult.not_added.length ? `<h3>Not added</h3>${qtyResult.not_added.map(r => `<div class="list-item">Row ${r.n} (${r.what}): ${r.problem}</div>`).join("")}` : ""}
-      ${qtyResult.job_id ? `<div class="form-inline"><button class="btn small secondary" data-action="open-job" data-id="${qtyResult.job_id}">Open the job</button></div>` : ""}
     </div>` : "";
   if (qtyPreview) {
     const p = qtyPreview;
@@ -66,11 +66,17 @@ export function qtyImportHtml() {
       <div class="form-inline">${p.can_add ? `<button class="btn" data-action="qty-apply">Add ${p.can_add} to the schedule of values</button>` : ""}<button class="btn secondary" data-action="qty-cancel">Cancel</button></div>`;
   }
   return `${done}<div data-form-key="qtyimport">
-      <div class="form-row">${field({ form: "qtyimport", name: "job", id: "qty-import-job", label: "Job", value: jobs.length === 1 ? unesc(jobs[0].id) : "",
-        options: [["", "Pick a job…"], ...jobs.map(j => [unesc(j.id), `${unesc(j.name)} (${unesc(j.code)})`])] })}</div>
+      <input type="hidden" id="qty-import-job" name="job" data-field="job" value="${jobs[0].id}">
       <textarea id="qty-csv" data-field="csv" rows="4" class="full-input" placeholder="Item or description, and the quantity this period (a lump sum as % done)" aria-label="Quantities this period">${esc(draftValue("qtyimport", "csv"))}</textarea>
     </div>
-    <div class="form-inline"><button class="btn small" data-action="qty-read">Read quantities</button><button class="btn small secondary" data-action="qty-choose-file">Choose the file</button></div>`;
+    <div class="form-inline"><button class="btn small" data-action="qty-read">Read quantities</button><button class="btn small secondary" data-action="qty-choose-file">Choose the file</button><button class="btn small secondary" data-action="qty-close">Cancel</button></div>`;
+}
+
+// On the job's schedule card: Import quantities, which opens the import for this job.
+export function qtyImportForJob(j) {
+  if (j.closed || !(j.sov_view && j.sov_view.present)) return "";
+  if (formOpen.qtyimport !== j.id) return `<button class="btn small secondary" data-action="qty-open" data-id="${j.id}">Import quantities</button>`;
+  return `<div class="qty-import" id="qty-import"><h3>Import quantities</h3>${qtyImportHtml(j.id)}</div>`;
 }
 
 // Send the sheet for a preview: nothing changes on the server until Add is tapped.
@@ -92,21 +98,6 @@ function qtyJobPicked() {
 
 const MAX_QTY_XLSX = 700 * 1024;   // base64 of it has to fit in a 1 MB request, as on Payments
 
-function sovPickerHtml() {
-  const open = state.jobs.filter(j => !j.closed);
-  if (!open.length) return `<p class="sub">Add a job first; its schedule of values is pasted on the job page.</p>`;
-  // Only a job whose schedule can still be set (no pay app yet, work not done): picking another
-  // would open a schedule that can't change (D4, sov_view.editable from domain._sov_view).
-  const ready = open.filter(j => j.sov_view && j.sov_view.editable);
-  if (!ready.length) return `<p class="sub">Every open job has a pay app out or its work done, so its schedule of values is set.</p>`;
-  return `<p class="sub">Paste the lines from your estimate, a spreadsheet or a PDF onto a job's schedule. Set it before the job's first pay app.</p>
-      <div class="form-inline">
-        <label for="sov-import-job" class="inline-label">Job</label>
-        <select id="sov-import-job">${ready.map(j => `<option value="${j.id}">${j.name} (${j.code})</option>`).join("")}</select>
-        <button class="btn small" data-action="import-sov">Open its schedule</button>
-      </div>`;
-}
-
 // The PDF and the QuickBooks file of one sent pay app.
 export function sentPayAppRow(r) {
   return `<tr><td><a href="${pathFor("payapp-detail", r.job_id, r.invoice_id)}" data-action="open-payapp" data-job="${r.job_id}" data-inv="${r.invoice_id}">${r.number}</a></td>
@@ -121,23 +112,15 @@ export const views = {
     return `
       <h1>Import</h1>
       <div class="card">
-        <h2>Files and photos</h2>
+        <h2>Upload documents and photos to the Inbox</h2>
         ${dropzoneHtml()}
       </div>
       <div class="card">
-        <h2>Paste an email, a text thread, or notes</h2>
+        <h2>Paste an email, text thread or site notes</h2>
         ${pasteBoxHtml()}
       </div>
       ${qboCardHtml(true)}
       ${paymentsImportHtml()}
-      <div class="card" id="qty-import">
-        <h2>Quantities done</h2>
-        ${qtyImportHtml()}
-      </div>
-      <div class="card" id="sov-import">
-        <h2>Schedule of values</h2>
-        ${sovPickerHtml()}
-      </div>
       <p class="sub">Emails and texts forwarded to Duracash arrive in the <a href="/communications" data-action="nav" data-view="inbox">Inbox</a>.</p>
     `;
   },
@@ -165,18 +148,18 @@ export const views = {
       </div>
       <div class="card" id="export-payapps">
         <h2>Sent pay apps</h2>
-        <div class="filter-bar">
+        ${jobFilterShown(state.jobs) ? `<div class="filter-bar">
           <label for="sent-filter" class="inline-label">Job</label>
           <select id="sent-filter" data-sent-filter="1">
             <option value="all">All jobs</option>
             ${jobFilterOptions(state.jobs, sentJobFilter)}
           </select>
-        </div>
+        </div>` : ""}
         ${rows.length ? `<div class="table-wrap"><table>
           <tr><th>Pay app</th><th>Job</th><th>Sent</th><th>Amount</th><th>Status</th><th>Download</th></tr>
           ${rows.map(sentPayAppRow).join("")}
         </table></div>${moreButton("sentpayapps", page)}`
-        : !page ? `<p class="sub">Loading…</p>` : emptyState("No pay apps sent yet")}
+        : !page ? `<p class="sub">Loading…</p>` : emptyState("No pay apps sent yet", "", `<button class="btn" data-action="nav" data-view="payapps">${termText("Pay apps")}</button>`)}
       </div>
       <div class="card" id="export-calendar">
         <h2>Calendar feed</h2>
@@ -239,15 +222,6 @@ export const actions = {
     render();
   },
   "qty-cancel": () => { qtySent = null; qtyPreview = null; render(); },
-  // The job's schedule card, opened for pasting: Set up, or Edit when it has one.
-  "import-sov": () => {
-    const id = document.getElementById("sov-import-job")?.value || "";
-    if (!id) { toast("Pick a job first."); return; }
-    nav("job", id);
-    const card = document.getElementById("sov-card");
-    if (!card) return;
-    card.querySelector('[data-action="sov-start"]')?.click();
-    (document.getElementById("sov-paste") || card).scrollIntoView({ block: "center" });
-    document.getElementById("sov-paste")?.focus();
-  },
+  "qty-open": (el, id) => { qtySent = null; qtyPreview = null; qtyResult = null; formOpen.qtyimport = id; render(); },
+  "qty-close": () => { formOpen.qtyimport = false; clearForm("qtyimport"); render(); },
 };

@@ -23,7 +23,7 @@ class TodayRowsTests(unittest.TestCase):
     def setUp(self):
         self.state = server.empty_state("Pine Builders")
         self.job = domain.create_job(self.state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St",
-                                     approver="Dana", ap_email="dana@example.com")
+                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner")
         self.payer = self.state["payers"][0]
 
     def rows(self, now=NOW):
@@ -52,14 +52,14 @@ class TodayRowsTests(unittest.TestCase):
 
     def test_new_job(self):
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("new_job", 5, "Not billed yet", "copper", "Bill progress"))
-        self.assertEqual(r["text"], "Porch rebuild has no pay app yet. Bill the work done so far, or mark it done.")
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("new_job", 5, "Not billed yet", "copper", "Progress pay app"))
+        self.assertEqual(r["text"], "Porch rebuild has no pay app yet. Bill the work done so far with Progress pay app, or use Final pay app.")
         self.assertEqual((r["job_id"], r["job"], r["payer"], r["path"]), (self.job["id"], "Porch rebuild", "Dana Lee", f"/jobs/{self.job['id']}"))
 
     def test_blocked_by_paperwork(self):
         inv = self.draft()
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"]), ("blocked", 3, "Needs paperwork", "amber"))
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"]), ("blocked", 3, "Needs supporting documents", "amber"))
         self.assertEqual(r["text"], "Signed contract is missing. And 3 more.")
         self.assertEqual(r["button"], "Add 4 missing documents")
         self.assertEqual((r["invoice_id"], r["co_id"]), (inv["id"], ""))
@@ -78,26 +78,26 @@ class TodayRowsTests(unittest.TestCase):
         self.clear_packet(inv)
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("ready", 1, "Ready to send", "green", "Review & send"))
-        self.assertEqual(r["text"], f"{inv['number']} for $4,000.00 to Dana. Check what goes out, then approve.")
+        self.assertEqual(r["text"], f"{inv['number']} for $4,000.00 to Dana is ready. Review & send.")
         self.assertEqual(r["invoice_id"], inv["id"])
 
     def test_waiver_due(self):
         self.job["waiver_due"] = True
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("waiver", 2, "Waiver due", "amber", "Review waiver"))
-        self.assertEqual(r["text"], "Paid in full: the client is waiting for the lien waiver.")
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("waiver", 2, "Waiver due", "amber", "Choose waiver and send"))
+        self.assertEqual(r["text"], "Paid in full: the client is waiting for the lien waiver. Choose waiver and send.")
 
     def test_finished_work_not_billed(self):
         self.draft()["status"] = "void"
         self.job["work_status"] = "complete"
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["button"]), ("not_billed", 5, "Not billed", "Draft pay app"))
-        self.assertEqual(r["text"], "$4,000.00 of finished work has no pay app yet. Drafting sends nothing.")
+        self.assertEqual(r["text"], "$4,000.00 of finished work isn't billed. Draft pay app.")
 
     def test_cutoff_due_soon(self):
         self.payer["payapp_due_day"] = 31
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("due_soon", 1.5, "Due soon", "amber", "Bill progress"))
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("due_soon", 1.5, "Due soon", "amber", "Progress pay app"))
         self.assertEqual(r["text"], "Record this month's progress and draft the pay app. Pay app due to Dana Lee by Oct 31, 2026.")
         # A cutoff also lifts a blocked job's row, and says so.
         self.draft()
@@ -144,7 +144,7 @@ class TodayRowsTests(unittest.TestCase):
         self.state["inbox"] = [{"id": "in-1", "status": "new", "source": "sms", "from": "+15555550123",
                                 "text": "Porch is done\nall cleaned up", "says_done_job_id": self.job["id"]}]
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["button"], r["item_id"]), ("says_done", 0, "Job's done?", "Mark done and draft", "in-1"))
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["button"], r["item_id"]), ("says_done", 0, "Job's done?", "Final pay app", "in-1"))
         self.assertEqual(r["text"], "Text message from +15555550123: Porch is done")
 
     def test_inbox_item_for_a_job(self):
@@ -153,7 +153,7 @@ class TodayRowsTests(unittest.TestCase):
                                 "match_reason": "names the job"},
                                {"id": "in-3", "status": "filed", "subject": "Old", "suggested_job_id": self.job["id"]}]
         r = self.only()
-        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("inbox", 6, "Inbox", "", "Add to this job"))
+        self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("inbox", 6, "Inbox", "", "Add to This Job"))
         self.assertEqual((r["text"], r["note"], r["item_id"], r["path"]), ("Signed CO 3", "names the job", "in-2", "/communications"))
         # The kind it will be filed as goes with the row, to show and change there (Oct 23 note #46).
         self.assertEqual(r["item_kind"], "note")
@@ -167,21 +167,21 @@ class TodayRowsTests(unittest.TestCase):
     # ---------- one rule set: the page, the email and the job ----------
 
     def test_most_urgent_first(self):
-        other = domain.create_job(self.state, "Bath", "Dana Lee", 500_000, address="2 Elm St")
+        other = domain.create_job(self.state, "Bath", "Dana Lee", 500_000, address="2 Elm St", approver="Bath", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.record_progress(self.state, other["id"], 100_000)
         self.clear_packet(other["invoices"][-1])
         self.assertEqual([r["kind"] for r in self.rows()], ["ready", "new_job"])
 
     def test_snapshot_sends_the_rows_the_email_lists(self):
         inv = self.sent()
-        other = domain.create_job(self.state, "Bath", "Dana Lee", 500_000, address="2 Elm St")
+        other = domain.create_job(self.state, "Bath", "Dana Lee", 500_000, address="2 Elm St", approver="Bath", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.record_progress(self.state, other["id"], 100_000)
         self.state["inbox"] = [{"id": "in-2", "status": "new", "source": "email", "subject": "Signed CO 3", "suggested_job_id": self.job["id"]}]
         rows = self.rows()
         self.assertEqual(domain.light_snapshot(self.state, NOW)["today_rows"], rows)
         self.assertEqual([r["kind"] for r in rows], ["blocked", "follow_up", "inbox"])
         subject, body = domain.daily_digest(self.state, "https://app.example", NOW)
-        self.assertEqual(subject, "Due today in Duracash: 1 pay app missing paperwork, 1 follow-up, 1 Inbox item")
+        self.assertEqual(subject, "Due today in Duracash: 1 pay app missing supporting documents, 1 follow-up, 1 Inbox item")
         for r in rows:
             self.assertIn(f"- {r['job']}: {r['label']}. {r['text']}\n  https://app.example{r['path']}", body)
         self.assertIn(inv["number"], body)
@@ -210,6 +210,135 @@ class TodayRowsTests(unittest.TestCase):
 
     # ---------- draws (R6-01) ----------
 
+    # ---------- what comes after billing: the job page's words, in the daily email too (Nov 3) ----------
+
+    def finished_and_paid(self, retainage=0):
+        inv = self.sent()
+        inv.update(status="paid", amount_cents=1_000_000 - retainage, gross_cents=1_000_000, retainage_cents=retainage)
+        self.job["work_status"] = "complete"
+        self.job["completed_value_cents"] = 1_000_000
+        self.job.setdefault("payments", []).append({"id": "p1", "invoice_id": inv["id"], "amount_cents": 1_000_000 - retainage, "reference": "x", "matched_at": iso(NOW)})
+        self.job["waiver_due"] = False
+        self.job["closeout_packet"] = []
+        return inv
+
+    def test_a_draft_with_the_client_is_waiting_on_them_not_ready_to_send(self):
+        inv = self.draft()
+        self.clear_packet(inv)
+        inv.update(pencil_status="sent")
+        r = self.only()
+        self.assertEqual((r["kind"], r["button"]), ("pencil_out", ""))
+        self.assertIn("When they answer, tap Client agreed to the draft or Client wants changes.", r["text"])
+        inv.update(pencil_status="agreed")
+        r = self.only()
+        self.assertEqual((r["kind"], r["button"]), ("ready", "Review & send"))
+        self.assertIn("The client agreed to it. Review & send.", r["text"])
+
+    def test_closeout_missing(self):
+        self.finished_and_paid()
+        self.job["closeout_packet"] = [{"id": "c1", "kind": "punch", "label": "Punch list sign-off", "required": True, "present": False, "blocker": "Punch list sign-off is missing."}]
+        r = self.only()
+        self.assertEqual((r["kind"], r["button"]), ("closeout", "Open closeout documents"))
+        self.assertEqual(r["text"], "Closeout: missing Punch list sign-off. Open closeout documents.")
+        subject, _ = domain.daily_digest(self.state, "", NOW)
+        self.assertIn("1 job missing closeout documents", subject)
+
+    def test_retainage_to_ask_for_and_the_wait_after_asking(self):
+        self.finished_and_paid(retainage=100_000)
+        self.job["closeout_packet"] = []
+        held = domain.job_money(self.job)["retainage_open_cents"]
+        self.assertGreater(held, 0)
+        r = self.only()
+        self.assertEqual((r["kind"], r["button"]), ("retainage", "Ask for retainage"))
+        self.assertEqual(r["text"], f"{domain.money(held)} held back. Closeout documents are in. Ask for retainage.")
+        self.assertIn("1 retainage to ask for", domain.daily_digest(self.state, "", NOW)[0])
+        self.job["last_retainage_chase_at"] = iso(NOW - timedelta(days=1))
+        r = self.only()
+        self.assertEqual((r["kind"], r["button"], r["ball_in_court"], r["due"]), ("retainage_wait", "Record retainage paid", "client", "2026-11-03"))
+        self.assertIn("Ask again from Nov 3, 2026, or Record retainage paid.", r["text"])
+        self.assertIsNone(domain.daily_digest(self.state, "", NOW), "waiting on the client: not in the email")
+        self.job["last_retainage_chase_at"] = iso(NOW - timedelta(days=30))
+        self.assertEqual(self.only()["kind"], "retainage")
+
+    def test_ready_to_finish(self):
+        self.finished_and_paid()
+        r = self.only()
+        self.assertEqual((r["kind"], r["button"], r["text"]), ("finish", "Finish job", "Ready to finish the job. Finish job."))
+        self.job["completed_at"] = iso(NOW - timedelta(days=7))
+        self.assertIn("1 job ready to finish", domain.daily_digest(self.state, "", NOW)[0])
+
+    def test_a_job_to_finish_is_in_the_email_once_a_week(self):
+        self.finished_and_paid()
+        self.job["completed_at"] = iso(NOW)
+        days = [d for d in range(21) if domain.daily_digest(self.state, "", NOW + timedelta(days=d))]
+        self.assertEqual(days, [0, 7, 14], "the row stays on the Dashboard each day")
+        self.assertEqual(self.only(NOW + timedelta(days=1))["kind"], "finish")
+        del self.job["completed_at"]
+        monday = NOW + timedelta(days=(7 - NOW.weekday()) % 7)
+        self.assertIsNotNone(domain.daily_digest(self.state, "", monday), "no date on an older job: Mondays")
+        self.assertIsNone(domain.daily_digest(self.state, "", monday + timedelta(days=1)))
+
+    def test_a_finished_job_held_up_by_an_unsigned_change_order_has_a_row(self):
+        self.finished_and_paid()
+        self.job["change_orders"].append({"id": "co-3", "number": 3, "status": "pending", "included_in_billing": False, "amount_cents": 50_000, "description": "Rail"})
+        r = self.only()
+        self.assertEqual((r["kind"], r["label"], r["tone"], r["button"]), ("finish_held", "Before you finish", "amber", "Open job"))
+        self.assertEqual(r["text"], "Before you finish: CO 3 is not signed yet.")
+        self.job["completed_at"] = iso(NOW)
+        self.assertIn("1 job held up before finishing", domain.daily_digest(self.state, "", NOW)[0])
+        self.assertIsNone(domain.daily_digest(self.state, "", NOW + timedelta(days=1)))
+
+    def test_a_draft_to_a_client_with_no_email_names_the_email(self):
+        inv = self.draft()
+        self.clear_packet(inv)
+        self.payer["ap_email"] = ""
+        self.assertEqual(self.only()["text"], f"{inv['number']} for {domain.money(inv['amount_cents'])} to Dana is ready. Add the pay app email for Dana Lee, then Review & send.")
+
+    def test_a_ticket_filed_from_the_inbox_says_which(self):  # criterion 83
+        import importer
+        for picked, text, expect in (("ticket:delivery", "Tile came", "delivery"), ("ticket:time_sheet", "Crew hours", "time_sheet"),
+                                     ("ticket", "Time sheet week 3", "time_sheet"), ("ticket", "Tile came", "delivery")):
+            item = {"id": f"in-{picked}-{text}", "status": "new", "kind": "note", "subject": "", "text": text, "file_ids": [], "source": "paste", "from": ""}
+            self.state.setdefault("inbox", []).append(item)
+            importer.file_item(self.state, item["id"], self.job["id"], picked, "owner")
+            rec = self.job["records"][-1]
+            self.assertEqual((rec["kind"], rec["ticket_type"]), ("ticket", expect))
+
+    def test_the_pencil_preview_is_what_goes(self):  # criterion 78
+        inv = self.draft()
+        shown = next(i for i in domain.job_view(self.state, self.job)["invoices"] if i["id"] == inv["id"])["pencil_preview"]
+        domain.send_pencil(self.state, self.job["id"], domain.PREVIEW_SENDER)
+        sent = self.state["email_log"][-1]
+        self.assertEqual((sent["subject"], sent["body"]), (shown["subject"], shown["body"]))
+
+    def test_a_missing_document_row_carries_the_item_its_button_lands_on(self):
+        inv = self.draft()
+        r = self.only()
+        self.assertEqual(r["packet_item_id"], inv["packet"][0]["id"])
+        self.assertEqual(r["key"], f"blocked:{self.job['id']}:{inv['id']}", "the assignee stays with the row")
+
+    def test_a_row_held_up_only_by_a_change_order_goes_to_it(self):
+        inv = self.draft()
+        self.clear_packet(inv)
+        self.job["change_orders"].append({"id": "co-2", "number": 2, "status": "pending", "included_in_billing": True, "amount_cents": 50_000, "description": "Rail"})
+        r = self.only()
+        self.assertEqual((r["button"], r["co_id"]), ("Get CO 2 signed", "co-2"))
+        self.assertEqual(r["path"], f"/money/change-order/{self.job['id']}/co-2")
+        inv["packet"][0]["present"] = False
+        r = self.only()
+        self.assertEqual((r["co_id"], r["path"]), ("", f"/money/packet/{self.job['id']}/{inv['id']}"), "with documents missing too, the documents first")
+
+    def test_a_file_waiting_for_a_look_changes_the_button(self):
+        inv = self.draft()
+        self.clear_packet(inv)
+        self.job["records"].append({"id": "r1", "label": "scan.pdf", "file_ids": ["f1"]})
+        inv["packet"][0].update(present=False, attachments=[{"record_id": "r1", "name": "scan.pdf", "unconfirmed": True}])
+        r = self.only()
+        self.assertEqual(r["button"], "Check 1 document")
+        self.assertIn("look at scan.pdf and confirm it", r["text"])
+        inv["packet"][1].update(present=False)
+        self.assertEqual(self.only()["button"], "Add or check 2 documents")
+
     def test_draws_read_draw_on_today_and_in_the_email(self):
         self.state["company"]["billing_style"] = "draws"
         self.payer["payapp_due_day"] = 31
@@ -219,14 +348,15 @@ class TodayRowsTests(unittest.TestCase):
         self.job["work_status"] = "complete"
         self.payer["payapp_due_day"] = None
         r = self.only()
-        self.assertEqual((r["button"], r["text"]), ("Draft draw", "$4,000.00 of finished work has no draw yet. Drafting sends nothing."))
+        self.assertEqual((r["button"], r["text"]), ("Draft draw", "$4,000.00 of finished work isn't billed. Draft draw."))
         subject, _ = domain.daily_digest(self.state, "", NOW)
         self.assertEqual(subject, "Due today in Duracash: 1 job to bill")
 
     def test_draws_leave_names_as_typed(self):
         self.state["company"]["billing_style"] = "draws"
         self.job["name"] = "Pay app test house"
-        self.assertEqual(self.only()["text"], "Pay app test house has no draw yet. Bill the work done so far, or mark it done.")
+        self.assertEqual(self.only()["text"], "Pay app test house has no draw yet. Bill the work done so far with Progress draw, or use Final draw.")
+        self.assertEqual(domain.term_text("Final pay app", "draws"), "Final draw")
         self.assertEqual(domain.term_text("Pay apps and a pay app", "draws"), "Draws and a draw")
         self.assertEqual(domain.term_text("Pay apps and a pay app", "pay_apps"), "Pay apps and a pay app")
         self.assertEqual(domain.term_text("Send pay app to Pay app Co", "draws", ("Pay app Co",)), "Send draw to Pay app Co")

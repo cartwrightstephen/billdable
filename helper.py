@@ -35,6 +35,12 @@ LOCK = threading.Lock()
 
 ANSWER_AT = 0.42      # confident match
 SUGGEST_AT = 0.22     # close enough to offer "did you mean"
+COVER_AT = 0.5        # share of the question's known words an answer must cover (_covers)
+# Words a question picks up on the way that say nothing about what it asks ("... in Duracash"): an
+# answer that doesn't use them isn't missing them (Round 1 hunt). Only the app's own name: "asking"
+# and "today" can be what a question is about ("Why is the app asking me which waiver it is?",
+# "Can I record yesterday's work today?"), so they count as any word does.
+FILLER = {"duracash"}
 
 STOPWORDS = set("""a an the i me my we our you your it its is are was were be been am do does did doing to of in on at for
 from with by about as into than then so and or but if can could would should will shall may might must how what when
@@ -73,8 +79,16 @@ def _stem(word: str) -> str:
     return word
 
 
+# "my client is asking for retainage": someone else asking is how the question is put, not what it
+# is about, so the phrase is left out; the app or Duracash asking ("Why is the app asking me which
+# waiver it is?") is what a question can be about.
+_ASKERS = ("client", "customer", "gc", "owner", "contractor", "sub", "subcontractor", "supplier", "vendor", "architect", "engineer", "payer", "they", "he", "she", "someone", "everyone")
+_REPORTED = re.compile(r"\b(?:" + "|".join(_ASKERS) + r")(?:\s+(?:is|are|was|were|keeps|keep|kept|has been|have been))?\s+asking\b")
+
+
 def tokens(text: str) -> list[str]:
     text = (text or "").lower().replace("’", "'")
+    text = _REPORTED.sub(" ", text)
     text = _SYN_RE.sub(lambda m: " " + SYNONYMS[m.group(1)] + " ", text)
     words = re.findall(r"[a-z0-9]+", text)
     return [_stem(w) for w in words if w not in STOPWORDS and len(w) > 1]
@@ -120,26 +134,57 @@ def _score(q: list[str], entry: dict[str, Any], idf: dict[str, float]) -> float:
     if not qs:
         return 0.0
     w = lambda ts: sum(idf.get(t, math.log(1 + len(idf) or 2)) for t in ts)
-    best = 0.0
+    best, best_tokens = 0.0, set()
     for example in entry.get("questions", []):
         es = set(tokens(example))
         if not es:
             continue
         overlap = w(qs & es)
-        if overlap:
-            best = max(best, overlap / math.sqrt(w(qs) * w(es)))
+        if overlap and overlap / math.sqrt(w(qs) * w(es)) > best:
+            best, best_tokens = overlap / math.sqrt(w(qs) * w(es)), es
     kws = {normalize(k) for k in entry.get("keywords", [])}
     joined = " ".join(q)
-    hits = sum(1 for k in kws if k and (f" {k} " in f" {joined} "))
+    hit = [k for k in kws if k and (f" {k} " in f" {joined} ")]
     # Not capped at 1.0: a keyword hit breaks ties between equally good example matches.
-    return best + 0.12 * min(hits, 3)
+    score = best + 0.12 * min(len(hit), 3)
+    if not _covers(qs, best_tokens | {t for k in hit for t in k.split()}, idf):
+        return min(score, SUGGEST_AT - 0.01)
+    return score
+
+
+def _covers(qs: set[str], matched: set[str], idf: dict[str, float]) -> bool:
+    """Whether an answer covers the question (round 1, item 20). Of the question's words that some
+    answer uses (a job's name is no answer's), it must cover at least COVER_AT of their weight, and
+    the rarest of them, the one that says what the question is about: "my GC wants a notice to
+    owner" is about the notice, which the Client type answer, matching GC and owner, doesn't cover.
+    One that doesn't is neither the answer nor a "Did you mean": the helper says it doesn't know.
+    A FILLER word the answer doesn't use is left out of both."""
+    known = {t for t in qs if t in idf and (t not in FILLER or t in matched)}
+    hit = known & matched
+    if not known:
+        return True
+    if not hit or sum(idf[t] for t in hit) < COVER_AT * sum(idf[t] for t in known):
+        return False
+    missed = known - hit
+    return not missed or max(idf[t] for t in missed) <= max(idf[t] for t in hit)
+
+
+def _says_what_it_needs(question: str, entry: dict[str, Any]) -> bool:
+    """An answer that lists words it needs ("needs") is only the answer to a question that uses one
+    of them, as written, stop words and all: "Why is my GC asking for a waiver?" is not about
+    which waiver to tap. An answer with none lists nothing."""
+    needs = entry.get("needs") or []
+    text = (question or "").lower().replace("’", "'")
+    return not needs or any(re.search(rf"\b{re.escape(n.lower())}(?:s|es|ed|ing|ped|ping)?\b", text) for n in needs)
 
 
 def rank(question: str, kb: list[dict[str, Any]] | None = None) -> list[tuple[float, dict[str, Any]]]:
     kb = kb if kb is not None else load_kb()
     idf = _idf(kb)
     q = tokens(question)
-    return sorted(((_score(q, e, idf), e) for e in kb), key=lambda se: -se[0])
+    # Short of what it needs, an answer is at most a "did you mean", never the answer.
+    scored = [(_score(q, e, idf) if _says_what_it_needs(question, e) else min(_score(q, e, idf), SUGGEST_AT - 0.01), e) for e in kb]
+    return sorted(scored, key=lambda se: -se[0])
 
 
 # ---------- finding the job a question is about ----------
@@ -225,7 +270,7 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
                     actions.append(_follow_up_btn(r))
                 else:
                     actions.append({"type": "path", "path": r["path"], "label": label})
-        return "Here is your To Do, most urgent first:\n" + "\n".join(lines), actions[:6]
+        return "Here is your To do, most urgent first:\n" + "\n".join(lines), actions[:6]
     if name == "money":
         t = snap["totals"]
         billed_month = sum(i["amount_cents"] for j in snap["jobs"] for i in j["invoices"]
@@ -279,8 +324,8 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         if not job["blocked"]:
             # Missing paperwork before there is a draft is what the next pay app will need, not a block.
             return (f"{job['name']} isn't blocked yet. The next {pay_app} will need:\n" + "\n".join(f"- {b}" for b in job["blockers"]),
-                    [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open paperwork"}])
-        return f"{job['name']} is blocked by:\n" + "\n".join(f"- {b}" for b in job["blockers"]), [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Open paperwork"}]
+                    [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Supporting documents"}])
+        return f"{job['name']} is blocked by:\n" + "\n".join(f"- {b}" for b in job["blockers"]), [_job_btn(job), {"type": "packet", "job_id": job["id"], "inv": "", "label": "Supporting documents"}]
     if name == "job_status":
         if not job:
             return None
@@ -376,7 +421,7 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
             reply["text"] = "I'm not sure I understood. Did you mean one of these?"
             reply["suggestions"] = [e["questions"][0] for e in close]
         else:
-            reply["text"] = ("I don't have an answer for that yet. I've saved the question so the Duracash team can add one. "
+            reply["text"] = ("I don't know that yet. I've saved the question so the Duracash team can add an answer. "
                              "Try asking what to do today, who owes you, or how to import an email.")
             reply["suggestions"] = ["What should I do today?", "Who owes me money?", "How do I import emails and texts?"]
     log_id = "q-" + secrets.token_hex(6)
@@ -450,6 +495,8 @@ def save_answer(entry: dict[str, Any], editor: str) -> dict[str, Any]:
         if isinstance(a, dict) and a.get("type") == "nav" and isinstance(a.get("view"), str) and isinstance(a.get("label"), str):
             actions.append({"type": "nav", "view": a["view"][:30], "label": a["label"][:60]})
     answer_id = entry.get("id") or re.sub(r"[^a-z0-9]+", "-", questions[0].lower()).strip("-")[:60] or "answer-" + secrets.token_hex(3)
+    # The words a shipped answer needs in a question stay with it when its text is edited here.
+    needs = next((e.get("needs") for e in _read(SHIPPED_KB) if e.get("id") == str(answer_id)[:60]), None)
     clean = {
         "id": str(answer_id)[:60],
         "category": str(entry.get("category") or "General")[:40],
@@ -462,6 +509,7 @@ def save_answer(entry: dict[str, Any], editor: str) -> dict[str, Any]:
         "follow_ups": [f.strip()[:120] for f in entry.get("follow_ups", []) if isinstance(f, str) and f.strip()][:4],
         "edited_by": editor,
         "edited_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        **({"needs": needs} if needs else {}),
     }
     with LOCK:
         local = _read(LOCAL_KB)

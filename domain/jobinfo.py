@@ -12,11 +12,12 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 __all__ = [
-    "CLIENT_TYPES", "client_type_role", "client_type_of", "START_BACK_DAYS", "START_AHEAD_DAYS", "parse_start_date",
+    "CLIENT_TYPES", "client_type_role", "client_type_of", "START_BACK_DAYS", "START_AHEAD_DAYS", "parse_start_date", "parse_end_date",
     "local_today", "job_started_on", "JOB_STAGES", "job_stage", "job_key_dates", "payer_jobs", "payer_extras",
+    "RETAINAGE_BY_TYPE", "default_retainage_pct",
 ]
 
-# Client type (J2): five kinds of client, each mapped onto the two sets of defaults the app
+# Client type (J2): six kinds of client ("Other" added 10 Nov 2026, Stephen), each mapped onto the two sets of defaults the app
 # already has (the paperwork a new client starts with, follow-up and approval days). The payer
 # keeps role "GC" or "Owner" as before; client_type is the finer word shown on the page.
 CLIENT_TYPES: dict[str, tuple[str, str]] = {
@@ -25,6 +26,7 @@ CLIENT_TYPES: dict[str, tuple[str, str]] = {
     "homeowner": ("Homeowner", "Owner"),
     "sub": ("Another subcontractor (you are a lower tier)", "GC"),
     "public": ("Public agency", "Owner"),
+    "other": ("Other", "Owner"),
 }
 
 
@@ -32,6 +34,21 @@ def client_type_role(client_type: Any) -> str | None:
     """"GC" or "Owner" for a client type, or None when it isn't one."""
     entry = CLIENT_TYPES.get(str(client_type or ""))
     return entry[1] if entry else None
+
+
+# The retainage a client usually holds (round 1, item 1): 10% for a general contractor, a public
+# agency and a higher-tier sub, none for an owner or homeowner, unless the client playbook says.
+RETAINAGE_BY_TYPE = {"gc": 10, "public": 10, "sub": 10}
+
+
+def default_retainage_pct(payer: dict[str, Any] | None) -> int:
+    """The retainage percent a new job for this client starts at: the client playbook's "Usual
+    retainage %" when it has one, else its type's."""
+    payer = payer or {}
+    saved = payer.get("retainage_pct")
+    if isinstance(saved, int) and not isinstance(saved, bool):
+        return saved
+    return RETAINAGE_BY_TYPE.get(client_type_of(payer), 0)
 
 
 def client_type_of(payer: dict[str, Any]) -> str:
@@ -59,6 +76,25 @@ def parse_start_date(value: Any, today: date | None = None) -> str:
     today = today or datetime.now(timezone.utc).date()
     if not today - timedelta(days=START_BACK_DAYS) <= day <= today + timedelta(days=START_AHEAD_DAYS):
         raise GateError("Job not saved.", fields={"started_on": START_MESSAGE})
+    return day.isoformat()
+
+
+# The anticipated end date: a real day, on or after the start and no more than about 10 years ahead.
+END_AHEAD_DAYS = 3653
+END_MESSAGE = "Enter the anticipated end date as a day in the next 10 years, like 2027-03-31."
+
+
+def parse_end_date(value: Any, start: str = "", refusal: str = "Job not saved.", today: date | None = None) -> str:
+    """The anticipated end date as YYYY-MM-DD, or a GateError on its box. start is the job's start."""
+    from domain import GateError
+    try:
+        day = datetime.strptime(str(value or "").strip(), "%Y-%m-%d").date()
+    except ValueError:
+        raise GateError(refusal, fields={"anticipated_end_on": END_MESSAGE})
+    if day > (today or datetime.now(timezone.utc).date()) + timedelta(days=END_AHEAD_DAYS):
+        raise GateError(refusal, fields={"anticipated_end_on": END_MESSAGE})
+    if start and day.isoformat() < start:
+        raise GateError(refusal, fields={"anticipated_end_on": f"Enter an anticipated end date on or after the start date, {start}."})
     return day.isoformat()
 
 
@@ -153,6 +189,7 @@ def job_key_dates(state: dict[str, Any], job: dict[str, Any], payer: dict[str, A
             out.append({"key": key, "label": label, "date": _day(value)})
 
     add("started", "Started", job_started_on(state, job))
+    add("anticipated_end", "Anticipated end", job.get("anticipated_end_on"))
     day = _int_or(payer.get("payapp_due_day"), 0)
     if 1 <= day <= 31 and not job.get("closed") and job.get("work_status") != "complete":
         add("cutoff_this", "Pay app due this month", _cutoff(day, today.year, today.month).isoformat())
@@ -166,7 +203,7 @@ def job_key_dates(state: dict[str, Any], job: dict[str, Any], payer: dict[str, A
     add("payment_due", "Payment due", due[0] if due else "")
     follow = follow_up_due(job, payer) if unpaid and not job.get("closed") else None
     add("follow_up", "Next follow-up", follow.date().isoformat() if follow else "")
-    add("done", "Marked done", job.get("completed_at"))
+    add("done", "Work finished", job.get("completed_at"))
     asked = job.get("last_retainage_chase_at")
     add("retainage_asked", "Retainage asked", asked)
     if asked and not job.get("closed") and job_money(job)["retainage_open_cents"] > 0:
@@ -202,6 +239,8 @@ def payer_extras(state: dict[str, Any], payer: dict[str, Any]) -> None:
     and its paperwork list read the way the server reads it (S11). Its jobs, finished ones too,
     come from GET /api/payers/<id>/jobs when its card is opened, so the page load stays the
     size of the open work however many jobs a client had."""
-    from domain import parse_packet_text
+    from domain import parse_packet_text, playbook_missing
+    payer["playbook_missing"] = playbook_missing(payer)  # read before the type below fills in
     payer["client_type"] = client_type_of(payer)
+    payer["retainage_default"] = default_retainage_pct(payer)   # what New job starts at (round 1, item 1)
     payer["packet_items"] = [] if payer.get("no_paperwork") else parse_packet_text(payer.get("packet") or "")

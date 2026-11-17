@@ -49,7 +49,7 @@ class RateLimited(Exception):
     pass
 
 ROLES = ("owner", "member")
-TOKEN_HOURS = {"reset": 1, "verify": 72, "invite": 7 * 24, "pwchange": 0.25, "login": 1 / 6}
+TOKEN_HOURS = {"reset": 1, "verify": 72, "invite": 7 * 24, "pwchange": 0.25, "login": 1 / 6, "sms": 0.25}
 RESET_MAX_PER_HOUR = 3
 _RESETS: dict[str, list[float]] = {}
 # Emailed 6-digit codes (S2 password change, S7 sign-in from a new device): at most this many
@@ -224,6 +224,11 @@ def user_by_email(email: str) -> dict[str, Any] | None:
     return None
 
 
+def _texts_on(user: dict[str, Any]) -> bool:
+    """Agreed to texts, at a number a texted code proved is theirs."""
+    return bool(user.get("sms_opt_in") and user.get("phone") and user.get("sms_confirmed_phone") == user.get("phone"))
+
+
 def _public(user: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": user["id"],
@@ -239,7 +244,181 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         "two_step": bool(user.get("totp_enabled")),
         "onboarding_dismissed": bool(user.get("onboarding_dismissed")),
         "appearance": _appearance(user.get("appearance")),
+        # Only ever shown to the person: team() and all_users() leave these out.
+        "phone": user.get("phone", ""),
+        "sms_opt_in": _texts_on(user),
+        "sms_stopped": bool(user.get("sms_opt_out_at")) and not user.get("sms_opt_in"),
+        # Agreed before codes existed: texts are off until the number is confirmed.
+        "sms_needs_confirming": bool(user.get("sms_opt_in")) and not _texts_on(user),
+        "reminders": dict(user.get("reminders") or {}),
     }
+
+
+_OWN_ONLY = ("phone", "sms_opt_in", "sms_stopped", "sms_needs_confirming", "reminders")
+
+
+def _listed(user: dict[str, Any]) -> dict[str, Any]:
+    """A person as others see them in a list."""
+    return {k: v for k, v in _public(user).items() if k not in _OWN_ONLY}
+
+
+# ---------- texts and reminders: each person's own choice (Decision 7) ----------
+
+def set_sms(user_id: str, phone: str, opt_in: bool) -> dict[str, Any]:
+    """Keep this person's mobile number (already checked: sms.e164) and whether they agreed to
+    texts. No number means no texts, and agreeing counts only for a number a texted code proved
+    (confirm_sms_code); changing the number means proving the new one, and so does a STOP since. When they agree, the time
+    is kept as the record of it."""
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        was_on = _texts_on(user)
+        if user.get("phone") != phone:
+            user.pop("sms_confirmed_phone", None)
+        agreed = bool(opt_in and phone and user.get("sms_confirmed_phone") == phone and not user.get("sms_opt_out_at"))
+        if agreed and not was_on:
+            user["sms_opt_in_at"] = _iso(_utcnow())
+            user.pop("sms_opt_out_at", None)
+        user["phone"], user["sms_opt_in"] = phone, agreed
+        _save(data)
+        return _public(user)
+
+
+def sms_contact(company_id: str, user_id: str) -> dict[str, Any] | None:
+    """{phone, opted_in} of a person in this company; None for anyone else."""
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
+        return {"phone": user.get("phone", ""), "opted_in": _texts_on(user)} if user else None
+
+
+def sms_proven(user_id: str, phone: str) -> bool:
+    """Has a code texted to this number come back from this person, with the number still theirs?
+    A STOP since undoes it: only a code getting through shows the number takes texts again, and
+    until it does, the page shows texts as stopped rather than on."""
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["id"] == user_id), None)
+        return bool(user and phone and user.get("phone") == phone and user.get("sms_confirmed_phone") == phone and not user.get("sms_opt_out_at"))
+
+
+def issue_sms_code(user_id: str, phone: str) -> str | None:
+    """A 6-digit code proving this number, in place of any earlier one, or None when too many were
+    asked for in the last hour by this person or for this number (so nobody can use it to pester
+    a stranger, whichever accounts they use)."""
+    now = time.monotonic()
+    key = f"sms-to:{phone}"
+    with LOCK:
+        recent = [t for t in _CODES.get(key, []) if now - t < 3600]
+        if len(recent) >= CODES_MAX_PER_HOUR:
+            _CODES[key] = recent
+            return None
+        # Over this person's limit (issue_code's), the code they have stays live.
+        if len([t for t in _CODES.get(f"sms:{user_id}", []) if now - t < 3600]) >= CODES_MAX_PER_HOUR:
+            return None
+        _CODES[key] = recent + [now]
+        data = _load()
+        data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v.get("kind") == "sms" and v.get("user_id") == user_id)}
+        _save(data)
+    return issue_code(user_id, "sms", phone=phone)
+
+
+def sms_code_number(user_id: str, code: Any) -> str:
+    """The number this live code went to; "" when it isn't one."""
+    raw = re.sub(r"\s+", "", str(code or ""))
+    with LOCK:
+        entry = _load()["tokens"].get(_code_key("sms", user_id, raw)) or {}
+        return entry.get("phone", "") if entry.get("kind") == "sms" and entry.get("expires_at", "") > _iso(_utcnow()) else ""
+
+
+def sms_live_number(user_id: str) -> str:
+    """The number this person's live code went to; "" when none is."""
+    now = _iso(_utcnow())
+    with LOCK:
+        return next((v.get("phone", "") for v in _load()["tokens"].values()
+                     if v.get("kind") == "sms" and v.get("user_id") == user_id and v.get("expires_at", "") > now), "")
+
+
+def drop_sms_codes(user_id: str) -> None:
+    with LOCK:
+        data = _load()
+        data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v.get("kind") == "sms" and v.get("user_id") == user_id)}
+        _save(data)
+
+
+def confirm_sms_code(user_id: str, code: Any) -> dict[str, Any]:
+    """The code came back: the number it was texted to is this person's, and texts are on. Wrong
+    tries count as for the emailed codes (CODE_MAX_WRONG)."""
+    raw = re.sub(r"\s+", "", str(code or ""))
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        phone = (data["tokens"].get(_code_key("sms", user_id, raw)) or {}).get("phone", "")
+        if not phone or not _take_code(data, "sms", user_id, raw):
+            _wrong_code(data, "sms", user_id)
+            raise AuthError("That code didn't match, or it has expired. Ask for a new one.")
+        if not _texts_on(user) or user.get("phone") != phone:
+            user["sms_opt_in_at"] = _iso(_utcnow())
+        user.pop("sms_opt_out_at", None)
+        user["phone"], user["sms_confirmed_phone"], user["sms_opt_in"] = phone, phone, True
+        _save(data)
+        return _public(user)
+
+
+def sms_stop(phone: str) -> int:
+    """STOP from this number: texts off for every account that has it, since the Duracash number
+    is shared and Twilio's block covers them all. Returns how many changed."""
+    if not phone:
+        return 0
+    with LOCK:
+        data = _load()
+        people = [u for u in data["users"] if u.get("phone") == phone and u.get("sms_opt_in")]
+        for user in people:
+            user["sms_opt_in"] = False
+            user["sms_opt_out_at"] = _iso(_utcnow())
+        if people:
+            _save(data)
+        return len(people)
+
+
+def member_by_phone(company_id: str, phone: str) -> dict[str, Any] | None:
+    """The team member with this number, to say who a text came from."""
+    if not phone:
+        return None
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["company_id"] == company_id and u.get("phone") == phone), None)
+        return _listed(user) if user else None
+
+
+def session_public(user_id: str) -> dict[str, Any] | None:
+    """This person as they see themselves, read fresh."""
+    with LOCK:
+        user = next((u for u in _load()["users"] if u["id"] == user_id), None)
+        return _public(user) if user else None
+
+
+def set_reminders(user_id: str, prefs: dict[str, list[str]]) -> dict[str, Any]:
+    with LOCK:
+        data = _load()
+        user = _user(data, user_id)
+        user["reminders"] = {**(user.get("reminders") or {}), **prefs}
+        _save(data)
+        return _public(user)
+
+
+# Someone new (signing up, or joining by invite) gets every reminder in the app; email and text
+# stay off until they pick them (round 1, item 19). Accounts from before keep what they chose.
+NEW_USER_REMINDERS = {"dates": ["app"], "missing": ["app"], "co_records": ["app"]}
+
+
+def new_user_reminders() -> dict[str, list[str]]:
+    return {kind: list(channels) for kind, channels in NEW_USER_REMINDERS.items()}
+
+
+def reminder_people(company_id: str) -> list[dict[str, Any]]:
+    """The people in this company who turned on at least one reminder."""
+    with LOCK:
+        users = [u for u in _load()["users"] if u["company_id"] == company_id
+                 and any((u.get("reminders") or {}).values())]
+        return [_public(u) for u in users]
 
 
 # ---------- appearance (G9): each person's theme and accent ----------
@@ -276,8 +455,10 @@ def create_user(
     role: str = "owner",
     enforce_policy: bool = True,
     terms_version: str | None = None,
+    reminders: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
-    """Create a user. enforce_policy=False is only for the built-in demo account."""
+    """Create a user. enforce_policy=False is only for the built-in demo account. reminders: their
+    starting choices (sign-up passes new_user_reminders())."""
     if not isinstance(email, str) or not isinstance(password, str) or not isinstance(name, str):
         raise ValueError("Email, password and name must be text.")
     email = email.strip().lower()
@@ -305,6 +486,8 @@ def create_user(
     if terms_version:
         user["terms_version"] = terms_version
         user["terms_accepted_at"] = _iso(_utcnow())
+    if reminders:
+        user["reminders"] = {kind: list(channels) for kind, channels in reminders.items()}
     with LOCK:
         data = _load()
         if any(u["email"] == email for u in data["users"]):
@@ -501,10 +684,10 @@ def _code_key(kind: str, user_id: str, code: str) -> str:
     return _digest(f"{kind}:{user_id}:{code}")
 
 
-def issue_code(user_id: str, kind: str) -> str | None:
-    """A new 6-digit code of this kind ("pwchange" or "login") for this person, or None when too
-    many were asked for in the last hour. Only its hash is kept; older ones stay valid until used
-    or expired."""
+def issue_code(user_id: str, kind: str, **fields: Any) -> str | None:
+    """A new 6-digit code of this kind ("pwchange", "login" or "sms") for this person, or None when
+    too many were asked for in the last hour. Only its hash is kept; older ones stay valid until
+    used or expired."""
     now = time.monotonic()
     with LOCK:
         key = f"{kind}:{user_id}"
@@ -523,6 +706,7 @@ def issue_code(user_id: str, kind: str) -> str | None:
         data["tokens"][_code_key(kind, user_id, code)] = {
             "kind": kind, "id": f"{kind}-" + secrets.token_hex(4), "user_id": user_id,
             "created_at": _iso(_utcnow()), "expires_at": _iso(_utcnow() + timedelta(hours=TOKEN_HOURS[kind])),
+            **fields,
         }
         _save(data)
         return code
@@ -765,13 +949,19 @@ def is_company_admin(user_id: str, company_id: str) -> bool:
     return bool(admin and admin["id"] == user_id)
 
 
+def owner_names(company_id: str) -> list[str]:
+    """Who in this company a person can ask for what only an owner may do."""
+    with LOCK:
+        return [u.get("name") or u.get("email", "") for u in _load()["users"] if u["company_id"] == company_id and u.get("role", "owner") == "owner"]
+
+
 def team(company_id: str) -> dict[str, Any]:
     with LOCK:
         data = _load()
         _prune_tokens(data)
         admin = _admin(data, company_id)
         users = [
-            {**_public(u), "company_admin": bool(admin and admin["id"] == u["id"]), "created_at": u.get("created_at", "")}
+            {**_listed(u), "company_admin": bool(admin and admin["id"] == u["id"]), "created_at": u.get("created_at", "")}
             for u in data["users"] if u["company_id"] == company_id
         ]
         invites = [
@@ -854,6 +1044,7 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
             # They received the invite link at this address, as with a reset link.
             "email_verified": True,
             "verified_at": _iso(_utcnow()),
+            "reminders": new_user_reminders(),
         }
         if terms_version:
             user["terms_version"] = terms_version
@@ -1014,7 +1205,7 @@ def delete_company_users(company_id: str) -> int:
 
 def all_users() -> list[dict[str, Any]]:
     with LOCK:
-        return [{**_public(u), "created_at": u.get("created_at", "")} for u in _load()["users"]]
+        return [{**_listed(u), "created_at": u.get("created_at", ""), "sms_opt_in": bool(u.get("sms_opt_in"))} for u in _load()["users"]]
 
 
 def owner_emails(company_id: str) -> list[str]:

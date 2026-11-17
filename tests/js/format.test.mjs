@@ -3,6 +3,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { centsFrom, percentFrom, dollarsText, plainNumber, esc, unesc, escDeep, money, words, emailStatusHtml, emailOutcome } from "../../static/js/format.js";
 import { sovNum } from "../../static/js/sov.js";
+import { setAccount } from "../../static/js/state.js";
+
+setAccount({ mailReady: true });   // Send again shows only where the server sends mail (payapp-page.test.mjs)
 
 test("centsFrom reads dollars the way people type them", () => {
   assert.equal(centsFrom("$12,500.50").cents, 1250050);

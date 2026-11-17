@@ -1,7 +1,7 @@
 """Read a contract into the New job and Add client forms (Stephen's Oct 29 review, G4 and S12).
 
 A contract comes as a Word file (.docx), a PDF with text in it, a .txt, or pasted text. The text
-is read with the standard library only: zipfile and xml.etree for .docx; zlib to inflate a PDF's
+is read with the standard library only: zipfile and expat for .docx; zlib to inflate a PDF's
 compressed streams, then the strings its text operators (Tj, TJ, ' and ") draw. Plain rules, like
 the rest of importer.py, then look for the contract sum, retainage, the contract or PO number,
 the project's name and address, the client, the start and completion dates, the day pay apps
@@ -20,7 +20,7 @@ import time
 import zlib
 from datetime import date, datetime
 from typing import Any
-from xml.etree import ElementTree
+from xml.parsers import expat
 
 import sov
 from domain.validate import check_field, normalize_phone, split_address
@@ -29,7 +29,10 @@ NO_TEXT = "Couldn't read text from this file; fill the fields in by hand."
 NOT_OPENED = "Couldn't open this file. Save it again as a Word file or a PDF, or paste the text."
 WRONG_TYPE = "Choose a Word file (.docx), a PDF or a .txt file, or paste the text."
 MAX_TEXT = 400_000          # characters kept of a contract's text
-MAX_PART = 30 * 1024 * 1024  # the most a .docx part or a PDF stream may inflate to
+MAX_PART = 12 * 1024 * 1024  # the most a .docx's document may inflate to: a 300-page contract is about 5 MB
+MAX_ELEMENTS = 600_000      # the most elements a .docx's document may have, so empty ones can't keep the server busy
+MAX_DEPTH = 200             # and how deep they may go
+MAX_ZIP_DIRECTORY = 1024 * 1024  # how big a .docx's list of parts may be; a real one is a few KB
 MIN_LETTERS = 40            # fewer letters than this is no text (a scan's stray marks)
 
 
@@ -42,10 +45,10 @@ def read(name: str, data: bytes, company_name: str = "") -> dict[str, Any]:
         elif ext == ".pdf":
             text = pdf_text(data)
         elif ext in {".txt", ".text", ".md"}:
-            text = data.decode("utf-8", "replace")
+            text = plain_text(data)
         else:
             return {"ok": False, "error": WRONG_TYPE}
-    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, ValueError):
+    except (zipfile.BadZipFile, KeyError, ValueError):
         return {"ok": False, "error": NOT_OPENED if ext == ".docx" else NO_TEXT}
     except Exception:  # a file this reader doesn't understand is never a crash
         return {"ok": False, "error": NO_TEXT}
@@ -57,39 +60,105 @@ def read(name: str, data: bytes, company_name: str = "") -> dict[str, Any]:
 
 # ---------- Word ----------
 
-W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main}"   # as expat names a tag
+
+
+class _Enough(Exception):
+    """MAX_TEXT characters have been read: the rest is left."""
+
+
+class _WordReader:
+    """A document's lines, as the parser goes by: no tree is built, so what it holds at any moment
+    is the text kept so far and one row's cells, however big the file inflates."""
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+        self.runs: list[str] = []    # the paragraph being read
+        self.cells: list[list[str]] = []   # a table cell's paragraphs, innermost last
+        self.rows: list[list[str]] = []    # a table row's cells, innermost last
+        self.in_text = self.depth = self.elements = self.kept = 0
+
+    def start(self, tag: str, attrs: Any) -> None:
+        self.elements += 1
+        self.depth += 1
+        if self.elements > MAX_ELEMENTS or self.depth > MAX_DEPTH:
+            raise ValueError("too big")
+        if tag == W + "t":
+            self.in_text += 1
+        elif tag == W + "tab":
+            self.runs.append("\t")
+        elif tag in (W + "br", W + "cr"):
+            self.runs.append("\n")
+        elif tag == W + "tr":
+            self.rows.append([])
+        elif tag == W + "tc":
+            self.cells.append([])
+
+    def end(self, tag: str) -> None:
+        self.depth -= 1
+        if tag == W + "t":
+            self.in_text -= 1
+        elif tag == W + "p":
+            (self.cells[-1] if self.cells else self.lines).append("".join(self.runs))
+            self.runs.clear()
+        elif tag == W + "tc" and self.cells:
+            cell = " ".join(self.cells.pop()).strip()
+            if self.rows:
+                self.rows[-1].append(cell)
+        elif tag == W + "tr" and self.rows:
+            self.lines.append("\t".join(self.rows.pop()))
+
+    def chars(self, text: str) -> None:
+        if self.in_text:
+            self.runs.append(text)
+            self.kept += len(text)
+            if self.kept >= MAX_TEXT:
+                raise _Enough()
+
+
+def _refuse_doctype(*_: Any) -> None:
+    raise ValueError("entities")  # a Word file never has them; refusing them keeps the parser safe
+
+
+def _zip_directory_size(data: bytes) -> int:
+    """What the zip's end record says its list of parts takes up (zipfile reads that much, and
+    builds an object per part). 0 when there's no end record: zipfile then says it's no zip."""
+    at = data.rfind(b"PK\x05\x06", max(0, len(data) - 66_000))
+    return int.from_bytes(data[at + 12:at + 16], "little") if at >= 0 else 0
 
 
 def docx_text(data: bytes) -> str:
-    """The document's paragraphs, one per line; a table's rows as tab-separated cells."""
+    """The document's paragraphs, one per line; a table's rows as tab-separated cells. Stops at
+    MAX_TEXT characters; a file past the size, element or depth limits raises ValueError."""
+    if _zip_directory_size(data) > MAX_ZIP_DIRECTORY:
+        raise ValueError("too big")
+    reader = _WordReader()
+    parser = expat.ParserCreate(namespace_separator="}")
+    parser.buffer_text = True
+    parser.StartElementHandler, parser.EndElementHandler = reader.start, reader.end
+    parser.CharacterDataHandler = reader.chars
+    parser.StartDoctypeDeclHandler = _refuse_doctype
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         info = z.getinfo("word/document.xml")
         if info.file_size > MAX_PART:
             raise ValueError("too big")
-        xml = z.read(info)
-    if b"<!DOCTYPE" in xml or b"<!ENTITY" in xml:
-        raise ValueError("entities")  # a Word file never has them; refusing them keeps the parser safe
-    body = ElementTree.fromstring(xml).find(W + "body")
-    lines: list[str] = []
-    for el in list(body) if body is not None else []:
-        if el.tag == W + "p":
-            lines.append(_para(el))
-        elif el.tag == W + "tbl":
-            for tr in el.iter(W + "tr"):
-                lines.append("\t".join(" ".join(_para(p) for p in tc.iter(W + "p")).strip() for tc in tr.findall(W + "tc")))
-    return "\n".join(lines)
+        try:
+            with z.open(info) as part:
+                while True:
+                    chunk = part.read(64 * 1024)
+                    parser.Parse(chunk, not chunk)
+                    if not chunk:
+                        break
+        except expat.ExpatError as exc:
+            raise ValueError("not XML") from exc
+        except _Enough:
+            pass
+    return "\n".join(reader.lines + ["".join(reader.runs)] if reader.runs else reader.lines)
 
 
-def _para(p: ElementTree.Element) -> str:
-    out = []
-    for el in p.iter():
-        if el.tag == W + "t" and el.text:
-            out.append(el.text)
-        elif el.tag == W + "tab":
-            out.append("\t")
-        elif el.tag in (W + "br", W + "cr"):
-            out.append("\n")
-    return "".join(out)
+def plain_text(data: bytes) -> str:
+    """A text file's first MAX_TEXT characters (at most four bytes each), without decoding the rest."""
+    return data[:MAX_TEXT * 4].decode("utf-8", "replace")[:MAX_TEXT]
 
 
 # ---------- PDF ----------

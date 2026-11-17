@@ -1,10 +1,11 @@
 // The job page's change orders: the sign controls, the New change order card and its form.
+import { focusAfterDraw } from "../dom.js";
 import { money, centsFrom, fmtDate, unesc } from "../format.js";
 import { coSignature, RECORD_KINDS } from "../jobs.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, formOpen, onSessionEnd } from "../state.js";
-import { post, render, toggleForm } from "../app-core.js";
+import { post, render, toggleForm, may } from "../app-core.js";
 
 
 // The change order just made from the job page's New change order card, shown there with
@@ -32,7 +33,7 @@ export function localToday() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 // Record kinds that can back up a change order: quotes, supplier invoices, T&M sheets, photos.
-const BACKUP_KINDS = new Set(["note", "photo", "contract", "change_order", "ticket", "supplier_invoice", "stored", "other"]);
+const BACKUP_KINDS = new Set(["note", "conversation", "photo", "contract", "change_order", "ticket", "supplier_invoice", "stored", "other"]);
 
 // The amber pill when work began before the client signed (M9); it stays once signed, as a record.
 export function workStartedPill(co) {
@@ -48,15 +49,17 @@ export function coSignControls(j, co, extra = "", opts = {}) {
   const key = `cosign-${co.id}`;
   const records = j.records || [];
   // The signed copy is most likely the newest change-order record (R3-06).
-  const newestCo = records.filter(r => r.kind === "change_order").pop();
+  const filed = co.signed_copy && records.find(r => r.id === co.signed_copy.record_id);
+  const newestCo = filed || records.filter(r => r.kind === "change_order").pop();
   return `${flag}<div class="form-inline">
       <button class="btn small" data-action="request-co-signature" data-id="${j.id}" data-co="${co.id}">${co.signing_page ? "Send the signing link again" : "Request signature"}</button>
-      <button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="${!!formOpen[key]}">Signed on paper…</button>
-      <button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>
+      ${may("approve-co") ? `<button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="${!!formOpen[key]}">Signed on paper…</button>` : ""}
+      ${may("withdraw-co") ? `<button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>` : ""}
       ${extra}
     </div>
+    ${co.signed_copy ? `<p class="sub co-signed-copy">Signed copy filed by ${co.signed_copy.by}: ${co.signed_copy.label}${co.signed_copy.signer_name ? `, signed by ${co.signed_copy.signer_name}` : ""}${co.signed_copy.signed_on ? ` on ${fmtDate(co.signed_copy.signed_on)}` : ""}.${may("approve-co") ? "" : " Someone who can approve change orders has to mark it signed."}</p>` : ""}
     ${co.signing_page ? `<p class="sub">Signing page: <a href="/api/jobs/${j.id}/co/${co.id}/page" target="_blank" rel="noopener">open it</a>${co.signature_requested_at ? ` · requested ${fmtDate(co.signature_requested_at)}` : ""}</p>` : ""}
-    ${formOpen[key] ? `<div class="co-paper" data-form-key="${key}">${formErrorLine(key)}
+    ${formOpen[key] && may("approve-co") ? `<div class="co-paper" data-form-key="${key}">${formErrorLine(key)}
         <div class="form-grid">
           ${field({ form: key, name: "signer_name", id: `cosign-name-${co.id}`, label: "Signed by (name)", required: true, autocomplete: "off" })}
           ${field({ form: key, name: "signed_on", id: `cosign-date-${co.id}`, label: "Date signed", type: "date", required: true, attrs: `max="${localToday()}"` })}
@@ -103,7 +106,7 @@ export function coFormFields(j) {
       ${field({ form: "newco", name: "reason", id: "co-reason", label: "Reason", required: true, options: [["", "Pick why the scope changed…"], ...Object.entries(CO_REASONS)] })}
       ${field({ form: "newco", name: "description", id: "co-desc", label: "Description (required for Other)", wide: true, multiline: true })}
       ${field({ form: "newco", name: "contract_ref", id: "co-ref", label: "Contract section or original scope it changes (optional)", wide: true, placeholder: "Section 09 30 00, tile in baths 1-3" })}
-      ${field({ form: "newco", name: "pricing", id: "co-pricing", label: "Pricing", options: Object.entries(CO_PRICING) })}
+      ${field({ form: "newco", name: "pricing", id: "co-pricing", label: "Pricing", options: Object.entries(CO_PRICING), buttons: true })}
       ${moneyField({ form: "newco", name: "amount_cents", id: "co-amt", label: coItemRows ? "Amount ($), blank adds up the cost lines" : "Amount ($), negative for a credit", inputmode: "text" })}
     </div>
     <fieldset class="co-items"><legend>Cost breakdown (optional)</legend>
@@ -111,10 +114,10 @@ export function coFormFields(j) {
       ${coItemRows < MAX_CO_ITEMS ? `<button class="btn small secondary" data-action="co-add-item">Add a cost line</button>` : ""}
     </fieldset>
     <div class="form-grid">
-      ${field({ form: "newco", name: "schedule_days", id: "co-days", label: "Schedule change, days (optional)", inputmode: "numeric", placeholder: "3" })}
+      ${field({ form: "newco", name: "schedule_days", id: "co-days", label: "Schedule change, days (optional)", inputmode: "numeric" })}
       ${field({ form: "newco", name: "work_started_on", id: "co-started", label: "Work started on (optional)", type: "date", attrs: `max="${localToday()}"` })}
     </div>
-    ${backup.length ? `<fieldset class="co-backup"><legend>Backup from the job record (optional)</legend>
+    ${backup.length ? `<fieldset class="co-backup"><legend>Backup from the job records (optional)</legend>
       ${backup.map(r => `<label class="co-backup-item"><input type="checkbox" data-co-backup="${r.id}"${coBackup.has(unesc(r.id)) ? " checked" : ""}> <span class="pill">${termText(RECORD_KINDS[unesc(r.kind)] || r.kind)}</span> ${r.label}</label>`).join("")}
     </fieldset>` : ""}`;
 }
@@ -162,13 +165,13 @@ export async function addChangeOrder(jobId) {
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
   "include-co": (el, id) => post(`/api/jobs/${id}/include-co/${el.dataset.co}`),
-  "new-co": () => { newCoMade = null; coItemRows = 0; coBackup = new Set(); toggleForm("newco"); requestAnimationFrame(() => document.getElementById("co-title")?.focus()); },
+  "new-co": () => { newCoMade = null; coItemRows = 0; coBackup = new Set(); toggleForm("newco"); focusAfterDraw(() => document.getElementById("co-title")); },
   "new-co-done": () => { newCoMade = null; coItemRows = 0; coBackup = new Set(); formOpen.newco = false; clearForm("newco"); render(); },
   "co-add-item": () => {
     readBackup();
     coItemRows = Math.min(MAX_CO_ITEMS, coItemRows + 1);
     render();
-    requestAnimationFrame(() => document.getElementById(`co-item-label-${coItemRows - 1}`)?.focus());
+    focusAfterDraw(() => document.getElementById(`co-item-label-${coItemRows - 1}`));
   },
   "add-co-here": async (el, id) => {
     const r = await addChangeOrder(id);

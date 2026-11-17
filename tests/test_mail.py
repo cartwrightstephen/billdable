@@ -28,6 +28,9 @@ import mailer
 import monthly
 import server
 import storage
+from dollar_jobs import dollar_jobs
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 MAIL_ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USER", "SMTP_PASSWORD", "MAIL_FROM", "MAIL_DAILY_LIMIT")
@@ -160,12 +163,12 @@ class SubjectAndSignOffTests(unittest.TestCase):
         import domain
         state = {"company": {"name": "Brightwater Tile", "phone": "404-555-0100"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = domain.create_job(state, "Pine kitchen", "Jones Family", 1_000_000, address="12 Pine St", approver="Sam Jones",
-                                ap_email="ap@jones.example", retainage_pct=10)
+                                ap_email="ap@jones.example", retainage_pct=10, phone="(404) 555-0100", role="Owner")
         domain.record_progress(state, job["id"], 400_000, period_end="")
         domain.send_pencil(state, job["id"], "Alex Rivera")
         domain.record_pencil_response(state, job["id"], True)
         for item in job["invoices"][-1]["packet"]:
-            domain.resolve_packet_item(state, job["id"], item["id"])
+            domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
         domain.approve_and_send(state, job["id"], "Alex Rivera")
         inv = job["invoices"][-1]
         mail = state["email_log"][-1]
@@ -234,6 +237,7 @@ class EmailFailureTests(unittest.TestCase):
                          "each change order counts on its own, and a signed one no longer matters")
 
 
+@dollar_jobs
 class MailHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -299,7 +303,7 @@ class MailHttpTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))  # sending needs a verified address
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": ap,
-               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         return cookie, state["jobs"][0]
 
@@ -315,13 +319,14 @@ class MailHttpTests(unittest.TestCase):
         for n, item in enumerate(inv["packet"]):
             if attach and n == 0:
                 self.request("POST", f"/api/jobs/{job['id']}/attach-record/{item['id']}", {"record_id": rec_id}, cookie=cookie)
+                self.request("POST", f"/api/jobs/{job['id']}/packet-confirm/{item['id']}", {"looked": True}, cookie=cookie)
             else:
                 self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "on file"}, cookie=cookie)
 
     def test_pay_app_is_emailed_with_packet_files(self):
         cookie, job = self.company("mail1@pine.example")
         self.ready_to_send(cookie, job, attach=True)
-        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         self.assertEqual(res.status, 200, state)
         entry = state["email_log"][-1]
         self.assertEqual(entry["status"], "sent", entry)
@@ -336,7 +341,7 @@ class MailHttpTests(unittest.TestCase):
         self.assertIn("billing@duracash.test", str(msg["From"]))
         self.assertIn("Pay application PA-", msg["Subject"])
         self.assertIn("Amount due this application", msg.get_body(("plain",)).get_content())
-        self.assertIn("1 paperwork document is attached", msg.get_body(("plain",)).get_content())
+        self.assertIn("1 supporting document is attached", msg.get_body(("plain",)).get_content())
         self.assertNotIn("packet", msg.get_body(("plain",)).get_content().lower())  # the glossary's word is paperwork
         names = [p.get_filename() for p in msg.iter_attachments()]
         self.assertEqual(names, [f"{state['jobs'][0]['invoices'][-1]['number']}.pdf", "contract.pdf"])
@@ -385,10 +390,10 @@ class MailHttpTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.ready_to_send(cookie, state["jobs"][0])
-        _, state = self.request("POST", f"/api/jobs/{state['jobs'][0]['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{state['jobs'][0]['id']}/send", reviewed(self, state['jobs'][0]['id'], cookie), cookie=cookie)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
         stored = server.load_company(data["user"]["company_id"])["email_log"][-1]
         self.assertEqual(stored["message_id"], parsed(self.sink.messages[0])["Message-ID"])
@@ -417,7 +422,7 @@ class MailHttpTests(unittest.TestCase):
             domain._record_email(st, "", "pay_app", "ap@park.example", "Pay application PA-1", "Body", "Bo B")
             server.save_company(company_id, st)
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+               "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie_a)
         self.assertEqual(res.status, 200, state)
         self.assertEqual(server.load_company(company_id)["email_log"][-1]["status"], "queued")
@@ -428,7 +433,7 @@ class MailHttpTests(unittest.TestCase):
             os.environ.pop(key, None)
         cookie, job = self.company("mail-moot@pine.example")
         self.ready_to_send(cookie, job)
-        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         _, state = self.request("POST", f"/api/jobs/{job['id']}/follow-up", {"early": True}, cookie=cookie)
         emails = {e["kind"]: e for e in state["email_log"]}
         self.assertTrue(emails["follow_up"]["status"].startswith("not sent"), emails)
@@ -461,7 +466,7 @@ class MailHttpTests(unittest.TestCase):
             os.environ.pop(key, None)
         cookie, job = self.company("mail2@pine.example")
         self.ready_to_send(cookie, job)
-        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         entry = state["email_log"][-1]
         self.assertEqual(entry["status"], mailer.NOT_SET_UP)
         self.assertEqual(self.sink.messages, [])
@@ -488,10 +493,10 @@ class MailHttpTests(unittest.TestCase):
         self.sink.reject.add("bounce@park.example")
         cookie, job = self.company("mail3@pine.example", ap="bounce@park.example")
         self.ready_to_send(cookie, job)
-        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         entry = state["email_log"][-1]
         self.assertTrue(entry["status"].startswith("failed: recipient refused"), entry["status"])
-        self.assertNotIn("paperwork document", entry["body"])  # no paperwork files, so the email doesn't claim any
+        self.assertNotIn("supporting documents document", entry["body"])  # no paperwork files, so the email doesn't claim any
         self.assertEqual(state["jobs"][0]["invoices"][-1]["status"], "sent")  # the approval stands
         self.sink.reject.clear()
         _, state = self.request("POST", f"/api/outbox/{entry['id']}/retry", {}, cookie=cookie)
@@ -501,7 +506,7 @@ class MailHttpTests(unittest.TestCase):
         res, _ = self.request("POST", "/api/auth/login", {"email": auth.DEMO_EMAIL, "password": auth.DEMO_PASSWORD})
         cookie = res.getheader("Set-Cookie").split(";")[0]
         job = {"name": "Demo mail check", "customer": "Park GC", "address": "1 Demo St", "approver": "Kim",
-               "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+               "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         job_id = next(j["id"] for j in state["jobs"] if j["name"] == "Demo mail check")
         self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 500_000}, cookie=cookie)
@@ -521,7 +526,7 @@ class MailHttpTests(unittest.TestCase):
         _, state = self.request("POST", f"/api/jobs/{job['id']}/pencil", {}, cookie=cookie)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
         self.request("POST", f"/api/jobs/{job['id']}/pencil-response", {"agreed": True}, cookie=cookie)
-        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         self.assertIn("daily limit of 1", state["email_log"][-1]["status"])
         self.assertEqual(len(self.sink.messages), 1)
 
@@ -531,7 +536,7 @@ class MailHttpTests(unittest.TestCase):
         self.ready_to_send(cookie, job)
         other, _ = self.company("mail5b@pine.example")
         result = {}
-        sender = threading.Thread(target=lambda: result.update(r=self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)))
+        sender = threading.Thread(target=lambda: result.update(r=self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)))
         sender.start()
         time.sleep(0.4)
         start = time.monotonic()
@@ -548,7 +553,7 @@ class MailHttpTests(unittest.TestCase):
         self.mail_on(SMTP_USER="u", SMTP_PASSWORD="pässwörd")
         cookie, job = self.company("mail7@pine.example")
         self.ready_to_send(cookie, job)
-        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         self.assertEqual(res.status, 200, state)
         self.assertTrue(state["email_log"][-1]["status"].startswith("failed"), state["email_log"][-1]["status"])
 
@@ -563,7 +568,7 @@ class MailHttpTests(unittest.TestCase):
                                   "to": "ap@park.example", "subject": "s", "body": "b", "approved_by": "Pat", "attachments": [],
                                   "status": "sending", "sending_at": "2026-01-01T00:00:00+00:00"})
         server.save_company(company_id, data)
-        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         self.assertEqual(state["email_log"][-1]["status"], "sent")  # the dead "sending" row didn't use up the limit of 1
         self.mail_on(MAIL_DAILY_LIMIT="5")
         res, state = self.request("POST", "/api/outbox/eml-stuck/retry", {}, cookie=cookie)
@@ -574,16 +579,16 @@ class MailHttpTests(unittest.TestCase):
         self.mail_on(MAIL_DAILY_LIMIT="1")
         cookie, job = self.company("mail9@pine.example")
         self.ready_to_send(cookie, job)
-        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
         res, _ = self.request("POST", "/api/reset", {"confirm": "Pine & Sons", "password": PASSWORD}, cookie=cookie)
         self.assertEqual(res.status, 200)
         job2 = {"name": "After reset", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
-                "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner"}
+                "contract_cents": 3_450_000, "retainage_pct": 10, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job2, cookie=cookie)
         new_job = state["jobs"][0]
         self.ready_to_send(cookie, new_job)
-        _, state = self.request("POST", f"/api/jobs/{new_job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{new_job['id']}/send", reviewed(self, new_job['id'], cookie), cookie=cookie)
         self.assertIn("daily limit of 1", state["email_log"][-1]["status"])
         self.assertEqual(len(self.sink.messages), 1)
 
@@ -592,10 +597,10 @@ class MailHttpTests(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         auth.verify_email(auth.verify_email_token(data["user"]["id"]))
         job = {"name": "Elm\u2028addition\x85x", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim",
-               "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner"}
+               "ap_email": "ap@park.example", "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         self.ready_to_send(cookie, state["jobs"][0])
-        _, state = self.request("POST", f"/api/jobs/{state['jobs'][0]['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{state['jobs'][0]['id']}/send", reviewed(self, state['jobs'][0]['id'], cookie), cookie=cookie)
         self.assertEqual(state["email_log"][-1]["status"], "sent", state["email_log"][-1]["status"])
 
     def test_cc_and_odd_addresses(self):  # review findings 11 and 13
@@ -603,7 +608,7 @@ class MailHttpTests(unittest.TestCase):
         payer_id = job["payer_id"]
         self.request("POST", f"/api/payers/{payer_id}/update", {"copy": "Dana <dana@park.example>, bookkeeper"}, cookie=cookie)
         self.ready_to_send(cookie, job)
-        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         self.assertEqual(state["email_log"][-1]["status"], "sent")
         self.assertEqual(sorted(self.sink.messages[-1]["to"]), ["ap@park.example", "dana@park.example"])
         self.assertEqual(parsed(self.sink.messages[-1])["Cc"], "dana@park.example")
@@ -616,7 +621,7 @@ class MailHttpTests(unittest.TestCase):
         self.request("POST", f"/api/payers/{job['payer_id']}/update", {"copy": "pm@park.con"}, cookie=cookie)
         self.sink.reject.add("pm@park.con")
         self.ready_to_send(cookie, job)
-        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        _, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         entry = state["email_log"][-1]
         self.assertEqual(entry["status"], "sent", "the AP desk got it")
         self.assertEqual(entry["refused"], ["pm@park.con (550)"])

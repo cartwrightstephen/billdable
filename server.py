@@ -39,6 +39,7 @@ import backup
 import billing
 import calendar_feed
 import contract_import
+import doc_check
 import domain
 import exports
 import helper
@@ -48,6 +49,7 @@ import legal
 import mail_events
 import mailer
 import metrics
+import financials
 import migrations
 from domain import profiles
 import monthly
@@ -59,6 +61,8 @@ import qbo_csv
 import qty_import
 import qr
 import payer_page
+import reminders
+import sms
 import sov
 import storage
 import store
@@ -92,8 +96,10 @@ def company_lock(company_id: str) -> threading.RLock:
 
 
 MAX_BODY_BYTES = 1_000_000
+DRAIN_BYTES = 16 * 1024 * 1024
 MAX_INBOUND_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 5_000
+CLIENT_PHONE = "That number belongs to a client. Texts only go to your own team."
 BODY_SECONDS = 60  # a request body must arrive within this long in total, however slowly it trickles
 
 # The only files served from static/. Anything else is a 404.
@@ -206,7 +212,7 @@ def demo_enabled() -> bool:
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
 DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_contract_read", "_p_ping", "_p_qty_preview"}
-COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_password_code", "_p_two_step", "_p_my_name", "_p_resend_verify", "_p_helper_admin",
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_password_code", "_p_two_step", "_p_my_name", "_p_my_sms", "_p_reminder_prefs", "_p_reminder_read", "_p_resend_verify", "_p_helper_admin",
                                              "_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal",
                                              "_p_appearance", "_p_profile_save", "_p_profile_delete", "_p_admin_hand_over"}
@@ -236,7 +242,7 @@ def read_only_reason(company_id: str, state: dict | None = None) -> str:
     if state is None:
         with company_lock(company_id):
             state = load_company(company_id)
-    why = str(state.get("company", {}).get("read_only") or "").strip() or billing.standing(state)["hold"]
+    why = billing.read_only_why(state)
     return f"This company is read-only: {why}. Nothing was changed; your data is kept and can be exported from Settings." if why else ""
 
 
@@ -416,6 +422,9 @@ def send_system_email(to: str, subject: str, body: str, company_id: str = "", ri
     (auth.issue_code) instead, so a flood of reset requests can't stop people signing in (A1)."""
     if not mailer.configured():
         return "email delivery is not set up on this server"
+    if not mailer.allowed(to):
+        log_json("info", msg="system email held: not on the allow-list", rid=rid, company=company_id)
+        return mailer.NOT_ALLOWED
     # However many companies or reset requests there are, the server sends at most 300 of
     # these an hour, so a flood of sign-ups or reset requests can't burn the mail account (R6-05).
     if shared_limit and not _within_limit("system-email", 300, 3600):
@@ -465,6 +474,8 @@ def delete_company_data(company_id: str) -> int:
     importer.forget_company(company_id)
     helper.forget_company(company_id)
     mailer.forget_company(company_id)
+    sms.forget_company(company_id)
+    reminders.forget_company(company_id)
     return removed
 
 
@@ -700,7 +711,8 @@ class Handler(BaseHTTPRequestHandler):
         if length < 0:
             raise BadRequest("Content-Length must be a number.")
         if length > MAX_BODY_BYTES:
-            raise BadRequest("Request body is too large.", 413)
+            self._drain(length)
+            raise BadRequest(f"That is too large to send: the limit is {MAX_BODY_BYTES // 1_000_000} MB. Save an Excel file as CSV and try again.", 413)
         if not length:
             return {}
         raw = self._read_body(length)
@@ -720,8 +732,35 @@ class Handler(BaseHTTPRequestHandler):
         if length < 0:
             raise BadRequest("Content-Length must be a number.")
         if length > limit:
+            self._drain(length)
             raise BadRequest(f"Upload is larger than {limit // (1024 * 1024)} MB.", 413)
         return self._read_body(length) if length else b""
+
+    def _drain(self, length: int) -> None:
+        """Take in a body refused for its size, up to DRAIN_BYTES and within BODY_SECONDS in total
+        (as _read_body: read1 and the socket timeout, since a plain read waits for all it asked for),
+        so the answer reaches a browser still sending rather than a broken connection. Then the
+        connection closes."""
+        self.close_connection = True
+        left = min(length, DRAIN_BYTES)
+        deadline = time.monotonic() + BODY_SECONDS
+        try:
+            while left > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                self.connection.settimeout(min(self.timeout, remaining))
+                chunk = self.rfile.read1(min(left, 65536))
+                if not chunk:
+                    return
+                left -= len(chunk)
+        except OSError:   # a timeout is one
+            pass
+        finally:
+            try:
+                self.connection.settimeout(self.timeout)
+            except OSError:
+                pass
 
     def _read_body(self, length: int) -> bytes:
         """Read exactly `length` bytes within BODY_SECONDS in total. The socket timeout alone is per read,
@@ -792,7 +831,14 @@ class Handler(BaseHTTPRequestHandler):
             with company_lock(company_id):
                 state = load_company(company_id)
                 waiting = {e.get("id") for e in state.get("email_log", []) if e.get("status") == "queued"}
-                fn(state)
+                try:
+                    fn(state)
+                except domain.GateError as exc:
+                    if exc.keep_changes:
+                        # What the refusal found goes on the page (an item waiting for a look), so there
+                        # is a way forward. Saved under this lock: nobody's change comes in between.
+                        save_company(company_id, state)
+                    raise
                 # To Do assignments of rows that are gone, or of an earlier turn of a row, go (C5).
                 domain.prune_assignments(state)
                 # The first paid pay app ends the free trial (trial.py): tell Stripe, once.
@@ -945,6 +991,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(403, {"error": why, "read_only": True})
                     return
         if route.access == "user":
+            if route.perm and not has_perm(user, route.perm):
+                self._json(403, {"error": NO_PERMISSION})
+                return
             handler(m, user)
             return
         body = self._read_json()
@@ -965,6 +1014,19 @@ class Handler(BaseHTTPRequestHandler):
         if route.access == "body":
             handler(m, ctx)
             return
+
+        if route.handler == "_m_job_action" and m.group(2) in DOCUMENT_ACTIONS and m.group(3):
+            ctx.read_ahead = _read_ahead(ctx.company_id, m.group(1), m.group(3), _text(body, "record_id"), _text(body, "file_id"))
+        elif route.handler == "_m_job_action" and m.group(2) in WAIVER_READING_ACTIONS and not m.group(3):
+            ctx.read_ahead = _read_ahead_waivers(ctx.company_id, m.group(1), m.group(2))
+        elif route.handler == "_m_payapp_attachments" and _text(body, "action") == "add_record":
+            ctx.read_ahead = _read_ahead(ctx.company_id, m.group(1), "", _text(body, "record_id"))
+        elif route.handler == "_m_qty_apply":
+            try:
+                ctx.read_ahead = {"sheet": _sheet_text(body)}   # an Excel file holds up nobody else while it is read
+            except domain.GateError as exc:
+                self._json(409, _gate(exc))
+                return
 
         def change(state: dict) -> None:
             fresh = handler(state, m, ctx)
@@ -1135,6 +1197,17 @@ class Handler(BaseHTTPRequestHandler):
             view = domain.job_view(state, job)
         self._json(200, {"job": view})
 
+    def _g_final_preview(self, m, user) -> None:
+        """What Final Pay App would draft, for its confirm box. Changes nothing."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+            try:
+                preview = domain.final_pay_app_preview(state, m.group(1))
+            except domain.GateError as err:
+                self._json(409, {"error": str(err)})
+                return
+        self._json(200, preview)
+
     def _g_waiver_forms(self, m, user) -> None:
         """The lien waiver forms each state sets (M22), for the waiver page's state picker."""
         self._json(200, domain.waiver_forms())
@@ -1180,7 +1253,10 @@ class Handler(BaseHTTPRequestHandler):
         key = "email_log" if m.group(1) == "outbox" else "audit"
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
-            page = domain.page(state.get(key, []), offset, limit, (q.get("job") or [""])[0])
+            rows = state.get(key, [])
+            if key == "audit" and (q.get("who") or [""])[0] == "people":
+                rows = [r for r in rows if r.get("actor") != domain.APP_ACTOR]   # without the app's own entries (round 1, item 14)
+            page = domain.page(rows, offset, limit, (q.get("job") or [""])[0])
             if key == "email_log":
                 domain.mark_moot(state, page["entries"])
         self._json(200, page)
@@ -1398,6 +1474,19 @@ class Handler(BaseHTTPRequestHandler):
             state = load_company(user["company_id"])
         self._json(200, metrics.compute(state, since=since))
 
+    def _g_financials(self, m, user) -> None:
+        """Money > Financials: the company's picture as a bank asks for it (financials.py)."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        self._json(200, financials.compute(state))
+
+    def _g_financials_csv(self, m, user) -> None:
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        f = financials.compute(state)
+        self._send(200, financials.to_csv(f).encode("utf-8"), "text/csv; charset=utf-8",
+                   {"Content-Disposition": f'attachment; filename="financials-{f["as_of"]}.csv"'})
+
     def _g_import_settings(self, m, user) -> None:
         tokens = importer.company_tokens(user["company_id"])
         base = self._base_url()
@@ -1528,6 +1617,10 @@ class Handler(BaseHTTPRequestHandler):
         everyone but the demo, unless this browser is remembered."""
         if user["company_id"] == auth.DEMO_COMPANY_ID or not mailer.configured():
             return False
+        # A tester the allow-list can't reach would never get the code, and so could never sign
+        # in to staging. Production always asks.
+        if not production() and not mailer.allowed(user.get("email", "")):
+            return False
         return not auth.device_known(user["id"], self._token(DEVICE_COOKIE))
 
     def _send_login_code(self, user: dict) -> str | None:
@@ -1556,7 +1649,8 @@ class Handler(BaseHTTPRequestHandler):
         pid = profiles.user_profile_id(user)
         return {**user, "two_step_setup_due": due, "perms": profiles.perms_of(user, state),
                 "profile_name": profiles.profile_name(state, pid),
-                "company_admin": auth.is_company_admin(user["id"], user["company_id"])}
+                "company_admin": auth.is_company_admin(user["id"], user["company_id"]),
+                "owner_names": auth.owner_names(user["company_id"]), "texts_number": sms.settings()["from"]}
 
     def _p_signup(self, m) -> None:
         body = self._read_json()
@@ -1573,7 +1667,7 @@ class Handler(BaseHTTPRequestHandler):
             # Read before the account is saved: a refused name must not leave a user with no company.
             company_name = _text(body, "company_name").strip()
             user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
-                                    terms_version=legal.TERMS_VERSION)
+                                    terms_version=legal.TERMS_VERSION, reminders=auth.new_user_reminders())
             # The company name can wait (R2-02): until it is typed in Account, it is the person's name.
             fresh = empty_state(company_name or str(user.get("name") or "").strip() or "New company")
             trial.start(fresh["company"])
@@ -1827,7 +1921,7 @@ class Handler(BaseHTTPRequestHandler):
         if not may_take(ctx.user, "sov-progress", state):
             raise OwnerOnly()
         # The preview's basis is required: what is added is what the person saw.
-        ctx.reply["quantity_import"] = qty_import.apply(state, _text(ctx.body, "job_id", limit=80), _sheet_text(ctx.body), ctx.actor,
+        ctx.reply["quantity_import"] = qty_import.apply(state, _text(ctx.body, "job_id", limit=80), ctx.read_ahead["sheet"], ctx.actor,
                                                         source=_text(ctx.body, "name", limit=200), seen=_text(ctx.body, "basis", limit=80))
 
     def _m_payments_apply(self, state: dict, m, ctx: "Ctx") -> None:
@@ -1895,6 +1989,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _m_inbox(self, state: dict, m, ctx: "Ctx") -> None:
         item_id, verb, body, actor = m.group(1), m.group(2), ctx.body, ctx.actor
+        # No manager role exists: what is texted to the company's number is sorted by those who
+        # hold "Edit company details, client settings and connections" (owners, and any profile given it).
+        item = next((i for i in state.get("inbox", []) if i["id"] == item_id), None)
+        if item and item.get("by_text") and not has_perm(ctx.user, "company", state):
+            raise domain.GateError("Filing a text needs the permission to edit company details, client settings and connections. Ask an owner.")
         if verb == "file":
             importer.file_item(state, item_id, _text(body, "job_id"), _text(body, "kind"), actor)
         elif verb == "dismiss":
@@ -1902,6 +2001,10 @@ class Handler(BaseHTTPRequestHandler):
         elif verb == "undo":
             importer.undo_item(state, item_id, actor, can_pull_back=may_take(ctx.user, "void-sent", state))
         elif verb == "mark-done":
+            # Marking the work done is the Final pay app's step: it takes manage_jobs (Round 1, item 2),
+            # whichever page it comes from. Without it the item can still be filed.
+            if not may_take(ctx.user, "done", state):
+                raise OwnerOnly()
             importer.file_and_mark_done(state, item_id, actor)
         else:
             raise UnknownAction()
@@ -2187,6 +2290,8 @@ class Handler(BaseHTTPRequestHandler):
         waiver_kind = (query.get("waiver_kind") or [""])[0] if file_now else ""
         # The paid pay app or retainage release it is for, from that row of the waiver page (B1).
         waiver_for = (query.get("waiver_for") or [""])[0] if file_now else ""
+        # A file on its way into the New job record form: that form's save fills in what it is.
+        for_job_record = file_now and (query.get("for_job_record") or [""])[0] == "1"
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
@@ -2214,6 +2319,9 @@ class Handler(BaseHTTPRequestHandler):
 
         # Uploaded in the Inbox with "Which job?" answered: suggested there, filed by a person (R5-07).
         reason = "Added from the job page." if file_now else "was uploaded for this job"
+        ahead = _read_ahead(company_id, job_id, attach_to, stored=stored) if attach_to else {}
+        made: list[str] = []
+        notes: list[str] = []
 
         def add(state: dict) -> None:
             for meta in stored:
@@ -2226,26 +2334,36 @@ class Handler(BaseHTTPRequestHandler):
                     extra={"skipped_attachments": skipped} if skipped else None, job_reason=reason)
             else:
                 meta = stored[0]
-                text = data.decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
+                text = data[:importer.MAX_TEXT_CHARS * 4].decode("utf-8", "replace") if meta["ext"] in {".txt", ".csv"} else ""
                 item = importer.add_item(state, "upload", text=text, subject=meta["name"], file_ids=ids, job_id=job_id,
                                          extra={"payments_csv": True, "payment_rows": payment_rows} if payment_rows else None,
                                          job_reason=reason)
             if file_now:
                 # Dropped on a job page: the person already chose the job.
                 filed = importer.file_item(state, item["id"], job_id, kind if kind in importer.KINDS else item["kind"], actor)
+                made.extend(filed["record_ids"])   # the upload's answer names its records: the page's copy of the job can be out of date
+                if for_job_record:
+                    domain.hold_for_job_record(state, job_id, filed["record_ids"], actor)
                 if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
-                    domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for)
+                    domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for, said=False)
                 if attach_to:
-                    domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor)
-                if signed_co:
+                    domain.attach_record_to_packet(state, job_id, attach_to, filed["record_ids"][0], actor, read_file=_file_reader(company_id, ahead))
+                if signed_co and may_take(user, "approve-co", state):
                     # Who signed the paper copy and when (M9) come with it; without them it is refused.
                     domain.mark_co_signed(state, job_id, signed_co, filed["record_ids"][0], actor,
                                           signer_name=(query.get("signer") or [""])[0], signed_on=(query.get("signed_on") or [""])[0])
+                elif signed_co:
+                    # Approving it takes manage_jobs (Round 1, item 2): the copy is kept with the change
+                    # order as its backup, and it stays pending for someone who can.
+                    notes.append(domain.file_signed_co_copy(state, job_id, signed_co, filed["record_ids"][0], actor,
+                                                            signer_name=(query.get("signer") or [""])[0], signed_on=(query.get("signed_on") or [""])[0]))
 
         status, payload = self._mutate(company_id, add)
         if status != 200:
             importer.discard(company_id, stored)
-        self._json(status, payload)
+        if status == 200 and notes:
+            payload = {**payload, "message": " ".join(notes)}
+        self._json(status, {**payload, "uploaded_record_ids": made} if status == 200 and made else payload)
 
     def _store_email_files(self, company_id: str, parsed: dict, actor: str, raw: bytes | None = None, raw_name: str = "") -> tuple:
         """Write an email's own file and its attachments to disk; refused attachment types are listed, not fatal."""
@@ -2607,6 +2725,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(303, b"", "text/plain", {"Location": f"/s/{company_id}.{token}"})
 
+    def _local_development(self) -> bool:
+        """No named environment, and the request came from this machine (a proxy's never does)."""
+        env = (os.environ.get("DURACASH_ENV") or "").strip().lower()
+        return env in {"", "development"} and self.client_address[0] in {"127.0.0.1", "::1"}
+
     def _inbound_sms(self, token: str) -> None:
         company_id = importer.company_for_token(token, "sms")
         if not company_id:
@@ -2619,15 +2742,28 @@ class Handler(BaseHTTPRequestHandler):
         if demo_locked(company_id):
             self._json(200, {"ok": True, "ignored": "the demo is read-only"})
             return
+        secret = (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
+        if not secret and not self._local_development():
+            # Without the token nobody can tell a text from Twilio from a stranger's post.
+            log_json("error", msg="inbound text refused: TWILIO_AUTH_TOKEN is not set", company=company_id, rid=self._rid)
+            self._json(403, {"error": "Texts aren't set up on this server."})
+            return
         params = dict(parse_qsl(data.decode("utf-8", "replace"), keep_blank_values=True))
-        secret = os.environ.get("TWILIO_AUTH_TOKEN")
         if secret:
-            url = self._base_url() + self.path
-            signed = url + "".join(k + params[k] for k in sorted(params))
-            expected = base64.b64encode(hmac.new(secret.encode(), signed.encode(), hashlib.sha1).digest()).decode()
-            if not hmac.compare_digest(expected, self.headers.get("X-Twilio-Signature", "")):
+            # _base_url: DURACASH_URL, else the address Render's proxy says was asked for. It must
+            # match what is registered at Twilio exactly (docs/setup-integrations.md).
+            if not twilio_media.signature_ok(self._base_url() + self.path, params, self.headers.get("X-Twilio-Signature"), secret):
                 self._json(403, {"error": "Signature check failed."})
                 return
+        empty = b'<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+        # Twilio answers these words itself. STOP also turns texts off here; none is a message to file.
+        if sms.is_stop(params.get("Body", "")) or params.get("OptOutType", "").upper() == "STOP":
+            sms.opt_out(params.get("From", ""))
+            self._send(200, empty, "text/xml; charset=utf-8")
+            return
+        if sms.is_keyword(params.get("Body", "")):
+            self._send(200, empty, "text/xml; charset=utf-8")
+            return
         media = []
         try:
             count = int(params.get("NumMedia", "0") or 0)
@@ -2645,15 +2781,19 @@ class Handler(BaseHTTPRequestHandler):
         if links:
             text += "\n\n" + "\n".join(f"Photo or file sent by text (not downloaded): {m['url']}" for m in links)
         notes = problems + skipped
+        sender = params.get("From", "")
+        member = auth.member_by_phone(company_id, sms.e164(sender))
 
         def add(state: dict) -> None:
             for meta in stored:
                 importer.register_file(state, meta)
-            extra = {"media": media} if media else {}
+            extra = {"by_text": True, "unknown_sender": not member, **({"media": media} if media else {})}
             if notes:
                 extra["skipped_attachments"] = notes
-            importer.add_item(state, "sms", text=text, sender=params.get("From", ""), file_ids=[m["id"] for m in stored],
-                              extra=extra or None)
+            item = importer.add_item(state, "sms", text=text, sender=sender, file_ids=[m["id"] for m in stored], extra=extra)
+            # After the job match, which reads the number and not the name. It only ever suggests:
+            # a person files every text, whoever sent it.
+            item["from"] = f"{member['name'] if member else 'Unknown sender'} ({sender})"[:200]
 
         status, _ = self._mutate(company_id, add)
         if status != 200:
@@ -2704,20 +2844,28 @@ class Handler(BaseHTTPRequestHandler):
         domain.create_job(
             state, _text(body, "name"), _text(body, "customer"), _number(body, "contract_cents", "the contract amount", 0),
             address=_text(body, "address"), approver=_text(body, "approver"), ap_email=_text(body, "ap_email"),
-            phone=_text(body, "phone"), role=_text(body, "role", "Owner"),
-            retainage_pct=_number(body, "retainage_pct", "the retainage percent", 0),
+            phone=_text(body, "phone"), role=_text(body, "role"),
+            # Blank or left out: what the client usually holds (round 1, item 1).
+            retainage_pct=None if body.get("retainage_pct") in (None, "") else _number(body, "retainage_pct", "the retainage percent", 0),
             # "packet_notes" is what pages from before R1-04 send; it is a note on the job record now.
             note=_text(body, "note") or _text(body, "packet_notes"),
             contract_number=_text(body, "contract_number"), actor=ctx.actor,
             # "Same as ABC Builders?" answered with "keep the new name" (Oct 23 note 5).
             new_customer=body.get("new_customer") is True,
+            # Round 1: an open job of the same name is asked about, unless kept as a new job.
+            ask_same_job=body.get("new_job") is not True,
+            # The page says when a person answered who signs off (domain.signer_answered).
+            approver_confirmed=body.get("approver_confirmed") is True,
             # J1: the address in four parts; a page that sends only "address" still works.
             address_parts=_address_parts(body), client_type=_text(body, "client_type"),
-            started_on=_text(body, "started_on"), assignee_id=assignee_id, assignee_name=assignee_name,
+            started_on=_text(body, "started_on"), anticipated_end_on=_text(body, "anticipated_end_on"),
+            assignee_id=assignee_id, assignee_name=assignee_name,
             # S12: what an imported contract said about the client's pay app day and terms.
             payer_days={k: body.get(k) for k in ("payapp_due_day", "payment_terms_days") if k in body},
             # The page's own date: the start date when none was typed (review C3).
             today=_text(body, "today"),
+            # Every new job has a schedule of values: one lump-sum line until the person sets one.
+            auto_schedule=True, schedule_lines=body.get("sov_lines"), schedule_op=body.get("sov_op_pct"),
         )
 
     def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:
@@ -2733,7 +2881,7 @@ class Handler(BaseHTTPRequestHandler):
         """What a draft pay app's email carries (M4): {action, record_id | file_id}."""
         body = ctx.body
         domain.change_payapp_attachments(state, m.group(1), m.group(2), _text(body, "action"),
-                                         _text(body, "record_id") or _text(body, "file_id"), ctx.actor)
+                                         _text(body, "record_id") or _text(body, "file_id"), ctx.actor, read_file=_file_reader(ctx.company_id, ctx.read_ahead))
 
     def _m_payer_suggestion(self, state: dict, m, ctx: "Ctx") -> None:
         domain.answer_packet_suggestion(state, m.group(1), m.group(2), m.group(3) == "add", ctx.actor)
@@ -2753,8 +2901,100 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(200, {"user": self._me_user(user)})
 
+    def _p_my_sms(self, m, ctx: "Ctx") -> None:
+        """My account: this person's mobile number and whether they agreed to texts (Decision 7)."""
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The demo account can't save a phone number.", "fields": {"phone": "The demo account can't save a phone number."}})
+            return
+        typed = _text(ctx.body, "phone").strip()
+        phone = sms.e164(typed)
+        agreed = ctx.body.get("sms_opt_in") is True
+        wrong = ""
+        if typed and not phone:
+            wrong = "Enter a US mobile number, like (404) 555-0123."
+        elif agreed and not phone:
+            wrong = "Enter your mobile number to get texts."
+        elif phone and phone in sms.client_numbers(company_state(ctx.company_id)):
+            wrong = CLIENT_PHONE
+        elif agreed and not auth.sms_proven(ctx.user["id"], phone):
+            # Agreeing takes effect once a code texted to the number comes back; nothing changes until then.
+            code = auth.issue_sms_code(ctx.user["id"], phone)
+            if not code:
+                other = auth.sms_live_number(ctx.user["id"])
+                self._json(429, {"error": f"Five codes were asked for in the last hour, so none was sent to {sms.shown(phone)}. "
+                                          + (f"Use the newest one, which went to {sms.shown(other)}, or try again later." if other else "Use the newest one, or try again later.")})
+                return
+            result = sms.send_code(company_state(ctx.company_id), ctx.company_id, ctx.user["id"], code)
+            if result == "sent":
+                self._json(200, {"user": self._me_user(auth.session_public(ctx.user["id"]) or ctx.user), "code_sent": True, "sent_to": phone})
+                return
+            auth.drop_sms_codes(ctx.user["id"])
+            wrong = {sms.NOT_SET_UP: "Texts aren't set up on this server, so this number can't be confirmed.",
+                     sms.NOT_ALLOWED: "This number isn't on this server's allow-list.",
+                     sms.READ_ONLY: "Texts are off while this company is read-only.",
+                     sms.CLIENT_NUMBER: CLIENT_PHONE,
+                     sms.STOPPED: f"This number replied STOP earlier, so nothing can be texted to it. Text START to {sms.shown(sms.settings()['from'])} first, then try again."}.get(result, "The code couldn't be sent. Check the number and try again.")
+        if wrong:
+            self._json(409, {"error": wrong, "fields": {"phone": wrong}})
+            return
+        self._json(200, {"user": self._me_user(auth.set_sms(ctx.user["id"], phone, agreed))})
+
+    def _p_my_sms_confirm(self, m, ctx: "Ctx") -> None:
+        """The code texted to the number came back: it is this person's, and texts are on."""
+        code = ctx.body.get("code")
+        wrong = ""
+        if sms.is_client_number(company_state(ctx.company_id), auth.sms_code_number(ctx.user["id"], code)):
+            auth.drop_sms_codes(ctx.user["id"])   # a client was given this number since the code went
+            wrong = CLIENT_PHONE
+        else:
+            try:
+                self._json(200, {"user": self._me_user(auth.confirm_sms_code(ctx.user["id"], code))})
+                return
+            except auth.AuthError as exc:
+                wrong = str(exc)
+        self._json(409, {"error": wrong, "fields": {"sms_code": wrong}})
+
+    def _reminders_reply(self, user: dict, state: dict) -> dict:
+        return reminders.page(state, user, datetime.now(timezone.utc))
+
+    def _g_reminders(self, m, user) -> None:
+        self._json(200, self._reminders_reply(auth.session_public(user["id"]) or user, company_state(user["company_id"])))
+
+    def _p_reminder_prefs(self, m, ctx: "Ctx") -> None:
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The demo account can't turn reminders on."})
+            return
+        raw = ctx.body.get("prefs")
+        try:
+            if not isinstance(raw, dict):
+                raise ValueError("Pick in the app, email or text.")
+            prefs = reminders.clean_prefs(raw)
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        person = auth.session_public(ctx.user["id"]) or ctx.user
+        if not person.get("sms_opt_in"):
+            fields = {k: "Add your mobile number and agree to texts above first." for k, c in prefs.items() if "text" in c}
+            if fields:
+                self._json(409, {"error": next(iter(fields.values())), "fields": fields})
+                return
+        user = auth.set_reminders(ctx.user["id"], prefs)
+        self._json(200, self._reminders_reply(user, company_state(ctx.company_id)))
+
+    def _p_reminder_read(self, m, ctx: "Ctx") -> None:
+        reminders.mark_read(ctx.company_id, ctx.user["id"], _text(ctx.body, "id"))
+        self._json(200, self._reminders_reply(auth.session_public(ctx.user["id"]) or ctx.user, company_state(ctx.company_id)))
+
     def _m_payer_update(self, state: dict, m, ctx: "Ctx") -> None:
-        domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
+        payer = domain.update_payer(state, m.group(1), ctx.body, ctx.actor)
+        if ctx.body.get("approver") and domain.signer_defaulted(payer):
+            ctx.reply["signer_needs_confirming"] = True
+
+    def _m_payer_missing(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.fill_missing_client_details(state, m.group(1), ctx.body, ctx.actor)
+
+    def _m_payer_waiver_needed(self, state: dict, m, ctx: "Ctx") -> None:
+        domain.client_waiver_needed_again(state, m.group(1), ctx.actor)
 
     def _m_payer_add(self, state: dict, m, ctx: "Ctx") -> None:
         domain.add_payer(state, ctx.body, ctx.actor)
@@ -2784,6 +3024,8 @@ class Ctx:
     actor: str
     # Fields a "mutate" handler adds to the snapshot it answers with.
     reply: dict = field(default_factory=dict)
+    # Files the document check will want, read before the company's lock (_read_ahead).
+    read_ahead: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -2850,12 +3092,15 @@ ROUTES = [
     Route("GET", r"/api/auth/demo-available", "_g_demo_available"),
     Route("GET", r"/api/state", "_g_state", "user"),
     Route("GET", r"/api/jobs", "_g_jobs", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/final-preview", "_g_final_preview", "user"),
     Route("GET", r"/api/jobs/([^/]+)", "_g_job", "user"),
     Route("GET", r"/api/(outbox|audit)", "_g_log_page", "user"),
     Route("GET", r"/api/timeline", "_g_timeline", "user"),
     Route("GET", r"/api/export", "_g_export", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
     Route("GET", r"/api/metrics", "_g_metrics", "user"),
+    Route("GET", r"/api/financials\.csv", "_g_financials_csv", "user", perm="financials"),
+    Route("GET", r"/api/financials", "_g_financials", "user", perm="financials"),
     Route("GET", r"/api/qbo/status", "_g_qbo_status", "user"),
     Route("GET", r"/api/billing", "_g_billing", "user"),
     Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user"),
@@ -2916,10 +3161,12 @@ ROUTES = [
     Route("POST", r"/api/reset", "_m_reset", "mutate", perm="data"),
     Route("POST", r"/api/jobs", "_m_create_job", "mutate"),
     Route("POST", r"/api/jobs/([^/]+)/([a-z-]+)(?:/([^/]+))?", "_m_job_action", "mutate"),
-    Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/suggestion/([^/]+)/(add|dismiss)", "_m_payer_suggestion", "mutate", perm="company"),
     Route("POST", r"/api/payers", "_m_payer_add", "mutate"),
-    Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate"),
-    Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/update", "_m_payer_update", "mutate", perm="company"),
+    Route("POST", r"/api/payers/([^/]+)/missing", "_m_payer_missing", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/waiver-needed", "_m_payer_waiver_needed", "mutate", perm="company"),
+    Route("POST", r"/api/payers/([^/]+)/merge", "_m_payer_merge", "mutate", perm="company"),
     Route("POST", r"/api/payers/([^/]+)/delete", "_m_payer_delete", "mutate", perm="company"),
     Route("POST", r"/api/import/payments-apply", "_m_payments_apply", "mutate", perm="record_payments"),
     Route("POST", r"/api/import/quantities/apply", "_m_qty_apply", "mutate"),
@@ -2927,6 +3174,11 @@ ROUTES = [
     Route("POST", r"/api/inbox/([^/]+)/([a-z-]+)", "_m_inbox", "mutate"),
     Route("POST", r"/api/company", "_m_company_update", "mutate", perm="company"),
     Route("POST", r"/api/auth/name", "_p_my_name", "body"),
+    Route("POST", r"/api/auth/sms", "_p_my_sms", "body"),
+    Route("POST", r"/api/auth/sms/confirm", "_p_my_sms_confirm", "body"),
+    Route("GET", r"/api/reminders", "_g_reminders", "user"),
+    Route("POST", r"/api/reminders/prefs", "_p_reminder_prefs", "body"),
+    Route("POST", r"/api/reminders/read", "_p_reminder_read", "body"),
 ]
 
 
@@ -2994,7 +3246,7 @@ def _sends(what: str, run):
 
 def _import_qbo(h, st, j, i, c):
     if c.company_id != auth.DEMO_COMPANY_ID:
-        raise domain.GateError("QuickBooks import is not built yet. The sample import only runs on the demo account.")
+        raise domain.GateError("The sample import only runs on the demo account. Connect QuickBooks on Settings, Company to read your payments.")
     domain.import_sample_qbo_payment(st, j, c.actor)
 
 
@@ -3008,10 +3260,80 @@ def _progress(h, st, j, i, c):
     return domain.record_progress(st, j, _number(body, "completed_cents", "the total done so far", 0), _text(body, "notes"), c.actor, period_end=runs_to)
 
 
+def _sov_progress(h, st, j, i, c):
+    """Progress on the schedule of values. With amounts (line id -> dollars), the draft then bills
+    those amounts on its lines: "Bill by dollars instead" on a one-line schedule (Round 1, item 10)
+    sends the line's % done and the exact dollars typed. One request: a refused amount leaves no draft."""
+    amounts = c.body.get("amounts")
+    done = c.body.get("done")
+    if isinstance(amounts, dict) and amounts:
+        # A draw under a tenth of a percent keeps its dollars; a new amount on the open draft at
+        # the same quantities changes only its amounts (Round 1 hunt).
+        done = domain.done_for_amounts(st, j, done, amounts)
+        if domain.drafted_at(st, j, done) and not c.body.get("stored"):
+            return domain.set_payapp_amounts(st, j, amounts, c.actor, period_end=_text(c.body, "period_to") or None, notes=_text(c.body, "notes"))
+    out = domain.record_sov_progress(st, j, done, _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
+                                     period_end=_text(c.body, "period_to"), keep_amounts=isinstance(amounts, dict) and bool(amounts))
+    if isinstance(amounts, dict) and amounts:
+        job = next(x for x in st["jobs"] if x["id"] == j)
+        draft = next((inv for inv in job["invoices"] if inv["status"] in domain.DRAFT_STATUSES), None)
+        drafted = {e["line_id"]: e["amount_cents"] for e in (draft or {}).get("sov_sheet") or []}
+        changed = {k: v for k, v in amounts.items() if not (isinstance(v, str) and v.strip() and _cents_or_none(v) == drafted.get(k))}
+        if changed:
+            out = domain.set_payapp_amounts(st, j, changed, c.actor)
+    return out
+
+
+def _cents_or_none(text: str) -> "int | None":
+    try:
+        return sov.to_cents(text, "Amount")
+    except sov.SovError:
+        return None
+
+
+def _may_change_contract(c: "Ctx", st: dict) -> bool:
+    """A schedule saved as the new contract amount changes the contract: that takes manage_jobs
+    (Round 1, item 2), the same as Edit job. Without it the request is refused, not half-done."""
+    if c.body.get("update_contract") is not True:
+        return False
+    if not may_take(c.user, "edit", st):
+        raise OwnerOnly()
+    return True
+
+
 def _retainage(h, st, j, i, c):
-    """Ask for retainage: all of it, or amount_cents of it (R4-07)."""
+    """Ask for retainage: all of it, or amount_cents of it (R4-07). With an unconditional waiver in
+    the closeout documents, only an owner gives the reason it goes (M14)."""
     amount = c.body.get("amount_cents")
-    return domain.chase_retainage(st, j, c.actor, amount_cents=None if amount in (None, "") else _number(c.body, "amount_cents", "the retainage to ask for"))
+    override = _text(c.body, "unconditional_override").strip()
+    if override and c.user.get("role", "owner") != "owner":
+        raise domain.GateError("Only an owner can ask for retainage with an unconditional waiver attached.")
+    return domain.chase_retainage(st, j, c.actor, amount_cents=None if amount in (None, "") else _number(c.body, "amount_cents", "the retainage to ask for"),
+                                  unconditional_override=override, read_file=_file_reader(c.company_id, c.read_ahead))
+
+
+def _answerer(c: "Ctx", st: dict) -> "domain.Answerer":
+    """Who is answering which waiver a file is, from their profile (domain.Answerer): setting or
+    changing a waiver answer, by any route, takes send_payapps (ask_retainage on a retainage
+    request), and an unconditional answer is taken back only by whoever gave it or an owner."""
+    return domain.Answerer(send_payapps=profiles.has_perm(c.user, "send_payapps", st), ask_retainage=profiles.has_perm(c.user, "ask_retainage", st),
+                           owner=c.user.get("role", "owner") == "owner", id=str(c.user.get("id") or ""))
+
+
+def _shown(body: dict) -> list | None:
+    """The records a page was showing when Confirm was tapped; None from a page that doesn't say."""
+    shown = body.get("shown")
+    return [str(r) for r in shown] if isinstance(shown, list) else None
+
+
+def _skip_item(st: dict, j: str, i: str, c: "Ctx") -> dict:
+    """Not needed. A whole client's rule or list is the client's settings: without that permission
+    the whole client is refused, and any other item comes off this pay app only."""
+    on_client = profiles.has_perm(c.user, "company", st)
+    whole_client = c.body.get("whole_client") is True
+    if whole_client and not on_client:
+        raise OwnerOnly()
+    return domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor, whole_client=whole_client, on_client=on_client)
 
 
 def _send_payapp(h, st, j, i, c):
@@ -3020,7 +3342,8 @@ def _send_payapp(h, st, j, i, c):
     override = _text(c.body, "unconditional_override").strip()
     if override and c.user.get("role", "owner") != "owner":
         raise domain.GateError("Only an owner can send a pay app with an unconditional waiver attached.")
-    return domain.approve_and_send(st, j, c.actor, unconditional_override=override, **_co_args(c))
+    return domain.approve_and_send(st, j, c.actor, unconditional_override=override, reviewed=_text(c.body, "reviewed"),
+                                   read_file=_file_reader(c.company_id, c.read_ahead), **_co_args(c))
 
 
 def _received_on(body: dict) -> str | None:
@@ -3057,7 +3380,7 @@ def _assignee(c: Ctx, user_id: str) -> tuple:
 
 def _edit_job(h, st, j, i, c):
     body = c.body
-    updates = {k: _text(body, k) for k in ("name", "address", "contract_number", "started_on") if k in body}
+    updates = {k: _text(body, k) for k in ("name", "address", "contract_number", "started_on", "anticipated_end_on") if k in body}
     updates.update(_address_parts(body) or {})
     if "assignee_id" in body:
         updates["assignee_id"], updates["assignee_name"] = _assignee(c, _text(body, "assignee_id"))
@@ -3092,12 +3415,83 @@ def may_take(user: dict, action: str, state: dict) -> bool:
 
 
 # /api/jobs/<job>/<action>[/<item>]: action -> (takes an item id, handler(handler, state, job_id, item, ctx)).
+def _read_stored(company_id: str, meta: dict) -> "doc_check.ReadFile | None":
+    """A stored file read for the document check; None if it is gone."""
+    ext = str(meta.get("ext") or "").lower()
+    try:
+        return doc_check.prepare(ext, b"" if ext in doc_check.PICTURES else importer.file_path(company_id, meta).read_bytes())
+    except OSError:
+        return None
+
+
+def _read_ahead(company_id: str, job_id: str, item_id: str, record_id: str = "", file_id: str = "", stored: tuple | list = ()) -> dict:
+    """Read the files a document check is about to want, before the company's lock is taken, so a
+    big file holds up nobody else: {file id: what doc_check.prepare got}. The files the item already
+    has, the record or file on its way to it, and those just stored."""
+    with company_lock(company_id):
+        state = load_company(company_id)
+    job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
+    item = domain._find_packet_item(job, item_id)[0] if job else None
+    wanted = {a.get("record_id") for a in (item or {}).get("attachments", [])} | {record_id}
+    ids = {fid for r in (job or {}).get("records", []) if r["id"] in wanted for fid in r.get("file_ids") or []} | {file_id}
+    metas = {m["id"]: m for m in state.get("files", []) if m["id"] in ids}
+    metas.update({m["id"]: m for m in stored})
+    return {fid: _read_stored(company_id, meta) for fid, meta in metas.items()}
+
+
+def _read_ahead_waivers(company_id: str, job_id: str, action: str) -> dict:
+    """The same for Approve & send, the waiver step and the retainage request: what goes with the
+    draft for a send, the job's waivers for the waiver step, the closeout documents for the
+    request. A file
+    missed here (one that came on since) is read under the lock by _file_reader."""
+    with company_lock(company_id):
+        state = load_company(company_id)
+    job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
+    if not job:
+        return {}
+    if action == "send":
+        draft = next((i for i in job.get("invoices", []) if i.get("status") in domain.DRAFT_STATUSES), {})
+        going = {a.get("record_id") for item in draft.get("packet") or [] for a in item.get("attachments", [])} | set(draft.get("extra_record_ids") or [])
+        records = [r for r in job.get("records", []) if r["id"] in going]
+    elif action == "retainage":
+        going = {a.get("record_id") for item in job.get("closeout_packet") or [] for a in item.get("attachments", [])}
+        records = [r for r in job.get("records", []) if r["id"] in going]
+    else:
+        records = [r for r in job.get("records", []) if r.get("kind") == "waiver"]
+    ids = {fid for r in records for fid in r.get("file_ids") or []}
+    return {m["id"]: _read_stored(company_id, m) for m in state.get("files", []) if m["id"] in ids}
+
+
+def _file_reader(company_id: str, ahead: dict | None = None):
+    """What the document check reads a stored file with (domain.read_file): what _read_ahead got,
+    or for a file that came onto the item since, read now."""
+    def read(meta: dict) -> "doc_check.ReadFile | None":
+        if ahead and meta["id"] in ahead:
+            return ahead[meta["id"]]
+        return _read_stored(company_id, meta)
+    return read
+
+
+DOCUMENT_ACTIONS = {"attach-record", "packet-confirm", "packet-recheck", "attach"}
+WAIVER_READING_ACTIONS = {"send", "waiver", "retainage"}
+
+
 JOB_ACTIONS = {
     "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"), period_end=_text(c.body, "period_to"))),
     "progress": (False, _progress),
-    "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), c.body.get("update_contract") is True, c.actor)),
-    "sov-progress": (False, lambda h, st, j, i, c: domain.record_sov_progress(st, j, c.body.get("done"), _text(c.body, "notes"), c.actor, stored=c.body.get("stored"),
-                                                                                        period_end=_text(c.body, "period_to"))),
+    "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), _may_change_contract(c, st), c.actor,
+                                                          may_change_contract=may_take(c.user, "edit", st))),
+    "sov-progress": (False, _sov_progress),
+    "sov-amounts": (False, lambda h, st, j, i, c: domain.set_payapp_amounts(st, j, c.body.get("amounts"), c.actor)),
+    "sov-correct": (False, lambda h, st, j, i, c: domain.correct_field_total(st, j, _text(c.body, "line_id"), c.body.get("qty"), _text(c.body, "reason"), c.actor,
+                                                                             below_billed=c.body.get("below_billed") is True)),
+    "quantities-undo": (True, lambda h, st, j, i, c: domain.undo_quantity_import(st, j, i, c.actor, below_billed=c.body.get("below_billed") is True)),
+    "waiver-needed": (False, lambda h, st, j, i, c: domain.waiver_needed_after_all(st, j, c.actor)),
+    "overbilling-settled": (False, lambda h, st, j, i, c: domain.settle_overbilling(st, j, _text(c.body, "reason"), c.actor)),
+    # Is this a lien waiver? A person's answer for a file going out that reads as one (the Nov 6 redesign).
+    "waiver-answer": (True, lambda h, st, j, i, c: domain.answer_waiver_question(st, j, i, _text(c.body, "answer"), c.actor, shown=_shown(c.body), answerer=_answerer(c, st))),
+    "retainage-credit": (False, lambda h, st, j, i, c: domain.apply_credit_to_retainage(st, j, _text(c.body, "reason"), c.actor,
+                                                                                         amount_cents=_number(c.body, "amount_cents", "the amount") if c.body.get("amount_cents") not in (None, "") else None)),
     "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, _sends("the pay app", _send_payapp)),
@@ -3105,9 +3499,11 @@ JOB_ACTIONS = {
     "match-payment": (False, lambda h, st, j, i, c: domain.match_payment(st, j, _number(c.body, "amount_cents", "the payment amount"), _text(c.body, "reference"), c.actor,
                                                                          invoice_id=_text(c.body, "invoice_id") or None, received_on=_received_on(c.body))),
     "waiver": (False, _sends("the waiver", lambda h, st, j, i, c: domain.send_waiver(st, j, c.actor, invoice_id=_text(c.body, "invoice_id") or None, kind=_text(c.body, "kind") or None,
-                                                                                    release_id=_text(c.body, "release_id") or None))),
+                                                                                    release_id=_text(c.body, "release_id") or None, confirm_final=c.body.get("confirm_final") is True,
+                                                                                    looked_at=_text(c.body, "looked_at"), check_only=c.body.get("check_only") is True,
+                                                                                    read_file=_file_reader(c.company_id, c.read_ahead), answerer=_answerer(c, st)))),
     # The type of a signed waiver on the job record, and which paid pay app or release it is for (B1).
-    "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"))),
+    "waiver-type": (True, lambda h, st, j, i, c: domain.set_waiver_type(st, j, i, _text(c.body, "kind"), c.actor, for_id=_text(c.body, "for_id"), answerer=_answerer(c, st))),
     # No waiver goes out through Duracash for this payment: handed over outside it, or not needed (B2).
     "waiver-not-needed": (False, lambda h, st, j, i, c: domain.waiver_not_needed(st, j, _text(c.body, "reason"), invoice_id=_text(c.body, "invoice_id") or None,
                                                                               release_id=_text(c.body, "release_id") or None, actor=c.actor)),
@@ -3132,10 +3528,15 @@ JOB_ACTIONS = {
     "pencil-response": (False, lambda h, st, j, i, c: domain.record_pencil_response(st, j, c.body.get("agreed") is True, _text(c.body, "note"), c.actor)),
     "add-evidence": (False, lambda h, st, j, i, c: domain.add_evidence(st, j, _filled(c.body, "label", "Enter what this evidence is."), _text(c.body, "kind", "note"), c.actor)),
     "add-record": (False, lambda h, st, j, i, c: domain.add_job_record(st, j, _text(c.body, "label"), _text(c.body, "kind", "note"), _text(c.body, "note"), c.actor)),
-    "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor)),
-    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor)),
+    "edit-record": (True, lambda h, st, j, i, c: domain.edit_record(st, j, i, _text(c.body, "label"), _text(c.body, "kind"), c.actor, _text(c.body, "note") if "note" in c.body else None,
+                                                                          answerer=_answerer(c, st))),
+    "attach-record": (True, lambda h, st, j, i, c: domain.attach_record_to_packet(st, j, i, _text(c.body, "record_id"), c.actor, read_file=_file_reader(c.company_id, c.read_ahead),
+                                                                                   looked=c.body.get("looked") is True, answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
+    "packet-confirm": (True, lambda h, st, j, i, c: domain.confirm_packet_item(st, j, i, c.actor, looked=c.body.get("looked") is True, read_file=_file_reader(c.company_id, c.read_ahead),
+                                                                                shown=_shown(c.body), answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
+    "packet-recheck": (True, lambda h, st, j, i, c: c.reply.update(domain.recheck_reply(st, j, i, read_file=_file_reader(c.company_id, c.read_ahead), shown=_shown(c.body)))),
     "detach": (True, lambda h, st, j, i, c: domain.detach_packet_item(st, j, i, c.actor)),
-    "packet-skip": (True, lambda h, st, j, i, c: domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor)),
+    "packet-skip": (True, lambda h, st, j, i, c: _skip_item(st, j, i, c)),
     "learn-rejection": (False, lambda h, st, j, i, c: domain.learn_rejection(st, j, _filled(c.body, "reason", "Enter why the client sent the pay app back."), c.actor)),
     "import-qbo": (False, _import_qbo),
     "close": (False, lambda h, st, j, i, c: domain.close_job(st, j, c.actor)),
@@ -3144,10 +3545,12 @@ JOB_ACTIONS = {
     "accept-short-pay": (True, lambda h, st, j, i, c: domain.settle_short_pay(st, j, i, _text(c.body, "reason"), c.actor)),
     "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
     "edit": (False, _edit_job),
+    "paperwork": (False, lambda h, st, j, i, c: domain.set_job_paperwork(st, j, c.body, c.actor)),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
-    # The Diary, and crew, weather, materials, deliveries, ticked sections and files (T11, T12, M1).
-    "daily-record": (False, lambda h, st, j, i, c: domain.add_daily_record(st, j, _filled(c.body, "notes", "Enter the diary entry."), c.actor, details=c.body)),
-    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name", "attachment"), c.actor)),
+    # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
+    "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body, c.reply)),
+    "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead),
+                                                                         looked=c.body.get("looked") is True, answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
 }
 
 def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None = None) -> bool:

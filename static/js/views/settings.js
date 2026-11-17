@@ -6,20 +6,26 @@ import { moreButton, askConfirm } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
 import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
-import { jobFilterOptions } from "../jobs.js";
+import { jobFilterOptions, jobFilterShown } from "../jobs.js";
 import { inviteLocked, inviteLockHtml } from "../setup.js";
 import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, setTeamData, teamData, mailReady, billingInfo, codesByEmail, twoStepPrompt, setTwoStepPrompt, helperAdmin } from "../state.js";
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
 import { THEMES, ACCENTS, applyAppearance, normalizeAppearance, storedAppearance } from "../theme.js";
 import { qboCardHtml } from "./payments.js";
 import { forgetImportSettings } from "./inbox.js";
+import { notificationsCardHtml, saveReminderPrefs } from "./automations.js";
 
 let twoStepSetup = null;  // {secret, uri} while setting up two-step sign-in
 let recoveryCodes = null; // shown once, right after two-step sign-in is turned on
 const ordinal = (n) => n + ([11, 12, 13].includes(n % 100) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th"));
 const BILLING_WORDS = { trialing: "Trial", active: "Active", past_due: "Card declined", unpaid: "Unpaid", canceled: "Cancelled", incomplete: "Incomplete", incomplete_expired: "Expired", paused: "Paused" };
 let auditJobFilter = "all";
+let auditWho = "";   // "people": without the app's own entries (round 1, item 14)
 export function setAuditJobFilter(value) { auditJobFilter = value; }
+// The log's query: the job picked and whose entries (app-core's LIST_QUERY lists).
+function auditQuery() {
+  return [auditJobFilter !== "all" ? "job=" + encodeURIComponent(unesc(auditJobFilter)) : "", auditWho ? "who=" + auditWho : ""].filter(Boolean).join("&");
+}
 
 async function resetData() {
   if (me && me.company_id === DEMO_COMPANY_ID) {
@@ -213,11 +219,11 @@ function companyView() {
       ${owner ? "" : `<p class="sub">Your profile doesn't include changing these.</p>`}
       <div class="form-grid">
         ${box("name", "co-name", "Company name", "name", { required: true, autocomplete: "organization" })}
-        ${box("phone", "co-phone", "Phone", "phone", { type: "tel", inputmode: "tel", autocomplete: "tel", placeholder: "(404) 555-0123" })}
+        ${box("phone", "co-phone", "Phone", "phone", { type: "tel", inputmode: "tel", autocomplete: "tel" })}
         ${box("street", "co-address", "Street address", "street", { wide: true, autocomplete: "address-line1" })}
         ${box("city", "co-city", "City", "city", { autocomplete: "address-level2" })}
         ${box("state", "co-state", "State", "state", { options: [["", "Pick a state"], ...US_STATES.map(c => [c, c])] })}
-        ${box("zip", "co-zip", "ZIP code", "zip", { inputmode: "numeric", autocomplete: "postal-code", placeholder: "30303" })}
+        ${box("zip", "co-zip", "ZIP code", "zip", { inputmode: "numeric", autocomplete: "postal-code" })}
         ${box("license", "co-license", "Contractor licence number", "licence")}
         ${box("legal_name", "co-legal-name", "Legal name (on contracts and lien waivers)", undefined, { wide: true, placeholder: "Same as the company name" })}
       </div>
@@ -281,16 +287,35 @@ function myAccountView() {
     <div class="card" data-form-key="account">${formErrorLine("account")}
       <h2>You</h2>
       ${isDemo ? `<div class="money-row"><span class="label">Name</span><span>${me.name}</span></div>` : `<div class="form-grid">${field({ form: "account", name: "name", id: "my-name", label: "Name", value: unesc(me.name), autocomplete: "name", rule: "name", required: true })}</div>`}
-      <div class="money-row"><span class="label">Email</span><span>${me.email} ${isDemo ? "" : verified}</span></div>
+      <div class="money-row"><span class="label">Email</span><span class="long-word">${me.email} ${isDemo ? "" : verified}</span></div>
+      ${isDemo ? "" : textsHtml()}
       <div class="money-row"><span class="label">Profile</span><span>${me.profile_name || words(me.role)}${me.company_admin ? ` <span class="pill copper">Company Admin</span>` : ""}</span></div>
       ${isDemo ? "" : `<div class="money-row"><span class="label">Password</span><span><button class="btn small secondary" data-action="nav" data-view="password">Change password</button></span></div>`}
     </div>
+    ${notificationsCardHtml()}
     ${appearanceCardHtml()}
     ${isDemo || twoStepPrompt ? "" : twoStepCardHtml()}
     ${me.onboarding_dismissed && !isDemo ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
     <p class="sub">Your account id: <code>${me.id}</code></p>
     <div class="save-bar"><button class="btn" data-action="save-account">Save</button></div>
   `;
+}
+
+// The mobile number and the agreement to texts (Decision 7). Texts are this person's own reminders.
+let smsCodeTo = "";   // the number a code was just texted to, until it is confirmed
+const shownPhone = (e164) => { const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(unesc(e164 || "")); return m ? `(${m[1]}) ${m[2]}-${m[3]}` : ""; };
+function textsHtml() {
+  // A redraw while the box is open (a background load) keeps what was ticked.
+  const box = globalThis.document?.getElementById("my-sms-opt-in");
+  const ticked = box ? box.checked : me.sms_opt_in;
+  return `<div class="form-grid">${field({ form: "account", name: "phone", id: "my-phone", label: "Mobile phone", value: shownPhone(smsCodeTo || me.phone), autocomplete: "tel", inputmode: "tel", rule: "phone" })}</div>
+      <label class="terms-check"><input type="checkbox" id="my-sms-opt-in"${ticked ? " checked" : ""}> Text me Duracash work reminders at this number: important dates and missing information, up to one message a day per company. Message and data rates may apply. Reply STOP to stop, HELP for help. Agreeing is not a condition of using Duracash.</label>
+      ${smsCodeTo ? `<div class="invite-result" role="status" data-form-key="smscode"><strong>Enter the code we texted to ${esc(shownPhone(smsCodeTo))}.</strong> Texts turn on once it is confirmed.
+        <div class="form-grid">${field({ form: "smscode", name: "sms_code", id: "my-sms-code", label: "Code from the text", autocomplete: "one-time-code", inputmode: "numeric" })}</div>
+        ${formErrorLine("smscode")}
+        <div class="form-inline"><button class="btn small" data-action="sms-confirm">Confirm number</button><button class="btn small secondary" data-action="sms-resend">Send a new code</button></div></div>` : ""}
+      ${me.sms_stopped ? `<p class="sub">You replied STOP, so texts are off. To turn them back on, text START to ${me.texts_number ? esc(shownPhone(me.texts_number)) : "the Duracash number"} first, then tick the box and save.</p>` : ""}
+      ${me.sms_needs_confirming && !smsCodeTo ? `<p class="sub">Confirm your number to keep getting texts: tick the box and save, then enter the code we text you.</p>` : ""}`;
 }
 
 // Appearance (G9): the theme and accent, kept on this person's account, saved with the page.
@@ -319,7 +344,7 @@ function twoStepCardHtml(prompt = false) {
           <li>In an authenticator app (Google Authenticator, 1Password, Authy, Microsoft Authenticator), add an account and scan this code. ${/Mobi|Android|iPhone/.test(navigator.userAgent) ? `On this phone, <a href="${esc(unesc(twoStepSetup.uri))}">open it in the app</a> instead.` : ""}
             ${twoStepSetup.qr ? `<img class="qr-code" id="2fa-qr" src="${twoStepSetup.qr}" alt="QR code of the two-step key" width="180" height="180">` : ""}</li>
           <li>Can't scan it? Choose to enter a key and type this one: <code id="2fa-key">${twoStepSetup.secret.match(/.{1,4}/g).join(" ")}</code> <button class="btn small secondary" data-action="copy" data-target="2fa-key">Copy</button></li>
-          <li>Type the 6-digit code the app shows: <span class="form-inline"><input id="2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"><button class="btn small" data-action="2fa-enable">Turn on</button></span></li>
+          <li>Type the 6-digit code the app shows: <span class="form-inline"><input id="2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"><button class="btn small" data-action="2fa-enable">Turn on</button></span></li>
         </ol>` : "";
   let body;
   if (recoveryCodes) {
@@ -332,7 +357,7 @@ function twoStepCardHtml(prompt = false) {
           <input id="2fa-off-code" placeholder="Code from the app" autocomplete="one-time-code" inputmode="numeric" aria-label="Code from the app">
           <button class="btn small secondary" data-action="2fa-disable">Use email codes</button></div></details>` : ""}`;
   } else if (codesByEmail) {
-    body = `<p class="sub"><span class="pill green">On</span> Email codes. Signing in on a new device asks for a 6-digit code we email to ${me.email}; that device is then remembered for 30 days.</p>
+    body = `<p class="sub"><span class="pill green">On</span> Email codes. Signing in on a new device asks for a 6-digit code we email to <span class="long-word">${me.email}</span>; that device is then remembered for 30 days.</p>
       ${setup || `<button class="btn small secondary" data-action="2fa-begin">Use an authenticator app instead</button>`}`;
   } else {
     body = `<p class="sub"><span class="pill amber">Not set up</span> Add a code from your phone to every sign-in, so a stolen password isn't enough.</p>
@@ -355,10 +380,10 @@ function passwordView() {
     <div class="card" data-form-key="password">${formErrorLine("password")}
       ${codesByEmail ? `<div class="form-inline">
         <button class="btn small${codeSentTo ? " secondary" : ""}" data-action="pw-code">${codeSentTo ? "Send a new code" : "Email me a code"}</button>
-        ${codeSentTo ? `<span class="sub" role="status">Code sent to ${codeSentTo}. It works for 15 minutes.</span>` : `<span class="sub">To ${me.email}</span>`}
+        ${codeSentTo ? `<span class="sub long-word" role="status">Code sent to ${codeSentTo}. It works for 15 minutes.</span>` : `<span class="sub long-word">To ${me.email}</span>`}
       </div>` : ""}
       <div class="form-grid">
-        ${codesByEmail ? field({ form: "password", name: "code", id: "pw-code", label: "Code from the email", autocomplete: "one-time-code", inputmode: "numeric", placeholder: "123456" }) : ""}
+        ${codesByEmail ? field({ form: "password", name: "code", id: "pw-code", label: "Code from the email", autocomplete: "one-time-code", inputmode: "numeric" }) : ""}
         ${field({ form: "password", name: "current", id: "pw-current", label: "Current password", type: "password", autocomplete: "current-password" })}
         ${field({ form: "password", name: "new", id: "pw-new", label: "New password (10+ characters)", type: "password", autocomplete: "new-password" })}
       </div>
@@ -405,7 +430,7 @@ export function trialBannerHtml() {
 // Signed out: what one person had open in Settings isn't kept for the next.
 export function forgetSettings() {
   twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {}; codeSentTo = ""; profileDraft = null;
-  helperReview = null; helperDraft = null; auditJobFilter = "all";
+  helperReview = null; helperDraft = null; auditJobFilter = "all"; auditWho = "";
 }
 onSessionEnd(forgetSettings);
 
@@ -431,7 +456,7 @@ function adminCompaniesHtml() {
 
 let helperReview = null;
 let helperDraft = null;   // the answer being written or edited
-const HELPER_VIEWS = ["dashboard", "results", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "payments", "waivers", "retainage", "automations", "account", "audit"];
+const HELPER_VIEWS = ["dashboard", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "waivers", "retainage", "account", "audit"];
 
 export async function loadHelperReview() {
   const body = document.getElementById("helper-admin-body");
@@ -553,31 +578,54 @@ export const views = {
       <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial and, once Stripe is set up, its subscription. Nothing is enforced unless BILLING_ENFORCE=1.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
   },
   audit() {
-    const page = listPage("audit", auditJobFilter);
+    const page = listPage("audit", auditQuery());
     const events = page ? page.entries : [];
     return `
       <h1>Activity log</h1>
       ${state.audit_chain && !state.audit_chain.ok ? `<p class="blocker">The chain of records is broken at ${state.audit_chain.broken_at}.</p>` : ""}
-      <div class="filter-bar">
+      ${jobFilterShown(state.jobs) ? `<div class="filter-bar">
         <label for="audit-filter" class="inline-label">Job</label>
         <select id="audit-filter" data-filter-for="audit">
           <option value="all">All jobs</option>
           ${jobFilterOptions(state.jobs, auditJobFilter)}
         </select>
+      </div>` : ""}
+      <div class="filter-bar" role="group" aria-label="Whose entries">
+        <button class="${auditWho ? "btn secondary" : "btn"} small" data-action="audit-who" data-who="" aria-pressed="${!auditWho}">Everything</button>
+        <button class="${auditWho ? "btn" : "btn secondary"} small" data-action="audit-who" data-who="people" aria-pressed="${!!auditWho}">Without the app's own entries</button>
       </div>
       ${events.length ? `<div class="table-wrap">
         <table>
           <tr><th>What happened</th><th>When</th><th>Who</th><th>Action</th></tr>
           ${events.map(e => `<tr><td>${e.detail}</td><td>${fmtDateTime(e.at)}</td><td>${e.actor}</td><td>${actionWords(e.action)}</td></tr>`).join("")}
         </table>
-      </div>${moreButton("audit", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("Nothing logged yet")}
+      </div>${moreButton("audit", page)}` : !page ? `<p class="sub">Loading…</p>` : emptyState("No activity yet")}
     `;
   },
 };
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in app.js.
 export const actions = {
+  "audit-who": (el) => { auditWho = el.dataset.who === "people" ? "people" : ""; render(); },
   "reset-data": () => resetData(),
+  "sms-resend": async () => {
+    const r = await postJson("/api/auth/sms", { phone: smsCodeTo, sms_opt_in: true });
+    if (!r.ok) { refuseForm("smscode", r.data.fields || { _form: r.data.error || "Not sent." }); return; }
+    setMe(escDeep(r.data.user));
+    if (r.data.code_sent) smsCodeTo = r.data.sent_to;
+    clearForm("smscode");
+    toast("A new code is on its way.");
+    render();
+  },
+  "sms-confirm": async () => {
+    const r = await postJson("/api/auth/sms/confirm", { code: formValues("smscode").sms_code || "" });
+    if (!r.ok) { refuseForm("smscode", r.data.fields || { _form: r.data.error || "Not confirmed." }); return; }
+    setMe(escDeep(r.data.user));
+    smsCodeTo = "";
+    clearForm("smscode"); clearForm("account");
+    toast("Number confirmed. Texts are on.");
+    render();
+  },
   "pw-code": async () => {
     const r = await postJson("/api/auth/password/code", {});
     if (!r.ok) { refuseForm("password", { _form: r.data.error || "No code was sent." }); return; }
@@ -702,6 +750,15 @@ export const actions = {
       if (!r.ok) { refuseForm("account", r.data.fields || { _form: r.data.error || "Not saved." }); return; }
       setMe(escDeep(r.data.user));
     }
+    const optIn = document.getElementById("my-sms-opt-in");
+    // A Save while a code is waiting for this same number doesn't ask for another.
+    const waiting = optIn && optIn.checked && smsCodeTo && (v.phone || "") === shownPhone(smsCodeTo);
+    if (optIn && !waiting && (("phone" in v && v.phone !== shownPhone(me.phone)) || optIn.checked !== !!me.sms_opt_in)) {
+      const r = await postJson("/api/auth/sms", { phone: v.phone || "", sms_opt_in: optIn.checked });
+      if (!r.ok) { refuseForm("account", r.data.fields || { _form: r.data.error || "Not saved." }); return; }
+      setMe(escDeep(r.data.user));
+      smsCodeTo = r.data.code_sent ? r.data.sent_to : "";
+    }
     const look = formValues("appearance");
     const was = savedAppearance();
     const wanted = { theme: look.theme || was.theme, accent: look.accent || was.accent };
@@ -712,9 +769,11 @@ export const actions = {
       setMe(escDeep(r.data.user));
       applyAppearance(r.data.user.appearance);
     }
+    if (!(await saveReminderPrefs())) return;
     clearForm("account"); clearForm("appearance");
-    toast("Saved");
+    toast(smsCodeTo ? "Saved. Enter the code we texted you to turn texts on." : "Saved");
     render();
+    if (smsCodeTo) document.getElementById("my-sms-code")?.focus();
   },
   "billing-checkout": () => openBilling("/api/billing/checkout"),
   "billing-portal": () => openBilling("/api/billing/portal"),

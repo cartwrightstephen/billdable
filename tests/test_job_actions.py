@@ -63,8 +63,8 @@ class JobActionTests(unittest.TestCase):
 
     def new_job(self, name):
         res, data = self.request("POST", "/api/jobs", {
-            "name": name, "address": "1 Main St", "customer": "Ada Owner", "approver": "Ada Owner",
-            "ap_email": "ada@example.com", "role": "Owner", "contract_cents": 1000000, "retainage_pct": 0,
+            "name": name, "address": "1 Main St", "customer": "Ada Owner", "approver_confirmed": True, "approver": "Ada Owner",
+            "ap_email": "ada@example.com", "role": "Owner", "contract_cents": 1000000, "retainage_pct": 0, "phone": "(404) 555-0100"
         }, self.cookie)
         self.assertEqual(res.status, 200, data)
         return next(j["id"] for j in data["jobs"] if j["name"] == name)
@@ -76,7 +76,7 @@ class JobActionTests(unittest.TestCase):
         self.assertTrue(called, "the pattern found no calls: has the URL style changed?")
         # Links to pages the server serves (the pay-app PDF) are GET routes, not actions.
         served = {r.method + " " + r.pattern for r in server.ROUTES}
-        links = {w for w in called if any(p.startswith(f"GET /api/jobs/([^/]+)/{w}/") for p in served)}
+        links = {w for w in called if any(p.startswith(f"GET /api/jobs/([^/]+)/{w}/") or p == f"GET /api/jobs/([^/]+)/{w}" for p in served)}
         self.assertEqual(sorted(called - links - set(server.JOB_ACTIONS)), [], "the page calls job actions the server does not have")
 
     def test_an_empty_request_is_refused_plainly_never_a_server_error(self):

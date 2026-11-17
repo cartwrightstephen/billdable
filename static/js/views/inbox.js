@@ -2,7 +2,7 @@
 // text, and the forwarding addresses for email, texts and the calendar. The Inbox page shows
 // what is waiting and everything received (C1); the file and paste boxes are on Import (data.js).
 import { esc, unesc, escDeep, money, fmtDate } from "../format.js";
-import { RECORD_KINDS, SOURCE_LABELS, defaultJobId, jobFilterOptions } from "../jobs.js";
+import { RECORD_KINDS, FILE_KINDS, fileKindPick, SOURCE_LABELS, defaultJobId, jobFilterOptions, jobFilterShown, finalPayAppConfirm } from "../jobs.js";
 import { readJson, setNetBanner, inBatches } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { webcalUrl } from "../calendar.js";
@@ -10,23 +10,13 @@ import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "../inbox.js";
 import { termText } from "../terms.js";
 import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
-import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can } from "../app-core.js";
+import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can, may } from "../app-core.js";
 import { moreButton } from "../dom.js";
 import { printSheet } from "./communications.js";
+import { stageRecordFiles, rememberDailyJob } from "./daily.js";
 
-// Files added on Import go with the job last picked under "Which job?" on this device (R5-07).
-// "" is "Not sure, file later". Kept in memory too, for a private window.
-const UPLOAD_JOB_KEY = "duracash-upload-job";
-let uploadJob = null;
-// null until a pick is made on this device; "" after "Not sure, file later" was picked.
-function lastUploadJob() {
-  if (uploadJob !== null) return uploadJob;
-  try { return localStorage.getItem(UPLOAD_JOB_KEY); } catch (_) { return null; }
-}
-export function rememberUploadJob(id) {
-  uploadJob = unesc(id);
-  try { localStorage.setItem(UPLOAD_JOB_KEY, uploadJob); } catch (_) { /* private window: remembered until reload */ }
-}
+// Which job? on Import starts on "Not sure, file later", so nothing skips the Inbox without someone
+// choosing a job here. A job's own files go in through New job record (Yusuf, 10 Nov).
 const FILE_ACCEPT = document.getElementById("file-input")?.getAttribute("accept") || "";
 let importSettings = null;
 // The addresses changed on the server (a team member removed): ask for them again when shown.
@@ -44,7 +34,7 @@ const UPLOADS_AT_ONCE = 3;
 async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", extra = {}) {
   const files = [...(fileList || [])];
   if (!files.length) return;
-  let ok = 0, signedOut = false;
+  let ok = 0, signedOut = false, said = "";
   const failed = [];
   const one = async (f) => {
     if (signedOut) return;
@@ -60,7 +50,7 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", ext
       });
       const data = await readJson(res);
       if (res.status === 401) { signedOut = true; return; }
-      if (res.ok) { ok++; setNetBanner(false); }
+      if (res.ok) { ok++; setNetBanner(false); if (data.message) said = data.message; }
       else failed.push(data.error || `${name}: upload failed`);
     } catch (_) {
       setNetBanner(true);
@@ -73,9 +63,15 @@ async function uploadFiles(fileList, jobId = "", fileNow = false, kind = "", ext
   if (signedOut) { clearSession(); renderLanding(); return; }
   // The answers can arrive out of order, so the page reads the company once at the end.
   if (ok) { clearJobDetails(); await load(); }
-  const where = !fileNow ? "in the Inbox" : extra.attach ? "added to the job record and attached" : extra.co ? "added to the job record; the change order is signed" : "added to the job record";
-  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", failed.join("; ")].filter(Boolean).join(" "));
+  // A signed copy from someone who can't approve change orders is kept with it; the answer says so.
+  const where = !fileNow ? "in the Inbox" : extra.attach ? "added to the job records and attached" : extra.co && !said ? "added to the job records; the change order is signed" : "added to the job records";
+  toast([ok ? `${ok} file${ok === 1 ? "" : "s"} ${where}.` : "", said, failed.join("; ")].filter(Boolean).join(" "), ok && !fileNow ? toInbox() : null);
   render();
+}
+
+// What was added to the Inbox from elsewhere (Import) carries a way there (round 1, item 20).
+function toInbox() {
+  return currentView === "inbox" ? null : { label: "Open the Inbox", run: () => nav("inbox") };
 }
 
 async function postImport(path, body) {
@@ -86,7 +82,7 @@ async function postImport(path, body) {
   const data = await readJson(res);
   if (!res.ok) { toast(data.error || "Import failed."); return false; }
   setState(data);
-  toast(body.job_id ? "Added to the job record." : "Added to the Inbox.");
+  toast(body.job_id ? "Added to the job records." : "Added to the Inbox.", toInbox());
   render();
   return true;
 }
@@ -147,15 +143,15 @@ export function newAddressButton(kind) {
   return can("company") ? `<button class="btn small secondary" data-action="rotate-token" data-kind="${kind}">Make a new address</button>` : "";
 }
 
-// Import's "Which job?" for files added there: the last one picked, or the only open job.
+// Import's "Which job?": what the box on screen shows (a redraw keeps a pick), else Not sure.
+function uploadJobPick() {
+  const onScreen = document.getElementById("upload-job");
+  return onScreen ? onScreen.value : "";
+}
+
 function uploadJobOptions() {
   const openJobs = state.jobs.filter(j => !j.closed);
-  // "Not sure" stays picked once chosen, even with one open job.
-  // A redraw keeps what the box on screen shows (a pick made while the page was loading), then
-  // what was last picked on this device.
-  const onScreen = document.getElementById("upload-job");
-  const last = onScreen && onScreen.value ? onScreen.value : lastUploadJob();
-  const pick = last === "" ? "" : defaultJobId(openJobs, last || "");
+  const pick = uploadJobPick();
   return `<option value="">Not sure, file later</option>` + openJobs.map(j => `<option value="${j.id}"${pick === j.id ? " selected" : ""}>${j.name} (${j.code})</option>`).join("");
 }
 
@@ -175,7 +171,7 @@ export function dropzoneHtml(cameraOnly = false) {
         <button class="btn" id="inbox-camera" data-action="pick-files" data-capture="1">Take a photo</button></div></div>`;
   }
   return `<div class="dropzone" tabindex="0">
-        <label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>
+        ${state.jobs.some(j => !j.closed) ? `<label class="upload-job" for="upload-job">Which job? <select id="upload-job">${uploadJobOptions()}</select></label>` : ""}
         <div class="capture-buttons touch-only">
           <button class="btn" data-action="pick-files" data-ask-job="1" data-capture="1">Take a photo</button>
           <button class="btn secondary" data-action="pick-files" data-ask-job="1">Choose files</button>
@@ -197,13 +193,13 @@ export function pasteBoxHtml(jobId = "") {
           <select id="paste-source" data-field="source" aria-label="What are you pasting?"${picked ? ' data-touched="1"' : ""}>
             ${opt("email", "An email")}
             ${opt("sms", "Text messages")}
-            ${opt("notes", "Notes: one daily record per date")}
+            ${opt("notes", "Notes: one job record per date")}
             ${opt("paste", "Something else")}
           </select>
         </div>
         <textarea id="paste-text" data-field="text" rows="6" placeholder="Paste here. For notes, start each day with a date, for example:&#10;10/12 Framing done on Oak Street, 4 crew&#10;10/13 Inspector passed rough-in">${esc(text)}</textarea>
         <p id="paste-hint" class="sub paste-hint" role="status"></p>
-        <div class="form-inline"><button class="btn" data-action="import-text"${jobId ? ` data-job="${jobId}"` : ""}>${jobId ? "Add to job" : "Add to Inbox"}</button></div></div>`;
+        <div class="form-inline"><button class="btn" id="paste-add" data-action="import-text"${jobId ? ` data-job="${jobId}"` : ""}>${jobId || uploadJobPick() ? "Add to job" : "Add to Inbox"}</button></div></div>`;
 }
 
 // Typing or pasting in the box: pick what it looks like, unless the person already chose.
@@ -252,7 +248,7 @@ export function receivedStatus(r) {
 // A row's files, each opening in a new tab; a file taken off the job record since says so.
 export function receivedFilesHtml(r) {
   const links = (r.files || []).map(f => `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>`).join(" · ");
-  const gone = r.files_gone ? `${r.files_gone} file${r.files_gone === 1 ? "" : "s"} no longer on the job record` : "";
+  const gone = r.files_gone ? `${r.files_gone} file${r.files_gone === 1 ? "" : "s"} no longer in the job records` : "";
   return links || gone ? `<div class="sub">Files: ${[links, gone].filter(Boolean).join(" · ")}</div>` : "";
 }
 
@@ -278,7 +274,7 @@ function receivedHtml() {
       <div class="filter-bar">
         ${receivedSelect("source", "Came in by", "All", SOURCE_OPTIONS())}
         ${receivedSelect("status", "Status", "All", STATUS_OPTIONS)}
-        ${receivedSelect("job", "Job", "All jobs", [], jobFilterOptions(state.jobs, receivedFilter.job))}
+        ${jobFilterShown(state.jobs) ? receivedSelect("job", "Job", "All jobs", [], jobFilterOptions(state.jobs, receivedFilter.job)) : ""}
         ${receivedSelect("sort", "Sort", "", SORT_OPTIONS)}
       </div>
       ${rows.length ? `<div class="table-wrap"><table>
@@ -288,23 +284,29 @@ function receivedHtml() {
           <td>${receivedStatus(r)}${r.why ? `<div class="sub">${r.why}</div>` : ""}
             <div class="row-actions">${r.status === "new" ? "" : `<button class="btn small secondary" data-action="inbox-undo" data-item="${r.id}">Undo</button>`}<button class="linkish" data-action="print-received" data-item="${r.id}">Print</button></div></td></tr>`).join("")}
       </table></div>${moreButton("inbox", page)}`
-      : !page ? `<p class="sub">Loading…</p>` : emptyState(filtered ? "Nothing matches these filters." : "Nothing has come in yet.")}
+      : !page ? `<p class="sub">Loading…</p>` : emptyState(filtered ? "Nothing matches these filters" : "Nothing received yet", "", filtered ? "" : `<button class="btn" data-action="nav" data-view="import">Import</button>`)}
     </div>`;
 }
 
 function inboxItemCard(i) {
+  // Texted to the company's number: only the permission the server asks for sorts these.
+  if (i.by_text && !can("company")) return `<div class="inbox-item" data-item="${i.id}">
+    <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${(i.text || "").split("\n")[0].slice(0, 80) || "Text message"}</strong>
+      <span class="sub">${i.from ? "from " + i.from + " · " : ""}${fmtDate(i.sent_at || i.received_at)}</span></div>
+    <p class="sub">An owner, or someone allowed to edit company details, files this to a job.</p></div>`;
   const openJobs = state.jobs.filter(j => !j.closed);
   const files = (i.file_ids || []).map(fid => (state.files || []).find(x => x.id === fid)).filter(Boolean);
   const title = i.subject || (files[0] && files[0].name) || (i.text || "").split("\n")[0].slice(0, 80) || "Untitled";
   const preview = (i.text || "").slice(0, 600);
-  const kinds = Object.entries(RECORD_KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? "selected" : ""}>${termText(v)}</option>`).join("");
+  const picked = fileKindPick(i.kind, `${i.subject || ""} ${i.text || ""}`);
+  const kinds = FILE_KINDS.map(([k, v]) => `<option value="${k}" ${picked === k ? "selected" : ""}>${termText(v)}</option>`).join("");
   const suggested = i.suggested_job_id && openJobs.find(j => j.id === i.suggested_job_id);
   const choices = suggested ? [] : choiceJobs(i, openJobs);
   // Nothing suggested and only one open job: that one (R2-07).
   const pick = i.suggested_job_id || defaultJobId(openJobs);
   const jobs = `<option value="">Pick a job…</option>` + jobsInOrder(openJobs, i.candidates || []).map(j => `<option value="${j.id}" ${pick === j.id ? "selected" : ""}>${j.name} (${j.code})</option>`).join("");
   const selects = !suggested || inboxOpen.has(i.id);
-  const kindName = termText(RECORD_KINDS[i.kind] || i.kind);
+  const kindName = termText((FILE_KINDS.find(([k]) => k === picked) || [])[1] || i.kind);
   return `<div class="inbox-item" data-item="${i.id}">
     <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${title}</strong>
       <span class="sub">${i.from ? "from " + i.from + " · " : ""}${fmtDate(i.sent_at || i.received_at)}${i.note_date ? " · dated " + fmtDate(i.note_date) : ""}</span></div>
@@ -316,7 +318,7 @@ function inboxItemCard(i) {
       ${choices.map(j => `<button class="btn small secondary" data-action="inbox-file-suggested" data-item="${i.id}" data-job="${j.id}">${j.name}</button>`).join("")}</div>`
       : `<div class="sub">${suggested ? "Suggested because it " + i.match_reason : i.match_reason}</div>`}
     ${i.payments_csv && files[0] ? `<div class="notice">This looks like a payments export. <button class="btn small" data-action="inbox-read-payments" data-file="${files[0].id}">Read as payments (${i.payment_rows} row${i.payment_rows === 1 ? "" : "s"})</button></div>` : ""}
-    ${i.says_done_job_id ? `<div class="notice says-done">This says the job is done. <button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark ${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || "the job"} done and draft the pay app</button></div>` : ""}
+    ${i.says_done_job_id ? `<div class="notice says-done">This says the job is done.${may("done") ? ` <button class="btn small" data-action="inbox-mark-done" data-item="${i.id}">Mark ${(state.jobs.find(j => j.id === i.says_done_job_id) || {}).name || "the job"} done and draft the pay app</button>` : ""}</div>` : ""}
     ${suggested ? `<div class="form-inline inbox-one-tap">
       <button class="btn" data-action="inbox-file-suggested" data-item="${i.id}" data-job="${suggested.id}">Add to ${suggested.name}</button>
       ${selects ? "" : `<button class="linkish" data-action="inbox-other" data-item="${i.id}" data-focus="job">Other job</button>
@@ -345,7 +347,7 @@ function dropOverlay(on) {
   }
   if (!el) return;
   const job = currentView === "job" && state && state.jobs.find(j => j.id === currentJobId && !j.closed);
-  el.textContent = job ? `Drop to add to ${job.name}` : "Drop to add to the Inbox";
+  el.textContent = currentView === "daily" ? "Drop to add to this job record" : job ? `Drop to start a job record for ${job.name}` : "Drop to add to the Inbox";
   el.style.display = on ? "flex" : "none";
 }
 function importTargetJob() {
@@ -375,8 +377,12 @@ document.addEventListener("drop", (e) => {
     return;
   }
   e.preventDefault();
+  // A job's files go in through New job record (Yusuf, 10 Nov): dropped on its form, or on the
+  // job's page, which opens the form for that job with the files in it.
+  if (currentView === "daily") { stageRecordFiles(e.dataTransfer.files); return; }
   const jobId = importTargetJob();
-  uploadFiles(e.dataTransfer.files, jobId || inboxUploadJob(), !!jobId);
+  if (jobId) { const files = [...e.dataTransfer.files]; rememberDailyJob(jobId); nav("daily"); stageRecordFiles(files); return; }
+  uploadFiles(e.dataTransfer.files, inboxUploadJob(), false);
 });
 window.addEventListener("blur", () => { dragDepth = 0; dropOverlay(false); });
 document.addEventListener("dragend", () => { dragDepth = 0; dropOverlay(false); });
@@ -426,7 +432,7 @@ export const views = {
       <h1>Inbox</h1>
       <div class="card inbox-waiting">
         <div class="top"><h2>Waiting (${items.length})</h2>${withSuggestion ? `<button class="btn small secondary" data-action="inbox-file-all">${withSuggestion === 1 ? "Add it to its suggested job" : `Add all ${withSuggestion} to their suggested jobs`}</button>` : ""}</div>
-        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting.")}
+        ${items.length ? items.map(inboxItemCard).join("") : emptyState("Nothing waiting")}
       </div>
       ${dropzoneHtml(true)}
       <p class="sub">Add files or paste notes on <a href="/data/import" data-action="nav" data-view="import">Import</a>.</p>
@@ -456,7 +462,7 @@ export const actions = {
     if (input) {
       input.dataset.job = el.dataset.job || "";
       input.dataset.kind = el.dataset.kind || "";   // e.g. "waiver" from the waiver page
-      input.dataset.attach = el.dataset.attach || "";   // a paperwork item to attach it to
+      input.dataset.attach = el.dataset.attach || "";   // a supporting document to attach it to
       input.dataset.co = el.dataset.co || "";   // a change order it is the signed copy of
       input.dataset.waiverKind = el.dataset.waiverKind || "";   // the type of a signed lien waiver (M14)
       input.dataset.waiverFor = el.dataset.waiverFor || "";   // the paid pay app or release it is for (B1)
@@ -468,10 +474,12 @@ export const actions = {
       input.click();
     }
   },
+  // Import from a job's Job records card: Which job? starts on that job.
   "import-text": async (el) => {
     const text = document.querySelector("#paste-text")?.value || "";
     const source = document.querySelector("#paste-source")?.value || "paste";
-    const jobId = el.dataset.job || "";
+    // Which job? on Import: filed straight onto it; Not sure waits in the Inbox.
+    const jobId = el.dataset.job || inboxUploadJob();
     if (!text.trim()) { toast("Paste some text first."); return; }
     const ok = await postImport("/api/import/text" + (jobId ? "?file=1" : ""), { text, source, job_id: jobId });
     // Added: the box and its kind start over, as for the next paste.
@@ -488,7 +496,7 @@ export const actions = {
   "inbox-file-all": async () => {
     // Every card's picks are read before the first save: each save redraws the cards, which
     // would show the suggested job and kind again.
-    const picks = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id).map(i => {
+    const picks = (state.inbox || []).filter(i => i.status === "new" && i.suggested_job_id && (!i.by_text || can("company"))).map(i => {
       const select = document.querySelector(`#inb-job-${i.id}`);
       const jobId = select ? select.value : i.suggested_job_id;   // a row set back to "Pick a job" is skipped
       return { id: i.id, jobId, kind: document.querySelector(`#inb-kind-${i.id}`)?.value || i.kind };
@@ -514,7 +522,10 @@ export const actions = {
   "inbox-mark-done": async (el) => {
     const it = (state.inbox || []).find(x => x.id === el.dataset.item);
     const j = it && state.jobs.find(x => x.id === it.says_done_job_id);
-    const answer = await askConfirm(`Mark ${unesc(j ? j.name : "the job")} done? ${termText("This bills the rest of the contract on a final pay app.")}`, "Mark done and draft", false, "Just file the message");
+    const res = j ? await fetch(`/api/jobs/${encodeURIComponent(j.id)}/final-preview`).catch(() => null) : null;
+    const words = res && res.ok ? finalPayAppConfirm(j, await res.json())
+      : { text: `Record ${unesc(j ? j.name : "the job")} as finished? ${termText("This bills the rest of the contract on a final pay app.")}`, button: termText("Final pay app") };
+    const answer = await askConfirm(words.text, words.button, false, "Just file the message");
     if (!answer) return;
     if (answer === "alt") { if (it) await post(`/api/inbox/${it.id}/file`, { job_id: it.says_done_job_id, kind: it.kind }); return; }
     const r = await post(`/api/inbox/${el.dataset.item}/mark-done`);
@@ -527,7 +538,7 @@ export const actions = {
     const r = ((listPage("inbox", receivedQuery()) || {}).entries || []).find(x => x.id === el.dataset.item);
     if (!r) return;
     printSheet([["From", r.from || "—"], ["Received", fmtDate(r.sent_at || r.received_at)], ["Came in by", SOURCE_LABELS[r.source] || r.source],
-      ["Status", receivedStatus(r)]], r.title, r.text, (r.files || []).map(f => f.name).concat(r.files_gone ? [`${r.files_gone} file${r.files_gone === 1 ? "" : "s"} no longer on the job record`] : []));
+      ["Status", receivedStatus(r)]], r.title, r.text, (r.files || []).map(f => f.name).concat(r.files_gone ? [`${r.files_gone} file${r.files_gone === 1 ? "" : "s"} no longer in the job records`] : []));
   },
   "rotate-token": async (el) => {
     if (!(await askConfirm("Make a new address? The old one stops working right away.", "Make a new address"))) return;
@@ -541,3 +552,11 @@ export const actions = {
   // The kind select counts: the card's when it is open, else Today's row's (it starts at the guessed kind).
   "inbox-file-suggested": (el) => post(`/api/inbox/${el.dataset.item}/file`, { job_id: el.dataset.job, kind: document.querySelector(`#inb-kind-${el.dataset.item}`)?.value || "" }),
 };
+
+// Which job? says where the paste box's text goes, in place: a redraw would lose nothing, but needn't happen.
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.id === "upload-job") {
+    const add = document.getElementById("paste-add");
+    if (add) add.textContent = e.target.value ? "Add to job" : "Add to Inbox";
+  }
+});

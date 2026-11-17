@@ -66,7 +66,7 @@ class RouteEdgeTests(unittest.TestCase):
         res, data = self.request("POST", "/api/nope", {})
         self.assertEqual(res.status, 401)
         cookie, _ = self.signup("routes@example.com")
-        res, data = self.request("POST", "/api/jobs", {"name": "Elm", "customer": "Elm GC", "contract_cents": 100000, "address": "9 Elm St", "approver": "Dana Elm", "ap_email": "ap@elmgc.com"}, cookie=cookie)
+        res, data = self.request("POST", "/api/jobs", {"name": "Elm", "customer": "Elm GC", "contract_cents": 100000, "address": "9 Elm St", "approver": "Dana Elm", "ap_email": "ap@elmgc.com", "phone": "(404) 555-0100", "role": "Owner"}, cookie=cookie)
         self.assertEqual(res.status, 200, data)
         job_id = data["jobs"][0]["id"]
         for path in [f"/api/jobs/{job_id}/nope", f"/api/jobs/{job_id}/approve-co", f"/api/jobs/{job_id}/done/extra", "/api/nope"]:
@@ -121,7 +121,7 @@ class RouteEdgeTests(unittest.TestCase):
 
     def test_per_view_endpoints(self):
         cookie, _ = self.signup("views@example.com")
-        job = {"name": "Ash", "customer": "Ash GC", "contract_cents": 100000, "address": "1 Ash St", "approver": "Al Ash", "ap_email": "ap@ashgc.com"}
+        job = {"name": "Ash", "customer": "Ash GC", "contract_cents": 100000, "address": "1 Ash St", "approver": "Al Ash", "ap_email": "ap@ashgc.com", "phone": "(404) 555-0100", "role": "Owner"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         job_id = state["jobs"][0]["id"]
         self.assertNotIn("payer", state["jobs"][0], "payers are sent once, not per job")

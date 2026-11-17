@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import admin
 import billing
 import domain
+from waiver_help import confirm_suggested
 import metrics
 import monthly
 import server
@@ -150,7 +151,8 @@ class MonthlyJobsTests(unittest.TestCase):
                 self.assertEqual(monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 9, tzinfo=UTC)), [], "only on the 1st to the 3rd")
                 did = monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 2, tzinfo=UTC))
                 self.assertEqual(monthly.run_monthly_jobs(server.SITE, datetime(2026, 11, 3, tzinfo=UTC)), [], "once")
-        send.assert_called_once_with(server.SITE, 2026, 10)
+        send.assert_called_once()
+        self.assertEqual(send.call_args[0][:3], (server.SITE, 2026, 10))
         self.assertIn("2026-10", did[0])
 
 
@@ -258,7 +260,7 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
 
     def gc_job(self, state, packet=None):
         job = domain.create_job(state, "Mill Creek patio", "Tallow Creek Builders", 1_000_000, address="1 Mill Rd",
-                                ap_email="ap@tallow.example", role="GC")
+                                ap_email="ap@tallow.example", role="GC", approver="Mill Creek patio", phone="(404) 555-0100")
         if packet is not None:
             domain.update_payer(state, job["payer_id"], {"packet": packet})
         return job
@@ -289,39 +291,51 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
 
     def test_owner_backup_is_needed_only_without_a_schedule(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
-        plain = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St")
+        plain = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.record_progress(state, plain["id"], 400_000)
         self.assertIn("Pay app backup", [p["label"] for p in domain.missing_packet(plain)])
-        scheduled = domain.create_job(state, "Deck", "Dana Homeowner", 1_000_000, address="3 Elm St")
+        scheduled = domain.create_job(state, "Deck", "Dana Homeowner", 1_000_000, address="3 Elm St", approver="Deck", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.save_sov(state, scheduled["id"], self.SOV_LINES, "0")
         domain.record_sov_progress(state, scheduled["id"], {scheduled["sov"]["lines"][0]["id"]: "40"})
         self.assertNotIn("Pay app backup", [p["label"] for p in domain.missing_packet(scheduled)])
 
+    @staticmethod
+    def on_record(state, job, label, kind):
+        """A record with a stored file, as an upload leaves it."""
+        fid = f"file-{len(state.setdefault('files', [])) + 1}"
+        state["files"].append({"id": fid, "name": f"{label}.pdf", "ext": ".pdf", "size": 10})
+        domain.add_job_record(state, job["id"], label, kind)
+        job["records"][-1]["file_ids"] = [fid]
+        domain._refresh_draft_gate(job, state)
+        return job["records"][-1]
+
     def test_new_record_kinds_fill_their_paperwork(self):
-        # An insurance certificate, a supplier invoice (for a ticket item) and a stored-materials
+        # An insurance certificate, a delivery ticket (a supplier invoice only when the item asks for one) and a stored-materials
         # document on the job record fill the items that name them (J5, M6).
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
-        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St")
+        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.update_payer(state, job["payer_id"], {"packet": "Insurance certificate, delivery tickets, stored materials invoice"})
-        domain.add_job_record(state, job["id"], "ACME COI 2026", "insurance")
-        domain.add_job_record(state, job["id"], "ABC Supply invoice 4471", "supplier_invoice")
+        self.on_record(state, job, "ACME COI 2026", "insurance")
+        self.on_record(state, job, "ABC Supply invoice 4471", "supplier_invoice")
+        self.on_record(state, job, "Delivery 88", "ticket")
         domain.record_progress(state, job["id"], 400_000)
         packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
         self.assertEqual(packet["Insurance certificate"]["attachments"][0]["name"], "ACME COI 2026")
-        self.assertEqual(packet["Delivery tickets"]["attachments"][0]["name"], "ABC Supply invoice 4471")
+        self.assertEqual([a["name"] for a in packet["Delivery tickets"]["attachments"]], ["Delivery 88"])
 
     def test_records_on_the_job_fill_the_paperwork(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
-        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", contract_number="C-7")
-        domain.add_job_record(state, job["id"], "Signed contract PDF", "contract")
+        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", contract_number="C-7", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
+        self.on_record(state, job, "Signed contract PDF", "contract")
         domain.record_progress(state, job["id"], 400_000)
         contract = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Signed contract")
-        self.assertTrue(contract["present"])
+        self.assertFalse(contract["present"], "suggested, not cleared")
         self.assertEqual([(a["name"], a["auto"]) for a in contract["attachments"]], [("Signed contract PDF", True)])
-        self.assertTrue(any("attached automatically from the job record" in a["detail"] for a in state["audit"]))
-        # A record added after drafting fills its item too.
-        domain.add_job_record(state, job["id"], "Kitchen photos", "photo")
+        self.assertTrue(any("suggested from the job records" in a["detail"] for a in state["audit"]))
+        # A record added after drafting is suggested for its item too.
+        self.on_record(state, job, "Kitchen photos", "photo")
         photos = next(p for p in job["invoices"][-1]["packet"] if p["label"] == "Progress photos")
+        confirm_suggested(state, job)
         self.assertTrue(photos["present"])
         # Detach takes it off, and the same record is not attached again.
         domain.detach_packet_item(state, job["id"], photos["id"])
@@ -331,23 +345,24 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
 
     def test_contract_number_alone_is_not_the_signed_contract(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
-        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", contract_number="C-7")
+        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", contract_number="C-7", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         domain.record_progress(state, job["id"], 400_000)
         self.assertIn("Signed contract", [p["label"] for p in domain.missing_packet(job)])
 
     def test_this_periods_waiver_is_not_reused(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
-        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", ap_email="d@example.com")
-        domain.add_job_record(state, job["id"], "Signed contract", "contract")
-        domain.add_job_record(state, job["id"], "Waiver for PA-01", "waiver")
+        job = domain.create_job(state, "Porch", "Dana Homeowner", 1_000_000, address="2 Elm St", ap_email="d@example.com", approver="Porch", phone="(404) 555-0100", role="Owner")
+        self.on_record(state, job, "Signed contract", "contract")
+        self.on_record(state, job, "Waiver for PA-01", "waiver")
         domain.record_progress(state, job["id"], 400_000)
+        confirm_suggested(state, job)
         for item in domain.missing_packet(job):
             domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
         domain.approve_and_send(state, job["id"], "Owner")
         domain.record_progress(state, job["id"], 600_000)
         packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
-        self.assertTrue(packet["Signed contract"]["present"], "the contract carries over")
-        self.assertFalse(packet["Conditional waiver"]["present"], "last period's waiver does not")
+        self.assertEqual([a["name"] for a in packet["Signed contract"]["attachments"]], ["Signed contract"], "the contract is suggested again")
+        self.assertFalse(packet["Conditional waiver"]["attachments"], "last period's waiver is not")
 
 
 if __name__ == "__main__":
@@ -356,7 +371,7 @@ if __name__ == "__main__":
 
 class FollowUpEscalationTests(unittest.TestCase):
     """R4-06: one follow-up names every unpaid pay app, counts per pay app, gets firmer, copies
-    the escalation email from the third; "Spoke to them" holds the next one until its date."""
+    the escalation email from the third; a logged conversation holds the next one until its date."""
 
     def setUp(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -401,6 +416,29 @@ class FollowUpEscalationTests(unittest.TestCase):
         self.assertTrue(third["subject"].startswith("Third follow-up:"))
         self.assertEqual(third["cc"], ["owner@jones.example"])
 
+    def test_a_conversation_filed_any_other_way_counts_as_a_follow_up_too(self):
+        payer = domain._payer(self.state, self.job["payer_id"])
+        self.assertLess(domain.follow_up_due(self.job, payer), datetime.now(UTC))
+        domain.add_job_record(self.state, self.job["id"], "Call with AP", "conversation", "Paying Friday", "Owner")
+        self.assertGreater(domain.follow_up_due(self.job, payer), datetime.now(UTC) + timedelta(days=6))
+        self.assertIn(("call", "Paying Friday"), [(r["kind"], r["text"].split(": ")[-1]) for r in domain.contact_log(self.state, self.job["id"], limit=None)[0]])
+
+    def test_a_note_doesnt_count_as_a_follow_up(self):
+        payer = domain._payer(self.state, self.job["payer_id"])
+        domain.add_job_record(self.state, self.job["id"], "Gate code", "note", "4411", "Owner")
+        self.assertLess(domain.follow_up_due(self.job, payer), datetime.now(UTC))
+
+    def test_a_contact_note_from_before_conversations_still_holds_the_follow_up(self):
+        payer = domain._payer(self.state, self.job["payer_id"])
+        next_on = (datetime.now(UTC) + timedelta(days=3)).date()
+        self.job["invoices"][0]["last_follow_up_at"] = domain.utcnow()
+        self.job.update({"contact_noted_at": domain.utcnow(), "expected_payment_on": next_on.isoformat()})
+        self.job.setdefault("records", []).append({"id": "rec-old", "kind": "note", "label": "Spoke to Sam Jones", "note": "Friday", "added_at": domain.utcnow(), "added_by": "Owner"})
+        domain.audit(self.state, self.job["id"], "contact_noted", "Spoke to Sam Jones: Friday (Owner)", "Owner")
+        self.assertEqual(domain.follow_up_due(self.job, payer).date(), next_on)
+        row = next(r for r in domain.contact_log(self.state, self.job["id"], limit=None)[0] if r["kind"] == "call")
+        self.assertEqual((row["label"], row["text"]), ("Conversation", "Conversation with Sam Jones: Friday"))
+
     def test_note_contact_holds_the_follow_up_until_the_date(self):
         payer = domain._payer(self.state, self.job["payer_id"])
         self.assertLess(domain.follow_up_due(self.job, payer), datetime.now(UTC), "due before the call")
@@ -411,12 +449,13 @@ class FollowUpEscalationTests(unittest.TestCase):
         domain.note_contact(self.state, self.job["id"], "Check goes out Friday", next_on.isoformat(), "Owner")
         self.assertEqual(domain.follow_up_due(self.job, payer).date(), next_on)
         self.assertEqual(self.job["expected_payment_on"], next_on.isoformat())
-        self.assertEqual(self.job["records"][-1]["label"], "Spoke to Sam Jones")
-        self.assertIn("Spoke to Sam Jones: Check goes out Friday", self.state["audit"][-1]["detail"])
+        self.assertEqual(self.job["records"][-1]["kind"], "conversation")
+        self.assertEqual(self.job["records"][-1]["label"], "Conversation with Sam Jones")
+        self.assertIn("Conversation with Sam Jones: Check goes out Friday", self.state["audit"][-1]["detail"])
         with self.assertRaises(domain.GateError) as raised:
             domain.record_follow_up(self.state, self.job["id"], "Owner")
         self.assertIn(f"not due until {next_on.isoformat()}", str(raised.exception))
-        self.assertIn("you spoke to them", str(raised.exception))   # the call holds it, not the days between contacts
+        self.assertIn("a conversation on", str(raised.exception))   # the call holds it, not the days between contacts
         # A follow-up sent anyway (Follow up now) goes back to the usual days.
         domain.record_follow_up(self.state, self.job["id"], "Owner", early=True)
         self.assertGreater(domain.follow_up_due(self.job, payer), datetime.now(UTC) + timedelta(days=6))

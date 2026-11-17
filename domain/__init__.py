@@ -15,10 +15,12 @@ import json
 import re
 import secrets
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import doc_check
 import payapp_pdf
 import sov
 import trial
@@ -104,11 +106,13 @@ class GateError(Exception):
     "ap_email") to what to fix there, so a form shows it under that input. `extra` is anything
     else the page needs to answer it, such as the saved customer a new name nearly matches.
     `action` is the way out when it is on another page: {"label", "view", "job_id", "detail"},
-    a link in that card."""
+    a link in that card. `keep_changes` says what was found on the way to the refusal is saved all
+    the same (an item now waiting for a look), so the page can show the way forward."""
 
     def __init__(self, message: str, blockers: list[str] | None = None, fields: dict[str, str] | None = None,
-                 extra: dict[str, Any] | None = None, action: dict[str, str] | None = None):
+                 extra: dict[str, Any] | None = None, action: dict[str, str] | None = None, keep_changes: bool = False):
         super().__init__(message)
+        self.keep_changes = keep_changes
         self.fields = dict(fields or {})
         self.blockers = blockers or list(self.fields.values()) or [message]
         self.extra = dict(extra or {})
@@ -144,7 +148,7 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
     pending = sum(co["amount_cents"] for co in job["change_orders"] if co["status"] == "pending")
     contract_total = job["contract_cents"] + approved
     billed = sum(inv["amount_cents"] for inv in job["invoices"] if inv["status"] in BILLED_STATUSES)
-    collected = sum(p["amount_cents"] for p in job["payments"])
+    payments = sum(p["amount_cents"] for p in job["payments"])
     # What the customer kept off a pay app that was settled short (R4-01): no longer owed.
     short_paid = sum(int(inv.get("short_pay_cents") or 0) for inv in job["invoices"] if inv["status"] in BILLED_STATUSES)
     draft = sum(inv["amount_cents"] for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES)
@@ -162,7 +166,34 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
             0,
             job.get("completed_value_cents", contract_total) - billed - draft - retainage_held - retainage_on_drafts,
         )
-    outstanding = max(0, billed - collected - short_paid)
+    # Work billed past the contract and signed change orders (a credit signed after the bill went
+    # out, say). An unsigned change order on a pay app counts until it is signed or withdrawn.
+    allowed = contract_total + sum(co["amount_cents"] for co in job["change_orders"] if co["status"] == "pending" and co.get("included_in_billing"))
+    billed_gross = job.get("retainage_held_cents", 0) + sum(
+        int(inv.get("gross_cents", inv["amount_cents"] + inv.get("retainage_cents", 0))) for inv in job["invoices"] if inv["status"] in BILLED_STATUSES)
+    came_in = payments + retainage_released
+    entries = job.get("overbilling_settled") or []
+    # A refund or credit is what really happened, whatever the contract does afterwards, so it stays
+    # counted; only what never came in can't have gone back. returned is the money part (a credit
+    # against a short pay moved none), and that credit stands only as long as the short pay does.
+    returned = min(sum(int(s["returned_cents"]) for s in entries), came_in)
+    settled = returned + min(sum(int(s["cents"]) - int(s["returned_cents"]) for s in entries), short_paid)
+    # What came in on a pay app past what it billed is the client paying back a refund, and stays
+    # that once more work is billed (Nov 6 review, C).
+    paid_back = 0
+    for inv in job["invoices"]:
+        if inv["status"] in BILLED_STATUSES:
+            paid_on = sum(p["amount_cents"] for p in job["payments"] if p.get("invoice_id") == inv["id"])
+            paid_back += max(0, paid_on + int(inv.get("short_pay_cents") or 0) - inv["amount_cents"])
+    paid_back = max(paid_back, payments + short_paid - billed)
+    over = max(0, billed_gross + paid_back - allowed)
+    # A signed credit taken off the retainage held (apply_credit_to_retainage), for as long as the
+    # contract leaves it standing: a later change order brings the retainage back.
+    credited = min(sum(int(c["cents"]) for c in job.get("retainage_credits") or []), max(0, over - settled), max(0, retainage_held - retainage_released))
+    above = max(0, came_in + short_paid - allowed)
+    # More went back than the job is now over its contract (a change order signed after a refund),
+    # less what has come back since.
+    refund_owed = max(0, returned - max(0, billed_gross - allowed) - paid_back)
     return {
         "contract_cents": job["contract_cents"],
         "approved_co_cents": approved,
@@ -170,14 +201,43 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
         "contract_total_cents": contract_total,
         "billed_cents": billed,
         "draft_cents": draft,
-        "collected_cents": collected,
+        "payments_cents": payments,
+        "collected_cents": max(0, payments - returned),
+        "refunded_cents": returned,
         "short_paid_cents": short_paid,
-        "outstanding_cents": outstanding,
+        "outstanding_cents": max(0, billed - payments - short_paid + paid_back) + refund_owed,
+        "refund_owed_cents": refund_owed,
         "unbilled_completed_cents": unbilled_completed,
+        "billed_gross_cents": billed_gross,
+        "overbilled_cents": max(0, over - settled - credited),
+        "billing_allowed_cents": allowed,
+        "overbilling_settled_cents": settled,
+        "overbilling_settleable_cents": max(0, min(over - credited, above) - settled),
         "retainage_held_cents": retainage_held,
         "retainage_released_cents": retainage_released,
-        "retainage_open_cents": max(0, retainage_held - retainage_released),
+        "retainage_credited_cents": credited,
+        "retainage_open_cents": max(0, retainage_held - retainage_released - credited),
     }
+
+
+def _owed_text(m: dict[str, int]) -> str:
+    """What is owed, in words: on pay apps, and what a refund left short of the contract."""
+    owed = m["refund_owed_cents"]
+    on_bills = m["outstanding_cents"] - owed
+    parts = [f"{money(on_bills)} is still owed on pay apps sent."] if on_bills else []
+    if owed:
+        parts.append(f"{money(owed)} is owed back: {money(m['refunded_cents'])} was refunded or credited, and the contract total is now {money(m['billing_allowed_cents'])}. "
+                     "Record it when it comes in, or sign a credit if the client keeps it.")
+    return " ".join(parts)
+
+
+def retainage_credit_room(job: dict[str, Any], m: dict[str, int] | None = None) -> int:
+    """How much signed credit can still come off the retainage held: what is overbilled, what is
+    held, and the credits signed less what was already taken off this way."""
+    m = m or job_money(job)
+    signed = sum(-co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved" and co["amount_cents"] < 0)
+    used = sum(int(c["cents"]) for c in job.get("retainage_credits") or [])
+    return max(0, min(m["overbilled_cents"], m["retainage_open_cents"], signed - used))
 
 
 def close_blockers(job: dict[str, Any]) -> list[str]:
@@ -194,7 +254,7 @@ def close_blocker_items(job: dict[str, Any]) -> list[dict[str, Any]]:
     m = job_money(job)
     out: list[dict[str, Any]] = []
     if job.get("work_status") != "complete":
-        out.append({"kind": "not_done", "text": "Work is not marked done."})
+        out.append({"kind": "not_done", "text": "The work isn't finished. Use Final pay app."})
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft:
         out.append({"kind": "draft", "text": f"{open_draft['number']} is still a draft.",
@@ -204,8 +264,18 @@ def close_blocker_items(job: dict[str, Any]) -> list[dict[str, Any]]:
             out.append({"kind": "co", "text": f"CO {co['number']} is not signed yet.", "co_id": co["id"], "number": co["number"]})
     if m["unbilled_completed_cents"] > 0 and not open_draft:
         out.append({"kind": "unbilled", "text": f"{money(m['unbilled_completed_cents'])} of finished work is not billed."})
+    if m["overbilled_cents"] > 0:
+        last = next((inv for inv in reversed(job["invoices"]) if inv["status"] in BILLED_STATUSES), None)
+        already = f", with {money(m['overbilling_settled_cents'])} already refunded or credited" if m["overbilling_settled_cents"] else ""
+        creditable = retainage_credit_room(job, m)
+        out.append({"kind": "overbilled", "invoice_id": (last or {}).get("id", ""), "number": (last or {}).get("number", ""),
+                    "settleable": m["overbilling_settleable_cents"] > 0, "creditable_cents": creditable, "text":
+                    f"The client is overbilled by {money(m['overbilled_cents'])}: {money(m['billed_gross_cents'])} billed against a contract total of "
+                    f"{money(m['billing_allowed_cents'])}{already}. Pull back {(last or {}).get('number', 'the last pay app')} and draft it again if nothing is paid on it. "
+                    "If it is paid, refund or credit the difference and record that here."
+                    + (f" If the signed credit comes out of the retainage held, take {money(creditable)} off the retainage." if creditable else "")})
     if m["outstanding_cents"] > 0:
-        out.append({"kind": "outstanding", "text": f"{money(m['outstanding_cents'])} is still owed on pay apps sent."})
+        out.append({"kind": "outstanding", "refund_owed_cents": m["refund_owed_cents"], "text": _owed_text(m)})
     if m["retainage_open_cents"] > 0:
         out.append({"kind": "retainage", "text": f"{money(m['retainage_open_cents'])} held back (retainage) is still owed."})
     if job.get("waiver_due") and not job.get("waiver_sent"):
@@ -225,14 +295,17 @@ def active_packet(job: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def missing_packet(job: dict[str, Any]) -> list[dict[str, Any]]:
-    return [item for item in active_packet(job) if item["required"] and not item["present"]]
+    """The required items not in. On a pay app not sent yet, an item in only on names is not in
+    (acceptance 96), whatever the older code stored on it."""
+    open_one = any(inv.get("status") in DRAFT_STATUSES for inv in job.get("invoices", []))
+    return [item for item in active_packet(job) if item["required"] and (not item["present"] or (open_one and sov.name_only(job, item)))]
 
 
 def closeout_missing(job: dict[str, Any]) -> list[dict[str, Any]]:
     """The closeout items not in yet, which hold back asking for all the retainage: the closeout
     packet, or for older jobs without one, the paperwork still missing on the job."""
     if job.get("closeout_packet"):
-        return [item for item in job["closeout_packet"] if item["required"] and not item["present"]]
+        return [item for item in job["closeout_packet"] if item["required"] and (not item["present"] or sov.name_only(job, item))]
     return missing_packet(job)
 
 
@@ -240,10 +313,22 @@ def unsigned_cos_in_billing(job: dict[str, Any]) -> list[dict[str, Any]]:
     return [co for co in job["change_orders"] if co["status"] == "pending" and co.get("included_in_billing")]
 
 
+def _blocker_text(job: dict[str, Any], item: dict[str, Any]) -> str:
+    """What holds an item back: a name with no file, a file waiting for a person's look, else it is missing."""
+    if sov.name_only(job, item):
+        return f"{item['label']}: No file was kept for it. Remove it and add the file."
+    waiting = [a["name"] for a in item.get("attachments", []) if a.get("unconfirmed")]
+    return f"{item['label']}: look at {', '.join(waiting)} and confirm it." if waiting else item["blocker"]
+
+
 def blocker_items(job: dict[str, Any]) -> list[dict[str, Any]]:
-    """What blocks send, each as {kind, text, co_id, number}: kind "paperwork" (a missing packet
-    item) or "co" (an unsigned change order on the bill, which the app links to)."""
-    items = [{"kind": "paperwork", "text": item["blocker"], "co_id": "", "number": 0} for item in missing_packet(job)]
+    """What blocks send, each as {kind, text, co_id, number, item_id, waiting}: kind "paperwork" (a
+    missing packet item: item_id is where its button lands, waiting that a file only needs a
+    look; an item in only on names needs a file, so it is not waiting) or "co" (an unsigned
+    change order on the bill, which the app links to)."""
+    items = [{"kind": "paperwork", "text": _blocker_text(job, item), "co_id": "", "number": 0, "item_id": item.get("id", ""),
+              "waiting": not sov.name_only(job, item) and any(a.get("unconfirmed") for a in item.get("attachments", []))}
+             for item in missing_packet(job)]
     for co in unsigned_cos_in_billing(job):
         items.append({
             "kind": "co",
@@ -275,7 +360,9 @@ def blocker_button(job: dict[str, Any]) -> str:
     items = blocker_items(job)
     n = len(items)
     if needs_paperwork(job):
-        return f"Add {n} missing document{'' if n == 1 else 's'}"
+        waiting = sum(1 for b in items if b["waiting"])
+        verb = "Check" if waiting == n else "Add or check" if waiting else "Add"
+        return f"{verb} {n} {'' if waiting else 'missing '}document{'' if n == 1 else 's'}"
     if is_blocked(job) and items and all(b["kind"] == "co" for b in items):
         return f"Get CO {items[0]['number']} signed" if n == 1 else f"Get {n} change orders signed"
     return f"Fix {n} thing{'' if n == 1 else 's'} before sending"
@@ -343,6 +430,8 @@ def record_progress(
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft and open_draft.get("pencil_status") == "sent":
         raise GateError(f"{open_draft['number']} is with the client as a draft. Void it or record their answer first.")
+    if not open_draft:
+        _need_playbook(state, job)
     contract_total = job["contract_cents"] + sum(
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
@@ -409,8 +498,10 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     if _with_client(open_draft):
         raise GateError(
             f"{open_draft['number']} is with the client for their review. Record their answer or delete the draft, "
-            "then mark the job done so the final pay app covers the rest."
+            "then use Final pay app so it covers the rest."
         )
+    if not open_draft:
+        _need_playbook(state, job)
     runs_to = period_to(job, period_end)
     # A draft only here becomes the final pay app (B6 of the Oct 30 review): same number and paperwork.
     replaced = open_draft
@@ -418,6 +509,9 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         replaced["status"] = "void"
         replaced["voided_at"] = utcnow()
         replaced["replaced"] = True
+        # The final pay app bills everything left: amounts changed on the draft start over.
+        if replaced.pop("sov_overrides", None):
+            audit(state, job_id, "payapp_amount_changed", f"The amounts changed by hand on {replaced['number']} went back to the suggested ones: the final pay app bills all the work left.", "duracash")
     job["work_status"] = "complete"
     job["completed_at"] = job.get("completed_at") or utcnow()
     job["done_at_invoice"] = len(job["invoices"])   # pay apps from here on are the final one(s)
@@ -426,7 +520,7 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     # on the job's header line (R2-05). A message filed from the Inbox is its own record already.
     if note_record and (notes or "").strip():
         job.setdefault("records", []).append({
-            "id": "rec-" + secrets.token_hex(3), "kind": "note", "label": "Notes when marked done",
+            "id": "rec-" + secrets.token_hex(3), "kind": "note", "label": "Notes at Final pay app",
             "note": notes.strip(), "added_at": utcnow(), "added_by": actor,
         })
     if evidence:
@@ -435,6 +529,7 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
         co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
     )
     for line in sov.lines(job):
+        line.setdefault("field_milli", line["done_milli"])   # what the field recorded stays, for undo
         line["done_milli"] = line["qty_milli"]
     audit(state, job_id, "job_done", f"{actor} marked {job['name']} done. Notes: {notes or 'none'}.", actor)
     _ensure_closeout_packet(state, job)
@@ -444,13 +539,30 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
     return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
 
 
+def final_pay_app_preview(state: dict[str, Any], job_id: str) -> dict[str, Any]:
+    """What Final Pay App (mark_done) would draft, worked out on a copy so nothing changes: its
+    amount, whether it is the final one (is_final), and what is left pending if it isn't.
+    Refuses as mark_done would."""
+    trial_state = deepcopy(state)
+    job = mark_done(trial_state, job_id, "preview")
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    pending = [{"number": co["number"], "amount_cents": co["amount_cents"]}
+               for co in job["change_orders"] if co["status"] == "pending" and not co.get("included_in_billing")]
+    if not draft:
+        return {"drafted": False, "final": is_final(job), "pending_cos": pending}
+    replaced = next((inv for inv in job["invoices"] if inv["id"] == draft.get("replaces")), None)
+    return {"drafted": True, "final": bool(draft.get("final")) and is_final(job), "number": draft["number"], "amount_cents": draft["amount_cents"],
+            "gross_cents": draft["gross_cents"], "retainage_cents": draft["retainage_cents"],
+            "replaces": replaced["number"] if replaced else "", "pending_cos": pending}
+
+
 def draft_invoice(
     state: dict[str, Any], job_id: str, actor: str = "duracash", strict: bool = False, replaces: dict[str, Any] | None = None,
     period_end: str = "", notes: str = "",
 ) -> dict[str, Any]:
     """Draft a pay app for unbilled completed work, withholding retainage.
 
-    strict=True is for the explicit "Draft pay app" button: a no-op raises
+    strict=True is for the explicit "Draft Pay App" button: a no-op raises
     instead of being logged silently, so the user is told why nothing happened.
     replaces is a draft just voided by a progress correction: the new one keeps its number
     (unless the customer saw it) and its paperwork.
@@ -460,18 +572,40 @@ def draft_invoice(
     """
     job = _open_job(state, job_id)
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if job.get("work_status") == "complete":
+        for line in sov.lines(job):   # every line is whole once the work is done (some were lowered before Nov 5)
+            line["done_milli"] = line["qty_milli"]
     if open_draft:
         if strict:
             raise GateError(f"{open_draft['number']} is already an open draft. Send it before drafting another.")
         audit(state, job_id, "draft_skipped", "Open draft already exists.", actor)
         return job
+    if not replaces:
+        _need_playbook(state, job)
     money_file = job_money(job)
     work = money_file["unbilled_completed_cents"]
+    if strict and job.get("work_status") != "complete":  # the person asked for it: the suggestion goes on
+        billed_qty = sov.billed(job)["qty_by_line"]
+        for line in sov.lines(job):
+            line["done_milli"] = sov.suggested_done(line, billed_qty.get(line["id"], 0))
+    # A draft set aside by a new schedule until it has quantities (save_sov) is what this one replaces.
+    waiting = job.get("sov_replaced_draft")
+    if waiting and not replaces:
+        replaces = next((inv for inv in job["invoices"] if inv["id"] == waiting), None)
     period = sov.this_period(job) if sov.has_sov(job) else None
+    pending_included = unsigned_cos_in_billing(job)
+    pending_cents = sum(co["amount_cents"] for co in pending_included)
+    # Amounts changed by hand on the draft this replaces stay: the person decides the pay app.
+    chosen = (replaces or {}).get("sov_overrides") or {}
+    if period and chosen:
+        adjusted = sov.with_amounts(job, sov.this_period(job), chosen)
+        if adjusted["total_cents"] + pending_cents > 0:
+            period = adjusted
+        else:
+            audit(state, job_id, "payapp_amount_changed", f"The amounts changed by hand on {replaces['number']} would leave nothing to bill, so it went back to the suggested amounts.", "duracash")
     if period:
         work = period["total_cents"]
-    pending_included = unsigned_cos_in_billing(job)
-    gross = work + sum(co["amount_cents"] for co in pending_included)
+    gross = work + pending_cents
     if gross <= 0:
         if strict:
             raise GateError("Nothing to draft: there is no unbilled completed work on this job.")
@@ -496,6 +630,7 @@ def draft_invoice(
     invoice_id = f"inv-{job['id']}-{len(job['invoices']) + 1}"
     if replaces and replaces.get("packet") and replaces.get("packet_id") != "job-packet":
         packet = _carry_packet(replaces["packet"], invoice_id)
+        _look_again_at_waivers(packet, replaces["amount_cents"], amount)
         _attach_from_record(state, job, packet, number)
     else:
         packet = _packet_for_pay_app(state, job, invoice_id, number)
@@ -503,19 +638,18 @@ def draft_invoice(
         # Show the punch-list/closeout items from the first pay app that holds
         # retainage, so they can be collected while the job is still running.
         _ensure_closeout_packet(state, job)
-    packet_missing = [item["blocker"] for item in packet if item["required"] and not item["present"]]
-    co_blockers = [
-        f"Change Order {co['number']} is included in the billing amount but has not been signed."
-        for co in pending_included
-    ]
-    blockers = packet_missing + co_blockers
+    if period:
+        # What the field stood at, beside the quantity drafted: they differ when a figure was typed.
+        fields = {line["id"]: sov.field_total(line) for line in sov.lines(job)}
+        for entry in period["sheet"]:
+            entry["field_milli_at_draft"] = fields[entry["line_id"]]
     invoice = {
         "id": invoice_id,
         "number": number,
         "amount_cents": amount,
         "gross_cents": gross,
         "retainage_cents": retained,
-        "status": "draft" if blockers else "awaiting_approval",
+        "status": "draft",
         "lines": lines,
         "created_at": utcnow(),
         "sent_at": None,
@@ -533,24 +667,128 @@ def draft_invoice(
     if replaces:
         invoice["replaces"] = replaces["id"]
         _carry_send_choices(state, job, replaces, invoice)
+    job.pop("sov_replaced_draft", None)
+    if period and period.get("kept"):
+        invoice["sov_overrides"] = period["kept"]
+        _audit_kept_amounts(state, job, invoice, replaces, period)
     job["invoices"].append(invoice)
     invoice["final"] = is_final(job)
     if invoice["packet_id"] != "job-packet":
         _name_conditional_waiver(job, invoice)
         if _add_ticket_item(job, invoice, _payer(state, job["payer_id"])):
             _attach_from_record(state, job, packet, number)
-            if invoice["status"] == "awaiting_approval" and any(i["required"] and not i["present"] for i in packet):
-                invoice["status"] = "draft"
+    blockers = blocker_lines(job)
+    invoice["status"] = "draft" if blockers else "awaiting_approval"
     audit(
         state,
         job_id,
         "draft_invoice",
         f"Drafted {number} for {money(amount)}"
         + (f" ({money(gross)} less {money(retained)} retainage)" if retained else "")
-        + f", with {len(packet)} paperwork item{'' if len(packet) == 1 else 's'}. {len(blockers)} to fix before it can go.",
+        + f", with {len(packet)} supporting document{'' if len(packet) == 1 else 's'}. {len(blockers)} to fix before it can go.",
         actor,
     )
     return job
+
+
+def _audit_kept_amounts(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], old: dict[str, Any] | None,
+                        period: dict[str, Any]) -> None:
+    """A redraft that keeps amounts changed by hand says so when the suggested amount moved under
+    one (new quantities came in) or the line's balance cut one down."""
+    was = {e["line_id"]: e.get("suggested_cents", e["amount_cents"]) for e in (old or {}).get("sov_sheet") or []}
+    for entry in period["sheet"]:
+        if entry.get("suggested_cents") is None:
+            continue
+        name = sov_line_name(entry)
+        if any(entry is c for c in period["cut"]):
+            audit(state, job["id"], "payapp_amount_changed", f"{invoice['number']}, {name}: the amount changed by hand was more than the line's balance, so it is now {money(entry['amount_cents'])}.", "duracash")
+        elif entry["line_id"] in was and was[entry["line_id"]] != entry["suggested_cents"]:
+            audit(state, job["id"], "payapp_amount_changed", f"{invoice['number']}, {name}: suggested {money(entry['suggested_cents'])}, final stays {money(entry['amount_cents'])} as changed by hand.", "duracash")
+
+
+def set_payapp_amounts(state: dict[str, Any], job_id: str, amounts: Any, actor: str = "owner", period_end: Any = None,
+                       notes: Any = None) -> dict[str, Any]:
+    """Change what the open draft bills on its schedule lines. amounts maps line id -> dollars; a
+    blank goes back to the suggested amount. The draft is drafted again with them, keeping its
+    number, paperwork and notes, and each change goes in the audit trail with the suggested and
+    final amounts. An amount can be anything from $0 to what is left on the line. period_end and
+    notes (Bill by dollars, which sends them with the amounts): the date it runs to and new notes,
+    kept, and a change to them alone is a change too."""
+    job = _open_job(state, job_id)
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if not draft:
+        raise GateError("There is no draft pay app to change. Draft one first.")
+    if _with_client(draft):
+        raise GateError(f"{draft['number']} is with the client as a draft. Void it or record their answer first.")
+    if not sov.has_sov(job):
+        raise GateError("This job has no schedule of values. Enter the progress in dollars instead.")
+    if not isinstance(amounts, dict) or not amounts:
+        raise GateError("Enter an amount on at least one line.")
+    drafted = {e["line_id"]: e["amount_cents"] for e in draft.get("sov_sheet") or []}
+    # What the person sees as suggested: everything recorded and not yet billed.
+    entries = {e["line_id"]: e for e in sov.this_period(job, skip=draft, field=True)["sheet"]}
+    already = sov.billed(job, skip=draft)
+    by_id = {line["id"]: line for line in sov.lines(job)}
+    chosen = dict(draft.get("sov_overrides") or {})
+    errors, changes, to_suggested = [], [], []
+    for line_id, raw in amounts.items():
+        line = by_id.get(line_id)
+        if not line:
+            errors.append(f"Line {str(line_id)[:20]} is not on this job's schedule.")
+            continue
+        name = sov_line_name(line)
+        if line["scheduled_cents"] < 0:
+            errors.append(f"{name}: a credit comes off the pay app as it is. Its amount can't be changed.")
+            continue
+        suggested = entries[line_id]["amount_cents"]
+        was = drafted.get(line_id, 0)
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            cents = suggested
+        else:
+            try:
+                cents = sov.to_cents(raw, name)
+            except sov.SovError as exc:
+                errors.append(str(exc))
+                continue
+        room = sov.line_room(line, already["by_line"].get(line_id, 0))
+        if cents < 0:
+            errors.append(f"{name}: the amount can't be negative.")
+        elif cents > room:
+            errors.append(f"{name}: {money(cents)} is more than the {money(room)} left on the line. Extra scope is a change order.")
+        elif cents != was:
+            changes.append((name, suggested, cents))
+            if cents == suggested:
+                chosen.pop(line_id, None)
+                to_suggested.append(line)
+            else:
+                chosen[line_id] = cents
+        elif line_id in chosen and cents == suggested:
+            chosen.pop(line_id, None)
+    if errors:
+        raise GateError("Amounts not changed.", errors)
+    runs_to = period_to(job, period_end) if period_end is not None else ""
+    notes = notes.strip()[:2000] if isinstance(notes, str) else ""
+    new_date = bool(runs_to) and runs_to != draft.get("period_to")
+    new_notes = bool(notes) and notes != (draft.get("progress_notes") or "")
+    if not changes and not (new_date or new_notes):
+        raise GateError("Nothing changed. Enter an amount that differs from the one on the draft.")
+    # A line back at the suggested amount bills all that is recorded on it.
+    moved = {line["id"]: line["done_milli"] for line in to_suggested}
+    for line in to_suggested:
+        line["done_milli"] = sov.anticipated(job, line)["done_milli"] if job.get("work_status") == "complete" \
+            else sov.suggested_done(line, already["qty_by_line"].get(line["id"], 0))
+    trial = sov.with_amounts(job, sov.this_period(job, skip=draft), chosen, skip=draft)
+    if trial["total_cents"] + sum(co["amount_cents"] for co in unsigned_cos_in_billing(job)) <= 0:
+        for line in to_suggested:
+            line["done_milli"] = moved[line["id"]]
+        raise GateError(f"That leaves nothing to bill. Leave an amount on a line, or delete {draft['number']}.")
+    for name, suggested, cents in changes:
+        audit(state, job_id, "payapp_amount_changed", f"{actor} changed {draft['number']}, {name}: suggested {money(suggested)}, final {money(cents)}.", actor)
+    if new_date:
+        audit(state, job_id, "payapp_period", f"{actor} changed the date {draft['number']} runs to: {draft.get('period_to') or 'not set'} → {runs_to}.", actor)
+    draft["sov_overrides"] = chosen
+    why = "with the amounts changed by hand" if changes else "with the date it runs to changed" if new_date else "with new notes"
+    return _redraft(state, job, draft, why, period_end=runs_to if new_date else "", notes=notes if new_notes else "")
 
 
 def _carry_send_choices(state: dict[str, Any], job: dict[str, Any], old: dict[str, Any], new: dict[str, Any]) -> None:
@@ -569,19 +807,31 @@ def _carry_send_choices(state: dict[str, Any], job: dict[str, Any], old: dict[st
           f"{new['number']} keeps what was chosen for its email: {'; '.join(p for p in parts if p)}.", "duracash")
 
 
-def _redraft(state: dict[str, Any], job: dict[str, Any], open_draft: dict[str, Any], why: str, period_end: str = "") -> dict[str, Any]:
+def _redraft(state: dict[str, Any], job: dict[str, Any], open_draft: dict[str, Any], why: str, period_end: str = "", notes: str = "") -> dict[str, Any]:
     """Replace a draft that has not gone to the client with a new one (B6 of the Oct 30 review):
-    it keeps its number, paperwork, notes and email choices."""
+    it keeps its number, paperwork, notes (unless new ones are given) and email choices."""
     open_draft["status"] = "void"
     open_draft["voided_at"] = utcnow()
     open_draft["replaced"] = True
     audit(state, job["id"], "draft_replaced", f"{open_draft['number']} ({money(open_draft['amount_cents'])}) replaced {why}.", "duracash")
-    return draft_invoice(state, job["id"], actor="duracash", replaces=open_draft, period_end=period_end or open_draft.get("period_to") or "")
+    return draft_invoice(state, job["id"], actor="duracash", replaces=open_draft, period_end=period_end or open_draft.get("period_to") or "", notes=notes)
 
 
 def _with_client(draft: dict[str, Any] | None) -> bool:
     """The draft went to the client for their review and they haven't answered."""
     return bool(draft and draft.get("pencil_status") == "sent")
+
+
+def _pencil_email(state: dict[str, Any], job: dict[str, Any], draft: dict[str, Any], payer: dict[str, Any], actor: str) -> tuple[str, str]:
+    """A pencil copy's subject and body; the review screen shows them before it goes (pencil_preview)."""
+    subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
+    body = (
+        f"{payer.get('approver') or payer['name']},\n\n"
+        f"Here is the pencil copy of {draft['number']} for {job['name']}, attached as a PDF marked PENCIL COPY. "
+        "Please confirm the quantities and change orders, or send corrections, before we submit the formal pay app.\n\n"
+        f"{pay_app_text(state, job, draft)}\n\n{sign_off(state, actor)}"
+    )
+    return subject, body
 
 
 def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
@@ -590,15 +840,10 @@ def send_pencil(state: dict[str, Any], job_id: str, actor: str = "owner") -> dic
     draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if not draft:
         raise GateError("Draft a pay app first. The draft is what goes for their review.")
+    _need_playbook(state, job)
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
-    subject = f"Pencil copy for review: {draft['number']} — {job['name']}"
-    body = (
-        f"{payer.get('approver') or payer['name']},\n\n"
-        f"Here is the pencil copy of {draft['number']} for {job['name']}, attached as a PDF marked PENCIL COPY. "
-        "Please confirm the quantities and change orders, or send corrections, before we submit the formal pay app.\n\n"
-        f"{pay_app_text(state, job, draft)}\n\n{sign_off(state, actor)}"
-    )
+    subject, body = _pencil_email(state, job, draft, payer, actor)
     _record_email(state, job_id, "pencil", to, subject, body, actor, payapp_invoice_id=draft["id"])
     draft["pencil_sent_at"] = utcnow()
     draft["pencil_status"] = "sent"
@@ -625,18 +870,35 @@ def record_pencil_response(state: dict[str, Any], job_id: str, agreed: bool, not
 
 
 def resolve_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: str = "owner", reason: str = "") -> dict[str, Any]:
+    """"I have this" (Decision 5): an override, not a check of a file, so it needs a reason. Who,
+    when and why are kept on the item for the pay app's page and Review & send, and audited; the
+    client's PDF and page show only the tick, as they do for any item that is in."""
     job = _open_job(state, job_id)
-    item, _invoice = _find_packet_item(job, item_id)
+    item, invoice = _find_packet_item(job, item_id)
     if not item:
-        raise GateError("Paperwork item not found.")
-    # "I have this" (R3-05): where it is is optional; when given it is kept and audited.
+        raise GateError("Supporting document not found.")
+    _still_a_draft(invoice)
     reason = (reason or "").strip()[:500] if isinstance(reason, str) else ""
+    if not reason:
+        _refuse("", {"reason": f"Enter why {item['label']} can go without a checked file."})
+    _drop_unconfirmed(item)
+    if is_waiver_item(item):
+        # An override doesn't replace the answer for a file that is going out: one nobody has said
+        # which waiver it is stays off the item (it is still on the job records).
+        records = {r["id"]: r for r in job.get("records", [])}
+        unanswered = [a for a in item.get("attachments", []) if (records.get(a.get("record_id")) or {}).get("file_ids") and waiver_answer(records[a["record_id"]]) not in WAIVER_ANSWERS]
+        if unanswered:
+            item["attachments"] = [a for a in item["attachments"] if a not in unanswered]
+            item.setdefault("detached_record_ids", []).extend(a["record_id"] for a in unanswered if a.get("auto"))
+            audit(state, job_id, "paperwork_detached", f"{actor} took {', '.join(a['name'] for a in unanswered)} off {item['label']}: nobody had said which waiver it is.", actor)
     item["present"] = True
     item["resolved_at"] = utcnow()
     item["marked_in_hand"] = True
-    if reason:
-        item["present_reason"] = reason
-    audit(state, job_id, "packet_resolved", f"{actor} marked {item['label']} as in hand{': ' + reason if reason else ''}.", actor)
+    item["present_reason"] = reason
+    item["override"] = {"by": actor, "at": item["resolved_at"], "reason": reason}
+    item.pop("check", None)
+    which = f" on {invoice['number']}" if invoice else ""
+    audit(state, job_id, "packet_resolved", f"{actor} overrode {item['label']}{which} with I have this: {reason}.", actor)
     _refresh_draft_gate(job, state)
     return job
 
@@ -652,59 +914,428 @@ def payer_link(invoice: dict[str, Any], link_base: str | None, company_id: str) 
 
 UNCONDITIONAL_ATTACHED = "An unconditional waiver is attached. It gives up your lien rights before you are paid."
 
+# Which waiver a file is, is the person's answer (Nov 6 redesign). A file on a waiver item goes once
+# someone says which waiver it is, Conditional or Unconditional, with the app's guess picked first
+# when it read one (waiver_guess, doc_check.reading; none picked when it couldn't tell). Any other
+# file going out that reads as a lien waiver form, wherever its text says so, or
+# is filed as a waiver, is asked about once: Is this a lien waiver? No, Yes, conditional or Yes,
+# unconditional (waiver_questions). The answer is kept on the record with who, when and the files it
+# was given for, and types the record, and setting or changing one takes send_payapps (Answerer).
+# The owner gate (M14) is for an unconditional answer, or a record typed unconditional, where a
+# conditional waiver is needed.
+WAIVER_ANSWERS = ("conditional", "unconditional")
+QUESTION_ANSWERS = ("no",) + WAIVER_ANSWERS
 
-def unconditional_waivers_attached(job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, Any]]:
-    """Waiver records going out with this pay app that are unconditional (M14): attached to a
-    paperwork item or added to the send, and not left out of the email."""
+
+@dataclass(frozen=True)
+class Answerer:
+    """Who is setting a waiver answer, as the server knows them from their profile: setting or
+    changing one, by any route (the question, Confirm on a waiver item, attaching with an answer,
+    the record's waiver type), takes send_payapps; on a retainage request, ask_retainage does too.
+    An unconditional answer is taken back only by whoever gave it or an owner. None (scripts and
+    tests of other rules) is anyone."""
+    send_payapps: bool = True
+    ask_retainage: bool = True
+    owner: bool = True
+    id: str = ""
+
+
+NOT_YOURS_TO_ANSWER = "Someone who can send pay apps says which waiver this is."
+
+
+def _retainage_packet(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """The documents a retainage request attaches: the closeout list, or on a job from before it
+    the older packet."""
+    return job.get("closeout_packet") or job.get("packet") or []
+
+
+def _open_draft(job: dict[str, Any]) -> dict[str, Any] | None:
+    return next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+
+
+def _on_open_draft(draft: dict[str, Any] | None, record_id: Any) -> bool:
+    """The record goes with the open pay app: added to the send or attached to one of its items."""
+    return bool(draft) and bool(record_id) and (record_id in (draft.get("extra_record_ids") or [])
+                                                or any(a.get("record_id") == record_id for x in draft.get("packet") or [] for a in x.get("attachments", [])))
+
+
+def _on_retainage_request(job: dict[str, Any], item: dict[str, Any] | None = None, record: dict[str, Any] | None = None) -> bool:
+    """An item on the retainage request's list (_retainage_packet), or a record on one, when none of
+    its files also goes with the open pay app: a file on both is the pay app's. With both given, the
+    record is the one being attached to the item."""
+    packet, draft = _retainage_packet(job), _open_draft(job)
+    if item is not None:
+        ids = [a.get("record_id") for a in item.get("attachments", [])] + ([record["id"]] if record else [])
+        if (draft and any(x is item for x in draft.get("packet") or [])) or any(_on_open_draft(draft, rid) for rid in ids):
+            return False
+        return any(x is item for x in packet)
+    if record is None or _on_open_draft(draft, record["id"]):
+        return False
+    return any(a.get("record_id") == record["id"] for x in packet for a in x.get("attachments", []))
+
+
+def _may_answer(answerer: "Answerer | None", retainage: bool) -> bool:
+    return answerer is None or answerer.send_payapps or (retainage and answerer.ask_retainage)
+
+
+def is_waiver_item(item: dict[str, Any]) -> bool:
+    return item.get("waiver_kind") in WAIVER_KINDS or (_record_kinds_for(item) or ("",))[0] in {"waiver", "final_waiver"}
+
+
+def _item_word(item: dict[str, Any] | None) -> str:
+    """The waiver an item needs: conditional, unless it asks for an unconditional one."""
+    return "unconditional" if str((item or {}).get("waiver_kind") or "").startswith("unconditional") else "conditional"
+
+
+def waiver_answer(record: dict[str, Any]) -> str:
+    """The person's answer for the record's files as they are now: no, conditional or
+    unconditional. Blank when nobody has answered for these files."""
+    said = record.get("waiver_answer") or {}
+    return str(said.get("kind") or "") if said and set(said.get("file_ids") or []) == set(record.get("file_ids") or []) else ""
+
+
+def _read_now(record: dict[str, Any]) -> dict[str, Any]:
+    """What the record's files read as (doc_check.waiver_reading), if they are the files that were read."""
+    read = record.get("waiver_read") or {}
+    return read if read and set(read.get("file_ids") or []) == set(record.get("file_ids") or []) else {}
+
+
+def _read_waiver(state: dict[str, Any] | None, record: dict[str, Any], read_file: Any) -> dict[str, Any]:
+    """Read a record's files for the waiver question, once for each set of files, kept on the record."""
+    if read_file is not None and state is not None and record.get("file_ids") and not _read_now(record):
+        ids = set(record["file_ids"])
+        metas = [f for f in state.get("files", []) if f["id"] in ids]
+        if metas:
+            got = doc_check.waiver_reading([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas])
+            record["waiver_read"] = {**got, "file_ids": sorted(ids)}
+    return _read_now(record)
+
+
+def waiver_guess(record: dict[str, Any]) -> str:
+    """The answer picked first: what the files read as, and nothing else. A photo, a scan, a form
+    that says neither word or both has no informed guess, so none is picked and the page says the
+    app couldn't tell. The record's type and the waiver the item needs are not a reading."""
+    return str(_read_now(record).get("guess") or "")
+
+
+def _may_take_back(said: dict[str, Any], actor: str, answerer: "Answerer | None") -> bool:
+    """Whoever gave the answer, or an owner (None, a script, is anyone)."""
+    return answerer is None or answerer.owner or bool((said.get("by_id") and said["by_id"] == answerer.id) or (not said.get("by_id") and said.get("by") == actor))
+
+
+def _say_which(state: dict[str, Any], job: dict[str, Any], record: dict[str, Any], kind: str, actor: str, stage: str = "progress", where: str = "",
+               answerer: "Answerer | None" = None) -> None:
+    """Keep a person's answer on the record, with who, when and its files, and type the record.
+    where: the audit's words for it, or blank when the caller's own audit row says it. An
+    unconditional answer is changed to another only by whoever gave it or an owner; any change of
+    an answer that stood is audited. The same answer from someone else is no change: the giver, and
+    the time, stay the first person's, and the second is noted beside it (confirmed_by)."""
+    said = record.get("waiver_answer") or {}
+    # An answer stands for the files it was given for, and for those and more: adding a file to the
+    # record doesn't make it someone else's to take back.
+    before = str(said.get("kind") or "") if set(said.get("file_ids") or []) & set(record.get("file_ids") or []) else ""
+    if before == "unconditional" and kind != "unconditional" and not _may_take_back(said, actor, answerer):
+        raise GateError(f"{record['label']} was marked unconditional by {said.get('by') or 'someone'}. Only {said.get('by') or 'they'} or an owner can change it.")
+    if before and before != kind:
+        audit(state, job["id"], "waiver_answer_changed", f"{actor} changed {record['label']} from {before} to {kind} (first said by {said.get('by') or 'someone'}).", actor)
+    if before == kind and not _may_take_back(said, actor, answerer):
+        said["file_ids"] = list(record.get("file_ids") or [])
+        if said.get("confirmed_by") != actor:
+            said["confirmed_by"], said["confirmed_at"] = actor, utcnow()
+            audit(state, job["id"], "waiver_answer", f"{actor} confirmed {record['label']} is the {kind} waiver{where}, as {said.get('by') or 'someone'} said.", actor)
+    else:
+        record["waiver_answer"] = {"kind": kind, "by": actor, "at": utcnow(), "file_ids": list(record.get("file_ids") or [])}
+        if answerer is not None and answerer.id:
+            record["waiver_answer"]["by_id"] = answerer.id
+        if where:
+            what = "not a lien waiver" if kind == "no" else f"the {kind} waiver"
+            audit(state, job["id"], "waiver_answer", f"{actor} said {record['label']} is {what}{where}.", actor)
+    if kind in WAIVER_ANSWERS:
+        record["waiver_kind"] = f"{kind}_{stage}"
+
+
+def _filed_records(job: dict[str, Any], item: dict[str, Any]) -> list[dict[str, Any]]:
+    """The records on an item that have files."""
     records = {r["id"]: r for r in job.get("records", [])}
-    ids = [a.get("record_id") for item in invoice.get("packet") or [] for a in item.get("attachments", [])]
-    ids += list(invoice.get("extra_record_ids") or [])
-    excluded = set(invoice.get("excluded_file_ids") or [])
+    return [records[a["record_id"]] for a in item.get("attachments", []) if a.get("record_id") in records and records[a["record_id"]].get("file_ids")]
+
+
+def item_question(job: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    """What "Which waiver is this?" shows on a waiver item: the answer picked first, only when the
+    files all read (unconditional when any of them reads so), blank when the app couldn't tell; what
+    the files read as, for the warning beside it; and "both" when a file holds both forms."""
+    filed = _filed_records(job, item)
+    guesses = [waiver_guess(r) for r in filed]
+    both = any(_read_now(r).get("both") for r in filed)
+    reads = set(guesses) - {""}
+    guess = "" if both or not filed else "unconditional" if "unconditional" in reads else "conditional" if all(guesses) else ""
+    out = {"guess": guess, "reads_as": "" if both else "unconditional" if "unconditional" in reads else "conditional" if reads else ""}
+    if both:
+        out["both"] = True
+    return out
+
+
+def _ask_which_waiver(job: dict[str, Any], packet: list[dict[str, Any]], retainage: bool = False) -> list[dict[str, Any]]:
+    """A waiver item that is in with a file nobody has said which waiver it is (in from before the
+    question, or a file added to its record since) waits for the answer; an override ("I have this")
+    doesn't replace the answer for a file that is going out. The final waiver that went out after
+    payment stays on the retainage request (retainage), not on a later pay app. Returns the items
+    now waiting."""
     out = []
-    for rid in dict.fromkeys(ids):
-        rec = records.get(rid)
-        if not rec or rec.get("kind") != "waiver" or not str(record_waiver_kind(rec)).startswith("unconditional"):
+    for item in packet or []:
+        if not item.get("present") or not is_waiver_item(item):
             continue
-        if rec.get("file_ids") and set(rec["file_ids"]) <= excluded:
+        filed = _filed_records(job, item)
+        if not any(waiver_answer(r) not in WAIVER_ANSWERS and not (retainage and _sent_for_this_job(job, r)) for r in filed):
+            continue
+        item["present"] = False
+        for key in ("confirmed_by", "confirmed_at", "resolved_at", "looked_as", "unread", "override", "marked_in_hand", "present_reason"):
+            item.pop(key, None)
+        for a in item.get("attachments", []):
+            a["unconfirmed"] = True
+        out.append(item)
+    return out
+
+
+def _sent_for_this_job(job: dict[str, Any], rec: dict[str, Any]) -> bool:
+    """The final waiver that went out after payment (send_waiver): already with the client, for a
+    pay app or retainage release of this job. It fills the closeout's final waiver item and goes with
+    the retainage request; added to a later pay app's email it is asked about like any other."""
+    tie = _waiver_tie(rec)
+    return bool(rec.get("sent_as_final")) and bool(tie) and (tie == EARLIER_PAYMENT or tie in {inv["id"] for inv in job["invoices"]} or tie in {r["id"] for r in job.get("retainage_waivers", [])})
+
+
+def _going_records(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any = ()) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """The records going out with a packet, each with the item it is on (None when added to the
+    send): an item's attachments that aren't waiting to be confirmed, then the ones added."""
+    records = {r["id"]: r for r in job.get("records", [])}
+    pairs = [(records.get(a.get("record_id")), item) for item in packet or [] for a in _going(item)]
+    pairs += [(records.get(rid), None) for rid in extra_ids or []]
+    return [(rec, item) for rec, item in pairs if rec]
+
+
+def _records_going(job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, Any]]:
+    """The records going out with this pay app: attached to a paperwork item or added to the send."""
+    seen: dict[str, dict[str, Any]] = {}
+    for rec, _item in _going_records(job, invoice.get("packet") or [], invoice.get("extra_record_ids") or []):
+        seen.setdefault(rec["id"], rec)
+    return list(seen.values())
+
+
+def _left_out(rec: dict[str, Any], excluded: set[str]) -> bool:
+    return bool(rec.get("file_ids")) and set(rec["file_ids"]) <= excluded
+
+
+def _was_waiver(rec: dict[str, Any]) -> bool:
+    """The record is, or ever was, filed or typed as a lien waiver, or a person answered that it is
+    one: it stays a waiver going out whatever kind or label it is given since (edit_record keeps
+    was_waiver), until a person answers or says No."""
+    return (rec.get("kind") == "waiver" or bool(rec.get("was_waiver")) or rec.get("waiver_kind") in WAIVER_KINDS
+            or str((rec.get("waiver_answer") or {}).get("kind") or "") in WAIVER_ANSWERS)
+
+
+def waiver_questions(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any = (), excluded: Any = (),
+                     state: dict[str, Any] | None = None, read_file: Any = None) -> list[dict[str, Any]]:
+    """The records going out, not on a waiver item (which asks which waiver it is), that read as a
+    lien waiver form or are filed as a waiver, and that nobody has answered "Is this a lien waiver?"
+    for yet. With read_file, a record not read yet is read."""
+    on_item = {a.get("record_id") for item in packet or [] if is_waiver_item(item) for a in item.get("attachments", [])}
+    excluded = set(excluded or [])
+    out: list[dict[str, Any]] = []
+    for rec, _item in _going_records(job, packet, extra_ids):
+        if rec["id"] in on_item or rec in out or not rec.get("file_ids") or _left_out(rec, excluded):
+            continue
+        read = _read_waiver(state, rec, read_file)
+        if not waiver_answer(rec) and (_was_waiver(rec) or read.get("form")):
+            out.append(rec)
+    return out
+
+
+def _is_unconditional(rec: dict[str, Any]) -> bool:
+    """Someone said it is the unconditional waiver; with no answer for its files, it is typed so
+    (filed as a waiver, or named one)."""
+    said = waiver_answer(rec)
+    if said:
+        return said == "unconditional"
+    return record_waiver_kind(rec).startswith("unconditional") and (_was_waiver(rec) or "waiver" in str(rec.get("label") or "").lower())
+
+
+def _unconditional_going(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any = (), excluded: Any = (), retainage: bool = False) -> list[dict[str, Any]]:
+    """Unconditional waivers going where a conditional one is needed: on any item but one asking for
+    an unconditional waiver (for an earlier payment), or added to the send. The final waiver that
+    went out after payment is already with the client, and goes with the retainage request (retainage)
+    it fills the closeout for; on a later pay app it is gated like any other."""
+    excluded = set(excluded or [])
+    out: list[dict[str, Any]] = []
+    for rec, item in _going_records(job, packet, extra_ids):
+        if item is not None and is_waiver_item(item) and _item_word(item) == "unconditional":
+            continue
+        if rec in out or (retainage and _sent_for_this_job(job, rec)) or not _is_unconditional(rec) or _left_out(rec, excluded):
             continue
         out.append(rec)
     return out
 
 
+def unconditional_waivers_attached(job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, Any]]:
+    """The unconditional waivers going out with this pay app where it needs the conditional one
+    (M14): sending them takes an owner and a reason."""
+    return _unconditional_going(job, invoice.get("packet") or [], invoice.get("extra_record_ids") or [], invoice.get("excluded_file_ids") or [])
+
+
+def _why_unconditional(rec: dict[str, Any]) -> str:
+    said = rec.get("waiver_answer") or {}
+    if waiver_answer(rec) == "unconditional":
+        return f"{said.get('by') or 'someone'} said it is the unconditional waiver"
+    kind = record_waiver_kind(rec)
+    return WAIVER_KINDS[kind] if kind in WAIVER_KINDS else "unconditional"
+
+
+def _record_rows(state: dict[str, Any], records: list[dict[str, Any]], extra: Any = ()) -> list[dict[str, Any]]:
+    names = {f["id"]: f.get("name", "") for f in state.get("files", [])}
+    extra = set(extra or [])
+    return [{"record_id": r["id"], "label": r["label"], "extra": r["id"] in extra, "file_ids": list(r.get("file_ids") or []),
+             "file_names": [names[f] for f in r.get("file_ids") or [] if names.get(f)]} for r in records]
+
+
+def _unconditional_rows(state: dict[str, Any], records: list[dict[str, Any]], extra: Any = ()) -> list[dict[str, Any]]:
+    """What a page warns about (M14), the same rule as the send: each record by name, why, and its
+    files so a person can take it off."""
+    return [{**row, "why": _why_unconditional(r)} for row, r in zip(_record_rows(state, records, extra), records)]
+
+
+def _question_rows(state: dict[str, Any], records: list[dict[str, Any]], extra: Any = ()) -> list[dict[str, Any]]:
+    """The records a page asks "Is this a lien waiver?" about, with the answer picked first."""
+    return [{**row, "guess": waiver_guess(r), **({"both": True} if _read_now(r).get("both") else {})}
+            for row, r in zip(_record_rows(state, records, extra), records)]
+
+
+def answer_waiver_question(state: dict[str, Any], job_id: str, record_id: str, answer: str, actor: str = "owner",
+                           shown: list[str] | None = None, answerer: "Answerer | None" = None) -> dict[str, Any]:
+    """Is this a lien waiver? A person's answer for a record going out (waiver_questions): no, yes
+    and conditional, or yes and unconditional, which then takes the owner where a conditional one
+    is needed. shown is the files the page was showing: a file added since asks again."""
+    job = _open_job(state, job_id)
+    rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not rec:
+        raise GateError("That record is not on this job.")
+    if answer not in QUESTION_ANSWERS:
+        _refuse("", {"answer": f"Say whether {rec['label']} is a lien waiver: no, yes and conditional, or yes and unconditional."})
+    if not _may_answer(answerer, _on_retainage_request(job, record=rec)):
+        raise GateError(f"Someone who can send pay apps says whether {rec['label']} is a lien waiver.")
+    if shown is not None and set(shown) != set(rec.get("file_ids") or []):
+        raise GateError(f"{rec['label']} has changed since this page was opened. Look at its files again.", extra={"review_changed": True})
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    stage = "final" if (draft or {}).get("final") or (not draft and job.get("work_status") == "complete") else "progress"
+    _say_which(state, job, rec, answer, actor, stage, f" going with {draft['number']}" if draft else " going with the closeout documents", answerer)
+    if not job.get("closed"):
+        _refresh_draft_gate(job, state)
+    return job
+
+
+def _pay_app_email(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], payer: dict[str, Any],
+                   files: list[str], actor: str, link: str) -> str:
+    """The email a pay app goes out with; Review & send shows it first (email_preview)."""
+    body = (
+        f"{payer.get('approver') or payer['name']},\n\n"
+        f"Please find {'the final pay application' if invoice['final'] else 'pay application'} {invoice['number']} for {job['name']} attached as a PDF."
+        + (f" {len(files)} supporting document{'s are' if len(files) != 1 else ' is'} attached too." if files else "")
+        + (f" Payment due {invoice['due_on']}." if invoice.get("due_on") else "")
+        + f"\n\n{pay_app_text(state, job, invoice)}"
+    )
+    if link:
+        body += f"\n\nSee this pay app and its supporting documents, and tell us it reached you:\n{link}"
+    return body + f"\n\n{sign_off(state, actor)}"
+
+
+# Who sends it and the private link are known only when it goes; the page fills in the name.
+PREVIEW_SENDER = "[Your name]"
+PREVIEW_LINK = "[private link to this pay app]"
+
+
+def email_preview(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, str]:
+    """A draft's email as it would go now, for Review & send. Changes nothing on the draft."""
+    payer = _payer(state, job["payer_id"])
+    going = {**invoice, "final": is_final(job)}
+    terms = _int_or(payer.get("payment_terms_days"), None)
+    if terms:
+        going["due_on"] = (datetime.now(timezone.utc).date() + timedelta(days=terms)).isoformat()
+    return {"subject": pay_app_subject(state, job, going), "stamp": review_stamp(state, job, invoice),
+            "body": _pay_app_email(state, job, going, payer, _packet_file_ids(state, job, going), PREVIEW_SENDER, PREVIEW_LINK)}
+
+
+def review_stamp(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:
+    """What Review & send showed: the pay app, its amount and the files going. Sent back with
+    Approve & send, so a change made since (in another session) asks for a fresh look."""
+    what = [invoice["id"], str(invoice["amount_cents"]), *_packet_file_ids(state, job, invoice)]
+    return hashlib.sha256("|".join(what).encode()).hexdigest()[:16]
+
+
+def _need_waiver_answers(state: dict[str, Any], job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any, excluded: Any, read_file: Any) -> None:
+    """A file going out that reads as a lien waiver form, or is filed as a waiver, goes once a person
+    has said whether it is one (waiver_questions). What was read stays for the page."""
+    asked = waiver_questions(job, packet, extra_ids, excluded, state, read_file)
+    if asked:
+        names = ", ".join(r["label"] for r in asked)
+        raise GateError(f"Say whether {names} {'is a lien waiver' if len(asked) == 1 else 'are lien waivers'}, then send.",
+                        [f"{r['label']}: is this a lien waiver?" for r in asked], extra={"waiver_question": True}, keep_changes=True)
+
+
 def approve_and_send(
     state: dict[str, Any], job_id: str, actor: str = "owner", link_base: str | None = None, company_id: str = "",
-    unconditional_override: str = "",
+    unconditional_override: str = "", reviewed: str | None = None, read_file: Any = None,
 ) -> dict[str, Any]:
     """Send the open draft. A signed unconditional waiver going with it is refused (M14) unless
     unconditional_override gives the reason (the server lets only an owner give one); the
-    override is kept on the pay app and in the audit."""
+    override is kept on the pay app and in the audit. reviewed is the stamp of what Review & send
+    showed (review_stamp): the server always passes it, so a send needs a look at what goes.
+    None is for callers with no page (scripts, tests of other rules)."""
     job = _open_job(state, job_id)
+    invoice = next((inv for inv in reversed(job["invoices"]) if inv["status"] in {"draft", "awaiting_approval"}), None)
+    # A stale screen first: what it says stands in the way may not be what stands in the way now.
+    if reviewed and invoice and reviewed != review_stamp(state, job, invoice):
+        raise GateError(f"{invoice['number']} changed since you opened it. Look it over again, then send.",
+                        extra={"review_changed": True, "invoice_id": invoice["id"]})
+    if invoice and _ask_which_waiver(job, invoice.get("packet") or []):
+        _refresh_draft_gate(job)
+        raise GateError("Pay app blocked.", blocker_lines(job), extra={"waiver_question": True}, keep_changes=True)   # the page shows the question
     blockers = blocker_lines(job)
     if blockers:
         raise GateError("Pay app blocked.", blockers)
-    invoice = next((inv for inv in reversed(job["invoices"]) if inv["status"] in {"draft", "awaiting_approval"}), None)
     if not invoice:
         raise GateError("No draft pay app to send.")
+    _need_playbook(state, job)
+    if reviewed is not None and reviewed != review_stamp(state, job, invoice):
+        raise GateError(f"{invoice['number']} changed since you opened it. Look it over again, then send." if reviewed
+                        else f"Open {invoice['number']} and look it over, then send.", extra={"review_changed": True, "invoice_id": invoice["id"]})
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
+    _need_waiver_answers(state, job, invoice.get("packet") or [], invoice.get("extra_record_ids") or [], invoice.get("excluded_file_ids") or [], read_file)
     unconditional = unconditional_waivers_attached(job, invoice)
     override = _reason(unconditional_override) if unconditional else ""
     if unconditional and not override:
-        raise GateError(UNCONDITIONAL_ATTACHED, [f"{r['label']} ({WAIVER_KINDS[record_waiver_kind(r)]})" for r in unconditional],
+        raise GateError(UNCONDITIONAL_ATTACHED, [f"{r['label']} ({_why_unconditional(r)})" for r in unconditional],
                         fields={"unconditional_override": "Enter why it goes with this pay app, or take it off."},
-                        extra={"unconditional_waiver": True})
+                        extra={"unconditional_waiver": True}, keep_changes=True)   # what was read goes on the page
+    # The bill can stop being the final one under a confirmed waiver (a change order written since,
+    # say): that waiver isn't sent as the other type without a look.
+    invoice["final"] = is_final(job)
+    if invoice.get("packet_id") != "job-packet":
+        flipped = _name_conditional_waiver(job, invoice)
+        if flipped:
+            invoice["status"] = "draft"   # kept with the refusal: the page shows it waiting, with Confirm
+            raise GateError(f"{invoice['number']} changed since you opened it. Look at {flipped[0]['label']} again, then send.",
+                            [f"{item['label']}: {item['check']['problems'][-1]}" for item in flipped],
+                            extra={"review_changed": True, "invoice_id": invoice["id"]}, keep_changes=True)
     invoice["status"] = "sent"
     invoice["sent_at"] = utcnow()
     invoice["approved_by"] = actor   # shown as "sent by" (R4-05)
+    _settlements_follow(state, job, f"{invoice['number']} went out")
     # The contract as it went out: later change orders and releases don't change this pay app.
     invoice["contract_at_send"] = payapp_pdf.contract_terms(job)
     # The customer's payment terms set a due date from the day it goes out (R4-04).
     terms = _int_or(payer.get("payment_terms_days"), None)
     if terms:
         invoice["due_on"] = (datetime.now(timezone.utc).date() + timedelta(days=terms)).isoformat()
-    invoice["final"] = is_final(job)
-    if invoice.get("packet_id") != "job-packet":
-        _name_conditional_waiver(job, invoice)
     # The first stage of the waiver (M13): the conditional type that went with the pay app.
     cond = next((item for item in invoice.get("packet") or [] if str(item.get("waiver_kind", "")).startswith("conditional")
                  and item.get("present")), None)
@@ -714,7 +1345,8 @@ def approve_and_send(
         for att in cond.get("attachments", []):
             rec = records.get(att.get("record_id"))
             if rec and rec.get("kind") == "waiver":
-                rec.setdefault("waiver_kind", cond["waiver_kind"])
+                if record_waiver_kind(rec):  # a type nobody said isn't assumed (a person confirmed it, or it stays blank)
+                    rec.setdefault("waiver_kind", cond["waiver_kind"])
                 if not _waiver_tie(rec):
                     rec["invoice_id"] = invoice["id"]
     if override:
@@ -725,17 +1357,7 @@ def approve_and_send(
     job["external_status"] = f"Submitted to {payer['name']}, awaiting {payer['approver']}"
     subject = pay_app_subject(state, job, invoice)
     files = _packet_file_ids(state, job, invoice)
-    body = (
-        f"{payer.get('approver') or payer['name']},\n\n"
-        f"Please find {'the final pay application' if invoice['final'] else 'pay application'} {invoice['number']} for {job['name']} attached as a PDF. Every item of paperwork is accounted for"
-        + (f"; {len(files)} paperwork document{'s are' if len(files) != 1 else ' is'} attached too." if files else ".")
-        + (f" Payment due {invoice['due_on']}." if invoice.get("due_on") else "")
-        + f"\n\n{pay_app_text(state, job, invoice)}"
-    )
-    link = payer_link(invoice, link_base, company_id)
-    if link:
-        body += f"\n\nSee this pay app, its paperwork and documents, and tell us it reached you:\n{link}"
-    body += f"\n\n{sign_off(state, actor)}"
+    body = _pay_app_email(state, job, invoice, payer, files, actor, payer_link(invoice, link_base, company_id))
     _record_email(state, job_id, "pay_app", to, subject, body, actor, attachments=files, cc=_copy_list(payer),
                   payapp_invoice_id=invoice["id"])
     audit(
@@ -755,7 +1377,7 @@ def _aware(iso: str) -> datetime:
 
 def follow_up_due(job: dict[str, Any], payer: dict[str, Any]) -> datetime | None:
     """When the next follow-up is due (R4-06): the customer's days between follow-ups after the
-    last contact on the oldest unpaid pay app, or the date noted after a call (note_contact) when
+    last contact on the oldest unpaid pay app, or the date noted after a conversation (note_contact) when
     no follow-up has gone out since. None when nothing is out for payment."""
     unpaid = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
     if not unpaid:
@@ -815,7 +1437,7 @@ def record_follow_up(
         last = oldest.get("last_follow_up_at") or oldest.get("sent_at") or ""
         promised = expected_payment(oldest)
         if job.get("expected_payment_on") and (job.get("contact_noted_at") or "") >= last:
-            why = f"you spoke to them {job['contact_noted_at'][:10]} and noted to check again then"
+            why = f"a conversation on {job['contact_noted_at'][:10]} noted to check again then"
         elif promised and due.date() == promised + timedelta(days=1):
             why = f"{oldest.get('approved_by_payer') or payer['name']} approved it for payment by {promised.isoformat()}"
         else:
@@ -848,7 +1470,7 @@ def record_follow_up(
         body = f"Hi {who}, checking on {job['name']}: {listing}. Is anything missing on your side?"
     link = payer_link(oldest, link_base, company_id)
     if link:
-        body += f"\n\nThe pay app, its paperwork and documents: {link}"
+        body += f"\n\nThe pay app and its supporting documents: {link}"
     body += f"\n\n{sign_off(state, actor)}"
     escalate = str(payer.get("escalation_email") or "").strip()
     cc = [escalate] if count >= 3 and escalate and escalate.lower() != to.lower() else []
@@ -864,13 +1486,30 @@ def record_follow_up(
     return job
 
 
+def _log_conversation(state: dict[str, Any], job: dict[str, Any], text: str, day: date | None, actor: str, now: str) -> None:
+    """What makes a conversation with the client more than a note (R4-06): while a pay app waits
+    for payment it counts as a follow-up for the timing, and with a date the next follow-up waits
+    until then. It is in the Activity log and in Recent contact either way."""
+    waiting = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
+    for inv in waiting:
+        inv["last_follow_up_at"] = now
+    if waiting:
+        job["contact_noted_at"] = now
+        if day:
+            job["expected_payment_on"] = day.isoformat()
+        else:
+            job.pop("expected_payment_on", None)
+    payer = _payer(state, job["payer_id"])
+    who = payer.get("approver") or payer["name"]
+    job["last_contact"] = {"at": now, "by": actor, "text": text, "next_on": day.isoformat() if day else ""}
+    audit(state, job["id"], "contact_noted", f"Conversation with {who}: {text}" + (f" Next check {day.isoformat()}." if day else "") + f" ({actor})", actor)
+
+
 def note_contact(state: dict[str, Any], job_id: str, text: str, next_on: Any = "", actor: str = "owner") -> dict[str, Any]:
-    """"Spoke to them" (R4-06): what the customer said on the phone, kept on the job record and in
-    the Activity log. It counts as a follow-up for the timing, and with a date the next follow-up
-    waits until then."""
+    """Log a conversation (R4-06): what the client said, kept on the job's records as a record of
+    kind "conversation". Older ones are notes labelled "Spoke to ..."; they stay as they are.
+    A date to check again needs a pay app waiting for payment: that is the follow-up it holds."""
     job = _open_job(state, job_id)
-    if not any(inv["status"] in OPEN_FOR_PAYMENT for inv in job["invoices"]):
-        raise GateError("No sent pay app is waiting for payment.")
     text = " ".join(str(text or "").split())[:500]
     problems = {}
     if not text:
@@ -878,24 +1517,16 @@ def note_contact(state: dict[str, Any], job_id: str, text: str, next_on: Any = "
     day = _day(next_on, "next_on", "Enter the date to check again, like 2026-11-07.")
     if day and day < datetime.now(timezone.utc).date() - timedelta(days=1):
         problems["next_on"] = "Enter today or a later date to check again."
+    elif day and not any(inv["status"] in OPEN_FOR_PAYMENT for inv in job["invoices"]):
+        problems["next_on"] = "No sent pay app is waiting for payment, so there is no follow-up to hold."
     _refuse("Nothing was saved.", problems)
     payer = _payer(state, job["payer_id"])
-    who = payer.get("approver") or payer["name"]
     now = utcnow()
-    for inv in job["invoices"]:
-        if inv["status"] in OPEN_FOR_PAYMENT:
-            inv["last_follow_up_at"] = now
-    job["contact_noted_at"] = now
-    if day:
-        job["expected_payment_on"] = day.isoformat()
-    else:
-        job.pop("expected_payment_on", None)
-    job["last_contact"] = {"at": now, "by": actor, "text": text, "next_on": day.isoformat() if day else ""}
     job.setdefault("records", []).append({
-        "id": "rec-" + secrets.token_hex(3), "kind": "note", "label": f"Spoke to {who}",
+        "id": "rec-" + secrets.token_hex(3), "kind": "conversation", "label": f"Conversation with {payer.get('approver') or payer['name']}",
         "note": text + (f" Check again {day.isoformat()}." if day else ""), "added_at": now, "added_by": actor,
     })
-    audit(state, job_id, "contact_noted", f"Spoke to {who}: {text}" + (f" Next check {day.isoformat()}." if day else "") + f" ({actor})", actor)
+    _log_conversation(state, job, text, day, actor, now)
     return job
 
 
@@ -927,16 +1558,22 @@ def match_payment(
     # A pay app settled short still takes the rest if the customer pays it after all (R4-01):
     # named by id, or on its own when nothing else is open.
     short = [inv for inv in job["invoices"] if inv["status"] == "paid" and inv.get("short_pay_cents")]
-    if not open_invoices and not short:
+    # A refund the contract no longer leaves room for (a change order signed after it): the client
+    # pays it back, on the last pay app sent, which stays as it went.
+    owed_back = job_money(job)["refund_owed_cents"]
+    back_on = next((inv for inv in reversed(job["invoices"]) if inv["status"] in BILLED_STATUSES), None) if owed_back else None
+    if not open_invoices and not short and not back_on:
         raise GateError("No open invoice to match.")
     if invoice_id:
-        invoice = next((inv for inv in open_invoices + short if inv["id"] == invoice_id), None)
+        invoice = next((inv for inv in open_invoices + short + ([back_on] if back_on else []) if inv["id"] == invoice_id), None)
         if not invoice:
             _refuse("", {"invoice_id": "Pick a pay app that is waiting for payment."})
     elif len(open_invoices) == 1:
         invoice = open_invoices[0]
     elif not open_invoices and len(short) == 1:
         invoice = short[0]
+    elif not open_invoices and back_on:
+        invoice = back_on
     else:
         raise GateError(
             "More than one pay app is open. Choose which pay app this payment is for.",
@@ -946,7 +1583,7 @@ def match_payment(
     if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
         _refuse("", {"amount_cents": "Enter the payment amount, more than $0."})
     already = sum(p["amount_cents"] for p in job["payments"] if p["invoice_id"] == invoice["id"])
-    remaining = invoice["amount_cents"] - already
+    remaining = max(0, invoice["amount_cents"] - already) + (owed_back if invoice is back_on else 0)
     if amount_cents > remaining:
         _refuse("", {"amount_cents": f"Enter no more than the {money(remaining)} still owed on {invoice['number']}. You entered {money(amount_cents)}."})
     reference = reference.strip() if isinstance(reference, str) else ""
@@ -974,8 +1611,9 @@ def match_payment(
     late = ""
     if invoice["status"] == "paid":
         # The rest of a short pay came in after all: less of it stays written off.
+        was_short = int(invoice.get("short_pay_cents") or 0)
         invoice["short_pay_cents"] = max(0, invoice["amount_cents"] - collected_for_invoice)
-        late = f" Short pay now {money(invoice['short_pay_cents'])}."
+        late = f" Short pay now {money(invoice['short_pay_cents'])}." if was_short else " Refund paid back."
     elif collected_for_invoice >= invoice["amount_cents"]:
         if _legacy_waiver_pending(job):
             job["legacy_waiver_pending"] = True
@@ -986,6 +1624,7 @@ def match_payment(
     elif collected_for_invoice > 0:
         invoice["status"] = "partial"
         job["external_status"] = "Partial payment received"
+    _refresh_draft_gate(job, state)   # what is left to collect decides the waiver on a final draft
     audit(
         state,
         job_id,
@@ -1025,6 +1664,7 @@ def settle_short_pay(state: dict[str, Any], job_id: str, invoice_id: str, reason
     due = _waiver_comes_due(state, job, invoice, invoice["number"])
     _sync_waiver(job)
     job["external_status"] = "Short pay accepted, waiver not sent" if due else "Short pay accepted"
+    _refresh_draft_gate(job, state)
     audit(
         state,
         job_id,
@@ -1049,14 +1689,45 @@ WAIVER_KINDS = {
 
 def suggested_waiver_kind(job: dict[str, Any], invoice: dict[str, Any] | None = None) -> str:
     """The waiver type that fits a pay app now (M17): conditional while it is unpaid, unconditional
-    once its payment is matched; on final payment for the final pay app, or once the job is done
-    and fully paid, but never while retainage is still held (that waiver goes with its release)."""
-    m = job_money(job)
+    once its payment is matched; on final payment only when this pay app's money is the last there
+    is (still_open). A final waiver gives up the right to anything unbilled or unpaid."""
     paid = invoice is None or invoice.get("status") == "paid"
-    final = bool(invoice is not None and invoice.get("final")) or (
-        job.get("work_status") == "complete" and m["unbilled_completed_cents"] == 0 and m["outstanding_cents"] == 0)
-    final = final and m["retainage_open_cents"] == 0
-    return f"{'unconditional' if paid else 'conditional'}_{'final' if final else 'progress'}"
+    return f"{'unconditional' if paid else 'conditional'}_{'progress' if still_open(job, invoice) else 'final'}"
+
+
+def still_open(job: dict[str, Any], invoice: dict[str, Any] | None = None) -> list[str]:
+    """What a final waiver would give up, in words, besides this pay app's own money: the job not
+    finished, work or a change order not billed, a draft, pay apps owed, retainage held. A change
+    order on this draft has to be signed before it goes, so it isn't one."""
+    m = job_money(job)
+    own_owed = own_draft = own_held = 0
+    drafting = False
+    if invoice is not None and invoice.get("status") in DRAFT_STATUSES:
+        own_draft, own_held, drafting = invoice["amount_cents"], int(invoice.get("retainage_cents") or 0), True
+    elif invoice is not None and invoice.get("status") in OPEN_FOR_PAYMENT:
+        own_owed = _owed_on(job, invoice)
+    out = []
+    if job.get("work_status") != "complete":
+        out.append("the job isn't finished")
+    if m["unbilled_completed_cents"] > 0:
+        out.append(f"{money(m['unbilled_completed_cents'])} is not billed")
+    if m["draft_cents"] > own_draft:
+        out.append(f"{money(m['draft_cents'] - own_draft)} is on a draft")
+    if m["outstanding_cents"] > own_owed:
+        out.append(f"{money(m['outstanding_cents'] - own_owed)} is still owed")
+    if m["retainage_open_cents"] > 0 or own_held:
+        out.append(f"{money(m['retainage_open_cents'] + own_held)} of retainage is still held")
+    for co in job["change_orders"]:
+        if co["status"] == "pending" and not (drafting and co.get("included_in_billing")):
+            out.append(f"CO {co['number']} is not signed")
+    return out
+
+
+def release_due_kind(job: dict[str, Any], release: dict[str, Any]) -> str:
+    """The waiver a retainage release owes now. One marked final stays final only while nothing else
+    is open (one recorded before Nov 5, or on a job undone or reopened since, owes a progress waiver)."""
+    final = str(release.get("kind", "")).endswith("_final") and not still_open(job)
+    return "unconditional_final" if final else "unconditional_progress"
 
 
 WAIVER_TYPE_WORDS = {"conditional_progress": "conditional", "unconditional_progress": "unconditional",
@@ -1077,16 +1748,23 @@ def record_waiver_kind(record: dict[str, Any]) -> str:
 
 
 def set_waiver_type(state: dict[str, Any], job_id: str, record_id: str, kind: str, actor: str = "owner",
-                    for_id: str = "") -> dict[str, Any]:
+                    for_id: str = "", said: bool = True, answerer: "Answerer | None" = None) -> dict[str, Any]:
     """Say which of the four types a signed waiver on the job record is (M14), and with for_id
     which paid pay app or retainage release it is for (B1 of the Oct 30 review), or "job" for the
     older job-level waiver (Earlier payment). An unconditional one is tied as it is added when only
     one waiver is owed, so it can't go out for another; never one that was unclear while several
-    were owed (waiver_needs_tie): a person says which that one is for."""
+    were owed (waiver_needs_tie): a person says which that one is for. said: a person picked the
+    type for this record, which is their answer to which waiver it is (False for an upload that
+    takes the type of the item or page it was added on). Someone who can't answer (answerer) sets
+    the type and nothing more, and changes no type that already has an answer."""
     job = _job(state, job_id)
     rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
     if not rec or rec.get("kind") != "waiver":
         raise GateError("That lien waiver is not on this job's record.")
+    if said and not _may_answer(answerer, _on_retainage_request(job, record=rec)):
+        if waiver_answer(rec):
+            raise GateError(f"{rec['label']} has been answered. {NOT_YOURS_TO_ANSWER}")
+        said = False
     if kind not in WAIVER_KINDS:
         _refuse("", {"kind": "Pick the waiver type: conditional or unconditional, progress or final."})
     owed = _waiver_owed(job)
@@ -1098,7 +1776,10 @@ def set_waiver_type(state: dict[str, Any], job_id: str, record_id: str, kind: st
     elif kind.startswith("unconditional") and not _waiver_tie(rec) and not rec.get("waiver_needs_tie") and len(owed) == 1:
         target = owed[0]
     before = record_waiver_kind(rec)
-    rec["waiver_kind"] = kind
+    if said:
+        _say_which(state, job, rec, kind.split("_")[0], actor, kind.split("_")[1], answerer=answerer)   # a person said it: their answer
+    else:
+        rec["waiver_kind"] = kind
     if before != kind:
         audit(state, job_id, "waiver_type", f"{actor} set the type of {rec['label']}: {WAIVER_KINDS[kind].lower()}.", actor)
     if target:
@@ -1180,7 +1861,7 @@ def _waiver_on_file(state: dict[str, Any], job: dict[str, Any], kind: str, tied:
                    + [job.get("closeout_packet") or []] for item in packet
                    if str(item.get("waiver_kind", "")).startswith("conditional") for a in item.get("attachments", [])}
     for record in reversed(job.get("records", [])):
-        if record.get("kind") != "waiver" or record.get("number_only"):
+        if record.get("kind") != "waiver" or record.get("number_only") or waiver_answer(record) == "no":
             continue
         has = record_waiver_kind(record)
         if not has and record["id"] in conditional:
@@ -1199,7 +1880,8 @@ def _waiver_comes_due(state: dict[str, Any], job: dict[str, Any], what: dict[str
     """A pay app paid or retainage released owes its unconditional waiver (M16, M20), unless the
     client was marked as not taking lien waivers (Not needed for this client on the conditional
     one, skip_packet_item; B2 of the Oct 30 review): then none is due and the pay app says why.
-    Returns whether one is due."""
+    Not needed on this job is about the conditional waiver only: the unconditional one stays owed,
+    with its own audited way out (waiver_not_needed). Returns whether one is due."""
     payer = _payer(state, job["payer_id"])
     skip = payer.get("waiver_not_needed")
     what["waiver_sent"] = False
@@ -1209,7 +1891,7 @@ def _waiver_comes_due(state: dict[str, Any], job: dict[str, Any], what: dict[str
     reason = skip.get("reason") or "Not needed for this client"
     what["waiver_due"] = False
     what["waiver_not_needed"] = {"by": "duracash", "at": utcnow(), "reason": reason, "client": True}
-    audit(state, job["id"], "waiver_not_needed", f"No lien waiver is due for {which}: {payer['name']} doesn't take them ({reason}).", "duracash")
+    audit(state, job["id"], "waiver_not_needed", f"No lien waiver is due for {which}: {payer['name']} does not take them ({reason}).", "duracash")
     return False
 
 
@@ -1220,12 +1902,17 @@ def _pending_waivers(job: dict[str, Any]) -> list[dict[str, Any]]:
 
 def send_waiver(
     state: dict[str, Any], job_id: str, actor: str = "owner", invoice_id: str | None = None, kind: str | None = None,
-    release_id: str | None = None,
+    release_id: str | None = None, confirm_final: bool = False,
+    read_file: Any = None, looked_at: str = "", check_only: bool = False, answerer: "Answerer | None" = None,
 ) -> dict[str, Any]:
     """The second stage of the waiver (M16, M21): after payment, a person approves sending the
     signed form on the job record. One waiver per paid pay app and per retainage release
     (release_id, M20); older records keep a single job-level flag. Duracash never writes the form:
-    it is refused until a signed waiver of the type being sent is on the job record."""
+    it is refused until a signed waiver of the type being sent is on the job record. With read_file,
+    the file is read whatever its label or type says (Decision 6, criterion 67): what doesn't match
+    is named, and it goes only once a person says they opened that record (looked_at, its id).
+    check_only: every check and warning, and nothing sent, so the page asks for the look first and
+    then one confirm to send (Round 1 acceptance, item 17)."""
     job = _open_job(state, job_id)
     if kind is not None and kind not in WAIVER_KINDS:
         raise GateError("Pick the waiver type: conditional or unconditional, progress or final.")
@@ -1254,18 +1941,45 @@ def send_waiver(
         kind = kind or suggested_waiver_kind(job, invoice)
     else:
         release = releases[0]
-        kind = kind or release["kind"]
+        release_due = release_due_kind(job, release)
+        kind = kind or release_due
     found = waiver_on_file(state, job, kind, invoice["id"] if invoice else "", release["id"] if release else "", legacy=legacy)
     if not found:
-        message = f"Add the signed {WAIVER_TYPE_WORDS[kind]} waiver to the job record first."
+        message = f"Add the signed {WAIVER_TYPE_WORDS[kind]} waiver to the job records first."
         raise GateError(message, extra={"waiver_kind": kind})
+    # A final waiver while the job still calls for a progress one gives up more than is being paid:
+    # it warns and takes a person's confirm, before any email (never a hard block, Decision 6).
+    due = suggested_waiver_kind(job, invoice) if invoice else release_due if release else suggested_waiver_kind(job)
+    if kind.endswith("_final") and not due.endswith("_final") and not confirm_final:
+        left = still_open(job, invoice)
+        raise GateError(f"This is a final waiver, but the job isn't finished: the {WAIVER_KINDS[due].lower()} is the one due"
+                        + (f", because {', and '.join(left)}" if left else "") + ". Send the final one only if you mean to.",
+                        extra={"final_waiver_warning": True, "confirm_label": "Send the final waiver"})
     record, files = found["record"], found["file_ids"]
+    # Sending is not the answer for someone who can't give one: the file waits for someone who can.
+    may_answer = answerer is None or _may_answer(answerer, _on_retainage_request(job, record=record))
+    if not may_answer and waiver_answer(record) != kind.split("_")[0]:
+        raise GateError(f"{record['label']} is not marked {kind.split('_')[0]} yet. {NOT_YOURS_TO_ANSWER}", fields={"answer": NOT_YOURS_TO_ANSWER})
+    looked_past = []
+    if read_file is not None:
+        amount_due = invoice["amount_cents"] - int(invoice.get("short_pay_cents") or 0) if invoice else release["amount_cents"] if release else None
+        metas = [f for f in state.get("files", []) if f["id"] in set(files)]
+        check = doc_check.check([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], job["name"],
+                                money(amount_due) if amount_due is not None else "", amount_due, kind, True)
+        looked_past = check["problems"]
+        if looked_past and looked_at != record["id"]:
+            raise GateError(f"Look at {record['label']} before it goes as the {WAIVER_KINDS[kind].lower()}: {' '.join(looked_past)}",
+                            extra={"look_warning": True, "record_id": record["id"], "confirm_label": "I opened it and it's right"})
     if found["ambiguous"]:
         # More than one waiver is owed and this one wasn't said to be for any (B1): ask, send nothing.
         why = "More than one waiver is due on this job." if len(_waiver_owed(job)) > 1 else "It was added while more than one waiver was due."
         raise GateError(f"Say which pay app {record['label']} is for first. {why}",
                         fields={"for_id": "Pick the pay app or retainage release this signed waiver is for."},
                         extra={"waiver_record_id": record["id"], "waiver_for": _waiver_owed(job)})
+    if check_only:
+        return job
+    if looked_past:
+        audit(state, job_id, "waiver_looked_at", f"{actor} opened {record['label']} and said it is right: {' '.join(looked_past)}", actor)
     _hold_unclear_waivers(job)
     now = utcnow()
     if legacy:
@@ -1296,9 +2010,12 @@ def send_waiver(
         which = f" for the retainage released {release['at'][:10]}"
         detail = f"release of {money(amount)} retainage"
         through, held = "", 0
-    record["waiver_kind"] = kind
+    if may_answer:
+        _say_which(state, job, record, kind.split("_")[0], actor, kind.split("_")[1], answerer=answerer)   # they chose the type and looked
     if not _waiver_tie(record):
         _tie_waiver(record, invoice["id"] if invoice else release["id"] if release else EARLIER_PAYMENT)
+    if kind.endswith("_final"):
+        _final_waiver_fills_closeout(state, job, record, actor)
     job["waiver_sent_at"] = now
     job["waiver_kind"] = WAIVER_KINDS[kind]
     job["external_status"] = "Waiver sent"
@@ -1322,6 +2039,18 @@ def send_waiver(
     _sync_waiver(job)
     audit(state, job_id, "send_waiver", f"{actor} approved sending the {WAIVER_KINDS[kind].lower()}{which} ({record['label']}).", actor)
     return job
+
+
+def _final_waiver_fills_closeout(state: dict[str, Any], job: dict[str, Any], record: dict[str, Any], actor: str) -> None:
+    """The final waiver that went out is the closeout's Final lien waivers: nobody files it twice."""
+    record["sent_as_final"] = True
+    for item in job.get("closeout_packet") or []:
+        if not item.get("present") and (_record_kinds_for(item) or ("",))[0] == "final_waiver":
+            now = utcnow()
+            item["attachments"] = [{"name": record["label"], "record_id": record["id"]}]
+            item.update(present=True, resolved_at=now, confirmed_by=actor, confirmed_at=now)
+            item.pop("check", None)
+            audit(state, job["id"], "packet_confirmed", f"{record['label']} went out as the final waiver, so it fills {item['label']}.", actor)
 
 
 def waiver_not_needed(
@@ -1430,16 +2159,19 @@ def waiver_stages(state: dict[str, Any], job: dict[str, Any], invoice: dict[str,
     return {"conditional": cond, "unconditional": uncond}
 
 
-def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash", amount_cents: int | None = None) -> dict[str, Any]:
+def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash", amount_cents: int | None = None,
+                    unconditional_override: str = "", read_file: Any = None) -> dict[str, Any]:
     """Ask the client to release retainage (M24, M25): only once the job is marked done and the
     closeout paperwork is in. `amount_cents` below what is held asks for part of it. The request
-    attaches the newest pay app sent and the closeout documents on file."""
+    attaches the newest pay app sent and the closeout documents on file. Their waivers are asked
+    about as a pay app's are: an unconditional one where the closeout needs the conditional final
+    waiver takes unconditional_override, the reason (the server lets only an owner give one)."""
     job = _open_job(state, job_id)
     open_retainage = job_money(job)["retainage_open_cents"]
     if open_retainage <= 0:
         raise GateError("No open retainage.")
     if job.get("work_status") != "complete":
-        raise GateError("Retainage is asked for once the job is marked done. Mark the job done first.")
+        raise GateError("Retainage is asked for once the work is finished. Use Final pay app first.")
     if amount_cents is not None:
         if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
             _refuse("", {"amount_cents": "Enter the retainage to ask for, more than $0."})
@@ -1447,9 +2179,18 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
             _refuse("", {"amount_cents": f"Enter no more than the {money(open_retainage)} held."})
     amount = amount_cents or open_retainage
     partial = amount < open_retainage
+    closeout = _retainage_packet(job)   # what _packet_file_ids attaches below, on a job from before the closeout list too
+    asked = _ask_which_waiver(job, closeout, retainage=True)
     missing = closeout_missing(job)
     if missing:
-        raise GateError("The closeout paperwork isn't complete.", [item["blocker"] for item in missing])
+        raise GateError("The closeout documents aren't complete.", [_blocker_text(job, item) for item in missing], keep_changes=bool(asked))
+    _need_waiver_answers(state, job, closeout, (), (), read_file)
+    unconditional = _unconditional_going(job, closeout, retainage=True)
+    override = _reason(unconditional_override) if unconditional else ""
+    if unconditional and not override:
+        raise GateError(UNCONDITIONAL_ATTACHED, [f"{r['label']} ({_why_unconditional(r)})" for r in unconditional],
+                        fields={"unconditional_override": "Enter why it goes with the request, or take it off."},
+                        extra={"unconditional_waiver": True}, keep_changes=True)
     payer = _payer(state, job["payer_id"])
     to = _send_to(payer)
     days = _int_or(payer.get("follow_up_days"), 7)
@@ -1466,7 +2207,7 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
     job["retainage_asked_cents"] = amount
     job["external_status"] = f"Retainage follow-up sent to {payer['approver']}"
     subject = f"Application for release of retainage — {money(amount)} — {job['name']}"
-    files = _packet_file_ids(state, job, {"packet": job.get("closeout_packet") or job.get("packet") or []})
+    files = _packet_file_ids(state, job, {"packet": closeout})
     newest = next((inv for inv in reversed(job["invoices"]) if inv["status"] in BILLED_STATUSES), None)
     if partial:
         ask = (f"The work on {job['name']} is complete. Please release {money(amount)} "
@@ -1482,6 +2223,10 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
     )
     _record_email(state, job_id, "retainage", to, subject, body, actor, attachments=files,
                   payapp_invoice_id=newest["id"] if newest else None)
+    if override:
+        job.setdefault("retainage_overrides", []).append({"by": actor, "at": utcnow(), "reason": override, "record_ids": [r["id"] for r in unconditional]})
+        audit(state, job_id, "unconditional_override",
+              f"{actor} asked for retainage with an unconditional waiver attached ({', '.join(r['label'] for r in unconditional)}): {override}.", actor)
     audit(
         state,
         job_id,
@@ -1500,7 +2245,7 @@ def record_retainage_payment(
     actor: str = "owner",
 ) -> dict[str, Any]:
     """Record retainage the payer released. Kept apart from pay-app payments. Each release owes
-    its own lien waiver (M20): unconditional on final payment when nothing is held after it."""
+    its own lien waiver (M20): unconditional, on final payment only when the job is finished by it."""
     job = _open_job(state, job_id)
     open_retainage = job_money(job)["retainage_open_cents"]
     if open_retainage <= 0:
@@ -1519,13 +2264,16 @@ def record_retainage_payment(
     waivers = job.setdefault("retainage_waivers", [])
     release = {
         "id": f"rw-{len(waivers) + 1}", "amount_cents": amount_cents, "reference": reference or "manual", "at": now,
-        "kind": "unconditional_final" if amount_cents == open_retainage else "unconditional_progress",
+        # Final only when the job is finished (suggested_waiver_kind). Releasing all the retainage
+        # on a job half done is a progress waiver: it gives up no rights to the work still to bill.
+        "kind": "unconditional_final" if suggested_waiver_kind(job).endswith("_final") else "unconditional_progress",
     }
     waivers.append(release)
     due = _waiver_comes_due(state, job, release, f"the retainage released {now[:10]}")
     if legacy:
         job["legacy_waiver_pending"] = True
     _sync_waiver(job)
+    _refresh_draft_gate(job, state)
     audit(state, job_id, "retainage_paid", f"{actor} recorded {money(amount_cents)} retainage released ({reference or 'manual'})."
           + (" Its lien waiver is due." if due else ""), actor)
     return job
@@ -1575,6 +2323,7 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out["needs_paperwork"] = needs_paperwork(job)
     out["blocker_button"] = blocker_button(job) if out["blocked"] else ""
     out["payer"] = deepcopy(_payer(state, job["payer_id"]))
+    out["retainage_usual"] = default_retainage_pct(out["payer"])   # the pay app warns at 0% (round 1, item 1)
     out["can_delete"] = can_delete_job(job)
     out["can_undo_done"] = can_undo_done(job)
     out["close_blocker_items"] = close_blocker_items(job)
@@ -1585,8 +2334,11 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out.setdefault("closeout_packet", [])
     out.setdefault("evidence", [])
     out.setdefault("done_notes", "")
-    out["sov_view"] = _sov_view(job)
+    out["sov_view"] = _sov_view(job, state)
     _paperwork_view(state, job, out)
+    out["playbook_missing"] = playbook_missing(out["payer"])
+    out["playbook_blocks"] = bool(job.get("playbook_required") and out["playbook_missing"])
+    out["paperwork_view"] = _job_paperwork_view(state, job)
     # Where the job stands and the dates that matter (J7), worked out here so the page doesn't.
     out["started_on"] = job_started_on(state, job)
     out["stage"] = job_stage(job, out["money"])
@@ -1596,6 +2348,11 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     for inv in out["invoices"]:
         paid = sum(p["amount_cents"] for p in job["payments"] if p.get("invoice_id") == inv["id"])
         inv["remaining_cents"] = max(0, inv["amount_cents"] - paid) if inv["status"] in OPEN_FOR_PAYMENT else 0
+    if out["money"]["refund_owed_cents"]:   # Record a Payment takes it on the last pay app sent
+        last = next((inv for inv in reversed(out["invoices"]) if inv["status"] in BILLED_STATUSES), None)
+        if last:
+            last["remaining_cents"] += out["money"]["refund_owed_cents"]
+            last["refund_owed_cents"] = out["money"]["refund_owed_cents"]
     _payapp_figures(job, out)
     _co_flags(out)
     # Money > Unpaid's Recent contact (M11), only on jobs with money owed, to keep the page light.
@@ -1613,7 +2370,11 @@ def payapp_figures(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, in
         if inv is invoice or inv.get("id") == invoice.get("id"):
             break
         earlier.add(inv.get("id"))
-    figures["received_before"] = sum(p["amount_cents"] for p in job.get("payments", []) if p.get("invoice_id") in earlier)
+    received = sum(p["amount_cents"] for p in job.get("payments", []) if p.get("invoice_id") in earlier)
+    # Less what went back by the time this one went out (a pay app not sent yet: by now).
+    sent = invoice.get("sent_at")
+    back = sum(int(s.get("returned_cents", s["cents"])) for s in job.get("overbilling_settled") or [] if not sent or str(s.get("at", "")) <= sent)
+    figures["received_before"] = max(0, received - back)
     return figures
 
 
@@ -1642,6 +2403,13 @@ def waiver_forms() -> dict[str, Any]:
     return _WAIVER_FORMS
 
 
+def _item_questions(job: dict[str, Any], packet: list[dict[str, Any]]) -> None:
+    """Each waiver item waiting for its files' answer, as the page draws it: item_question."""
+    for item in packet:
+        if is_waiver_item(item) and not item.get("present") and any(a.get("unconfirmed") for a in item.get("attachments", [])):
+            item["waiver_question"] = item_question(job, item)
+
+
 def _paperwork_view(state: dict[str, Any], job: dict[str, Any], out: dict[str, Any]) -> None:
     """What the paperwork, waiver and retainage parts of the app read (M3, M17, M20, M22): each
     item's accepted record kinds, both waiver stages of each pay app, the retainage releases'
@@ -1656,6 +2424,27 @@ def _paperwork_view(state: dict[str, Any], job: dict[str, Any], out: dict[str, A
         if inv["status"] == "void":
             continue
         inv["waiver_stages"] = waiver_stages(state, job, by_id[inv["id"]])
+        inv["co_rows"] = sov.co_rows(job, by_id[inv["id"]])
+        if inv["status"] in DRAFT_STATUSES:
+            inv["email_preview"] = email_preview(state, job, by_id[inv["id"]])
+            real = by_id[inv["id"]]
+            extra = real.get("extra_record_ids") or []
+            inv["unconditional_attached"] = _unconditional_rows(state, unconditional_waivers_attached(job, real), extra)
+            inv["waiver_questions"] = _question_rows(state, waiver_questions(job, real.get("packet") or [], extra, real.get("excluded_file_ids") or []), extra)
+            _item_questions(job, inv.get("packet") or [])
+            for item in inv.get("packet") or []:
+                if item.get("required") and sov.name_only(job, item):   # shown missing, with Remove and the ways to fill it
+                    item.update(present=False, name_only=True)
+            subject, body = _pencil_email(state, job, by_id[inv["id"]], _payer(state, job["payer_id"]), PREVIEW_SENDER)
+            inv["pencil_preview"] = {"subject": subject, "body": body}
+    if not job.get("closed"):
+        for item in out.get("closeout_packet") or []:
+            if item.get("required") and sov.name_only(job, item):
+                item.update(present=False, name_only=True)
+        closeout = _retainage_packet(job)
+        _item_questions(job, out.get("closeout_packet") or [])
+        out["closeout_unconditional"] = _unconditional_rows(state, _unconditional_going(job, closeout, retainage=True))
+        out["closeout_waiver_questions"] = _question_rows(state, waiver_questions(job, closeout))
     if _legacy_waiver_pending(job):
         # The older job-level waiver (Earlier payment): the signed one that would go out, or that
         # it is unclear which payment one is for while several are owed (B1).
@@ -1665,6 +2454,7 @@ def _paperwork_view(state: dict[str, Any], job: dict[str, Any], out: dict[str, A
                                 "record_id": found["record"]["id"] if found else ""}
     for release in out.get("retainage_waivers", []):
         if release.get("waiver_due") and not release.get("waiver_sent"):
+            release["kind"] = release_due_kind(job, release)
             found = waiver_on_file(state, job, release["kind"], release_id=release["id"])
             release["on_file"] = bool(found and not found["ambiguous"])
             release["waiver_record_label"] = found["record"]["label"] if found else ""
@@ -1681,6 +2471,9 @@ def job_state(job: dict[str, Any]) -> str:
     for key in ("state", "address_state"):  # a job saved with its address in parts
         if re.fullmatch(r"[A-Za-z]{2}", str(job.get(key) or "")):
             return str(job[key]).upper()
+    saved = str((job.get("address_parts") or {}).get("state") or "")   # New job's four boxes (J1)
+    if re.fullmatch(r"[A-Za-z]{2}", saved):
+        return saved.upper()
     try:
         parts = parse_legacy_address(str(job.get("address") or ""))
     except Exception:  # an address the reader can't split names no state
@@ -1689,8 +2482,15 @@ def job_state(job: dict[str, Any]) -> str:
     return found if re.fullmatch(r"[A-Z]{2}", found) else ""
 
 
+def backlog_cents(m: dict[str, int]) -> int:
+    """Signed work not done yet on a job (its job_money): the contract with signed change orders,
+    less what is billed, drafted, and done but not billed yet (Money > Financials)."""
+    return max(0, m["contract_total_cents"] - m["billed_gross_cents"] - m["draft_cents"] - m["unbilled_completed_cents"])
+
+
 def _totals(views: list[dict[str, Any]]) -> dict[str, Any]:
     return {
+        "backlog_cents": sum(backlog_cents(j["money"]) for j in views if not j.get("closed") and "money" in j),
         "unbilled_cents": sum(j["money"]["unbilled_completed_cents"] for j in views),
         "outstanding_cents": sum(j["money"]["outstanding_cents"] for j in views),
         "retainage_cents": sum(j["money"]["retainage_open_cents"] for j in views),
@@ -1891,8 +2691,8 @@ WENT_OUT = {"sent", "approved", "partial", "paid"}
 # The company's word for a pay app (R6-01): a company that bills homeowners in draws
 # (billing_style "draws") reads "draw" on Today and in the daily email, as in the app
 # (static/js/terms.js termText). keep: names someone typed (a job, a customer) that stay as typed.
-_TERM_WORDS = [(re.compile(r"\bPay apps\b"), "Draws"), (re.compile(r"\bpay apps\b"), "draws"),
-               (re.compile(r"\bPay app\b"), "Draw"), (re.compile(r"\bpay app\b"), "draw")]
+_TERM_WORDS = [(re.compile(r"\bPay [Aa]pps\b"), "Draws"), (re.compile(r"\bpay apps\b"), "draws"),
+               (re.compile(r"\bPay [Aa]pp\b"), "Draw"), (re.compile(r"\bpay app\b"), "draw")]
 
 
 def billing_style(state: dict[str, Any]) -> str:
@@ -1968,7 +2768,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
             source = SOURCE_LABELS.get(item.get("source", ""), item.get("source", ""))
             first = (item.get("text") or item.get("subject") or "").split("\n")[0][:120]
             add(0, "says_done", job, "Job's done?", "copper", f"{source}{' from ' + item['from'] if item.get('from') else ''}: {first}",
-                "Mark done and draft", "/dashboard", item_id=item.get("id", ""))
+                term_text("Final pay app", style), "/dashboard", item_id=item.get("id", ""))
     for job in jobs.values():
         payer = payers.get(job.get("payer_id"), {})
         invoices = job.get("invoices", [])
@@ -1986,31 +2786,60 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         before = len(out)
         cutoff_day = due[0].isoformat() if due else ""
         # One next step per job, in the job page's order (jobActions): blockers first.
-        if is_blocked(job):
+        if draft and draft.get("pencil_status") == "sent":
+            since = f" since {_day_words(draft['pencil_sent_at'])}" if draft.get("pencil_sent_at") else ""
+            add(4.5, "pencil_out", job, "With the client", "copper", f"{draft['number']} is with {payer.get('approver') or payer.get('name', 'the client')} for their review{since}. "
+                "When they answer, tap Client agreed to the draft or Client wants changes.", "", invoice_id=draft["id"], due=cutoff_day)
+        elif is_blocked(job):
             more = f" And {len(items) - 1} more." if len(items) > 1 else ""
             paperwork = needs_paperwork(job)
             cos = [b for b in items if b["kind"] == "co"]
-            add(3, "blocked", job, "Needs paperwork" if paperwork else "Blocked", "amber" if paperwork else "red", items[0]["text"] + more,
-                blocker_button(job), f"/money/packet/{job['id']}/{draft['id']}" if draft else f"/money/packet/{job['id']}",
-                invoice_id=draft["id"] if draft else "", co_id=cos[0]["co_id"] if cos and len(cos) == len(items) else "", due=cutoff_day)
+            only_co = cos[0]["co_id"] if cos and len(cos) == len(items) else ""
+            add(3, "blocked", job, "Needs supporting documents" if paperwork else "Blocked", "amber" if paperwork else "red", items[0]["text"] + more,
+                blocker_button(job), f"/money/change-order/{job['id']}/{only_co}" if only_co else f"/money/packet/{job['id']}/{draft['id']}" if draft else f"/money/packet/{job['id']}",
+                invoice_id=draft["id"] if draft else "", co_id=only_co, due=cutoff_day,
+                packet_item_id=items[0].get("item_id", ""))
         elif draft:
-            add(1, "ready", job, "Ready to send", "green", f"{draft['number']} for {money(draft['amount_cents'])} to {payer.get('approver') or payer.get('name', '')}. "
-                "Check what goes out, then approve.", "Review & send", f"/money/pay-app/{job['id']}/{draft['id']}", invoice_id=draft["id"], due=cutoff_day)
+            changes = draft.get("pencil_status") == "corrections"
+            said = {"agreed": "The client agreed to it. ", "corrections": f"The client wants changes{': ' + draft['pencil_note'] if draft.get('pencil_note') else ''}. Fix it, then "}.get(draft.get("pencil_status"), "")
+            email = "" if str(payer.get("ap_email") or "").strip() else f"{'add' if changes else 'Add'} the pay app email for {payer.get('name', 'the client')}, then "
+            add(1, "ready", job, "Ready to send", "green", f"{draft['number']} for {money(draft['amount_cents'])} to {payer.get('approver') or payer.get('name', '')} is ready. "
+                f"{said}{email}Review & send.", "Review & send", f"/money/pay-app/{job['id']}/{draft['id']}", invoice_id=draft["id"], due=cutoff_day)
         elif job.get("waiver_due") and not job.get("waiver_sent"):
             released = any(r.get("waiver_due") and not r.get("waiver_sent") for r in job.get("retainage_waivers", []))
             add(2, "waiver", job, "Waiver due", "amber", ("Retainage received" if released and not any(
                 inv.get("waiver_due") and not inv.get("waiver_sent") for inv in job["invoices"]) else "Paid in full")
-                + ": the client is waiting for the lien waiver.", "Review waiver",
+                + ": the client is waiting for the lien waiver. Choose waiver and send.", "Choose waiver and send",
                 f"/money/waiver/{job['id']}")
         elif job.get("work_status") == "complete" and m["unbilled_completed_cents"] > 0:
             add(5, "not_billed", job, "Not billed", "copper",
-                f"{money(m['unbilled_completed_cents'])} of finished work has no pay app yet. Drafting sends nothing.", "Draft pay app", due=cutoff_day)
+                f"{money(m['unbilled_completed_cents'])} of finished work isn't billed. Draft pay app.", "Draft pay app", due=cutoff_day)
         elif due_soon:
-            add(2.5, "due_soon", job, "Due soon", "amber", "Record this month's progress and draft the pay app.", "Bill progress", due=cutoff_day)
+            add(2.5, "due_soon", job, "Due soon", "amber", "Record this month's progress and draft the pay app.", "Progress pay app", due=cutoff_day)
         # A new job (R2-04): nothing billed on it yet, so Today says what comes next instead of nothing.
         elif not any(i["status"] not in {"void", "replaced"} for i in invoices):
-            add(5, "new_job", job, "Not billed yet", "copper", f"{job['name']} has no pay app yet. Bill the work done so far, or mark it done.",
-                "Bill progress", due=cutoff_day)
+            add(5, "new_job", job, "Not billed yet", "copper", f"{job['name']} has no pay app yet. Bill the work done so far with Progress pay app, or use Final pay app.",
+                "Progress pay app", due=cutoff_day)
+        # The work is finished and billed, and nothing is out with the client: closeout, then the
+        # money held back, then Finish Job, in the job page's order and words (jobActions).
+        elif m["refund_owed_cents"] and not any(i["status"] in OPEN_FOR_PAYMENT for i in invoices):
+            add(4.5, "refund_owed", job, "Owed back", "amber", _owed_text(m), "Open job")
+        elif job.get("work_status") == "complete" and m["outstanding_cents"] == 0:
+            missing = closeout_missing(job)
+            asked = job.get("last_retainage_chase_at")
+            asked_due = _aware(asked) + timedelta(days=_int_or(payer.get("follow_up_days"), 7)) if asked else None
+            if missing:
+                add(5.5, "closeout", job, "Closeout", "amber", f"Closeout: missing {', '.join(i['label'] for i in missing)}. Open closeout documents.", "Open closeout documents")
+            elif m["retainage_open_cents"] > 0:
+                if not asked_due or now >= asked_due:
+                    add(5.5, "retainage", job, "Retainage", "copper", f"{money(m['retainage_open_cents'])} held back. Closeout documents are in. Ask for retainage.", "Ask for retainage")
+                else:   # asked already: waiting on the client until it can be asked again, so not in the email
+                    add(5.6, "retainage_wait", job, "Retainage", "copper", f"Asked for the {money(m['retainage_open_cents'])} held back {_day_words(asked)}. "
+                        f"Ask again from {_day_words(asked_due.isoformat())}, or Record retainage paid.", "Record retainage paid", due=asked_due.date().isoformat())
+            elif close_blockers(job):
+                add(6.5, "finish_held", job, "Before you finish", "amber", "Before you finish: " + close_blockers(job)[0], "Open job")
+            else:
+                add(7, "finish", job, "Ready to finish", "green", "Ready to finish the job. Finish job.", "Finish job")
         # A cutoff makes the job's row more urgent, and says so.
         if due_soon and len(out) > before:
             row = out[-1]
@@ -2019,7 +2848,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
                 row["text"] += f" {cutoff} {payer.get('name', '')} by {_day_words(due[0].isoformat())}."
             row["rank"] = min(row["rank"], 1.5)
         # A pay app sent and unpaid past the payer's follow-up window is its own row. One follow-up
-        # names every unpaid pay app; after a call ("Spoke to them…") the row waits for the date
+        # names every unpaid pay app; after a logged conversation the row waits for the date
         # noted (R4-06).
         follow = follow_up_due(job, payer)
         if follow:
@@ -2043,17 +2872,32 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         job = jobs.get(item.get("suggested_job_id"))
         if job and not item.get("says_done_job_id"):
             # item_kind: the kind the Inbox guessed, which the row shows and lets you change before filing.
-            add(6, "inbox", job, "Inbox", "", (item.get("subject") or item.get("text") or "An item").split("\n")[0][:100], "Add to this job",
+            add(6, "inbox", job, "Inbox", "", (item.get("subject") or item.get("text") or "An item").split("\n")[0][:100], "Add to This Job",
                 "/communications", item_id=item.get("id", ""), note=item.get("match_reason") or "", item_kind=item.get("kind") or "note")
     return decorate_rows(state, sorted(out, key=lambda r: r["rank"]), today)
 
 
 DIGEST_NOUNS = {
     "email_failed": ("email that didn't go out", "emails that didn't go out"), "says_done": ("job that may be done", "jobs that may be done"),
-    "blocked": ("pay app missing paperwork", "pay apps missing paperwork"), "ready": ("pay app to send", "pay apps to send"),
+    "blocked": ("pay app missing supporting documents", "pay apps missing supporting documents"), "ready": ("pay app to send", "pay apps to send"),
     "waiver": ("waiver", "waivers"), "due_soon": ("pay app due soon", "pay apps due soon"), "follow_up": ("follow-up", "follow-ups"),
     "not_billed": ("job to bill", "jobs to bill"), "new_job": ("new job to bill", "new jobs to bill"), "inbox": ("Inbox item", "Inbox items"),
+    "closeout": ("job missing closeout documents", "jobs missing closeout documents"), "retainage": ("retainage to ask for", "retainages to ask for"),
+    "finish": ("job ready to finish", "jobs ready to finish"), "finish_held": ("job held up before finishing", "jobs held up before finishing"),
 }
+# Finishing is never urgent: these rows stay on the Dashboard, and the email names them once a week.
+WEEKLY_DIGEST_KINDS = {"finish", "finish_held"}
+
+
+def _digest_week_day(job: dict[str, Any] | None, today: date) -> bool:
+    """Whether a job's finish row goes in today's email: every seventh day from the day the work
+    was marked done (Mondays for an older job with no date). Worked out, not stored, so a restart
+    and each person's copy of the email agree."""
+    try:
+        done = date.fromisoformat(str((job or {}).get("completed_at") or "")[:10])
+    except ValueError:
+        return today.weekday() == 0
+    return (today - done).days % 7 == 0
 
 
 def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = None, user_id: str | None = None,
@@ -2065,7 +2909,7 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     assigned to nobody. A "due soon" row is listed as soon as it shows, so there is time to get
     the pay app ready before the client's cutoff; only a row someone dated by hand for a later day
     waits for that day (review C7). Work that is ready (a pay app to send, a block to clear, work
-    not billed) is listed whatever its client's cutoff."""
+    not billed) is listed whatever its client's cutoff. A job to finish is listed once a week."""
     now = now or datetime.now(timezone.utc)
     day = now.date().isoformat()
 
@@ -2073,7 +2917,12 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
         by_hand = (r.get("due") or "") != (r.get("own_due") or "")
         return not by_hand or (r.get("due") or day) <= day
 
-    rows = rows_for_user([r for r in today_rows(state, now) if r["kind"] in DIGEST_NOUNS and due_now(r)], user_id, owner)
+    by_id = {j["id"]: j for j in state.get("jobs", [])}
+
+    def this_week(r: dict[str, Any]) -> bool:
+        return r["kind"] not in WEEKLY_DIGEST_KINDS or _digest_week_day(by_id.get(r["job_id"]), now.date())
+
+    rows = rows_for_user([r for r in today_rows(state, now) if r["kind"] in DIGEST_NOUNS and due_now(r) and this_week(r)], user_id, owner)
     tasks = rows_for_user(tasks_due_by(state, now.date()), user_id, owner)
     if not rows and not tasks:
         return None
@@ -2104,9 +2953,43 @@ def page(rows: list[dict[str, Any]], offset: int, limit: int, job_id: str = "") 
     return {"entries": deepcopy(picked[offset:offset + limit]), "total": len(picked), "offset": offset, "limit": limit}
 
 
+# The app's own bookkeeping that comes with a person's action (round 1, item 14): a file put on a
+# supporting document, the check's warning, the confirm that came with it, a suggestion from the
+# job records, an Inbox item filed. In a job's Activity it goes under the action it came with.
+ACTIVITY_FOLLOW_ON = {"add_record", "attach_record", "packet_attachment", "document_flagged", "packet_confirmed", "import_filed", "record_filed", "add_evidence"}
+FOLLOW_ON_SECONDS = 5
+APP_ACTOR = "duracash"
+
+
+def _seconds_apart(a: str, b: str) -> float:
+    try:
+        return abs((_aware(b) - _aware(a)).total_seconds())
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _one_per_action(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Oldest first in, oldest first out: bookkeeping written within a few seconds of the action
+    before it goes under that action as its details, when it is the same person's or the app's own.
+    Another person's never goes under it, and what can't be grouped (the app's own later, a
+    person's own confirm) is an entry of its own: nothing is left out (Round 1 hunt)."""
+    out: list[dict[str, Any]] = []
+    lead = None
+    for r in rows:
+        if r["kind"] == "action" and r["action"] in ACTIVITY_FOLLOW_ON:
+            if lead is not None and _seconds_apart(lead["at"], r["at"]) <= FOLLOW_ON_SECONDS and r["who"] in (lead["who"], APP_ACTOR):
+                lead.setdefault("details", []).append({k: r[k] for k in ("action", "text", "at", "who")})
+                continue
+        out.append(r)
+        if r["kind"] == "action":
+            lead = r
+    return out
+
+
 def timeline_page(state: dict[str, Any], job_id: str, offset: int, limit: int) -> dict[str, Any]:
-    """One job's history, newest first (UI/UX Option B): every audit row on the job, and every
-    email with its delivery status (bodies left out)."""
+    """One job's history, newest first (UI/UX Option B): one entry per action on the job, with the
+    app's bookkeeping that came with it as its details (_one_per_action), and every email with its
+    delivery status (bodies left out). The activity log keeps every row."""
     # One sequence for both: an action's place is its row number in the audit trail, an email's
     # is between the audit rows written before and after it (audit_seq). Older emails, from
     # before audit_seq, go after every audit row of the same second or earlier. Times are only
@@ -2123,8 +3006,8 @@ def timeline_page(state: dict[str, Any], job_id: str, offset: int, limit: int) -
         keyed.append(((place, n), {**{k: v for k, v in e.items() if k not in {"body", "subject", "approved_by", "kind", "audit_seq"}},
                                    "kind": "email", "email_kind": e.get("kind", ""), "at": e.get("at", ""), "text": e.get("subject", ""),
                                    "who": e.get("approved_by", "")}))
-    keyed.sort(key=lambda kr: kr[0], reverse=True)
-    rows = [r for _, r in keyed]
+    keyed.sort(key=lambda kr: kr[0])
+    rows = list(reversed(_one_per_action([r for _, r in keyed])))
     return {"entries": mark_moot(state, deepcopy(rows[offset:offset + limit])), "total": len(rows), "offset": offset, "limit": limit}
 
 
@@ -2147,8 +3030,13 @@ def _refresh_draft_gate(job: dict[str, Any], state: dict[str, Any] | None = None
     invoice = next((inv for inv in reversed(job["invoices"]) if inv["status"] in {"draft", "awaiting_approval"}), None)
     if not invoice:
         return
+    # Whether it is the final one can move under it (a change order written or signed, say).
+    invoice["final"] = is_final(job)
+    if invoice.get("packet_id") != "job-packet":
+        _name_conditional_waiver(job, invoice)
     if state is not None:
         _attach_from_record(state, job, active_packet(job), invoice["number"])
+    _ask_which_waiver(job, invoice.get("packet") or [])
     _items_follow_files(job, invoice)  # an item whose files are all left out of the email stays missing (M4)
     invoice["status"] = "draft" if blocker_lines(job) else "awaiting_approval"
 
@@ -2228,11 +3116,13 @@ def _payer_day(k: str, v: Any) -> tuple[Any, str]:
 def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
     payer = _payer(state, payer_id)
     text_fields = {"approver": "who signs off on your bills", "ap_email": "the email pay apps go to",
-                   "packet": "the paperwork needed", "rejects_when": "when they send pay apps back", "copy": "who else to email",
+                   "packet": "the supporting documents needed", "rejects_when": "when they send pay apps back", "copy": "who else to email",
                    "name": "the client's name", "phone": "the phone number", "escalation_email": "who to copy on late follow-ups"}
     clean: dict[str, Any] = {}
     errors: dict[str, str] = {}
     for k, v in updates.items():
+        if k == "approver_confirmed":
+            continue  # read below: it says who signs off was answered, it isn't stored as sent
         if k in PAYER_DAY_FIELDS or k == "payapp_due_day":
             if v is None and k != "payapp_due_day":
                 continue
@@ -2241,6 +3131,17 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
                 errors[k] = error
             else:
                 clean[k] = value
+            continue
+        if k == "retainage_pct":
+            # The client playbook's "Usual retainage %" (round 1, item 1): blank goes back to its type's.
+            if v in (None, "") or (isinstance(v, str) and not v.strip()):
+                clean[k] = None
+                continue
+            pct = _int_or(v, None) if not isinstance(v, bool) else None
+            if pct is None or not 0 <= pct <= 20 or (isinstance(v, str) and not v.strip().isdigit()):
+                errors[k] = "Enter a retainage from 0 to 20 percent, or leave it blank."
+            else:
+                clean[k] = pct
             continue
         if v is None:
             continue
@@ -2261,14 +3162,17 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
                 continue
             clean[k] = v
             clean["role"] = client_type_role(v)
-    if "ap_email" in clean and not EMAIL_RE.match(clean["ap_email"]):
+    if clean.get("ap_email") and not EMAIL_RE.match(clean["ap_email"]):
         errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com."
+    # A complete playbook stays complete (Decision 4): what is saved can be changed, not removed.
+    # A client saved before the rule may stay without one until its next new job (Decision 3).
+    for k in PLAYBOOK_FIELDS:
+        if k in clean and not clean[k] and str(payer.get(k) or "").strip():
+            errors[k] = PLAYBOOK_FIELDS[k]
     if clean.get("escalation_email") and not EMAIL_RE.match(clean["escalation_email"]):
         errors["escalation_email"] = "Enter one email to copy from the third follow-up, like owner@builder.com, or leave it blank."
-    if "approver" in clean and not clean["approver"]:
-        errors["approver"] = "Enter who signs off on your bills."
     if clean.get("phone"):
-        # G1: a US phone, saved as (404) 555-0123. Blank clears it.
+        # G1: a US phone, saved as (404) 555-0123.
         phone = normalize_phone(clean["phone"])
         if phone:
             clean["phone"] = phone
@@ -2291,12 +3195,18 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
         raise GateError("Client playbook not saved.", fields=errors)
     changed = []
     was = payer["name"]
+    signer_was = payer.get("approver")
     for k, v in clean.items():
         if v is None:
             payer.pop(k, None)
         else:
             payer[k] = v
         changed.append(k)
+    if clean.get("approver") or updates.get("approver_confirmed") is True:
+        if signer_answered(payer.get("approver"), payer["name"], updates.get("approver_confirmed") is True):
+            payer["approver_confirmed"] = True
+        elif clean.get("approver") != signer_was:
+            payer.pop("approver_confirmed", None)   # what was confirmed was someone else
     if clean.get("packet"):
         payer.pop("no_paperwork", None)  # a list typed in again replaces "nothing needed"
     elif clean.get("packet") == "":
@@ -2309,6 +3219,81 @@ def update_payer(state: dict[str, Any], payer_id: str, updates: dict[str, Any], 
     renamed = f" (was {was})" if "name" in clean else ""
     audit(state, "", "playbook_update", f"{actor} updated {payer['name']}{renamed}: {', '.join(changed) or 'no change'}.", actor)
     return payer
+
+
+# A complete Client playbook (Decision 4): its name and client type, and these. Box -> the reason.
+PLAYBOOK_FIELDS = {"approver": "Enter who signs off on your bills.", "ap_email": "Enter the email pay apps go to, like ap@builder.com.",
+                   "phone": "Enter the client's phone number."}
+SIGNER_IS_CLIENT = "Confirm who signs off on your bills. It is set to the client's own name."
+PLAYBOOK_WORDS = {"client_type": "the client type", "approver": "who signs off", "ap_email": "email for pay apps", "phone": "phone"}
+
+
+def signer_answered(signer: str, client_name: str, said: bool) -> bool:
+    """Whether a save answers who signs off: the request says so (the screens do, their box starts
+    empty), or it names someone other than the client. Sending the client's own name back doesn't."""
+    if not str(signer or "").strip():
+        return False
+    return said or str(signer).strip().lower() != str(client_name or "").strip().lower()
+
+
+def signer_defaulted(payer: dict[str, Any]) -> bool:
+    """Who signs off still reads as the client's own name, as a blank box used to be saved, and no
+    one has said so since: asked at the client's next new job. Saying it once settles it."""
+    signer = str(payer.get("approver") or "").strip().lower()
+    return bool(signer) and signer == str(payer.get("name") or "").strip().lower() and not payer.get("approver_confirmed")
+
+
+def playbook_missing(payer: dict[str, Any]) -> list[str]:
+    """The boxes a saved client still has to answer: a blank one, a client type never picked (one
+    read from an older role isn't an answer) or a signer that only defaulted to the client."""
+    out = [] if payer.get("client_type") in CLIENT_TYPES else ["client_type"]
+    return out + [k for k in PLAYBOOK_FIELDS if not str(payer.get(k) or "").strip() or (k == "approver" and signer_defaulted(payer))]
+
+
+def fill_missing_client_details(state: dict[str, Any], payer_id: str, body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+    """The boxes a saved client still has to answer, from anyone on the team: the same rule as New
+    job, where a blank is filled since nothing goes anywhere yet. What is already saved, and every
+    other setting, is changed on the Client playbook with the company permission."""
+    payer = _payer(state, payer_id)
+    missing = playbook_missing(payer)
+    typed = {k: str(body[k]).strip() for k in ("client_type", *PLAYBOOK_FIELDS) if isinstance(body.get(k), str) and body[k].strip()}
+    if not typed:
+        raise GateError("Enter what is missing.")
+    errors = {k: "This is already saved." for k in typed if k not in missing}
+    if "client_type" in typed and not client_type_role(typed["client_type"]):
+        errors["client_type"] = "Pick the client type."
+    if "ap_email" in typed and not EMAIL_RE.match(typed["ap_email"]):
+        errors["ap_email"] = PLAYBOOK_FIELDS["ap_email"]
+    if "phone" in typed:
+        typed["phone"] = normalize_phone(typed["phone"]) or typed["phone"]
+        errors.update(check_field("phone", typed["phone"]))
+    if "approver" in typed and not signer_answered(typed["approver"], payer["name"], body.get("approver_confirmed") is True):
+        errors["approver"] = SIGNER_IS_CLIENT
+    _refuse("Client not saved.", errors)
+    for k, value in typed.items():
+        payer[k] = value
+        audit(state, "", "playbook_update", f"{actor} added {PLAYBOOK_WORDS[k]} to {payer['name']}: {value}.", actor)
+    if "approver" in typed:
+        payer["approver_confirmed"] = True
+    if "client_type" in typed:
+        payer["role"] = client_type_role(typed["client_type"])
+        for job in state["jobs"]:
+            if job.get("payer_id") == payer["id"]:
+                job["payer_role"] = payer["role"]
+    return payer
+
+
+def _need_playbook(state: dict[str, Any], job: dict[str, Any]) -> None:
+    """A pay app doesn't start or go out while the client's playbook is incomplete. A job from
+    before the rule isn't held up (Decision 3): sending still needs the email (_send_to)."""
+    if not job.get("playbook_required"):
+        return
+    payer = _payer(state, job["payer_id"])
+    missing = playbook_missing(payer)
+    if missing:
+        raise GateError(f"{payer['name']}'s Client playbook isn't complete.",
+                        [f"Add {PLAYBOOK_WORDS[k]} in the Client playbook." for k in missing],
+                        extra={"playbook_missing": missing}, action={"label": "Open Client playbook", "view": "playbook"})
 
 
 def _payer_named(state: dict[str, Any], name: str, other_than: str = "") -> dict[str, Any] | None:
@@ -2349,6 +3334,15 @@ def payer_near(state: dict[str, Any], name: str, other_than: str = "") -> dict[s
                  and customer_key(p["name"]) == key), None)
 
 
+def job_near(state: dict[str, Any], name: str) -> dict[str, Any] | None:
+    """An open job whose name is this one, ignoring case, spacing and punctuation (Round 1, item 20):
+    two "Peachtree Clinic electrical" jobs can't be told apart in the Inbox or a job picker."""
+    key = " ".join(re.findall(r"[a-z0-9]+", (name or "").lower()))
+    if not key:
+        return None
+    return next((j for j in state["jobs"] if not j.get("closed") and " ".join(re.findall(r"[a-z0-9]+", j["name"].lower())) == key), None)
+
+
 def _same_customer_question(field: str, typed: str, near: dict[str, Any]) -> GateError:
     """The refusal that asks "Same as ABC Builders?": the page offers the saved customer or
     keeping the new name (sent again with new_customer: true)."""
@@ -2358,7 +3352,7 @@ def _same_customer_question(field: str, typed: str, near: dict[str, Any]) -> Gat
 
 
 def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_email: str, phone: str,
-               client_type: str = "") -> dict[str, Any]:
+               client_type: str = "", approver_confirmed: bool = False) -> dict[str, Any]:
     """A customer with the usual settings for its role, added to the company."""
     # Catalog labels (PAPERWORK_ITEMS), so the Client playbook shows them as ticked boxes.
     packet_rule = ", ".join(DEFAULT_PAPERWORK["GC" if role == "GC" else "Owner"])
@@ -2373,18 +3367,19 @@ def _new_payer(state: dict[str, Any], name: str, role: str, approver: str, ap_em
         "packet": packet_rule,
         "follow_up_days": 5 if role == "GC" else 7,
         "usual_approval_days": 21 if role == "GC" else 14,
-        "rejects_when": "Missing required paperwork.",
+        "rejects_when": "Missing required supporting documents.",
         "copy": "",
+        "approver_confirmed": signer_answered(approver, name, approver_confirmed),  # both callers refuse a blank one
     }
     state["payers"].append(payer)
     return payer
 
 
 def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
-    """A customer added from Customer settings, before any job (R3-07). Only the name is needed;
-    who signs off defaults to the customer, and the email can wait until the first send. The
-    client type (J2) sets the role's defaults; a paperwork list (S11, S13) and the day fields a
-    contract import found (S12) may come too."""
+    """A customer added from Customer settings, before any job (R3-07), with a complete playbook
+    (Decision 4). The client type (J2) sets the role's defaults; a paperwork list (S11, S13) and
+    the day fields a contract import found (S12) may come too. A name nearly matching a saved one
+    is asked about before the rest."""
     def text(key: str) -> str:
         v = body.get(key)
         return str(v).strip() if isinstance(v, (str, int, float)) and not isinstance(v, bool) else ""
@@ -2398,13 +3393,21 @@ def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner")
         errors["name"] = rule_message("name")
     elif _payer_named(state, name):
         errors["name"] = f"Another client is already called {_payer_named(state, name)['name']}."
+    near = None if body.get("new_customer") is True or errors else payer_near(state, name)
     if client_type and not client_type_role(client_type):
         errors["client_type"] = "Pick the client type."
+    elif not near and not client_type and text("role") not in {"Owner", "GC"}:
+        errors["client_type"] = "Pick the client type."
     if ap_email and not EMAIL_RE.match(ap_email):
-        errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
+        errors["ap_email"] = PLAYBOOK_FIELDS["ap_email"]
     if phone:
         phone = normalize_phone(phone) or phone
         errors.update(check_field("phone", phone))
+    if not near:
+        typed = {"approver": approver, "ap_email": ap_email, "phone": phone}
+        errors.update({k: PLAYBOOK_FIELDS[k] for k in PLAYBOOK_FIELDS if not typed[k]})
+        if approver and not signer_answered(approver, name, body.get("approver_confirmed") is True):
+            errors["approver"] = SIGNER_IS_CLIENT
     days: dict[str, Any] = {}
     for k in (*PAYER_DAY_FIELDS, "payapp_due_day"):
         if body.get(k) not in (None, ""):
@@ -2414,10 +3417,9 @@ def add_payer(state: dict[str, Any], body: dict[str, Any], actor: str = "owner")
             else:
                 days[k] = value
     _refuse("Client not added.", errors)
-    near = None if body.get("new_customer") is True else payer_near(state, name)
     if near:
         raise _same_customer_question("name", name, near)
-    payer = _new_payer(state, name, role, approver or name, ap_email, phone, client_type)
+    payer = _new_payer(state, name, role, approver, ap_email, phone, client_type, body.get("approver_confirmed") is True)
     payer.update(days)
     if body.get("no_paperwork") is True:
         payer["packet"], payer["no_paperwork"] = "", True
@@ -2636,7 +3638,7 @@ def answer_packet_suggestion(state: dict[str, Any], payer_id: str, suggestion_id
     if accept:
         packet = str(payer.get("packet", "")).strip().rstrip(".")
         payer["packet"] = f"{packet}, {sug['text']}" if packet else sug["text"]
-        audit(state, "", "playbook_learned", f"{actor} added \"{sug['text']}\" to {payer['name']}'s paperwork list ({sug['source']}).", actor)
+        audit(state, "", "playbook_learned", f"{actor} added \"{sug['text']}\" to {payer['name']}'s supporting documents list ({sug['source']}).", actor)
     return payer
 
 
@@ -2792,6 +3794,7 @@ def add_change_order(
     audit(state, job_id, "add_co", f"{actor} added CO {number} — {title} for {what}{days}.", actor)
     if started:
         _set_work_started(state, job, co, started, actor)
+    _refresh_draft_gate(job)   # a final draft isn't the final one with this still to come
     return job
 
 
@@ -2822,6 +3825,11 @@ def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
                 if line.get("co_id") == co_id:
                     line["label"] = f"CO {co['number']} — {co['title']}"
     audit(state, job_id, "approve_co", f"{actor} approved CO {co['number']} — {co['title']}.", actor)
+    # A final draft not sent yet bills what is left, so it follows the change. One with the client
+    # stays as they have it; if it goes out over the new total, close_blocker_items says so.
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if job.get("work_status") == "complete" and draft and not _with_client(draft) and not any(l.get("co_id") == co_id for l in draft.get("lines", [])):
+        _redraft(state, job, draft, f"to follow CO {co['number']}")
     _refresh_draft_gate(job, state)
     return job
 
@@ -2939,7 +3947,7 @@ def mark_co_signed(
     errors: dict[str, str] = {}
     record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
     if not record:
-        raise GateError("Pick the job record that holds the signed change order, or request an online signature.")
+        raise GateError("Pick the record that holds the signed change order, or request an online signature.")
     signer = None if signer_name is None else " ".join(str(signer_name or "").split())[:120]
     if signer is not None and len(signer) < 2:
         errors["signer_name"] = "Enter the name of the person who signed it."
@@ -2962,6 +3970,32 @@ def mark_co_signed(
         co["history"][-1]["note"] = f"signed on paper by {signer}" + (f" on {day}" if day else "")
     _note_signed_after_start(state, job, co)
     return job
+
+
+def file_signed_co_copy(
+    state: dict[str, Any], job_id: str, co_id: str, record_id: str, actor: str = "owner",
+    signer_name: Any = None, signed_on: Any = None,
+) -> str:
+    """A signed copy taken by someone who can't approve change orders (Round 1, item 2): it goes
+    on the change order as its backup, with who signed it and when if given, and the change order
+    stays pending until someone who can marks it signed. Returns what the page says."""
+    job, co = _pending_co(state, job_id, co_id)
+    record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not record:
+        raise GateError("That record is not on this job.")
+    if record_id not in (co.get("support_record_ids") or []):
+        co.setdefault("support_record_ids", []).append(record_id)
+    signer = " ".join(str(signer_name or "").split())[:120]
+    try:
+        day = _past_day(signed_on, "signed_on", "the date it was signed") if signed_on else ""
+    except GateError:
+        day = ""
+    co["signed_copy"] = {"record_id": record_id, "label": record.get("label", ""), "by": actor, "at": utcnow(),
+                         **({"signer_name": signer} if len(signer) >= 2 else {}), **({"signed_on": day} if day else {})}
+    co_event(co, "signed_copy_filed", actor, note=record.get("label", ""))
+    audit(state, job_id, "co_signed_copy", f"{actor} filed {record.get('label', 'a file')} as the signed copy of CO {co['number']}. "
+          "It stays pending until someone who can approve change orders marks it signed.", actor)
+    return f"Filed with CO {co['number']}. Someone who can approve change orders has to mark it signed."
 
 
 def co_signed_on(co: dict[str, Any]) -> str:
@@ -3054,6 +4088,7 @@ def withdraw_change_order(state: dict[str, Any], job_id: str, co_id: str, actor:
     co["withdrawn_at"] = co_event(co, "withdrawn", actor)
     co["withdrawn_by"] = actor
     audit(state, job_id, "withdraw_co", f"{actor} withdrew CO {co['number']} — {co['title']}.", actor)
+    _refresh_draft_gate(job, state)   # with it gone, a draft can be the final one
     return job
 
 
@@ -3077,7 +4112,28 @@ def void_draft(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict
             co["included_in_billing"] = False
             co_event(co, "off_draft", actor)
             audit(state, job_id, "change_order_off_draft", f"CO {co['number']} taken off the voided draft.", actor)
+    _back_to_suggested(job)
+    _pencil_status_goes(job)
     return job
+
+
+def _back_to_suggested(job: dict[str, Any]) -> None:
+    """A pay app was deleted or pulled back: a quantity typed for it went with it, so each line goes
+    back to what the card suggests and a blank box bills (a line with no field total has only the
+    quantity entered on it, and keeps that). A finished job's lines stay whole."""
+    if job.get("work_status") == "complete" or not sov.has_sov(job):
+        return
+    billed_qty = sov.billed(job)["qty_by_line"]
+    for line in sov.lines(job):
+        if "field_milli" in line:
+            line["done_milli"] = sov.suggested_done(line, billed_qty.get(line["id"], 0))
+    job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
+
+
+def _pencil_status_goes(job: dict[str, Any]) -> None:
+    """The draft the client had for review is gone, so the job no longer says it is with them."""
+    if str(job.get("external_status") or "").startswith("Pencil copy with"):
+        job["external_status"] = None
 
 
 def _reason(text: Any) -> str:
@@ -3096,6 +4152,8 @@ def void_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, reaso
         raise GateError("Pick a pay app that has gone out. A draft is deleted instead.")
     if invoice["status"] in {"partial", "paid"} or any(p["invoice_id"] == invoice["id"] for p in job["payments"]):
         raise GateError(f"A payment is recorded on {invoice['number']}, so it can't be pulled back. Correct the next pay app instead.")
+    if _holds_paid_retainage(job, invoice):
+        raise GateError(f"{money(job_money(job)['retainage_released_cents'])} of retainage is recorded as paid, and {invoice['number']} holds it, so it can't be pulled back. Correct the next pay app instead.")
     later = [inv for inv in job["invoices"][job["invoices"].index(invoice) + 1:] if inv["status"] != "void"]
     if later:
         nxt = later[0]
@@ -3118,6 +4176,7 @@ def void_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, reaso
     for co in job["change_orders"]:
         if co["id"] in carried and co.get("included_in_billing"):
             co["included_in_billing"] = False
+    _back_to_suggested(job)
     subject = f"Pay application {invoice['number']} withdrawn — {job['name']}"
     body = (
         f"{payer.get('approver') or payer['name']},\n\n"
@@ -3128,6 +4187,7 @@ def void_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, reaso
     )
     _record_email(state, job_id, "pay_app_withdrawn", to, subject, body, actor, cc=_copy_list(payer))
     audit(state, job_id, "void_sent", f"{actor} pulled back {invoice['number']} ({money(invoice['amount_cents'])}): {reason}.", actor)
+    _settlements_follow(state, job, f"{invoice['number']} was pulled back")
     return job
 
 
@@ -3144,7 +4204,7 @@ def can_undo_done(job: dict[str, Any]) -> bool:
 
 
 def undo_mark_done(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
-    """Mark done tapped by mistake: delete the final draft and put the job back in progress, with
+    """Final Pay App tapped by mistake: delete the final draft and put the job back in progress, with
     the total done so far at what is billed (on a schedule, each line back to its billed quantity)."""
     job = _open_job(state, job_id)
     if job.get("work_status") != "complete":
@@ -3159,6 +4219,7 @@ def undo_mark_done(state: dict[str, Any], job_id: str, actor: str = "owner") -> 
         for co in job["change_orders"]:
             if co["id"] in carried and co.get("included_in_billing"):
                 co["included_in_billing"] = False
+    _pencil_status_goes(job)
     job["work_status"] = "in_progress"
     job.pop("completed_at", None)
     job.pop("done_at_invoice", None)
@@ -3251,17 +4312,24 @@ def reopen_job(state: dict[str, Any], job_id: str, reason: str, actor: str = "ow
 # add_daily_record is in domain/daily.py (T11, T12, M1).
 
 
-def add_packet_attachment(state: dict[str, Any], job_id: str, item_id: str, name: str, actor: str = "owner") -> dict[str, Any]:
+def add_packet_attachment(state: dict[str, Any], job_id: str, item_id: str, name: str, actor: str = "owner", file_id: str = "",
+                          read_file: Any = None, looked: bool = False, answer: str = "", answerer: "Answerer | None" = None) -> dict[str, Any]:
+    """Attach a stored file by its id. A name alone is refused: it used to clear the item with no
+    document behind it. The file goes on the job record if it isn't there yet."""
     job = _open_job(state, job_id)
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
-        raise GateError("Paperwork item not found.")
+        raise GateError("Supporting document not found.")
     _still_a_draft(_invoice)
-    item.setdefault("attachments", []).append({"name": name, "added_at": utcnow(), "added_by": actor})
-    item["present"] = True
-    audit(state, job_id, "packet_attachment", f"{actor} attached {name} to {item['label']}.", actor)
-    _refresh_draft_gate(job, state)
-    return job
+    meta = next((f for f in state.get("files", []) if file_id and f["id"] == file_id), None)
+    if not meta:
+        _refuse("", {"file_id": f"Choose the file for {item['label']}. A name alone isn't a document."})
+    record = next((r for r in job.get("records", []) if file_id in r.get("file_ids", [])), None)
+    if not record:
+        add_job_record(state, job_id, str(name or meta["name"])[:200], (_record_kinds_for(item) or ("", ("other",)))[1][0], "", actor)
+        record = job["records"][-1]
+        record["file_ids"] = [file_id]
+    return attach_record_to_packet(state, job_id, item_id, record["id"], actor, read_file=read_file, looked=looked, answer=answer, answerer=answerer)
 
 
 def import_sample_qbo_payment(state: dict[str, Any], job_id: str, actor: str = "duracash") -> dict[str, Any]:
@@ -3381,7 +4449,8 @@ def _ensure_closeout_packet(state: dict[str, Any], job: dict[str, Any]) -> None:
     if any(item.get("kind") == "closeout" for item in job.get("packet") or []):
         return  # older record: closeout already lives in the job packet
     payer = next((p for p in state["payers"] if p["id"] == job["payer_id"]), {})
-    labels = [l for l in parse_packet_text(payer.get("packet", "")) if _is_closeout(l)]
+    own = job.get("paperwork_labels")
+    labels = [l for l in (own if own is not None else parse_packet_text(payer.get("packet", ""))) if _is_closeout(l)]
     prefix = f"closeout-{job['id']}"
     if labels:
         job["closeout_packet"] = _items_from_labels(prefix, labels)
@@ -3397,7 +4466,7 @@ def _packet_for_pay_app(state: dict[str, Any], job: dict[str, Any], invoice_id: 
     """Reuse an existing job packet (older records), else build one from the payer playbook.
     Paperwork Duracash makes is in from the start, and missing items are filled from the job record."""
     if job.get("packet"):
-        _attach_from_record(state, job, job["packet"], number or "the job's paperwork")
+        _attach_from_record(state, job, job["packet"], number or "the job's supporting documents")
         return job["packet"]
     items = _new_packet(state, job, invoice_id)
     for item in items:
@@ -3408,15 +4477,17 @@ def _packet_for_pay_app(state: dict[str, Any], job: dict[str, Any], invoice_id: 
 
 
 def _new_packet(state: dict[str, Any], job: dict[str, Any], invoice_id: str) -> list[dict[str, Any]]:
-    """A new pay app's paperwork: the client's list, else the default one. Either way it has a
-    conditional waiver (M16): the first stage of the two-stage waiver gate, so Approve & send
-    waits for it unless the client was marked as not taking one (skip_packet_item, audited)."""
+    """A new pay app's paperwork: the job's own list when it has one (set_job_paperwork), else
+    the client's, else the default one. Either way it has a conditional waiver (M16): the first
+    stage of the two-stage waiver gate, so Approve & send waits for it unless the client was
+    marked as not taking one (skip_packet_item, audited)."""
     payer = next((p for p in state["payers"] if p["id"] == job["payer_id"]), {})
-    labels = [l for l in parse_packet_text(payer.get("packet", "")) if not _is_closeout(l)]
+    own = job.get("paperwork_labels")
+    labels = [l for l in (own if own is not None else parse_packet_text(payer.get("packet", ""))) if not _is_closeout(l)]
     if labels:
         items = _items_from_labels(invoice_id, labels)
-    elif payer.get("no_paperwork"):
-        items = []  # every item was marked not needed for this customer
+    elif own is not None or payer.get("no_paperwork"):
+        items = []  # nothing needed on this job, or every item was marked not needed for this customer
     else:
         items = [
             _packet_item(invoice_id, "contract", "Signed contract", "Signed contract is missing."),
@@ -3443,7 +4514,140 @@ def _new_packet(state: dict[str, Any], job: dict[str, Any], invoice_id: str) -> 
         if skipped:
             item.update(required=False, skipped_reason=skipped.get("reason") or "Not needed for this client", skipped_at=utcnow())
         items.insert(1 if items and items[0]["kind"] == "contract" else 0, item)
+    job_skip = job.get("waiver_skipped")  # Not needed on this job (skip_packet_item): the client's list stays
+    for item in items if job_skip else []:
+        if str(item.get("waiver_kind", "")).startswith("conditional"):
+            item.update(required=False, skipped_reason=job_skip["reason"], skipped_at=job_skip["at"], skipped_by=job_skip["by"], skipped_scope="job")
     return items
+
+
+def _job_paperwork_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    """The list a job's next pay app reads, for its card: {own, labels, none}. own: the job has its
+    own list instead of the client's. A list that also has closeout items names them too."""
+    payer = _payer(state, job["payer_id"])
+    own = job.get("paperwork_labels")
+    if own is not None:
+        return {"own": True, "labels": list(own), "none": not own, "legacy": bool(job.get("packet")), "waiver_skipped": job.get("waiver_skipped") or None}
+    none = bool(payer.get("no_paperwork"))
+    labels = [] if none else parse_packet_text(payer.get("packet", "")) or list(DEFAULT_PAPERWORK["GC" if payer.get("role") == "GC" else "Owner"])
+    return {"own": False, "labels": labels, "none": none, "legacy": bool(job.get("packet")), "waiver_skipped": job.get("waiver_skipped") or None}
+
+
+def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+    """Change the paperwork this job needs: {packet: the list, no_paperwork: true for nothing, or
+    use_client: true for the client's list again}. It applies from the next pay app and to a draft
+    that hasn't been sent; a sent pay app stays as it went (B9). Audited."""
+    job = _open_job(state, job_id)
+    if job.get("packet"):
+        raise GateError("This job's supporting documents were set up on an older pay app, so it can't have its own list.")
+    before = _job_paperwork_view(state, job)
+    took_back = False
+    if body.get("use_client") is True:
+        job.pop("paperwork_labels", None)
+        # The client's list again is the client's list whole: a waiver marked not needed here comes back.
+        took_back = bool(job.get("waiver_skipped"))
+        if took_back:
+            _waiver_needed_again(state, job, actor)
+    else:
+        text = body.get("packet") if isinstance(body.get("packet"), str) else ""
+        labels = [] if body.get("no_paperwork") is True else parse_packet_text(text)
+        if not labels and body.get("no_paperwork") is not True:
+            _refuse("Supporting documents not saved.", {"packet": "Tick what this job needs with each pay app, or Nothing needed."})
+        job["paperwork_labels"] = labels
+    after = _job_paperwork_view(state, job)
+    if before["own"] == after["own"] and before["labels"] == after["labels"]:
+        if took_back:
+            _refresh_draft_gate(job, state)
+        return job
+    was = {l.lower() for l in before["labels"]}
+    now = {l.lower() for l in after["labels"]}
+    parts = [f"added {', '.join(l for l in after['labels'] if l.lower() not in was)}" if now - was else "",
+             f"took off {', '.join(l for l in before['labels'] if l.lower() not in now)}" if was - now else ""]
+    change = "; ".join(p for p in parts if p)
+    audit(state, job_id, "job_paperwork",
+          f"{actor} set {job['name']}'s supporting documents back to the client's list" + (f": {change}." if change else ".") if not after["own"]
+          else f"{actor} changed the supporting documents for {job['name']}: {change or 'nothing needed'}.", actor)
+    for invoice in job["invoices"]:
+        if invoice["status"] in DRAFT_STATUSES and invoice.get("packet_id") != "job-packet":
+            _draft_follows_list(state, job, invoice)
+    _refresh_draft_gate(job, state)
+    return job
+
+
+def _draft_follows_list(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> None:
+    """A draft takes on the job's list: an item still listed keeps what is attached to it, a new
+    one is added, and one taken off goes (its records stay on the job record). The conditional
+    waiver (M16) and the tickets for work billed by ticket (M6) stay, whatever the list says."""
+    packet = invoice["packet"]
+    def same(old: dict[str, Any], new: dict[str, Any]) -> bool:
+        if str(new.get("waiver_kind", "")).startswith("conditional"):
+            return str(old.get("waiver_kind", "")).startswith("conditional")
+        return old["label"].lower() == new["label"].lower()
+    kept: list[dict[str, Any]] = []
+    for new in _new_packet(state, job, invoice["id"]):
+        old = next((o for o in packet if same(o, new) and not any(o is k for k in kept)), None)
+        if old and not old.get("required") and old.get("skipped_reason") and new.get("required"):
+            # Ticked again on the list: asked for again. (A waiver marked not needed reads as not
+            # required on `new` too, so a change to the rest of the list leaves it off.)
+            _item_needed_again(old)
+            audit(state, job["id"], "paperwork_needed", f"{old['label']} is needed on {invoice['number']} again: it is back on the job's list.", "duracash")
+        if not old and _made_here(new["label"], job):
+            new.update(present=True, present_reason=MADE_HERE_REASON, resolved_at=utcnow())
+        kept.append(old or new)
+    kept += [o for o in packet if o.get("covers") and not any(o is k for k in kept)]
+    packet[:] = kept
+    _name_conditional_waiver(job, invoice)
+
+
+def _item_needed_again(item: dict[str, Any]) -> None:
+    item["required"] = True
+    for key in ("skipped_reason", "skipped_at", "skipped_by", "skipped_scope", "detached_record_ids"):
+        item.pop(key, None)
+
+
+def _waiver_needed_again(state: dict[str, Any], job: dict[str, Any], actor: str) -> None:
+    """Not needed on this job, taken back: the job's mark goes, and the open draft asks again."""
+    skip = job.pop("waiver_skipped", None)
+    for invoice in job["invoices"]:
+        if invoice["status"] in DRAFT_STATUSES:
+            for item in invoice.get("packet") or []:
+                if item.get("skipped_scope") == "job" and str(item.get("waiver_kind", "")).startswith("conditional"):
+                    _item_needed_again(item)
+    audit(state, job["id"], "paperwork_needed", f"{actor} marked the conditional waiver needed after all on {job['name']}"
+          + (f" (it was marked not needed: {skip['reason']})." if skip else "."), actor)
+
+
+def waiver_needed_after_all(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict[str, Any]:
+    """The way back from Not needed on this job (skip_packet_item). What was marked for the whole
+    client is changed on the client's playbook."""
+    job = _open_job(state, job_id)
+    if not job.get("waiver_skipped"):
+        raise GateError("The conditional waiver isn't marked not needed on this job.")
+    _waiver_needed_again(state, job, actor)
+    _refresh_draft_gate(job, state)
+    return job
+
+
+def client_waiver_needed_again(state: dict[str, Any], payer_id: str, actor: str = "owner") -> dict[str, Any]:
+    """The way back from Not needed for this client, on the Client playbook card: new pay apps ask
+    for the conditional waiver again, and so do the client's open drafts, except on a job marked not
+    needed on its own. After-payment waivers already settled as not due stay as they were."""
+    payer = _payer(state, payer_id)
+    skip = payer.pop("waiver_not_needed", None)
+    if not skip:
+        raise GateError(f"Lien waivers aren't marked not needed for {payer['name']}.")
+    audit(state, "", "paperwork_needed", f"{actor} marked lien waivers needed again for {payer['name']} "
+          f"(marked not needed by {skip.get('by', 'someone')} on {str(skip.get('at', ''))[:10]}: {skip.get('reason', 'no reason given')}).", actor)
+    for job in state["jobs"]:
+        if job.get("payer_id") != payer_id or job.get("closed") or job.get("waiver_skipped"):
+            continue
+        for invoice in job["invoices"]:
+            if invoice["status"] in DRAFT_STATUSES:
+                for item in invoice.get("packet") or []:
+                    if not item.get("required") and item.get("skipped_scope") != "job" and str(item.get("waiver_kind", "")).startswith("conditional"):
+                        _item_needed_again(item)
+        _refresh_draft_gate(job, state)
+    return payer
 
 
 def _work_billed_by_ticket(job: dict[str, Any], invoice: dict[str, Any]) -> list[str]:
@@ -3487,27 +4691,45 @@ def _add_ticket_item(job: dict[str, Any], invoice: dict[str, Any], payer: dict[s
     return True
 
 
-def _name_conditional_waiver(job: dict[str, Any], invoice: dict[str, Any]) -> None:
+def _kind_problem(has: str, needs: str) -> str:
+    return f"It is a {WAIVER_KINDS[has].lower()}, and this pay app needs a {WAIVER_KINDS[needs].lower()}. Look at it again."
+
+
+def _name_conditional_waiver(job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, Any]]:
     """The conditional waiver on a pay app is on final payment when the pay app is the final one
-    (M13) and no retainage is held on it or still open on the job (the rule of
-    suggested_waiver_kind; B3 of the Oct 30 review): that waiver goes with the retainage release.
-    Its waiver items say so, and the type is kept on the pay app as it goes out."""
-    final = bool(invoice.get("final")) and not int(invoice.get("retainage_cents") or 0) \
-        and job_money(job)["retainage_open_cents"] == 0
+    (M13) and its money is the last there is (still_open, the rule of suggested_waiver_kind; B3 of
+    the Oct 30 review): a waiver on final payment gives up what else is unpaid or held back.
+    Its waiver items say so, and the type is kept on the pay app as it goes out. A waiver confirmed
+    as one type isn't confirmed as the other: returns the items now waiting for another look."""
+    final = bool(invoice.get("final")) and not still_open(job, invoice)
     kind = "conditional_final" if final else "conditional_progress"
+    flipped = []
     for item in invoice.get("packet") or []:
-        if not str(item.get("waiver_kind", "")).startswith("conditional"):
+        was = str(item.get("waiver_kind", ""))
+        if not was.startswith("conditional"):
             continue
         item["waiver_kind"] = kind
         if item.get("auto_waiver"):
             item["label"] = WAIVER_KINDS[kind]
             item["blocker"] = f"{WAIVER_KINDS[kind]} is missing."
+        if was == kind or was not in WAIVER_KINDS:
+            continue
+        if _ask_for_a_look(item, _kind_problem(was, kind)):
+            flipped.append(item)
+        elif not item.get("present") and (item.get("check") or {}).get("problems"):
+            item["check"]["problems"].append(_kind_problem(was, kind))  # already waiting: all of it goes in one look
+            item["check"]["status"] = "flagged"
+    return flipped
 
 
 # Paperwork Duracash makes itself, so a pay app never waits on it: the pay app and its schedule
 # of values or continuation sheet. Backup counts only when the job bills from a schedule (the
 # continuation sheet is the backup); otherwise it is tickets and invoices from the job record.
-MADE_HERE_RE = re.compile(r"pay[\s-]*app(?:lication)?s?\b|schedule of values|continuation sheet", re.I)
+# The whole label has to name it: "Lien waiver for pay application" is a waiver, not the pay app.
+MADE_HERE_RE = re.compile(r"(?:(?:the|aia|aia[\s-]style)\s+)?(?:pay[\s-]*app(?:lication)?s?|schedule of values|continuation sheet)(?:\s*\(.*\))?", re.I)
+BACKUP_RE = re.compile(r"(?:pay[\s-]*app(?:lication)?\s+)?backup", re.I)
+# A notarized pay application comes back from a notary, so it is not made here; it is its own item.
+NOTARIZED_RE = re.compile(r"notari[sz]ed\s+(?:pay[\s-]*app|application)", re.I)
 MADE_HERE_REASON = "Produced by Duracash"
 
 # The standard paperwork (M6), for each pay app and for closeout: key (the item's kind), label,
@@ -3523,7 +4745,7 @@ PAPERWORK_ITEMS = (
      "per_pay_app": True, "closeout": False},
     {"key": "photo", "label": "Progress photos", "accepts_kinds": ("photo",), "words": re.compile(r"photo", re.I),
      "per_pay_app": True, "closeout": False},
-    {"key": "ticket", "label": "Daily tickets and time sheets", "accepts_kinds": ("ticket", "supplier_invoice"),
+    {"key": "ticket", "label": "Daily tickets and time sheets", "accepts_kinds": ("ticket",),
      "words": re.compile(r"ticket|time ?sheet", re.I), "per_pay_app": True, "closeout": False},
     {"key": "supplier_invoice", "label": "Supplier invoices and receipts", "accepts_kinds": ("supplier_invoice",),
      "words": re.compile(r"invoice|receipt", re.I), "per_pay_app": True, "closeout": False},
@@ -3532,6 +4754,11 @@ PAPERWORK_ITEMS = (
     {"key": "stored", "label": "Stored materials documents", "accepts_kinds": ("stored",),
      "words": re.compile(r"stored material", re.I), "per_pay_app": True, "closeout": False},
     {"key": "backup", "label": "Pay app backup", "accepts_kinds": ("pay_app",), "words": re.compile(r"backup", re.I),
+     "per_pay_app": True, "closeout": False},
+    # Public jobs: each has its own record kind, since a time sheet or the app's backup isn't one.
+    {"key": "payroll", "label": "Certified payroll", "accepts_kinds": ("payroll",), "words": re.compile(r"payroll", re.I),
+     "per_pay_app": True, "closeout": False},
+    {"key": "notarized", "label": "Notarized pay application", "accepts_kinds": ("notarized",), "words": NOTARIZED_RE,
      "per_pay_app": True, "closeout": False},
     {"key": "punch", "label": "Punch list sign-off", "accepts_kinds": ("punch",), "words": re.compile(r"punch", re.I),
      "per_pay_app": False, "closeout": True},
@@ -3558,6 +4785,8 @@ PAPERWORK_CATALOG = [{k: e[k] for k in ("key", "label", "per_pay_app", "closeout
 # "Contractor's insurance certificate" is insurance, not the contract. Items whose kind is a
 # catalog key take the catalog's kinds; this table is the fallback for typed labels.
 RECORD_FOR_ITEM = (
+    ("notarized", ("notarized",), NOTARIZED_RE),
+    ("payroll", ("payroll",), re.compile(r"payroll", re.I)),
     ("backup", ("pay_app",), re.compile(r"backup", re.I)),
     ("insurance", ("insurance",), re.compile(r"insurance|\bcoi\b", re.I)),
     ("co", ("change_order",), re.compile(r"change order", re.I)),
@@ -3565,7 +4794,7 @@ RECORD_FOR_ITEM = (
     ("waiver", ("waiver",), re.compile(r"waiver", re.I)),
     ("photo", ("photo",), re.compile(r"photo", re.I)),
     ("supplier_invoice", ("supplier_invoice",), re.compile(r"invoice|receipt", re.I)),
-    ("ticket", ("ticket", "supplier_invoice"), re.compile(r"ticket|time ?sheet", re.I)),
+    ("ticket", ("ticket",), re.compile(r"ticket|time ?sheet", re.I)),
     ("stored", ("stored",), re.compile(r"stored material", re.I)),
     ("inspection", ("inspection",), re.compile(r"inspection", re.I)),
     ("punch", ("punch",), re.compile(r"punch", re.I)),
@@ -3576,18 +4805,29 @@ RECORD_FOR_ITEM = (
 )
 # Records that belong to one pay app (this period's waiver, photos, backup) are not reused on the
 # next one; a signed contract or an insurance certificate is.
-PER_PAY_APP = {"backup", "co", "waiver", "photo", "ticket", "supplier_invoice", "stored", "inspection"}
-AUTO_NOTE = "Attached from the job record"
+PER_PAY_APP = {"backup", "co", "waiver", "photo", "ticket", "supplier_invoice", "stored", "inspection", "payroll", "notarized"}
+# Items several records can fill together, all suggested (acceptance 46). The rest take one document.
+MANY_RECORDS = {"photo", "ticket", "supplier_invoice", "stored", "inspection", "payroll"}
+TICKET_WORDS = re.compile(r"ticket|time ?sheet", re.I)
+INVOICE_WORDS = re.compile(r"invoice|receipt", re.I)
+AUTO_NOTE = "Attached from the job records"
 
 
 def _made_here(label: str, job: dict[str, Any]) -> bool:
-    if "backup" in label.lower():
-        return sov.has_sov(job)
-    return bool(MADE_HERE_RE.search(label))
+    label = label.strip()
+    if BACKUP_RE.fullmatch(label):
+        # The continuation sheet backs up a schedule with detail; one lump-sum line backs up nothing.
+        base = [line for line in sov.lines(job) if not line.get("co_id")]
+        return len(base) > 1 or any(line.get("qty_milli") and not (str(line.get("unit", "")).upper() == "LS" and line["qty_milli"] == 1000) for line in base)
+    return bool(MADE_HERE_RE.fullmatch(label))
 
 
 def _record_kinds_for(item: dict[str, Any]) -> tuple[str, tuple[str, ...]] | None:
-    """(item name, the job-record kinds that fill it), or None when nothing on the record can."""
+    """(item name, the job-record kinds that fill it), or None when nothing on the record can. A
+    supplier invoice fills a ticket item only when the item's label asks for invoices too."""
+    label = str(item.get("label") or "")
+    if TICKET_WORDS.search(label) and INVOICE_WORDS.search(label):
+        return "ticket", ("ticket", "supplier_invoice")
     entry = next((e for e in PAPERWORK_ITEMS if e["key"] == item.get("kind")), None)
     if entry:
         return entry["key"], entry["accepts_kinds"]
@@ -3598,7 +4838,8 @@ def _record_kinds_for(item: dict[str, Any]) -> tuple[str, tuple[str, ...]] | Non
 
 
 def _attach_from_record(state: dict[str, Any], job: dict[str, Any], packet: list[dict[str, Any]], where: str) -> None:
-    """Fill each missing item with the newest job record of the kind that matches it."""
+    """Suggest for each missing item the newest job record of the kind that fits it and has a file.
+    A suggestion doesn't clear the item: a person confirms they checked it (confirm_packet_item)."""
     used = {
         a.get("record_id")
         for inv in job.get("invoices", []) if inv.get("status") != "void" and inv.get("packet") is not packet
@@ -3611,25 +4852,267 @@ def _attach_from_record(state: dict[str, Any], job: dict[str, Any], packet: list
     for item in packet:
         if item.get("present") or not item.get("required"):
             continue
+        attached = item.get("attachments", [])
+        if any(a.get("unconfirmed") and not a.get("auto") for a in attached):
+            continue  # one a person attached is waiting for their look
         match = _record_kinds_for(item)
         if not match:
             continue
         name, kinds = match
         declined = set(item.get("detached_record_ids", []))
-        record = next((
+        fits = [
             r for r in reversed(job.get("records", []))
             if r.get("kind") in kinds and not r.get("number_only") and r["id"] not in declined
             and not ((name in PER_PAY_APP or name == "final_waiver") and r["id"] in used) and _fits_waiver_item(r, item, owner)
-            and _fits_work(r, owner)
-        ), None)
-        if not record:
+            and _fits_work(r, owner) and _can_fill(state, r, item)
+        ]
+        if name not in MANY_RECORDS:
+            fits = fits[:1]  # a newer record takes over
+        wanted = {r["id"] for r in fits}
+        auto = {a.get("record_id") for a in attached if a.get("auto")}
+        if wanted == auto:
             continue
-        item.setdefault("attachments", []).append({
-            "name": record["label"], "record_id": record["id"], "added_at": utcnow(), "added_by": "duracash", "auto": True,
-        })
-        item["present"] = True
-        item["resolved_at"] = utcnow()
-        audit(state, job["id"], "attach_record", f"{record['label']} attached automatically from the job record to {item['label']} on {where}.", "duracash")
+        item["attachments"] = [a for a in attached if not a.get("auto") or a.get("record_id") in wanted]
+        for record in fits:
+            if record["id"] in auto:
+                continue
+            item["attachments"].append({
+                "name": record["label"], "record_id": record["id"], "added_at": utcnow(), "added_by": "duracash", "auto": True, "unconfirmed": True,
+            })
+            audit(state, job["id"], "attach_record", f"{record['label']} suggested from the job records for {item['label']} on {where}.", "duracash")
+        item.pop("check", None)
+
+
+# What can fill an item (Stephen's Nov 1 notes): a stored file that isn't empty, of a type a person
+# can open. A lien waiver or a contract is a document, not a spreadsheet.
+DOCUMENT_TYPES = {".pdf", ".doc", ".docx", ".txt", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"}
+SHEET_TYPES = {".csv", ".xls", ".xlsx"}
+DOCUMENTS_ONLY = {"waiver", "final_waiver", "contract", "insurance", "completion"}
+NOTE_ITEM_RE = sov.NOTE_ITEM_RE
+
+
+def _takes_note(item: dict[str, Any]) -> bool:
+    """The one kind of item a record with no file can fill: its label asks for a note."""
+    return bool(NOTE_ITEM_RE.search(str(item.get("label") or "")))
+
+
+def _record_files(state: dict[str, Any], record: dict[str, Any], item: dict[str, Any]) -> list[dict[str, Any]]:
+    """The record's stored files that can fill this item. A size is kept on every stored file; an
+    older entry without one isn't taken for empty."""
+    allowed = DOCUMENT_TYPES if (_record_kinds_for(item) or ("",))[0] in DOCUMENTS_ONLY else DOCUMENT_TYPES | SHEET_TYPES
+    ids = set(record.get("file_ids") or [])
+    return [f for f in state.get("files", []) if f["id"] in ids and f.get("size", 1) and str(f.get("ext") or "").lower() in allowed]
+
+
+def _can_fill(state: dict[str, Any], record: dict[str, Any], item: dict[str, Any]) -> bool:
+    return bool(_record_files(state, record, item)) or (_takes_note(item) and not record.get("file_ids"))
+
+
+def _going(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """An item's attachments that go with the email: not one still waiting to be confirmed."""
+    return [a for a in item.get("attachments", []) if not a.get("unconfirmed")]
+
+
+def _drop_unconfirmed(item: dict[str, Any]) -> None:
+    """Take off what nobody confirmed. A suggestion taken off this way isn't made again."""
+    waiting = [a for a in item.get("attachments", []) if a.get("unconfirmed")]
+    item.setdefault("detached_record_ids", []).extend(a["record_id"] for a in waiting if a.get("auto") and a.get("record_id"))
+    item["attachments"] = _going(item)
+
+
+FIELD_RECORD_KINDS = {"ticket", "photo", "inspection", "supplier_invoice"}
+
+
+def _document_check(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None, read_file: Any) -> dict[str, Any] | None:
+    """Compare the item's files with the job (Decision 6): a waiver with the job name, the amount
+    and the conditional wording, any other document with the job name. Progress photos have
+    nothing to compare. read_file(meta) gives a file's bytes; without it nothing is read."""
+    name = (_record_kinds_for(item) or ("",))[0]
+    records = {r["id"]: r for r in job.get("records", [])}
+    attached = [records.get(a.get("record_id")) or {} for a in item.get("attachments", [])]
+    check = None
+    if read_file is not None and name != "photo":
+        metas = [f for a in item.get("attachments", []) for f in _record_files(state, records.get(a.get("record_id")) or {}, item)]
+        if metas:
+            waiver = name in {"waiver", "final_waiver"} or bool(item.get("waiver_kind"))
+            cents = invoice["amount_cents"] if waiver and invoice else None
+            # Field paperwork often doesn't name the job, so that is no reason to stop anyone.
+            field = not waiver and set((_record_kinds_for(item) or ("", ("-",)))[1]) <= FIELD_RECORD_KINDS
+            check = doc_check.check([(m["name"], str(m.get("ext") or "").lower(), read_file(m)) for m in metas], "" if field else job["name"],
+                                    money(cents) if cents is not None else "", cents, str(item.get("waiver_kind") or ""), waiver)
+    # A record that says another type than the item needs (progress for final, say).
+    if item.get("waiver_kind") in WAIVER_KINDS:
+        for rec in attached:
+            has = record_waiver_kind(rec) if rec.get("kind") == "waiver" else ""
+            if has and has != item["waiver_kind"] and has.split("_")[0] == item["waiver_kind"].split("_")[0]:   # the other word is M14's gate at send
+                check = check or {"status": "flagged", "problems": []}
+                check["problems"].append(_kind_problem(has, item["waiver_kind"]))
+                check["status"] = "flagged"
+    return check
+
+
+def _check_stamp(job: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None) -> dict[str, Any]:
+    """What a check of an item was for: its files, and for a waiver, the amount."""
+    records = {r["id"]: r for r in job.get("records", [])}
+    files = sorted(f for a in item.get("attachments", []) for f in (records.get(a.get("record_id")) or {}).get("file_ids") or [])
+    return {"file_ids": files, "cents": invoice["amount_cents"] if invoice and item.get("waiver_kind") else None}
+
+
+def _clear_item(state: dict[str, Any], job: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None, actor: str,
+                read_file: Any, looked: bool, confirming: bool = False, answer: str = "", answerer: "Answerer | None" = None) -> None:
+    """The person's check (Stephen's Nov 1 notes, Decision 6): the item clears with who and when,
+    unless the file doesn't match or can't be read. Then it waits, with the warning, until they
+    say they opened it and it is right (looked), a separate step from the warning naming what
+    didn't match, which clears it whatever the warning said. confirming: this is Confirm on the
+    item (not an attach): one look clears the file at this amount, whatever else the check finds now.
+    A waiver item clears once someone says which waiver its files are (answer, the Nov 6 redesign):
+    that tap is the look at what the item shows, and it is kept on each record (_say_which)."""
+    shown = set((item.get("check") or {}).get("problems") or [])
+    stamp = _check_stamp(job, item, invoice)
+    same_file = item.get("check_for") is not None and item["check_for"] == stamp
+    records = {r["id"]: r for r in job.get("records", [])}
+    for a in item.get("attachments", []):   # read once for the waiver question and the pay app's page
+        if a.get("record_id") in records:
+            _read_waiver(state, records[a["record_id"]], read_file)
+    check = _document_check(state, job, item, invoice, read_file)
+    if check is not None:
+        item["check"] = check = _keep_asked_look(item, check, stamp)
+        item["check_for"] = stamp
+    else:
+        check = item.get("check")
+    which = invoice["number"] if invoice else "the job's supporting documents"
+    problems = (check or {}).get("problems") or []
+    waiver = is_waiver_item(item)
+    filed = _filed_records(job, item)
+    answer = answer if waiver and answer in WAIVER_ANSWERS else ""
+    looked = looked or bool(answer)
+    # Which waiver it is: answered now, or already for each record's files as they are.
+    unanswered = waiver and bool(filed) and not answer and not all(waiver_answer(r) in WAIVER_ANSWERS for r in filed)
+    # A photo or a scan the check can't read, added by the person (not a suggestion they confirm):
+    # adding it is their check, and nothing was compared that could stand in the way (round 1, item 3).
+    unread = bool(problems) and not confirming and (check or {}).get("status") != "flagged" and not waiver
+    # Looked counts only for the warning the person was shown: a first attach never clears a flag.
+    # A waiver's answer is all a file that couldn't be read needs: nothing was compared.
+    told = (waiver and bool(answer) and (check or {}).get("status") != "flagged") or (looked and (set(problems) <= shown or (confirming and same_file)))
+    if unanswered or (problems and not unread and not told):
+        for a in item.get("attachments", []):
+            a["unconfirmed"] = True
+        if problems and not (waiver and (check or {}).get("status") == "unchecked"):
+            audit(state, job["id"], "document_flagged", f"Document check on {item['label']} on {which}: {' '.join(problems)}", "duracash")
+        item["present"] = False
+        return
+    for a in item.get("attachments", []):
+        a.pop("unconfirmed", None)
+        a.pop("auto", None)
+    # A name with a real file beside it now has nothing to say.
+    if any(_is_filed(records, a) for a in item.get("attachments", [])):
+        item["attachments"] = [a for a in item["attachments"] if a.get("record_id") in records]
+    item["present"] = True
+    item["resolved_at"] = utcnow()
+    item["confirmed_by"] = actor
+    item["confirmed_at"] = item["resolved_at"]
+    item.pop("files_left_out", None)
+    names = ", ".join(a["name"] for a in item.get("attachments", []))
+    if unread:
+        files = [f for a in item.get("attachments", []) for f in _record_files(state, records.get(a.get("record_id")) or {}, item)]
+        item["unread"] = "photo" if files and all(str(f.get("ext") or "").lower() in doc_check.PICTURES for f in files) else "file"
+        audit(state, job["id"], "packet_confirmed", f"{actor} added {names} for {item['label']} on {which}. It couldn't be read, so nothing was compared.", actor)
+        return
+    item.pop("unread", None)
+    warned = f" after the warning: {' '.join(problems)}" if problems and (check or {}).get("status") == "flagged" else ""
+    if waiver and filed:
+        stage = "final" if str(item.get("waiver_kind") or "").endswith("_final") else "progress"
+        for rec in filed:
+            if answer:
+                _say_which(state, job, rec, answer, actor, stage, answerer=answerer)
+        item["looked_as"] = answer or waiver_answer(filed[0])
+        audit(state, job["id"], "packet_confirmed", f"{actor} said {names} is the {item['looked_as']} waiver for {item['label']} on {which}{warned}.", actor)
+        return
+    item.pop("looked_as", None)
+    audit(state, job["id"], "packet_confirmed", f"{actor} checked {names} for {item['label']} on {which}{warned}.", actor)
+
+
+def _keep_asked_look(item: dict[str, Any], check: dict[str, Any], stamp: dict[str, Any]) -> dict[str, Any]:
+    """A look asked for on these same files (a new amount, the other type, a mismatch) stands until a
+    person gives it: a check that could read nothing new doesn't answer it."""
+    was = item.get("check") or {}
+    if check.get("status") != "unchecked" or was.get("status") != "flagged":
+        return check
+    if (item.get("check_for") or {}).get("file_ids") not in (None, stamp["file_ids"]):
+        return check
+    asked = list(was.get("problems") or [])
+    return {"status": "flagged", "problems": asked + [p for p in check.get("problems") or [] if p not in asked]}
+
+
+def _is_filed(records: dict[str, Any], attachment: dict[str, Any]) -> bool:
+    return bool((records.get(attachment.get("record_id")) or {}).get("file_ids"))
+
+
+def _item_to_confirm(state: dict[str, Any], job: dict[str, Any], item_id: str, shown: list[str] | None) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    item, invoice = _find_packet_item(job, item_id)
+    if not item:
+        raise GateError("Supporting document not found.")
+    _still_a_draft(invoice)
+    records = {r["id"]: r for r in job.get("records", [])}
+    if not any(_can_fill(state, records.get(a.get("record_id")) or {}, item) for a in item.get("attachments", [])):
+        raise GateError(f"Attach the file for {item['label']} first.")
+    waiting = [a for a in item.get("attachments", []) if a.get("unconfirmed")]
+    # An attachment by name only has no record: the page sends a blank for it.
+    if shown is not None and {r or "" for r in shown} != {a.get("record_id") or "" for a in waiting}:
+        names = ", ".join(a["name"] for a in waiting) or "the file"
+        raise GateError(f"{item['label']} changed since you opened it: {names} is on it now. Look at that, then confirm.",
+                        extra={"review_changed": True, "invoice_id": (invoice or {}).get("id", "")})
+    if invoice and invoice.get("packet_id") != "job-packet":
+        # Saved before a change said so: what this confirm is for is the type the pay app needs now.
+        invoice["final"] = is_final(job)
+        _name_conditional_waiver(job, invoice)
+    return item, invoice
+
+
+def recheck_packet_item(state: dict[str, Any], job_id: str, item_id: str, read_file: Any = None, shown: list[str] | None = None) -> list[str]:
+    """Read what is on an item as Confirm would, clearing nothing, and return every problem: what
+    the prompt lists, so one look answers all of it."""
+    job = _open_job(state, job_id)
+    item, invoice = _item_to_confirm(state, job, item_id, shown)
+    check = _document_check(state, job, item, invoice, read_file)
+    if check is not None:
+        stamp = _check_stamp(job, item, invoice)
+        item["check"] = _keep_asked_look(item, check, stamp)
+        item["check_for"] = stamp
+    return list((item.get("check") or {}).get("problems") or [])
+
+
+def recheck_reply(state: dict[str, Any], job_id: str, item_id: str, read_file: Any = None, shown: list[str] | None = None) -> dict[str, Any]:
+    """What the page's Confirm reads before it confirms: every problem, and whether any of them is a
+    mismatch for the person to answer ("flagged"), or only a file that couldn't be read."""
+    problems = recheck_packet_item(state, job_id, item_id, read_file=read_file, shown=shown)
+    item, _invoice = _find_packet_item(_open_job(state, job_id), item_id)
+    return {"check_problems": problems, "check_status": ((item or {}).get("check") or {}).get("status", "")}
+
+
+def confirm_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: str = "owner", looked: bool = False,
+                        read_file: Any = None, shown: list[str] | None = None, answer: str = "", answerer: "Answerer | None" = None) -> dict[str, Any]:
+    """A person confirms they checked what is attached to an item: a suggestion from the job
+    record, or a file the document check flagged (looked says they opened it and it is right).
+    On a waiver item the confirm is the answer to which waiver it is (answer: conditional or
+    unconditional). shown is the records on their screen: a newer one may have taken over since,
+    and that one hasn't been looked at."""
+    job = _open_job(state, job_id)
+    item, invoice = _item_to_confirm(state, job, item_id, shown)
+    records = {r["id"]: r for r in job.get("records", [])}
+    if is_waiver_item(item):
+        unanswered = answer not in WAIVER_ANSWERS and not all(waiver_answer(r) in WAIVER_ANSWERS for r in _filed_records(job, item))
+        if (answer in WAIVER_ANSWERS or unanswered) and not _may_answer(answerer, _on_retainage_request(job, item=item)):
+            raise GateError(NOT_YOURS_TO_ANSWER, fields={"answer": NOT_YOURS_TO_ANSWER})
+        if unanswered:
+            _refuse("", {"answer": f"Which waiver is on {item['label']}? Say conditional or unconditional."})
+    _clear_item(state, job, item, invoice, actor, read_file, looked, confirming=True, answer=answer, answerer=answerer)
+    if item["present"] and invoice and invoice.get("excluded_file_ids"):
+        # Confirmed with its file left out over a redraft (_ask_for_a_look): what clears goes with the email.
+        back = {fid for a in item.get("attachments", []) for fid in records.get(a.get("record_id"), {}).get("file_ids", [])}
+        invoice["excluded_file_ids"] = [fid for fid in invoice["excluded_file_ids"] if fid not in back]
+    _refresh_draft_gate(job, state)
+    return job
 
 
 def _fits_waiver_item(record: dict[str, Any], item: dict[str, Any], invoice: dict[str, Any] | None) -> bool:
@@ -3637,9 +5120,11 @@ def _fits_waiver_item(record: dict[str, Any], item: dict[str, Any], invoice: dic
     fills a conditional item, M14) and it was not taken for another pay app."""
     if record.get("kind") != "waiver" or not item.get("waiver_kind"):
         return True
+    if record.get("sent_as_final") and (_record_kinds_for(item) or ("",))[0] == "final_waiver":
+        return True   # the final waiver that went out, whichever type the closeout's item names
     has = record_waiver_kind(record)
-    if has and has.split("_")[0] != item["waiver_kind"].split("_")[0]:
-        return False
+    if has and has != item["waiver_kind"]:
+        return False  # a progress waiver isn't suggested for a final payment, nor the other way
     if has and (_record_kinds_for(item) or ("",))[0] == "final_waiver" and not has.endswith("_final"):
         return False  # the closeout's final waiver is never a progress one
     # Taken for a pay app: it stays that pay app's, never another's or the closeout's; taken for
@@ -3665,12 +5150,12 @@ def detach_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: 
     job = _open_job(state, job_id)
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
-        raise GateError("Paperwork item not found.")
+        raise GateError("Supporting document not found.")
     if item.get("present_reason") == MADE_HERE_REASON:
         raise GateError(f"Duracash makes {item['label']} with the pay app; there is nothing to remove.")
     if _invoice and _invoice.get("status") not in DRAFT_STATUSES:
         # What went with a pay app stays as it was sent; the customer may already have it.
-        raise GateError(f"{_invoice['number']} has gone to the client, so its paperwork stays as it was sent.")
+        raise GateError(f"{_invoice['number']} has gone to the client, so its supporting documents stay as they were sent.")
     taken = item.get("attachments", [])
     if not taken and not item.get("present"):
         raise GateError(f"Nothing is attached to {item['label']}.")
@@ -3680,6 +5165,8 @@ def detach_packet_item(state: dict[str, Any], job_id: str, item_id: str, actor: 
     item.pop("resolved_at", None)
     item.pop("present_reason", None)
     item.pop("marked_in_hand", None)
+    for key in ("override", "confirmed_by", "confirmed_at", "check", "files_left_out"):
+        item.pop(key, None)
     names = ", ".join(a["name"] for a in taken) or "the in-hand mark"
     audit(state, job_id, "paperwork_detached", f"{actor} took {names} off {item['label']}.", actor)
     _refresh_draft_gate(job)
@@ -3690,23 +5177,43 @@ def _still_a_draft(invoice: dict[str, Any] | None) -> None:
     """Paperwork that went with a pay app stays as it was sent (B9 of the Oct 30 review): the
     client may already have it. Closeout and older job paperwork have no pay app."""
     if invoice and invoice.get("status") not in DRAFT_STATUSES:
-        raise GateError(f"{invoice['number']} has gone to the client, so its paperwork stays as it was sent.")
+        raise GateError(f"{invoice['number']} has gone to the client, so its supporting documents stay as they were sent.")
 
 
-def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: str = "", actor: str = "owner") -> dict[str, Any]:
+def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: str = "", actor: str = "owner",
+                     whole_client: bool = False, on_client: bool = True) -> dict[str, Any]:
     """This customer does not need the item: it stops blocking, and it leaves the customer's
     paperwork list so later pay apps do not ask for it. The conditional waiver and the daily
     tickets Duracash adds itself are kept off on the client instead (waiver_not_needed,
-    tickets_not_needed), since they are not on the list."""
+    tickets_not_needed), since they are not on the list. A conditional waiver is the exception
+    (accept. 10): it comes off this job only unless the person chose the whole client.
+    on_client False: this person can't change the client's settings, so it comes off this pay app
+    only, and the client's list stays as it is."""
     job = _open_job(state, job_id)
     item, _invoice = _find_packet_item(job, item_id)
     if not item:
-        raise GateError("Paperwork item not found.")
+        raise GateError("Supporting document not found.")
     _still_a_draft(_invoice)
     reason = (reason or "").strip()[:500] if isinstance(reason, str) else ""
+    _drop_unconfirmed(item)
     item["required"] = False
     item["skipped_reason"] = reason or "Not needed for this client"
     item["skipped_at"] = utcnow()
+    item["skipped_by"] = actor
+    if str(item.get("waiver_kind", "")).startswith("conditional") and _invoice and not whole_client:
+        if not reason:
+            item["skipped_reason"] = "Not needed on this job"
+        item["skipped_scope"] = "job"
+        job["waiver_skipped"] = {"by": actor, "at": item["skipped_at"], "reason": item["skipped_reason"]}
+        audit(state, job_id, "paperwork_not_needed", f"{actor} marked {item['label']} not needed on this job: {item['skipped_reason']}.", actor)
+        _refresh_draft_gate(job)
+        return job
+    # A client's list and rules take the permission, on an older job-level list too (no pay app here).
+    if not on_client and (_invoice or not any(x is item for x in job.get("closeout_packet") or [])):
+        item["skipped_scope"] = "pay_app"
+        audit(state, job_id, "paperwork_not_needed", f"{actor} marked {item['label']} not needed on {_invoice['number'] if _invoice else 'this job'}: {item['skipped_reason']}.", actor)
+        _refresh_draft_gate(job)
+        return job
     payer = _payer(state, job["payer_id"])
     if str(item.get("waiver_kind", "")).startswith("conditional") and _invoice:
         # The conditional waiver comes back on every pay app (M16) unless the client doesn't take one.
@@ -3716,18 +5223,23 @@ def skip_packet_item(state: dict[str, Any], job_id: str, item_id: str, reason: s
         payer["tickets_not_needed"] = {"by": actor, "at": utcnow(), "reason": item["skipped_reason"]}
     # A closeout item (M6: five by default) is not needed on this job only; the client's list stays.
     closeout = any(x is item for x in job.get("closeout_packet") or [])
-    labels = [] if closeout else parse_packet_text(payer.get("packet", ""))
-    if not labels and _invoice:
+    own = job.get("paperwork_labels")
+    labels = [] if closeout or own is not None else parse_packet_text(payer.get("packet", ""))
+    if not labels and _invoice and own is None:
         # No list saved: this pay app used the default one, so save what it asked for, less this.
         labels = [p["label"] for p in _invoice.get("packet") or [] if p is item or not p.get("skipped_reason")]
     kept = [l for l in labels if l.lower() != item["label"].lower()]
+    if own is not None and not closeout and item["label"].lower() in {l.lower() for l in own}:
+        # The job has its own list: it comes off that one, and the client's stays.
+        job["paperwork_labels"] = [l for l in own if l.lower() != item["label"].lower()]
+        audit(state, job_id, "job_paperwork", f"{actor} took \"{item['label']}\" off the supporting documents for {job['name']}.", actor)
     if len(kept) != len(labels):
         payer["packet"] = _packet_text(kept)
         if kept:
             payer.pop("no_paperwork", None)
         else:
             payer["no_paperwork"] = True  # an empty list would bring the default one back
-        audit(state, "", "playbook_update", f"{actor} took \"{item['label']}\" off {payer['name']}'s paperwork list.", actor)
+        audit(state, "", "playbook_update", f"{actor} took \"{item['label']}\" off {payer['name']}'s supporting documents list.", actor)
     audit(state, job_id, "paperwork_not_needed", f"{actor} marked {item['label']} not needed: {item['skipped_reason']}.", actor)
     _refresh_draft_gate(job)
     return job
@@ -3737,6 +5249,32 @@ def _packet_text(labels: list[str]) -> str:
     """Labels back into a paperwork list, as a person would write it."""
     words = [l if i == 0 or l[1:2].isupper() else l[0].lower() + l[1:] for i, l in enumerate(labels)]
     return (", ".join(words) + ".") if words else ""
+
+
+def _ask_for_a_look(item: dict[str, Any], problem: str) -> bool:
+    """A waiver someone confirmed (in now, or with its file left out of the email for the moment)
+    waits for another look, saying why. An override stays, and an item in from before these rules
+    stays. Returns whether it asked."""
+    if not ((item.get("present") or item.get("files_left_out")) and item.get("confirmed_by") and item.get("waiver_kind") and not item.get("override")):
+        return False
+    item["present"] = False
+    item.pop("files_left_out", None)
+    item.pop("confirmed_by")
+    item.pop("confirmed_at", None)
+    item.pop("resolved_at", None)
+    for a in item.get("attachments", []):
+        a["unconfirmed"] = True
+    item["check"] = {"status": "flagged", "problems": [problem]}
+    return True
+
+
+def _look_again_at_waivers(packet: list[dict[str, Any]], before: int, now: int) -> None:
+    """A waiver confirmed for one amount isn't confirmed for another: a redraft at a new amount
+    asks for another look."""
+    if before == now:
+        return
+    for item in packet:
+        _ask_for_a_look(item, f"The amount changed from {money(before)} to {money(now)}. Look at it again.")
 
 
 def _carry_packet(packet: list[dict[str, Any]], invoice_id: str) -> list[dict[str, Any]]:
@@ -3762,13 +5300,39 @@ def _packet_item(job_id: str, kind: str, label: str, blocker: str, required: boo
 # importer.KINDS: what a record on the job can be.
 # The job record's kinds; static/js/jobs.js RECORD_KINDS and importer.KINDS have the same keys
 # with their words. supplier_invoice is never a bare "invoice", so it isn't read as a pay app.
-RECORD_KINDS = ("note", "daily", "photo", "contract", "change_order", "waiver", "pay_app", "ticket",
-                "supplier_invoice", "insurance", "inspection", "stored", "punch", "completion", "asbuilt", "warranty", "other")
+RECORD_KINDS = ("note", "conversation", "daily", "photo", "contract", "change_order", "waiver", "pay_app", "ticket",
+                "supplier_invoice", "insurance", "inspection", "stored", "payroll", "notarized", "punch", "completion", "asbuilt", "warranty", "other")
 
 
-def edit_record(state: dict[str, Any], job_id: str, record_id: str, label: str, kind: str, actor: str = "owner") -> dict[str, Any]:
-    """Fix a record's label or kind (a supplier invoice filed as a pay app, a photo read as a note) (R5-07).
-    Paperwork it is attached to keeps it; the draft's paperwork check runs again."""
+RECORD_NOTE_MAX = 5000
+
+
+def _keep_the_waiver_question(state: dict[str, Any], job: dict[str, Any], rec: dict[str, Any], actor: str, answerer: "Answerer | None") -> None:
+    """A lien waiver going out with the open pay app or on the retainage request, with no answer or
+    an Unconditional one, doesn't change kind except by someone who can answer it for that file; an
+    Unconditional answer only by whoever gave it or an owner. The answer is then cleared, so it asks again."""
+    said = waiver_answer(rec)
+    if said not in ("", "unconditional"):
+        return   # a person said conditional, or that it is not a lien waiver
+    if not (_on_open_draft(_open_draft(job), rec["id"]) or any(a.get("record_id") == rec["id"] for x in _retainage_packet(job) for a in x.get("attachments", []))):
+        return
+    if not _may_answer(answerer, _on_retainage_request(job, record=rec)):
+        raise GateError(f"{rec['label']} is a lien waiver going out. {NOT_YOURS_TO_ANSWER}")
+    if said:
+        if not _may_take_back(rec["waiver_answer"], actor, answerer):
+            who = rec["waiver_answer"].get("by") or "someone"
+            raise GateError(f"{rec['label']} was marked unconditional by {who}. Only {who} or an owner can change it.")
+        audit(state, job["id"], "waiver_answer_changed", f"{actor} changed what {rec['label']} is, so the answer {rec['waiver_answer'].get('by') or 'someone'} gave (unconditional) is asked again.", actor)
+        rec.pop("waiver_answer")
+
+
+def edit_record(state: dict[str, Any], job_id: str, record_id: str, label: str, kind: str, actor: str = "owner",
+                note: str | None = None, answerer: "Answerer | None" = None) -> dict[str, Any]:
+    """Fix a record's label or kind (a supplier invoice filed as a pay app, a photo read as a note) (R5-07),
+    or its note (what a client said on a conversation). note None leaves it as it is. The audit row
+    keeps what the note said. Paperwork it is attached to keeps it; the draft's paperwork check runs again.
+    A lien waiver stays one for the waiver question whatever it is called since (was_waiver); changing
+    the kind of one that is going out is for someone who can answer it (_keep_the_waiver_question)."""
     job = _job(state, job_id)
     rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
     if not rec:
@@ -3779,9 +5343,20 @@ def edit_record(state: dict[str, Any], job_id: str, record_id: str, label: str, 
     if kind not in RECORD_KINDS:
         raise GateError("Pick what kind of record this is.", fields={"kind": "Pick a kind."})
     before = (rec["label"], rec["kind"])
+    if kind != rec["kind"] and _was_waiver(rec):
+        _keep_the_waiver_question(state, job, rec, actor, answerer)
+    if rec["kind"] == "waiver" and kind != "waiver":
+        rec["was_waiver"] = True
     rec["label"], rec["kind"] = label, kind
+    if kind != "ticket":
+        rec.pop("ticket_type", None)  # only a ticket is a delivery ticket or a time sheet (domain/daily.py)
     if before != (label, kind):
         audit(state, job_id, "edit_record", f"{actor} changed the record '{before[0]}' ({before[1]}) to '{label}' ({kind}).", actor)
+    if note is not None:
+        was, note = rec.get("note", ""), note.strip()[:RECORD_NOTE_MAX]
+        if note != was:
+            rec["note"] = note
+            audit(state, job_id, "edit_record", f"{actor} changed the note on '{label}' from '{was[:500]}' to '{note[:500]}'.", actor)
     if not job.get("closed"):
         _refresh_draft_gate(job, state)
     return job
@@ -3808,7 +5383,10 @@ def add_job_record(
         "added_by": actor,
     }
     job.setdefault("records", []).append(rec)
-    audit(state, job_id, "add_record", f"{actor} added {kind} to the job record: {label}.", actor)
+    if rec["kind"] == "conversation":   # however it was added, it does what Log a conversation does
+        _log_conversation(state, job, rec["note"] or label, None, actor, rec["added_at"])
+    else:
+        audit(state, job_id, "add_record", f"{actor} added {kind} to the job's records: {label}.", actor)
     if not job.get("closed"):
         _refresh_draft_gate(job, state)
     return job
@@ -3820,35 +5398,53 @@ def attach_record_to_packet(
     item_id: str,
     record_id: str,
     actor: str = "owner",
+    read_file: Any = None,
+    looked: bool = False,
+    answer: str = "",
+    answerer: "Answerer | None" = None,
 ) -> dict[str, Any]:
+    """Attaching and confirming are one step for the person doing it: they chose this record for
+    this item, so it clears in their name, unless the document check has something to say, or it
+    is a waiver item and nobody has said which waiver it is (answer, _clear_item). A record with no
+    real file can't fill a document item, whatever it is called. Someone who can't answer
+    (answerer) attaches the file all the same, and it waits for an answer."""
     job = _open_job(state, job_id)
     item, invoice = _find_packet_item(job, item_id)
     record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if item and not _may_answer(answerer, _on_retainage_request(job, item=item, record=record)):
+        answer = ""
     if not item:
-        raise GateError("Paperwork item not found.")
+        raise GateError("Supporting document not found.")
     if not record:
         raise GateError("Job record not found.")
     _still_a_draft(invoice)
+    if not _can_fill(state, record, item):
+        if record.get("file_ids"):
+            raise GateError(f"{record['label']}: its file is empty or isn't a type that can go with {item['label']}. Add a PDF, a Word file or a photo.")
+        raise GateError(f"{record['label']} has no file. {item['label']} needs the document itself, not a note.")
+    _drop_other_suggestions(item, record_id)
     already = next((a for a in item.get("attachments", []) if a.get("record_id") == record_id), None)
     if already:
-        # Attached from the job record as it was added (a photo taken for this item): it is the
+        # Suggested from the job record, or added as a photo taken for this item: it is the
         # person's choice now, so keep one attachment and make it theirs.
         already.pop("auto", None)
         already["added_by"] = actor
-        _refresh_draft_gate(job, state)
-        return job
-    item.setdefault("attachments", []).append({
-        "name": record["label"],
-        "record_id": record_id,
-        "added_at": utcnow(),
-        "added_by": actor,
-    })
-    item["present"] = True
-    item["resolved_at"] = utcnow()
-    which = invoice["number"] if invoice else "the job's paperwork"
-    audit(state, job_id, "attach_record", f"{actor} attached {record['label']} to {item['label']} on {which}.", actor)
+    else:
+        item.setdefault("attachments", []).append({
+            "name": record["label"],
+            "record_id": record_id,
+            "added_at": utcnow(),
+            "added_by": actor,
+        })
+        which = invoice["number"] if invoice else "the job's supporting documents"
+        audit(state, job_id, "attach_record", f"{actor} attached {record['label']} to {item['label']} on {which}.", actor)
+    _clear_item(state, job, item, invoice, actor, read_file, looked, answer=answer, answerer=answerer)
     _refresh_draft_gate(job, state)
     return job
+
+
+def _drop_other_suggestions(item: dict[str, Any], record_id: str) -> None:
+    item["attachments"] = [a for a in item.get("attachments", []) if not a.get("auto") or a.get("record_id") == record_id]
 
 
 def create_job(
@@ -3860,8 +5456,8 @@ def create_job(
     approver: str = "",
     ap_email: str = "",
     phone: str = "",
-    role: str = "Owner",
-    retainage_pct: int = 0,
+    role: str = "",
+    retainage_pct: int | None = 0,
     note: str = "",
     contract_number: str = "",
     actor: str = "owner",
@@ -3872,13 +5468,22 @@ def create_job(
     assignee_id: str = "",
     assignee_name: str = "",
     payer_days: dict[str, Any] | None = None,
+    auto_schedule: bool = False,
+    schedule_lines: Any = None,
+    schedule_op: Any = "",
     today: Any = "",
+    anticipated_end_on: Any = None,
+    approver_confirmed: bool = False,
+    ask_same_job: bool = False,
 ) -> dict[str, Any]:
-    """Add a job and its record. The packet is created later, with a pay app, from the payer's
+    """Add a job and its record. With ask_same_job (New job), an open job of the same name is asked
+    about first (job_near), the way a near-match client is. The packet is created later, with a pay app, from the payer's
     paperwork list (Customer settings); `note` is kept on the job record and never becomes it.
-    Who signs off and the email are optional: the email is asked for before the first send.
-    A customer name that nearly matches a saved one ("ABC Builders Inc" for "ABC Builders") is
-    asked about first, unless new_customer says to keep it as a new customer.
+    The client's playbook has to be complete (Decisions 3 and 4): a new client comes with its
+    type, who signs off, email and phone; a saved client missing one takes it from here, and
+    anything still missing is refused under its box. A customer name that nearly matches a saved
+    one ("ABC Builders Inc" for "ABC Builders") is asked about first, unless new_customer says to
+    keep it as a new customer.
 
     The address comes in four parts (J1: street, city, state, ZIP), each checked, and is kept
     whole as address too ("Street, City, ST 12345") for the pay app PDF, the client's page and
@@ -3887,14 +5492,17 @@ def create_job(
     start date (J8, today when blank: `today`, the page's own date, through local_today);
     assignee_id is the team member the job's tasks go to.
     payer_days (the pay app due day and payment terms an imported contract found, S12) are saved
-    on a new client only: a saved client's are changed in the Client playbook."""
+    on a new client only: a saved client's are changed in the Client playbook.
+    auto_schedule (what the New job route asks for) gives every new job a schedule of values: the
+    schedule_lines the form sent, which must add up to the contract amount or nothing is saved
+    (field "sov"), or else one lump-sum line for the contract amount."""
     name = (name or "").strip()
     customer_name = (customer_name or "").strip()
     address = (address or "").strip()
     approver = (approver or "").strip()
     ap_email = (ap_email or "").strip()
     phone = (phone or "").strip()
-    role = client_type_role(client_type) or (role if role in {"Owner", "GC"} else "Owner")
+    role = client_type_role(client_type) or (role if role in {"Owner", "GC"} else "")
     note = (note or "").strip()
     contract_number = (contract_number or "").strip()
 
@@ -3921,14 +5529,34 @@ def create_job(
         phone = normalize_phone(phone) or phone
         errors.update(check_field("phone", phone))
     errors.update(check_field("contract_number", contract_number))
+    payer = _payer_named(state, customer_name) if customer_name else None
+    near = payer_near(state, customer_name) if customer_name and not payer and not new_customer else None
+    if not near:
+        # What this client still needs: everything when new, only its empty boxes when saved.
+        typed = {"approver": approver, "ap_email": ap_email, "phone": phone}
+        wanted = playbook_missing(payer) if payer else ["client_type", *PLAYBOOK_FIELDS]
+        errors.update({k: PLAYBOOK_FIELDS[k] for k in wanted if k in typed and not typed[k]})
+        if payer and "approver" in errors and signer_defaulted(payer):
+            errors["approver"] = SIGNER_IS_CLIENT
+        # The client's own name typed for who signs off counts when the page says a person answered.
+        if "approver" in wanted and approver and not signer_answered(approver, payer["name"] if payer else customer_name, approver_confirmed):
+            errors["approver"] = SIGNER_IS_CLIENT
+        if "client_type" in wanted and not role and "client_type" not in errors:
+            errors["client_type"] = "Pick the client type."
     start = ""
     if started_on not in (None, ""):
         try:
             start = parse_start_date(started_on)
         except GateError as exc:
             errors.update(exc.fields)
+    end = ""
+    if anticipated_end_on not in (None, ""):
+        try:
+            end = parse_end_date(anticipated_end_on, start or local_today(today))
+        except GateError as exc:
+            errors.update(exc.fields)
     if ap_email and not EMAIL_RE.match(ap_email):
-        errors["ap_email"] = "Enter the email pay apps go to, like ap@builder.com, or leave it blank for now."
+        errors["ap_email"] = PLAYBOOK_FIELDS["ap_email"]
     days: dict[str, Any] = {}
     for k in ("payapp_due_day", "payment_terms_days"):
         if (payer_days or {}).get(k) not in (None, ""):
@@ -3941,27 +5569,45 @@ def create_job(
         errors["contract_cents"] = "Enter the contract amount, more than $0."
     elif contract_cents > MAX_AMOUNT_CENTS:
         errors["contract_cents"] = f"Enter a contract amount up to {money(MAX_AMOUNT_CENTS)}."
-    if not isinstance(retainage_pct, int) or isinstance(retainage_pct, bool) or not 0 <= retainage_pct <= 20:
+    if retainage_pct is not None and (not isinstance(retainage_pct, int) or isinstance(retainage_pct, bool) or not 0 <= retainage_pct <= 20):
         errors["retainage_pct"] = "Enter a retainage from 0 to 20 percent."
+    # ---- schedule of values at New job (Nov 3 Decision 1) ----
+    schedule = None
+    if auto_schedule and schedule_lines:
+        schedule, why = _new_job_schedule(schedule_lines, schedule_op, contract_cents)
+        if why:
+            errors["sov"] = why
+    # ---- end schedule of values ----
     _refuse("Job not saved.", errors)
-    approver = approver or customer_name  # a homeowner signs off on their own bills
 
-    payer = _payer_named(state, customer_name)
-    near = None if payer or new_customer else payer_near(state, customer_name)
     if near:
         raise _same_customer_question("customer", customer_name, near)
+    same_job = job_near(state, name) if ask_same_job else None
+    if same_job:
+        raise GateError(f"You already have a job called {same_job['name']}.",
+                        fields={"name": f"You already have a job called {same_job['name']}. Open it, or keep this as a new job."},
+                        extra={"same_job": {"id": same_job["id"], "name": same_job["name"], "typed": name}})
     if not payer:
-        payer = _new_payer(state, customer_name, role, approver, ap_email, phone, client_type)
+        payer = _new_payer(state, customer_name, role, approver, ap_email, phone, client_type, approver_confirmed)
         payer.update(days)
     else:
+        missing = playbook_missing(payer)
+        if "client_type" in missing:
+            # A type never picked is answered here (checked above); after that it is the client's.
+            payer["client_type"] = client_type if client_type_role(client_type) else ("gc" if role == "GC" else "owner")
+            payer["role"] = role
+            audit(state, "", "playbook_update", f"{actor} set the client type of {payer['name']}: {payer['client_type']}.", actor)
         # A saved client keeps its type: the job follows it (the form doesn't ask, J2).
         role = payer.get("role") if payer.get("role") in {"Owner", "GC"} else role
         # Keep the payer's existing contact. A new job must not silently redirect
         # where every other job's pay apps go; changes belong in Customer settings.
         # A blank one is filled in, since nothing goes anywhere yet.
-        if ap_email and not str(payer.get("ap_email") or "").strip():
-            payer["ap_email"] = ap_email
-            audit(state, "", "playbook_update", f"{actor} added the email for pay apps to {payer['name']}: {ap_email}.", actor)
+        for k, value in (("approver", approver), ("ap_email", ap_email), ("phone", phone)):
+            if value and k in missing:
+                payer[k] = value
+                audit(state, "", "playbook_update", f"{actor} added {PLAYBOOK_WORDS[k]} to {payer['name']}: {value}.", actor)
+        if "approver" in missing:
+            payer["approver_confirmed"] = True
         differs = [
             label
             for label, new, old in (
@@ -3978,6 +5624,9 @@ def create_job(
                 f"{actor} entered a different {' and '.join(differs)} for {payer['name']}; kept the saved ones. Change them in the Client playbook.",
                 actor,
             )
+
+    if retainage_pct is None:
+        retainage_pct = default_retainage_pct(payer)   # none given: what the client usually holds (round 1, item 1)
 
     base = "".join(ch for ch in name.upper() if ch.isalnum())[:4] or "JOB"
     code = base
@@ -4030,27 +5679,53 @@ def create_job(
         "closed": False,
         "evidence": [],
         "done_notes": "",
+        "playbook_required": True,  # made under the rule, so a pay app waits for a complete playbook
     }
+    if end:
+        job["anticipated_end_on"] = end
     if parts is not None:
         job["address_parts"] = parts
     if assignee_id:
         job["assignee_id"], job["assignee_name"] = assignee_id, (assignee_name or "").strip()
+    # ---- schedule of values: every new job has one (Nov 3 Decision 1) ----
+    if auto_schedule:
+        job["schedule_required"] = True
+        job["sov"] = schedule or {"op_bp": 0, "lines": [sov.auto_line(job["contract_cents"], "sov-" + secrets.token_hex(8))]}
+    # ---- end schedule of values ----
     state["jobs"].append(job)
     audit(
         state,
         job["id"],
         "create_job",
-        f"{actor} created {job['name']} for {payer['name']} ({money(job['contract_cents'])}). The paperwork list comes with the first pay app.",
+        f"{actor} created {job['name']} for {payer['name']} ({money(job['contract_cents'])}). The supporting documents list comes with the first pay app.",
         actor,
     )
     return job
 
 
 
+def _new_job_schedule(raw_lines: Any, op_pct: Any, contract_cents: Any) -> tuple[dict[str, Any] | None, str]:
+    """The lines typed at New job as a schedule, or why they can't be saved."""
+    try:
+        lines = sov.clean_lines(raw_lines, [], lambda: "sov-" + secrets.token_hex(8))
+        schedule = {"op_bp": sov.to_bp(op_pct), "lines": lines}
+    except sov.SovError as exc:
+        return None, str(exc)
+    if not lines:
+        return None, ""
+    total = sov.totals({"sov": schedule})["contract_cents"]
+    if isinstance(contract_cents, int) and total != contract_cents:
+        diff = abs(total - contract_cents)
+        return None, (f"The schedule adds up to {money(total)}, {money(diff)} {'more' if total > contract_cents else 'less'} than the "
+                      f"{money(contract_cents)} contract. Change a line or the contract amount.")
+    return schedule, ""
+
+
 def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
     """Fix a job's name, address or contract number at any time. The contract amount can change
     only before the first pay app, and only without a schedule of values (change that schedule
-    instead). Retainage can change any time and applies from the next pay app (R4-07): pay apps
+    instead); a job on its one automatic lump-sum line can change it until a pay app is sent, and
+    the line and any open draft follow. Retainage can change any time and applies from the next pay app (R4-07): pay apps
     already sent keep what they held, and an open draft is drafted again at the new percent. The job code never changes: emails
     and texts are filed by it. Payer contacts are edited in the Payer Playbook.
 
@@ -4111,6 +5786,25 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
                 changes.append(f"start date from {was or 'none'} to {start}")
                 job["started_on"] = start
 
+    start_now = job_started_on(state, job)
+    if "anticipated_end_on" in updates:
+        typed = str(updates["anticipated_end_on"] or "").strip()
+        was = job.get("anticipated_end_on") or ""
+        try:
+            end = parse_end_date(typed, start_now, "The job was not changed.") if typed else ""
+        except GateError as exc:
+            problems.update(exc.fields)
+        else:
+            if end != was:
+                changes.append(f"anticipated end date from {was or 'none'} to {end or 'none'}")
+                if end:
+                    job["anticipated_end_on"] = end
+                else:
+                    job.pop("anticipated_end_on", None)
+    # A start date moved past an end date left as it was.
+    if "started_on" in updates and "anticipated_end_on" not in problems and start_now > (job.get("anticipated_end_on") or start_now):
+        problems["started_on"] = f"Enter a start date on or before the anticipated end date, {job['anticipated_end_on']}."
+
     if "assignee_id" in updates and (updates["assignee_id"] or "") != job.get("assignee_id", ""):
         who = str(updates.get("assignee_name") or "").strip() or "no one"
         changes.append(f"assigned to {who}" + (f" (was {job['assignee_name']})" if job.get("assignee_name") else ""))
@@ -4120,16 +5814,20 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
             job.pop("assignee_id", None)
             job.pop("assignee_name", None)
 
+    redraft = None
     if "contract_cents" in updates and updates["contract_cents"] != job["contract_cents"]:
         cents = updates["contract_cents"]
-        if has_pay_apps:
+        follows = _contract_follows(job)
+        if has_pay_apps and not follows:
             problems["contract_cents"] = "Use a change order: the contract amount is fixed once a pay app exists."
-        elif sov.has_sov(job):
+        elif sov.has_sov(job) and not follows:
             problems["contract_cents"] = "Change the contract from the schedule of values: this job bills from it."
         elif not isinstance(cents, int) or isinstance(cents, bool) or cents <= 0:
             problems["contract_cents"] = "Enter the contract amount, more than $0."
         elif cents > MAX_AMOUNT_CENTS:
             problems["contract_cents"] = f"Enter a contract amount up to {money(MAX_AMOUNT_CENTS)}."
+        elif cents + _signed_cos(job) <= 0:
+            problems["contract_cents"] = f"Signed change orders take {money(-_signed_cos(job))} off the contract. Enter more than that."
         else:
             changes.append(f"contract from {money(job['contract_cents'])} to {money(cents)}")
             job["contract_cents"] = cents
@@ -4138,8 +5836,11 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
                 job["completed_value_cents"] = cents + sum(
                     co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved"
                 )
+            if follows:
+                sov.follow_contract(job, cents)
+                job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
+                redraft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
 
-    redraft = None
     if "retainage_pct" in updates and updates["retainage_pct"] != job.get("retainage_pct", 0):
         pct = updates["retainage_pct"]
         open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
@@ -4159,11 +5860,17 @@ def edit_job(state: dict[str, Any], job_id: str, updates: dict[str, Any], actor:
         redraft["status"] = "void"
         redraft["voided_at"] = utcnow()
         redraft["replaced"] = True
-        changes.append(f"{redraft['number']} drafted again at {job['retainage_pct']}%")
+        changes.append(f"{redraft['number']} drafted again at {job['retainage_pct']}%"
+                       + (f" and the new contract amount" if "contract_cents" in updates and sov.is_auto(job) else ""))
         draft_invoice(state, job_id, actor="duracash", replaces=redraft, period_end=redraft.get("period_to") or "")
     if changes:
         audit(state, job_id, "edit_job", f"{actor} changed {job['name']}: " + "; ".join(changes) + ".", actor)
+    _refresh_draft_gate(job)   # a new contract amount can change whether a draft is the final one
     return job
+
+
+def _signed_cos(job: dict[str, Any]) -> int:
+    return sum(co["amount_cents"] for co in job["change_orders"] if co["status"] == "approved")
 
 
 def delete_job(state: dict[str, Any], job_id: str, actor: str = "owner") -> None:
@@ -4219,18 +5926,22 @@ def save_sov(
     op_pct: Any = 0,
     update_contract: bool = False,
     actor: str = "owner",
+    may_change_contract: bool = True,
 ) -> dict[str, Any]:
-    """Set the job's schedule of values. Allowed until the first pay app is drafted."""
+    """Set the job's schedule of values. Allowed until the first pay app is sent (Nov 3 Decision
+    2): an open draft doesn't lock it, it is drafted again from the new schedule. A draft that is
+    with the client for review has to be answered or deleted first. may_change_contract: whether
+    this person may make the schedule's total the contract (manage_jobs); the refusal says who can."""
     job = _open_job(state, job_id)
-    live = sov.live_invoices(job)
-    if live:
-        draft = _sov_draft_lock(job)
-        if draft:
-            raise GateError(f"The schedule is fixed while {draft['number']} is a draft. Delete the draft to change it.")
+    sent = [inv for inv in sov.live_invoices(job) if inv["status"] not in DRAFT_STATUSES]
+    if sent:
         raise GateError(
-            f"The schedule of values is fixed once a pay app exists ({live[0]['number']}). "
+            f"The schedule of values is fixed once a pay app has been sent ({sent[0]['number']}). "
             "Scope changes go through change orders, which add their own lines."
         )
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if _with_client(draft):
+        raise GateError(f"The schedule is fixed while {draft['number']} is with the client for review. Record their answer or delete the draft to change it.")
     if job.get("work_status") == "complete":
         raise GateError("The job is marked done. A schedule of values is set before billing starts.")
     try:
@@ -4238,11 +5949,15 @@ def save_sov(
         bp = sov.to_bp(op_pct)
     except sov.SovError as exc:
         raise GateError("Schedule of values not saved.", [str(exc)])
+    if not new_lines and job.get("schedule_required"):
+        # A new job always has a schedule: taking every line off leaves the one lump-sum line.
+        new_lines, bp = [sov.auto_line(job["contract_cents"], "sov-" + secrets.token_hex(8))], 0
     if not new_lines:
         if job.get("sov"):
             job.pop("sov", None)
             job["completed_value_cents"] = 0
             audit(state, job_id, "sov_removed", f"{actor} removed the schedule of values; progress is entered in dollars again.", actor)
+            _draft_follows_schedule(state, job, draft)
         return job
     candidate = {"op_bp": bp, "lines": new_lines}
     figures = sov.totals({"sov": candidate})
@@ -4256,9 +5971,12 @@ def save_sov(
                 [
                     f"Lines {money(figures['base_scheduled_cents'])} + overhead and profit {money(figures['op_scheduled_cents'])} = {money(figures['contract_cents'])}.",
                     f"Difference: {money(figures['contract_cents'] - contract)}.",
-                    "Adjust a line or the overhead and profit, or save it and change the contract amount to the schedule total.",
+                    "Adjust a line or the overhead and profit, or save it and change the contract amount to the schedule total." if may_change_contract
+                    else "Adjust a line or the overhead and profit. Changing the contract amount takes someone who can change a job's contract.",
                 ],
             )
+        if figures["contract_cents"] + _signed_cos(job) <= 0:
+            raise GateError(f"Signed change orders take {money(-_signed_cos(job))} off the contract, so the schedule has to total more than that.")
         job["contract_cents"] = figures["contract_cents"]
         audit(
             state,
@@ -4268,6 +5986,9 @@ def save_sov(
             actor,
         )
     earlier = job.get("completed_value_cents", 0)
+    kept = {line["id"] for line in new_lines}
+    discarded = [f"{line['description']} {_qty_words(line, sov.field_total(line))} ({money(sov.line_to_date(sov.anticipated(job, line)))})"
+                 for line in sov.lines(job) if not line.get("co_id") and line["id"] not in kept and sov.line_to_date(sov.anticipated(job, line)) > 0]
     # Change-order lines aren't edited here: they keep their progress and stored materials.
     co_lines = {l["co_id"]: l for l in sov.lines(job) if l.get("co_id")}
     job["sov"] = candidate
@@ -4285,10 +6006,28 @@ def save_sov(
         f"{actor} saved a schedule of values: {len(new_lines)} lines, {money(figures['base_scheduled_cents'])}"
         + (f" plus {bp / 100:g}% overhead and profit ({money(figures['op_scheduled_cents'])})" if bp else "")
         + "."
-        + (f" The earlier completed-to-date of {money(earlier)} is replaced by quantities." if earlier and not job["completed_value_cents"] else ""),
+        + (f" Recorded on lines replaced, and discarded: {'; '.join(discarded)}." if discarded else
+           f" The earlier completed-to-date of {money(earlier)} is replaced by quantities." if earlier and not job["completed_value_cents"] else ""),
         actor,
     )
+    _draft_follows_schedule(state, job, draft)
     return job
+
+
+def _draft_follows_schedule(state: dict[str, Any], job: dict[str, Any], draft: dict[str, Any] | None) -> None:
+    """A schedule was saved on a job with an open draft: the draft is drafted again from it, keeping
+    its number and paperwork. With nothing done on the new lines yet there is nothing to bill, so
+    the draft comes off and the next one picks up its number and paperwork (draft_invoice)."""
+    if not draft:
+        return
+    draft["status"] = "void"
+    draft["voided_at"] = utcnow()
+    draft["replaced"] = True
+    audit(state, job["id"], "draft_replaced", f"{draft['number']} ({money(draft['amount_cents'])}) replaced from the new schedule of values.", "duracash")
+    draft_invoice(state, job["id"], actor="duracash", replaces=draft, period_end=draft.get("period_to") or "")
+    if not any(inv["status"] in DRAFT_STATUSES for inv in job["invoices"]):
+        job["sov_replaced_draft"] = draft["id"]
+        audit(state, job["id"], "draft_replaced", f"The new schedule has no quantities done yet, so {draft['number']} comes back when they are entered, with its number and supporting documents.", "duracash")
 
 
 def record_sov_progress(
@@ -4299,7 +6038,7 @@ def record_sov_progress(
     actor: str = "owner",
     stored: Any = None,
     period_end: Any = "",
-    from_daily: str = "",
+    keep_amounts: bool = False,
 ) -> dict[str, Any]:
     """Record quantities completed to date, and materials stored, on schedule lines; draft the
     progress pay app. `done` maps line id -> quantity to date; `stored` maps line id -> dollars of
@@ -4307,9 +6046,12 @@ def record_sov_progress(
     The period's pay app is one draft that keeps up (M1): while it is only here, new progress
     replaces it, keeping its number, paperwork and notes, the way record_progress does for dollar
     jobs. Once it is with the client for review it has to be answered or voided first.
-    from_daily is the day of the daily record the quantities came from (YYYY-MM-DD): the lines it
-    moved carry it as from_daily_on, which the schedule card shows; progress typed on the job page
-    clears it from the lines it changes."""
+    This is the only way job records reach a draft (Nov 3): a line not in `done`, or blank in it,
+    is at its suggestion (its field total, or what is billed when that is more), and a figure typed that differs from the field total is the person's own, audited
+    with the suggested and final figures. It leaves the field total as it was. A quantity typed on a
+    line whose amount was changed by hand on the open draft is the newer entry: the amount gives way
+    to it, and the audit says so (Round 1 hunt), and so does a change to its stored materials; a
+    line sent at the quantity and stored materials it stands at keeps its amount. keep_amounts: the dollar form, which sets them next."""
     job = _open_job(state, job_id)
     if not sov.has_sov(job):
         raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
@@ -4318,29 +6060,53 @@ def record_sov_progress(
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft and open_draft.get("pencil_status") == "sent":
         raise GateError(f"{open_draft['number']} is with the client as a draft. Void it or record their answer first.")
+    if not open_draft:
+        _need_playbook(state, job)
     runs_to = period_to(job, period_end)
-    done = done if isinstance(done, dict) else {}
     stored = stored if isinstance(stored, dict) else {}
     # The open draft is about to be replaced: it doesn't count as billed while the new figures
     # are checked. Put back if they are refused.
     draft_status = open_draft["status"] if open_draft else ""
     if open_draft:
         open_draft["status"] = "void"
+    # A blank box and a line left out both mean the suggestion: what the card shows and suggests.
+    done = {k: v for k, v in done.items() if not (v is None or (isinstance(v, str) and not v.strip()))} if isinstance(done, dict) else {}
+    by_hand = dict((open_draft or {}).get("sov_overrides") or {})
+    # Only a line whose quantity or stored materials changed from the draft's: the form sends every box (Round 1 hunt).
+    giving_way = [] if keep_amounts else [line for line in sov.lines(job) if line["id"] in by_hand
+                                          and ((line["id"] in done and _qty_changed(line, done[line["id"]])) or _stored_changed(line, stored))]
+    billed_qty = sov.billed(job)["qty_by_line"]
+    for line in sov.lines(job):
+        want = sov.suggested_done(line, billed_qty.get(line["id"], 0))
+        if line["id"] not in done and want != line["done_milli"]:
+            done[line["id"]] = f"{want // 1000}.{want % 1000:03d}"
     try:
-        changes, rebill = _check_sov_progress(job, done, stored, replacing=open_draft)
+        changes, rebill = _check_sov_progress(job, done, stored, replacing=open_draft, amounts_go=bool(giving_way))
     except GateError:
         if open_draft:
             open_draft["status"] = draft_status
         raise
+    for line in giving_way:
+        by_hand.pop(line["id"], None)
+        qty_changed = line["id"] in done and _qty_changed(line, done[line["id"]])
+        entered = (f"entered {_qty_words(line, sov.to_milli(done[line['id']], sov_line_name(line)))}" if qty_changed
+                   else f"changed the stored materials to {money(sov.to_cents(stored[line['id']], 'stored materials'))}")
+        audit(state, job_id, "payapp_amount_changed", f"{actor} {entered} on "
+              f"{sov_line_name(line)}: the {money(open_draft['sov_overrides'][line['id']])} changed by hand gives way to it on {open_draft['number']}.", actor)
+    if giving_way:
+        open_draft["sov_overrides"] = by_hand
     summary = []
     for line, qty, store in changes:
         part = f"{line['description']} {sov.fmt_qty(line['done_milli'])} → {sov.fmt_qty(qty)} {line['unit']}"
         if store != int(line.get("stored_cents") or 0):
             part += f", stored {money(int(line.get('stored_cents') or 0))} → {money(store)}"
         summary.append(part)
-        if from_daily and qty != line["done_milli"]:
-            line["from_daily_on"] = from_daily
-        elif qty != line["done_milli"]:
+        if "field_milli" in line and qty != line["field_milli"]:
+            audit(state, job_id, "payapp_amount_changed", f"{actor} changed the pay app quantity, {sov_line_name(line)}: "
+                  f"suggested {sov.fmt_qty(line['field_milli'])} {line['unit']} ({money(sov.extend(line['field_milli'], line['rate_cents']))}), "
+                  f"final {sov.fmt_qty(qty)} {line['unit']} ({money(sov.extend(qty, line['rate_cents']))}).", actor)
+            line.pop("from_daily_on", None)
+        elif "field_milli" not in line and qty != line["done_milli"]:
             line.pop("from_daily_on", None)
         line["done_milli"] = qty
         line["stored_cents"] = store
@@ -4350,7 +6116,7 @@ def record_sov_progress(
         state,
         job_id,
         "record_progress",
-        (f"{actor} recorded progress to date{' from the daily record' if from_daily else ''}: {'; '.join(summary)}." if summary
+        (f"{actor} recorded progress to date: {'; '.join(summary)}." if summary
          else f"{actor} billed the work recorded before, unchanged.")
         + f" Completed and stored to date {money(job['completed_value_cents'])}."
         + (f" {notes}" if notes else ""),
@@ -4364,8 +6130,316 @@ def record_sov_progress(
     return draft_invoice(state, job_id, actor="duracash", period_end=runs_to, notes=notes)
 
 
+def done_for_amounts(state: dict[str, Any], job_id: str, done: Any, amounts: Any) -> dict[str, Any]:
+    """The quantities to go with "Bill by dollars" (Round 1 hunt): the page sends the line's % done
+    rounded down to a tenth of a percent beside the dollars. A draw smaller than that step would
+    round to no progress at all, so the line steps up to the next tenth that holds the dollars; the
+    pay app then bills the dollars exactly (set_payapp_amounts)."""
+    job = _job(state, job_id)
+    out = dict(done) if isinstance(done, dict) else {}
+    if not isinstance(amounts, dict):
+        return out
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    already = sov.billed(job, skip=draft)
+    for line in sov.lines(job):
+        raw = amounts.get(line["id"])
+        if raw is None or (isinstance(raw, str) and not raw.strip()) or line["scheduled_cents"] <= 0:
+            continue
+        try:
+            cents = sov.to_cents(raw, sov_line_name(line))
+            typed = sov.to_milli(out[line["id"]], sov_line_name(line)) if line["id"] in out else None
+        except sov.SovError:
+            continue
+        before = already["qty_by_line"].get(line["id"], 0)
+        if cents <= 0 or (typed is not None and typed > before):
+            continue
+        to_date = already["by_line"].get(line["id"], 0) + cents
+        need = min(line["qty_milli"], max(before + 1, -(-to_date * line["qty_milli"] // line["scheduled_cents"])))
+        out[line["id"]] = f"{need // 1000}.{need % 1000:03d}"
+    return out
+
+
+def drafted_at(state: dict[str, Any], job_id: str, done: Any) -> bool:
+    """The open draft already stands at these quantities, and it isn't with the client: only its
+    amounts can change (a new dollar amount within the same tenth of a percent)."""
+    job = _job(state, job_id)
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    if not draft or _with_client(draft) or not isinstance(done, dict) or not done:
+        return False
+    by_id = {line["id"]: line for line in sov.lines(job)}
+    try:
+        return all(k in by_id and sov.to_milli(v, sov_line_name(by_id[k])) == by_id[k]["done_milli"]
+                   for k, v in done.items() if not (v is None or (isinstance(v, str) and not v.strip())))
+    except sov.SovError:
+        return False
+
+
+def _stored_changed(line: dict[str, Any], stored: dict[str, Any]) -> bool:
+    """Stored materials sent for a line differ from the open draft's. A blank box is no change; one
+    that can't be read counts as changed, as for a quantity."""
+    value = stored.get(line["id"])
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return False
+    try:
+        return sov.to_cents(value, "stored materials") != int(line.get("stored_cents") or 0)
+    except sov.SovError:
+        return True
+
+
+def _qty_changed(line: dict[str, Any], value: Any) -> bool:
+    """A figure sent for a line differs from the quantity the open draft stands at. One that can't
+    be read counts as changed: the check after says what is wrong with it."""
+    try:
+        return sov.to_milli(value, sov_line_name(line)) != line["done_milli"]
+    except sov.SovError:
+        return True
+
+
+def _qty_words(line: dict[str, Any], milli: int) -> str:
+    """A quantity as the line is measured: a lump sum in %, anything else in its unit."""
+    if str(line.get("unit", "")).upper() == "LS" and line.get("qty_milli") == 1000:
+        return f"{sov.fmt_qty(milli * 100)}%"
+    return f"{sov.fmt_qty(milli)} {line['unit']}".strip()
+
+
+def _field_totals_change(state: dict[str, Any], job: dict[str, Any], changes: list[tuple[dict[str, Any], int]]) -> str:
+    """Set the field totals, (line, new total) each. What the card suggests follows; a draft drafted
+    at the old field total follows too, unless it is with the client, and a figure typed on a draft
+    stays until the person changes it. Returns what became of the draft, in words for the audit."""
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    billed_qty = sov.billed(job, skip=draft)["qty_by_line"]
+    on_draft = {e["line_id"]: e for e in (draft or {}).get("sov_sheet") or []}
+    follows = []
+    for line, new in changes:
+        # As the progress form reads it: typed when it differed from the field on the day it was drafted.
+        at_draft = on_draft.get(line["id"], {}).get("field_milli_at_draft", sov.field_total(line))
+        if line["done_milli"] == at_draft:
+            follows.append(line)
+        line["field_milli"] = new
+        line.pop("from_daily_on", None)
+    for line, _new in changes:
+        if not draft:
+            line["done_milli"] = sov.suggested_done(line, billed_qty.get(line["id"], 0))
+    job["completed_value_cents"] = sov.totals({"sov": {"op_bp": sov.op_bp(job), "lines": [sov.anticipated(job, l) for l in sov.lines(job)]}})["to_date_cents"]
+    if not draft:
+        return ""
+    if _with_client(draft):
+        return f" {draft['number']} is with the client and still bills what they have."
+    if not follows:
+        _refresh_draft_gate(job, state)
+        return f" {draft['number']} keeps the quantity typed on it."
+    for line in follows:
+        line["done_milli"] = sov.suggested_done(line, billed_qty.get(line["id"], 0))
+    _redraft(state, job, draft, "at the corrected field total")
+    return "" if any(inv["status"] in DRAFT_STATUSES for inv in job["invoices"]) else f" {draft['number']} came off: nothing is left to bill."
+
+
+def correct_field_total(state: dict[str, Any], job_id: str, line_id: str, qty: Any, reason: Any, actor: str = "owner",
+                        below_billed: bool = False) -> dict[str, Any]:
+    """Change what the field has recorded on a line: a wrong quantity on a job record or an imported
+    file. It takes a reason, and the audit keeps the old and new totals. Sent pay apps don't change;
+    going below what they billed has to be said (below_billed)."""
+    from domain.daily import quantities_blocked
+    job = _open_job(state, job_id)
+    blocked = quantities_blocked(job)
+    if blocked:
+        raise GateError(blocked)
+    line = next((l for l in sov.lines(job) if l["id"] == line_id), None)
+    if not line:
+        _refuse("", {"line_id": "Pick a line of this job's schedule of values."})
+    name = sov_line_name(line)
+    if line["scheduled_cents"] < 0:
+        raise GateError(f"{name}: a credit has no quantities to correct.")
+    reason = _reason(reason)
+    errors = {} if reason else {"reason": "Enter why the total is wrong, like the import had 90 and 9 was meant."}
+    new = 0
+    try:
+        new = sov.to_milli(qty, name)
+    except sov.SovError as exc:
+        errors["qty"] = str(exc)
+    else:
+        if new < 0:
+            errors["qty"] = f"{name}: the total can't be negative."
+        elif new > line["qty_milli"]:
+            errors["qty"] = over_schedule_text(line, new)
+        elif sov.line_completed({**line, "done_milli": new}) + int(line.get("stored_cents") or 0) > line["scheduled_cents"]:
+            errors["qty"] = f"{name}: work done plus the materials stored is more than the line's scheduled value. Lower the stored materials first."
+    _refuse("Field total not corrected.", errors)
+    old = sov.field_total(line)
+    if new == old:
+        _refuse("", {"qty": f"{name} is already at {_qty_words(line, old)}."})
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    sent_qty = sov.billed(job, skip=draft)["qty_by_line"].get(line_id, 0)
+    if new < sent_qty and not below_billed:
+        raise GateError(f"{name}: {_qty_words(line, sent_qty)} is already billed. Pay apps sent stay as they are, and nothing more is suggested until the field total passes that. Confirm to go below it.",
+                        extra={"below_billed": True})
+    what = _field_totals_change(state, job, [(line, new)])
+    audit(state, job_id, "field_total_corrected",
+          f"{actor} corrected the field total, {name}: {_qty_words(line, old)} to {_qty_words(line, new)}. {reason}."
+          + (f" {_qty_words(line, sent_qty)} is already billed and stays billed." if new < sent_qty else "") + what, actor)
+    return job
+
+
+def undo_quantity_import(state: dict[str, Any], job_id: str, record_id: str, actor: str = "owner", below_billed: bool = False) -> dict[str, Any]:
+    """Take off what an imported quantity file added (qty_import.apply), line by line, down to zero
+    at most. The record stays, saying so. Going below what sent pay apps billed has to be said."""
+    from domain.daily import quantities_blocked
+    job = _open_job(state, job_id)
+    blocked = quantities_blocked(job)
+    if blocked:
+        raise GateError(blocked)
+    record = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not record:
+        raise GateError("Job record not found.")
+    rows = record.get("quantities") or []
+    if not rows:
+        raise GateError("That record added no quantities that can be taken off." if not record.get("quantities_undone") else "That import was already undone.")
+    by_id = {line["id"]: line for line in sov.lines(job)}
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    sent = sov.billed(job, skip=draft)["qty_by_line"]
+    changes, words, gone, below = [], [], [], []
+    for row in rows:
+        line = by_id.get(row["line_id"])
+        if not line:
+            gone.append(row["line_id"])
+            continue
+        old = sov.field_total(line)
+        new = max(0, old - row["qty_milli"])
+        changes.append((line, new))
+        words.append(f"{sov_line_name(line)}: {_qty_words(line, old)} to {_qty_words(line, new)}")
+        if new < sent.get(line["id"], 0):
+            below.append(f"{sov_line_name(line)}: {_qty_words(line, sent[line['id']])} is already billed")
+    if below and not below_billed:
+        raise GateError("Pay apps sent stay as they are, and nothing more is suggested until the field total passes what they billed. Confirm to undo it.",
+                        below, extra={"below_billed": True})
+    what = _field_totals_change(state, job, changes)
+    now = utcnow()
+    record["quantities_undone"] = {"by": actor, "at": now, "rows": rows}
+    record.pop("quantities")
+    audit(state, job_id, "quantities_import_undone",
+          f"{actor} undid the quantities from {record['label']}: {'; '.join(words) or 'nothing to take off'}."
+          + (f" {len(gone)} line{'' if len(gone) == 1 else 's'} no longer on the schedule." if gone else "")
+          + (f" Below what is billed: {'; '.join(below)}." if below else "") + what, actor)
+    return job
+
+
+def _holds_paid_retainage(job: dict[str, Any], invoice: dict[str, Any], m: dict[str, int] | None = None) -> bool:
+    """Retainage the client paid must still have a pay app holding it, so a pay app whose retainage
+    is part of what was paid stays. A credit off the retainage moved no money and only stands while
+    something is held (job_money), so it doesn't hold a pay app."""
+    m = m or job_money(job)
+    return m["retainage_released_cents"] > m["retainage_held_cents"] - int(invoice.get("retainage_cents") or 0)
+
+
+def _overbilling_way_out(job: dict[str, Any], m: dict[str, int]) -> str:
+    """What can settle the overbilling when no refund can: the words for what works on this job now."""
+    open_ones = [inv for inv in job["invoices"] if inv["status"] in OPEN_FOR_PAYMENT]
+    part_paid = next((inv for inv in open_ones if any(p.get("invoice_id") == inv["id"] for p in job["payments"])), None)
+    unpaid = next((inv for inv in reversed(open_ones) if not any(p.get("invoice_id") == inv["id"] for p in job["payments"]) and not _holds_paid_retainage(job, inv, m)), None)
+    ways = []
+    if retainage_credit_room(job, m):
+        ways.append(f"take the signed credit off the {money(m['retainage_open_cents'])} retainage held")
+    if part_paid:
+        ways.append(f"accept what is left on {part_paid['number']} as short pay")
+    if unpaid:
+        ways.append(f"pull back {unpaid['number']} and draft it again")
+    return (" Or ".join(w[0].upper() + w[1:] for w in ways) + ".") if ways else "Sign a change order for the difference."
+
+
+def settle_overbilling(state: dict[str, Any], job_id: str, reason: Any, actor: str = "owner") -> dict[str, Any]:
+    """The client paid past the contract and got the difference back outside Duracash (a refund, or
+    a credit on other work): recorded with what was done, so the job can be finished. returned_cents
+    is the money that went back, which comes off what the job has received: what covers only a short
+    pay accepted (money that never came in) is a credit and moved nothing."""
+    job = _open_job(state, job_id)
+    m = job_money(job)
+    if not m["overbilled_cents"]:
+        raise GateError("This job isn't overbilled.")
+    cents = m["overbilling_settleable_cents"]
+    if not cents:
+        received = m["payments_cents"] + m["short_paid_cents"] + m["retainage_released_cents"]
+        last = next((inv for inv in reversed(job["invoices"]) if inv["status"] in BILLED_STATUSES), None)
+        way_out = _overbilling_way_out(job, m)
+        if not received:
+            raise GateError(f"Nothing is paid on {(last or {}).get('number', 'this job')}, so there is nothing to refund. Pull it back and draft it again.")
+        if m["overbilling_settled_cents"]:
+            raise GateError(f"The {money(m['overbilling_settled_cents'])} paid above the contract total of {money(m['billing_allowed_cents'])} is already recorded as refunded or credited. {way_out}")
+        raise GateError(f"{money(received)} is paid, which is not above the contract total of {money(m['billing_allowed_cents'])}, so there is nothing to refund. {way_out}")
+    reason = _reason(reason)
+    if not reason:
+        _refuse("", {"reason": "Enter what was done, like refund check 1044."})
+    money_above = max(0, m["payments_cents"] + m["retainage_released_cents"] - m["billing_allowed_cents"] - m["refunded_cents"])
+    job.setdefault("overbilling_settled", []).append({"cents": cents, "returned_cents": min(cents, money_above), "by": actor, "at": utcnow(), "reason": reason})
+    audit(state, job_id, "overbilling_settled", f"{actor} recorded {money(cents)} of overbilling as refunded or credited: {reason}."
+          + (f" {money(m['overbilled_cents'] - cents)} stays overbilled: that much more was not collected." if cents < m["overbilled_cents"] else ""), actor)
+    return job
+
+
+def apply_credit_to_retainage(state: dict[str, Any], job_id: str, reason: Any, actor: str = "owner", amount_cents: Any = None) -> dict[str, Any]:
+    """A signed credit taken out of the retainage held: the client doesn't pay that part of it, and
+    nothing was overpaid to refund. It lowers what is held, with no money recorded and no waiver
+    owed for that part. amount_cents blank is all that can go."""
+    job = _open_job(state, job_id)
+    m = job_money(job)
+    room = retainage_credit_room(job, m)
+    if not room:
+        if not m["retainage_open_cents"]:
+            raise GateError("No retainage is held to take a credit off.")
+        if not m["overbilled_cents"]:
+            raise GateError("Nothing is overbilled, so there is no credit to take off the retainage.")
+        raise GateError("No signed credit is left to take off the retainage.")
+    if amount_cents in (None, ""):
+        amount_cents = room
+    if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
+        _refuse("", {"amount_cents": "Enter the amount, more than $0."})
+    if amount_cents > room:
+        _refuse("", {"amount_cents": f"Enter no more than {money(room)}. You entered {money(amount_cents)}."})
+    reason = _reason(reason)
+    if not reason:
+        _refuse("", {"reason": "Enter what was agreed, like CO 3's credit comes off retainage."})
+    now = utcnow()
+    job.setdefault("retainage_credits", []).append({"cents": amount_cents, "by": actor, "at": now, "reason": reason})
+    # The last of what was held gone with nothing else open finishes the job, and no release is left
+    # to carry its final waiver: it comes due here, unless one went out already.
+    # A final waiver already due and not sent (the paid pay app's own, say) covers it too (Nov 6 review, B).
+    owes_final = suggested_waiver_kind(job).endswith("_final") and not any(
+        x.get("waiver_sent") and str(x.get("waiver_kind") or x.get("kind") or "").endswith("_final") for x in job["invoices"] + job.get("retainage_waivers", [])) \
+        and not any((release_due_kind(job, x) if "reference" in x else suggested_waiver_kind(job, x)).endswith("_final") for x in _pending_waivers(job))
+    due = False
+    if owes_final:
+        waivers = job.setdefault("retainage_waivers", [])
+        release = {"id": f"rw-{len(waivers) + 1}", "amount_cents": amount_cents, "reference": "Signed credit", "at": now, "kind": "unconditional_final", "credit": True}
+        waivers.append(release)
+        due = _waiver_comes_due(state, job, release, "the signed credit that finishes the job")
+    _sync_waiver(job)
+    _refresh_draft_gate(job, state)
+    audit(state, job_id, "retainage_credited",
+          f"{actor} took {money(amount_cents)} of signed credit off the retainage held: {reason}. No money was received."
+          + (" It finishes the job, so the final lien waiver is due." if due else " No waiver is owed for it."), actor)
+    return job
+
+
+def _settlements_follow(state: dict[str, Any], job: dict[str, Any], why: str) -> None:
+    """The billed total changed: a refund or credit recorded stays only for money that came in. What
+    no longer counts comes off (old data, settled on a pay app nobody paid), and the audit says so."""
+    entries = job.get("overbilling_settled") or []
+    recorded = sum(int(s["cents"]) for s in entries)
+    keep = job_money(job)["overbilling_settled_cents"]
+    if recorded <= keep:
+        return
+    kept = []
+    for entry in entries:
+        take = min(int(entry["cents"]), keep)
+        keep -= take
+        if take:
+            kept.append({**entry, "cents": take, "returned_cents": min(take, int(entry.get("returned_cents", take)))})
+    job["overbilling_settled"] = kept
+    audit(state, job["id"], "overbilling_settled_dropped",
+          f"{why}: {money(recorded - sum(s['cents'] for s in kept))} recorded as refunded or credited no longer counts, since that much never came in.", "duracash")
+
+
 def _check_sov_progress(job: dict[str, Any], done: dict[str, Any], stored: dict[str, Any],
-                        replacing: dict[str, Any] | None = None) -> tuple[list[tuple[dict[str, Any], int, int]], bool]:
+                        replacing: dict[str, Any] | None = None, amounts_go: bool = False) -> tuple[list[tuple[dict[str, Any], int, int]], bool]:
     """The lines whose quantity to date or stored materials change, each (line, quantity, stored),
     checked against the schedule and what is already billed; and whether work recorded earlier and
     not on a pay app is drafted again unchanged. Raises GateError with every problem."""
@@ -4403,15 +6477,16 @@ def _check_sov_progress(job: dict[str, Any], done: dict[str, Any], stored: dict[
             errors.append(f"{name}: {sov.fmt_qty(billed_qty[line_id])} {line['unit']} is already billed; the quantity to date can't go below that.")
         elif sov.line_completed(trial_line) + store > line["scheduled_cents"]:
             errors.append(f"{name}: work done plus {money(store)} stored is more than the line's {money(line['scheduled_cents'])}. Lower the stored materials as they are installed.")
-        elif sov.line_to_date(trial_line) < already["by_line"].get(line_id, 0):
-            errors.append(f"{name}: {money(already['by_line'][line_id])} is already billed on this line; work done plus stored materials can't go below that.")
+        elif line["scheduled_cents"] >= 0 and sov.line_to_date(trial_line) < min(already["by_line"].get(line_id, 0), sov.line_to_date(line)):
+            # A credit (a signed change order for less) goes further below nothing as its work is done.
+            errors.append(f"{name}: {money(already['by_line'].get(line_id, 0))} is already billed on this line; work done plus stored materials can't go below that.")
         elif qty != line["done_milli"] or store != int(line.get("stored_cents") or 0):
             changes.append((line, qty, store))
     if errors:
         raise GateError("Progress not recorded.", errors)
-    if not changes and replacing:
+    if not changes and replacing and not amounts_go:
         raise GateError(f"{replacing['number']} is already drafted at those quantities. Enter the corrected quantities to date.")
-    if not changes and not rebill:
+    if not changes and not rebill and not amounts_go:
         raise GateError("Nothing changed. Enter quantities to date or stored materials that differ from the last ones recorded.")
     return changes, rebill
 
@@ -4431,6 +6506,13 @@ def over_schedule_text(line: dict[str, Any], qty: int) -> str:
             "Extra scope is a change order.")
 
 
+def over_schedule_note(line: dict[str, Any], extra: int) -> str:
+    """What didn't fit on a line, for a job record: the part past the scheduled quantity."""
+    if str(line.get("unit", "")).upper() == "LS" and line.get("qty_milli") == 1000:
+        return f"{sov_line_name(line)}: {sov.fmt_qty(extra * 100)}% is over 100% and wasn't added. Extra scope is a change order."
+    return f"{sov_line_name(line)}: {sov.fmt_qty(extra)} {line['unit']} is over the schedule and wasn't added. Extra scope is a change order."
+
+
 def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> str:
     """The pay app as plain text, for the email body and the pencil copy."""
     out = [f"{'FINAL APPLICATION ' if invoice.get('final') else ''}{invoice['number']} — {job['name']}", job.get("address", "")]
@@ -4445,8 +6527,9 @@ def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, 
         out += ["", "Schedule of values (continuation sheet, dollars):", sheet]
     packet = [p for p in invoice.get("packet") or [] if p.get("required")]
     if packet:
-        out += ["", "Paperwork:"]
-        out += [f"  [{'x' if p.get('present') else ' '}] {p['label']}" for p in packet]
+        out += ["", "Supporting documents:"]
+        # An overridden item has no checked file behind it: no tick, and its reason stays inside.
+        out += [f"  Not attached: {p['label']}" if p.get("override") else f"  [{'x' if p.get('present') and not sov.name_only_open(job, invoice, p) else ' '}] {p['label']}" for p in packet]
     return "\n".join(out).strip()
 
 
@@ -4454,7 +6537,7 @@ def _packet_file_ids(state: dict[str, Any], job: dict[str, Any], invoice: dict[s
     """Stored files the email carries (M4): those behind the records attached to this pay app's
     paperwork, then those of the records added to the send, less the files left out."""
     records = {r["id"]: r for r in job.get("records", [])}
-    record_ids = [att.get("record_id") for item in invoice.get("packet") or [] for att in item.get("attachments", [])]
+    record_ids = [att.get("record_id") for item in invoice.get("packet") or [] for att in _going(item)]
     record_ids += list(invoice.get("extra_record_ids") or [])
     excluded = set(invoice.get("excluded_file_ids") or [])
     ids: list[str] = []
@@ -4469,7 +6552,7 @@ PAYAPP_ATTACHMENT_ACTIONS = ("add_record", "remove_record", "exclude_file", "inc
 
 
 def change_payapp_attachments(state: dict[str, Any], job_id: str, invoice_id: str, action: str, target: str,
-                              actor: str = "owner") -> dict[str, Any]:
+                              actor: str = "owner", read_file: Any = None) -> dict[str, Any]:
     """Adjust what a draft pay app's email carries (M4): add a job record that is not a paperwork
     item (an extra photo, a supplier invoice), take one back off, or leave one file out and put it
     back. Only before it is sent. Leaving out the last file behind a paperwork item makes that
@@ -4495,6 +6578,7 @@ def change_payapp_attachments(state: dict[str, Any], job_id: str, invoice_id: st
             if not rec.get("file_ids"):
                 raise GateError(f"{rec['label']} has no file to send.")
             extra.append(target)
+            _read_waiver(state, rec, read_file)   # the page asks whether it is a lien waiver, when it reads as one
             words = f"added {rec['label']} to the email for {invoice['number']}"
         else:
             if target not in extra:
@@ -4503,7 +6587,7 @@ def change_payapp_attachments(state: dict[str, Any], job_id: str, invoice_id: st
             words = f"took {rec['label']} off the email for {invoice['number']}"
     else:
         going = _packet_file_ids(state, job, {**invoice, "excluded_file_ids": []})
-        if target not in going:
+        if target not in going and target not in excluded:
             raise GateError("That file does not go with this pay app.")
         meta = next((f for f in state.get("files", []) if f["id"] == target), {})
         name = meta.get("name") or "the file"
@@ -4529,7 +6613,7 @@ def _items_follow_files(job: dict[str, Any], invoice: dict[str, Any]) -> None:
     records = {r["id"]: r for r in job.get("records", [])}
     excluded = set(invoice.get("excluded_file_ids") or [])
     for item in invoice.get("packet") or []:
-        files = [fid for a in item.get("attachments", []) for fid in (records.get(a.get("record_id")) or {}).get("file_ids", [])]
+        files = [fid for a in _going(item) for fid in (records.get(a.get("record_id")) or {}).get("file_ids", [])]
         if not files or item.get("marked_in_hand") or item.get("present_reason"):
             continue
         out = set(files) <= excluded
@@ -4561,45 +6645,159 @@ def link_record_to_work(state: dict[str, Any], job_id: str, record_id: str, co_i
 
 
 def _sov_draft_lock(job: dict[str, Any]) -> dict[str, Any] | None:
-    """The unsent draft pay app that is the only thing keeping the schedule fixed, if there is one.
-    Wording only: the rule (no edits while any pay app exists) is the same either way."""
-    live = sov.live_invoices(job)
-    if job.get("closed") or job.get("work_status") == "complete" or not live:
+    """The draft that is with the client for review, if that is the only thing keeping the schedule
+    fixed: recording their answer or deleting it opens the schedule again."""
+    if job.get("closed") or job.get("work_status") == "complete":
         return None
+    live = sov.live_invoices(job)
     if any(inv.get("status") not in DRAFT_STATUSES for inv in live):
         return None
-    return live[0]
+    return next((inv for inv in live if _with_client(inv)), None)
 
 
-def _sov_view(job: dict[str, Any]) -> dict[str, Any]:
-    """What the job page shows for the schedule of values: per-line figures and whether it can be edited.
-    draft_lock names the draft pay app when deleting it would make the schedule editable again."""
-    editable = not job.get("closed") and job.get("work_status") != "complete" and not sov.live_invoices(job)
-    draft = _sov_draft_lock(job)
-    draft_lock = {"id": draft["id"], "number": draft["number"]} if draft else None
-    if not sov.has_sov(job):
-        return {"present": False, "editable": editable, "draft_lock": draft_lock}
-    figures = sov.totals(job)
-    already = sov.billed(job)
+def _contract_follows(job: dict[str, Any]) -> bool:
+    """The contract amount can still change and take the automatic lump-sum line with it."""
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    return (sov.is_auto(job) and not job.get("closed") and not _with_client(draft)
+            and not any(inv.get("status") not in DRAFT_STATUSES for inv in sov.live_invoices(job)))
+
+
+def _quantities_from_records(state: dict[str, Any], job: dict[str, Any], since: str) -> dict[str, dict[str, int]]:
+    """What the job records since the last sent pay app put on each line, {line id: {milli, count}}:
+    daily records' quantities that were added (those kept on the record only don't count) and
+    imported files'."""
+    found: dict[str, dict[str, int]] = {}
+    ids = set(job.get("daily_records") or [])
+    daily = [r for r in state.get("daily_records", []) if r.get("id") in ids] if ids else []
+    # Records from before quantities_added: all of a record's quantities went on, or none did.
+    rows = [(r.get("at") or "", r.get("quantities_added", [] if r.get("quantities_not_applied") else (r.get("sections") or {}).get("quantities") or []))
+            for r in daily]
+    rows += [(r.get("added_at") or "", r["quantities"]) for r in job.get("records", []) if r.get("quantities")]
+    for at, quantities in rows:
+        if at > since:
+            for row in quantities:
+                entry = found.setdefault(row["line_id"], {"milli": 0, "count": 0})
+                entry["milli"] += row["qty_milli"]
+                entry["count"] += 1
+    return found
+
+
+def _sov_period(state: dict[str, Any] | None, job: dict[str, Any]) -> dict[str, Any]:
+    """The current billing period on the job's card and progress form: everything recorded and not
+    yet billed on a sent pay app, late records included. Per line, the quantity done this period
+    (field total less what sent pay apps billed), how much of it job records added since the last
+    pay app was drafted, what it adds up to, and the suggested amount; then the open draft's own
+    figures beside them, which a later job record doesn't change. `from` and `to` are the period
+    dates the pay apps carry (period_to, the person's local day)."""
+    draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    suggested = sov.this_period(job, skip=draft, field=True)
+    drafted = {e["line_id"]: e["amount_cents"] for e in (draft or {}).get("sov_sheet") or []}
+    chosen = (draft or {}).get("sov_overrides") or {}
+    already = sov.billed(job, skip=draft)
+    sent = [inv for inv in sov.live_invoices(job) if inv.get("status") not in DRAFT_STATUSES]
+    since = max((inv.get("created_at") or "" for inv in sent), default="")
+    records = _quantities_from_records(state, job, since) if state else {}
+    by_id = {line["id"]: line for line in sov.lines(job)}
     rows = []
-    for line in sov.lines(job):
+    for entry in suggested["sheet"]:
+        line = by_id[entry["line_id"]]
+        found = records.get(entry["line_id"]) or {}
+        rows.append({
+            "line_id": entry["line_id"], "item": entry["item"], "description": entry["description"], "unit": entry["unit"],
+            "lump_sum": entry["unit"].upper() == "LS" and entry["qty_milli"] == 1000,
+            "qty_this_milli": entry["qty_milli_this"],
+            # A later correction can leave less on the line than the records added.
+            "from_records_milli": min(found.get("milli", 0), entry["qty_milli_this"]), "record_count": found.get("count", 0),
+            "adds_up_cents": entry["work_this_cents"],
+            "suggested_cents": entry["amount_cents"], "final_cents": drafted.get(entry["line_id"], 0),
+            "changed": entry["line_id"] in chosen,
+            "credit": line["scheduled_cents"] < 0,
+            "room_cents": sov.line_room(line, already["by_line"].get(line["id"], 0)),
+        })
+    unsigned = sum(co["amount_cents"] for co in unsigned_cos_in_billing(job))
+    pct = int((draft or {}).get("retainage_pct", job.get("retainage_pct")) or 0)
+    gross = suggested["total_cents"] + unsigned
+    # A signed credit with nothing else to bill suggests nothing; it waits to come off the next pay app.
+    waiting = max(0, -gross)
+    gross = max(0, gross)
+    held = (gross * pct + 50) // 100 if pct and gross > 0 else 0
+    return {
+        "from": max((inv.get("period_to") or "" for inv in sent), default=""),
+        "to": (draft or {}).get("period_to") or "",
+        "draft": {"id": draft["id"], "number": draft["number"], "with_client": _with_client(draft)} if draft else None,
+        "lines": rows,
+        "op_suggested_cents": suggested["op_cents"], "op_final_cents": (draft or {}).get("op_cents", 0),
+        "unsigned_cents": unsigned, "retainage_pct": pct,
+        "suggested_gross_cents": gross, "suggested_retainage_cents": held, "suggested_net_cents": gross - held,
+        "credit_waiting_cents": waiting, "credit_waiting_names": [r["description"] for r in rows if r["credit"] and r["suggested_cents"] < 0] if waiting else [],
+        "final_gross_cents": (draft or {}).get("gross_cents", 0), "final_retainage_cents": (draft or {}).get("retainage_cents", 0),
+        "final_net_cents": (draft or {}).get("amount_cents", 0),
+        "changed": bool(chosen),
+    }
+
+
+def _progress_form_figure(line: dict[str, Any], entry: dict[str, Any] | None) -> int:
+    """What the progress form starts from: the open draft's own figure when one was typed for it
+    (it differed from the field then), else the field total, which keeps up with job records."""
+    if not entry:
+        return sov.field_total(line)
+    at_draft = entry.get("field_milli_at_draft", sov.field_total(line))   # drafts from before this was kept
+    return line["done_milli"] if line["done_milli"] != at_draft else sov.field_total(line)
+
+
+def _sov_view(job: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any]:
+    """What the job page shows for the schedule of values: per-line figures, the current period and
+    whether it can be edited (until the first pay app is sent, Nov 3 Decision 2). draft_lock names
+    a draft that is with the client when answering or deleting it would open the schedule again;
+    open_draft is a draft that saving the schedule would draft again; sent names the first pay app
+    that went out; contract_follows says the Edit job form can still change the contract amount."""
+    live = sov.live_invoices(job)
+    first_sent = next((inv for inv in live if inv.get("status") not in DRAFT_STATUSES), None)
+    draft = _sov_draft_lock(job)
+    open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
+    editable = not job.get("closed") and job.get("work_status") != "complete" and not first_sent and not _with_client(open_draft)
+    view = {
+        "editable": editable,
+        "draft_lock": {"id": draft["id"], "number": draft["number"]} if draft else None,
+        "open_draft": {"id": open_draft["id"], "number": open_draft["number"], "amount_cents": open_draft["amount_cents"]} if open_draft and editable else None,
+        "sent": first_sent["number"] if first_sent else "",
+        "done": job.get("work_status") == "complete" or bool(job.get("closed")),
+    }
+    if not sov.has_sov(job):
+        return {"present": False, **view}
+    # The card reads the field: quantities recorded count as done whether or not they are billed yet.
+    field_lines = [sov.anticipated(job, line) for line in sov.lines(job)]
+    figures = sov.totals({"sov": {"op_bp": sov.op_bp(job), "lines": field_lines}})
+    already = sov.billed(job)
+    sent_before = sov.billed(job, skip=open_draft)
+    sent_qty = sent_before["qty_by_line"]
+    on_draft = {e["line_id"]: e for e in (open_draft or {}).get("sov_sheet") or []}
+    rows = []
+    for stored, line in zip(sov.lines(job), field_lines):
         to_date = sov.line_to_date(line)
         rows.append({
             **line,
             "to_date_cents": to_date,
             "billed_cents": already["by_line"].get(line["id"], 0),
             "billed_qty_milli": already["qty_by_line"].get(line["id"], 0),
+            "sent_qty_milli": sent_qty.get(line["id"], 0),
+            "sent_cents": sent_before["by_line"].get(line["id"], 0),   # billed on pay apps that went, the open draft left out
+            "field_milli": sov.field_total(stored),
+            "form_done_milli": _progress_form_figure(stored, on_draft.get(line["id"])),
             "pct": (100 * to_date) // line["scheduled_cents"] if line["scheduled_cents"] else 0,
             "lump_sum": line["unit"].upper() == "LS" and line["qty_milli"] == 1000,
         })
     return {
         "present": True,
-        "editable": editable,
-        "draft_lock": draft_lock,
+        **view,
+        "auto": sov.is_auto(job),
+        "contract_follows": _contract_follows(job),
         "op_bp": sov.op_bp(job),
         "op_billed_cents": already["op_cents"],
+        "op_sent_cents": sent_before["op_cents"],
         "totals": figures,
         "lines": rows,
+        "period": None if job.get("closed") else _sov_period(state, job),
     }
 
 

@@ -21,11 +21,13 @@ import csv
 import io
 import re
 import zipfile
+import zlib
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from xml.etree import ElementTree
+from xml.parsers import expat
 from typing import Any
 
+import contract_import
 import domain
 
 COLUMNS = {
@@ -69,9 +71,12 @@ def _date(raw: str) -> str | None:
     return None
 
 
-_XL = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
-_XL_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
-MAX_XLSX_XML = 20 * 1024 * 1024
+_XL = "http://schemas.openxmlformats.org/spreadsheetml/2006/main}"   # as expat names a tag
+MAX_XLSX_XML = 12 * 1024 * 1024  # the most one part of an Excel file may inflate to: 2,000 rows of a dozen columns is about 2 MB
+MAX_XLSX_ELEMENTS = 600_000      # the most elements in a part, so empty ones can't keep the server busy
+MAX_XLSX_DEPTH = 64              # and how deep they may go
+MAX_XLSX_TEXT = 4_000_000        # characters of shared strings, and of CSV: one long string used in every cell stops here
+MAX_XLSX_CELL = 32_767           # characters in a cell, Excel's own limit
 # A payments export has a dozen columns. Cells past column IV (256) are left out, so a cell
 # addressed far to the right can't make a row of millions of empty cells.
 MAX_COLS = 256
@@ -98,68 +103,215 @@ def _rounded(number: str, digits: int) -> str:
     return "0" if text == "-0" else text
 
 
-def xlsx_to_csv(data: bytes, digits: int | None = None) -> str:
-    """The first sheet of an Excel file as CSV text, read with the standard library (R5-04).
-    Numbers stay as written, or with `digits` are rounded to that many decimals (Excel keeps 0.1 * 3
-    as 0.30000000000000004); a cell in a date format becomes MM/DD/YYYY. Anything unreadable gives ""."""
+class _Enough(Exception):
+    """The rows wanted have been read: the rest is left."""
+
+
+def _read_part(z: zipfile.ZipFile, name: str, reader: Any) -> None:
+    """Hand one part to reader.start, .end and .chars as the parser goes by: no tree is built, so
+    what's held at any moment is what the reader keeps, however big the part inflates. Past the
+    size, element or depth limits it raises ValueError, as does a part that isn't XML."""
+    info = z.getinfo(name)
+    if info.file_size > MAX_XLSX_XML:
+        raise ValueError("too large")
+    elements, depth = 0, 0
+
+    def start(tag: str, attrs: dict[str, str]) -> None:
+        nonlocal elements, depth
+        elements += 1
+        depth += 1
+        if elements > MAX_XLSX_ELEMENTS or depth > MAX_XLSX_DEPTH:
+            raise ValueError("too large")
+        reader.start(tag, attrs)
+
+    def end(tag: str) -> None:
+        nonlocal depth
+        depth -= 1
+        reader.end(tag)
+
+    parser = expat.ParserCreate(namespace_separator="}")
+    parser.buffer_text = True
+    parser.StartElementHandler, parser.EndElementHandler = start, end
+    parser.CharacterDataHandler = reader.chars
+    parser.StartDoctypeDeclHandler = contract_import._refuse_doctype
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as z:
-            def xml(name: str):
-                info = z.getinfo(name)
-                if info.file_size > MAX_XLSX_XML:
+        with z.open(info) as part:
+            while True:
+                chunk = part.read(64 * 1024)
+                parser.Parse(chunk, not chunk)
+                if not chunk:
+                    break
+    except expat.ExpatError as exc:
+        raise ValueError("not XML") from exc
+    except _Enough:
+        pass
+
+
+class _SharedStrings:
+    """xl/sharedStrings.xml: each <si>'s text."""
+
+    def __init__(self) -> None:
+        self.strings: list[str] = []
+        self.parts: list[str] | None = None
+        self.in_text = self.kept = 0
+
+    def start(self, tag: str, attrs: dict[str, str]) -> None:
+        if tag == _XL + "si":
+            self.parts = []
+        elif tag == _XL + "t":
+            self.in_text += 1
+
+    def end(self, tag: str) -> None:
+        if tag == _XL + "t":
+            self.in_text -= 1
+        elif tag == _XL + "si" and self.parts is not None:
+            self.strings.append("".join(self.parts))
+            self.parts = None
+
+    def chars(self, text: str) -> None:
+        if self.in_text and self.parts is not None:
+            self.kept += len(text)
+            if self.kept > MAX_XLSX_TEXT:
+                raise ValueError("too large")
+            self.parts.append(text)
+
+
+class _DateStyles:
+    """xl/styles.xml: the cell styles that are dates (built-in formats 14-22, or a custom format
+    with d, m and y)."""
+
+    def __init__(self) -> None:
+        self.custom: dict[int, str] = {}
+        self.xfs: list[int] = []
+        self.level = 0   # how far inside <cellXfs>: a style is an <xf> directly in it
+
+    def start(self, tag: str, attrs: dict[str, str]) -> None:
+        if tag == _XL + "numFmt":
+            self.custom[int(attrs.get("numFmtId", 0))] = (attrs.get("formatCode") or "").lower()[:200]
+        if self.level == 1 and tag == _XL + "xf":
+            self.xfs.append(int(attrs.get("numFmtId", 0)))
+        if self.level or tag == _XL + "cellXfs":
+            self.level += 1
+
+    def end(self, tag: str) -> None:
+        if self.level:
+            self.level -= 1
+
+    def chars(self, text: str) -> None:
+        pass
+
+    def found(self) -> set[int]:
+        out = set()
+        for k, fmt in enumerate(self.xfs):
+            code = self.custom.get(fmt, "")
+            if 14 <= fmt <= 22 or ("d" in code and "y" in code):
+                out.add(k)
+        return out
+
+
+class _SheetRows:
+    """A worksheet's rows, written out as CSV as the parser goes by."""
+
+    def __init__(self, shared: list[str], date_styles: set[int], digits: int | None) -> None:
+        self.shared, self.date_styles, self.digits = shared, date_styles, digits
+        self.out = io.StringIO()
+        self.writer = csv.writer(self.out, lineterminator="\n")
+        self.rows = 0
+        self.cells: dict[int, str] | None = None   # the row being read
+        self.cell: dict[str, str] | None = None    # the cell being read: its attributes
+        self.value: list[str] | None = None        # its <v>, the first if there are more
+        self.inline: list[str] = []                # its <t>s
+        self.in_value = self.in_text = self.size = 0
+
+    def start(self, tag: str, attrs: dict[str, str]) -> None:
+        if tag == _XL + "row":
+            if self.rows > MAX_ROWS + 20:
+                raise _Enough()
+            self.rows += 1
+            self.cells = {}
+        elif tag == _XL + "c" and self.cells is not None:
+            self.cell, self.value, self.inline, self.size = attrs, None, [], 0
+        elif self.cell is not None:
+            if tag == _XL + "v" and self.value is None:
+                self.value = []
+                self.in_value = 1
+            elif tag == _XL + "t":
+                self.in_text += 1
+
+    def end(self, tag: str) -> None:
+        if tag == _XL + "v":
+            self.in_value = 0
+        elif tag == _XL + "t":
+            self.in_text = max(0, self.in_text - 1)
+        elif tag == _XL + "c" and self.cell is not None:
+            col = _col(self.cell.get("r", ""))
+            value = self._cell_value()
+            if col < MAX_COLS and self.cells is not None:
+                self.cells[col] = value.strip()
+            self.cell = None
+        elif tag == _XL + "row" and self.cells is not None:
+            if self.cells:
+                self.writer.writerow([self.cells.get(i, "") for i in range(max(self.cells) + 1)])
+                if self.out.tell() > MAX_XLSX_TEXT:
                     raise ValueError("too large")
-                return ElementTree.fromstring(z.read(name))
+            self.cells = None
+
+    def chars(self, text: str) -> None:
+        if self.cell is None or not (self.in_value or self.in_text) or self.size >= MAX_XLSX_CELL:
+            return
+        text = text[:MAX_XLSX_CELL - self.size]
+        self.size += len(text)
+        if self.in_value:
+            self.value.append(text)
+        else:
+            self.inline.append(text)
+
+    def _cell_value(self) -> str:
+        c, kind = self.cell, self.cell.get("t")
+        v = "".join(self.value) if self.value is not None else ""
+        if kind == "inlineStr":
+            return "".join(self.inline)
+        if not v:
+            return ""
+        if kind == "s":
+            return self.shared[int(v)] if int(v) < len(self.shared) else ""
+        if int(c.get("s", 0) or 0) in self.date_styles and re.fullmatch(r"\d+(\.\d+)?", v):
+            try:
+                return (datetime(1899, 12, 30) + timedelta(days=float(v))).strftime("%m/%d/%Y")
+            except OverflowError:  # past the year 9999: not a date, keep the number
+                return v
+        if self.digits is not None and kind in (None, "n") and re.fullmatch(r"-?\d+(\.\d+)?([eE][-+]?\d+)?", v):
+            return _rounded(v, self.digits)
+        return v
+
+
+def xlsx_to_csv(data: bytes, digits: int | None = None) -> str:
+    """The first sheet of an Excel file as CSV text, read with the standard library (R5-04), under
+    the same kind of limits as a Word file (contract_import.docx_text).
+    Numbers stay as written, or with `digits` are rounded to that many decimals (Excel keeps 0.1 * 3
+    as 0.30000000000000004); a cell in a date format becomes MM/DD/YYYY. Anything unreadable, or past
+    the limits, gives ""."""
+    try:
+        if contract_import._zip_directory_size(data) > contract_import.MAX_ZIP_DIRECTORY:
+            return ""
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
             names = set(z.namelist())
-            shared = []
+            shared = _SharedStrings()
             if "xl/sharedStrings.xml" in names:
-                shared = ["".join(t.text or "" for t in si.iter(f"{_XL}t")) for si in xml("xl/sharedStrings.xml").iter(f"{_XL}si")]
-            # Cell styles that are dates (built-in formats 14-22, or a custom format with d, m and y).
-            date_styles: set[int] = set()
+                _read_part(z, "xl/sharedStrings.xml", shared)
+            styles = _DateStyles()
             if "xl/styles.xml" in names:
-                styles = xml("xl/styles.xml")
-                custom = {int(f.get("numFmtId", 0)): (f.get("formatCode") or "").lower() for f in styles.iter(f"{_XL}numFmt")}
-                xfs = styles.find(f"{_XL}cellXfs")
-                for k, xf in enumerate(xfs if xfs is not None else []):
-                    fmt = int(xf.get("numFmtId", 0))
-                    code = custom.get(fmt, "")
-                    if 14 <= fmt <= 22 or ("d" in code and "y" in code):
-                        date_styles.add(k)
+                _read_part(z, "xl/styles.xml", styles)
             sheet = "xl/worksheets/sheet1.xml"
             if sheet not in names:
                 sheets = sorted(n for n in names if n.startswith("xl/worksheets/sheet") and n.endswith(".xml"))
                 if not sheets:
                     return ""
                 sheet = sheets[0]
-            out = io.StringIO()
-            writer = csv.writer(out, lineterminator="\n")
-            for n, row in enumerate(xml(sheet).iter(f"{_XL}row")):
-                if n > MAX_ROWS + 20:
-                    break
-                cells: dict[int, str] = {}
-                for c in row.iter(f"{_XL}c"):
-                    kind, v = c.get("t"), c.find(f"{_XL}v")
-                    if kind == "inlineStr":
-                        value = "".join(t.text or "" for t in c.iter(f"{_XL}t"))
-                    elif v is None or v.text is None:
-                        value = ""
-                    elif kind == "s":
-                        value = shared[int(v.text)] if int(v.text) < len(shared) else ""
-                    elif int(c.get("s", 0) or 0) in date_styles and re.fullmatch(r"\d+(\.\d+)?", v.text):
-                        try:
-                            value = (datetime(1899, 12, 30) + timedelta(days=float(v.text))).strftime("%m/%d/%Y")
-                        except OverflowError:  # past the year 9999: not a date, keep the number
-                            value = v.text
-                    elif digits is not None and kind in (None, "n") and re.fullmatch(r"-?\d+(\.\d+)?([eE][-+]?\d+)?", v.text):
-                        value = _rounded(v.text, digits)
-                    else:
-                        value = v.text
-                    col = _col(c.get("r", ""))
-                    if col < MAX_COLS:
-                        cells[col] = value.strip()
-                if cells:
-                    writer.writerow([cells.get(i, "") for i in range(max(cells) + 1)])
-            return out.getvalue()
-    except (zipfile.BadZipFile, KeyError, ValueError, ElementTree.ParseError, OSError):
+            rows = _SheetRows(shared.strings, styles.found(), digits)
+            _read_part(z, sheet, rows)
+            return rows.out.getvalue()
+    except (zipfile.BadZipFile, KeyError, ValueError, OSError, EOFError, zlib.error, NotImplementedError, RuntimeError):
         return ""
 
 

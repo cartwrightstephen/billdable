@@ -84,6 +84,8 @@ a.btn { display: inline-block; text-decoration: none; }
 .blocker { color: var(--red); font-weight: 500; }
 .next-action { font-size: 13px; color: var(--copper); }
 .ai-badge { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: var(--copper); color: var(--on-accent); border: none; box-shadow: 0 4px 12px var(--copper-glow); cursor: pointer; font-size: 22px; display: flex; align-items: center; justify-content: center; z-index: 1000; }
+/* Above a sticky Save bar, not over its button (round 1, item 11). The phone's sits in the top bar. */
+@media (min-width: 801px) { body:has(.save-bar) .ai-badge { bottom: 88px; } }
 .ai-panel { position: fixed; bottom: 92px; right: 24px; width: min(400px, calc(100vw - 32px)); max-height: min(620px, calc(100vh - 120px)); background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px var(--shadow-panel); z-index: 1000; display: none; flex-direction: column; overflow: hidden; }
 .ai-panel.open { display: flex; }
 .ai-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 14px 16px 8px; border-bottom: 1px solid var(--line); }
@@ -112,7 +114,7 @@ a.btn { display: inline-block; text-decoration: none; }
 .metric.highlight { border-color: var(--copper); background: var(--copper-soft); }
 .metric.highlight .v { color: var(--copper); }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.money-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.money-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .money-row .label { color: var(--muted); }
 .payapp-notes { margin: 10px 0 0; white-space: pre-wrap; }
 .payapp-notes .label { display: block; color: var(--muted); font-size: 13px; }
@@ -143,7 +145,7 @@ table.sortable th { cursor: pointer; }
 table.sortable th:hover { color: var(--copper); }
 .form-inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
 .form-inline input, .form-inline textarea, .form-inline select { padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: var(--field-bg); min-height: 34px; }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:disabled { opacity: 1; background: var(--field-bg); color: var(--muted); border: 1px dashed var(--field); cursor: not-allowed; }
 .gate-reason { font-size: 13px; color: var(--red); margin: 6px 0; }
 .next-step { background: var(--copper-soft); border-left: 3px solid var(--copper); padding: 10px 14px; margin-bottom: 16px; border-radius: 0 8px 8px 0; }
 .legend { display: flex; gap: 12px; margin: 8px 0 16px; font-size: 12px; flex-wrap: wrap; }
@@ -166,7 +168,7 @@ table.sortable th:hover { color: var(--copper); }
 select { max-width: 100%; }
 .stage.clickable { cursor: pointer; }
 .stage.clickable:hover, .stage.active { border-color: var(--copper); background: var(--copper-soft); }
-.toast { position: fixed; top: 16px; left: 50%; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); background: var(--ink); color: var(--on-ink); padding: 10px 16px; border-radius: 8px; z-index: 2000; font-size: 14px; }
+.toast { position: fixed; bottom: 24px; left: 50%; max-width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); background: var(--ink); color: var(--on-ink); padding: 10px 16px; border-radius: 8px; z-index: 2000; font-size: 14px; }
 .toast-action { background: none; border: 0; padding: 0 0 0 8px; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .inbox-choices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
 .inbox-choices .sub { flex-basis: 100%; }
@@ -188,7 +190,7 @@ select { max-width: 100%; }
 .auth-toggle button { background: none; border: 0; color: var(--copper); cursor: pointer; font: inherit; text-decoration: underline; padding: 0; }
 .auth-error { color: var(--red); font-size: 13px; margin-top: 10px; }
 .auth-hint { font-size: 12px; color: var(--muted); margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
-.user-meta { font-size: 12px; color: var(--muted); margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); }
+.user-meta { font-size: 12px; color: var(--muted); margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
 .user-meta .reset-btn { margin-top: 8px; }
 .landing { min-height: 100vh; }
 .land-bar { display: flex; align-items: center; justify-content: space-between; padding: 18px 32px; border-bottom: 1px solid var(--line); }
@@ -216,6 +218,10 @@ select { max-width: 100%; }
 .land-foot { padding: 24px 32px 40px; color: var(--muted); font-size: 13px; text-align: center; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
 .form-grid label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+/* A one-choice field read as text, and a two-choice field as two buttons (forms.js field). */
+.field-label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.field-value { display: block; padding: 8px 0; }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
 .form-grid input, .form-grid select, .form-grid textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: var(--field-bg); }
 .form-grid [aria-invalid="true"], .form-inline [aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 .form-grid .span-2 { grid-column: span 2; }
@@ -223,6 +229,8 @@ select { max-width: 100%; }
 .req { color: var(--copper); }
 .form-error { background: var(--error-soft); border: 1px solid var(--red); color: var(--red); padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
 .field-error { display: block; color: var(--red); font-size: 12px; margin-top: 2px; }
+.field-ask { display: block; color: var(--amber); font-size: 12px; margin-top: 2px; }
+.field-ask:empty { display: none; }
 .empty-state { background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 28px 20px; text-align: center; color: var(--muted); margin: 12px 0; }
 .empty-state strong { display: block; color: var(--ink); margin-bottom: 6px; }
 .empty-state p { margin: 0 0 12px; }
@@ -253,7 +261,7 @@ a.reset-btn { display: block; text-decoration: none; text-align: left; }
 .help-list dl { margin: 8px 0 0; }
 .help-list dt { font-weight: 600; margin-top: 8px; }
 .help-list dd { margin: 2px 0 0; color: var(--muted); }
-@media (hover: none) {
+@media (hover: none), (max-width: 600px) {
   .has-info .info { display: none; }
   .nav button .info { display: inline-flex; }
   .help-list { display: block; }
@@ -262,6 +270,10 @@ a.reset-btn { display: block; text-decoration: none; text-align: left; }
 /* Import */
 .dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; margin: 12px 0; background: var(--card); display: flex; flex-direction: column; gap: 6px; }
 .dropzone.small { padding: 12px; }
+/* A unit after a box: Retainage [ 10 ] % */
+.with-suffix { display: flex; align-items: center; gap: 6px; }
+.with-suffix input { flex: 1 1 auto; min-width: 0; }
+.with-suffix .suffix { color: var(--muted); font-weight: 600; }
 /* The camera is a phone's way in (R6-04): Take a photo and Choose files as buttons on a touch
    screen; the drop-and-paste sentence only where there is a mouse to drop with. */
 .capture-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -272,6 +284,7 @@ a.reset-btn { display: block; text-decoration: none; text-align: left; }
   .pointer-only { display: none; }
 }
 .drop-overlay { display: none; position: fixed; inset: 0; z-index: 90; align-items: center; justify-content: center; background: var(--copper-wash); border: 3px dashed var(--copper); font: 600 22px Georgia, serif; color: var(--copper); pointer-events: none; }
+.long-word { min-width: 0; overflow-wrap: anywhere; }
 .linkish { background: none; border: 0; padding: 0; color: var(--copper); text-decoration: underline; cursor: pointer; font: inherit; }
 .inbox-item { border-top: 1px solid var(--line); padding: 12px 0; display: flex; flex-direction: column; gap: 6px; }
 .inbox-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
@@ -313,6 +326,7 @@ details.card > summary { cursor: pointer; }
 
 /* accounts, onboarding, trial */
 .verify-banner, .trial-banner { background: var(--amber-soft); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; font-size: 14px; }
+h1 + .verify-banner, h1 + .trial-banner { margin-top: 10px; }   /* the line after a heading doesn't touch it */
 .trial-banner { background: var(--ok-soft); }
 .onboarding { position: relative; }
 .onb-steps { margin: 6px 0 0; padding-left: 22px; display: grid; gap: 8px; }
@@ -323,6 +337,10 @@ details.card > summary { cursor: pointer; }
 .btn.danger { background: var(--red); color: var(--on-accent); border-color: var(--red); }
 .terms-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 8px 0; line-height: 1.4; }
 .terms-check input { width: auto; margin-top: 2px; }
+.reminder-kind { border: 0; padding: 0; margin: 0 0 12px; }
+/* My account's Notifications: a kind's three ways on one line. */
+.reminder-kind .sub { margin: 2px 0 4px; }
+.reminder-kind .terms-check { display: inline-flex; align-items: center; gap: 6px; margin: 0 18px 0 0; }
 .switch-row { font-size: inherit; margin: 12px 0; }
 .switch-row input { margin-top: 5px; }
 .land-legal { margin-top: 8px; font-size: 13px; }
@@ -355,37 +373,36 @@ td.num, .num { font-variant-numeric: tabular-nums; }
 .row-sub { margin: 2px 0 0; font-size: 12px; }
 .job-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .job-head .sub { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.next-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; background: var(--copper-soft); border: 1px solid var(--copper-line); border-left: 4px solid var(--copper); border-radius: 12px; padding: 14px 16px; margin: 4px 0 16px; }
-.next-text { display: grid; gap: 2px; min-width: 0; }
-.next-text .eyebrow { margin: 0; }
-.next-text .sub { margin: 2px 0 0; font-size: 13px; }
-.next-card .btn { white-space: nowrap; padding: 10px 18px; font-weight: 600; }
 .more-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
-/* Job page (R3-04): the main button and two more in the Next step card, the rest under "More" */
-.next-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; justify-content: flex-end; }
-.btn.two-line { display: inline-grid; gap: 2px; text-align: left; white-space: normal; max-width: 240px; padding: 8px 12px; font-weight: 600; }
-.btn.two-line .sub { font-weight: 400; font-size: 12px; color: var(--muted); margin: 0; }
-.more-actions-rest { margin: 0 0 16px; }
-.more-actions-rest > summary { cursor: pointer; color: var(--copper); font-size: 14px; margin-bottom: 8px; }
-.more-group h3 { font-size: 13px; margin: 8px 0 6px; color: var(--muted); font-weight: 600; }
-.more-group .more-actions { margin-bottom: 8px; }
+.job-actions { margin: 0 0 16px; }
 .retainage-note { margin: 4px 0 0; }
 .also-blocking { border-color: var(--red); }
 .form-card h2 { font-size: 16px; }
 .money-row.strong span { font-weight: 600; color: var(--ink); }
 .h2-gap { margin-top: 20px; }
 .row-link { display: flex; justify-content: space-between; align-items: center; }
-.add-record summary { cursor: pointer; color: var(--copper); font-size: 14px; margin-top: 10px; }
 .danger-text { color: var(--red); border-color: var(--red); }
 .send-check { border-color: var(--copper); }
 .send-check .btn { margin-top: 10px; }
 .packet-item { display: grid; gap: 6px; }
+.packet-item:focus { outline: 2px solid var(--copper); outline-offset: 2px; }
 .packet-item .mark { font-weight: 700; }
 .packet-item.present .mark { color: var(--green); }
 .packet-item.absent .mark { color: var(--red); }
 .playbook-card summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .playbook-card summary .sub { margin: 0; }
 .playbook-card [data-form-key] { margin-top: 12px; }
+/* Round 1, item 18: a client card in three sections, then one full-width Save. */
+.playbook-card [data-form-key] > h3, .playbook-section summary h3 { font-size: 15px; margin: 12px 0 6px; }
+.playbook-section { border-top: 1px solid var(--line); margin: 8px 0; }
+.playbook-section > summary { cursor: pointer; min-height: 44px; padding: 10px 0; }
+.playbook-section > summary h3 { display: inline; margin: 0 8px 0 0; }
+.btn.full-width { width: 100%; margin-top: 12px; }
+/* New job (Round 1, item 16): Import contract and the schedule folded, each with what it holds. */
+.same-job-q { flex-basis: 100%; margin: 0; font-weight: 600; }
+.contract-fold, .nj-sov { border-top: 1px solid var(--line); margin: 8px 0 12px; }
+.contract-fold > summary, .nj-sov > summary { cursor: pointer; font-weight: 600; min-height: 44px; padding: 10px 0; }
+.contract-fold > summary .sub, .nj-sov > summary .sub { font-weight: 400; margin: 0 0 0 6px; }
 .merge-payer { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
 .merge-payer summary { cursor: pointer; color: var(--muted); }
 .merge-payer .form-inline { margin-top: 8px; }
@@ -402,7 +419,10 @@ textarea { font: inherit; }
 
 @media (max-width: 800px) {
   .shell { display: block; }
-  .topbar { display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 60; background: var(--rail); border-bottom: 1px solid var(--line); padding: 8px 12px; }
+  .topbar { display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 60; background: var(--rail); border-bottom: 1px solid var(--line); padding: 8px 68px 8px 12px; }
+  /* In the bar, so it never sits over a line of the page. */
+  .ai-badge { top: 8px; bottom: auto; right: 12px; width: 44px; height: 44px; font-size: 20px; }
+  .ai-panel { top: 60px; bottom: auto; right: 16px; }
   .topbar .brand { font-size: 20px; margin: 0; }
   .topbar-section { margin-left: auto; font-size: 14px; color: var(--muted); }
   .menu-btn { width: 44px; height: 44px; border: 1px solid var(--field); border-radius: 8px; background: var(--card); font-size: 20px; cursor: pointer; color: var(--ink); }
@@ -414,10 +434,6 @@ textarea { font: inherit; }
   .metrics { grid-template-columns: 1fr 1fr; gap: 8px; }
   .metric .v { font-size: 22px; }
   .detail-grid { grid-template-columns: 1fr; }
-  .next-card { flex-direction: column; align-items: stretch; }
-  .next-card .btn { width: 100%; }
-  .next-actions { flex-direction: column; }
-  .btn.two-line { max-width: none; }
   .job-head { flex-direction: column; }
   .action-item { align-items: stretch; flex-direction: column; }
   .tabs { margin: -4px -16px 16px; padding: 0 8px; }
@@ -451,7 +467,7 @@ textarea { font: inherit; }
   .due-strip.week-list { flex-direction: column; flex-wrap: nowrap; }
   .due-strip.week-list .due-item { width: 100%; }
   .ai-badge { width: 48px; height: 48px; bottom: 16px; right: 16px; }
-  .toast { top: 68px; }
+  .toast { bottom: calc(16px + env(safe-area-inset-bottom)); }
   .form-inline > input, .form-inline > select { flex: 1 1 100%; }
   .sov-paste { flex-direction: column; }
 }
@@ -481,13 +497,14 @@ textarea { font: inherit; }
 @media (max-width: 420px) {
   .metrics { grid-template-columns: 1fr; }
 }
-/* Touch screens: every control at least 44 px tall (WCAG 2.5.5 target size). */
-@media (pointer: coarse) {
+/* Touch screens and phone widths: every control at least 44 px tall (WCAG 2.5.5 target size). */
+@media (pointer: coarse), (max-width: 600px) {
   .btn, .btn.small, .tab, .stage, .due-item, .back, select, input:not([type=checkbox]), .filter-bar button, .chip, .nav button { min-height: 44px; }
   /* A link-like button inside a sentence keeps the line's height; its touch area grows
-     invisibly around it instead (R6-02). */
+     invisibly around it instead (R6-02). One on its own line is simply tall. */
   .linkish { position: relative; }
   .linkish::after { content: ""; position: absolute; inset: -12px -6px; }
+  .linkish.tall, .row-record, .queue-more, .known-payer .linkish { display: inline-flex; align-items: center; min-height: 40px; }
   .info { width: 24px; height: 24px; font-size: 14px; }
   .help-dismiss, .ai-close { min-width: 44px; min-height: 44px; }
 }
@@ -515,9 +532,37 @@ textarea { font: inherit; }
 .timeline { list-style: none; margin: 0; padding: 0; }
 .timeline li { padding: 10px 0; border-bottom: 1px solid var(--line); line-height: 1.45; }
 .timeline li:last-child { border-bottom: 0; }
-.money-file > summary { cursor: pointer; }
-.money-file > summary h2 { display: inline; margin: 0 8px 0 0; }
-.money-file[open] > summary { margin-bottom: 8px; }
+.money-file > summary, .sov-file > summary, .job-paperwork > summary, .job-records > summary, .job-history > summary { cursor: pointer; min-height: 44px; }
+.money-file > summary h2, .sov-file > summary h2, .job-paperwork > summary h2, .job-records > summary h2, .job-history > summary h2 { display: inline; margin: 0 8px 0 0; }
+.money-file[open] > summary, .sov-file[open] > summary, .job-paperwork[open] > summary, .job-records[open] > summary, .job-history[open] > summary { margin-bottom: 8px; }
+.record-line .sub { margin-left: 4px; }
+/* Job page (Yusuf, 10 Nov 2026): four buttons side by side, each its own colour, the same in
+   every theme and accent; a banner only while there is something to do now. */
+:root { --act-co: #8a5a12; --act-progress: #8c3f1d; --act-final: #1f4f8a; --act-pay: #1f6b45; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --act-co: #e3b366; --act-progress: #e09468; --act-final: #86b4ec; --act-pay: #72c89b; }
+}
+:root[data-theme="dark"] { --act-co: #e3b366; --act-progress: #e09468; --act-final: #86b4ec; --act-pay: #72c89b; }
+.main-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 0 12px; }
+.main-action { padding: 12px 14px; font-weight: 600; border-radius: 10px; color: var(--on-accent); box-shadow: 0 1px 3px var(--shadow); }
+.main-action:hover:not(:disabled) { filter: brightness(1.1); }
+.main-co { --act: var(--act-co); }
+.main-progress { --act: var(--act-progress); }
+.main-done { --act: var(--act-final); }
+.main-match { --act: var(--act-pay); }
+.main-action { background: var(--act); }
+/* Off while it doesn't apply: its own colour, faint, with the words still readable. */
+.btn.main-action:disabled { background: color-mix(in srgb, var(--act) 10%, var(--card)); color: var(--act); border: 1px dashed color-mix(in srgb, var(--act) 45%, var(--card)); box-shadow: none; }
+.task-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; background: var(--amber-soft); border: 1px solid var(--amber-line); border-left: 4px solid var(--amber); border-radius: 12px; padding: 12px 16px; margin: 4px 0 14px; }
+.task-card.is-blocked { border-left-color: var(--red); }
+.task-card .blocker-list { margin: 0; padding-left: 20px; font-size: 14px; flex: 1 1 240px; }
+.task-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.task-action { font-weight: 600; white-space: nowrap; }
+.task-waiting { font-size: 14px; color: var(--muted); padding: 8px 0; }
+@media (max-width: 600px) {
+  .main-actions { grid-template-columns: 1fr 1fr; }
+  .task-actions, .task-action { width: 100%; }
+}
 
 /* Forms built with field() (js/forms.js): label, input, help and error line in one block. */
 .field { min-width: 0; }
@@ -542,14 +587,11 @@ textarea { font: inherit; }
 /* First run (R1-05 to R1-07): hidden parts stay hidden whatever their display rule; the
    sign-up "Check your email" panel; the email box and the confirm-first note in "Before you send". */
 [hidden] { display: none !important; }
-.check-email { border-color: var(--copper); }
-.check-email p { margin: 4px 0 10px; }
+.check-email { margin: -6px 0 14px; font-size: 14px; color: var(--muted); }
 .send-check .send-email { margin: 10px 0 4px; }
 .send-check .send-email .btn { margin-top: 6px; }
 .notice.confirm-first { margin: 10px 0 0; }
 .known-payer { margin: 0; }
-.more-details { margin: 12px 0; }
-.more-details > summary { cursor: pointer; color: var(--copper); font-size: 14px; margin-bottom: 8px; }
 .notice.company-gaps { margin: 10px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 /* What stands between a job and Finish job, each with the buttons that settle it (R3-08). */
@@ -642,6 +684,17 @@ span.due-item { cursor: default; }
 .daily-section h3 { font-size: 15px; margin: 0 0 6px; }
 .daily-files { list-style: none; padding: 0; margin: 6px 0; font-size: 13px; }
 .daily-files li { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+.record-row { padding: 4px 0 8px; }
+.record-row + .record-row { border-top: 1px solid var(--line); padding-top: 10px; }
+/* New job record (Round 1, item 15): a chip per kind of document opens its section. */
+.record-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.record-chips [aria-pressed="true"] { border-color: var(--copper); }
+.record-files-done { margin: 8px 0 0; }
+.record-files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.file-pick { position: relative; display: inline-flex; align-items: center; }
+.file-pick:focus-within { outline: 2px solid var(--copper); outline-offset: 2px; }
+.saved-result { background: var(--green-soft); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; }
+.job-records .top { align-items: center; }
 .daily-rec-meta { font-size: 13px; color: var(--muted); }
 .daily-rec-meta div { margin-top: 2px; }
 .sov-daily { font-size: 12px; color: var(--muted); }
@@ -668,14 +721,8 @@ span.due-item { cursor: default; }
 .contract-status:empty { display: none; }
 .contract-notes { margin: 4px 0; padding-left: 20px; font-size: 13px; color: var(--muted); }
 .form-grid [data-from-contract] { border-color: var(--copper); box-shadow: 0 0 0 1px var(--copper-line); }
-/* Add to a job record on the Jobs page (J4). */
+/* New job record on a row of Open jobs. */
 .row-record { font-size: 13px; }
-.add-to-record .dropzone { margin: 12px 0; }
-/* The Next step card holds the blockers (J6). */
-.next-card.is-blocked { border-left-color: var(--red); flex-wrap: wrap; }
-.next-card .blocker-list { margin: 4px 0 2px; padding-left: 20px; font-size: 14px; }
-.next-card .sent-back { flex-basis: 100%; }
-.next-card .sent-back summary { cursor: pointer; font-size: 13px; color: var(--copper); }
 /* Where this job stands (J7). */
 .stage-line { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .stage-step { font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
@@ -725,6 +772,18 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .recent-contact li:last-child { border-bottom: 0; }
 /* The pay app page's summary (M2). */
 .payapp-summary .payapp-received { margin-top: 8px; }
+/* Round 1: what is missing inside Review & send, the numbers folded under one line, an email that
+   didn't go out under the pill, a GC job at 0% retainage, and an Activity entry's bookkeeping. */
+.send-missing { margin: 12px 0; padding-top: 4px; border-top: 1px solid var(--line); }
+.send-missing h3 { margin: 8px 0 4px; font-size: 15px; color: var(--red); }
+.payapp-numbers > summary { font-weight: 600; }
+.payapp-numbers[open] > summary { margin-bottom: 12px; }
+.payapp-numbers > .card { box-shadow: none; margin: 0 0 12px; }
+.notice.email-undelivered { margin: 0 0 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.notice.retainage-zero { margin: 10px 0; }
+.pull-back-row { margin: 0 0 16px; }
+.activity-also { margin-top: 4px; font-size: 13px; }
+.activity-also summary { cursor: pointer; color: var(--muted); }
 
 
 
@@ -737,7 +796,7 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .file-link { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; }
 .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
 .period-record { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.period-records h3, .retainage-card h3, .client-needs h3, .waiver-check h3, .waiver-form-state h3, .send-attachments h3 { margin: 12px 0 4px; font-size: 15px; }
+.period-records h3, .client-needs h3, .waiver-check h3, .waiver-form-state h3, .send-attachments h3 { margin: 12px 0 4px; font-size: 15px; }
 .client-needs-box { border-top: 1px solid var(--line); margin-top: 10px; }
 .unconditional-warning { background: var(--red-soft); border: 1px solid var(--red); border-radius: 6px; padding: 8px 10px; margin: 10px 0; }
 .waiver-details { margin-top: 6px; }
@@ -766,6 +825,13 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 
 /* G9: the dark palette, for "Same as this device" on a dark device and for Dark. Only the
    tokens change; theme.js sets data-theme and data-accent on <html>. */
+/* Last, over each form's own box rules: on a phone a box is 44 px tall and 16 px, the size under
+   which iOS zooms in when one takes focus. */
+@media (pointer: coarse), (max-width: 600px) {
+  #app input:not([type=checkbox]):not([type=radio]), #app select { min-height: 44px; }
+  a.btn { display: inline-flex; align-items: center; }
+  #app input:not([type=checkbox]):not([type=radio]), #app select, #app textarea { font-size: 16px; }
+}
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -806,3 +872,75 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 :root[data-theme="dark"][data-accent="blue"] { --copper: #86b4ec; --copper-soft: #1d2a3a; --copper-line: #2c4058; --copper-wash: rgba(134, 180, 236, 0.16); --copper-glow: rgba(134, 180, 236, 0.35); }
 :root[data-theme="dark"][data-accent="green"] { --copper: #72c89b; --copper-soft: #1d3327; --copper-line: #2b4a38; --copper-wash: rgba(114, 200, 155, 0.16); --copper-glow: rgba(114, 200, 155, 0.35); }
 :root[data-theme="dark"][data-accent="slate"] { --copper: #aebbcd; --copper-soft: #262b33; --copper-line: #3a424e; --copper-wash: rgba(174, 187, 205, 0.16); --copper-glow: rgba(174, 187, 205, 0.35); }
+.doc-warning { background: var(--amber-soft); color: var(--amber); border: 1px solid var(--amber-line); border-radius: 8px; padding: 8px 12px; margin: 6px 0; font-size: 14px; }
+.doc-warning p { margin: 0 0 4px; }
+.doc-warning h3 { margin-top: 0; }
+.override-note { font-weight: 600; font-size: 14px; }
+.email-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; border: 1px solid var(--amber-line); border-radius: 8px; padding: 8px 12px; margin: 0; }
+
+/* The job's name inside the To do row, for a phone, where the Job column is hidden. */
+.todo-job-inline { display: none; }
+
+/* == round 1: the Dashboard on a phone (item 17) ==
+   To Do rows are the pill, the sentence and the one button; the tiles two by two; a job is one
+   line: its name, its pill and what it is owed. The desktop table keeps every column. */
+@media (max-width: 800px) {
+  .metrics.dash-tiles { grid-template-columns: 1fr 1fr; }
+  .dash-tiles .metric { padding: 10px 12px; }
+  .dash-tiles .metric .v { font-size: 20px; }
+  table.todo-table td.todo-job, table.todo-table td.todo-ball { display: none; }
+  table.todo-table .todo-job-inline { display: block; font-weight: 600; margin-bottom: 2px; }
+  table.todo-table .action-buttons .btn.secondary:not(:only-child) { display: none; }
+  table.dash-jobs tr:not(.head-row) { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
+  table.dash-jobs td:not(.dj-keep) { display: none; }
+  table.dash-jobs td.dj-keep { display: block; width: auto; padding: 0; margin: 0; border: 0; font-size: 15px; }
+  table.dash-jobs td.dj-keep::before { content: none; }
+  table.dash-jobs td.dj-name { flex: 1 1 auto; min-width: 0; }
+  table.dash-jobs td.num { margin-left: auto; white-space: nowrap; }
+}
+
+/* The money strip (Stephen, Nov 13): the company's main figures in one line at the top of every
+   page, for whoever may see the financials; each figure opens its page. */
+.money-strip { display: flex; flex-wrap: wrap; gap: 4px 20px; align-items: baseline; margin: -8px 0 16px; padding: 8px 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px; font-size: 14px; }
+.money-strip .strip-item { color: inherit; text-decoration: none; white-space: nowrap; }
+.money-strip .strip-item:hover .strip-k, .money-strip .strip-item:focus-visible .strip-k { text-decoration: underline; }
+.money-strip .strip-k { color: var(--muted); }
+.money-strip .strip-v { font-weight: 600; font-variant-numeric: tabular-nums; }
+.money-strip .strip-hot .strip-v { color: var(--copper); }
+.money-strip + .tabs { margin-top: 0; }
+@media (max-width: 640px) {
+  .money-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 13px; padding: 8px 10px; }
+  .money-strip .strip-item { display: flex; flex-direction: column; white-space: normal; }
+}
+
+/* Money > Financials */
+.page-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.page-head h1 { margin-bottom: 0; }
+.head-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.fin-chart { width: 100%; height: auto; display: block; }
+.fin-chart .bar-billed, .fin-legend .key-billed { fill: var(--act-final); background: var(--act-final); }
+.fin-chart .bar-collected, .fin-legend .key-collected { fill: var(--act-pay); background: var(--act-pay); }
+.fin-chart .bar-axis { stroke: var(--line); }
+.fin-chart .bar-label { fill: var(--muted); font-size: 11px; }
+.fin-legend { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+.fin-legend .key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
+.fin-legend .key:first-child { margin-left: 0; }
+#fin-report tr.total td, .print-sheet tr.total td { font-weight: 600; border-top: 2px solid var(--line); }
+.fin-more { margin-top: 10px; }
+.fin-facts { display: grid; grid-template-columns: max-content auto; gap: 4px 16px; margin: 12px 0 0; font-size: 14px; }
+.fin-facts dt { color: var(--muted); }
+.fin-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+@media print {
+  body.printing .print-sheet .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+  body.printing .print-sheet .metric { border: 1px solid var(--print-line); padding: 6px 8px; border-radius: 6px; }
+  body.printing .print-sheet .metric .v { font-size: 14pt; }
+  body.printing .print-sheet .card { border: 0; padding: 0; margin: 0 0 12px; break-inside: avoid; }
+  body.printing .print-sheet table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+  body.printing .print-sheet td, body.printing .print-sheet th { padding: 3px 6px; border-bottom: 1px solid var(--print-line); text-align: left; }
+  body.printing .print-sheet .num { text-align: right; }
+  body.printing .print-sheet summary { display: none; }
+}
+.metrics.fin-tiles { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 1000px) { .metrics.fin-tiles { grid-template-columns: 1fr 1fr; } }
+#fin-report th.num, #fin-report td.num { text-align: right; font-variant-numeric: tabular-nums; }

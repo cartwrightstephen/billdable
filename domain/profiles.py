@@ -29,10 +29,12 @@ PERMISSIONS: list[tuple[str, str]] = [
     ("record_payments", "Record payments"),
     ("void", "Delete drafts, pull back sent pay apps and accept short pays"),
     ("close_jobs", "Finish and reopen jobs"),
+    ("manage_jobs", "Change a job's contract, change orders and mark work done"),
     ("company", "Edit company details, client settings and connections"),
     ("team", "Manage the team and permissions"),
     ("billing", "Manage billing"),
     ("data", "Export and reset data"),
+    ("financials", "See company financials"),
 ]
 PERM_KEYS = [k for k, _ in PERMISSIONS]
 PERM_WORDS = dict(PERMISSIONS)
@@ -52,27 +54,40 @@ NAME_MAX = 40
 # given a permission on purpose rather than left open by accident.
 JOB_ACTION_PERMS: dict[str, str | None] = {
     "send": "send_payapps",
+    "waiver-answer": "send_payapps",   # Is this a lien waiver? answered by someone who can send (JOB_ACTION_ALSO: on a retainage request, ask_retainage)
     "waiver": "send_waivers",
     "waiver-not-needed": "send_waivers",   # the way out of sending one (B2 of the Oct 30 review)
     "retainage": "ask_retainage",
     "match-payment": "record_payments",
     "retainage-paid": "record_payments",
+    "retainage-credit": "record_payments",
+    "overbilling-settled": "record_payments",
     "accept-short-pay": "void",
     "void-draft": "void",
     "void-sent": "void",
     "delete": "void",
     "close": "close_jobs",
     "reopen": "close_jobs",
+    # Round 1 (Nov 5 audits): what changes the job itself, not a record on it. A Member keeps
+    # records, conversations, drafts, progress and documents.
+    "done": "manage_jobs", "undo-done": "manage_jobs", "edit": "manage_jobs",
+    "approve-co": "manage_jobs", "withdraw-co": "manage_jobs", "include-co": "manage_jobs",
     # Drafting, records, paperwork and follow-ups: everyone on the team.
-    "done": None, "undo-done": None, "progress": None, "sov": None, "sov-progress": None, "draft": None,
-    "resolve": None, "packet-skip": None, "follow-up": None, "note-contact": None, "edit": None,
-    "add-co": None, "approve-co": None, "request-co-signature": None, "include-co": None, "withdraw-co": None,
-    "attach": None, "detach": None, "add-evidence": None, "add-record": None, "attach-record": None,
+    "sov-amounts": None, "sov-correct": None, "quantities-undo": None, "waiver-needed": None,
+    "progress": None, "sov": None, "sov-progress": None, "draft": None,
+    "resolve": None, "packet-skip": None, "follow-up": None, "note-contact": None, "paperwork": None,
+    "add-co": None, "request-co-signature": None,
+    "attach": None, "detach": None, "add-evidence": None, "add-record": None, "attach-record": None, "packet-confirm": None, "packet-recheck": None,
     "edit-record": None, "daily-record": None, "pencil": None, "pencil-response": None,
     "learn-rejection": None, "import-qbo": None,
     # Added on dev by the other streams of the Oct 29 review (anyone, as they shipped).
     "waiver-type": None, "record-work": None, "co-logged": None, "co-work-started": None,
 }
+
+
+# A second permission that takes the action too: whoever asks for retainage answers the questions on
+# its request; the domain refuses it for anything that is not one (domain.Answerer).
+JOB_ACTION_ALSO: dict[str, str] = {"waiver-answer": "ask_retainage"}
 
 
 def _company(state: dict[str, Any]) -> dict[str, Any]:
@@ -140,7 +155,7 @@ def has_perm(user: dict[str, Any], perm: str, state: dict[str, Any]) -> bool:
 def may_take(user: dict[str, Any], action: str, state: dict[str, Any]) -> bool:
     """Whether this person may take this job action (mirrored by mayTake in static/js/jobs.js)."""
     need = JOB_ACTION_PERMS.get(action)
-    return need is None or has_perm(user, need, state)
+    return need is None or has_perm(user, need, state) or (action in JOB_ACTION_ALSO and has_perm(user, JOB_ACTION_ALSO[action], state))
 
 
 def holders(state: dict[str, Any], perm: str) -> set[str]:
@@ -217,6 +232,18 @@ def delete_profile(state: dict[str, Any], profile_id: str, in_use: bool, actor: 
     _company(state)["profiles"] = [{k: v for k, v in q.items() if not (q["id"] == OWNER and k == "perms")}
                                    for q in profiles(state) if q["id"] != profile_id]
     audit(state, "", "team", f"{actor} deleted the {p['name']} profile.", actor)
+
+
+def grant_manage_jobs(state: dict[str, Any]) -> None:
+    """Round 1: manage_jobs is new, and what it gates was anyone's before. A custom profile that
+    could delete drafts or finish jobs gets it; Member and the custom profiles that couldn't do
+    either don't (an owner ticks it for them). Owner holds every permission without it being stored.
+    Safe to run again."""
+    for p in _company(state).get("profiles") or []:
+        if not isinstance(p, dict) or p.get("id") in BUILT_IN or not isinstance(p.get("perms"), list):
+            continue
+        if ("void" in p["perms"] or "close_jobs" in p["perms"]) and "manage_jobs" not in p["perms"]:
+            p["perms"].append("manage_jobs")
 
 
 def migrate_company(state: dict[str, Any]) -> None:

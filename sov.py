@@ -29,6 +29,25 @@ Overhead and profit applies to the base contract lines only. Change-order
 lines are added when a CO is approved, at the CO amount, which already
 carries its markup.
 
+Quantities from the field are kept apart from what is on a pay app: field_milli on a line is
+what job records and imported files added up to, and done_milli is the quantity to date the pay
+apps are drafted from. A job record moves only field_milli; Progress Pay App brings done_milli up
+to it, or to the figure the person typed. A line with no field_milli (nothing recorded in the
+field yet, and every line from before) has its field total at done_milli.
+
+A new job with no schedule of its own gets one lump-sum line for the contract
+amount, marked "auto" (auto_line). It stays in step with the contract amount until
+a pay app has been sent, and the person can replace it with real lines.
+
+A figure typed on the progress form is on the open draft only. When that pay app is deleted or pulled
+back, done_milli comes back to the suggestion (domain._back_to_suggested), so the card and a blank box
+bill the same thing.
+
+A pay app's amount per line starts as the suggested amount (work to date less what
+is billed). The person can change it on the draft, and the final figure goes on the
+pay app: with_amounts writes it onto the line and its continuation-sheet entry, with
+suggested_cents beside it. A line billed short is suggested again on the next pay app.
+
 Every amount is whole cents and every rounding is half-up on integers, so the
 browser can repeat the arithmetic exactly.
 """
@@ -133,6 +152,27 @@ def has_sov(job: dict[str, Any]) -> bool:
     return any(not line.get("co_id") for line in lines(job))
 
 
+def is_auto(job: dict[str, Any]) -> bool:
+    """The job's base schedule is only the one lump-sum line made when no schedule was given."""
+    base = [line for line in lines(job) if not line.get("co_id")]
+    return len(base) == 1 and bool(base[0].get("auto"))
+
+
+def auto_line(contract_cents: int, line_id: str) -> dict[str, Any]:
+    """One lump-sum line for the contract amount."""
+    return {
+        "id": line_id, "item": "1", "description": "Contract amount", "unit": "LS", "qty_milli": 1000,
+        "rate_cents": contract_cents, "scheduled_cents": contract_cents, "done_milli": 0, "stored_cents": 0,
+        "co_id": None, "auto": True,
+    }
+
+
+def follow_contract(job: dict[str, Any], contract_cents: int) -> None:
+    """The auto line takes the job's new contract amount."""
+    line = next(l for l in lines(job) if not l.get("co_id"))
+    line["rate_cents"] = line["scheduled_cents"] = contract_cents
+
+
 def op_bp(job: dict[str, Any]) -> int:
     return int((job.get("sov") or {}).get("op_bp") or 0)
 
@@ -152,6 +192,65 @@ def line_stored(line: dict[str, Any]) -> int:
 def line_to_date(line: dict[str, Any]) -> int:
     """Total completed and stored to date (G703 G)."""
     return line_completed(line) + line_stored(line)
+
+
+def field_total(line: dict[str, Any]) -> int:
+    """The quantity the field has recorded on the line (see the top of this file)."""
+    return int(line.get("field_milli", line["done_milli"]))
+
+
+def anticipated(job: dict[str, Any], line: dict[str, Any]) -> dict[str, Any]:
+    """The line as the anticipated figures read it: at its field total, unless the job is marked
+    done, when every line is drafted whole."""
+    return {**line, "done_milli": line["qty_milli"] if job.get("work_status") == "complete" else field_total(line)}
+
+
+def suggested_done(line: dict[str, Any], billed_qty: int) -> int:
+    """The quantity to date a line bills with no figure typed: its field total, or what is already
+    billed when that is more (the sheet's total to date never goes back down)."""
+    return max(field_total(line), billed_qty)
+
+
+def co_rows(job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, Any]]:
+    """Change orders billed as their own pay-app line while unsigned, with no line on this pay app's
+    continuation sheet: its sheet was made before they were schedule lines. Each gets a row of its
+    own, so the sheet adds up to the pay app: {co_id, number, scheduled_cents, previous_cents,
+    this_cents, to_date_cents}. Billed up to and including this pay app, in the order they were made."""
+    order = job.get("invoices", [])
+    position = next((i for i, inv in enumerate(order) if inv is invoice or inv.get("id") == invoice.get("id")), len(order))
+    earlier = [inv for inv in order[:position] if inv.get("status") in LIVE_STATUSES]
+    on_sheet = {entry.get("line_id") for entry in invoice.get("sov_sheet") or invoice.get("sov_lines") or []}
+    rows = []
+    for co in job.get("change_orders", []):
+        co_line = next((l["id"] for l in lines(job) if l.get("co_id") == co["id"]), None)
+        previous = sum(l["amount_cents"] for inv in earlier for l in inv.get("lines", []) if l.get("co_id") == co["id"])
+        this = sum(l["amount_cents"] for l in invoice.get("lines", []) if l.get("co_id") == co["id"])
+        if (previous or this) and (co_line is None or co_line not in on_sheet):
+            rows.append({"co_id": co["id"], "number": co.get("number", ""), "scheduled_cents": co["amount_cents"], "previous_cents": previous,
+                         "this_cents": this, "to_date_cents": previous + this})
+    return rows
+
+
+NOTE_ITEM_RE = re.compile(r"\bnotes?\b", re.I)
+
+
+def name_only(job: dict[str, Any], item: dict[str, Any]) -> bool:
+    """An item from before files were required (Nov 3), in only on names: nothing it has attached
+    has a file behind it. A note item can be filled by a note. An item marked as in hand, overridden
+    or made here has no attachments, or stands on its own mark."""
+    attached = item.get("attachments") or []
+    if not attached or item.get("override") or item.get("marked_in_hand"):
+        return False
+    records = {r["id"]: r for r in job.get("records", [])}
+    def real(a: dict[str, Any]) -> bool:
+        rec = records.get(a.get("record_id"))
+        return bool(rec and (rec.get("file_ids") or NOTE_ITEM_RE.search(str(item.get("label") or ""))))
+    return not any(real(a) for a in attached)
+
+
+def name_only_open(job: dict[str, Any], invoice: dict[str, Any], item: dict[str, Any]) -> bool:
+    """name_only on a pay app not sent yet: what went out stays as it was sent."""
+    return invoice.get("status") in {"draft", "awaiting_approval"} and name_only(job, item)
 
 
 def retainage_on(cents: int, pct: int) -> int:
@@ -213,14 +312,19 @@ def live_invoices(job: dict[str, Any]) -> list[dict[str, Any]]:
     return [inv for inv in job.get("invoices", []) if inv.get("status") in LIVE_STATUSES]
 
 
-def billed(job: dict[str, Any]) -> dict[str, Any]:
-    """What earlier pay apps (sent or drafted, not void) already billed, per line."""
+def billed(job: dict[str, Any], skip: dict[str, Any] | None = None) -> dict[str, Any]:
+    """What earlier pay apps (sent or drafted, not void) already billed, per line. skip leaves
+    one pay app out: the open draft, to ask what the period comes to without it."""
     by_line: dict[str, int] = {}
     qty_by_line: dict[str, int] = {}
     work_by_line: dict[str, int] = {}
+    adjusted: set[str] = set()
     op = 0
     co_line = {l["co_id"]: l["id"] for l in lines(job) if l.get("co_id")}
     for inv in live_invoices(job):
+        if inv is skip:
+            continue
+        adjusted.update(e["line_id"] for e in inv.get("sov_sheet") or [] if e.get("suggested_cents") is not None)
         for entry in inv.get("sov_lines", []):
             by_line[entry["line_id"]] = by_line.get(entry["line_id"], 0) + entry["amount_cents"]
         # Quantities come from the whole continuation sheet: a line can move on a $0 period
@@ -235,20 +339,35 @@ def billed(job: dict[str, Any]) -> dict[str, Any]:
             line_id = co_line.get(entry.get("co_id"))
             if line_id:
                 by_line[line_id] = by_line.get(line_id, 0) + entry["amount_cents"]
-    return {"by_line": by_line, "qty_by_line": qty_by_line, "work_by_line": work_by_line, "op_cents": op}
+                # Billed whole: on the sheet it is previous work, like anything else billed before.
+                work_by_line[line_id] = max(work_by_line.get(line_id, 0), entry["amount_cents"])
+                qty_by_line[line_id] = max(qty_by_line.get(line_id, 0), next(l["qty_milli"] for l in lines(job) if l["id"] == line_id))
+    return {"by_line": by_line, "qty_by_line": qty_by_line, "work_by_line": work_by_line, "adjusted": adjusted, "op_cents": op}
 
 
-def this_period(job: dict[str, Any]) -> dict[str, Any]:
-    """The pay-app lines for work completed since the last pay app."""
-    already = billed(job)
+def this_period(job: dict[str, Any], skip: dict[str, Any] | None = None, field: bool = False) -> dict[str, Any]:
+    """The pay-app lines for work completed since the last pay app, as suggested amounts. skip
+    (the open draft) reads the period as if that draft weren't there. field reads every line at
+    its field total: everything recorded and not yet billed, whatever day it was for."""
+    already = billed(job, skip)
     out, sheet = [], []
     for line in lines(job):
+        if field:
+            # As a blank box bills it: never below the quantity already billed.
+            line = anticipated(job, line)
+            line = {**line, "done_milli": max(line["done_milli"], already["qty_by_line"].get(line["id"], 0))}
         to_date = line_to_date(line)
-        amount = to_date - already["by_line"].get(line["id"], 0)
+        before = already["by_line"].get(line["id"], 0)
+        amount = to_date - before
         credit = line["scheduled_cents"] < 0 and amount < 0
         previous_qty = already["qty_by_line"].get(line["id"], 0)
-        completed = line_completed(line)
-        prev_work = min(already["work_by_line"].get(line["id"], 0), completed)
+        # A line an earlier pay app billed past the work recorded (an amount changed by hand) stands
+        # at what was billed: the sheet's total to date never goes back down.
+        ahead = max(0, before - to_date) if line["scheduled_cents"] >= 0 else 0
+        to_date += ahead
+        completed = line_completed(line) + ahead
+        # A credit's line comes off all at once: previous only once a pay app has taken it.
+        prev_work = (completed if before else 0) if line["scheduled_cents"] < 0 else min(already["work_by_line"].get(line["id"], 0), completed)
         entry = {
             "line_id": line["id"],
             "item": line.get("item", ""),
@@ -267,26 +386,83 @@ def this_period(job: dict[str, Any]) -> dict[str, Any]:
             "work_this_cents": completed - prev_work,
             "stored_cents": line_stored(line),
         }
+        if line["id"] in already["adjusted"]:
+            entry["carried"] = True
         # The continuation sheet lists every line, like a G703; only lines with new work are billed.
         sheet.append(entry)
         if amount > 0 or credit:
             out.append(entry)
-    op_this = max(0, totals(job)["op_to_date_cents"] - already["op_cents"])
+    # On the base lines as they stand on the sheet, a line billed ahead of the work at what was billed.
+    co_ids = {l["id"] for l in lines(job) if l.get("co_id")}
+    op_this = max(0, markup(sum(e["to_date_cents"] for e in sheet if e["line_id"] not in co_ids), op_bp(job)) - already["op_cents"])
     return {"lines": out, "sheet": sheet, "op_cents": op_this, "total_cents": sum(l["amount_cents"] for l in out) + op_this}
 
 
 def unbilled(job: dict[str, Any]) -> int:
-    return this_period(job)["total_cents"]
+    """What is recorded and not on a pay app yet."""
+    return this_period(job, field=True)["total_cents"]
+
+
+def line_room(line: dict[str, Any], before: int) -> int:
+    """The most a pay app can bill on a line: what is left of its scheduled value."""
+    return max(0, line["scheduled_cents"] - before)
+
+
+def with_amounts(job: dict[str, Any], period: dict[str, Any], amounts: dict[str, int],
+                 skip: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The period with the amounts the person chose per line in place of the suggested ones.
+    Each changed entry keeps suggested_cents, and its sheet columns follow the final amount:
+    previous + this period + stored = total to date = what is billed on the line through this
+    pay app. Overhead and profit follows the base lines as billed. An amount for a line that is
+    gone, or for a credit line, is dropped; one past the line's balance is cut to it. Adds `kept`
+    (the amounts that differ from the suggested ones) and `cut` (the entries cut down)."""
+    already = billed(job, skip)
+    by_id = {line["id"]: line for line in lines(job)}
+    sheet, kept, cut = period["sheet"], {}, []
+    for entry in sheet:
+        line, want = by_id[entry["line_id"]], amounts.get(entry["line_id"])
+        if want is None or line["scheduled_cents"] < 0:
+            continue
+        before = already["by_line"].get(line["id"], 0)
+        final = min(want, line_room(line, before))
+        if final != want:
+            cut.append(entry)
+        if final == entry["amount_cents"]:
+            continue
+        kept[line["id"]] = final
+        to_date = before + final
+        # Previous is the work the last sheet showed, as this_period reads it: a typed amount that ran
+        # past the quantities on the line doesn't come back as this period's work.
+        prev_work = min(max(entry["prev_work_cents"], already["work_by_line"].get(line["id"], 0)), to_date)
+        stored = min(entry["stored_cents"], to_date - prev_work)
+        entry.update({
+            "suggested_cents": entry["amount_cents"], "amount_cents": final, "to_date_cents": to_date,
+            "prev_work_cents": prev_work, "stored_cents": stored, "work_this_cents": to_date - stored - prev_work,
+            "work_to_date_cents": to_date - stored,
+        })
+        # The quantity this amount stands for, so the next pay app suggests the rest in quantities too.
+        work_milli = line["qty_milli"] if to_date - stored >= line["scheduled_cents"] else (to_date - stored) * 1000 // line["rate_cents"]
+        entry["qty_milli_this"] = max(0, work_milli - already["qty_by_line"].get(line["id"], 0))
+        entry["qty_milli_to_date"] = work_milli
+    op_cents = period["op_cents"]
+    if kept:
+        base = sum(already["by_line"].get(e["line_id"], 0) + e["amount_cents"] for e in sheet if not by_id[e["line_id"]].get("co_id"))
+        op_cents = max(0, markup(base, op_bp(job)) - already["op_cents"])
+    out = [e for e in sheet if e["amount_cents"] > 0 or (e["scheduled_cents"] < 0 and e["amount_cents"] < 0)]
+    return {"lines": out, "sheet": sheet, "op_cents": op_cents, "total_cents": sum(e["amount_cents"] for e in out) + op_cents,
+            "kept": kept, "cut": cut}
 
 
 def line_label(entry: dict[str, Any]) -> str:
     item = f"{entry['item']}. " if entry.get("item") else ""
     pct = (100 * entry["qty_milli_to_date"]) // entry["qty_milli"] if entry["qty_milli"] else 0
+    # The amount isn't quantity x rate when it was changed by hand, now or on an earlier pay app.
+    note = " (amount adjusted)" if entry.get("suggested_cents") is not None else " (includes an earlier adjustment)" if entry.get("carried") else ""
     if entry["unit"].upper() == "LS" and entry["qty_milli"] == 1000:
-        return f"{item}{entry['description']} ({pct}% complete to date)"
+        return f"{item}{entry['description']} ({pct}% complete to date){note}"
     return (
         f"{item}{entry['description']}: {fmt_qty(entry['qty_milli_this'])} {entry['unit']} this period"
-        f" × ${entry['rate_cents'] / 100:,.2f} ({fmt_qty(entry['qty_milli_to_date'])} of {fmt_qty(entry['qty_milli'])}, {pct}% to date)"
+        f" × ${entry['rate_cents'] / 100:,.2f} ({fmt_qty(entry['qty_milli_to_date'])} of {fmt_qty(entry['qty_milli'])}, {pct}% to date){note}"
     )
 
 
@@ -315,6 +491,9 @@ def continuation_sheet(job: dict[str, Any], invoice: dict[str, Any]) -> str:
         text.append("  ".join(c.ljust(widths[i]) if i < 2 else c.rjust(widths[i]) for i, c in enumerate(r)).rstrip())
         if n == 0:
             text.append("-" * len(text[0]))
+    for row in co_rows(job, invoice):
+        text.append(f"CO {row['number']}: scheduled {row['scheduled_cents'] / 100:,.2f}, previous {row['previous_cents'] / 100:,.2f}, "
+                    f"this period {row['this_cents'] / 100:,.2f}, to date {row['to_date_cents'] / 100:,.2f}")
     if invoice.get("op_cents"):
         text.append(f"Overhead and profit {op_bp(job) / 100:g}% on this period's base work: {invoice['op_cents'] / 100:,.2f}")
     return "\n".join(text)
@@ -378,6 +557,8 @@ def clean_lines(raw_lines: Any, existing: list[dict[str, Any]], new_id) -> list[
             "stored_cents": 0,
             "co_id": None,
         }
+        if prior and "field_milli" in prior:
+            entry["field_milli"] = min(prior["field_milli"], qty)
         if prior:  # materials stored on the line stay, within what the edited line has left
             entry["stored_cents"] = max(0, min(int(prior.get("stored_cents") or 0), scheduled - line_completed(entry)))
         out.append(entry)

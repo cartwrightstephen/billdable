@@ -2,6 +2,7 @@
 
 import sys
 import unittest
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,7 +22,7 @@ def new_job(state, contract=10_000_000, retainage=0, customer="Jones Family", **
     return domain.create_job(
         state, kw.pop("name", "Pine kitchen"), customer, contract,
         address="12 Pine St", approver=kw.pop("approver", "Sam Jones"),
-        ap_email=kw.pop("ap_email", "ap@jones.example"), retainage_pct=retainage, **kw,
+        ap_email=kw.pop("ap_email", "ap@jones.example"), retainage_pct=retainage, phone=kw.pop("phone", "(404) 555-0100"), role=kw.pop("role", "" if "client_type" in kw else "Owner"), **kw,
     )
 
 
@@ -133,11 +134,12 @@ class DraftTests(unittest.TestCase):
         self.assertEqual((rec["kind"], rec["label"], rec["note"]), ("note", "Job notes", "Gate code 1234, call before 8am"))
         self.assertEqual(plain["records"], [])
 
-    def test_approver_and_email_optional_until_send(self):  # R1-05
+    def test_an_older_job_is_asked_for_the_email_at_send(self):  # R1-05, Decision 3
         state = new_state()
-        job = new_job(state, approver="", ap_email="", customer="Dana Homeowner")
+        job = new_job(state, customer="Dana Homeowner")
+        job.pop("playbook_required")  # made before a new job needed a complete playbook
         payer = state["payers"][-1]
-        self.assertEqual((payer["approver"], payer["ap_email"]), ("Dana Homeowner", ""))
+        payer["ap_email"] = ""
         domain.mark_done(state, job["id"])
         clear_packet(state, job)
         with self.assertRaises(domain.GateError) as raised:
@@ -158,7 +160,8 @@ class DraftTests(unittest.TestCase):
         self.assertEqual((payer["approver"], payer["ap_email"]), ("Kim", "ap@park.example"))
         self.assertTrue(any(a["action"] == "payer_kept" for a in state["audit"]))
         # A blank email on the saved customer is filled in by the next job that has one.
-        new_job(state, name="Third", customer="Ada Owner", ap_email="")
+        new_job(state, name="Third", customer="Ada Owner")
+        state["payers"][-1]["ap_email"] = ""
         new_job(state, name="Fourth", customer="Ada Owner", ap_email="ada@example.com")
         self.assertEqual(state["payers"][-1]["ap_email"], "ada@example.com")
 
@@ -168,6 +171,8 @@ class DraftTests(unittest.TestCase):
         domain.record_progress(state, job["id"], 1_000_000)
         item = job["invoices"][-1]["packet"][0]
         domain.add_job_record(state, job["id"], "Signed contract PDF", "contract")
+        state.setdefault("files", []).append({"id": "f1", "name": "contract.pdf", "ext": ".pdf", "size": 10})
+        job["records"][-1]["file_ids"] = ["f1"]
         domain.attach_record_to_packet(state, job["id"], item["id"], job["records"][-1]["id"])
         self.assertTrue(item["present"])
 
@@ -184,7 +189,7 @@ class ProgressCorrectionTests(unittest.TestCase):  # R1-09
         self.assertEqual(len(live), 1)
         self.assertEqual((live[0]["number"], live[0]["gross_cents"]), (first["number"], 350_000))
         self.assertEqual(first["status"], "void")
-        self.assertTrue(live[0]["packet"][0]["present"], "the paperwork carries over")
+        self.assertTrue(live[0]["packet"][0]["present"], "the supporting documents carries over")
         self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 0)
 
     def test_progress_refused_while_the_customer_reviews_the_draft(self):
@@ -389,7 +394,7 @@ class ReviewFindingTests(unittest.TestCase):
         send_open(state, job)
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"])
-        self.assertIn("marked done", str(raised.exception))
+        self.assertIn("Final pay app", str(raised.exception))
         self.assertFalse([e for e in state["email_log"] if e["kind"] == "retainage"])
 
     def test_co_after_done_billable_on_stale_legacy_record(self):
@@ -721,6 +726,37 @@ def job_route_item(state, job, action, item, body):
     return server.JOB_ACTIONS[action][1](None, state, job["id"], item, ctx)
 
 
+class FinalPayAppPreviewTests(unittest.TestCase):
+    """Final pay app's confirm box: the amount and whether it is the final one, with nothing changed."""
+
+    def setUp(self):
+        self.state = new_state()
+        self.job = new_job(self.state, contract=10_000_000, retainage=10)
+        domain.record_progress(self.state, self.job["id"], 5_000_000, "", "Owner")
+
+    def test_it_changes_nothing_and_matches_what_is_drafted(self):
+        before = deepcopy(self.state)
+        preview = domain.final_pay_app_preview(self.state, self.job["id"])
+        self.assertEqual(self.state, before)
+        self.assertTrue(preview["final"])
+        self.assertEqual(preview["replaces"], self.job["invoices"][-1]["number"])
+        domain.mark_done(self.state, self.job["id"], "Owner")
+        made = self.job["invoices"][-1]
+        self.assertEqual((preview["number"], preview["amount_cents"], preview["gross_cents"], preview["retainage_cents"]),
+                         (made["number"], made["amount_cents"], made["gross_cents"], made["retainage_cents"]))
+
+    def test_it_says_when_it_isnt_final(self):
+        domain.add_change_order(self.state, self.job["id"], "Extra", 1_000_000, "Owner", reason="owner_request")
+        preview = domain.final_pay_app_preview(self.state, self.job["id"])
+        self.assertFalse(preview["final"])
+        self.assertEqual(preview["pending_cos"][0]["amount_cents"], 1_000_000)
+
+    def test_it_refuses_as_the_real_thing_does(self):
+        domain.mark_done(self.state, self.job["id"], "Owner")
+        with self.assertRaises(domain.GateError):
+            domain.final_pay_app_preview(self.state, self.job["id"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -765,7 +801,7 @@ class RetainageChangeTests(unittest.TestCase):
         for amount in (None, 500_000):
             with self.assertRaises(domain.GateError) as raised:
                 domain.chase_retainage(state, job["id"], amount_cents=amount)
-            self.assertIn("Mark the job done first", str(raised.exception))
+            self.assertIn("Use Final pay app first", str(raised.exception))
         domain.mark_done(state, job["id"])
         for item in job["closeout_packet"]:
             domain.resolve_packet_item(state, job["id"], item["id"], reason="In the binder")

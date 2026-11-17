@@ -32,8 +32,11 @@ services:
         sync: false
 
   # Staging (P1-13): deploys dev, so a change is tried on a real server before main.
-  # Free plan, no disk: its data is throwaway and the landing page says so. No mail
-  # settings, so it never emails anyone; the Outbox shows what it would have sent.
+  # Free plan, no disk: its data is throwaway and the landing page says so.
+  # Email and text tests run here (Decision 8). DURACASH_ENV=staging means only the people on
+  # MAIL_ALLOWLIST and SMS_ALLOWLIST get anything, and nobody when a list is blank. Without
+  # SMTP_HOST it sends no email at all, and the Outbox shows what it would have sent.
+  # Fill the sync: false values in the Render dashboard: docs/setup-integrations.md.
   - type: web
     name: duracash-staging
     runtime: docker
@@ -42,5 +45,35 @@ services:
     branch: dev
     healthCheckPath: /healthz
     envVars:
+      - key: DURACASH_ENV
+        value: staging
       - key: COOKIE_SECURE
         value: "1"
+      - key: DURACASH_URL
+        sync: false
+      - key: MAIL_ALLOWLIST
+        sync: false
+      - key: SMS_ALLOWLIST
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_NUMBER
+        sync: false
+      - key: QBO_CLIENT_ID
+        sync: false
+      - key: QBO_CLIENT_SECRET
+        sync: false
+      - key: QBO_ENV
+        sync: false

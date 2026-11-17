@@ -7,7 +7,7 @@ import { resetTrail, stepTrail, previousPage } from "./trail.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./help.js";
 import { readJson, setNetBanner } from "./net.js";
 import { labelTables } from "./dom.js";
-import { refuseForm, formErrors, clearForm, clearAllForms } from "./forms.js";
+import { refuseForm, clearForm, clearAllForms } from "./forms.js";
 import { setBillingStyle, termText } from "./terms.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, clearSession, onSessionEnd, setLocation, closeForms, pendingPath, pendingSearch, setPending, setCameraAsk, setTeamData, setDrawerOpen, setQueueExpanded, idleMinutes, setSignedOutNote } from "./state.js";
 import { startIdleWatch, stopIdleWatch, idleWatching } from "./idle.js";
@@ -54,7 +54,7 @@ const LIST_URLS = { outbox: "/api/outbox?", audit: "/api/audit?", history: "/api
   inbox: "/api/inbox?", sentpayapps: "/api/payapps/sent?" };
 const LIST_VIEWS = { timeline: "job", sentpayapps: "export" };   // the view that shows a list, where it isn't the list's own name
 // Lists whose filter is a whole query string (several filters and a sort), not one job id.
-const LIST_QUERY = new Set(["inbox"]);
+const LIST_QUERY = new Set(["inbox", "audit"]);
 let toastTimer = null;
 export const DEMO_COMPANY_ID = "co-hartline";
 
@@ -85,9 +85,11 @@ function addInfoIcon(labelEl, text, hostEl) {
   const icon = document.createElement("span");
   icon.className = "info";
   icon.textContent = "i";
-  icon.tabIndex = 0;
+  // Out of the Tab order (round 1, item 11): the field it is beside carries its words (a11yPass).
+  icon.tabIndex = -1;
   icon.setAttribute("role", "button");
-  icon.setAttribute("aria-label", "What is this?");
+  const named = (labelEl.textContent || "").replace(/\s*\*\s*$/, "").trim();
+  icon.setAttribute("aria-label", named ? `What is ${named}?` : "What is this?");
   icon.dataset.help = text;
   icon.addEventListener("mouseenter", () => showHelpTip(icon));
   icon.addEventListener("mouseleave", hideHelpTip);
@@ -100,25 +102,21 @@ function addInfoIcon(labelEl, text, hostEl) {
 }
 
 // The (i) beside each label, found by the label's data-help key (a field()), else its text.
-// A touch screen shows no icons (styles.css); each card instead ends with one "What do these
-// mean?" list of the help in it (R3-10).
+// A touch screen shows no icons (styles.css); the page instead ends with one "What do these
+// mean?" list of the help on it (R3-10): one per page, never one per card (Round 1 acceptance,
+// item 23). A part of the page drawn again keeps the page's list.
 function decorateHelp(root) {
-  const lists = new Map();  // card -> [[term, help], ...]
+  const list = [];  // [[term, help], ...]
   root.querySelectorAll(".money-row .label, .metric .k, th, label").forEach(el => {
     if (el.closest(".auth-card")) return;
     const host = el.closest(".money-row, .metric, th, .form-grid > div") || el;
     const text = termText((el.dataset.help && FIELD_HELP[el.dataset.help]) || helpFor(el.textContent));
     addInfoIcon(el, text, host);
-    const card = text && el.closest(".card, .table-wrap, .metrics");
-    if (!card) return;
+    if (!text || !el.closest(".card, .table-wrap, .metrics")) return;
     const term = el.textContent.replace(/[↑↓*]/g, "").trim();
-    const list = lists.get(card) || [];
     if (term && !list.some(([t]) => t === term)) list.push([term, text]);
-    lists.set(card, list);
   });
-  lists.forEach((list, card) => {
-    const placed = card.classList.contains("card") ? card.querySelector(":scope > .help-list") : card.nextElementSibling?.classList.contains("help-list");
-    if (placed) return;  // drawn already
+  if (list.length && !root.querySelector(".help-list") && !(root.isConnected && document.querySelector(".help-list"))) {
     const box = document.createElement("details");
     box.className = "help-list";
     const summary = document.createElement("summary");
@@ -131,10 +129,8 @@ function decorateHelp(root) {
       dl.append(dt, dd);
     }
     box.append(summary, dl);
-    // A card holds its list; a table or a row of tiles has it just after.
-    if (card.classList.contains("card")) card.append(box);
-    else card.after(box);
-  });
+    root.append(box);
+  }
   root.querySelectorAll(".nav button[data-section]").forEach(b => addInfoIcon(b, termText(NAV_HELP[b.dataset.section]), b));
 }
 
@@ -166,6 +162,19 @@ export function toast(msg, action = null) {
 }
 function hideToast() { const el = document.getElementById("toast"); if (el) el.style.display = "none"; }
 
+// An old address that now opens part of a page (routes.js PATH_ALIASES "view#anchor"): once that
+// part is drawn, a fold opens, a filter button is pressed, and it is scrolled into view.
+let pendingAnchor = null;
+export function showAnchor() {
+  if (!pendingAnchor) return;
+  const el = document.getElementById(pendingAnchor) || document.querySelector(`[data-anchor="${CSS.escape(pendingAnchor)}"]`);
+  if (!el) return;   // not drawn yet: the next render tries again
+  pendingAnchor = null;
+  if (el.tagName === "BUTTON") { el.click(); return; }
+  if (el.tagName === "DETAILS") { el.open = true; if (el.dataset.more) moreDetails[el.dataset.more] = true; }
+  el.scrollIntoView({ block: "start" });
+}
+
 // Called once signed in: open the page in the address bar (or the one asked for while signed out).
 // The home-screen shortcuts (manifest.webmanifest, R6-04) add ?camera=1 to the Inbox and ?new=1
 // to Jobs. A page can't open the camera by itself, so Take a photo is put under the thumb.
@@ -176,6 +185,7 @@ export function applyLocation() {
   if (r.view === "jobs" && ask.get("new") === "1") formOpen.newjob = true;
   if (r.view === "inbox" && ask.get("camera") === "1") setCameraAsk(true);
   setLocation(r.view, r.jobId, r.detailId);
+  pendingAnchor = r.anchor || null;
   resetTrail(currentView, currentJobId, currentDetailId);   // arrived from outside the app
   history.replaceState(null, "", pathFor(currentView, currentJobId, currentDetailId));
 }
@@ -243,6 +253,7 @@ onSessionEnd(() => {
   actionEl = null;
   clearAllForms();
   for (const k of Object.keys(moreDetails)) delete moreDetails[k];
+  pendingAnchor = null;
 });
 
 function placeJob(full) {
@@ -342,6 +353,9 @@ export async function post(path, body = {}, opts = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
+// A refusal the caller held back (opts.ownRefusal) and now shows, as post() would have.
+export function showRefused(data, anchor = actionEl) { showRefusal(anchor, data || {}); }
+
 // Why an action was refused, in a card right under the button that was tapped (or the row or
 // bar it sits in), scrolled into view, with a link to the page that fixes it when the server
 // names one. Without a button on the page it falls back to a toast.
@@ -377,7 +391,7 @@ function showRefusal(anchor, data) {
     a.textContent = link.label;
     card.append(a);
   }
-  const host = anchor.closest(".action-item, .next-card, .more-actions, .form-inline, .form-row, .list-item") || anchor;
+  const host = anchor.closest(".action-item, .task-card, .main-actions, .more-actions, .form-inline, .form-row, .list-item") || anchor;
   host.insertAdjacentElement("afterend", card);
   card.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
@@ -442,6 +456,11 @@ function a11yPass(root) {
     if (!field.id) field.id = `fld-${++fieldSeq}`;
     l.htmlFor = field.id;
   });
+  // A label's (i) help is its field's description, since the icon takes no Tab stop.
+  root.querySelectorAll("label[for] .info").forEach(icon => {
+    const f = document.getElementById(icon.closest("label").htmlFor);
+    if (f && !f.hasAttribute("aria-description")) f.setAttribute("aria-description", icon.dataset.help);
+  });
   root.querySelectorAll("input:not([type=hidden]):not([type=checkbox]), select, textarea").forEach(f => {
     if (f.getAttribute("aria-label") || (f.id && root.querySelector(`label[for="${CSS.escape(f.id)}"]`))) return;
     const name = f.getAttribute("placeholder") || f.closest(".money-row")?.querySelector(".label")?.textContent;
@@ -486,10 +505,5 @@ export function finishHtml(root) {
 }
 export const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-// "More details (optional)" stays as the person left it across re-renders, and opens when
-// one of its fields has an error.
+// A folded section (data-more) stays as the person left it across re-renders.
 export const moreDetails = {};
-export function moreOpen(key) {
-  const errs = formErrors[key] || {};
-  return !!moreDetails[key] || ["contract_number", "retainage_pct", "phone", "approver", "ap_email", "note"].some(k => errs[k]);
-}

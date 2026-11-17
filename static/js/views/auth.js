@@ -61,10 +61,10 @@ export function renderLanding() {
         <div class="land-copy">
           <p class="eyebrow">For small GCs and remodelers</p>
           <h1>You finish the work.<br>Duracash gets it billed and collected.</h1>
-          <p class="lede">Works beside QuickBooks. Catches the missing paperwork, the unsigned change order, and the money held back that nobody chased. You approve every send.</p>
+          <p class="lede">Works beside QuickBooks. Catches the missing supporting documents, the unsigned change order, and the money held back that nobody chased. You approve every send.</p>
           <div class="land-points">
             <div><strong>Same-week invoice</strong><span>From “job’s done” to a draft you can send.</span></div>
-            <div><strong>Paperwork check</strong><span>Nothing leaves with a missing waiver or photo.</span></div>
+            <div><strong>Document check</strong><span>Nothing leaves with a missing waiver or photo.</span></div>
             <div><strong>Money</strong><span>Contract, change orders, billed, received, held back — one place.</span></div>
           </div>
           ${demoAvailable ? `<div class="land-demo">
@@ -74,11 +74,11 @@ export function renderLanding() {
         </div>
         <div class="auth-card land-form" id="signup">
           <h2>${signup ? "Create your company" : "Sign in"}</h2>
-          <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, paperwork and clients."}</p>
+          <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, supporting documents and clients."}</p>
           ${!signup && signedOutNote ? `<p class="notice signed-out-note" role="status">${esc(signedOutNote)}</p>` : ""}
           ${!signup && loginCode ? `<form id="auth-form">
             <label for="login-code">${loginCode.method === "email" ? "Code from the email" : "Code from your authenticator app"}</label>
-            <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" placeholder="123456" />
+            <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" />
             ${loginNote ? `<p class="sub" role="status">${esc(loginNote)}</p>` : ""}
             ${loginCode.method === "email" ? `<label class="terms-check"><input type="checkbox" id="login-remember" name="remember" checked> Don't ask again on this device for 30 days</label>
             <p class="sub">No email? Check the spam folder, or go back and sign in again for a new code.</p>`
@@ -106,8 +106,8 @@ export function renderLanding() {
       <section class="land-how">
         <h2>How it works</h2>
         <div class="land-steps">
-          <div class="card"><span class="step">1</span><h3>Mark the job done</h3><p>Notes and photos land on the job record. Money already knows the contract.</p></div>
-          <div class="card"><span class="step">2</span><h3>Add the paperwork</h3><p>Duracash names what is missing — a waiver, a signed change order, photos — before anything is sent.</p></div>
+          <div class="card"><span class="step">1</span><h3>Record the work as finished</h3><p>Notes and photos land in the job records. Money already knows the contract.</p></div>
+          <div class="card"><span class="step">2</span><h3>Add the supporting documents</h3><p>Duracash names what is missing — a waiver, a signed change order, photos — before anything is sent.</p></div>
           <div class="card"><span class="step">3</span><h3>Approve and collect</h3><p>You approve the send. Payments are recorded. Money held back and closeout stay on the calendar.</p></div>
         </div>
       </section>
@@ -374,12 +374,9 @@ function renderForgot(message = "", error = "") {
 // out, the server's reason is shown instead (email not set up on this server, too many links).
 function checkEmailHtml() {
   const sent = checkEmail.verification === "sent";
-  return `<div class="card check-email" role="status">
-    <h2>${sent ? "Check your email" : "Your email isn't confirmed yet"}</h2>
-    <p>${sent ? `We sent a confirmation link to ${checkEmail.email}.` : `No confirmation link went to ${checkEmail.email}: ${checkEmail.verification || "it could not be sent"}.`} You can set up your first job meanwhile.</p>
-    <div class="form-inline">${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : ""}
-      <button class="btn small secondary" data-action="dismiss-check-email">Got it</button></div>
-  </div>`;
+  // One plain line under the page's heading (round 1, item 9): the first job comes first.
+  return `<p class="check-email" role="status">${sent ? `We sent a confirmation link to ${checkEmail.email}.` : `Email not confirmed: no link went to ${checkEmail.email} (${checkEmail.verification || "it could not be sent"}).`}`
+    + `${mailReady ? ` <button class="linkish" data-action="resend-verify">Send the link again</button>` : ""} <button class="linkish" data-action="dismiss-check-email">Got it</button></p>`;
 }
 
 // Shared from the phone before signing in (R6-10): held for half an hour, added here with one tap.

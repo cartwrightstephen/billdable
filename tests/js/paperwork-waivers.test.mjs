@@ -9,7 +9,7 @@ const dom = installFakeDom();
 const core = await import("../../static/js/app-core.js");
 const page = await import("../../static/js/state.js");
 const reg = await import("../../static/js/views/index.js");
-const { retainageCardHtml } = await import("../../static/js/views/job-money.js");
+const { moneyCardHtml, retainagePctText } = await import("../../static/js/views/job-money.js");
 const { waiverRows } = await import("../../static/js/views/closeout.js");
 const { beforeYouSendHtml, recordWaiverKind, setWaiverForms } = await import("../../static/js/views/paperwork.js");
 const { retainageFacts, daysAgoText, waiverStageText } = await import("../../static/js/jobs.js");
@@ -33,15 +33,15 @@ const job = (over = {}) => ({
   ...over,
 });
 
-test("the Retainage card has the rate, the money, the asks and the releases", () => {
+test("retainage is one line in Money, its rate; there is no Retainage card (Yusuf, 10 Nov)", () => {
   core.setState({ company: { name: "Pine" }, jobs: [job()], payers: [], files: [] });
   const now = new Date("2026-10-30T12:00:00Z");
   const f = retainageFacts(job(), now);
   assert.deepEqual([f.pct, f.asked, f.doneDays, f.askedDays, f.payApps.map(i => i.number)], [10, 2, 29, 10, ["PA-1", "PA-2"]]);
-  const html = retainageCardHtml(job(), now);
-  for (const want of ["Retainage held", "$1,000.00", "Retainage released", "$400.00", "Still held", "$600.00", "29 days ago", "Times asked",
-    "Next ask allowed", "PA-1</a> · $500.00", "CHK-9", "Sam", "waiver due"]) assert.ok(html.includes(want), want);
-  assert.equal(retainageCardHtml(job({ retainage_pct: 0, money: { ...money, retainage_held_cents: 0 } })), "");
+  const html = moneyCardHtml(job());
+  assert.match(html, /<div class="money-row retainage-rate"><span class="label">Retainage<\/span><span>10%<\/span><\/div>\s*<\/details>/);
+  assert.doesNotMatch(html, /retainage-card|Times asked|Pay apps holding it|Releases/);
+  assert.deepEqual([retainagePctText({ retainage_pct: 0 }), retainagePctText({ retainage_pct: 5 }), retainagePctText({ retainage_pct: 7.5 }), retainagePctText({})], ["0%", "5%", "7.5%", "0%"]);
   assert.equal(daysAgoText(1), "1 day ago");
 });
 
@@ -63,9 +63,10 @@ test("the waiver page asks for the signed form before it sends, and says what th
   const view = reg.views["waiver-detail"];
   page.setLocation("waiver-detail", "j1");
   const html = view();
-  assert.match(html, /Add the signed unconditional waiver to the job record, then send\./);
+  assert.match(html, /Add the signed unconditional waiver to the job records, then send\./);
   assert.match(html, /data-waiver-kind="unconditional_progress"/);
-  assert.match(html, /data-action="waiver" data-id="j1" data-inv="i2" disabled>/);
+  // Approve & send stays on and the server says why in place, as on the pay app page (Round 1 acceptance, item 18).
+  assert.match(html, /data-action="waiver" data-id="j1" data-inv="i2">Approve & send/);
   for (const want of ["Pine Builders LLC", "Amount covered: $4,500.00", "Not released: the $600.00 retainage held to date on this job", "O.C.G.A. § 44-14-366",
     "Interim Waiver and Release Upon Payment", "Conditional, final payment: Sent"]) assert.ok(html.includes(want), want);
   assert.equal(waiverStageText({ kind: "", status: "After payment" }), "After payment");
@@ -89,7 +90,7 @@ test("a signed waiver not said to be for a pay app asks which; one not needed sh
     ["Retainage released Oct 22, 2026", true, "", true]]);
   page.setLocation("waiver-detail", "j1");
   const html = reg.views["waiver-detail"]();
-  assert.match(html, /Lien waiver signed is on the job record\. More than one waiver is due/);
+  assert.match(html, /Lien waiver signed is in the job records\. More than one waiver is due/);
   // Each row has its own picker, with its own row chosen (the same waiver shows on both rows).
   assert.match(html, /<select id="wfor-rec-9-i2"[^>]*><option value="i2" selected>PA-2<\/option><option value="rw-1">Retainage released/);
   assert.match(html, /<select id="wfor-rec-9-rw-1"[^>]*><option value="i2">PA-2<\/option><option value="rw-1" selected>Retainage released/);
@@ -133,7 +134,8 @@ test("Before you send lists each file with Leave out or Put back, and warns of a
     { id: "r3", kind: "supplier_invoice", label: "Lumber", file_ids: ["f4"] }];
   const files = [["f1", "a.jpg"], ["f2", "b.jpg"], ["f3", "w.pdf"], ["f4", "l.pdf"]].map(([id, name]) => ({ id, name }));
   const inv = { id: "d1", number: "PA-3", status: "awaiting_approval", excluded_file_ids: ["f2"], extra_record_ids: [],
-    packet: [{ label: "Photos", attachments: [{ record_id: "r1" }] }, { label: "Conditional waiver", waiver_kind: "conditional_progress", attachments: [{ record_id: "r2" }] }] };
+    packet: [{ label: "Photos", attachments: [{ record_id: "r1" }] }, { label: "Conditional waiver", waiver_kind: "conditional_progress", attachments: [{ record_id: "r2" }] }],
+    unconditional_attached: [{ record_id: "r2", label: "Unconditional waiver", why: "Pat said it is the unconditional waiver", extra: false, file_ids: ["f3"], file_names: ["w.pdf"] }] };
   const j = job({ records, invoices: [inv] });
   core.setState({ company: { name: "Pine" }, jobs: [j], payers: [], files });
   const html = beforeYouSendHtml(j, inv);
@@ -150,7 +152,7 @@ test("Add your legal name opens Settings, Company at the legal-name box (D2)", a
   const { waiverChecklistHtml } = await import("../../static/js/views/paperwork.js");
   core.setState({ company: { name: "Pine" }, jobs: [job()], payers: [], files: [] });
   const html = waiverChecklistHtml(job(), "unconditional_progress");
-  assert.match(html, /<button class="linkish" data-action="onb-go" data-view="company" data-focus="#co-legal-name">Add your legal name<\/button>/);
+  assert.match(html, /<button class="linkish tall" data-action="onb-go" data-view="company" data-focus="#co-legal-name">Add your legal name<\/button>/);
   assert.ok(reg.views.company, "the page it opens exists");
   assert.ok(!reg.views.settings);
 });

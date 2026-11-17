@@ -58,7 +58,7 @@ def rule_message(rule: str) -> str:
 def normalize_phone(value: str) -> str | None:
     """A US phone as (xxx) xxx-xxxx (with " x123" for an extension), or None if it isn't one."""
     m = _PHONE_RE.match(str(value or ""))
-    if not m:
+    if not m or len(set(m.group(1) + m.group(2) + m.group(3))) == 1:   # 0000000000 is nobody's number
         return None
     out = f"({m.group(1)}) {m.group(2)}-{m.group(3)}"
     return out + (f" x{m.group(4)}" if m.group(4) else "")

@@ -58,7 +58,7 @@ class DomainTests(unittest.TestCase):
     def test_paper_signature_needs_the_signed_copy_on_record(self):
         state = seed_state()
         job, co = pending(state)
-        with self.assertRaisesRegex(domain.GateError, "job record"):
+        with self.assertRaisesRegex(domain.GateError, "record that holds"):
             domain.mark_co_signed(state, job["id"], co["id"], "", "owner")
         domain.add_job_record(state, job["id"], "Signed CO scan", "change_order", "", "owner")
         rec = job["records"][-1]["id"]
@@ -178,7 +178,7 @@ class SigningHttpTests(unittest.TestCase):
                                                            "name": "Pat", "company_name": "Pine"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
         res, raw = self.request("POST", "/api/jobs", {"name": "Elm", "customer": "Park GC", "address": "9 Elm", "approver": "Kim",
-                                                      "ap_email": "ap@park.example", "contract_cents": 1_000_000}, cookie)
+                                                      "ap_email": "ap@park.example", "contract_cents": 1_000_000, "phone": "(404) 555-0100", "role": "Owner"}, cookie)
         job = json.loads(raw)["jobs"][-1]
         res, raw = self.request("POST", f"/api/jobs/{job['id']}/add-co", {"title": "Two <b>outlets</b>", "amount_cents": 45_000, "reason": "owner_request"}, cookie)
         co = json.loads(raw)["jobs"][-1]["change_orders"][-1]

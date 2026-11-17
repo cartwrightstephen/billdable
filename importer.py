@@ -70,26 +70,31 @@ KINDS = {
     "change_order": "Change order",
     "waiver": "Lien waiver",
     "pay_app": "Backup for the pay app",
-    "ticket": "Daily ticket or time sheet",
+    "ticket": "Delivery ticket or time sheet",
     "supplier_invoice": "Supplier invoice or receipt",
     "insurance": "Insurance certificate",
     "inspection": "Inspection",
     "stored": "Stored materials document",
+    "payroll": "Certified payroll",
+    "notarized": "Notarized pay application",
     "punch": "Punch list sign-off",
     "completion": "Completion certificate",
     "asbuilt": "As-builts",
     "warranty": "Warranty",
     "photo": "Photo",
     "contract": "Contract",
-    "daily": "Daily record",
+    "daily": "Diary entry",
     "note": "Note",
+    "conversation": "Conversation",
     "other": "Other",
 }
 
 _KIND_RULES = [
+    ("notarized", r"\bnotari[sz]ed (?:pay app|pay application|application for payment|g702)\b"),
     ("change_order", r"\bchange order\b|\bc\.?o\.?\s*#?\s*\d+|\bextra work\b|\bfield (?:order|directive)\b"),
     ("waiver", r"\bwaiver\b|\blien release\b"),
     ("pay_app", r"\bpay app\b|\bpay application\b|\bapplication for payment\b|\bg70[23]\b|\brequisition\b|\bpencil\b"),
+    ("payroll", r"\bcertified payroll\b|\bpayroll certification\b|\bwh-?347\b"),
     ("insurance", r"\bcertificate of (?:liability )?insurance\b|\binsurance certificate\b|\bcoi\b"),
     ("punch", r"\bpunch ?list\b"),
     ("completion", r"\bcertificate of (?:substantial )?completion\b|\bcompletion certificate\b"),
@@ -632,15 +637,29 @@ def _item(state: dict[str, Any], item_id: str) -> dict[str, Any]:
     return item
 
 
+# What a ticket can be when filed; domain/daily.py's New job record sets the same ticket_type.
+TICKET_WORDS = {"delivery": "Delivery ticket", "time_sheet": "Time sheet"}
+
+
+def _ticket_type(item: dict[str, Any]) -> str:
+    """A ticket filed without saying which: a time sheet if it says so, else a delivery ticket."""
+    said = f"{item.get('subject') or ''} {item.get('text') or ''}"
+    return "time_sheet" if re.search(r"\btime ?sheet\b", said, re.I) else "delivery"
+
+
 def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor: str) -> dict[str, Any]:
-    """Put an inbox item on a job's record. Daily notes become daily records with their own date."""
+    """Put an inbox item on a job's record. Daily notes become daily records with their own date.
+    kind may be "ticket:delivery" or "ticket:time_sheet": kind ticket with that ticket_type."""
     item = _item(state, item_id)
     if item["status"] != "new":
         raise domain.GateError("This item was already filed or dismissed.")
     job = domain._open_job(state, job_id) if job_id else None
     if not job:
         raise domain.GateError("Pick a job to file this to.")
+    kind, _, ticket_type = (kind or "").partition(":")
     kind = kind if kind in KINDS else item["kind"]
+    if kind == "ticket":
+        ticket_type = ticket_type if ticket_type in TICKET_WORDS else _ticket_type(item)
     files = [f for f in state.get("files", []) if f["id"] in item["file_ids"]]
     label = item["subject"] or (files[0]["name"] if files else "") or (item["text"].strip().splitlines() or ["Imported note"])[0]
     label = label.strip()[:120] or "Imported note"
@@ -662,8 +681,11 @@ def file_item(state: dict[str, Any], item_id: str, job_id: str, kind: str, actor
         rec["source"] = source_line
         rec["file_ids"] = list(item["file_ids"])
         rec["inbox_id"] = item["id"]
+        if kind == "ticket":
+            rec["ticket_type"] = ticket_type
+    domain._refresh_draft_gate(job, state)  # with its files now, it can be suggested for a missing item
     item.update({"status": "filed", "filed_job_id": job_id, "filed_kind": kind, "record_ids": record_ids, "filed_at": utcnow(), "filed_by": actor})
-    domain.audit(state, job_id, "import_filed", f"{actor} filed {KINDS.get(kind, kind).lower()} '{label}' ({source_line}) to the job record.", actor)
+    domain.audit(state, job_id, "import_filed", f"{actor} filed {(TICKET_WORDS[ticket_type] if kind == 'ticket' else KINDS.get(kind, kind)).lower()} '{label}' ({source_line}) to the job's records.", actor)
     return item
 
 
@@ -719,7 +741,7 @@ def capture_reply(state: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]
         if re.search(r"\b(need|needs|missing|required|require|attach|send us|please send)\b", summary, re.IGNORECASE):
             domain.suggest_packet_item(state, job.get("payer_id", ""), summary, "a reply", job["name"])
         domain.audit(state, job["id"], "reply_captured",
-                     f"A reply from {sender} to {', '.join(sorted(numbers))} was filed to the job record: {summary}", "duracash")
+                     f"A reply from {sender} to {', '.join(sorted(numbers))} was filed to the job's records: {summary}", "duracash")
         return job
     return None
 
@@ -768,14 +790,14 @@ def _paperwork_refusal(job: dict[str, Any], rids: set[str], can_pull_back: bool 
     drafts = [inv for inv in job.get("invoices", []) if inv.get("status") in domain.DRAFT_STATUSES and holds(inv.get("packet"))]
     if drafts:
         number = drafts[-1].get("number") or "the pay app"
-        return domain.GateError(f"The paperwork for {number} uses this record. Tap Remove on it there first.",
-                                action=link(f"Open the paperwork for {number}", "packet-detail", drafts[-1]["id"]))
+        return domain.GateError(f"The supporting documents for {number} use this record. Tap Remove on it there first.",
+                                action=link(f"Open {number}", "payapp-detail", drafts[-1]["id"]))
     if holds(job.get("packet")):
-        return domain.GateError("The job's paperwork uses this record. Tap Remove on it there first.",
-                                action=link("Open the paperwork", "packet-detail"))
+        return domain.GateError("The job's supporting documents use this record. Tap Remove on it there first.",
+                                action=link("Open supporting documents", "packet-detail"))
     if holds(job.get("closeout_packet")):
-        return domain.GateError("The closeout paperwork uses this record. Tap Remove on it there first.",
-                                action=link("Open the closeout paperwork", "packet-detail", "closeout"))
+        return domain.GateError("The closeout documents use this record. Tap Remove on it there first.",
+                                action=link("Open the closeout documents", "packet-detail", "closeout"))
     return None
 
 
@@ -827,7 +849,7 @@ def undo_item(state: dict[str, Any], item_id: str, actor: str, can_pull_back: bo
                 newer["prev_last_reply"] = prev_last
         item["auto_filed"] = False
     item.update({"status": "new", "record_ids": [], "filed_job_id": None})
-    domain.audit(state, job["id"], "import_undone", f"{actor} took an imported item back off the job record.", actor)
+    domain.audit(state, job["id"], "import_undone", f"{actor} took an imported item back out of the job's records.", actor)
     return item
 
 

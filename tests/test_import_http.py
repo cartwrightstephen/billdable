@@ -22,6 +22,9 @@ import helper
 import importer
 import server
 import storage
+from dollar_jobs import dollar_jobs
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 EML = (b"From: Kim Park <ap@park.example>\r\nTo: jobs@example.com\r\nSubject: CO 2 signed for Elm addition\r\n"
@@ -59,6 +62,7 @@ def xlsx_bytes(rows):
     return buf.getvalue()
 
 
+@dollar_jobs
 class ImportHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -108,7 +112,7 @@ class ImportHttpTests(unittest.TestCase):
         res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": email, "password": PASSWORD, "name": "Pat Pine", "company_name": "Pine Co"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
         job = {"name": "Elm addition", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim", "ap_email": "ap@park.example",
-               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC"}
+               "contract_cents": 10_000_000, "retainage_pct": 10, "role": "GC", "phone": "(404) 555-0100"}
         res, state = self.request("POST", "/api/jobs", job, cookie=cookie)
         return cookie, state["jobs"][0]
 
@@ -220,7 +224,7 @@ class ImportHttpTests(unittest.TestCase):
     def test_a_tie_comes_with_candidates_and_a_forward_keeps_its_sender(self):  # R5-05, R5-06
         cookie, job = self.company("tie@example.com")
         second = {"name": "Birch garage", "customer": "Park GC", "address": "4 Birch Road", "approver": "Kim", "ap_email": "ap@park.example",
-                  "contract_cents": 5_000_000, "retainage_pct": 10, "role": "GC"}
+                  "contract_cents": 5_000_000, "retainage_pct": 10, "role": "GC", "phone": "(404) 555-0100"}
         res, state = self.request("POST", "/api/jobs", second, cookie=cookie)
         self.assertEqual(res.status, 200, state)
         self.assertEqual(len({j["payer_id"] for j in state["jobs"]}), 1, "both jobs are Park GC's")
@@ -308,23 +312,26 @@ class ImportHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 200, state)
         packet = state["jobs"][0]["invoices"][-1]["packet"]
         item = next(p for p in packet if not p["present"])
-        res, state = self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=waiver&attach={item['id']}", raw=b"\x89PNG fake",
+        res, state = self.request("POST", f"/api/import/file?job={job['id']}&file=1&kind=waiver&waiver_kind=conditional_progress&attach={item['id']}", raw=b"\x89PNG fake",
                                   cookie=cookie, headers={"Content-Type": "image/png", "X-Filename": "IMG_0002.png"})
         self.assertEqual(res.status, 200, state)
         rec = state["jobs"][0]["records"][-1]
         item = next(p for p in state["jobs"][0]["invoices"][-1]["packet"] if p["id"] == item["id"])
-        self.assertTrue(item["present"])
+        # A photo the check can't read is attached; on a waiver item it waits for one tap that says
+        # which waiver it is (Round 1 acceptance, item 14).
+        self.assertFalse(item["present"])
+        self.assertEqual(item["check"]["status"], "unchecked")
         self.assertEqual([a["record_id"] for a in item["attachments"]], [rec["id"]])
         # The Inbox's Undo was refused while the paperwork used the record; Remove frees it.
         inbox_id = state["inbox"][-1]["id"]
         res, data = self.request("POST", f"/api/inbox/{inbox_id}/undo", {}, cookie=cookie)
         self.assertEqual(res.status, 409)
         self.assertIn("Remove", data["error"])
-        # The refusal links to that pay app's Paperwork page, where Remove is (Oct 23 note #13).
+        # The refusal links to that pay app's page, where Remove is (Oct 23 note #13, Decision 9).
         inv_id = state["jobs"][0]["invoices"][-1]["id"]
         self.assertEqual({k: data["action"][k] for k in ("view", "job_id", "detail")},
-                         {"view": "packet-detail", "job_id": job["id"], "detail": inv_id})
-        self.assertTrue(data["action"]["label"].startswith("Open the paperwork for "))
+                         {"view": "payapp-detail", "job_id": job["id"], "detail": inv_id})
+        self.assertTrue(data["action"]["label"].startswith("Open PA-"))
         res, state = self.request("POST", f"/api/jobs/{job['id']}/detach/{item['id']}", {}, cookie=cookie)
         self.assertEqual(res.status, 200, state)
         self.assertIn(item["blocker"], state["jobs"][0]["blockers"])
@@ -387,7 +394,7 @@ class ImportHttpTests(unittest.TestCase):
         inv = state["jobs"][0]["invoices"][-1]
         for item in inv.get("packet") or []:
             self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "sent with the email"}, cookie=cookie)
-        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        res, state = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie=cookie)
         self.assertEqual(res.status, 200, state)
         amount = state["jobs"][0]["invoices"][-1]["amount_cents"]
         csv_text = f"Date,Num,Customer,Amount,Memo\n10/09/2026,5521,Park GC,{amount / 100:.2f},\n"

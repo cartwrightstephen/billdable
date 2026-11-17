@@ -34,11 +34,11 @@ class AskTests(unittest.TestCase):
         domain.record_progress(state, job["id"], 900_000)
         inv = draft(job)
         for item in inv["packet"]:
-            domain.resolve_packet_item(state, job["id"], item["id"])
+            domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
         domain.approve_and_send(state, job["id"], "Owner")
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"], "Owner", amount_cents=10_000)
-        self.assertIn("Mark the job done first", str(raised.exception))
+        self.assertIn("Use Final pay app first", str(raised.exception))
 
     def test_part_after_done_and_times_asked(self):  # M24, M25
         state = new_state()

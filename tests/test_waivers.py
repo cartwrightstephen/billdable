@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import domain
 import server
 from test_packet import new_state, new_job, record, draft
-from waiver_help import signed_waiver
+from waiver_help import confirm_suggested, signed_waiver
 
 
 def sent_pay_app(state, job, cents=400_000):
@@ -22,6 +22,7 @@ def sent_pay_app(state, job, cents=400_000):
             domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
     if any(not p["present"] and p["required"] for p in inv["packet"]):
         record(state, job, "waiver", f"Signed conditional waiver {inv['number']}")
+        confirm_suggested(state, job)
     domain.approve_and_send(state, job["id"], "Owner")
     return inv
 
@@ -32,11 +33,11 @@ class UnconditionalWithPayAppTests(unittest.TestCase):  # M14
         self.job = new_job(self.state, packet="Invoice.")
         domain.record_progress(self.state, self.job["id"], 400_000)
         self.inv = draft(self.job)
-        domain.resolve_packet_item(self.state, self.job["id"], next(p for p in self.inv["packet"] if p["label"] == "Invoice")["id"])
+        domain.resolve_packet_item(self.state, self.job["id"], next(p for p in self.inv["packet"] if p["label"] == "Invoice")["id"], reason="test")
         self.rec = signed_waiver(self.state, self.job["id"], "unconditional_progress", "Unconditional waiver PA-1")
         waiver = next(p for p in self.inv["packet"] if p["kind"] == "waiver")
         self.assertFalse(waiver["present"], "an unconditional waiver never fills the conditional item by itself")
-        domain.attach_record_to_packet(self.state, self.job["id"], waiver["id"], self.rec["id"], "Sam")
+        domain.attach_record_to_packet(self.state, self.job["id"], waiver["id"], self.rec["id"], "Sam", answer="unconditional")
 
     def test_refused_without_a_reason(self):
         with self.assertRaises(domain.GateError) as raised:
@@ -84,7 +85,7 @@ class SecondStageTests(unittest.TestCase):  # M18, M19, M21
         self.assertEqual(domain.status_label(job), "Payment received, waiver not sent")
         with self.assertRaises(domain.GateError) as raised:
             domain.send_waiver(state, job["id"], "Owner")
-        self.assertEqual(str(raised.exception), "Add the signed unconditional waiver to the job record first.")
+        self.assertEqual(str(raised.exception), "Add the signed unconditional waiver to the job records first.")
         with self.assertRaises(domain.GateError) as raised:
             domain.close_job(state, job["id"])
         self.assertIn("A lien waiver is still due.", raised.exception.blockers)
@@ -116,7 +117,7 @@ class SecondStageTests(unittest.TestCase):  # M18, M19, M21
         signed_waiver(state, job["id"], "unconditional_final")
         with self.assertRaises(domain.GateError):
             domain.send_waiver(state, job["id"], "Owner", kind="unconditional_progress")
-        domain.send_waiver(state, job["id"], "Owner", kind="unconditional_final")
+        domain.send_waiver(state, job["id"], "Owner", kind="unconditional_final", confirm_final=True)
 
     def test_the_retainage_on_a_progress_waiver_is_named(self):  # M15
         state = new_state()
@@ -144,7 +145,7 @@ class SuggestedTypeTests(unittest.TestCase):  # M17
         inv = draft(job)
         for item in inv["packet"]:
             if not item["present"]:
-                domain.resolve_packet_item(state, job["id"], item["id"])
+                domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
         domain.approve_and_send(state, job["id"], "Owner")
         domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1")
         self.assertTrue(inv["final"])
@@ -207,7 +208,7 @@ class OnFileTests(unittest.TestCase):  # M18
         final = next(p for p in job["closeout_packet"] if p["kind"] == "final_waiver")
         self.assertFalse(final["present"], "neither the waiver sent with PA-1 nor a progress one is the final waiver")
         rec = signed_waiver(state, job["id"], "conditional_final", "Conditional final waiver")
-        domain._attach_from_record(state, job, job["closeout_packet"], "the closeout paperwork")
+        domain._attach_from_record(state, job, job["closeout_packet"], "the closeout documents")
         self.assertEqual([a["record_id"] for a in final["attachments"]], [rec["id"]])
 
 
@@ -220,6 +221,28 @@ class WaiverFormsTests(unittest.TestCase):  # M22
         self.assertEqual(list(forms["states"]), ["GA"], "add a state only from its statute's own text")
         self.assertTrue(forms["other"]["notes"])
         self.assertFalse(forms["other"]["citation"])
+
+    def test_georgias_forms_carry_the_titles_the_statute_gives_them(self):
+        # O.C.G.A. § 44-14-366(d) and (e) as amended from January 1, 2021 (SB 315): both titles
+        # name lien and payment bond rights. "Interim Waiver and Release Upon Payment" was the
+        # title before that and is no longer the form.
+        ga = domain.waiver_forms()["states"]["GA"]["forms"]
+        interim = "Waiver and Release of Lien and Payment Bond Rights Upon Interim Payment"
+        final = "Waiver and Release of Lien and Payment Bond Rights Upon Final Payment"
+        self.assertEqual(ga["conditional_progress"], interim)
+        self.assertEqual(ga["unconditional_progress"], interim)
+        self.assertEqual(ga["conditional_final"], final)
+        self.assertEqual(ga["unconditional_final"], final)
+        notes = " ".join(domain.waiver_forms()["states"]["GA"]["notes"])
+        self.assertIn("90 days", notes)
+
+    def test_georgias_interim_title_reads_as_a_lien_waiver_form(self):
+        import doc_check
+        for title in ("WAIVER AND RELEASE OF LIEN AND PAYMENT BOND RIGHTS UPON INTERIM PAYMENT",
+                      "Interim Waiver and Release Upon Payment"):   # the older title is still in circulation
+            body = "Northline GC\nAcme Electric LLC\n\n" * 6 + title + "\nThe undersigned mechanic and/or materialman has been employed by Northline GC."
+            self.assertTrue(doc_check._STATUTORY_TITLE.search(body), title)
+            self.assertTrue(doc_check.reading(body)["form"], title)
 
     def test_the_jobs_state_comes_from_its_address(self):
         self.assertEqual(domain.job_state({"address": "12 Pine St, Atlanta, GA 30307"}), "GA")

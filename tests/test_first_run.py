@@ -19,6 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import auth
 import server
 from test_accounts import ServerCase
+from dollar_jobs import dollar_jobs
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 
@@ -26,8 +29,8 @@ PASSWORD = "correct horse battery"
 def new_job_body(**over):
     """What the New job form posts (static/app.js, the create-job action), field for field."""
     body = {
-        "name": "Porch rebuild", "address": "12 Elm St", "customer": "Dana Homeowner", "approver": "Dana Homeowner",
-        "ap_email": "dana@example.com", "phone": "", "role": "Owner",
+        "name": "Porch rebuild", "address": "12 Elm St", "customer": "Dana Homeowner", "approver_confirmed": True, "approver": "Dana Homeowner",
+        "ap_email": "dana@example.com", "phone": "(404) 555-0100", "role": "Owner",
         "contract_number": "", "note": "",
         "contract_cents": 4850000, "retainage_pct": 0,
     }
@@ -35,6 +38,7 @@ def new_job_body(**over):
     return body
 
 
+@dollar_jobs
 class FirstRunTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -102,7 +106,7 @@ class FirstRunTests(unittest.TestCase):
 
         # The paperwork the customer wants with each pay app stops the send until it's in.
         missing = [p for p in draft["packet"] if p["required"] and not p["present"]]
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         if missing:
             self.assertEqual(res.status, 409, data)
             self.assertTrue(data["blockers"], data)
@@ -110,7 +114,7 @@ class FirstRunTests(unittest.TestCase):
                 res, data = self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
                 self.assertEqual(res.status, 200, data)
             self.assertEqual(self.job(data, job_id)["blockers"], [])
-            res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+            res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 200, data)
 
         job = self.job(data, job_id)
@@ -139,7 +143,7 @@ class FirstRunTests(unittest.TestCase):
 
     def test_notes_stay_on_the_job_record(self):  # R1-04
         cookie, _ = self.signup("first-run-notes@example.com")
-        res, data = self.request("POST", "/api/jobs", new_job_body(name="Plain deck", customer="Lee Family", approver="", ap_email=""), cookie)
+        res, data = self.request("POST", "/api/jobs", new_job_body(name="Plain deck", customer="Lee Family"), cookie)
         self.assertEqual(res.status, 200, data)
         res, data = self.request("POST", "/api/jobs", new_job_body(note="Gate code 1234, call before 8am"), cookie)
         self.assertEqual(res.status, 200, data)
@@ -150,7 +154,7 @@ class FirstRunTests(unittest.TestCase):
         packets = {j["name"]: [p["label"] for p in j["invoices"][-1]["packet"]] for j in data["jobs"] if j["invoices"]}
         res, data = self.request("POST", f"/api/jobs/{data['jobs'][0]['id']}/done", {"notes": ""}, cookie)
         default = [p["label"] for p in data["jobs"][0]["invoices"][-1]["packet"]]
-        self.assertEqual(packets["Porch rebuild"], default, "the notes did not become the paperwork list")
+        self.assertEqual(packets["Porch rebuild"], default, "the notes did not become the supporting documents list")
         self.assertNotIn("Gate code 1234", default)
 
     def test_done_notes_go_on_the_job_record(self):  # R2-05
@@ -160,7 +164,7 @@ class FirstRunTests(unittest.TestCase):
         res, data = self.request("POST", f"/api/jobs/{job_id}/done", {"notes": "Punch list walked with Dana"}, cookie)
         self.assertEqual(res.status, 200, data)
         job = self.job(data, job_id)
-        self.assertIn({"kind": "note", "label": "Notes when marked done", "note": "Punch list walked with Dana"},
+        self.assertIn({"kind": "note", "label": "Notes at Final pay app", "note": "Punch list walked with Dana"},
                       [{k: r[k] for k in ("kind", "label", "note")} for r in job["records"]])
         res, timeline = self.request("GET", f"/api/timeline?job={job_id}", cookie=cookie)
         self.assertEqual(res.status, 200, timeline)
@@ -171,29 +175,55 @@ class FirstRunTests(unittest.TestCase):
         res, data = self.request("POST", f"/api/jobs/{other}/done", {"notes": "  "}, cookie)
         self.assertEqual(self.job(data, other)["records"], [])
 
-    def test_email_asked_for_at_send(self):  # R1-05
-        cookie, _ = self.signup("first-run-email@example.com")
-        res, data = self.request("POST", "/api/jobs", new_job_body(approver="", ap_email=""), cookie)
+    def test_a_new_job_needs_a_complete_playbook(self):  # Decisions 3 and 4
+        cookie, _ = self.signup("first-run-playbook@example.com")
+        res, data = self.request("POST", "/api/jobs", new_job_body(approver="", ap_email="", phone="", role=""), cookie)
+        self.assertEqual(res.status, 409, data)
+        self.assertEqual(set(data["fields"]), {"approver", "ap_email", "phone", "client_type"})
+        res, data = self.request("POST", "/api/payers", {"name": "Half Client"}, cookie)
+        self.assertEqual(res.status, 409, data)
+        self.assertEqual(set(data["fields"]), {"approver", "ap_email", "phone", "client_type"})
+
+    def test_a_job_changes_its_own_paperwork(self):
+        cookie, _ = self.signup("first-run-job-paperwork@example.com")
+        _, data = self.request("POST", "/api/jobs", new_job_body(anticipated_end_on="2099-01-01"), cookie)
+        self.assertIn("anticipated_end_on", data["fields"])
+        _, data = self.request("POST", "/api/jobs", new_job_body(), cookie)
+        job = data["jobs"][-1]
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/paperwork", {"packet": "Certified payroll"}, cookie)
+        self.assertEqual(res.status, 200, data)
+        self.assertEqual(self.job(data, job["id"])["paperwork_view"]["labels"], ["Certified payroll"])
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/edit", {"anticipated_end_on": "2099-01-01"}, cookie)
+        self.assertEqual(res.status, 409, data)
+        self.assertIn("anticipated_end_on", data["fields"])
+
+    def test_email_asked_for_at_send(self):  # R1-05, for a job made before a new job needed one (Decision 3)
+        cookie, signed = self.signup("first-run-email@example.com")
+        company_id = signed["user"]["company_id"]
+        res, data = self.request("POST", "/api/jobs", new_job_body(), cookie)
         self.assertEqual(res.status, 200, data)
         job = data["jobs"][-1]
+        saved = server.load_company(company_id)
+        saved["jobs"][-1].pop("playbook_required")
+        saved["payers"][0]["ap_email"] = ""
+        server.save_company(company_id, saved)
         payer = next(p for p in data["payers"] if p["id"] == job["payer_id"])
-        self.assertEqual((payer["approver"], payer["ap_email"]), ("Dana Homeowner", ""))
         res, data = self.request("POST", f"/api/jobs/{job['id']}/done", {"notes": ""}, cookie)
         for item in self.job(data, job["id"])["invoices"][-1]["packet"]:
             self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
-        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie)
         self.assertEqual(res.status, 409, data)
         self.assertIn("Add the email pay apps go to", data["error"])
         self.assertIn("ap_email", data["fields"])
         res, data = self.request("POST", f"/api/payers/{payer['id']}/update", {"ap_email": "dana@example.com"}, cookie)
         self.assertEqual(res.status, 200, data)
-        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job['id']}/send", reviewed(self, job['id'], cookie), cookie)
         self.assertEqual(res.status, 200, data)
         self.assertEqual(self.job(data, job["id"])["invoices"][-1]["status"], "sent")
 
     def test_add_rename_and_merge_customers(self):  # R3-07
         cookie, _ = self.signup("first-run-customers@example.com")
-        res, data = self.request("POST", "/api/payers", {"name": "Ironleaf GC", "role": "GC"}, cookie)
+        res, data = self.request("POST", "/api/payers", {"name": "Ironleaf GC", "role": "GC", "approver_confirmed": True, "approver": "Ironleaf GC", "ap_email": "ap@client.example", "phone": "(404) 555-0100"}, cookie)
         self.assertEqual(res.status, 200, data)
         target = next(p for p in data["payers"] if p["name"] == "Ironleaf GC")
         res, data = self.request("POST", "/api/jobs", new_job_body(customer="Ironleef"), cookie)
@@ -215,9 +245,9 @@ class FirstRunTests(unittest.TestCase):
         self.assertEqual(res.status, 200, data)
         job = self.job(data, job_id)
         packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
-        self.assertTrue(packet["Signed contract"]["present"], "the contract on the job record is attached")
-        self.assertNotIn("Signed contract", job["missing_paperwork"])
-        self.assertEqual(len(job["missing_paperwork"]), len(job["blockers"]), "only paperwork blocks it")
+        self.assertFalse(packet["Signed contract"]["present"], "a record with no file is not the contract")
+        self.assertIn("Signed contract", job["missing_paperwork"])
+        self.assertEqual(len(job["missing_paperwork"]), len(job["blockers"]), "only supporting documents blocks it")
 
         # "Not needed for this customer": it stops blocking and the next pay app does not ask.
         photos = packet["Progress photos"]
@@ -230,7 +260,7 @@ class FirstRunTests(unittest.TestCase):
         for label in job["missing_paperwork"]:
             item = next(p for p in job["invoices"][-1]["packet"] if p["label"] == label)
             self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 200, data)
         res, data = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 3000000, "notes": ""}, cookie)
         self.assertEqual(res.status, 200, data)
@@ -249,7 +279,7 @@ class FirstRunTests(unittest.TestCase):
                 self.assertEqual(res.status, 200, data)
         job = self.job(data, job_id)
         self.assertEqual(job["missing_paperwork"], [])
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 200, data)
         res, data = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 3000000, "notes": ""}, cookie)
         self.assertEqual(res.status, 200, data)
@@ -277,14 +307,14 @@ class FirstRunWithMailTests(ServerCase):
         res, data = self.request("POST", f"/api/jobs/{job_id}/done", {"notes": ""}, cookie)
         for item in next(j for j in data["jobs"] if j["id"] == job_id)["invoices"][-1]["packet"]:
             self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "Handed over on site"}, cookie)
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 409, data)
         self.assertIn("Confirm your email first so the pay app goes out from you", data["error"])
         _, state = self.request("GET", "/api/state", cookie=cookie)
         self.assertIn(next(j for j in state["jobs"] if j["id"] == job_id)["invoices"][-1]["status"], ("draft", "awaiting_approval"))
         res, data = self.request("POST", "/api/auth/verify", {"token": token})
         self.assertEqual(res.status, 200, data)
-        res, data = self.request("POST", f"/api/jobs/{job_id}/send", {}, cookie)
+        res, data = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, cookie), cookie)
         self.assertEqual(res.status, 200, data)
 
 

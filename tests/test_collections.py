@@ -49,7 +49,7 @@ class ContactLogTests(unittest.TestCase):
         self.assertEqual(total, 5, "an email from someone else isn't the client's")
         self.assertEqual(rows == sorted(rows, key=lambda r: r["at"], reverse=True), True)
         self.assertEqual((rows[1]["label"], rows[1]["status"]), ("Follow-up emailed", "Bounced"))
-        self.assertEqual(rows[2]["text"], "Spoke to Sam Jones: Check goes out Friday")
+        self.assertEqual(rows[2]["text"], "Conversation with Sam Jones: Check goes out Friday")
         self.assertEqual(rows[2]["by"], "Pat")
         self.assertEqual(rows[3]["label"], "Marked received on the client page")
         self.assertNotIn("page", rows[3]["text"])

@@ -6,7 +6,7 @@
 // the server (a 409's "fields") lands under the right input.
 
 import { esc, centsFrom, dollarsText } from "./format.js";
-import { validate, tidy } from "./validate.js";
+import { validate, tidy, zipStateQuestion } from "./validate.js";
 
 export const formDraft = {};   // form key -> {field name: text as typed}
 export const formErrors = {};  // form key -> {field name: message, _form: a message for no one field}
@@ -29,16 +29,29 @@ export function clearForm(key) {
 // helpKey names the field's FIELD_HELP entry (the (i) text), put on the label as data-help.
 // rule names a check in validate.js (phone, zip, state, email, licence, contract_number, name,
 // street, city): the box is checked and tidied when it is left (watchForms), as the server does.
+// oneAsText: a select with one choice reads as text (its value in a hidden input); buttons: the
+// choices as a row of buttons, the picked one pressed (round 1, item 8: two choices, two buttons).
 export function field({ form, name, id, label, type = "text", required = false, help = "", value = "", placeholder = "",
-  autocomplete = "", inputmode = "", options = null, multiline = false, wide = false, attrs = "", helpKey = "", rule = "" }) {
+  autocomplete = "", inputmode = "", options = null, multiline = false, wide = false, attrs = "", helpKey = "", rule = "",
+  oneAsText = false, buttons = false, suffix = "" }) {
   const err = (formErrors[form] || {})[name] || "";
   const current = type === "password" ? "" : String(draftValue(form, name, value ?? ""));
   const describedBy = [help ? `${id}-help` : "", `${id}-err`].filter(Boolean).join(" ");
   const common = `id="${id}" name="${esc(name)}" data-field="${esc(name)}"${required ? " required" : ""}${err ? ' aria-invalid="true"' : ""} aria-describedby="${describedBy}"${placeholder ? ` placeholder="${esc(placeholder)}"` : ""}${autocomplete ? ` autocomplete="${autocomplete}"` : ""}${inputmode ? ` inputmode="${inputmode}"` : ""}${rule ? ` data-rule="${esc(rule)}"` : ""}${attrs ? " " + attrs : ""}`;
+  const tail = `${help ? `<span class="sub field-help" id="${id}-help">${esc(help)}</span>` : ""}<span class="field-error" id="${id}-err">${esc(err)}</span></div>`;
+  if (options && ((oneAsText && options.length === 1) || buttons)) {
+    const picked = options.some(([v]) => String(v) === current) ? current : String(options[0][0]);
+    const hidden = `<input type="hidden" ${common} value="${esc(picked)}">`;
+    if (!buttons) return `<div class="field${wide ? " span-2" : ""}"><span class="field-label">${esc(label)}</span><span class="field-value">${esc(options[0][1])}</span>${hidden}${tail}`;
+    const btn = ([v, text]) => `<button type="button" class="btn small${String(v) === picked ? "" : " secondary"}" data-action="seg-pick" data-for="${id}" data-value="${esc(v)}" aria-pressed="${String(v) === picked}">${esc(text)}</button>`;
+    return `<div class="field${wide ? " span-2" : ""}"><span class="field-label" id="${id}-label">${esc(label)}</span><div class="seg" role="group" aria-labelledby="${id}-label">${hidden}${options.map(btn).join("")}</div>${tail}`;
+  }
   let control;
   if (options) control = `<select ${common}>${options.map(([v, text]) => `<option value="${esc(v)}"${String(v) === current ? " selected" : ""}>${esc(text)}</option>`).join("")}</select>`;
   else if (multiline) control = `<textarea ${common}>${esc(current)}</textarea>`;
   else control = `<input ${common} type="${type}" value="${esc(current)}">`;
+  // A unit after the box, such as the % on retainage (Stephen, 10 Nov).
+  if (suffix && !options && !multiline) control = `<span class="with-suffix">${control}<span class="suffix" aria-hidden="true">${esc(suffix)}</span></span>`;
   return `<div class="field${wide ? " span-2" : ""}"><label for="${id}"${helpKey ? ` data-help="${esc(helpKey)}"` : ""}>${esc(label)}${required ? ' <span class="req">*</span>' : ""}</label>${control}${help ? `<span class="sub field-help" id="${id}-help">${esc(help)}</span>` : ""}<span class="field-error" id="${id}-err">${esc(err)}</span></div>`;
 }
 
@@ -47,7 +60,7 @@ export function field({ form, name, id, label, type = "text", required = false, 
 export function moneyField(opts) {
   const { cents, ...rest } = opts;
   // inputmode "text" where a minus sign is allowed (a phone's decimal pad has none).
-  return field({ placeholder: "0.00", ...rest, type: "text", inputmode: opts.inputmode || "decimal", autocomplete: "off",
+  return field({ ...rest, type: "text", inputmode: opts.inputmode || "decimal", autocomplete: "off",
     value: cents != null ? dollarsText(cents) : (opts.value || ""), attrs: `data-money="1"${opts.attrs ? " " + opts.attrs : ""}` });
 }
 
@@ -76,7 +89,7 @@ export function showFieldErrors(key, errors = {}) {
     if (msg) {
       input.setAttribute("aria-invalid", "true");
       first = first || input;
-      // A field folded away under "More details" opens so its error can be seen.
+      // A field folded away in a section opens so its error can be seen.
       const folded = input.closest("details");
       if (folded) folded.open = true;
     }
@@ -132,6 +145,13 @@ export function watchForms(root = document) {
   };
   root.addEventListener("input", remember);
   root.addEventListener("change", remember);
+  // A state picked from its list, or a ZIP changed, re-asks whether they fit (askZipState).
+  root.addEventListener("change", (e) => {
+    const el = e.target;
+    if (!el || !el.dataset || (el.dataset.rule !== "state" && el.dataset.rule !== "zip")) return;
+    const form = el.closest("[data-form-key]");
+    if (form) askZipState(form);
+  });
   root.addEventListener("focusout", (e) => {
     const el = e.target;
     if (el && el.dataset && el.dataset.rule) checkRule(el);
@@ -161,7 +181,26 @@ export function checkRule(el) {
   const span = document.getElementById(`${el.id}-err`);
   if (span) span.textContent = msg;
   if (msg) el.setAttribute("aria-invalid", "true"); else el.removeAttribute("aria-invalid");
+  if (form && (rule === "zip" || rule === "state")) askZipState(form);
   return msg;
+}
+
+// A ZIP from another state is questioned under the ZIP box (Stephen, 10 Nov); it doesn't stop a save.
+export function askZipState(form) {
+  const zip = form.querySelector('[data-rule="zip"]');
+  if (!zip) return "";
+  const state = form.querySelector('[data-rule="state"]');
+  const question = zipStateQuestion(zip.value, state ? state.value : "");
+  let note = document.getElementById(`${zip.id}-ask`);
+  if (!note && question) {
+    note = document.createElement("span");
+    note.className = "field-ask";
+    note.id = `${zip.id}-ask`;
+    note.setAttribute("role", "status");
+    (document.getElementById(`${zip.id}-err`) || zip).insertAdjacentElement("afterend", note);
+  }
+  if (note) note.textContent = question;
+  return question;
 }
 
 // Forget every form (moving to another page).

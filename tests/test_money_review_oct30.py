@@ -14,6 +14,7 @@ import domain
 import migrations
 import sov
 from seed import seed_state
+from waiver_help import confirm_suggested
 
 
 def new_state():
@@ -22,7 +23,7 @@ def new_state():
 
 def new_job(state, contract=1_000_000, retainage=0, packet=None):
     job = domain.create_job(state, "Pine kitchen", "Jones Family", contract, address="12 Pine St, Atlanta, GA 30307",
-                            approver="Sam", ap_email="ap@jones.example", retainage_pct=retainage)
+                            approver="Sam", ap_email="ap@jones.example", retainage_pct=retainage, phone="(404) 555-0100", role="Owner")
     if packet is not None:
         domain.update_payer(state, job["payer_id"], {"packet": packet})
     return job
@@ -60,6 +61,7 @@ def send_one(state, job, total, tag):
     inv = draft(job)
     record(state, job, "photo", f"Photos {tag}")
     record(state, job, "waiver", f"Signed conditional waiver {tag}")
+    confirm_suggested(state, job)
     domain.approve_and_send(state, job["id"])
     return inv
 
@@ -189,8 +191,9 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         domain.record_progress(s, job["id"], 1_000_000)
         inv = draft(job)
         w = next(p for p in inv["packet"] if p.get("waiver_kind"))
-        domain.skip_packet_item(s, job["id"], w["id"], "Homeowner, doesn't take waivers")
+        domain.skip_packet_item(s, job["id"], w["id"], "Homeowner, doesn't take waivers", whole_client=True)
         record(s, job, "photo", "Photos")
+        confirm_suggested(s, job)
         domain.approve_and_send(s, job["id"])
         domain.match_payment(s, job["id"], inv["amount_cents"], "chk")
         self.assertFalse(inv["waiver_due"])
@@ -207,8 +210,9 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         job = new_job(s, retainage=10, packet="Progress photos")
         domain.record_progress(s, job["id"], 1_000_000)
         inv = draft(job)
-        domain.skip_packet_item(s, job["id"], next(p for p in inv["packet"] if p.get("waiver_kind"))["id"], "Doesn't take them")
+        domain.skip_packet_item(s, job["id"], next(p for p in inv["packet"] if p.get("waiver_kind"))["id"], "Doesn't take them", whole_client=True)
         record(s, job, "photo", "Photos")
+        confirm_suggested(s, job)
         domain.approve_and_send(s, job["id"])
         domain.match_payment(s, job["id"], inv["amount_cents"], "chk")
         domain.record_retainage_payment(s, job["id"], inv["retainage_cents"], "ret")
@@ -274,6 +278,7 @@ class FinalWaiverWithRetainageTests(unittest.TestCase):  # B3 (r5_final_ret.py)
         self.assertEqual(item["label"], "Conditional waiver on progress payment")
         record(s, job, "photo", "Photos Oct")
         record(s, job, "waiver", "Signed conditional waiver PA-2")
+        confirm_suggested(s, job)
         domain.approve_and_send(s, job["id"])
         self.assertEqual(inv2["conditional_waiver_kind"], "conditional_progress")
         domain.match_payment(s, job["id"], inv2["amount_cents"], "chk2")
@@ -282,9 +287,11 @@ class FinalWaiverWithRetainageTests(unittest.TestCase):  # B3 (r5_final_ret.py)
     def test_without_retainage_the_final_pay_app_still_asks_for_a_final_waiver(self):
         s = new_state()
         job = new_job(s, packet="Progress photos")
-        send_one(s, job, 500_000, "PA-1")
+        first = send_one(s, job, 500_000, "PA-1")
         domain.mark_done(s, job["id"])
         item = next(i for i in draft(job)["packet"] if i.get("waiver_kind"))
+        self.assertEqual(item["waiver_kind"], "conditional_progress", "PA-1 is still owed, and a final waiver would give it up (Nov 5)")
+        domain.match_payment(s, job["id"], first["amount_cents"], "chk")
         self.assertEqual(item["waiver_kind"], "conditional_final")
 
 
@@ -297,10 +304,13 @@ class DailyRecordKeepsSendChoicesTests(unittest.TestCase):  # B4 (r1_attach_lost
         photo = record(s, job, "photo", "Progress photo", files=2)
         extra = record(s, job, "other", "Site letter")
         inv = draft(job)
+        confirm_suggested(s, job)
         domain.change_payapp_attachments(s, job["id"], inv["id"], "add_record", extra["id"])
         domain.change_payapp_attachments(s, job["id"], inv["id"], "exclude_file", photo["file_ids"][1])
         before = domain._packet_file_ids(s, job, inv)
         domain.add_daily_record(s, job["id"], "Pulled wire", details={"sections": {"quantities": [{"line_id": ids[0], "qty": "50"}]}})
+        self.assertIs(draft(job), inv, "a job record doesn't touch the draft")
+        domain.record_sov_progress(s, job["id"], {})
         inv2 = draft(job)
         self.assertIsNot(inv2, inv)
         self.assertEqual(inv2["number"], inv["number"])
@@ -329,18 +339,16 @@ class DailyRecordNeverLostTests(unittest.TestCase):  # B5 (r2_daily_blocked.py, 
         rec = self.saved()[-1]
         self.assertEqual((rec["notes"], rec["crew_count"], rec["weather"]), ("Pulled wire, 3 crew, rain at noon", 3, "Rain"))
         self.assertEqual(rec["sections"]["quantities"], [{"line_id": self.ids[0], "qty_milli": 50_000}])
-        self.assertIn("with the client for their review", rec["quantities_not_applied"])
-        self.assertNotIn("pencil", rec["quantities_not_applied"].lower())
-        self.assertEqual(sov.lines(self.job)[0]["done_milli"], before, "the quantities were not added")
-        note = self.job["records"][-1]["note"]
-        self.assertIn("Not added to the schedule of values", note)
-        self.assertTrue(any(a["action"] == "daily_quantities_not_applied" for a in self.s["audit"]))
+        # The draft stays as the client saw it; the field total keeps recording (Nov 3).
+        self.assertNotIn("quantities_not_applied", rec)
+        self.assertEqual(sov.lines(self.job)[0]["done_milli"], before, "the draft's basis didn't move")
+        self.assertEqual(sov.field_total(sov.lines(self.job)[0]), before + 50_000)
 
     def test_saved_after_mark_done(self):
         domain.mark_done(self.s, self.job["id"])
         domain.add_daily_record(self.s, self.job["id"], "Cleanup", details={"sections": {"quantities": [{"line_id": self.ids[0], "qty": "5"}]}})
         rec = self.saved()[-1]
-        self.assertIn("marked done", rec["quantities_not_applied"])
+        self.assertIn("work is finished", rec["quantities_not_applied"])
 
     def test_a_lump_sum_past_100_percent_is_saved_and_worded_in_percent(self):
         domain.add_daily_record(self.s, self.job["id"], "Panel set", details={"sections": {"quantities": [{"line_id": self.ids[1], "qty": "60"}]}})
@@ -349,10 +357,10 @@ class DailyRecordNeverLostTests(unittest.TestCase):  # B5 (r2_daily_blocked.py, 
                                 details={"crew_count": 2, "sections": {"quantities": [{"line_id": self.ids[1], "qty": "60"}]}})
         self.assertEqual(len(self.saved()), 2)
         reason = self.saved()[-1]["quantities_not_applied"]
-        self.assertIn("120%", reason)
-        self.assertIn("100%", reason)
+        self.assertIn("20% is over 100%", reason)
         self.assertNotIn("LS", reason)
-        self.assertEqual(sov.lines(self.job)[1]["done_milli"], 600)
+        # What fits goes on: the line stops at 100%.
+        self.assertEqual(sov.field_total(sov.lines(self.job)[1]), 1000)
 
     def test_the_job_page_words_a_lump_sum_in_percent_too(self):
         line = sov.lines(self.job)[1]
@@ -365,6 +373,7 @@ class LiveDraftRedraftsTests(unittest.TestCase):  # B6 (r7_include_co.py)
         self.job = sov_job(self.s)
         ids = [l["id"] for l in sov.lines(self.job)]
         domain.add_daily_record(self.s, self.job["id"], "Day 1", details={"sections": {"quantities": [{"line_id": ids[0], "qty": "50"}]}})
+        domain.record_sov_progress(self.s, self.job["id"], {})
         self.first = draft(self.job)
         domain.add_change_order(self.s, self.job["id"], "Extra outlets", 120_000, reason=next(iter(domain.CO_REASONS)))
         self.co = self.job["change_orders"][-1]
@@ -407,6 +416,7 @@ class TicketSkipSticksTests(unittest.TestCase):  # B7 (r12_ticket_skip.py)
         self.assertEqual(s["payers"][0]["tickets_not_needed"]["reason"], "GC doesn't want tickets")
         record(s, job, "photo", "Photos 1")
         record(s, job, "waiver", "Signed conditional waiver 1")
+        confirm_suggested(s, job)
         domain.approve_and_send(s, job["id"])
         domain.record_sov_progress(s, job["id"], {ids[0]: "300"})
         t2 = next(p for p in draft(job)["packet"] if p["kind"] == "ticket")
@@ -486,7 +496,7 @@ class StoredDataTests(unittest.TestCase):  # migrations._review_oct30_money_waiv
         s["payers"][0]["waiver_not_needed"] = {"by": "Owner", "at": "2026-10-01T12:00:00+00:00", "reason": "Homeowner"}
         other = new_job(s, retainage=10, packet="Progress photos, Unconditional waiver for previous payment")
         other["payer_id"] = domain.add_payer(s, {"name": "Ellison GC", "role": "GC", "approver": "Kim", "ap_email": "ap@ellison.example",
-                                                 "packet": "Progress photos, Unconditional waiver for previous payment"})["id"]
+                                                 "packet": "Progress photos, Unconditional waiver for previous payment", "phone": "(404) 555-0100"})["id"]
         domain.record_progress(s, other["id"], 300_000)
         d = draft(other)
         # As an older version stored it: no type on the unconditional item and no conditional one.
@@ -516,6 +526,7 @@ class StoredDataTests(unittest.TestCase):  # migrations._review_oct30_money_waiv
                 p["label"], p["blocker"] = label, f"{label} is missing."
         record(s, job, "photo", "Photos")
         record(s, job, "waiver", "Signed conditional waiver")
+        confirm_suggested(s, job)
         return s, job, d
 
     def test_an_old_drafts_waiver_item_is_read_as_the_conditional_one(self):

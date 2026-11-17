@@ -24,19 +24,20 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("the Dashboard lists what needs you and opens a job by its address", async () => {
     await page.goto(BASE + "/dashboard");
     await page.getByRole("heading", { name: "Overview" }).waitFor();
-    await page.getByRole("heading", { name: /To Do/ }).waitFor();
+    await page.getByRole("heading", { name: /To do/ }).waitFor();
     await page.locator(".action-item", { hasText: "Oak Street kitchen" }).getByRole("button", { name: "Open" }).click();
     await page.getByRole("heading", { name: "Oak Street kitchen" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/jobs/job-oak");
     assert.match(await page.title(), /Oak Street kitchen/);
   });
 
-  await step("the job page has one main action, and Back returns to the Dashboard", async () => {
-    const primary = page.locator(".next-card .primary-action");
-    assert.equal(await primary.count(), 1);
-    // Tabs and job-page buttons carry no tooltips; each button says why on its second line (R3-04).
-    assert.equal(await page.locator(".tabs .tab[title], .next-card .btn[title], .more-actions-rest .btn[title]").count(), 0);
-    assert.match(await primary.innerText(), /Fix 3 things before sending/);  // paperwork and a CO: R6-01 wording
+  await step("the job page: four buttons side by side, the task in its banner, and Back returns to the Dashboard", async () => {
+    // Yusuf, 10 Nov: New Change Order, Progress Pay App, Final Pay App, Record a Payment; no Next step line.
+    assert.deepEqual(await page.locator(".main-actions .main-action").allInnerTexts(), ["New Change Order", "Progress Pay App", "Final Pay App", "Record a Payment"]);
+    assert.equal(await page.getByText("Next step").count(), 0);
+    // Tabs and job-page buttons carry no tooltips (R3-04).
+    assert.equal(await page.locator(".tabs .tab[title], .task-card .btn[title], .job-actions .btn[title]").count(), 0);
+    assert.match(await page.locator(".task-card .task-action").first().innerText(), /Fix 3 things before sending/);  // paperwork and a CO: R6-01 wording
     await page.goBack();
     await page.getByRole("heading", { name: "Overview" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/dashboard");
@@ -44,20 +45,21 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
 
   await step("New job: a wrong field is marked in place and nothing typed is lost", async () => {
     await page.goto(BASE + "/jobs");
-    await page.getByRole("button", { name: "New job" }).first().click();
+    await page.getByRole("button", { name: "New job", exact: true }).first().click();
     await page.fill("#nj-name", "Smoke test porch");
     await page.fill("#nj-street", "1 Porch Lane");
     await page.fill("#nj-city", "Decatur");
     await page.selectOption("#nj-state", "GA");
     await page.fill("#nj-zip", "30030");
     await page.fill("#nj-amount", "48,500");
+    await page.getByRole("button", { name: "New client" }).click();
     await page.fill("#nj-customer", "Smoke Homeowner");
-    // The job, its address in parts (J1), the client and the amount up front (R2-01); the rest
-    // wait under "More details (optional)".
+    // The job, its address in parts (J1), the amount, its dates and a complete client up front
+    // (R2-01, Decision 4). Retainage affects money, so nothing is folded.
     const upFront = await page.locator('[data-form-key="newjob"] > .form-grid [data-field]:visible').evaluateAll(els => els.map(e => e.id));
-    for (const id of ["nj-name", "nj-street", "nj-city", "nj-state", "nj-zip", "nj-customer", "nj-amount"]) assert.ok(upFront.includes(id), `${id} up front: ${upFront}`);
-    assert.equal(await page.locator("#nj-email").isVisible(), false, "More details starts folded");
-    await page.getByText("More details (optional)").click();
+    for (const id of ["nj-name", "nj-street", "nj-city", "nj-state", "nj-zip", "nj-customer", "nj-amount", "nj-start", "nj-end", "nj-client-type", "nj-approver", "nj-email", "nj-phone"]) assert.ok(upFront.includes(id), `${id} up front: ${upFront}`);
+    assert.equal(await page.locator("#nj-retainage").isVisible(), true, "Retainage % shows");
+    assert.equal(await page.locator('[data-form-key="newjob"] .more-details').count(), 0, "nothing folded");
     await page.fill("#nj-approver", "Sam Smoke");
     await page.fill("#nj-email", "not an email");
     await page.click('[data-action="create-job"]');
@@ -83,8 +85,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const panel = p.locator(".check-email");
     await panel.waitFor();
     // CI has no mail server, so the panel gives the server's reason instead of "We sent a confirmation link".
-    assert.match(await panel.innerText(), new RegExp(`(We sent a confirmation link|No confirmation link went) to ${email.replace(/[.]/g, "\\.")}`));
-    assert.match(await panel.innerText(), /set up your first job meanwhile/);
+    assert.match(await panel.innerText(), new RegExp(`(We sent a confirmation link|no link went) to ${email.replace(/[.]/g, "\\.")}`));
+    // One plain line under the heading, not a card above it (round 1, item 9).
+    assert.equal(await p.locator("h1 + .check-email").count(), 1);
     await panel.getByRole("button", { name: "Got it" }).click();
     await panel.waitFor({ state: "detached" });
     // The setup checklist's first step goes to the company address box (R2-03).
@@ -109,7 +112,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("a first job: Today, the Daily record and the company address", async () => {  // R2-04, R2-05, R2-07
+  await step("a first job: Today, New job record and the company address", async () => {  // R2-04, R2-05, R2-07
     const ctx = await browser.newContext();
     const p = await ctx.newPage();
     p.on("pageerror", (e) => errors.push(e.message));
@@ -117,7 +120,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const jobId = await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Ann First", company_name: "First Builders" });
-      const st = await (await post("/api/jobs", { name: "First porch", address: "2 Elm St", customer: "Lee Homeowner", role: "Owner",
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Lee Homeowner", name: "First porch", address: "2 Elm St", customer: "Lee Homeowner", role: "Owner",
         ap_email: "lee@example.com", contract_cents: 1200000 })).json();
       return st.jobs[0].id;
     }, `first-${Date.now()}@example.com`);
@@ -125,17 +128,14 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.goto(BASE + "/dashboard");
     const row = p.locator(".action-item", { hasText: "First porch" });
     await row.locator(".pill", { hasText: "Not billed yet" }).waitFor();
-    await row.getByRole("button", { name: "Bill progress" }).click();
+    await row.getByRole("button", { name: "Progress pay app" }).click();
     await p.getByRole("heading", { name: "First porch" }).waitFor();
-    // The progress form says where the job stands and what the pay app comes to (R3-01).
-    await p.locator(".next-card .primary-action", { hasText: "Progress pay app" }).click();
-    await p.locator(".progress-context", { hasText: "Billed so far $0.00 of $12,000.00 contract (0%)" }).waitFor();
-    await p.fill("#progress-draw", "3,000");
-    assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $3,000.00.");
-    await p.locator('[data-action="progress-mode"][data-mode="percent"]').click();
-    await p.fill("#progress-pct", "50");
-    assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $6,000.00.");
-    // The only open job is picked on the Daily record.
+    await p.locator(".main-actions .main-progress").click();
+    // A new job's one lump-sum line: % done, with the period's total above it.
+    await p.locator('[data-form-key="sovprogress"]').waitFor();
+    await p.locator(".sov-progress .sov-period", { hasText: "This billing period" }).waitFor();
+    assert.equal(await p.locator('[data-sovp][data-lump="1"]').count(), 1);
+    // The only open job is picked on New job record.
     await p.goto(BASE + "/jobs/daily");
     await p.locator("#daily-job").waitFor();
     assert.equal(await p.inputValue("#daily-job"), jobId);
@@ -170,7 +170,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await ctx.close();
   });
 
-  await step("a job with a draft: three buttons, the rest under More, a change order and a photo for the paperwork", async () => {  // R3-04, R3-05, R3-06
+  await step("a job with a draft: every action showing in its group, a change order and a photo for the paperwork", async () => {  // R3-04, R3-05, R3-06
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const p = await ctx.newPage();
     p.on("pageerror", (e) => errors.push(e.message));
@@ -178,20 +178,21 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const jobId = await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Dee Draft", company_name: "Draft Builders" });
-      const st = await (await post("/api/jobs", { name: "Draft deck", address: "4 Oak St", customer: "Rae Homeowner", role: "Owner",
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Rae Homeowner", name: "Draft deck", address: "4 Oak St", customer: "Rae Homeowner", role: "Owner",
         ap_email: "rae@example.com", contract_cents: 2000000 })).json();
       const id = st.jobs[0].id;
       await post(`/api/jobs/${id}/add-record`, { label: "Deck notes", kind: "note", note: "Joists in" });
-      await post(`/api/jobs/${id}/progress`, { period_cents: 500000 });
+      const line = st.jobs[0].sov.lines[0].id;
+      await post(`/api/jobs/${id}/sov-progress`, { done: { [line]: "0.25" } });
       return id;
     }, `draft-${Date.now()}@example.com`);
     await p.goto(`${BASE}/jobs/${jobId}`);
-    await p.locator(".next-card .primary-action").waitFor();
-    assert.equal(await p.locator(".next-card .next-actions .btn").count(), 3, "one main button and two beside it");
-    assert.match(await p.locator(".more-actions-rest > summary").innerText(), /^More \(\d+\)$/);
+    await p.locator(".task-card .task-action").first().waitFor();
+    assert.equal(await p.locator(".main-actions .main-action").count(), 4, "the four buttons");
+    assert.equal(await p.locator(".job-actions h3, .action-group").count(), 0, "no Bill / Get paid / Close out headings");
+    assert.equal(await p.locator(".job-actions details, .more-actions-rest").count(), 0, "nothing folded away");
     // A change order from the job page; once saved, Request signature is right there.
-    await p.locator(".more-actions-rest > summary").click();
-    await p.locator('.more-actions-rest [data-action="new-co"]').click();
+    await p.locator('.job-actions [data-action="new-co"]').click();
     await p.fill("#co-title", "Owner buys the railing");
     await p.selectOption("#co-reason", "value_engineering");
     await p.fill("#co-amt", "-500");
@@ -203,8 +204,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await made.getByRole("button", { name: "Request signature" }).waitFor();
     // On a phone, a missing paperwork item offers Take a photo.
     await p.setViewportSize({ width: 375, height: 812 });
-    await p.locator(".next-card .primary-action").click();
-    await p.getByRole("heading", { name: /^Paperwork for/ }).waitFor();
+    await p.locator(".task-card .task-action").first().click();
+    // What is missing sits in Review & send, above the button (round 1, item 4).
+    await p.locator(".send-check .send-missing").waitFor();
     const missing = p.locator(".packet-item.absent").first();
     await missing.getByRole("button", { name: "Take a photo" }).waitFor({ state: "visible" });
     assert.equal(await missing.locator('[data-action="pick-files"][data-capture="1"][data-attach]').count(), 1);
@@ -220,8 +222,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const ids = await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Ina Box", company_name: "Inbox Builders" });
-      await post("/api/jobs", { name: "Maple porch", address: "8 Maple Ave", customer: "Ray Homeowner", role: "Owner", ap_email: "ray@example.com", contract_cents: 900000 });
-      const st = await (await post("/api/jobs", { name: "Cedar bath", address: "3 Cedar Ln", customer: "Sue Homeowner", role: "Owner",
+      await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Ray Homeowner", name: "Maple porch", address: "8 Maple Ave", customer: "Ray Homeowner", role: "Owner", ap_email: "ray@example.com", contract_cents: 900000 });
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Sue Homeowner", name: "Cedar bath", address: "3 Cedar Ln", customer: "Sue Homeowner", role: "Owner",
         ap_email: "sue@example.com", contract_cents: 1500000 })).json();
       await post("/api/import/text", { text: "Railing posts set on the Maple porch today.", source: "paste" });
       return Object.fromEntries(st.jobs.map((j) => [j.name, j.id]));
@@ -240,6 +242,9 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.goto(BASE + "/data/import", { waitUntil: "networkidle" });   // its QuickBooks and import settings have loaded
     await p.selectOption("#upload-job", ids["Cedar bath"]);
     assert.equal(await p.inputValue("#upload-job"), ids["Cedar bath"]);
+    await p.reload({ waitUntil: "networkidle" });
+    assert.equal(await p.inputValue("#upload-job"), "", "a pick isn't kept for next time: it starts on Not sure");
+    await p.selectOption("#upload-job", ids["Cedar bath"]);
     const chooser = p.waitForEvent("filechooser");
     await p.locator('.dropzone .pointer-only [data-action="pick-files"]').click();  // desktop: the "choose files" link (R6-04)
     await (await chooser).setFiles({ name: "IMG_0412.jpg", mimeType: "image/jpeg", buffer: Buffer.from("not really a jpeg") });
@@ -292,15 +297,19 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("heading", { name: "Unpaid" }).waitFor();
   });
 
-  await step("an unsettled job lists what stands before Finish job, each with its buttons", async () => {
+  await step("an unsettled job lists what stands before Finish job, with no button twice on the page", async () => {
     // Turner office TI is done, with money still owed on a pay app and retainage held back (R3-08).
+    // Round 1, item 6: the list stays; its buttons that the actions above already offer go.
     await page.goto(BASE + "/jobs/job-turner");
     await page.getByRole("heading", { name: "Turner office TI" }).waitFor();
     await page.getByRole("heading", { name: "Before you can finish this job" }).waitFor();
     assert.equal(await page.locator(".close-blocker-list li").count(), 2);
-    await page.locator('.close-blocker-list li[data-blocker="outstanding"]').getByRole("button", { name: "Record a payment" }).waitFor();
-    await page.locator('.close-blocker-list li[data-blocker="retainage"]').getByRole("button", { name: "Record retainage paid" }).waitFor();
-    assert.equal(await page.locator(".next-card .btn", { hasText: "Finish job" }).count(), 0, "no Finish job while unsettled");
+    for (const name of ["Record a payment", "Record retainage paid", "Ask for retainage"]) {
+      assert.ok(await page.getByRole("button", { name, exact: true }).count() <= 1, `${name} shows once`);
+    }
+    await page.locator('.job-actions').getByRole("button", { name: "Record a payment" }).waitFor();
+    await page.locator('.job-actions').getByRole("button", { name: "Record retainage paid" }).waitFor();
+    assert.equal(await page.locator(".task-card .btn", { hasText: "Finish job" }).count(), 0, "no Finish job while unsettled");
   });
 
   await step("a sent pay app with nothing paid can be pulled back, with a reason first", async () => {
@@ -315,8 +324,14 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("button", { name: "Pull back this pay app…" }).waitFor();
   });
 
-  await step("money path: the main button walks a job from blocked to closed", async () => {
-    // Follow the one main button, whatever it says, until the job is closed.
+  await step("money path: the To do banner walks a job from blocked to closed", async () => {
+    // Follow the banner's first task, whatever it says, or Record a Payment while the client has
+    // the pay app and nothing else is to do, until the job is closed.
+    const mainButton = async () => {
+      const task = page.locator(".task-card .task-action").first();
+      return (await task.count()) ? task : page.locator(".main-actions .main-match:not([disabled])");
+    };
+    const nameOf = (text) => /^Review & send\b/.test(text.trim()) ? "Review & send" : text.trim();
     const seen = [];
     let triedRefusal = false;
     let triedCancel = false;
@@ -324,17 +339,15 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     for (let n = 0; n < 12; n++) {
       await page.getByRole("heading", { name: "Inman Park bath" }).waitFor();
       if (await page.locator(".job-head .pill", { hasText: "Closed" }).count()) break;
-      // While the customer has the pay app and no follow-up is due there is no main button (R3-04):
-      // record the payment from the button beside it.
-      await page.locator(".next-card").waitFor();
-      const hasMain = (await page.locator(".next-card .primary-action").count()) > 0;
-      const main = hasMain ? page.locator(".next-card .primary-action") : page.locator(".next-card .btn.secondary", { hasText: "Record a payment" });
-      const label = hasMain ? (await main.innerText()).trim() : "Record a payment";
-      seen.push(hasMain ? label : "(waiting) Record a payment");
+      // While the customer has the pay app and no follow-up is due, Record a payment is the main button.
+      await page.locator(".job-actions").waitFor();
+      const main = await mainButton();
+      const label = nameOf(await main.innerText());
+      seen.push(label);
       // Paperwork alone reads "Add N missing documents" (R1-08); with an unsigned CO too, "Fix N things before sending" (R6-01).
       if (/^(Fix \d+ things? before sending|Add \d+ missing document)/.test(label)) {
         await main.click();
-        await page.getByRole("heading", { name: /^Paperwork( for |$)/ }).waitFor();  // "Paperwork" alone when no pay app is drafted yet
+        await page.locator('[data-form^="resolve-"]').first().waitFor();  // in Review & send on the pay app; alone when no pay app is drafted yet
         while (await page.locator('[data-form^="resolve-"]').count()) {
           const btn = page.locator('[data-form^="resolve-"]').first();
           const item = (await btn.getAttribute("data-form")).slice("resolve-".length);
@@ -351,11 +364,18 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.locator(".send-check").waitFor({ state: "visible" });
         assert.match(new URL(page.url()).pathname, /^\/money\/pay-app\//);
         await page.click('.send-check [data-action="send"]');
+        // It asks first, naming who, how much and the period (round 1, item 5).
+        await confirmDialog(page).filter({ hasText: "ap@ellisonresidential.example" }).waitFor();
+        await confirmIfAsked(page);
         await page.locator('.send-check [data-action="send"]').waitFor({ state: "detached" });
-        // The demo never emails, so Today lists the pay app's email as one that didn't go out (R1-11).
+        // The demo never emails: the page says so under the Sent pill (round 1, item 7).
+        await page.locator(".email-undelivered", { hasText: "was not delivered" }).waitFor();
+        // Today lists the pay app's email as one that didn't go out (R1-11); this server has no mail,
+        // so Send Again isn't offered (round 1, item 7).
         await page.goto(BASE + "/dashboard");
-        await page.locator(".action-item", { hasText: "Inman Park bath" }).filter({ hasText: "Didn't go out" })
-          .getByRole("button", { name: "Send again" }).waitFor();
+        const failed = page.locator(".action-item", { hasText: "Inman Park bath" }).filter({ hasText: "Didn't go out" });
+        await failed.waitFor();
+        assert.equal(await failed.locator('[data-action="email-retry"]').count(), 0);
         await page.goto(BASE + "/jobs/job-inman");
       } else if (label === "Choose waiver and send") {
         await main.click();
@@ -363,20 +383,29 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         const sendWaiver = page.locator('[data-action="waiver"]');
         await sendWaiver.first().waitFor();
         // The signed waiver goes on the job record first (M21): Choose file, then Approve & send asks first.
-        if (await sendWaiver.first().isDisabled()) {
+        // Approve & send stays on and says why in place (Round 1 acceptance, item 18): the row asks for the file.
+        const needsFile = page.locator(".waiver-row .blocker", { hasText: "Add the signed" });
+        if (await needsFile.count()) {
           const [chooser] = await Promise.all([page.waitForEvent("filechooser"),
             page.locator('.waiver-row [data-action="pick-files"]:not([data-capture])').first().click()]);
           await chooser.setFiles({ name: "signed-waiver.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 signed waiver") });
-          for (let t = 0; t < 100 && (await sendWaiver.first().isDisabled()); t++) await new Promise((r) => setTimeout(r, 100));
+          for (let t = 0; t < 100 && (await needsFile.count()); t++) await new Promise((r) => setTimeout(r, 100));
         }
         const before = await sendWaiver.count();
         await sendWaiver.first().click();
+        // The stand-in file doesn't read as a waiver: a person says they opened it (criterion 67),
+        // then one confirm sends it (Round 1 acceptance, item 17).
+        await confirmDialog(page).filter({ hasText: "I opened it and it's right" }).waitFor();
+        await confirmIfAsked(page);
+        await confirmDialog(page).filter({ hasText: "Email the signed" }).waitFor();
         await confirmIfAsked(page);
         for (let t = 0; t < 100 && (await sendWaiver.count()) >= before; t++) await new Promise((r) => setTimeout(r, 100));
         await page.goto(BASE + "/jobs/job-inman");
-      } else if (label === "Record a payment") {
+      } else if (label === "Record a Payment") {
         await main.click();
-        const option = await page.locator("#match-inv option").first().innerText();
+        // One open pay app reads as text, not a one-option select (round 1, item 8).
+        const option = (await page.locator("#match-inv option").count()) ? await page.locator("#match-inv option").first().innerText()
+          : await page.locator('[data-form-key="match"] .field-value').first().innerText();
         // The amount starts at what is still owed on the pay app, and the date at today (R3-02).
         assert.equal((await page.inputValue("#match-amt")).replace(/[$,]/g, ""), option.match(/\$([\d,]+\.\d\d)/)[1].replace(/,/g, ""));
         assert.match(await page.inputValue("#match-date"), /^\d{4}-\d{2}-\d{2}$/);
@@ -405,7 +434,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         });
         await main.click();
         await confirmIfAsked(page);
-        const card = page.locator(".next-card + .action-error");
+        const card = page.locator(".task-card + .action-error");
         await card.waitFor();
         assert.match(await card.innerText(), /CO \d+ is not signed|change order/i);  // R3-08 lists blockers as "CO N is not signed yet."
         await page.evaluate(async (co) => { await fetch(`/api/jobs/job-inman/withdraw-co/${co}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); }, coId);
@@ -416,13 +445,13 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         // The page's CSP forbids evaluating strings, so poll from here rather than with waitForFunction.
         for (let t = 0; t < 100; t++) {
           if (await page.locator(".job-head .pill", { hasText: "Closed" }).count()) break;
-          const now = (await page.locator(".next-card .primary-action").innerText({ timeout: 500 }).catch(() => "")).trim();
+          const now = nameOf(await (await mainButton()).innerText({ timeout: 500 }).catch(() => ""));
           if (now && now !== label) break;
           await new Promise((r) => setTimeout(r, 100));
         }
       }
     }
-    for (const want of ["Review & send", "(waiting) Record a payment", "Choose waiver and send", "Finish job"]) assert.ok(seen.includes(want), `main button never said ${want}: ${seen.join(" → ")}`);
+    for (const want of ["Review & send", "Record a Payment", "Choose waiver and send", "Finish job"]) assert.ok(seen.includes(want), `the walk never met ${want}: ${seen.join(" → ")}`);
     await page.locator(".job-head .pill", { hasText: "Closed" }).waitFor();
   });
 
@@ -502,10 +531,10 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
   await step("phone: no page scrolls sideways at 375 px", async () => {
     const phone = await signedInPage({ width: 375, height: 812 });
     const wide = [];
-    for (const path of ["/dashboard", "/dashboard/results", "/dashboard/calendar", "/jobs", "/jobs/daily", "/jobs/history", "/jobs/clients", "/jobs/job-oak",
+    for (const path of ["/dashboard", "/dashboard/calendar", "/jobs", "/jobs/daily", "/jobs/history", "/jobs/clients", "/jobs/job-oak",
                         "/communications", "/communications/outbox", "/data/import", "/data/export", "/money", "/money/packets",
-                        "/money/change-orders", "/money/collections", "/money/payments", "/money/waivers", "/money/retainage",
-                        "/automations", "/settings", "/settings/company", "/settings/team", "/settings/account", "/settings/billing",
+                        "/money/change-orders", "/money/collections", "/money/waivers", "/money/retainage",
+                        "/settings", "/settings/company", "/settings/team", "/settings/account", "/settings/billing",
                         "/settings/audit"]) {
       await phone.goto(BASE + path);
       await phone.locator("#view h1").first().waitFor();
@@ -515,11 +544,11 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.deepEqual(wide, [], "pages wider than the screen");
   });
 
-  await step("Money has five tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03, Oct 29 review
+  await step("Money has five tabs, Pay apps shows the paperwork, and Settings opens on Company", async () => {  // R6-03, Oct 29 review; round 1 item 19
     await page.goto(BASE + "/money");
     await page.locator(".tabs .tab", { hasText: "Closeout" }).waitFor();  // allInnerTexts doesn't wait for the page to draw
-    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Payments", "Closeout"]);
-    await page.locator("table th", { hasText: "Paperwork" }).waitFor();
+    assert.deepEqual(await page.locator(".tabs .tab").allInnerTexts(), ["Pay apps", "Change orders", "Unpaid", "Closeout", "Financials"]);
+    await page.locator("table th", { hasText: "Supporting documents" }).waitFor();
     await page.goto(BASE + "/money/packets");  // the old Paperwork tab's address opens Pay apps
     await page.getByRole("heading", { name: "Pay apps" }).waitFor();
     await page.goto(BASE + "/settings/company");
@@ -538,7 +567,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const jobId = await p.evaluate(async (email) => {
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Pia Phone", company_name: "Phone Builders" });
-      const st = await (await post("/api/jobs", { name: "Long schedule job", address: "4 Line St", customer: "Gail General", role: "GC",
+      const st = await (await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Gail General", name: "Long schedule job", address: "4 Line St", customer: "Gail General", role: "GC",
         ap_email: "ap@gail.example", contract_cents: 3150000 })).json();
       const id = st.jobs.find((j) => j.name === "Long schedule job").id;
       await post(`/api/jobs/${id}/sov`, { op_pct: "5", update_contract: true, lines: [
@@ -552,6 +581,8 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       assert.ok(width <= 375, `${where} is ${width}px wide`);
     };
     await p.goto(BASE + `/jobs/${jobId}`);
+    // Folded on a phone, with its summary (Round 1, item 13).
+    await p.locator("#sov-card > summary", { hasText: "2 lines" }).click();
     await p.locator("#sov-card .sov-table").waitFor();
     await noSideways("the job page with a schedule of values");
     await p.locator('#sov-card [data-action="sov-start"]').click();
@@ -588,7 +619,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
       const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       await post("/api/auth/signup", { accept_terms: true, email, password: "smoke test password", name: "Dee Draws", company_name: "Draw Builders" });
       await post("/api/company", { billing_style: "draws" });
-      await post("/api/jobs", { name: "Hill house", address: "9 Hill Rd", customer: "Pat Homeowner", role: "Owner", ap_email: "pat@example.com", contract_cents: 9000000 });
+      await post("/api/jobs", { phone: "(404) 555-0100", approver_confirmed: true, approver: "Pat Homeowner", name: "Hill house", address: "9 Hill Rd", customer: "Pat Homeowner", role: "Owner", ap_email: "pat@example.com", contract_cents: 9000000 });
     }, `draws-${Date.now()}@example.com`);
     await p.goto(BASE + "/money");
     await p.locator(".tabs .tab", { hasText: "Draws" }).waitFor();

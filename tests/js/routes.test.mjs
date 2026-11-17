@@ -43,10 +43,10 @@ test("Settings has a page each, /settings opens Company, and Paperwork belongs t
 });
 
 test("a refusal's link opens the page that fixes it, and nothing else", () => {  // Oct 23 note #13
-  assert.deepEqual(refusalLink({ label: "Open the paperwork for PA-OAK-3", view: "packet-detail", job_id: "j1", detail: "inv1" }),
-    { label: "Open the paperwork for PA-OAK-3", view: "packet-detail", jobId: "j1", detailId: "inv1", href: "/money/packet/j1/inv1" });
+  assert.deepEqual(refusalLink({ label: "Open the supporting documents for PA-OAK-3", view: "packet-detail", job_id: "j1", detail: "inv1" }),
+    { label: "Open the supporting documents for PA-OAK-3", view: "packet-detail", jobId: "j1", detailId: "inv1", href: "/money/packet/j1/inv1" });
   assert.deepEqual(refusalLink({ label: "Open PA-OAK-3", view: "payapp-detail", job_id: "j1", detail: "inv1" }).href, "/money/pay-app/j1/inv1");
-  assert.equal(refusalLink({ label: "Open the paperwork", view: "packet-detail", job_id: "j1", detail: "" }).detailId, null);
+  assert.equal(refusalLink({ label: "Open the supporting documents", view: "packet-detail", job_id: "j1", detail: "" }).detailId, null);
   for (const bad of [undefined, null, "x", {}, { label: "Go", view: "settings", job_id: "j1" }, { label: "Go", view: "packet-detail" }, { view: "packet-detail", job_id: "j1" }]) {
     assert.equal(refusalLink(bad), null, JSON.stringify(bad));
   }
@@ -57,13 +57,13 @@ test("the refusal card's button and the toast's both open the page", () => {  //
   const go = (view, jobId, detailId) => navs.push([view, jobId, detailId]);
   // What static/app.js's "nav" handler does with the card button's data-*.
   const click = (data) => go(data.view, data.id || null, data.detail || null);
-  const draft = refusalLink({ label: "Open the paperwork for PA-OAK-3", view: "packet-detail", job_id: "j1", detail: "inv1" });
+  const draft = refusalLink({ label: "Open the supporting documents for PA-OAK-3", view: "packet-detail", job_id: "j1", detail: "inv1" });
   assert.deepEqual(refusalLinkData(draft), { action: "nav", view: "packet-detail", id: "j1", detail: "inv1" });
   click(refusalLinkData(draft));
   const toastAction = refusalToastAction(draft, go);
-  assert.equal(toastAction.label, "Open the paperwork for PA-OAK-3");
+  assert.equal(toastAction.label, "Open the supporting documents for PA-OAK-3");
   toastAction.run();
-  const jobPaperwork = refusalLink({ label: "Open the paperwork", view: "packet-detail", job_id: "j1", detail: "" });
+  const jobPaperwork = refusalLink({ label: "Open the supporting documents", view: "packet-detail", job_id: "j1", detail: "" });
   assert.deepEqual(refusalLinkData(jobPaperwork), { action: "nav", view: "packet-detail", id: "j1" });
   click(refusalLinkData(jobPaperwork));
   refusalToastAction(jobPaperwork, go).run();
@@ -74,17 +74,21 @@ test("the refusal card's button and the toast's both open the page", () => {  //
 });
 
 test("the Oct 29 addresses, and every old one still opens its page", () => {
-  for (const [view, path] of [["dashboard", "/dashboard"], ["results", "/dashboard/results"], ["calendar", "/dashboard/calendar"],
+  for (const [view, path] of [["dashboard", "/dashboard"], ["calendar", "/dashboard/calendar"],
     ["daily", "/jobs/daily"], ["playbook", "/jobs/clients"], ["inbox", "/communications"], ["outbox", "/communications/outbox"],
-    ["import", "/data/import"], ["export", "/data/export"], ["automations", "/automations"]]) {
+    ["import", "/data/import"], ["export", "/data/export"]]) {
     assert.equal(pathFor(view), path);
     assert.deepEqual(routeFromPath(path), { view }, path);
   }
-  for (const [old, view] of [["/today", "dashboard"], ["/today/results", "results"], ["/today/calendar", "calendar"], ["/today/daily", "daily"],
+  // Round 1 folded Results onto the Dashboard, Automations into My account and Payments into Pay apps.
+  assert.deepEqual(routeFromPath("/today/results"), { view: "dashboard", anchor: "results" });
+  assert.deepEqual(routeFromPath("/automations"), { view: "account", anchor: "notifications" });
+  for (const [old, view] of [["/today", "dashboard"], ["/today/calendar", "calendar"], ["/today/daily", "daily"],
     ["/settings/playbook", "playbook"], ["/inbox", "inbox"], ["/money/outbox", "outbox"], ["/settings/help", "account"], ["/settings", "company"]]) {
     assert.deepEqual(routeFromPath(old), { view }, old);
   }
-  for (const [path, view] of Object.entries(PATH_ALIASES)) {
+  for (const [path, to] of Object.entries(PATH_ALIASES)) {
+    const view = to.split("#")[0];
     assert.ok(VIEW_PATHS[view], `${path} opens a page that has an address`);
     assert.equal(Object.values(VIEW_PATHS).includes(path), false, `${path} is only an alias`);
   }

@@ -6,10 +6,11 @@ import { readJson, setNetBanner, postJson } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { field, draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, onSessionEnd } from "../state.js";
-import { render, toast, emptyState, nav, setState, can } from "../app-core.js";
+import { render, toast, emptyState, nav, setState, can, perms } from "../app-core.js";
 import { canRecord, needsPick, splitTooMuch, picksFrom, afterRecord, refreshOwed } from "../payimport.js";
 import { qboCsvLink } from "./money.js";
-import { openJobs } from "../jobs.js";
+import { openJobs, payAppStarts } from "../jobs.js";
+import { termText } from "../terms.js";
 
 export let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV or the QuickBooks connection
 export let qboStatus = null;      // /api/qbo/status: configured, connected, environment (escaped)
@@ -78,7 +79,7 @@ function qboPayAppCell(row, n) {
 export function qboCardHtml(onImport) {
   const q = qboStatus;
   const owner = can("company");   // connect and disconnect need Edit company details and connections
-  return !q || q.loading ? "" : `<div class="card"><h2>QuickBooks connection</h2>${
+  return !q || q.loading ? "" : `<div class="card"><h2>Connect QuickBooks</h2>${
       !q.configured ? `<p class="sub">The QuickBooks connection isn't available yet. Use the CSV import ${onImport ? "below" : "on Import"}.</p>`
       : !q.connected ? (owner
         ? `<p class="sub">Read-only: Duracash reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
@@ -96,7 +97,7 @@ export function qboCardHtml(onImport) {
 export function paymentsImportHtml() {
   const imp = paymentImport;
   return `<div class="card" id="qbo-import">
-      <h2>Payments from QuickBooks</h2>
+      <h2>Import payments received (QuickBooks or CSV)</h2>
       <p class="sub">Paste a QuickBooks report with payments in it (CSV), or choose the file. Nothing is recorded until you tick and apply.</p>
       ${imp ? `${imp.warnings.length ? `<div class="sov-warn">${imp.warnings.map(w => `<div>${w}</div>`).join("")}</div>` : ""}
         <div class="table-wrap"><table>
@@ -111,15 +112,23 @@ export function paymentsImportHtml() {
     </div>`;
 }
 
+// What comes next with no payments yet: record one when a pay app is out, else bill, else a job.
+function noPaymentsButton() {
+  const open = openJobs(state.jobs);
+  const waiting = open.find(j => j.invoices.some(i => ["sent", "approved", "partial"].includes(i.status)));
+  if (waiting) return `<button class="btn" data-action="record-payment" data-id="${waiting.id}">Record a payment</button>`;
+  if (payAppStarts(state.jobs, perms()).length) return `<button class="btn" data-action="payapp-new">${termText("New pay app")}</button>`;
+  if (open.length) return `<button class="btn" data-action="open-job" data-id="${open[0].id}" data-focus=".task-card, .job-actions">Open ${open[0].name}</button>`;
+  return `<button class="btn" data-action="onb-newjob">New job</button>`;
+}
+
 // This module's pages, by the name their address opens (routes.js).
-export const views = {
-  payments() {
+// The payments received, newest first: Pay apps' Payments filter (round 1, item 19: once a tab).
+export function paymentsListHtml() {
     const pays = [];
     // A finished job's payments are in its job file (J9).
     openJobs(state.jobs).forEach(j => j.payments.forEach(p => pays.push({ ...p, job: j.name, jobId: j.id })));
     return `
-      <h1>Payments</h1>
-      <p class="sub">Import payments from QuickBooks, a CSV file or the connection, on <a href="/data/import" data-action="nav" data-view="import">Import</a>.</p>
       ${pays.length ? `<div class="table-wrap">
         <table>
           <tr><th>Job</th><th>Pay app</th><th>Amount</th><th>Reference</th><th>Received</th></tr>
@@ -135,10 +144,12 @@ export const views = {
             </tr>`;
           }).join("")}
         </table>
-      </div>` : emptyState("No payments yet")}
+      </div>` : emptyState("No payments yet", "", noPaymentsButton())}
+      <p class="sub">Payments from QuickBooks or a CSV file come in on <a href="/data/import" data-action="onb-go" data-view="import" data-focus="#qbo-csv">Import</a>.</p>
     `;
-  },
-};
+}
+
+export const views = {};
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {

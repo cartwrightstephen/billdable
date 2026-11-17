@@ -22,7 +22,7 @@ class MoneyFileTests(unittest.TestCase):
             ap_email="ap@jones.example",
             role="Owner",
             retainage_pct=10,
-            contract_number="C-100",
+            contract_number="C-100", phone="(404) 555-0100"
         )
         self.assertEqual(job["contract_cents"], 4500000)
         self.assertEqual(job["packet"], [])
@@ -42,7 +42,7 @@ class MoneyFileTests(unittest.TestCase):
         state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = domain.create_job(
             state, "Pine kitchen", "Jones Family", 10000000,
-            address="12 Pine St", approver="Sam Jones", ap_email="ap@jones.example",
+            address="12 Pine St", approver="Sam Jones", ap_email="ap@jones.example", phone="(404) 555-0100", role="Owner"
         )
         domain.record_progress(state, job["id"], 4000000, "Framing complete")
         self.assertEqual(job["work_status"], "in_progress")
@@ -52,13 +52,13 @@ class MoneyFileTests(unittest.TestCase):
     def test_create_job_rejects_missing_required_fields(self):
         state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": []}
         with self.assertRaises(domain.GateError) as raised:
-            domain.create_job(state, "", "", 0)
+            domain.create_job(state, "", "", 0, approver="", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertGreaterEqual(len(raised.exception.blockers), 4)
 
     def test_create_job_names_the_bad_field(self):
         state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": []}
         with self.assertRaises(domain.GateError) as raised:
-            domain.create_job(state, "Oak", "Oak GC", 100_000, address="1 Oak", approver="Kim", ap_email="kim at oak")
+            domain.create_job(state, "Oak", "Oak GC", 100_000, address="1 Oak", approver="Kim", ap_email="kim at oak", phone="(404) 555-0100", role="Owner")
         self.assertEqual(set(raised.exception.fields), {"ap_email"})
         self.assertIn("ap@builder.com", raised.exception.fields["ap_email"])
         self.assertEqual(str(raised.exception), raised.exception.fields["ap_email"])
@@ -169,6 +169,21 @@ class MoneyFileTests(unittest.TestCase):
         domain.approve_change_order(state, "job-ponce", co_id)
         self.assertEqual(job["change_orders"][0]["status"], "approved")
 
+    def test_edit_record_note_keeps_what_it_said_in_the_audit(self):  # criterion 59
+        state = seed_state()
+        domain.note_contact(state, "job-ponce", "Check goes out Friday", "", "owner")
+        rec = state["jobs"][[j["id"] for j in state["jobs"]].index("job-ponce")]["records"][-1]
+        domain.edit_record(state, "job-ponce", rec["id"], rec["label"], "conversation", "owner", note="Check goes out Monday")
+        self.assertEqual(rec["note"], "Check goes out Monday")
+        row = state["audit"][-1]
+        self.assertEqual(row["action"], "edit_record")
+        self.assertIn("Check goes out Friday", row["detail"])
+        self.assertIn("Check goes out Monday", row["detail"])
+        count = len(state["audit"])
+        domain.edit_record(state, "job-ponce", rec["id"], rec["label"], "conversation", "owner")
+        self.assertEqual(rec["note"], "Check goes out Monday", "no note sent: left as it is")
+        self.assertEqual(len(state["audit"]), count, "nothing changed, nothing logged")
+
     def test_edit_record_kind(self):  # R5-07
         state = seed_state()
         domain.add_job_record(state, "job-ponce", "ABC Supply invoice 4471", "pay_app", "", "owner")
@@ -187,19 +202,23 @@ class MoneyFileTests(unittest.TestCase):
 
 
 class PaperworkTests(unittest.TestCase):  # R3-05
-    def test_i_have_this_needs_no_reason_and_remove_restores_the_blocker(self):
+    def test_i_have_this_needs_a_reason_and_remove_restores_the_blocker(self):
         state = seed_state()
         domain.draft_invoice(state, "job-oak")
         job = domain._job(state, "job-oak")
         item = next(p for p in domain.active_packet(job) if p["id"] == "pkt-oak-waiver")
-        domain.resolve_packet_item(state, "job-oak", item["id"])
+        with self.assertRaises(domain.GateError) as raised:
+            domain.resolve_packet_item(state, "job-oak", item["id"], "Sam")
+        self.assertIn("reason", raised.exception.fields)
+        self.assertFalse(item["present"])
+        domain.resolve_packet_item(state, "job-oak", item["id"], "Sam", reason="test")
         self.assertTrue(item["present"])
         self.assertNotIn(item["blocker"], domain.blocker_lines(job))
-        self.assertTrue(state["audit"][-1]["detail"].endswith(f"marked {item['label']} as in hand."))
+        self.assertIn(f"Sam overrode {item['label']}", state["audit"][-1]["detail"])
         domain.detach_packet_item(state, "job-oak", item["id"])
         self.assertFalse(item["present"])
         self.assertIn(item["blocker"], domain.blocker_lines(job))
-        # Where it is, when given, is kept and in the activity log.
+        # The reason is kept and in the activity log.
         domain.resolve_packet_item(state, "job-oak", item["id"], reason="Emailed 10/12")
         self.assertEqual(item["present_reason"], "Emailed 10/12")
         self.assertIn("Emailed 10/12", state["audit"][-1]["detail"])
@@ -207,6 +226,8 @@ class PaperworkTests(unittest.TestCase):  # R3-05
         self.assertNotIn("present_reason", item)
         # A record attached by hand comes off too, and nothing on an empty item is refused.
         domain.add_job_record(state, "job-oak", "Waiver scan", "other")
+        state["files"] = state.get("files", []) + [{"id": "f-scan", "name": "scan.pdf", "ext": ".pdf", "size": 10}]
+        job["records"][-1]["file_ids"] = ["f-scan"]
         domain.attach_record_to_packet(state, "job-oak", item["id"], job["records"][-1]["id"])
         domain.detach_packet_item(state, "job-oak", item["id"])
         self.assertEqual((item["present"], item["attachments"]), (False, []))
@@ -257,7 +278,7 @@ class CloseBlockerTests(unittest.TestCase):  # R3-08
 
     def test_close_blocker_items_shape(self):
         state = self.blank()
-        job = domain.create_job(state, "Pine deck", "Lee Family", 1_000_000, address="1 Pine St", ap_email="lee@example.com", retainage_pct=10)
+        job = domain.create_job(state, "Pine deck", "Lee Family", 1_000_000, address="1 Pine St", ap_email="lee@example.com", retainage_pct=10, approver="Pine deck", phone="(404) 555-0100", role="Owner")
         self.assertEqual([b["kind"] for b in domain.close_blocker_items(job)], ["not_done"])
         domain.add_change_order(state, job["id"], "Extra stairs", 50_000)
         domain.mark_done(state, job["id"], "owner")
@@ -287,7 +308,7 @@ class CloseBlockerTests(unittest.TestCase):  # R3-08
 class DeleteJobTests(unittest.TestCase):  # R3-09
     def test_delete_after_void_succeeds_and_after_a_payment_is_refused(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
-        job = domain.create_job(state, "Pine deck", "Lee Family", 1_000_000, address="1 Pine St", ap_email="lee@example.com")
+        job = domain.create_job(state, "Pine deck", "Lee Family", 1_000_000, address="1 Pine St", ap_email="lee@example.com", approver="Pine deck", phone="(404) 555-0100", role="Owner")
         domain.record_progress(state, job["id"], 400_000, "", "owner")
         self.assertFalse(domain.can_delete_job(job))
         with self.assertRaises(domain.GateError):
@@ -298,7 +319,7 @@ class DeleteJobTests(unittest.TestCase):  # R3-09
         self.assertEqual(state["jobs"], [])
         self.assertIn("1 deleted draft", state["audit"][-1]["detail"])
 
-        paid = domain.create_job(state, "Oak porch", "Lee Family", 1_000_000, address="2 Oak St", ap_email="lee@example.com")
+        paid = domain.create_job(state, "Oak porch", "Lee Family", 1_000_000, address="2 Oak St", ap_email="lee@example.com", approver="Oak porch", phone="(404) 555-0100", role="Owner")
         domain.update_payer(state, paid["payer_id"], {"packet": ""})  # nothing needed with each pay app
         domain.record_progress(state, paid["id"], 400_000, "", "owner")
         waiver = next(p for p in paid["invoices"][-1]["packet"] if p["kind"] == "waiver")
@@ -313,7 +334,7 @@ class DeleteJobTests(unittest.TestCase):  # R3-09
 class ProgressNotesTests(unittest.TestCase):  # R4-12
     def new_job(self, state, **kw):
         return domain.create_job(state, "Pine kitchen", "Jones Family", 4_500_000, address="12 Pine St",
-                                 approver="Sam Jones", ap_email="ap@jones.example", **kw)
+                                 approver="Sam Jones", ap_email="ap@jones.example", phone=kw.pop("phone", "(404) 555-0100"), role=kw.pop("role", "" if "client_type" in kw else "Owner"), **kw)
 
     def test_the_drafted_pay_app_carries_the_notes(self):
         state = {"company": {"name": "Test"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
@@ -351,10 +372,10 @@ class JobFieldsTests(unittest.TestCase):
         state = blank_company()
         with self.assertRaises(domain.GateError) as raised:
             domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000,
-                              address_parts={"street": "", "city": " ", "state": "ZZ", "zip": "3003"})
+                              address_parts={"street": "", "city": " ", "state": "ZZ", "zip": "3003"}, approver="Oak kitchen", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertEqual(set(raised.exception.fields), {"street", "city", "state", "zip"})
         self.assertIn("ZIP", raised.exception.fields["zip"])
-        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS)
+        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS, approver="Oak kitchen", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertEqual(job["address"], "418 Oak Street, Decatur, GA 30030")
         self.assertEqual(job["address_parts"]["state"], "GA")
         view = domain.job_view(state, job)
@@ -362,7 +383,7 @@ class JobFieldsTests(unittest.TestCase):
 
     def test_an_older_job_keeps_its_one_line_address_in_street_until_edited(self):
         state = blank_company()
-        job = domain.create_job(state, "Porch", "Dana Homeowner", 100_000, address="2 Elm St")
+        job = domain.create_job(state, "Porch", "Dana Homeowner", 100_000, address="2 Elm St", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertNotIn("address_parts", job)
         self.assertEqual(domain.job_view(state, job)["address_parts"], {"street": "2 Elm St", "city": "", "state": "", "zip": ""})
         # Sent back as the form showed it, with another change: not checked, kept as it was (C4).
@@ -379,7 +400,7 @@ class JobFieldsTests(unittest.TestCase):
         """Review C4: a contract number or address saved before the field rules doesn't block an
         unrelated edit; a changed one is checked."""
         state = blank_company()
-        job = domain.create_job(state, "Porch", "Dana Lee", 1_000_000, address="1 Elm St, Atlanta, GA 30303")
+        job = domain.create_job(state, "Porch", "Dana Lee", 1_000_000, address="1 Elm St, Atlanta, GA 30303", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         job["contract_number"] = "PO#4500-12; Rev 2"          # any text was taken before G1
         long_street = "Lot 4, behind the old mill on the county road past the second bridge, " * 2
         job.pop("address_parts", None)
@@ -400,21 +421,21 @@ class JobFieldsTests(unittest.TestCase):
         state = blank_company()
         with self.assertRaises(domain.GateError) as raised:
             domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS,
-                              payer_days={"payapp_due_day": 40, "payment_terms_days": "soon"})
+                              payer_days={"payapp_due_day": 40, "payment_terms_days": "soon"}, approver="Oak kitchen", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertEqual(set(raised.exception.fields), {"payapp_due_day", "payment_terms_days"})
         domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS,
-                          payer_days={"payapp_due_day": 25, "payment_terms_days": "30"})
+                          payer_days={"payapp_due_day": 25, "payment_terms_days": "30"}, approver="Oak kitchen", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         payer = state["payers"][0]
         self.assertEqual((payer["payapp_due_day"], payer["payment_terms_days"]), (25, 30))
-        domain.create_job(state, "Bath", "Ironleaf GC", 100_000, address_parts=PARTS, payer_days={"payapp_due_day": 10})
+        domain.create_job(state, "Bath", "Ironleaf GC", 100_000, address_parts=PARTS, payer_days={"payapp_due_day": 10}, approver="Bath", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         self.assertEqual(payer["payapp_due_day"], 25, "a saved client's day is changed in the Client playbook")
 
     def test_phone_contract_number_and_names_follow_the_field_rules(self):
         state = blank_company()
         with self.assertRaises(domain.GateError) as raised:
-            domain.create_job(state, "!!!", "...", 100_000, address_parts=PARTS, phone="555", contract_number="C*100")
+            domain.create_job(state, "!!!", "...", 100_000, address_parts=PARTS, phone="555", contract_number="C*100", approver="!!!", ap_email="ap@client.example", role="Owner")
         self.assertEqual(set(raised.exception.fields), {"name", "customer", "phone", "contract_number"})
-        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS, phone="404.555.0142", contract_number="SC-114")
+        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS, phone="404.555.0142", contract_number="SC-114", approver="Oak kitchen", ap_email="ap@client.example", role="Owner")
         self.assertEqual(state["payers"][0]["phone"], "(404) 555-0142")
         with self.assertRaises(domain.GateError) as raised:
             domain.edit_job(state, job["id"], {"contract_number": "SC 114 / *2"})
@@ -424,21 +445,23 @@ class JobFieldsTests(unittest.TestCase):
             domain.update_payer(state, payer["id"], {"phone": "12", "name": "--"})
         self.assertEqual(set(raised.exception.fields), {"phone", "name"})
         with self.assertRaises(domain.GateError) as raised:
-            domain.add_payer(state, {"name": "Elm Co", "phone": "1234"})
+            domain.add_payer(state, {"name": "Elm Co", "phone": "1234", "approver_confirmed": True, "approver": "Elm Co", "ap_email": "ap@client.example", "role": "Owner"})
         self.assertIn("phone", raised.exception.fields)
 
     def test_client_type_maps_onto_the_two_sets_of_defaults(self):
         state = blank_company()
-        for n, (kind, role, follow) in enumerate([("gc", "GC", 5), ("sub", "GC", 5), ("owner", "Owner", 7), ("homeowner", "Owner", 7), ("public", "Owner", 7)]):
-            payer = domain.add_payer(state, {"name": f"Client {n}", "client_type": kind})
+        for n, (kind, role, follow) in enumerate([("gc", "GC", 5), ("sub", "GC", 5), ("owner", "Owner", 7), ("homeowner", "Owner", 7), ("public", "Owner", 7), ("other", "Owner", 7)]):
+            payer = domain.add_payer(state, {"name": f"Client {n}", "client_type": kind, "approver_confirmed": True, "approver": f"Client {n}", "ap_email": "ap@client.example", "phone": "(404) 555-0100"})
             self.assertEqual((payer["client_type"], payer["role"], payer["follow_up_days"]), (kind, role, follow), kind)
         with self.assertRaises(domain.GateError) as raised:
-            domain.add_payer(state, {"name": "Odd one", "client_type": "landlord"})
+            domain.add_payer(state, {"name": "Odd one", "client_type": "landlord", "approver_confirmed": True, "approver": "Odd one", "ap_email": "ap@client.example", "phone": "(404) 555-0100"})
         self.assertIn("client_type", raised.exception.fields)
+        # Other (Stephen, 10 Nov): an owner's defaults and no retainage unless the playbook says.
+        self.assertEqual(domain.jobinfo.default_retainage_pct({"client_type": "other"}), 0)
         # New job: a new client takes the type asked; a saved client keeps its own.
-        job = domain.create_job(state, "School gym", "Fulton County", 100_000, address_parts=PARTS, client_type="public")
+        job = domain.create_job(state, "School gym", "Fulton County", 100_000, address_parts=PARTS, client_type="public", approver="School gym", ap_email="ap@client.example", phone="(404) 555-0100")
         self.assertEqual((state["payers"][-1]["client_type"], job["payer_role"]), ("public", "Owner"))
-        again = domain.create_job(state, "Gym two", "Client 0", 100_000, address_parts=PARTS, client_type="homeowner", role="Owner")
+        again = domain.create_job(state, "Gym two", "Client 0", 100_000, address_parts=PARTS, client_type="homeowner", role="Owner", approver="Gym two", ap_email="ap@client.example", phone="(404) 555-0100")
         self.assertEqual(again["payer_role"], "GC", "the saved client's type decides")
         # Changing the type moves the role and every job's defaults with it; an older page's role sets the type.
         payer = state["payers"][0]
@@ -452,7 +475,7 @@ class JobFieldsTests(unittest.TestCase):
     def test_start_date_defaults_to_today_is_bounded_and_audited(self):
         from datetime import date, timedelta
         state = blank_company()
-        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS)
+        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 100_000, address_parts=PARTS, approver="Oak kitchen", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         today = date.today()
         self.assertIn(job["started_on"], {(today + timedelta(days=d)).isoformat() for d in (-1, 0, 1)})
         for bad in ("2026-13-01", "soon", (today - timedelta(days=4000)).isoformat(), (today + timedelta(days=800)).isoformat()):
@@ -481,9 +504,9 @@ class JobFieldsTests(unittest.TestCase):
 class ClientJobsTests(unittest.TestCase):
     def test_a_clients_jobs_include_finished_ones_with_the_newest_contract(self):  # S10
         state = blank_company()
-        a = domain.create_job(state, "Porch", "Ruiz Family", 100_000, address="1 Elm St")
-        b = domain.create_job(state, "Deck", "Ruiz Family", 200_000, address="2 Elm St", contract_number="C-7")
-        domain.create_job(state, "Other", "Someone Else", 100_000, address="3 Elm St")
+        a = domain.create_job(state, "Porch", "Ruiz Family", 100_000, address="1 Elm St", approver="Porch", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
+        b = domain.create_job(state, "Deck", "Ruiz Family", 200_000, address="2 Elm St", contract_number="C-7", approver="Deck", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
+        domain.create_job(state, "Other", "Someone Else", 100_000, address="3 Elm St", approver="Other", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         b["closed"] = True
         domain.add_job_record(state, a["id"], "Old contract", "contract")
         a["records"][-1]["file_ids"] = ["file-1"]
@@ -520,7 +543,7 @@ class JobStandingTests(unittest.TestCase):
 
     def test_stage_moves_with_the_job(self):
         state = blank_company()
-        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 1_000_000, address_parts=PARTS, retainage_pct=10)
+        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 1_000_000, address_parts=PARTS, retainage_pct=10, approver="Oak kitchen", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         stage = lambda: domain.job_view(state, job)["stage"]
         self.assertEqual(stage()["key"], "started")
         domain.record_progress(state, job["id"], 400_000)
@@ -538,7 +561,7 @@ class JobStandingTests(unittest.TestCase):
     def test_key_dates(self):
         from datetime import date
         state = blank_company()
-        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 1_000_000, address_parts=PARTS, started_on="2026-10-05")
+        job = domain.create_job(state, "Oak kitchen", "Ironleaf GC", 1_000_000, address_parts=PARTS, started_on="2026-10-05", approver="Oak kitchen", ap_email="ap@client.example", phone="(404) 555-0100", role="Owner")
         payer = state["payers"][0]
         payer["payapp_due_day"] = 31
         domain.record_progress(state, job["id"], 400_000)

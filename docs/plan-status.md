@@ -1,12 +1,14 @@
-# Where the plans stand (Oct 29, 2026)
+# Where the plans stand (Nov 5, 2026)
+
+The Nov 3 overhaul (Stephen's notes, `docs/client-flows.md` is current for it) is built on its branch and comes on top of what is below: a schedule of values on every new job, a required client playbook, real checks on supporting documents, a review before send, New job record, and internal texts. Where the sections below describe an older screen, the flows win.
 
 Two plans. The full-scope build plan of Oct 12 (P0–P3), with the UI/UX plan (Options A–C) and
 the retest's open rows, was built by Oct 13 (pull request #2). The improvement plan of Oct 27
 (`docs/improvement-plan.md`, six rounds to make Duracash easy for a contractor to start and use
 alone) was built on `dev` by Oct 29; its section below says what changed and what is left.
 "Built" means in the code with tests; nothing here is live until it is merged to `main` and
-deployed. The product words below are the app's own (customer, paperwork, customer settings);
-the plan rows keep the words they were written with.
+deployed. The words below are from when each part was built (customer, paperwork, customer
+settings, Today); the app now says client, supporting documents, Client playbook and Dashboard.
 
 **In short: the code is complete for everything that code alone can do.** What remains needs
 an account, a decision or a person: the Render disk, the Intuit and Stripe keys, a Backblaze
@@ -20,12 +22,12 @@ Each item's line is in the Progress section of `docs/improvement-plan.md`; the f
 - **First run.** Sign-up asks for name, email and password (the company name can wait); a "Check
   your email" panel says where the link went; Today's setup checklist leads to the company details,
   the first job, its paperwork and the first send. **Look around a sample company** opens the demo
-  with no account. New job is five boxes, with the rest under More details.
+  with no account. New job now shows everything on the form, nothing folded.
 - **Forms.** A wrong box turns red in place with the reason, and nothing typed is lost. Money boxes
   take "$48,500". Every label has an (i) with the trade term. Plain words everywhere (customer,
   paperwork, Customer settings, held back, Record a payment, Finish job), and "draw" for companies
   that bill homeowners in draws.
-- **The job page.** One Next step with the next two beside it and the rest under More; the progress
+- **The job page.** One Next step with every other action under it, grouped, and no More menu; the progress
   card bills a draw, a total or a percent with the figures shown; change orders, credits and their
   signatures on the page; paperwork by camera from a phone; a list of what stands before Finish job.
 - **The money loop.** Every send goes through Before you send. Payments carry their date; a short
@@ -33,7 +35,7 @@ Each item's line is in the Progress section of `docs/improvement-plan.md`; the f
   Pay apps carry Period to, a payment-due date and an AP-friendly subject, and download for
   QuickBooks. Follow-ups name every unpaid pay app and get firmer; a call can stand for one. The
   customer can approve a pay app for payment with a date. Owners get a daily email of what is due.
-  Only owners send unless the company lets members send.
+  Permission profiles on the Team page say who sends.
 - **Import and the Inbox.** Waiting first, one tap to add an item to its suggested job, photos
   that come in with a job, pastes read as the email, text thread or notes they are, a dropped
   payments file read as payments, and a payments import that finishes (pick a pay app, split a
@@ -48,8 +50,7 @@ Each item's line is in the Progress section of `docs/improvement-plan.md`; the f
 
 Left, and why (details in the Progress lines):
 
-- R1-03: the views still live in `static/app.js` (4,300 lines); the action map, partial redraw and
-  shared state are in, and views move out a few at a time as they are touched.
+- R1-03: done since. The views live in `static/js/views/`.
 - R5-10: the real QuickBooks export files and JSON need someone signed in to an Intuit sandbox
   company; the tests read them from `testdata/quickbooks/` as soon as they land.
 - R6-06: local backups still hold every upload (`BACKUP_UPLOADS=0` leaves them out and relies on the
@@ -66,7 +67,7 @@ Left, and why (details in the Progress lines):
 |---|---|---|---|
 | P0-1 | Persistent disk on Render | Built: `render.yaml` (Docker, starter plan, 10 GB disk at /var/data) | Stephen: attach the disk or switch the service to the blueprint; deploy twice and check `/healthz`. Unchecked from here: the live site didn't answer within 60 s today |
 | P0-2 | Off-site encrypted backup | Built: `offsite.py` (age, then S3 API to B2) | A B2 bucket with Object Lock, a write-only key, an age key pair |
-| P0-3 | CI on every push | Built and running: unit tests on SQLite and JSON, 13-step browser test | Stephen: protect `main`, require `unittest` and `smoke` |
+| P0-3 | CI on every push | Built and running: unit tests on SQLite and JSON, the browser test | Stephen: protect `main`, require `unittest` and `smoke` |
 | P0-4 | Production flags | Built (`DURACASH_ENV=production`) | Set on Render with `DURACASH_URL` |
 | P0-5 | Error alerts and uptime | Built: `alerts.py` (crash and backup alerts to a webhook), `/healthz` | A webhook (Slack or Better Stack) and an uptime monitor |
 | P0-6 | "Not legal deadlines" label | Built | — |

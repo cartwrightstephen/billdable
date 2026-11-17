@@ -51,6 +51,7 @@ def _seed() -> dict:
             {
                 "id": "payer-ellison",
                 "name": "Ellison Residential",
+                "client_type": "owner",
                 "role": "Owner",
                 "approver": "Mara Ellison",
                 "ap_email": "ap@ellisonresidential.example",
@@ -64,6 +65,7 @@ def _seed() -> dict:
             {
                 "id": "payer-north",
                 "name": "Northline GC",
+                "client_type": "gc",
                 "role": "GC",
                 "approver": "Dev Patel",
                 "ap_email": "dpatel@northlinegc.example",
@@ -77,6 +79,7 @@ def _seed() -> dict:
             {
                 "id": "payer-ponce",
                 "name": "Ponce Property Co.",
+                "client_type": "owner",
                 "role": "Owner",
                 "approver": "Accounts payable",
                 "ap_email": "payables@ponceproperty.example",
@@ -433,7 +436,7 @@ def _seed() -> dict:
                 "waiver_sent": True,
                 "waiver_sent_at": "2026-06-20T14:00:00+00:00",
                 "waiver_kind": "Conditional waiver on progress",
-                "waiver_standard": "Georgia statutory form; matches Ellison's paperwork requirement",
+                "waiver_standard": "Georgia statutory form; matches Ellison's supporting documents requirement",
                 "follow_ups": 1,
                 "retainage_held_cents": 0,
                 "retainage_released_cents": 0,
@@ -469,7 +472,7 @@ def _seed() -> dict:
                 "waiver_sent": True,
                 "waiver_sent_at": "2026-05-18T14:00:00+00:00",
                 "waiver_kind": "Unconditional waiver on final",
-                "waiver_standard": "Matches Ponce closeout paperwork; Georgia form",
+                "waiver_standard": "Matches Ponce closeout documents; Georgia form",
                 "follow_ups": 0,
                 "retainage_held_cents": 0,
                 "retainage_released_cents": 0,
@@ -504,7 +507,7 @@ def _seed() -> dict:
                 "waiver_sent": True,
                 "waiver_sent_at": "2026-04-12T14:00:00+00:00",
                 "waiver_kind": "Conditional waiver on progress",
-                "waiver_standard": "Georgia statutory; Ellison paperwork",
+                "waiver_standard": "Georgia statutory; Ellison supporting documents",
                 "follow_ups": 0,
                 "retainage_held_cents": 0,
                 "retainage_released_cents": 0,
@@ -531,7 +534,7 @@ def _seed() -> dict:
                 "job_id": "job-oak",
                 "actor": "owner",
                 "action": "job_done",
-                "detail": "Owner marked Oak Street kitchen done. Paperwork check ran the same night.",
+                "detail": "Owner marked Oak Street kitchen done. Document check ran the same night.",
             }
         ],
         "adapters": {

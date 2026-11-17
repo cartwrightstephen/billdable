@@ -20,7 +20,7 @@ const GONE = [
   "What happened today", "Write what happened today", "They wait below for you", "Notes split at every line",
   "Customer settings", "Payer playbook", "Go to Today", "nothing is filed without you", "<h1>Today</h1>", "<h1>Help</h1>", "Needs you", "<h2>This week</h2>",
   // D8 (Oct 30 review): the last notes of the kind.
-  "Steps marked optional don't count", "Its record holds notes and files", "Its paperwork list comes with it", "Everyone on the team can draft",
+  "Steps marked optional don't count", "Its record holds notes and files", "Its supporting documents list comes with it", "Everyone on the team can draft",
   "Only for you, on every device", "The same PDF goes with the email", "Every job is closed. Closed jobs",
 ];
 
@@ -30,7 +30,7 @@ test("the notes Stephen asked to remove don't come back", () => {
   assert.deepEqual(left, []);
   const server = readFileSync(new URL("../../server.py", import.meta.url), "utf8");
   assert.doesNotMatch(server, /summary-email|_p_summary_email/, "the summary email has no route");
-  assert.match(server, /"Enter the diary entry\."/);
+  assert.match(readFileSync(new URL("../../domain/daily.py", import.meta.url), "utf8"), /"Enter the diary entry\."/);
 });
 
 // "customer" as a word the page shows: not inside a name (nj-customer, new_customer,
@@ -52,10 +52,10 @@ test("no customer in what the page says: they are Clients", () => {
 
 test("the Results cards and the Diary use Stephen's words", () => {
   const today = text["js/views/today.js"], daily = text["js/views/daily.js"];
-  for (const s of ["Days from Job Completion to Pay App Sent", "Days from Pay App Sent to Paid", "Pay app rejections by Clients", "Jobs completed with outstanding billings"]) {
+  for (const s of ["Days from job completion to pay app sent", "Days from pay app sent to paid", "Pay app rejections by Clients", "Jobs completed with outstanding billings"]) {
     assert.ok(today.includes(s), s);
   }
-  assert.match(daily, /<label>Diary<\/label>/);
-  assert.match(daily, /"Write the diary entry\."/);
+  assert.match(daily, /<label for="daily-notes">Diary<\/label>/);
+  assert.match(daily, /"Write the diary entry, or add a document\."/);
   assert.match(text["js/views/clients.js"], /<h1>Client playbook<\/h1>/);
 });

@@ -4,7 +4,7 @@
 import { esc, unesc, money, fmtDate, fmtDateTime } from "../format.js";
 import { coSignature, coStatusWords, defaultJobId, openJobs as jobsOpen, RECORD_KINDS } from "../jobs.js";
 import { pathFor } from "../routes.js";
-import { askConfirm } from "../dom.js";
+import { askConfirm, focusAfterDraw } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
 import { termText } from "../terms.js";
 import { state, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
@@ -21,7 +21,7 @@ const days = (n) => `${n > 0 ? "+" : ""}${n} day${Math.abs(n) === 1 ? "" : "s"}`
 // What each history row says (domain.co_event, M10).
 const HISTORY_WORDS = {
   created: "Created", included: termText("Put on the next pay app"), off_draft: "Taken off the deleted draft",
-  signature_requested: "Signature requested", signed: "Signed", withdrawn: "Withdrawn",
+  signature_requested: "Signature requested", signed_copy_filed: "Signed copy filed", signed: "Signed", withdrawn: "Withdrawn",
   work_started: "Work started", client_logged: "Client logged it on their end", client_logged_undone: "Client logged it: taken off",
 };
 
@@ -170,7 +170,7 @@ function openCoForm(jobId) {
   nav("job", jobId);
   formOpen.newco = true;
   render();
-  requestAnimationFrame(() => document.getElementById("co-title")?.focus());
+  focusAfterDraw(() => document.getElementById("co-title"));
 }
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
@@ -187,7 +187,7 @@ export const actions = {
     if (open.length === 1) { openCoForm(open[0].id); return; }
     formOpen.copick = !formOpen.copick;
     render();
-    requestAnimationFrame(() => document.getElementById("new-co-job")?.focus());
+    focusAfterDraw(() => document.getElementById("new-co-job"));
   },
   "co-new-open": () => {
     const jobId = formValues("copick").job;
