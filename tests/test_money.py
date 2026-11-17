@@ -624,7 +624,7 @@ class ReopenAndUndoTests(unittest.TestCase):  # R4-02
         job = new_job(state, contract=1_000_000, retainage=10)
         domain.record_progress(state, job["id"], 400_000)
         send_open(state, job)
-        domain.mark_done(state, job["id"])
+        domain.mark_done(state, job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         final = job["invoices"][-1]
         self.assertTrue(domain.can_undo_done(job))
         job_route(state, job, "undo-done", {})
@@ -803,7 +803,7 @@ class RetainageChangeTests(unittest.TestCase):
             with self.assertRaises(domain.GateError) as raised:
                 domain.chase_retainage(state, job["id"], amount_cents=amount)
             self.assertIn("Use Final pay app first", str(raised.exception))
-        domain.mark_done(state, job["id"])
+        domain.mark_done(state, job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         for item in job["closeout_packet"]:
             domain.resolve_packet_item(state, job["id"], item["id"], reason="In the binder")
         with self.assertRaises(domain.GateError) as raised:

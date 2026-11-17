@@ -1079,7 +1079,7 @@ class FinalWaiverOnAJobNotFinishedTests(unittest.TestCase):  # items 16, 17, acc
         domain.send_waiver(state, job["id"], "Sam", release_id=release["id"])
         self.assertEqual(release["kind"], "unconditional_progress")
 
-    def test_a_final_waiver_asked_for_on_a_job_half_done_with_no_retainage_warns(self):
+    def test_a_final_waiver_asked_for_on_a_job_half_done_with_no_retainage_is_refused(self):  # decision 6: was a warning
         state = new_state()
         job = auto_job(state, contract=10_000_000)
         domain.record_sov_progress(state, job["id"], {sov.lines(job)[0]["id"]: "0.5"})
@@ -1089,11 +1089,12 @@ class FinalWaiverOnAJobNotFinishedTests(unittest.TestCase):  # items 16, 17, acc
         sent = len(state["email_log"])
         with self.assertRaises(domain.GateError) as raised:
             domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final")
-        self.assertTrue(raised.exception.extra["final_waiver_warning"])
+        self.assertIn("the job isn't finished", raised.exception.extra["final_waiver_held"])
         self.assertIn("isn't finished", str(raised.exception))
         self.assertEqual(len(state["email_log"]), sent)
-        domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final", confirm_final=True)
-        self.assertEqual(inv["waiver_kind"], "unconditional_final")
+        with self.assertRaises(domain.GateError):
+            domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final", confirm_final=True)
+        self.assertFalse(inv.get("waiver_sent"))
 
 
 class UnreadWaiverTests(unittest.TestCase):  # item 18

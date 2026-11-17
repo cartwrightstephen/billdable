@@ -169,7 +169,7 @@ class AcceptanceTests(Case):  # acceptance.md 66-70, 74, 76, 80
         self.assertIn("Not attached: Conditional waiver on progress payment", body)
         self.assertNotIn("✓", payer_page.render(self.state, self.job, self.inv, "/p/x").split("<h2>Supporting documents</h2>")[1].split("</div>")[0])
 
-    def test_a_final_waiver_while_retainage_is_held_needs_a_confirm(self):
+    def test_a_final_waiver_while_retainage_is_held_is_refused(self):  # decision 6, Nov 17: was a confirm
         state = new_state()
         job = new_job(state, retainage=10, packet="Invoice.")
         domain.record_progress(state, job["id"], 500_000)
@@ -183,10 +183,11 @@ class AcceptanceTests(Case):  # acceptance.md 66-70, 74, 76, 80
         sent = len(state["email_log"])
         with self.assertRaises(domain.GateError) as raised:
             domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final")
-        self.assertTrue(raised.exception.extra["final_waiver_warning"])
+        self.assertTrue(raised.exception.extra["final_waiver_held"])
         self.assertEqual(len(state["email_log"]), sent)
-        domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final", confirm_final=True)
-        self.assertEqual(len(state["email_log"]), sent + 1)
+        with self.assertRaises(domain.GateError):
+            domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final", confirm_final=True)
+        self.assertEqual(len(state["email_log"]), sent)
 
     def test_not_needed_on_a_waiver_is_this_job_only_unless_said(self):  # accept. 10
         state = new_state()

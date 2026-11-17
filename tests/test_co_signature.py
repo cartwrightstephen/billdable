@@ -107,7 +107,7 @@ class CreditTests(unittest.TestCase):
         self.assertEqual((figures["net_co"], figures["contract_to_date"]), (-250_000, 750_000))
         self.assertEqual(figures["balance"], 750_000 - 400_000)
         # Done: the work done is the lowered contract, so the last pay app bills what is left of it.
-        domain.mark_done(state, job["id"])
+        domain.mark_done(state, job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         self.assertEqual(job["invoices"][-1]["amount_cents"], 350_000)
 
     def test_credit_on_a_schedule_of_values_comes_off_the_next_pay_app(self):

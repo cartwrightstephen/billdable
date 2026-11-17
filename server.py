@@ -69,6 +69,7 @@ import store
 import trial
 import twilio_media
 import demo_seed
+import waiver_form
 from seed import seed_state
 
 ROOT = Path(__file__).resolve().parent
@@ -1230,8 +1231,25 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, preview)
 
     def _g_waiver_forms(self, m, user) -> None:
-        """The lien waiver forms each state sets (M22), for the waiver page's state picker."""
-        self._json(200, domain.waiver_forms())
+        """The lien waiver forms each state sets (M22), for the waiver page's state picker, and
+        which states' filled-in form is switched on (decision 1)."""
+        self._json(200, waiver_form.forms_for_page())
+
+    def _g_waiver_form_pdf(self, m, user) -> None:
+        """A state's statutory waiver filled in for a job (Stephen, 10 Nov, decision 1), for the
+        pay app or retainage release named by ?for=, interim or final. Only ids go in the address. Not found while DURACASH_WAIVER_FORMS doesn't name the job's state."""
+        query = parse_qs(urlparse(self.path).query)
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        job = next((j for j in state.get("jobs", []) if j["id"] == m.group(1)), None)
+        if not job or domain.job_state(job) not in waiver_form.states_on():
+            self._json(404, {"error": "No state form is set up for this job's state."})
+            return
+        pdf, name, refused = waiver_form.for_waiver(state, job["id"], (query.get("for") or [""])[0], m.group(2))
+        if refused:
+            self._json(409, {"error": refused})
+            return
+        self._send(200, pdf, "application/pdf", {"Content-Disposition": f'inline; filename="{name}"'})
 
     def _g_payer_jobs(self, m, user) -> None:
         """Every job of one client, finished ones too, for its Client playbook card (S10)."""
@@ -3141,6 +3159,7 @@ ROUTES = [
     Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
     Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.pdf", "_g_payapp_pdf", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/waiver-form/(interim|final)\.pdf", "_g_waiver_form_pdf", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.csv", "_g_payapp_csv", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)/page", "_g_payapp_page", "user"),
     Route("GET", r"/api/jobs/([^/]+)/co/([^/]+)/page", "_g_co_page", "user"),
@@ -3528,7 +3547,8 @@ WAIVER_READING_ACTIONS = {"send", "waiver", "retainage"}
 
 
 JOB_ACTIONS = {
-    "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"), period_end=_text(c.body, "period_to"))),
+    "done": (False, lambda h, st, j, i, c: domain.mark_done(st, j, c.actor, _text(c.body, "notes"), period_end=_text(c.body, "period_to"),
+                                                                     unpaid_reason=_text(c.body, "unpaid_reason"))),
     "progress": (False, _progress),
     "sov": (False, lambda h, st, j, i, c: domain.save_sov(st, j, _list(c.body, "lines"), c.body.get("op_pct"), _may_change_contract(c, st), c.actor,
                                                           may_change_contract=may_take(c.user, "edit", st))),

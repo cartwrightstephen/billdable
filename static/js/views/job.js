@@ -4,7 +4,7 @@
 import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
 import { activityAlsoHtml } from "../activity.js";
 import { deleteDraftText } from "../payapp-text.js";
-import { shortDay, jobPageActions, oneLumpLine, lumpDollars, closeBlockerActions, finalPayAppConfirm, closeoutMissing as closeoutMissingCount, closeoutShown, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
+import { unpaidPayApps, payAppNames, shortDay, jobPageActions, oneLumpLine, lumpDollars, closeBlockerActions, finalPayAppConfirm, closeoutMissing as closeoutMissingCount, closeoutShown, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
 import { sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { moreButton, askConfirm, focusAfterDraw } from "../dom.js";
@@ -185,7 +185,8 @@ function archiveHtml(j) {
   const live = (j.invoices || []).filter(i => !i.replaced && !(i.status === "void" && !i.sent_at));
   // The pay apps' waivers and each retainage release's, and every payment with the retainage paid
   // (Round 1 acceptance, item 26), oldest first.
-  const waivers = [...(j.invoices || []).filter(i => i.waiver_sent_at).map(i => ({ what: i.number, kind: i.waiver_kind, at: i.waiver_sent_at })),
+  const waivers = [...(j.invoices || []).flatMap(i => (i.partial_waivers || []).filter(w => !w.not_needed).map(w => ({ what: `${i.number}, part payment`, kind: w.kind, at: w.at }))),
+    ...(j.invoices || []).filter(i => i.waiver_sent_at && i.status !== "partial").map(i => ({ what: i.number, kind: i.waiver_kind, at: i.waiver_sent_at })),
     ...(j.retainage_waivers || []).filter(r => r.waiver_sent_at).map(r => ({ what: `Retainage${r.amount_cents ? " " + money(r.amount_cents) : ""}`, kind: r.kind, at: r.waiver_sent_at }))]
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const received = [...(j.payments || []).map(p => ({ at: p.matched_at, cents: p.amount_cents, reference: p.reference, what: "" })),
@@ -373,6 +374,8 @@ export const views = {
       ${formOpen.done && may("done") ? `<div class="card form-card" data-form-key="done"><h2>${termText("Final pay app")}</h2>${formErrorLine("done")}<div class="form-row">
         ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true, help: NOTES_HELP })}
         ${periodField("done", j)}
+        ${unpaidPayApps(j).length ? `<p class="blocker">${payAppNames(unpaidPayApps(j))} ${unpaidPayApps(j).length === 1 ? "is" : "are"} not paid yet.</p>
+          ${field({ form: "done", name: "unpaid_reason", id: "done-unpaid", label: "Why the final pay app goes now", wide: true, required: true })}` : ""}
         ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">${openDraft.number} becomes the final pay app. Its number and supporting documents stay.</p>` : ""}
         <button class="btn small" data-action="done" data-id="${j.id}">${termText("Draft final pay app")}</button></div></div>` : ""}
       ${formOpen.closeoverride && may("close") ? closeOverrideHtml(j) : ""}
@@ -461,6 +464,9 @@ export const actions = {
   "progress-all": () => { formOpen.progress = false; clearForm("progress"); formOpen.done = true; render(); document.getElementById("done-notes")?.focus(); },
   "done": async (el, id) => {
     const j = state.jobs.find(x => x.id === id);
+    const v = formValues("done");
+    // An earlier pay app unpaid: the final one takes a reason, kept as an override (decision 6).
+    if (j && unpaidPayApps(j).length && refuseForm("done", v.unpaid_reason ? {} : { unpaid_reason: `Enter why the final pay app goes while ${payAppNames(unpaidPayApps(j))} ${unpaidPayApps(j).length === 1 ? "is" : "are"} unpaid.` })) return;
     // Says the amount before anything changes. A refusal is the server's own, shown by the post below.
     const res = await fetch(`/api/jobs/${encodeURIComponent(id)}/final-preview`).catch(() => null);
     if (!res || (!res.ok && res.status !== 409)) { toast("Couldn't work out the amount. Nothing was changed."); return; }
@@ -468,8 +474,7 @@ export const actions = {
       const { text, button } = finalPayAppConfirm(j || {}, await res.json());
       if (!(await askConfirm(text, button))) return;
     }
-    const v = formValues("done");
-    await post(`/api/jobs/${id}/done`, { notes: v.notes || "", period_to: v.period_to || "" }, { formKey: "done", close: "done" });
+    await post(`/api/jobs/${id}/done`, { notes: v.notes || "", period_to: v.period_to || "", ...(v.unpaid_reason ? { unpaid_reason: v.unpaid_reason } : {}) }, { formKey: "done", close: "done" });
   },
   // Log a conversation (R4-06): counts as a follow-up while a pay app waits; with a date, Today waits until then.
   "save-conversation": async (el, id) => {

@@ -33,6 +33,8 @@ function clientApproversHtml(p, edits) {
 // (domain.signer_defaulted): its box starts empty, so saving the card doesn't count as an answer.
 const signerDefaulted = (p) => !!p.approver && (p.playbook_missing || []).map(unesc).includes("approver");
 
+const PARTIAL_WAIVER_CHOICES = [["yes", "Yes"], ["no", "No"]];
+
 // The client's own Usual retainage %, as typed: blank when it goes by its type (domain.jobinfo).
 const usualRetainage = (p) => (p.retainage_pct === undefined || p.retainage_pct === null ? "" : String(p.retainage_pct));
 
@@ -60,6 +62,7 @@ function clientReadOnlyHtml(p, key, f) {
     ${row("Payment terms", days(p.payment_terms_days))}
     ${row("Usual retainage", p.retainage_default != null ? `${p.retainage_default}%` : "")}
     ${row("Supporting documents needed", p.no_paperwork ? "Nothing needed" : p.packet)}
+    ${row("Lien waiver on each part payment", p.partial_waivers === false ? "No" : "Yes")}
     ${row("They send pay apps back when", p.rejects_when)}
     ${row("Also email (CC)", p.copy)}
     ${row("Also email from the third follow-up", p.escalation_email)}
@@ -249,7 +252,9 @@ export const views = {
             </div>
             ${playbookSection(`pb-docs-${p.id}`, "Supporting documents", p.no_paperwork ? "Nothing needed" : (p.packet_items || []).join(", ") || "None ticked", `
               ${paperworkHtml(key, p)}
-              ${f({ name: "rejects_when", label: "They send pay apps back when", helpKey: "rejects_when", multiline: true, wide: true, value: unesc(clean(p.rejects_when)) })}`, key, ["packet", "rejects_when"])}
+              ${/* Decision 5 (Stephen, 10 Nov): a waiver for the money in hand after a part payment, on unless turned off. */ ""}
+              ${f({ name: "partial_waivers", label: "Lien waiver on each part payment", options: PARTIAL_WAIVER_CHOICES, value: p.partial_waivers === false ? "no" : "yes" })}
+              ${f({ name: "rejects_when", label: "They send pay apps back when", helpKey: "rejects_when", multiline: true, wide: true, value: unesc(clean(p.rejects_when)) })}`, key, ["packet", "partial_waivers", "rejects_when"])}
             ${playbookSection(`pb-follow-${p.id}`, "Follow-ups and copies", `Every ${p.follow_up_days || 7} days${clean(p.copy) ? ` · CC ${p.copy}` : ""}`, `
               ${f({ name: "follow_up_days", label: "Days between follow-ups", helpKey: "follow_up_days", inputmode: "numeric", autocomplete: "off", value: String(p.follow_up_days || "") })}
               ${f({ name: "usual_approval_days", label: "Days they usually take to pay", helpKey: "usual_approval_days", inputmode: "numeric", autocomplete: "off", value: String(p.usual_approval_days || "") })}

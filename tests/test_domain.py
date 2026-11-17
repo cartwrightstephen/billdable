@@ -136,7 +136,9 @@ class MoneyFileTests(unittest.TestCase):
         domain.match_payment(state, "job-turner", 5000000, "QBO-20012")
         job = domain._job(state, "job-turner")
         self.assertEqual(job["invoices"][-1]["status"], "partial")
-        self.assertFalse(job["waiver_due"])
+        # It owes a waiver for what came in (decision 5, Nov 17), not the paid-in-full one.
+        self.assertTrue(job["waiver_due"] and not job["waiver_sent"])
+        self.assertEqual(domain.waiver_cents(job, job["invoices"][-1]), 5000000)
         self.assertEqual(domain.job_money(job)["outstanding_cents"], 6970000)
 
     def test_playbook_update_and_learn_rejection(self):

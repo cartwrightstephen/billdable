@@ -428,7 +428,7 @@ class Sequence:
         raise AssertionError(f"not finished: {domain.close_blockers(self.job)}")
 
     def clear_not_done(self, item):
-        domain.mark_done(self.state, self.id)
+        domain.mark_done(self.state, self.id, unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
 
     def clear_draft(self, item):
         for co in domain.unsigned_cos_in_billing(self.job):
