@@ -201,6 +201,10 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
         "contract_total_cents": contract_total,
         "billed_cents": billed,
         "draft_cents": draft,
+        # Backlog's inputs (B0, B12): a draft's gross, and the unsigned change orders on pay apps
+        # sent or drafted, which aren't signed work until they are signed.
+        "draft_gross_cents": draft + retainage_on_drafts,
+        "unsigned_co_billed_cents": _unsigned_co_billed(job),
         "payments_cents": payments,
         "collected_cents": max(0, payments - returned),
         "refunded_cents": returned,
@@ -218,6 +222,12 @@ def job_money(job: dict[str, Any]) -> dict[str, int]:
         "retainage_credited_cents": credited,
         "retainage_open_cents": max(0, retainage_held - retainage_released - credited),
     }
+
+
+def _unsigned_co_billed(job: dict[str, Any]) -> int:
+    pending = {co.get("id") for co in job["change_orders"] if co["status"] == "pending"} - {None}
+    return sum(int(line.get("amount_cents") or 0) for inv in job["invoices"] if inv["status"] in BILLED_STATUSES | DRAFT_STATUSES
+               for line in inv.get("lines") or [] if line.get("co_id") in pending)
 
 
 def _owed_text(m: dict[str, int]) -> str:
@@ -2716,8 +2726,11 @@ def job_state(job: dict[str, Any]) -> str:
 
 def backlog_cents(m: dict[str, int]) -> int:
     """Signed work not done yet on a job (its job_money): the contract with signed change orders,
-    less what is billed, drafted, and done but not billed yet (Money > Financials)."""
-    return max(0, m["contract_total_cents"] - m["billed_gross_cents"] - m["draft_cents"] - m["unbilled_completed_cents"])
+    less what is billed, drafted, and done but not billed yet (Money > Financials). Billed and
+    drafted are gross, retainage in, and leave out unsigned change orders on them, which the
+    contract total doesn't hold either."""
+    signed_billed = m["billed_gross_cents"] + m.get("draft_gross_cents", m["draft_cents"]) - m.get("unsigned_co_billed_cents", 0)
+    return max(0, m["contract_total_cents"] - signed_billed - m["unbilled_completed_cents"])
 
 
 def _totals(views: list[dict[str, Any]]) -> dict[str, Any]:

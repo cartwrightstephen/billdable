@@ -20,6 +20,7 @@ from typing import Any
 
 import domain
 import metrics
+from exports import text
 
 BILLED = domain.BILLED_STATUSES
 BUCKETS = [("current", "0–30 days", 0, 30), ("31_60", "31–60 days", 31, 60), ("61_90", "61–90 days", 61, 90), ("over_90", "Over 90 days", 91, None)]
@@ -138,11 +139,16 @@ def compute(state: dict[str, Any], today: date | None = None) -> dict[str, Any]:
                 if key in monthly:
                     monthly[key]["billed_cents"] += gross
                     c["billed_12m_cents"] += gross
-        for p in job.get("payments", []):
-            d = _day(p.get("matched_at"))
+        # Collected is money that stayed: payments and retainage released, less refunds, each in
+        # the month it happened, as the payments CSV adds up (B1, B11).
+        moves = [(p.get("matched_at"), p["amount_cents"]) for p in job.get("payments", [])]
+        moves += [(p.get("at"), int(p.get("amount_cents") or 0)) for p in job.get("retainage_payments", [])]
+        moves += [(s.get("at"), -int(s.get("returned_cents", s.get("cents") or 0))) for s in job.get("overbilling_settled") or []]
+        for at, cents in moves:
+            d = _day(at)
             key = d and f"{d.year:04d}-{d.month:02d}"
             if key in monthly:
-                monthly[key]["collected_cents"] += p["amount_cents"]
+                monthly[key]["collected_cents"] += cents
 
     receivable = sum(aging.values())
     billed_12 = sum(r["billed_cents"] for r in monthly.values())
@@ -186,7 +192,8 @@ def to_csv(f: dict[str, Any]) -> str:
     out = io.StringIO()
     w = csv.writer(out)
     d = lambda cents: f"{cents / 100:.2f}"
-    w.writerow([f"{f['company']} financial summary", f"as of {f['as_of']}"])
+    # Names are typed by people: each goes as text a spreadsheet won't run as a formula (B3).
+    w.writerow([text(f"{f['company']} financial summary"), f"as of {f['as_of']}"])
     w.writerow([])
     w.writerow(["Summary", "Amount"])
     for label, key in [("Owed by clients (receivables)", "receivable_cents"), ("Retainage held", "retainage_cents"), ("Backlog (signed work not done yet)", "backlog_cents"),
@@ -204,7 +211,7 @@ def to_csv(f: dict[str, Any]) -> str:
     w.writerow([])
     w.writerow(["Job", "Client", "Pay app", "Days since sent", "Owed"])
     for r in f["aging_rows"]:
-        w.writerow([r["job"], r["client"], r["pay_app"], r["days"], d(r["cents"])])
+        w.writerow([text(r["job"]), text(r["client"]), text(r["pay_app"]), r["days"], d(r["cents"])])
     w.writerow([])
     w.writerow(["Month", "Billed", "Collected"])
     for r in f["monthly"]:
@@ -212,10 +219,10 @@ def to_csv(f: dict[str, Any]) -> str:
     w.writerow([])
     w.writerow(["Client", "Owed", "Retainage held", "Share of receivables %", "Billed, last 12 months", "Share of billings %"])
     for r in f["clients"]:
-        w.writerow([r["client"], d(r["owed_cents"]), d(r["retainage_cents"]), "" if r["owed_share"] is None else r["owed_share"],
+        w.writerow([text(r["client"]), d(r["owed_cents"]), d(r["retainage_cents"]), "" if r["owed_share"] is None else r["owed_share"],
                     d(r["billed_12m_cents"]), "" if r["billed_share"] is None else r["billed_share"]])
     w.writerow([])
     w.writerow(["Backlog by job", "Client", "Contract with change orders", "Billed", "Done, not billed", "Work not done yet"])
     for r in f["backlog_jobs"]:
-        w.writerow([r["job"], r["client"], d(r["contract_cents"]), d(r["billed_cents"]), d(r["unbilled_cents"]), d(r["left_cents"])])
+        w.writerow([text(r["job"]), text(r["client"]), d(r["contract_cents"]), d(r["billed_cents"]), d(r["unbilled_cents"]), d(r["left_cents"])])
     return out.getvalue()

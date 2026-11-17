@@ -9,7 +9,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import importer
 from test_money import new_job, new_state, send_open
+from test_round2_review_rules import says_done_item
 
 
 class FinalOverrideOnARedraft(unittest.TestCase):  # R4, B6 (decision 6)
@@ -41,6 +43,20 @@ class FinalOverrideOnARedraft(unittest.TestCase):  # R4, B6 (decision 6)
         domain.match_payment(self.state, self.job["id"], self.first["amount_cents"], "chk", invoice_id=self.first["id"])
         domain.draft_invoice(self.state, self.job["id"], strict=True)
         self.assertNotIn("final_override", self.job["invoices"][-1])
+
+
+class InboxMarkDoneOnAFinishedJob(unittest.TestCase):  # R1
+    def test_a_job_marked_done_since_says_so_and_keeps_the_message(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        domain.record_progress(state, job["id"], 400_000, "a")
+        send_open(state, job)
+        item = says_done_item(state, job)
+        domain.mark_done(state, job["id"], "Sam", unpaid_reason="GC asked for it")
+        with self.assertRaises(domain.GateError) as refused:
+            importer.file_and_mark_done(state, item["id"], "Sam")
+        self.assertEqual(str(refused.exception), "Job is already marked done.")
+        self.assertEqual(item["status"], "new")
 
 
 if __name__ == "__main__":
