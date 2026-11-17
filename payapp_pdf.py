@@ -2,8 +2,8 @@
 
 The layout follows the familiar G702/G703 pattern (summary lines 1-9, then a
 line-by-line sheet), but it is Duracash's own document, not an AIA form, and
-it says so on every page. Waiver documents are not generated: lien waiver
-forms are set by state law, so the contractor supplies their own.
+it says so on every page. Lien waiver forms are set by state law: the contractor
+supplies their own, or prints a state's form filled in by waiver_form.py.
 
 Written with the standard library only: a small PDF writer using the built-in
 Helvetica and Courier fonts (no embedding), landscape US Letter.

@@ -282,11 +282,12 @@ class WaiverKindTests(unittest.TestCase):
     def test_kind_is_recorded_on_the_pay_app_and_in_the_email(self):
         state, job, inv = self.paid_job()
         signed_waiver(state, job["id"])
-        domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"], kind="conditional_final", confirm_final=True)
-        self.assertEqual(inv["waiver_kind"], "conditional_final")
-        self.assertEqual(job["waiver_kind"], "Conditional waiver on final payment")
-        self.assertTrue(state["email_log"][-1]["subject"].startswith("Conditional waiver on final payment"))
-        self.assertIn("conditional waiver on final payment", state["audit"][-1]["detail"])
+        # A final one waits for all the money (decision 6), so the kind asked for here is a progress one.
+        domain.send_waiver(state, job["id"], "owner", invoice_id=inv["id"], kind="conditional_progress")
+        self.assertEqual(inv["waiver_kind"], "conditional_progress")
+        self.assertEqual(job["waiver_kind"], "Conditional waiver on progress payment")
+        self.assertTrue(state["email_log"][-1]["subject"].startswith("Conditional waiver on progress payment"))
+        self.assertIn("conditional waiver on progress payment", state["audit"][-1]["detail"])
 
     def test_default_and_unknown_kinds(self):
         state, job, inv = self.paid_job()

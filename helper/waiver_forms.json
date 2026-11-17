@@ -1,5 +1,5 @@
 {
-  "note": "Lien waiver forms set by state law, shown on the waiver page and on a conditional waiver item. Duracash points to the form; it never writes one. Add a state only from the statute's own text, with its citation as plain text.",
+  "note": "Lien waiver forms set by state law, shown on the waiver page and on a conditional waiver item. Duracash points to the form, and where the server has a state's statutory_forms switched on it fills that form in to print and sign (waiver_form.py); it never sends an unsigned one. Add a state only from the statute's own text, with its citation as plain text.",
   "states": {
     "GA": {
       "name": "Georgia",
@@ -15,7 +15,66 @@
         "Georgia sets two forms, one for progress payments and one for the final payment. Use the form as the law words it.",
         "By law the waiver takes effect only once the payment it names is received, so the same form serves before and after payment.",
         "Not paid after signing? File an affidavit of nonpayment within 90 days of the waiver's date, or the waiver stands as if you were paid."
-      ]
+      ],
+      "statutory_forms": {
+        "note": "The forms of O.C.G.A. § 44-14-366(d) and (e) for Duracash to fill in and print in 12-point type: one paragraph per entry, {name} a blank. Shown to customers only once an attorney approves this wording and the server's DURACASH_WAIVER_FORMS names GA.",
+        "interim": {
+          "subsection": "(d)",
+          "title": "Waiver and Release of Lien and Payment Bond Rights Upon Interim Payment",
+          "paragraphs": [
+            "STATE OF GEORGIA",
+            "COUNTY OF {county}",
+            "THE UNDERSIGNED MECHANIC AND/OR MATERIALMAN HAS BEEN EMPLOYED BY {contractor} (NAME OF CONTRACTOR) TO FURNISH {furnish} (DESCRIBE MATERIALS AND/OR LABOR) FOR THE CONSTRUCTION OF IMPROVEMENTS KNOWN AS {project} (TITLE OF THE PROJECT OR BUILDING) WHICH IS LOCATED IN THE CITY OF {city}, COUNTY OF {project_county}, AND IS OWNED BY {owner} (NAME OF OWNER) AND MORE PARTICULARLY DESCRIBED AS FOLLOWS:",
+            "{property}",
+            "(DESCRIBE THE PROPERTY UPON WHICH THE IMPROVEMENTS WERE MADE BY USING EITHER A METES AND BOUNDS DESCRIPTION, THE LAND LOT DISTRICT, BLOCK AND LOT NUMBER, OR STREET ADDRESS OF THE PROJECT.)",
+            "UPON THE RECEIPT OF THE SUM OF ${amount}, THE MECHANIC AND/OR MATERIALMAN WAIVES AND RELEASES ANY AND ALL LIENS OR CLAIMS OF LIENS IT HAS UPON THE FOREGOING DESCRIBED PROPERTY OR ANY RIGHTS AGAINST ANY LABOR AND/OR MATERIAL BOND THROUGH THE DATE OF {through} (DATE) AND EXCEPTING THOSE RIGHTS AND LIENS THAT THE MECHANIC AND/OR MATERIALMAN MIGHT HAVE IN ANY RETAINED AMOUNTS, ON ACCOUNT OF LABOR OR MATERIALS, OR BOTH, FURNISHED BY THE UNDERSIGNED TO OR ON ACCOUNT OF SAID CONTRACTOR FOR SAID BUILDING OR PREMISES.",
+            "GIVEN UNDER HAND AND SEAL THIS {day} DAY OF {month}, {year}.",
+            "(SEAL)",
+            "{claimant}",
+            "(NAME OF MECHANIC AND/OR MATERIALMAN)",
+            "BY: {by}",
+            "ITS: {its}",
+            "NOTICE: WHEN YOU EXECUTE AND SUBMIT THIS DOCUMENT, YOU SHALL BE CONCLUSIVELY DEEMED TO HAVE WAIVED AND RELEASED ANY AND ALL LIENS AND CLAIMS OF LIENS UPON THE FOREGOING DESCRIBED PROPERTY AND ANY RIGHTS AGAINST ANY LABOR AND/OR MATERIAL BOND FOR THE AMOUNT SET FORTH ABOVE, REGARDLESS OF WHETHER YOU HAVE ACTUALLY RECEIVED SUCH PAYMENT, 60 DAYS AFTER THE DATE STATED ABOVE UNLESS YOU FILE EITHER AN AFFIDAVIT OF NONPAYMENT OR A CLAIM OF LIEN PRIOR TO THE EXPIRATION OF SUCH 60 DAY PERIOD. THE FAILURE TO INCLUDE THIS NOTICE LANGUAGE ON THE FACE OF THE FORM SHALL RENDER THE FORM UNENFORCEABLE AND INVALID AS A WAIVER AND RELEASE UNDER O.C.G.A. SECTION 44-14-366."
+          ]
+        },
+        "final": {
+          "subsection": "(e)",
+          "title": "Waiver and Release of Lien and Payment Bond Rights Upon Final Payment",
+          "paragraphs": [
+            "STATE OF GEORGIA",
+            "COUNTY OF {county}",
+            "THE UNDERSIGNED MECHANIC AND/OR MATERIALMAN HAS BEEN EMPLOYED BY {contractor} (NAME OF CONTRACTOR) TO FURNISH {furnish} (DESCRIBE MATERIALS AND/OR LABOR) FOR THE CONSTRUCTION OF IMPROVEMENTS KNOWN AS {project} (TITLE OF THE PROJECT OR BUILDING) WHICH IS LOCATED IN THE CITY OF {city}, COUNTY OF {project_county}, AND IS OWNED BY {owner} (NAME OF OWNER) AND MORE PARTICULARLY DESCRIBED AS FOLLOWS:",
+            "{property}",
+            "(DESCRIBE THE PROPERTY UPON WHICH THE IMPROVEMENTS WERE MADE BY USING EITHER A METES AND BOUNDS DESCRIPTION, THE LAND LOT DISTRICT, BLOCK AND LOT NUMBER, OR STREET ADDRESS OF THE PROJECT.)",
+            "UPON THE RECEIPT OF THE SUM OF ${amount}, THE MECHANIC AND/OR MATERIALMAN WAIVES AND RELEASES ANY AND ALL LIENS OR CLAIMS OF LIENS IT HAS UPON THE FOREGOING DESCRIBED PROPERTY OR ANY RIGHTS AGAINST ANY LABOR AND/OR MATERIAL BOND ON ACCOUNT OF LABOR OR MATERIALS, OR BOTH, FURNISHED BY THE UNDERSIGNED TO OR ON ACCOUNT OF SAID CONTRACTOR FOR SAID PROPERTY.",
+            "GIVEN UNDER HAND AND SEAL THIS {day} DAY OF {month}, {year}.",
+            "(SEAL)",
+            "{claimant}",
+            "(NAME OF MECHANIC AND/OR MATERIALMAN)",
+            "BY: {by}",
+            "ITS: {its}",
+            "NOTICE: WHEN YOU EXECUTE AND SUBMIT THIS DOCUMENT, YOU SHALL BE CONCLUSIVELY DEEMED TO HAVE WAIVED AND RELEASED ANY AND ALL LIENS AND CLAIMS OF LIENS UPON THE FOREGOING DESCRIBED PROPERTY AND ANY RIGHTS AGAINST ANY LABOR AND/OR MATERIAL BOND FOR THE AMOUNT SET FORTH ABOVE, REGARDLESS OF WHETHER YOU HAVE ACTUALLY RECEIVED SUCH PAYMENT, 60 DAYS AFTER THE DATE STATED ABOVE UNLESS YOU FILE EITHER AN AFFIDAVIT OF NONPAYMENT OR A CLAIM OF LIEN PRIOR TO THE EXPIRATION OF SUCH 60 DAY PERIOD. THE FAILURE TO INCLUDE THIS NOTICE LANGUAGE ON THE FACE OF THE FORM SHALL RENDER THE FORM UNENFORCEABLE AND INVALID AS A WAIVER AND RELEASE UNDER O.C.G.A. SECTION 44-14-366."
+          ]
+        },
+        "blanks": {
+          "county": "County where it is signed",
+          "contractor": "Name of contractor",
+          "furnish": "Materials and/or labor",
+          "project": "Title of the project or building",
+          "city": "City",
+          "project_county": "County of the project",
+          "owner": "Name of owner",
+          "property": "Description of the property",
+          "amount": "Sum received",
+          "through": "Through the date of",
+          "day": "Day",
+          "month": "Month",
+          "year": "Year",
+          "claimant": "Name of mechanic and/or materialman",
+          "by": "By",
+          "its": "Its"
+        }
+      }
     }
   },
   "other": {

@@ -38,7 +38,7 @@ export const ACTION_WORDS = {
   draft_replaced: "Draft replaced", draft_skipped: "Draft replaced", void_draft: "Draft deleted", void_sent: "Pay app pulled back",
   match_payment: "Payment recorded", short_pay: "Short pay accepted", retainage_paid: "Held-back money received",
   chase_retainage: "Asked for held-back money", follow_up: "Follow-up sent", contact_noted: "Conversation logged",
-  send_waiver: "Waiver sent", job_done: "Work finished", undo_done: "Back to in progress", close_job: "Job finished",
+  send_waiver: "Waiver sent", job_done: "Work finished", final_override: "Override: final pay app with one unpaid", undo_done: "Back to in progress", close_job: "Job finished",
   reopen_job: "Job reopened", create_job: "Job added", edit_job: "Job changed", delete_job: "Job deleted",
   contract_changed: "Contract changed", add_co: "Change order added", approve_co: "Change order signed",
   withdraw_co: "Change order withdrawn", include_co: "Change order put on the bill", change_order_off_draft: "Change order taken off the draft",

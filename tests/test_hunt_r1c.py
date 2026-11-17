@@ -295,8 +295,11 @@ class ASentFinalWaiverIsExemptOnlyWhereItWasSent(Case):
         domain.approve_and_send(self.state, self.job["id"], "Sam")
         domain.match_payment(self.state, self.job["id"], self.inv["amount_cents"], "chk", invoice_id=self.inv["id"])
         sent = self.stored("Final", pdf("UNCONDITIONAL WAIVER AND RELEASE ON FINAL PAYMENT Pine kitchen $4,000.00"), typed="unconditional_final")
-        domain.send_waiver(self.state, self.job["id"], "Sam", invoice_id=self.inv["id"], kind="unconditional_final", confirm_final=True,
-                           read_file=self.read, looked_at=sent["id"])
+        # One sent early, as a confirm allowed before decision 6 (Nov 17) refused it outright.
+        from unittest import mock
+        with mock.patch.object(domain, "final_waiver_holds", return_value=[]):
+            domain.send_waiver(self.state, self.job["id"], "Sam", invoice_id=self.inv["id"], kind="unconditional_final",
+                               read_file=self.read, looked_at=sent["id"])
         self.assertTrue(sent.get("sent_as_final"))
         domain.record_progress(self.state, self.job["id"], 700_000)
         later = draft(self.job)

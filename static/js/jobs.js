@@ -207,8 +207,10 @@ export function waiverPick(j, inv = null, release = null) {
 export function waiverSendForm(j, inv, disabled = false, release = null) {
   const key = release ? release.id : inv ? inv.id : "job";
   const pick = waiverPick(j, inv, release);
+  // A final waiver can't go while money on the job is still to come (domain.final_waiver_holds, decision 6).
+  const held = (j.final_waiver_holds || []).length > 0;
   return `<div class="form-inline">
-    <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}>${v}</option>`).join("")}</select>
+    <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}${k.endsWith("_final") && held ? " disabled" : ""}>${v}</option>`).join("")}</select>
     <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}${release ? ` data-release="${release.id}"` : ""}${disabled ? " disabled" : ""}>Approve & send</button>
   </div>
   <p class="sub waiver-hint" data-waiver-hint="${key}">${waiverHint(pick)}</p>`;
@@ -263,6 +265,21 @@ export function defaultJobId(openJobs, lastId = "") {
 
 const DRAFTS = ["draft", "awaiting_approval"];
 const OPEN_FOR_PAYMENT = ["sent", "approved", "partial"];   // domain.OPEN_FOR_PAYMENT
+
+// The pay apps sent and not paid in full (domain.unpaid_pay_apps): while there are any, Final pay
+// app takes a reason, kept as an override (Stephen, 10 Nov, decision 6).
+export function unpaidPayApps(j) { return (j.invoices || []).filter(i => OPEN_FOR_PAYMENT.includes(i.status)); }
+
+// "PA-01", "PA-01 and PA-02": as domain._numbers.
+export function payAppNames(invoices) {
+  const names = invoices.map(i => unesc(i.number));
+  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+// The override that let the final pay app go with an earlier one unpaid: who, when and why.
+export function finalOverrideText(o) {
+  return o ? `Final pay app with ${payAppNames((o.unpaid || []).map(number => ({ number })))} unpaid. Overridden by ${o.by} on ${fmtDate(o.at)}: ${o.reason}` : "";
+}
 
 // Work already billed, before retainage, on the pay apps that count, leaving out an open draft
 // (a progress entry replaces it). The server's _billed_gross, which a draw is added to.

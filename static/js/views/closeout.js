@@ -39,10 +39,18 @@ function retainageAskHtml(j) {
 export function waiverRows(j) {
   const rows = [];
   for (const inv of j.invoices || []) {
+    // Each part payment's waiver already settled (decision 5), then the one owed now.
+    for (const pw of inv.partial_waivers || []) {
+      rows.push({ inv, label: `${inv.number}, part payment`, amount: pw.cents, due: false, sent_at: pw.not_needed ? null : pw.at,
+        kind: pw.not_needed ? "" : unesc(pw.kind || ""), onFile: false, which: false, record: "", recordId: "", notNeeded: pw.not_needed ? pw.reason || "Not needed" : "" });
+    }
     const off = inv.waiver_not_needed;
     if (!inv.waiver_due && !inv.waiver_sent && !off) continue;
+    const part = inv.status === "partial";
+    if (part && (inv.waiver_sent || off)) continue;   // in partial_waivers above
     const stage = (inv.waiver_stages && inv.waiver_stages.unconditional) || {};
-    rows.push({ inv, label: inv.number, amount: inv.amount_cents - (inv.short_pay_cents || 0), due: !inv.waiver_sent && !off,
+    rows.push({ inv, label: part ? `${inv.number}, part payment` : inv.number,
+      amount: inv.waiver_amount_cents != null ? inv.waiver_amount_cents : inv.amount_cents - (inv.short_pay_cents || 0), due: !inv.waiver_sent && !off,
       sent_at: inv.waiver_sent_at, kind: inv.waiver_sent ? unesc(inv.waiver_kind || "") : off ? "" : waiverPick(j, inv),
       onFile: stage.status === "Attached", which: stage.status === "Which pay app?", record: stage.record_label || "", recordId: unesc(stage.record_id || ""),
       notNeeded: off ? off.reason || "Not needed" : "" });
@@ -134,7 +142,7 @@ export const views = {
           : `<p class="sub">${termText("No waiver is due yet. One is due after each paid pay app.")}</p>`}
       </div>
       ${first ? `<div class="card">${waiverChecklistHtml(j, first.kind, first.inv || null, first.amount)}</div>` : ""}
-      <div class="card">${waiverFormHtml(j, first ? first.kind : "")}</div>
+      <div class="card">${waiverFormHtml(j, first ? first.kind : "", first && (first.inv || first.release) ? rowId(first) : "")}</div>
       ${payApps.length ? `<div class="card">
         <h2>${termText("By pay app")}</h2>
         <div class="table-wrap"><table>
@@ -203,10 +211,11 @@ export const views = {
 
 // What this module's buttons do: ACTIONS[name](el, el.dataset.id, event), merged in views/index.js.
 export const actions = {
-  // A person approves each waiver (M21). A final waiver while a progress one is due warns, and so
-  // does a file that doesn't match what it goes as (blank, other wording, another job or amount, a
-  // scan): those looks come first, each for what it names (accept. 67, 76), read with nothing sent;
-  // then one confirm names the type, what it covers and who gets it (Round 1 acceptance, item 17).
+  // A person approves each waiver (M21). A file that doesn't match what it goes as (blank, other
+  // wording, another job or amount, a scan) warns: those looks come first, each for what it names
+  // (accept. 67, 76), read with nothing sent; then one confirm names the type, what it covers and
+  // who gets it (Round 1 acceptance, item 17). A final waiver while money is still to come is
+  // refused with no way past it (decision 6).
   "waiver": async (el, id) => {
     const key = el.dataset.release || el.dataset.inv || "job";
     const kind = document.getElementById(`waiver-kind-${key}`)?.value;
@@ -214,10 +223,9 @@ export const actions = {
     const body = { ...(el.dataset.inv ? { invoice_id: el.dataset.inv } : {}), ...(el.dataset.release ? { release_id: el.dataset.release } : {}), ...(kind ? { kind } : {}) };
     const said = {};
     let r = await post(`/api/jobs/${id}/waiver`, { ...body, check_only: true }, { quiet: true, ownRefusal: true });
-    while (r && r.data && (r.data.final_waiver_warning || r.data.look_warning)) {
-      if (!(await askConfirm(r.data.error, r.data.confirm_label || "Send the final waiver", true))) return;
-      if (r.data.final_waiver_warning) said.confirm_final = true;
-      if (r.data.look_warning) said.looked_at = r.data.record_id;
+    while (r && r.data && r.data.look_warning) {
+      if (!(await askConfirm(r.data.error, r.data.confirm_label || "I opened it and it's right", true))) return;
+      said.looked_at = r.data.record_id;
       r = await post(`/api/jobs/${id}/waiver`, { ...body, ...said, check_only: true }, { quiet: true, ownRefusal: true });
     }
     // Anything else it can't go for, or a check that didn't come back: say why and stop. The send

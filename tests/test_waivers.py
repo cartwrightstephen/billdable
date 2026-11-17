@@ -117,7 +117,11 @@ class SecondStageTests(unittest.TestCase):  # M18, M19, M21
         signed_waiver(state, job["id"], "unconditional_final")
         with self.assertRaises(domain.GateError):
             domain.send_waiver(state, job["id"], "Owner", kind="unconditional_progress")
-        domain.send_waiver(state, job["id"], "Owner", kind="unconditional_final", confirm_final=True)
+        # A final waiver while the job isn't finished can't go at all (decision 6, Nov 17): not even confirmed.
+        with self.assertRaises(domain.GateError) as refused:
+            domain.send_waiver(state, job["id"], "Owner", kind="unconditional_final", confirm_final=True)
+        self.assertIn("the job isn't finished", refused.exception.extra["final_waiver_held"])
+        self.assertFalse(inv.get("waiver_sent"))
 
     def test_the_retainage_on_a_progress_waiver_is_named(self):  # M15
         state = new_state()

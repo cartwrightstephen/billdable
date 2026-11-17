@@ -3,7 +3,7 @@
 // A pay app is drafted on its job's page; New pay app here asks for the job and opens that job's
 // step for it, the progress form or Draft pay app (Stephen's Oct 29 review, G10).
 import { esc, unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
-import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn, payAppStarts, defaultJobId } from "../jobs.js";
+import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn, payAppStarts, defaultJobId, finalOverrideText } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm, focusAfterDraw } from "../dom.js";
 import { field, formErrorLine, refuseForm, formValues } from "../forms.js";
@@ -181,6 +181,7 @@ export const views = {
       ${inv.sent_at && inv.status !== "void" ? undeliveredHtml(inv) : ""}
       ${fromDaily ? `<p class="sov-daily payapp-daily">Updated from job records on ${fmtDate(fromDaily)}</p>` : ""}
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
+      ${inv.final_override ? `<p class="override-note final-override">${finalOverrideText(inv.final_override)}</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a></p>
       ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
       ${inv.status === "void" && currentDraft ? `<p class="notice"><a href="${pathFor("payapp-detail", j.id, currentDraft.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${currentDraft.id}">Go to the current draft, ${currentDraft.number}</a></p>` : ""}

@@ -288,7 +288,7 @@ class FinalWaiverWithRetainageTests(unittest.TestCase):  # B3 (r5_final_ret.py)
         s = new_state()
         job = new_job(s, packet="Progress photos")
         first = send_one(s, job, 500_000, "PA-1")
-        domain.mark_done(s, job["id"])
+        domain.mark_done(s, job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         item = next(i for i in draft(job)["packet"] if i.get("waiver_kind"))
         self.assertEqual(item["waiver_kind"], "conditional_progress", "PA-1 is still owed, and a final waiver would give it up (Nov 5)")
         domain.match_payment(s, job["id"], first["amount_cents"], "chk")
@@ -462,7 +462,7 @@ class SentPayAppPaperworkStaysTests(unittest.TestCase):  # B9 (r6_attach_sent.py
         self.assertTrue(self.photos["required"])
 
     def test_closeout_paperwork_still_takes_them(self):
-        domain.mark_done(self.s, self.job["id"])
+        domain.mark_done(self.s, self.job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         item = self.job["closeout_packet"][0]
         domain.skip_packet_item(self.s, self.job["id"], item["id"], "Not on this job")
         self.assertFalse(item["required"])

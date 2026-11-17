@@ -184,7 +184,7 @@ class PeriodTotalTests(unittest.TestCase):
         domain.record_sov_progress(state, job["id"], {})
         domain.void_draft(state, job["id"])
         self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 225_000)
-        domain.mark_done(state, job["id"], "Owner", "finished")
+        domain.mark_done(state, job["id"], "Owner", "finished", unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         self.assertEqual(open_draft(job)["gross_cents"], 1_800_000 - 450_000)
         domain.undo_mark_done(state, job["id"])
         self.assertEqual(domain.job_money(job)["unbilled_completed_cents"], 225_000)
@@ -417,7 +417,7 @@ class AutoLumpSumTests(unittest.TestCase):
         # $24,250.19 (half-up from .185) + $1,234.56 = $25,484.75; 10% is $2,548.475, $2,548.48 held.
         self.assertEqual((draft["gross_cents"], draft["retainage_cents"], draft["amount_cents"]), (2_548_475, 254_848, 2_293_627))
         send_open(state, job)
-        domain.mark_done(state, job["id"], "Owner", "finished")
+        domain.mark_done(state, job["id"], "Owner", "finished", unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         draft = open_draft(job)
         self.assertEqual(draft["gross_cents"], 4_850_037 + 123_456 - 2_548_475)
         self.assertTrue(draft["final"])
@@ -503,7 +503,7 @@ class AcceptanceMoneyTests(unittest.TestCase):
         draft = open_draft(job)
         self.assertEqual((draft["gross_cents"], draft["retainage_cents"], draft["amount_cents"]), (8_734_567, 873_457, 7_861_110))
         send_open(state, job)
-        domain.mark_done(state, job["id"], "Owner", "finished")
+        domain.mark_done(state, job["id"], "Owner", "finished", unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         draft = open_draft(job)
         self.assertEqual((draft["gross_cents"], draft["retainage_cents"], draft["amount_cents"]), (16_265_433, 1_626_543, 14_638_890))
         live = [i for i in job["invoices"] if i["status"] != "void"]
@@ -520,7 +520,7 @@ class AcceptanceMoneyTests(unittest.TestCase):
         domain.record_sov_progress(state, job["id"], {})
         self.assertEqual(open_draft(job)["gross_cents"], 9_990_001)
         send_open(state, job)
-        domain.mark_done(state, job["id"], "Owner", "finished")
+        domain.mark_done(state, job["id"], "Owner", "finished", unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         self.assertEqual(open_draft(job)["gross_cents"], 10_000)
 
     def test_override_past_the_balance_names_what_is_left(self):  # acceptance 34
@@ -572,7 +572,7 @@ class AcceptanceMoneyTests(unittest.TestCase):
         draft = open_draft(job)
         self.assertEqual((draft["gross_cents"], draft["retainage_cents"], draft["amount_cents"]), (2_000_000, 200_000, 1_800_000))
         send_open(state, job)
-        domain.mark_done(state, job["id"], "Owner", "finished")
+        domain.mark_done(state, job["id"], "Owner", "finished", unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         draft = open_draft(job)
         self.assertEqual((draft["gross_cents"], draft["retainage_cents"], draft["amount_cents"]), (2_500_000, 250_000, 2_250_000))
 
@@ -589,7 +589,7 @@ class AcceptanceMoneyTests(unittest.TestCase):
         self.assertEqual((draft["gross_cents"], draft["retainage_cents"], draft["amount_cents"]), (5_800_000, 580_000, 5_220_000))
         domain.approve_change_order(state, job["id"], co["id"])
         send_open(state, job)
-        domain.mark_done(state, job["id"], "Owner", "finished")
+        domain.mark_done(state, job["id"], "Owner", "finished", unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         live = [i for i in job["invoices"] if i["status"] != "void"]
         self.assertEqual(sum(i["gross_cents"] for i in live), 10_800_000)
 
