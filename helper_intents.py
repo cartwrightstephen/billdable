@@ -341,7 +341,15 @@ _RET = r"(?:retainage|retention)"
 # "minus 10% retainage", "retention withheld". That is a pay app's payment, so Record a Payment.
 _RET_KEPT = re.compile(
     rf"\b(?:less|minus|net\s+of|after|excluding|without|withholding|deducting)\s+(?:the\s+|\d+(?:\.\d+)?\s*%\s*|any\s+)?{_RET}\b"
-    rf"|\b{_RET}\s+(?:withheld|held\s+back|deducted|taken\s+out|kept|retained)\b", re.I)
+    rf"|\b{_RET}\s+(?:withheld|held|deducted|taken\s+out|kept|retained)\b", re.I)
+# Retainage said not to be part of this payment: "no retainage paid yet", "but not for the
+# retainage", "retainage paid separately later", "the retainage check comes later". The payment is
+# still the pay app's, so Record a Payment (Round 2 review, B38, third pass).
+_RET_NOT_NOW = re.compile(
+    rf"\b(?:no|not|nor|never)\s+(?:[\w']+\s+){{0,2}}?{_RET}\b"
+    rf"|\b{_RET}\b(?:\s+[\w']+){{0,3}}?\s+(?:later|separately|yet|comes?|coming|pending|outstanding|still|next|to\s+follow|at\s+closeout)\b", re.I)
+# "record retainage held on Turner's payment": retainage kept back from a payment being recorded.
+_RECORD_PAYMENT = re.compile(r"\b(?:record|log|enter)\b.*\bpayments?\b", re.I)
 # Retainage as the money that came in, said on its own: "record retainage paid", "retainage came in
 # for Decatur", "the retainage was paid on Turner".
 _RET_IN = re.compile(
@@ -358,7 +366,8 @@ def _retainage_received(q: str, paying: bool = False) -> bool:
     """Whether a command records retainage that came in (Round 2 review, B38). Only that is the job
     page's Record retainage paid; a payment with retainage held back ("less retainage") is the pay
     app's payment. paying: the command is already Record a Payment's ("record a payment for ...")."""
-    return bool(_RET_IN.search(q) or (paying and _RET_PAID.search(q))) and not _RET_KEPT.search(q)
+    return (bool(_RET_IN.search(q) or (paying and _RET_PAID.search(q)))
+            and not _RET_KEPT.search(q) and not _RET_NOT_NOW.search(q))
 
 
 def retainage_releasable(job: dict[str, Any]) -> bool:
@@ -442,6 +451,10 @@ def intent(question: str, snap: dict[str, Any], perms: set[str], context_job_id:
         # "record retainage paid", "retainage came in for Decatur" (Round 2 review, B38).
         return "start-task", _retainage_reply(q, snap, perms, context_job_id)
     form = _task(q)
+    if not form and _RET_KEPT.search(q) and _RECORD_PAYMENT.search(q):
+        # "record retainage held on Turner's payment": the payment, with retainage held back, is
+        # the pay app's Record a Payment, not retainage received (Round 2 review, B38).
+        form = "match"
     if form:
         reply = _task_reply(form, question, q, snap, perms, style, context_job_id)
         if reply:

@@ -347,6 +347,11 @@ _OVERDUE_RE = re.compile(r"\b(?:over[\s-]*due|past[\s-]*due|late)\b", re.I)
 _NOT_OVERDUE_RE = re.compile(r"\b(?:not|isn't|isnt|aren't|arent)\s+(?:yet\s+)?(?:over[\s-]*due|past[\s-]*due|late|due)\b", re.I)
 
 
+# Late or overdue said of a follow-up or of sending, not of a payment (Round 2 review, B18).
+_FOLLOWUP_LATE_RE = re.compile(r"\bfollow[\s-]*ups?\b|\bfollowups?\b|\blate\s+(?:to\s+|in\s+|on\s+)?send(?:ing)?\b"
+                               r"|\bsend(?:ing)?\b[^.?!]{0,20}?\b(?:late|overdue)\b", re.I)
+
+
 def _overdue_asked(question: str) -> bool:
     return bool(_OVERDUE_RE.search(question or "")) and not _not_overdue_asked(question)
 
@@ -362,6 +367,12 @@ def _overdue(snap: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str,
     return [r for r in rows if "" < due.get((r["job_id"], r["pay_app"]), "") < today]
 
 
+def _undated(snap: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The aging rows whose pay app has no due date, so can't be called overdue or not."""
+    due = {(j["id"], i["number"]): str(i.get("due_on") or "") for j in snap["jobs"] for i in j["invoices"]}
+    return [r for r in rows if not due.get((r["job_id"], r["pay_app"]), "")]
+
+
 def _named_scope(snap: dict[str, Any], question: str) -> tuple[str, set[str]] | None:
     """The client or job a question names, and the ids of the jobs that means; None for neither."""
     client = helper_intents.client_named(snap, question) if question else None
@@ -371,8 +382,14 @@ def _named_scope(snap: dict[str, Any], question: str) -> tuple[str, set[str]] | 
     return (job["name"], {job["id"]}) if job else None
 
 
-def _join(how_to: str, live: str) -> str:
-    """A prepared how-to, then the live lines, without a sentence the how-to already says (B26)."""
+# A question asking how to do something wants the how-to first; any other ("Why can't I send?",
+# "Approve and send") wants its live answer first, as at 198422a, with the how-to after it.
+_HOW_RE = re.compile(r"^\s*(?:how\b|what\s+are\s+the\s+steps\b|walk\s+me\s+through\b|show\s+me\s+how\b)", re.I)
+
+
+def _join(how_to: str, live: str, live_first: bool = False) -> str:
+    """A prepared how-to, then the live lines, without a sentence the how-to already says (B26).
+    live_first: the live lines lead and the how-to follows (Round 2 review, third pass)."""
     split = lambda t: [x for x in re.split(r"(?<=[.!?])\s+", t.strip()) if x]
     said = {_plain(x) for x in split(how_to)}
     lines = []
@@ -381,6 +398,8 @@ def _join(how_to: str, live: str) -> str:
         if kept or not line.strip():
             lines.append(" ".join(kept))
     rest = "\n".join(lines).strip()
+    if rest and live_first:
+        return f"{rest}\n\n{how_to.strip()}"
     return f"{how_to.strip()}\n\n{rest}" if rest else how_to.strip()
 
 
@@ -491,10 +510,20 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
             total, head = sum(r["cents"] for r in rows), domain.term_text("Pay apps not due yet", style) + (f" for {scope[0]}" if scope else "")
         elif _overdue_asked(question):
             # Overdue as Unpaid marks it: due date before today (Round 2 review, B18).
-            rows = _overdue(snap, rows)
-            if not rows:
+            late = _overdue(snap, rows)
+            undated = _undated(snap, rows)
+            if not late and undated:
+                # No due date set is not "nothing overdue": those are listed, oldest first, as they
+                # were at 198422a, saying why (Round 2 review, third pass).
+                rows = undated
+                total = sum(r["cents"] for r in rows)
+                head = (f"Nothing is past its due date" + (f" for {scope[0]}" if scope else "")
+                        + f", but {'this' if len(rows) == 1 else 'these'} unpaid {pay_app}{'' if len(rows) == 1 else 's'} {'has' if len(rows) == 1 else 'have'} no due date set")
+            elif not late:
                 return f"Nothing is overdue" + (f" for {scope[0]}" if scope else "") + f": no unpaid {pay_app} is past its due date.", [helper_intents.nav_action("collections")]
-            total, head = sum(r["cents"] for r in rows), domain.term_text("Overdue pay apps", style) + (f" for {scope[0]}" if scope else "")
+            else:
+                rows = late
+                total, head = sum(r["cents"] for r in rows), domain.term_text("Overdue pay apps", style) + (f" for {scope[0]}" if scope else "")
         lines = [f"- {r['pay_app']}, {r['job']}: " + (f"{domain.money(r['cents'])}, " if money_ok else "") + f"{r['days']} days" for r in rows[:10]]
         head += ", oldest first" + (f" ({domain.money(total)} in all)" if money_ok else "") + ":"
         jobs_seen = list({r["job_id"]: r for r in rows}.values())[:3]
@@ -529,10 +558,15 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
         # What is still owed on every unpaid pay app, listed as the job page's follow-up lists them
         # (domain.record_follow_up), so a part payment isn't billed again (Round 2 review, B17).
         owed = [(i, domain._owed_on(job, i)) for i in unpaid]
-        listing = "; ".join(f"{i['number']} {domain.money(c)} sent {(i.get('sent_at') or '')[:10]}" for i, c in owed)
-        if len(owed) > 1:
-            listing += f"; total {domain.money(sum(c for _, c in owed))}"
-        note = (f"Hi {p.get('approver') or p['name']}, checking on {job['name']}: {listing}. Is anything missing on your side?"
+        # The letter layout of 198422a: greeting, the pay app, sign-off (Round 2 review, third pass).
+        if len(owed) == 1:
+            i, c = owed[0]
+            still = " still owed" if c != int(i.get("amount_cents") or 0) else ""
+            body = f"Checking on {i['number']} for {job['name']} ({domain.money(c)}{still}), sent {(i.get('sent_at') or '')[:10]}."
+        else:
+            listing = "; ".join(f"{i['number']} {domain.money(c)} sent {(i.get('sent_at') or '')[:10]}" for i, c in owed)
+            body = f"Checking on {job['name']}: {listing}; total {domain.money(sum(c for _, c in owed))}."
+        note = (f"Hi {p.get('approver') or p['name']},\n\n{body} Is anything missing on your side?"
                 f"\n\nThanks,\n{company}")
         # Sending it is the job page's Send follow-up: the helper only opens the job (decision 12).
         actions = [{"type": "copy", "text": note, "label": "Copy note"}]
@@ -663,6 +697,11 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
         asked = _drop_names(question, named) or question
     ranked = rank(asked)
     top_score, top = ranked[0] if ranked else (0.0, None)
+    if top and top.get("handler") in ("unpaid", "who_owes") and _FOLLOWUP_LATE_RE.search(question):
+        # A follow-up, or sending, being late ("is a follow up overdue", "is my pay app late to
+        # send?") is the follow-ups answer, not who owes or the overdue list (Round 2 review, B18).
+        top = next((e for _, e in ranked if e.get("handler") == "followups"), top)
+        top_score = max(top_score, ANSWER_AT)
     reply: dict[str, Any] = {"actions": [], "suggestions": []}
     matched = None
     command = helper_intents.intent(question, snap, perms, context_job_id)
@@ -713,7 +752,7 @@ def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, 
                     # A prepared how-to ("how_to" in answers.json) keeps its text, first, and the live
                     # lines follow it; a live answer's text is only a fallback for no live lines (B26).
                     live_text, extra = live
-                    text = _join(text, live_text) if how_to else live_text
+                    text = _join(text, live_text, live_first=not _HOW_RE.match(question)) if how_to else live_text
                     actions = extra + actions
         form = helper_intents.answer_form(top["id"], snap, job, perms)
         if form:

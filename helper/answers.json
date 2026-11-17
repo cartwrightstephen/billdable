@@ -128,7 +128,8 @@
         "Why can't I send the pay app?",
         "Why is approve and send greyed out?",
         "What is missing on this job?",
-        "Which jobs are blocked?"
+        "Which jobs are blocked?",
+        "What is blocked jobs?"
       ],
       "keywords": [
         "blocker",
@@ -217,7 +218,8 @@
       "questions": [
         "Which waivers are due?",
         "Do I owe any waivers?",
-        "What waivers need to go out?"
+        "What waivers need to go out?",
+        "Waiver due"
       ],
       "keywords": [
         "waiver due"
@@ -1137,7 +1139,6 @@
       "category": "Waivers",
       "questions": [
         "How do I send a waiver?",
-        "Waiver due",
         "Send the lien waiver"
       ],
       "keywords": [
@@ -1979,8 +1980,7 @@
       "questions": [
         "What does the Overview page show?",
         "What does the dashboard show?",
-        "What do the tiles mean?",
-        "What is blocked jobs?"
+        "What do the tiles mean?"
       ],
       "keywords": [
         "dashboard",

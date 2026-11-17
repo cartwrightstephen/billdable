@@ -168,7 +168,8 @@ class LiveAnswers(Base):
         inv = next(i for i in summit["invoices"] if i["number"] == "PA-SUMM-01")
         domain.match_payment(st, summit["id"], 3_000_000, "chk 1", invoice_id=inv["id"])
         text = self.ask("Draft a follow-up for Summit Ridge", state=st)["text"]
-        self.assertIn("PA-SUMM-01 $10,554.00", text)
+        # One pay app: the letter layout of 198422a, with what is still owed (third pass).
+        self.assertIn("\n\nChecking on PA-SUMM-01 for Summit Ridge Medical Office ($10,554.00 still owed), sent", text)
         self.assertNotIn("$40,554.00", text)
         second = next(i for i in summit["invoices"] if i["number"] == "PA-SUMM-02")
         second.update(status="sent", sent_at=datetime.now(timezone.utc).isoformat())

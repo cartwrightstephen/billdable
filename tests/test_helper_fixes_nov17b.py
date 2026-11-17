@@ -2,7 +2,8 @@
 failed by another route, and regressions the first fixes brought in. Each test names its item.
 
 The main guard is HelperAnswersDontRegress: every example question in helper/answers.json and the
-paraphrases from the verification, with the answer each gets on the seed and the Redbud demo
+paraphrases from the verification, with the answer each gets on the seed and the Redbud demo, as
+the owner and the Member, with no page open and on a job's page
 (tests/fixtures/helper_expected_answers.json). A row that differs from dev 198422a says why."""
 
 import json
@@ -52,21 +53,61 @@ class Base(unittest.TestCase):
 
 
 class HelperAnswersDontRegress(Base):
+    # The four contexts of each row (tests/fixtures/helper_expected_answers.json): page|user.
+    CONTEXTS = (("-", "owner"), ("-", "member"), ("page", "owner"), ("page", "member"))
+
     def test_every_example_and_paraphrase_gets_its_expected_answer(self):
+        """Every row, on the seed and the demo, as the owner and the Member, with no page open and on
+        a job's page: the answer id, and for a how-to with live lines which comes first. A later
+        change that moves one answers worse silently no more (Round 2 review, third pass)."""
         rows = json.loads(EXPECTED.read_text())["questions"]
-        demo = self.demo()
+        kb = {e["id"]: e for e in helper.load_kb()}
         wrong = []
-        # The log is no part of what is answered; leaving it out keeps this quick.
-        log, helper._log = helper._log, lambda entry: None
+        # The log is no part of what is answered, and the state is not changed by answering: each
+        # state's snapshot and each question's ranking are worked out once, which keeps this quick.
+        snaps, ranks = {}, {}
+        real = (helper._log, domain.snapshot, helper.rank)
+        helper._log = lambda entry: None
+        def snapshot(st):
+            if id(st) not in snaps:
+                snaps[id(st)] = real[1](st)
+            return snaps[id(st)]
+
+        def rank(q, kb=None):
+            if kb is not None:
+                return real[2](q, kb)
+            if q not in ranks:
+                ranks[q] = real[2](q)
+            return ranks[q]
+        domain.snapshot, helper.rank = snapshot, rank
         try:
-            for name, st in (("seed", self.state), ("demo", demo)):
+            for name, st, page in (("seed", self.state, "Turner"), ("demo", self.demo(), "Westside")):
+                page_id = self.job(st, page)["id"]
                 for row in rows:
-                    got = self.ask(row["q"], state=st)["matched"]
-                    if got != row[name]:
-                        wrong.append(f"{name}: {row['q']!r} gave {got}, expected {row[name]}")
+                    for where, who in self.CONTEXTS:
+                        ctx = f"{where}|{who}"
+                        r = self.ask(row["q"], user=OWNER if who == "owner" else MEMBER, state=st,
+                                     job_id=page_id if where == "page" else "")
+                        want = row[name] if not isinstance(row[name], dict) else row[name][ctx]
+                        if r["matched"] != want:
+                            wrong.append(f"{name} {ctx}: {row['q']!r} gave {r['matched']}, expected {want}")
+                            continue
+                        lead = (row.get("lead") or {}).get(name)
+                        lead = lead[ctx] if isinstance(lead, dict) else lead
+                        prepared = (kb.get(want) or {}).get("answer", "").strip()
+                        if lead and prepared:
+                            got = "prepared" if r["text"].startswith(prepared[:60]) else "live"
+                            if got != lead:
+                                wrong.append(f"{name} {ctx}: {row['q']!r} leads with the {got} lines, expected {lead}")
         finally:
-            helper._log = log
+            helper._log, domain.snapshot, helper.rank = real
         self.assertEqual(wrong, [])
+
+    def test_every_example_question_is_in_the_table(self):
+        listed = {row["q"] for row in json.loads(EXPECTED.read_text())["questions"]}
+        missing = [q for e in json.loads(helper.SHIPPED_KB.read_text())["answers"]
+                   for q in e.get("questions", []) if q not in listed]
+        self.assertEqual(missing, [])
 
     def test_every_change_since_198422a_says_why(self):
         for row in json.loads(EXPECTED.read_text())["questions"]:
