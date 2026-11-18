@@ -74,8 +74,11 @@ class Filed(Case):
         domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", looked=True, read_file=self.read,
                                    shown=[rec["id"]], answer=truth)
         self.assertTrue(self.waiver["present"])
-        self.assertEqual(rec["waiver_kind"], f"{truth}_progress", "the answer types the record")
-        self.goes(truth == "unconditional")
+        # A form that reads final is typed final, and a final waiver never goes with a progress
+        # pay app (decision 6; Georgia waivers, Nov 18).
+        final = doc_check.reading(text)["final"]
+        self.assertEqual(rec["waiver_kind"], f"{truth}_{'final' if final else 'progress'}", "the answer types the record")
+        self.goes(truth == "unconditional", final)
 
     def elsewhere(self, text, asked, truth):
         """Filed under the insurance certificate: asked "Is this a lien waiver?" when it reads as
@@ -94,9 +97,15 @@ class Filed(Case):
         self.assertTrue(refused.exception.extra.get("waiver_question"))
         self.assertEqual(self.inv["status"] in domain.DRAFT_STATUSES, True)
         domain.answer_waiver_question(self.state, self.job["id"], rec["id"], truth, "Sam", shown=rec["file_ids"])
-        self.goes(truth == "unconditional")
+        self.goes(truth == "unconditional" and truth != "no", truth != "no" and doc_check.reading(text)["final"])
 
-    def goes(self, owner):
+    def goes(self, owner, final=False):
+        if final:
+            with self.assertRaises(domain.GateError) as refused:
+                self.send(unconditional_override="Paid by wire, owner checked")
+            self.assertTrue(refused.exception.extra.get("final_waiver_held"))
+            self.assertIn(self.inv["status"], domain.DRAFT_STATUSES)
+            return
         if owner:
             with self.assertRaises(domain.GateError) as refused:
                 self.send()
@@ -121,7 +130,8 @@ class GcConditionalForms(Filed):
     def test_boilerplate_about_an_unconditional_waiver_reads_conditional_and_goes(self):
         for name, text in CONDITIONAL_FORMS.items():
             with self.subTest(name):
-                self.assertEqual(doc_check.reading(text), {"guess": "conditional", "form": True})
+                read = doc_check.reading(text)
+                self.assertEqual((read["guess"], read["form"]), ("conditional", True))
                 self.on_the_waiver_item(text, "conditional", "conditional")
                 self.elsewhere(text, True, "conditional")
 

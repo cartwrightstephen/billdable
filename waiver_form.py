@@ -2,8 +2,9 @@
 still be typed in (Stephen, 10 Nov, decision 1: "we should at least have a fillable form for one
 suggested waiver and allow the user to upload their own in states where permitted").
 
-Georgia only for now: O.C.G.A. § 44-14-366(d) (interim payment) and (e) (final payment), its
-words kept in helper/waiver_forms.json. Every word prints in 12-point type, the blanks are PDF
+Georgia only for now: O.C.G.A. § 44-14-366(d) (interim payment) and (e) (final payment) as
+amended by SB 315 from 1 January 2021 (90 days, affidavit of nonpayment only), its words kept
+in helper/waiver_forms.json. Every word prints in 12-point type, the blanks are PDF
 form fields with what Duracash knows already in them, and the person prints it, signs it and adds
 the signed copy to the job records as before: Duracash never sends an unsigned form.
 
@@ -29,7 +30,7 @@ FIELD_H = 14
 BLANK_W = {        # each blank's width in points; property takes the whole line, two lines high
     "county": 160, "contractor": 230, "furnish": 260, "project": 260, "city": 150, "project_county": 140,
     "owner": 220, "amount": 110, "through": 130, "day": 36, "month": 110, "year": 50,
-    "claimant": 330, "by": 260, "its": 200,
+    "signature": 300, "witness": 300, "address": 360,
 }
 PROPERTY_LINES = 2
 
@@ -82,7 +83,8 @@ def forms_for_page() -> dict[str, Any]:
     on = states_on()
     states = {}
     for st, entry in data["states"].items():
-        entry = {k: v for k, v in entry.items() if k != "statutory_forms"}
+        # The attorney's questions stay in the file for the people who ask them, off the page.
+        entry = {k: v for k, v in entry.items() if k not in ("statutory_forms", "attorney")}
         entry["fillable"] = st in on
         states[st] = entry
     return {**data, "states": states}
@@ -127,8 +129,10 @@ def prefill(state: dict[str, Any], job: dict[str, Any], for_id: str, which: str)
         "amount": amount,
         "through": str((invoice or {}).get("period_to") or "") if which == "interim" else "",
         "day": "", "month": "", "year": "",
-        "claimant": str(company.get("legal_name") or company.get("name") or ""),
-        "by": "", "its": "",
+        # Signed and witnessed by hand. The statute's form has no printed name, By or Its line, so
+        # none is added (Georgia waivers, Nov 18). attorney: may the company's name go under the
+        # signature, and whose address is (ADDRESS)? Until then both stay blank.
+        "signature": "", "witness": "", "address": "",
     }
 
 
@@ -305,6 +309,9 @@ def for_waiver(state: dict[str, Any], job_id: str, for_id: str = "", which: str 
     if which not in ("interim", "final"):
         which = "interim"
     if which == "final" and not job.get("closed"):
+        # Georgia's final form waits for the sum it names (§ 44-14-366(g)(2)), so the law would let
+        # it go with the request for the last money; decision 6 holds it until all the money is in.
+        # attorney/Stephen: fill it for the retainage request when retainage is all that's left?
         left = domain.final_waiver_holds(job)
         if left:
             return None, "", f"A final waiver waits until all the money on {job['name']} is in: {', '.join(left)}."

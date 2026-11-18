@@ -1105,10 +1105,12 @@ def _say_which(state: dict[str, Any], job: dict[str, Any], record: dict[str, Any
 
 
 def _answer_stage(record: dict[str, Any], stage: str) -> str:
-    """The stage an answer types a record at: a form already typed final stays final. The answer
-    says conditional or unconditional only, and a final lien release answered on a progress pay
-    app is still a final release (decision 6 gates it as one)."""
-    return "final" if record_waiver_kind(record).endswith("_final") else stage
+    """The stage an answer types a record at: a form already typed final stays final, and so does
+    one whose label or files say final with no type yet ("Final lien release", record_says_final).
+    The answer says conditional or unconditional only, and a final lien release answered on a
+    progress pay app is still a final release (decision 6 gates it as one)."""
+    kind = record_waiver_kind(record)
+    return "final" if kind.endswith("_final") or (not kind and record_says_final(record)) else stage
 
 
 def _filed_records(job: dict[str, Any], item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1248,6 +1250,31 @@ def _finals_going(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: 
             continue
         out.append(rec)
     return out
+
+
+def _conditional_finals_going(job: dict[str, Any], packet: list[dict[str, Any]], extra_ids: Any = (), excluded: Any = ()) -> list[dict[str, Any]]:
+    """Conditional final waivers going out with a send: typed so, by a person or by its label."""
+    excluded = set(excluded or [])
+    out: list[dict[str, Any]] = []
+    for rec, _item in _going_records(job, packet, extra_ids):
+        if rec in out or _left_out(rec, excluded) or record_waiver_kind(rec) != "conditional_final":
+            continue
+        out.append(rec)
+    return out
+
+
+def _no_final_waiver_for_part(job: dict[str, Any], finals: list[dict[str, Any]], left: list[str], where: str) -> None:
+    """A conditional final waiver goes only with the request for the last money on the job. Georgia's
+    final form (O.C.G.A. § 44-14-366(e)) has no retainage exception and, once the sum it names is
+    paid, gives up every lien and bond right on the job; sent with a request for less than all that
+    is left, the rest goes with it (Georgia waivers, Nov 18). No override, as decision 6.
+    attorney: confirm a final waiver for less than the whole balance gives up the rest."""
+    if finals and left:
+        raise GateError(f"{_numbers_of(finals)} {'is a final waiver' if len(finals) == 1 else 'are final waivers'}: once this payment "
+                        f"arrives it gives up the rest of the money on {job['name']}: {', '.join(left)}. "
+                        f"Send a progress waiver {where}, or take it off.",
+                        [f"{r['label']} ({WAIVER_KINDS['conditional_final'].lower()})" for r in finals],
+                        extra={"final_waiver_held": left}, keep_changes=True)
 
 
 def _no_early_final_waiver(job: dict[str, Any], finals: list[dict[str, Any]], where: str) -> None:
@@ -1409,6 +1436,10 @@ def approve_and_send(
     _need_waiver_answers(state, job, invoice.get("packet") or [], invoice.get("extra_record_ids") or [], invoice.get("excluded_file_ids") or [], read_file)
     _no_early_final_waiver(job, _finals_going(job, invoice.get("packet") or [], invoice.get("extra_record_ids") or [],
                                               invoice.get("excluded_file_ids") or []), f"with {invoice['number']}")
+    _no_final_waiver_for_part(job, _conditional_finals_going(job, invoice.get("packet") or [], invoice.get("extra_record_ids") or [],
+                                                             invoice.get("excluded_file_ids") or []),
+                              still_open(job, invoice) or ([] if is_final(job) else [f"{invoice['number']} is not the final pay app"]),
+                              f"with {invoice['number']}")
     unconditional = unconditional_waivers_attached(job, invoice)
     override = _reason(unconditional_override) if unconditional else ""
     if unconditional and not override:
@@ -1956,6 +1987,20 @@ WAIVER_TYPE_WORDS = {"conditional_progress": "conditional", "unconditional_progr
 _WAIVER_LABEL_RE = re.compile(r"\b(un)?conditional\b", re.I)
 
 
+_FINAL_LABEL = re.compile(r"\bfinal\b", re.I)
+_PROGRESS_LABEL = re.compile(r"\binterim\b|\bprogress\b|\bpartial\b", re.I)
+
+
+def record_says_final(record: dict[str, Any]) -> bool:
+    """The record's own label says final and not interim or progress ("Final lien release"), or
+    its files read as a final waiver (doc_check.waiver_reading), whatever type it was given. One
+    with no type is never taken as a progress waiver by default: someone says which waiver it is,
+    and the answer types it final."""
+    label = str(record.get("label") or "")
+    said = bool(_FINAL_LABEL.search(label)) and not _PROGRESS_LABEL.search(label)
+    return said or bool(_read_now(record).get("final"))
+
+
 def record_waiver_kind(record: dict[str, Any]) -> str:
     """A waiver record's type (M14, M18): the one kept on it, else read from its label when the
     label says conditional or unconditional ("final" makes it final). Blank when unknown."""
@@ -2092,6 +2137,8 @@ def _waiver_on_file(state: dict[str, Any], job: dict[str, Any], kind: str, tied:
         has = record_waiver_kind(record)
         if not has and record["id"] in conditional:
             continue
+        if not has and kind.endswith("_progress") and record_says_final(record):
+            continue   # a "Final lien release" nobody typed is never sent as a progress waiver
         if has and has != kind:
             continue
         if not tied(_waiver_tie(record)):
@@ -2183,6 +2230,14 @@ def send_waiver(
         release_due = release_due_kind(job, release)
         kind = kind or release_due
     found = waiver_on_file(state, job, kind, invoice["id"] if invoice else "", release["id"] if release else "", legacy=legacy)
+    if not found and kind.endswith("_progress"):
+        final = waiver_on_file(state, job, kind.replace("_progress", "_final"), invoice["id"] if invoice else "",
+                               release["id"] if release else "", legacy=legacy)
+        if final and not record_waiver_kind(final["record"]) and record_says_final(final["record"]):
+            rec = final["record"]
+            raise GateError(f"{rec['label']} says final. Which waiver is this? Set its type on the job record.",
+                            fields={"kind": "Pick the waiver type: conditional or unconditional, progress or final."},
+                            extra={"which_waiver": True, "waiver_record_id": rec["id"], "waiver_kind": kind})
     if not found:
         message = f"Add the signed {WAIVER_TYPE_WORDS[kind]} waiver to the job records first."
         raise GateError(message, extra={"waiver_kind": kind})
@@ -2437,6 +2492,12 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
         raise GateError("The closeout documents aren't complete.", [_blocker_text(job, item) for item in missing], keep_changes=bool(asked))
     _need_waiver_answers(state, job, closeout, (), (), read_file)
     _no_early_final_waiver(job, _finals_going(job, closeout, retainage=True), "with the retainage request")
+    # The closeout's conditional final waiver is for the last money: all the retainage, nothing else open.
+    left = [why for why in still_open(job) if not why.endswith("of retainage is still held")]
+    if partial:
+        left.append(f"{money(open_retainage - amount)} of retainage is not asked for")
+    _no_final_waiver_for_part(job, [r for r in _conditional_finals_going(job, closeout) if not _sent_for_this_job(job, r)], left,
+                              "with the retainage request")
     unconditional = _unconditional_going(job, closeout, retainage=True)
     override = _reason(unconditional_override) if unconditional else ""
     if unconditional and not override:
@@ -5027,6 +5088,15 @@ def _name_conditional_waiver(job: dict[str, Any], invoice: dict[str, Any]) -> li
         if not was.startswith("conditional"):
             continue
         item["waiver_kind"] = kind
+        if was == "conditional_final" and kind == "conditional_progress":
+            # A form typed final only because it was answered on this item while it was the final
+            # one is the progress waiver now; one whose own label or files say final stays final,
+            # and the send refuses it (_no_final_waiver_for_part).
+            records = {r["id"]: r for r in job.get("records", [])}
+            for a in item.get("attachments", []):
+                rec = records.get(a.get("record_id"))
+                if rec and rec.get("waiver_kind") == "conditional_final" and not record_says_final(rec):
+                    rec["waiver_kind"] = "conditional_progress"
         if item.get("auto_waiver"):
             item["label"] = WAIVER_KINDS[kind]
             item["blocker"] = f"{WAIVER_KINDS[kind]} is missing."
@@ -5443,6 +5513,8 @@ def _fits_waiver_item(record: dict[str, Any], item: dict[str, Any], invoice: dic
     has = record_waiver_kind(record)
     if has and has != item["waiver_kind"]:
         return False  # a progress waiver isn't suggested for a final payment, nor the other way
+    if not has and record_says_final(record) and not item["waiver_kind"].endswith("_final"):
+        return False  # nor a "Final lien release" nobody typed for a progress payment
     if has and (_record_kinds_for(item) or ("",))[0] == "final_waiver" and not has.endswith("_final"):
         return False  # the closeout's final waiver is never a progress one
     # Taken for a pay app: it stays that pay app's, never another's or the closeout's; taken for

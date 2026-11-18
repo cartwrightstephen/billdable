@@ -281,11 +281,11 @@ class GeorgiaFormTests(unittest.TestCase):  # decision 1
             self.assertEqual(set(blanks) - set(forms["blanks"]), set(), which)
             self.assertEqual(set(blanks) - set(waiver_form.BLANK_W) - {"property"}, set(), which)
             for needed in ("county", "contractor", "furnish", "project", "city", "project_county", "owner", "property", "amount",
-                           "day", "month", "year", "claimant", "by", "its"):
+                           "day", "month", "year", "signature", "witness", "address"):   # the 2021 form's signature block
                 self.assertIn(needed, blanks, which)
             text = " ".join(forms[which]["paragraphs"])
             self.assertIn("NOTICE: WHEN YOU EXECUTE AND SUBMIT THIS DOCUMENT", text)
-            self.assertIn("O.C.G.A. SECTION 44-14-366", text)
+            self.assertIn("O.C.G.A. § 44-14-366", text)
         self.assertIn("through", re.findall(r"\{([a-z_]+)\}", " ".join(forms["interim"]["paragraphs"])))
         self.assertNotIn("{through}", " ".join(forms["final"]["paragraphs"]))
         self.assertIn("RETAINED AMOUNTS", " ".join(forms["interim"]["paragraphs"]))
@@ -308,11 +308,11 @@ class GeorgiaFormTests(unittest.TestCase):  # decision 1
         self.assertEqual(fields["amount"], "4,000.00")
         self.assertEqual(fields["project"], "Peachtree clinic")
         self.assertEqual(fields["contractor"], "Jones GC")
-        self.assertEqual(fields["claimant"], "Volt Electric LLC")
+        self.assertEqual(fields["signature"], "", "signed by hand; the statute's form has no printed name line")
         self.assertEqual(fields["city"], "Atlanta")
         self.assertEqual(fields["property"], GA_ADDRESS)
         self.assertEqual(fields["through"], self.inv["period_to"])
-        self.assertEqual(fields["by"], "")
+        self.assertEqual(fields["witness"], "")
         self.assertIn(b"(WAIVER AND RELEASE OF LIEN AND PAYMENT BOND RIGHTS UPON INTERIM) Tj", pdf)
 
     def test_a_part_payment_form_names_what_came_in(self):

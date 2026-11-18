@@ -74,7 +74,7 @@ class TheWaiverQuestion(unittest.TestCase):
 
     def test_many_forward_sentences_still_read_and_the_title_decides(self):
         text = "Conditional waiver.\n" + "The contractor will deliver an unconditional waiver.\n" * 201 + "UNCONDITIONAL WAIVER AND RELEASE"
-        self.assertEqual(reading(text), {"guess": "conditional", "form": True})
+        self.assertEqual({k: reading(text)[k] for k in ("guess", "form")}, {"guess": "conditional", "form": True})
 
 
 class ThroughTheServer(Base):
@@ -119,7 +119,8 @@ class ThroughTheServer(Base):
                 self.assertEqual(self.waiver_item()["waiver_question"]["guess"], "unconditional")
                 status, data = self.post(f"/api/jobs/{self.job_id}/packet-confirm/{item['id']}", {"looked": True, "shown": [rid], "answer": "unconditional"}, cookie=self.bob)
                 self.assertEqual(status, 200, data)
-                self.assertEqual(self.record(rid)["waiver_kind"], "unconditional_progress", "the answer types it")
+                # A form titled final stays final whatever item it sits on (Georgia waivers, Nov 18).
+                self.assertEqual(self.record(rid)["waiver_kind"], "unconditional_final" if "FINAL" in title else "unconditional_progress", "the answer types it")
                 self.assertIn(rid, [r["record_id"] for r in self.draft()["unconditional_attached"]])
                 self.clear_the_rest()
                 status, data = self.send(cookie=self.bob)
