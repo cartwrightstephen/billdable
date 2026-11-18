@@ -3,7 +3,7 @@
 // controls at phone width. Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
-export default async function ({ browser, BASE, step, signedInPage, confirmDialog, confirmIfAsked }) {
+export default async function ({ browser, BASE, step, signedInPage, confirmDialog, confirmIfAsked, signIfAsked }) {
   const made = (p, name, thenPaid = false) => p.evaluate(async ([jobName, paid]) => {
     const call = async (path, body) => (await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })).json();
     let st = await call("/api/jobs", { name: jobName, customer: `${jobName} client`, contract_cents: 1000000, address: "7 Test St, Atlanta, GA 30307",
@@ -17,6 +17,8 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     for (const item of draft().packet) if (item.required && !item.present) await call(`/api/jobs/${job.id}/resolve/${item.id}`, { reason: "In hand" });
     full = await read();
     if (paid) {
+      // The owner signs it first: nothing goes unapproved (Stephen, 18 Nov).
+      await call(`/api/jobs/${job.id}/payapp-approve`, { invoice_id: draft().id, stamp: draft().approval.stamp, signature: "Smoke Signer" });
       await call(`/api/jobs/${job.id}/send`, { reviewed: draft().email_preview.stamp });
       full = await read();
       const inv = full.invoices.at(-1);
@@ -62,6 +64,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     const warning = p.locator(".unconditional-warning");
     await warning.filter({ hasText: "paper.txt" }).waitFor();
     assert.equal(await p.locator(".waiver-questions").count(), 0, "asked once");
+    await signIfAsked(p);   // the owner signs what goes (Stephen, 18 Nov), then gives the reason
     await warning.locator(`#override-reason-${inv}`).fill("Paid by wire");
     await warning.locator('[data-action="send-override"]').click();
     await confirmIfAsked(p);

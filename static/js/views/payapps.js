@@ -113,19 +113,42 @@ function retainageZeroHtml(j) {
 }
 
 // Who must approve it before it goes (Stephen, 10 Nov, decision 8; domain.approval_view): each
-// named person, approved or not, and Approve for the one signed in once it is ready to send. The
-// server refuses the send until all have, and clears an approval when the pay app changes.
-export function approvalHtml(inv, meId = (me || {}).id, mayApprove = may("payapp-approve")) {
+// approver, signed or not, and the signing form for the one signed in once it is ready to send.
+// Approving is signing, and nothing goes unapproved (Stephen, 18 Nov): with nobody named the
+// owners sign; a client whose list is empty can't be sent to, which is said here with the way out.
+// The server refuses the send until all have signed, and a change to the pay app clears them.
+export function approvalHtml(inv, meId = (me || {}).id, mayApprove = may("payapp-approve"), mayEditClient = can("company")) {
   const a = inv.approval || {};
   const people = a.required || [];
+  if (a.blocked) {
+    const where = a.source === "client" ? ["playbook", "Open Client playbook"] : ["company", "Open Settings, Company"];
+    return `<div class="payapp-approvals">
+    <h3>Approvals</h3>
+    <p class="blocker approvals-none" role="status">${a.blocked}</p>
+    ${mayEditClient ? `<button class="btn small secondary" data-action="nav" data-view="${where[0]}">${where[1]}</button>` : ""}
+  </div>`;
+  }
   if (!people.length) return "";
   const mine = people.find(p => p.id === meId && !p.approved_at);
   const ready = inv.status === "awaiting_approval";
+  const key = `approve-${inv.id || ""}`;
   return `<div class="payapp-approvals">
     <h3>Approvals</h3>
-    ${people.map(p => `<div class="money-row"><span class="label">${p.name}</span><span>${p.approved_at ? `Approved ${fmtDateTime(p.approved_at)}` : `<span class="pill amber">Waiting</span>`}</span></div>`).join("")}
-    ${mine && mayApprove && ready ? `<button class="btn small" data-action="payapp-approve" data-id="${inv.job_id || ""}" data-inv="${inv.id || ""}" data-stamp="${a.stamp || ""}">Approve ${inv.number}</button>` : ""}
+    ${people.map(p => `<div class="money-row"><span class="label">${p.name}</span><span>${p.approved_at ? signedText(p) : `<span class="pill amber">Waiting</span>`}</span></div>`).join("")}
+    ${mine && mayApprove && ready ? `<div class="approve-sign" data-form-key="${key}">${formErrorLine(key)}
+      <p class="sub approve-consent">${a.consent || ""}</p>
+      <div class="form-grid">
+        ${field({ form: key, name: "signature", id: `${key}-signature`, label: "Your full name", autocomplete: "name", required: true })}
+        ${field({ form: key, name: "title", id: `${key}-title`, label: "Title", autocomplete: "organization-title" })}
+      </div>
+      <button class="btn small" data-action="payapp-approve" data-id="${inv.job_id || ""}" data-inv="${inv.id || ""}" data-stamp="${a.stamp || ""}">Sign ${inv.number}</button>
+    </div>` : ""}
   </div>`;
+}
+
+// "Signed /s/ Ana Ruiz, Project manager · Nov 18, 2026 3:00 PM".
+export function signedText(p) {
+  return `Signed /s/ ${p.signed_name || p.name}${p.title ? `, ${p.title}` : ""} · ${fmtDateTime(p.approved_at)}`;
 }
 
 // The numbers, folded under one line (round 1, item 4): the summary, lines, continuation sheet
@@ -148,6 +171,7 @@ function numbersHtml(j, inv) {
       ${continuationHtml(inv, j)}
       <div class="card">
         <h2>Approval</h2>
+        ${(inv.signatures || []).map(p => `<div class="money-row"><span class="label">Approved by ${p.name}</span><span>${signedText(p)}</span></div>`).join("")}
         <div class="money-row"><span class="label">Sent by</span><span>${inv.approved_by || "—"}</span></div>
         <div class="money-row"><span class="label">Sent</span><span>${fmtDateTime(inv.sent_at)}</span></div>
         ${inv.period_to ? `<div class="money-row"><span class="label">Period to</span><span>${fmtDate(inv.period_to)}</span></div>` : ""}
@@ -224,7 +248,7 @@ export const views = {
         ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger.${can("company") ? ` Change it in <button class="linkish tall" data-action="nav" data-view="playbook">Client playbook</button>.` : ""}</p>` : ""}
         ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
         ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
-        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}"${missing || (j.blockers || []).length || noEmail || locked || ((inv.approval || {}).waiting || []).length ? ' data-blocked="1"' : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
+        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}"${missing || (j.blockers || []).length || noEmail || locked || ((inv.approval || {}).waiting || []).length || (inv.approval || {}).blocked ? ' data-blocked="1"' : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
       </div>` : ""}
       ${supportingDocsHtml(j, inv)}
       ${!draft ? `<div class="card">
@@ -341,9 +365,14 @@ export const actions = {
     }
     return r;
   },
-  // The version shown is the one approved: a draft changed since is refused (B13).
+  // The version shown is the one signed: a draft changed since is refused (B13). The typed full
+  // name is the signature (Stephen, 18 Nov).
   "payapp-approve": async (el, id) => {
-    const r = await post(`/api/jobs/${id}/payapp-approve`, { invoice_id: el.dataset.inv || "", stamp: el.dataset.stamp || "" });
+    const key = `approve-${el.dataset.inv || ""}`;
+    const v = formValues(key);
+    const name = String(v.signature || "").trim();
+    if (refuseForm(key, name.length >= 2 ? {} : { signature: "Type your full name to sign." })) return null;
+    const r = await post(`/api/jobs/${id}/payapp-approve`, { invoice_id: el.dataset.inv || "", stamp: el.dataset.stamp || "", signature: name, title: String(v.title || "").trim() }, { formKey: key });
     if (r && r.data && r.data.review_changed) { await load(); render(); }   // show the version there is now
     return r;
   },

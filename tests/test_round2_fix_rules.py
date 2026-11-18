@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import importer
 import outbox
 from domain import profiles
@@ -134,7 +135,7 @@ class ApprovalOfTheVersionShown(unittest.TestCase):  # B13
         domain.record_progress(self.state, self.job["id"], 450_000, "b")
         inv = clear_packet(self.state, self.job)
         with self.assertRaises(domain.GateError) as refused:
-            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", invoice_id=inv["id"], seen=self.shown)
+            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", signature="Ana Ruiz", invoice_id=inv["id"], seen=self.shown)
         self.assertTrue(refused.exception.extra["review_changed"])
         self.assertEqual(domain.approvals_missing(self.state, self.job, inv), ["Ana Ruiz"])
         with self.assertRaises(domain.GateError):
@@ -142,12 +143,12 @@ class ApprovalOfTheVersionShown(unittest.TestCase):  # B13
 
     def test_a_click_from_an_older_page_is_refused(self):
         with self.assertRaises(domain.GateError):
-            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", invoice_id=self.inv["id"], seen="")
+            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", signature="Ana Ruiz", invoice_id=self.inv["id"], seen="")
         with self.assertRaises(domain.GateError):
-            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", invoice_id="inv-other", seen=self.shown)
+            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", signature="Ana Ruiz", invoice_id="inv-other", seen=self.shown)
 
     def test_the_version_shown_is_approved(self):
-        domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", invoice_id=self.inv["id"], seen=self.shown)
+        domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", signature="Ana Ruiz", invoice_id=self.inv["id"], seen=self.shown)
         self.assertEqual(domain.approvals_missing(self.state, self.job, self.inv), [])
 
 

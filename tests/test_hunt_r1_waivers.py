@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 from test_blockers import GOOD, Case, pdf
 from test_packet import new_job, new_state, draft
 
@@ -28,7 +29,7 @@ class GateReadsEveryKind(Case):
         self.assertTrue(self.waiver["present"])
 
     def send(self, **kw):
-        return domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read, **kw)
+        return approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read, **kw)
 
     def test_a_real_unconditional_waiver_under_the_insurance_item_is_asked_about_then_needs_the_owner(self):
         for text in ("UNCONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT Pine kitchen $4,000.00",
@@ -117,7 +118,7 @@ class WaiverSendOrder(unittest.TestCase):
         from test_money_fixes import UnreadWaiverTests
         t = UnreadWaiverTests("test_the_waiver_step_reads_a_record_with_no_type")
         t.setUp()
-        domain.approve_and_send(t.state, t.job["id"], "Owner")
+        approve_help.approve_and_send(t.state, t.job["id"], "Owner")
         domain.match_payment(t.state, t.job["id"], t.inv["amount_cents"], "chk")
         rec = t.record("Signed form", "waiver", "Conditional waiver upon payment for another job")
         emails = len(t.state["email_log"])

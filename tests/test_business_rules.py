@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import admin
 import billing
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 from waiver_help import confirm_suggested
 import metrics
 import monthly
@@ -358,7 +359,7 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
         confirm_suggested(state, job)
         for item in domain.missing_packet(job):
             domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
-        domain.approve_and_send(state, job["id"], "Owner")
+        approve_help.approve_and_send(state, job["id"], "Owner")
         domain.record_progress(state, job["id"], 600_000)
         packet = {p["label"]: p for p in job["invoices"][-1]["packet"]}
         self.assertEqual([a["name"] for a in packet["Signed contract"]["attachments"]], ["Signed contract"], "the contract is suggested again")

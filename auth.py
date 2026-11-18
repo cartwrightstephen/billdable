@@ -961,6 +961,14 @@ def owner_names(company_id: str) -> list[str]:
         return [u.get("name") or u.get("email", "") for u in _load()["users"] if u["company_id"] == company_id and u.get("role", "owner") == "owner"]
 
 
+def owners(company_id: str) -> list[dict[str, str]]:
+    """[{id, name}] of the company's owners: they approve pay apps when no approvers are named
+    (Stephen, 18 Nov). Read from the cached file, as every request's session check is."""
+    with LOCK:
+        return [{"id": u["id"], "name": u.get("name") or u.get("email", "")} for u in _read()["users"]
+                if u["company_id"] == company_id and u.get("role", "owner") == "owner"]
+
+
 def team(company_id: str) -> dict[str, Any]:
     with LOCK:
         data = _load()

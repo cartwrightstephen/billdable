@@ -387,6 +387,8 @@ def load_company(company_id: str) -> dict:
     if state is not None:
         if migrations.migrate(state):
             _write_back_migrated(company_id)
+        # Who approves pay apps when nobody is named: the owners as the team has them now (Stephen, 18 Nov).
+        domain.set_team_owners(state, auth.owners(company_id))
         return state
     log_json("error", msg="company data missing", company=company_id, folder=str(COMPANIES))
     alerts.notify(f"company-missing:{company_id}", f"company data missing for {company_id}; requests answer 503 until it is restored")
@@ -3625,8 +3627,12 @@ JOB_ACTIONS = {
     # Round 2 (Stephen, 10 Nov): price a change order saved without one (decision 2), and a named
     # approver approves the draft pay app (decision 8).
     "co-price": (True, lambda h, st, j, i, c: _price_co(st, j, i, c)),
+    # Approving is signing (Stephen, 18 Nov): the typed name, the title if given, and as with a
+    # client's change order signature, the network address and browser.
     "payapp-approve": (False, lambda h, st, j, i, c: domain.approve_payapp(st, j, c.actor, c.user.get("id", ""),
-                                                                          invoice_id=_text(c.body, "invoice_id"), seen=_text(c.body, "stamp"))),
+                                                                          invoice_id=_text(c.body, "invoice_id"), seen=_text(c.body, "stamp"),
+                                                                          signature=_text(c.body, "signature", limit=200), title=_text(c.body, "title", limit=200),
+                                                                          ip=h._client_ip(), user_agent=h.headers.get("User-Agent", ""))),
     "reopen": (False, lambda h, st, j, i, c: domain.reopen_job(st, j, _text(c.body, "reason"), c.actor)),
     "undo-done": (False, lambda h, st, j, i, c: domain.undo_mark_done(st, j, c.actor)),
     "accept-short-pay": (True, lambda h, st, j, i, c: domain.settle_short_pay(st, j, i, _text(c.body, "reason"), c.actor)),

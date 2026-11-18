@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import auth
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 from waiver_help import signed_waiver
 import helper
 import importer
@@ -170,7 +171,7 @@ class SubjectAndSignOffTests(unittest.TestCase):
         domain.record_pencil_response(state, job["id"], True)
         for item in job["invoices"][-1]["packet"]:
             domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
-        domain.approve_and_send(state, job["id"], "Alex Rivera")
+        approve_help.approve_and_send(state, job["id"], "Alex Rivera")
         inv = job["invoices"][-1]
         mail = state["email_log"][-1]
         self.assertTrue(mail["subject"].startswith(f"Pay application {inv['number']} — Pine kitchen — $3,600.00 — Brightwater Tile"))

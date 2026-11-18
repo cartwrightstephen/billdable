@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import doc_check
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import unconditional_corpus as c
 from test_blockers import Case
 from test_packet import draft, new_job, new_state
@@ -51,7 +52,7 @@ class Filed(Case):
         self.data = {}
 
     def send(self, **kw):
-        return domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read, **kw)
+        return approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read, **kw)
 
     def a_good_waiver(self):
         self.attach(self.stored("Our waiver", b"CONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT\nPine kitchen $4,000.00\n", "w.txt"), answer="conditional")

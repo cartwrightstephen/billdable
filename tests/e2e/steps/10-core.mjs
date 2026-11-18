@@ -2,7 +2,7 @@
 // the money path from blocked to closed, the phone layout. The steps share one page and run in order.
 import assert from "node:assert/strict";
 
-export default async function ({ browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors }) {
+export default async function ({ browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors, signIfAsked }) {
   await step("landing redirects a deep link to sign-in, then opens it", async () => {
     const ctx = await browser.newContext();
     const p = await ctx.newPage();
@@ -363,6 +363,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
         await page.locator(".action-item", { hasText: "Inman Park bath" }).getByRole("button", { name: "Review & send" }).click();
         await page.locator(".send-check").waitFor({ state: "visible" });
         assert.match(new URL(page.url()).pathname, /^\/money\/pay-app\//);
+        await signIfAsked(page, "Alex Hartline");   // the owner signs, then sends (Stephen, 18 Nov)
         await page.click('.send-check [data-action="send"]');
         // It asks first, naming who, how much and the period (round 1, item 5).
         await confirmDialog(page).filter({ hasText: "ap@ellisonresidential.example" }).waitFor();

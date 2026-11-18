@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import server
 from domain import profiles
 from test_accounts import ServerCase
@@ -174,20 +175,20 @@ class ApproverTests(unittest.TestCase):
         self.assertTrue(raised.exception.extra.get("approvals_missing"))
         self.assertIn("Ana Ruiz, Ben Ode", str(raised.exception))
         with self.assertRaises(domain.GateError):
-            domain.approve_payapp(self.state, self.job["id"], "Cat", "u-cat")   # not named
-        domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana")
+            domain.approve_payapp(self.state, self.job["id"], "Cat", "u-cat", signature="Cat")   # not named
+        domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", signature="Ana Ruiz")
         with self.assertRaises(domain.GateError):
-            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana")   # already
+            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", signature="Ana Ruiz")   # already
         view = domain.job_view(self.state, self.job)["invoices"][-1]["approval"]
         self.assertEqual([(p["name"], bool(p["approved_at"])) for p in view["required"]], [("Ana Ruiz", True), ("Ben Ode", False)])
         self.assertEqual(view["waiting"], ["Ben Ode"])
-        domain.approve_payapp(self.state, self.job["id"], "Ben Ode", "u-ben")
+        domain.approve_payapp(self.state, self.job["id"], "Ben Ode", "u-ben", signature="Ben Ode")
         domain.approve_and_send(self.state, self.job["id"], "Owner")
         self.assertEqual(self.inv["status"], "sent")
 
     def test_an_approval_is_cleared_when_the_pay_app_changes(self):
         domain.set_payapp_approvers(self.state, ["u-ana"], self.POOL)
-        domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana")
+        domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", signature="Ana Ruiz")
         self.assertEqual(domain.approvals_missing(self.state, self.job, self.inv), [])
         self.inv["period_to"] = "2026-10-31" if self.inv.get("period_to") != "2026-10-31" else "2026-09-30"
         self.assertEqual(domain.approvals_missing(self.state, self.job, self.inv), ["Ana Ruiz"])
@@ -195,16 +196,20 @@ class ApproverTests(unittest.TestCase):
         self.assertEqual(self.inv["approvals"], [])
         self.assertEqual(self.state["audit"][-1]["action"], "payapp_approval_cleared")
         # A new amount drafts it again: nothing carries over.
-        domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana")
+        domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", signature="Ana Ruiz")
         domain.record_progress(self.state, self.job["id"], 400_000, "b")
         draft = next(i for i in self.job["invoices"] if i["status"] in domain.DRAFT_STATUSES)
         self.assertEqual(domain.approvals_missing(self.state, self.job, draft), ["Ana Ruiz"])
 
     def test_only_once_it_is_ready_to_send(self):
         domain.set_payapp_approvers(self.state, ["u-ana"], self.POOL)
+        # A document still missing (what Approve & send goes by, blocker_lines), not the status alone.
+        self.inv["packet"][0]["present"] = False
+        self.inv["packet"][0].pop("resolved", None)
         self.inv["status"] = "draft"
+        self.assertTrue(domain.blocker_lines(self.job))
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana")
+            domain.approve_payapp(self.state, self.job["id"], "Ana Ruiz", "u-ana", signature="Ana Ruiz")
         self.assertIn("supporting documents", str(raised.exception))
 
     def test_a_client_list_replaces_the_companys(self):
@@ -212,8 +217,13 @@ class ApproverTests(unittest.TestCase):
         payer_id = self.job["payer_id"]
         domain.set_payapp_approvers(self.state, ["u-ben"], self.POOL, payer_id=payer_id)
         self.assertEqual(domain.approvals_missing(self.state, self.job, self.inv), ["Ben Ode"])
+        # An empty client list: nobody can approve, so its pay apps can't go (Stephen, 18 Nov).
         domain.set_payapp_approvers(self.state, [], self.POOL, payer_id=payer_id)
         self.assertEqual(domain.approvals_missing(self.state, self.job, self.inv), [])
+        self.assertIn("can't be sent", domain.approval_blocked(self.state, self.job))
+        with self.assertRaises(domain.GateError) as raised:
+            domain.approve_and_send(self.state, self.job["id"], "Owner")
+        self.assertTrue(raised.exception.extra.get("approvals_none"))
         domain.set_payapp_approvers(self.state, [], self.POOL, payer_id=payer_id, same_as_company=True)
         self.assertEqual(domain.approvals_missing(self.state, self.job, self.inv), ["Ana Ruiz"])
 
@@ -298,12 +308,15 @@ class Round2RulesHttpTests(ServerCase):
         self.assertEqual(res.status, 409, out)
         self.assertTrue(out.get("review_changed"), out)
         res, out = self.request("POST", f"/api/jobs/{self.job_id}/payapp-approve", {"invoice_id": inv["id"], "stamp": inv["approval"]["stamp"]}, cookie=pm)
+        self.assertEqual((res.status, list(out.get("fields", {}))), (409, ["signature"]), "approving is signing (Stephen, 18 Nov)")
+        res, out = self.request("POST", f"/api/jobs/{self.job_id}/payapp-approve", {"invoice_id": inv["id"], "stamp": inv["approval"]["stamp"],
+                                                                                    "signature": "Pam Pine", "title": "Project manager"}, cookie=pm)
         self.assertEqual(res.status, 200, out)
         self.assertEqual(self.job(out)["invoices"][-1]["approval"]["waiting"], [])
         res, out = self.request("POST", f"/api/jobs/{self.job_id}/send", {"reviewed": stamp}, cookie=self.owner)
         self.assertEqual(res.status, 200, out)
         self.assertEqual(self.job(out)["invoices"][-1]["status"], "sent")
-        # A client's own list replaces it; an empty one means nobody for that client.
+        # A client's own list replaces it; an empty one means its pay apps can't be sent.
         payer_id = self.job(out)["payer_id"]
         res, out = self.request("POST", f"/api/payers/{payer_id}/approvers", {"user_ids": []}, cookie=self.owner)
         self.assertEqual(res.status, 200, out)

@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 from waiver_help import signed_waiver
 import server
 from seed import seed_state
@@ -35,7 +36,7 @@ def clear_packet(state, job):
 
 def send_open(state, job):
     clear_packet(state, job)
-    domain.approve_and_send(state, job["id"], "Owner")
+    approve_help.approve_and_send(state, job["id"], "Owner")
     return job["invoices"][-1]
 
 
@@ -143,13 +144,13 @@ class DraftTests(unittest.TestCase):
         domain.mark_done(state, job["id"])
         clear_packet(state, job)
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(state, job["id"])
+            approve_help.approve_and_send(state, job["id"])
         self.assertIn("Add the email pay apps go to", str(raised.exception))
         self.assertIn("ap_email", raised.exception.fields)
         self.assertIn(job["invoices"][-1]["status"], domain.DRAFT_STATUSES, "nothing changed")
         self.assertFalse(state.get("email_log"))
         domain.update_payer(state, payer["id"], {"ap_email": "dana@example.com"})
-        domain.approve_and_send(state, job["id"])
+        approve_help.approve_and_send(state, job["id"])
         self.assertEqual(state["email_log"][-1]["to"], "dana@example.com")
 
     def test_repeat_customer_keeps_saved_contact(self):  # R1-05
@@ -290,7 +291,7 @@ class ChangeOrderTests(unittest.TestCase):
         inv = clear_packet(state, job)
         self.assertEqual(inv["amount_cents"], 1_120_000)
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(state, job["id"])
+            approve_help.approve_and_send(state, job["id"])
         self.assertTrue(any("CO 1" in b or "Change Order 1" in b for b in raised.exception.blockers))
 
 
@@ -414,7 +415,7 @@ class ReviewFindingTests(unittest.TestCase):
         domain.approve_change_order(state, "job-ponce", job["change_orders"][-1]["id"])
         domain.draft_invoice(state, "job-ponce", strict=True)
         inv = clear_packet(state, job)
-        domain.approve_and_send(state, "job-ponce", "Owner")
+        approve_help.approve_and_send(state, "job-ponce", "Owner")
         domain.match_payment(state, "job-ponce", inv["amount_cents"], "CHK-P2", invoice_id=inv["id"])
         rec = signed_waiver(state, "job-ponce")
         # Two are owed (this pay app's and the older one): it is said to be for the pay app (B1).

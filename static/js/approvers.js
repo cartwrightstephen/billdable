@@ -53,8 +53,13 @@ export function approverBoxes(scope, saved, render, disabled = false) {
   return people.map(p => `<label class="terms-check approver-row"><input type="checkbox" data-approver="${scope}" data-user="${p.id}"${ticked.has(p.id) ? " checked" : ""}${disabled ? " disabled" : ""}> ${p.name}</label>`).join("");
 }
 
-// "Ana Ruiz and Ben Ode", or nobody.
-export function approverNames(list) {
+// "Ana Ruiz, Ben Ode", or `empty` for an empty list.
+export function approverNames(list, empty = "Nobody") {
   const names = (list || []).map(p => p.name);
-  return names.length ? names.join(", ") : "Nobody";
+  return names.length ? names.join(", ") : empty;
+}
+
+// Who approves when nobody is named: every owner (Stephen and Yusuf, 18 Nov; domain.payapp_approvers).
+export function ownersLine(owners) {
+  return `${approverNames(owners, "The owners")}${(owners || []).length ? " (the owners)" : ""}`;
 }

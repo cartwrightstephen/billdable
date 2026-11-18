@@ -83,6 +83,12 @@ def deliver_queued(site, company_id: str, user: dict, only: set | None = None, r
                 e["status"] = "failed: the pay app was voided after this email was approved"
                 e["failed_at"] = now.isoformat(timespec="seconds")
                 continue
+            unapproved = domain.send_unapproved(job_now, e)
+            if unapproved:
+                # "Unapproved pay applications should never send" (Stephen, 18 Nov), whatever queued it.
+                e["status"] = f"not sent: {unapproved}"
+                e["failed_at"] = now.isoformat(timespec="seconds")
+                continue
             if e.get("payapp_invoice_id"):
                 try:
                     pdf, name = payapp_pdf.for_invoice(state, e["job_id"], e["payapp_invoice_id"])
@@ -159,6 +165,9 @@ def retry_email(site, company_id: str, user: dict, email_id: str, rid: str = "")
         moot = domain.email_moot(job, entry) if job else ""
         if moot:
             return 409, {"error": f"{moot} This email doesn't need to go out any more."}
+        unapproved = domain.send_unapproved(job, entry)
+        if unapproved:
+            return 409, {"error": f"{unapproved} Unapproved pay apps aren't sent."}
         entry["status"] = "queued"
         entry["retried"] = entry.get("retried", 0) + 1
         site.save(company_id, state)

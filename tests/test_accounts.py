@@ -36,6 +36,7 @@ import trial
 from test_mail import Sink
 from dollar_jobs import dollar_jobs
 from review_help import reviewed
+from approve_help import sign_http
 
 PASSWORD = "correct horse battery"
 ENV = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "MAIL_FROM", "DURACASH_URL", "HELPER_ADMIN_USER_IDS", "BACKUP_KEEP")
@@ -393,6 +394,11 @@ class AccountHttpTests(ServerCase):
         res, out = self.request("POST", "/api/team/profiles/member", sends, cookie=owner)
         self.assertEqual(res.status, 200, out)
         self.assertIn("send_payapps", next(p for p in out["profiles"] if p["id"] == "member")["perms"])
+        # The sender needs no approve permission, but nothing goes until the owner has signed it
+        # (Stephen, 18 Nov): the member is refused, the owner signs, then the member sends.
+        res, out = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, member), cookie=member)
+        self.assertEqual((res.status, out.get("approvals_missing")), (409, True), out)
+        self.assertEqual(sign_http(self, job_id, owner)[0].status, 200)
         res, out = self.request("POST", f"/api/jobs/{job_id}/send", reviewed(self, job_id, member), cookie=member)
         self.assertEqual(res.status, 200, out)
         self.assertEqual(out["jobs"][0]["invoices"][-1]["status"], "sent")

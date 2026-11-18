@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import migrations
 from seed import seed_state
 from waiver_help import confirm_suggested
@@ -134,14 +135,14 @@ class ConditionalWaiverTests(unittest.TestCase):  # M13, M16, M19
             if p is not waiver:
                 domain.resolve_packet_item(state, job["id"], p["id"], reason="test")
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(state, job["id"])
+            approve_help.approve_and_send(state, job["id"])
         self.assertIn("Conditional waiver on progress payment is missing.", raised.exception.blockers)
         rec = record(state, job, "waiver", "Signed conditional waiver PA-1")
         self.assertFalse(waiver["present"], "the waiver on the job record is only suggested")
         self.assertEqual([a["record_id"] for a in waiver["attachments"]], [rec["id"]])
         confirm_suggested(state, job)
         self.assertTrue(waiver["present"], "a person confirmed it")
-        domain.approve_and_send(state, job["id"])
+        approve_help.approve_and_send(state, job["id"])
         self.assertEqual(inv["conditional_waiver_kind"], "conditional_progress")
         self.assertEqual((rec["waiver_kind"], rec["invoice_id"]), ("conditional_progress", inv["id"]))
 
@@ -162,7 +163,7 @@ class ConditionalWaiverTests(unittest.TestCase):  # M13, M16, M19
         self.assertIn("marked Conditional waiver on progress payment not needed", state["audit"][-1]["detail"])
         inv = draft(job)
         domain.resolve_packet_item(state, job["id"], next(p for p in inv["packet"] if p["kind"] != "waiver")["id"], reason="test")
-        domain.approve_and_send(state, job["id"])
+        approve_help.approve_and_send(state, job["id"])
         domain.record_progress(state, job["id"], 800_000)
         nxt = next(p for p in draft(job)["packet"] if p["kind"] == "waiver")
         self.assertEqual((nxt["required"], nxt["skipped_reason"]), (False, "They don't take waivers"))
@@ -240,7 +241,7 @@ class AttachmentTests(unittest.TestCase):  # M4
         files = domain._packet_file_ids(self.state, self.job, self.inv)
         self.assertEqual(files, [self.waiver["file_ids"][0], self.photo["file_ids"][1], extra["file_ids"][0]])
         self.assertIn("Sam left Kitchen photos 1.pdf out of the email", self.state["audit"][-1]["detail"])
-        domain.approve_and_send(self.state, self.job["id"], "Sam")
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam")
         self.assertEqual(self.state["email_log"][-1]["attachments"], files)
         with self.assertRaises(domain.GateError) as raised:
             self.change("include_file", self.photo["file_ids"][0])
@@ -261,7 +262,7 @@ class AttachmentTests(unittest.TestCase):  # M4
         self.assertFalse(photos["present"])
         self.assertEqual(self.inv["status"], "draft")
         with self.assertRaises(domain.GateError):
-            domain.approve_and_send(self.state, self.job["id"])
+            approve_help.approve_and_send(self.state, self.job["id"])
         self.change("include_file", self.photo["file_ids"][1])
         self.assertTrue(photos["present"])
         self.assertEqual(self.inv["status"], "awaiting_approval")

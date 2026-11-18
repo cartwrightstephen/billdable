@@ -68,7 +68,11 @@ export default async function ({ browser, BASE, step, confirmIfAsked, errors }) 
     assert.equal(status, 200, JSON.stringify(st));
     const draft = await clearDraft(jobId);
     [, st] = await api(`/api/jobs/${jobId}/note-contact`, { text: "Ready" });
-    const stamp = st.jobs.find(j => j.id === jobId).invoices.find(i => i.id === draft.id).email_preview.stamp;
+    const ready = st.jobs.find(j => j.id === jobId).invoices.find(i => i.id === draft.id);
+    const stamp = ready.email_preview.stamp;
+    // The owner signs it first: nothing goes unapproved (Stephen, 18 Nov).
+    [status, st] = await api(`/api/jobs/${jobId}/payapp-approve`, { invoice_id: ready.id, stamp: ready.approval.stamp, signature: "Rae Rules" });
+    assert.equal(status, 200, JSON.stringify(st));
     [status, st] = await api(`/api/jobs/${jobId}/send`, { reviewed: stamp });
     assert.equal(status, 200, JSON.stringify(st));
     [status, st] = await api(`/api/jobs/${jobId}/match-payment`, { amount_cents: draft.amount_cents, reference: "CHK-1", invoice_id: draft.id });
@@ -88,7 +92,7 @@ export default async function ({ browser, BASE, step, confirmIfAsked, errors }) 
     assert.match(await note.innerText(), /^Finished without .*\. Override by Rae Rules, .*: Owner keeps the closeout binder$/);
   });
 
-  await step("Named approvers: Review & send lists who hasn't approved, Approve, then it sends (decision 8)", async () => {
+  await step("Named approvers: Review & send lists who hasn't signed, Sign, then it sends (decision 8; signing, 18 Nov)", async () => {
     await company();
     const me = await p.evaluate(async () => (await (await fetch("/api/auth/me")).json()).user);
     const jobId = await newJob("Elm fence");
@@ -104,8 +108,9 @@ export default async function ({ browser, BASE, step, confirmIfAsked, errors }) 
     const approvals = p.locator(".payapp-approvals");
     await approvals.locator(".money-row", { hasText: "Rae Rules" }).locator(".pill", { hasText: "Waiting" }).waitFor();
     assert.equal(await p.locator('[data-action="send"][data-blocked="1"]').count(), 1);
+    await approvals.locator('input[name="signature"]').fill("Rae Rules");
     await approvals.locator('[data-action="payapp-approve"]').click();
-    await approvals.locator(".money-row", { hasText: "Approved" }).waitFor();
+    await approvals.locator(".money-row", { hasText: "Signed /s/ Rae Rules" }).waitFor();
     await p.click('[data-action="send"]');
     await confirmIfAsked(p);
     await p.locator("h1 + .sub .pill", { hasText: "Sent" }).waitFor();

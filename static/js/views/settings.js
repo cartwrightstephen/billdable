@@ -12,7 +12,7 @@ import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, se
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
 import { THEMES, ACCENTS, applyAppearance, normalizeAppearance, storedAppearance } from "../theme.js";
 import { qboCardHtml } from "./payments.js";
-import { approverBoxes, approverIds, forgetApprovers } from "../approvers.js";
+import { approverBoxes, approverIds, forgetApprovers, approverNames } from "../approvers.js";
 import { forgetImportSettings } from "./inbox.js";
 import { notificationsCardHtml, saveReminderPrefs } from "./automations.js";
 
@@ -186,6 +186,7 @@ function approversCardHtml(owner) {
   return `<div class="card" id="approvers-card" data-form-key="approvers">
       <h2>Pay app approvers</h2>${formErrorLine("approvers")}
       ${approverBoxes("company", saved, render, !owner)}
+      ${saved.length ? "" : `<p class="sub approvers-default">Nobody ticked, so the owners approve: ${approverNames(state.team_owners, "every owner")}.</p>`}
       ${owner ? `<button class="btn small" data-action="approvers-save">Save approvers</button>` : ""}
     </div>`;
 }

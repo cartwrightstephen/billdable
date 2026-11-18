@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import alerts
 import doc_check
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import mailer
 import monthly
 import server
@@ -167,7 +168,7 @@ def signed_co(state, job, cents):
 class PayingBackARefund(unittest.TestCase):
     def test_paid_back_while_the_contract_has_room_to_bill(self):
         s = new_state(); j = new_job(s, contract=10_000_000); i = j["id"]
-        domain.record_progress(s, i, 5_000_000); clear_packet(s, j); domain.approve_and_send(s, i, "Owner"); inv = j["invoices"][-1]
+        domain.record_progress(s, i, 5_000_000); clear_packet(s, j); approve_help.approve_and_send(s, i, "Owner"); inv = j["invoices"][-1]
         domain.match_payment(s, i, 5_000_000, "c", invoice_id=inv["id"])
         signed_co(s, j, -6_000_000); domain.settle_overbilling(s, i, "Refund")
         signed_co(s, j, 6_000_000)
@@ -211,7 +212,7 @@ class TheCardAndABlankBox(unittest.TestCase):
         line = sov.lines(j)[0]
         domain.add_daily_record(s, i, "Work", details={"sections": {"quantities": [{"line_id": line["id"], "qty": "10%"}]}})
         domain.record_sov_progress(s, i, {line["id"]: "0.507"})
-        clear_packet(s, j); domain.approve_and_send(s, i, "Owner")
+        clear_packet(s, j); approve_help.approve_and_send(s, i, "Owner")
         domain.record_sov_progress(s, i, {}, stored={line["id"]: "1000"})
         draft = j["invoices"][-1]
         domain.void_draft(s, i, "Sam")
@@ -228,7 +229,7 @@ class AnAmountTypedAhead(unittest.TestCase):
         line = sov.lines(j)[0]
         domain.record_sov_progress(s, i, {line["id"]: "0.245"})
         domain.set_payapp_amounts(s, i, {line["id"]: "2450.81"})   # 81 cents past the quantity
-        clear_packet(s, j); domain.approve_and_send(s, i, "Owner")
+        clear_packet(s, j); approve_help.approve_and_send(s, i, "Owner")
         domain.record_sov_progress(s, i, {}, stored={line["id"]: "1000"})
         domain.set_payapp_amounts(s, i, {line["id"]: "1519.61"})   # more than the stored materials suggested
         entry = j["invoices"][-1]["sov_sheet"][0]

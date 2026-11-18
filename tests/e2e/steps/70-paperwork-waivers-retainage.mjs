@@ -2,7 +2,7 @@
 // M13-M26): paperwork, lien waivers and retainage. Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
-export default async function ({ browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors }) {
+export default async function ({ browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors, signIfAsked }) {
   await step("retainage is one line in Money, its rate; no Retainage card (Yusuf, 10 Nov)", async () => {
     await page.goto(BASE + "/jobs/job-turner");
     const money = page.locator("details.money-file");
@@ -97,6 +97,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const warn = p.locator(".unconditional-warning");
     await warn.waitFor();
     assert.match(await warn.innerText(), /An unconditional waiver is attached/);
+    await signIfAsked(p);   // signed first (Stephen, 18 Nov), so the refusal here is the waiver's
     await p.click('.send-check [data-action="send"]');
     await confirmIfAsked(p);   // every send the page makes asks first; the server refuses this one
     await p.locator(".action-error, .refusal").first().waitFor().catch(() => {});

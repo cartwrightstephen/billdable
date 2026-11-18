@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import waiver_form
 from test_money import clear_packet, new_job, new_state, send_open
 from waiver_help import signed_waiver
@@ -159,7 +160,7 @@ class NoFinalWaiverAttachedEarly(unittest.TestCase):  # B2, B32: decision 6 has 
         domain.change_payapp_attachments(state, job["id"], inv["id"], "add_record", rec["id"])
         domain.answer_waiver_question(state, job["id"], rec["id"], "unconditional", "Owner")
         with self.assertRaises(domain.GateError) as refused:
-            domain.approve_and_send(state, job["id"], "Owner", unconditional_override="GC asked")
+            approve_help.approve_and_send(state, job["id"], "Owner", unconditional_override="GC asked")
         self.assertTrue(refused.exception.extra["final_waiver_held"])
         self.assertNotIn("unconditional_override", refused.exception.fields or {})
         self.assertEqual(inv["status"] in domain.DRAFT_STATUSES, True)
@@ -174,9 +175,9 @@ class NoFinalWaiverAttachedEarly(unittest.TestCase):  # B2, B32: decision 6 has 
         domain.change_payapp_attachments(state, job["id"], inv["id"], "add_record", rec["id"])
         domain.answer_waiver_question(state, job["id"], rec["id"], "unconditional", "Owner")
         with self.assertRaises(domain.GateError) as refused:
-            domain.approve_and_send(state, job["id"], "Owner")
+            approve_help.approve_and_send(state, job["id"], "Owner")
         self.assertEqual(str(refused.exception), domain.UNCONDITIONAL_ATTACHED)
-        domain.approve_and_send(state, job["id"], "Owner", unconditional_override="GC asked")
+        approve_help.approve_and_send(state, job["id"], "Owner", unconditional_override="GC asked")
         self.assertEqual(inv["status"], "sent")
 
     def test_a_final_waiver_on_the_earlier_payment_item_waits_for_the_money(self):  # B2, B32 round 2
@@ -195,7 +196,7 @@ class NoFinalWaiverAttachedEarly(unittest.TestCase):  # B2, B32: decision 6 has 
         domain.attach_record_to_packet(state, job["id"], target["id"], rec["id"], "Sam")
         domain.confirm_packet_item(state, job["id"], target["id"], "Sam", answer="unconditional")
         with self.assertRaises(domain.GateError) as refused:
-            domain.approve_and_send(state, job["id"], "Owner", unconditional_override="GC asked")
+            approve_help.approve_and_send(state, job["id"], "Owner", unconditional_override="GC asked")
         self.assertTrue(refused.exception.extra["final_waiver_held"])
         self.assertIn(inv["status"], domain.DRAFT_STATUSES)
         self.assertEqual(state["email_log"], [])

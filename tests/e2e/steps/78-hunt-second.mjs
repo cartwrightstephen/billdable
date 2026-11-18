@@ -4,7 +4,7 @@
 // of the page at phone width. Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
-export default async function ({ browser, BASE, step, signedInPage, confirmDialog, confirmIfAsked }) {
+export default async function ({ browser, BASE, step, signedInPage, confirmDialog, confirmIfAsked, signIfAsked, signFirst }) {
   const call = (p, path, body) => p.evaluate(async ([to, what]) => {
     const r = await fetch(to, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(what || {}) });
     return { status: r.status, data: await r.json() };
@@ -30,6 +30,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
   };
   const sendAndPay = async (p, id) => {
     await clear(p, id);
+    await signFirst(p, id);
     const r = await call(p, `/api/jobs/${id}/send`, { reviewed: draftOf(await read(p, id)).email_preview.stamp });
     assert.equal(r.status, 200, JSON.stringify(r.data));
     const inv = (await read(p, id)).invoices.at(-1);
@@ -97,6 +98,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await no.click();
     assert.equal(await confirmDialog(p).count(), 0, "one tap, no dialog");
     await p.waitForFunction(async (jobId) => !((await (await fetch(`/api/jobs/${jobId}`)).json()).job.invoices.at(-1).waiver_questions || []).length, id);
+    await signIfAsked(p);
     await p.locator('.send-check [data-action="send"]').click();
     await confirmIfAsked(p);
     await p.waitForFunction(async (jobId) => (await (await fetch(`/api/jobs/${jobId}`)).json()).job.invoices.at(-1).status === "sent", id);
