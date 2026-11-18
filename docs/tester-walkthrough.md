@@ -134,7 +134,8 @@ Retainage 10% holds back $3,620.00, so the pay app asks for **$32,580.00**.
    code, Contractor licence number, and Legal name (on contracts and lien waivers). Leave
    **Company name** as it is.
 3. Tap **Save** at the bottom of the page. "Saved" shows briefly.
-4. Leave **Pay app approvers** alone for now.
+4. Leave **Pay app approvers** alone for now. With nobody ticked, the owners (you) approve and sign
+   each pay app before it goes.
 
 **Checkpoint:** back on the **Dashboard**, the card reads "1 of 5 steps done" and the company
 step has a tick.
@@ -249,15 +250,16 @@ Further down, **The email** shows what Dana will get: "Less retainage 10%: -$3,6
 "Amount due this application: $32,580.00", and a continuation sheet whose Retainage column reads
 450.00, 1,500.00, 700.00, 650.00, 0.00 and 320.00. Tap **Open the PDF** and check it shows the same.
 
-## Step 9. Approve, Review & send
+## Step 9. Sign, Review & send
 
 1. Look at **Review & send** on the pay app's page. **To** reads "Dana Whitfield ·
    alex+gc@example.com". **Amount** is $32,580.00. **Payment due** is 30 days after it goes
    out. A note says it's the first pay app to this client: check the email address.
-2. If asked to approve, sign with your name: when the page shows an **Approvals** box with your
-   name "Waiting", tap the approve button there (it reads **Approve PA-PEAC-01**). If it asks for
-   a signature, type your name exactly as you entered it at sign-up. The box then reads
-   "Approved". If no Approvals box shows, skip this.
+2. Sign the pay app. Every pay app needs approval before it can go, and with no approvers named
+   the company's owners approve, so that is you. Under **Review & send** an approvals block shows
+   your name as waiting. Type your full name in **Your full name** (a **Title** is optional) and
+   tap **Sign PA-PEAC-01**. Your name then shows as signed, and the PDF gets an "Approved by" block
+   with your name and the date.
 3. Tap **Approve & send to alex+gc@example.com**. A box asks "Email PA-PEAC-01 for $32,580.00
    ... to Dana Whitfield"; tap **Send**.
 

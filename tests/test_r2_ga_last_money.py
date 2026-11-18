@@ -11,6 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import approve_help
 import domain
 import waiver_form
 from test_money import clear_packet, new_job, new_state, send_open
@@ -211,7 +212,7 @@ def pay_app_with_waiver(ga=True, waiver=True):
         rec = signed_waiver(state, job["id"], "conditional_progress", "Conditional waiver")
         domain.change_payapp_attachments(state, job["id"], inv["id"], "add_record", rec["id"])
         domain.answer_waiver_question(state, job["id"], rec["id"], "conditional", "Owner")
-    domain.approve_and_send(state, job["id"], "Owner")
+    approve_help.approve_and_send(state, job["id"], "Owner")
     return state, job, inv
 
 

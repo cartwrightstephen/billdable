@@ -19,7 +19,7 @@ const jpeg = (name) => ({ name, mimeType: "image/jpeg", buffer: Buffer.from([0xf
 
 // A Georgia job of its own, $10,000 at 10% retainage, finished, billed in full and paid but the
 // $1,000 retainage, with every closeout document in but the final lien waiver.
-async function lastMoneyJob(p) {
+async function lastMoneyJob(p, signFirst) {
   const run = Date.now().toString(36);   // a run of its own on a server already used
   const name = `Peach depot R2-89 ${run}`;
   const made = await api(p, "/api/jobs", { name, address: "40 Peach Ave, Savannah, GA 31401", customer: `Peachline Builders 89 ${run}`,
@@ -38,6 +38,7 @@ async function lastMoneyJob(p) {
   }
   view = (await api(p, `/api/jobs/${job.id}`)).data.job;
   const ready = view.invoices.find((i) => i.id === draft.id);
+  assert.equal(await signFirst(p, job.id), 200, "the owner signs before it goes (Stephen, 18 Nov)");
   ok(await api(p, `/api/jobs/${job.id}/send`, { reviewed: (ready.email_preview || {}).stamp || "" }));
   ok(await api(p, `/api/jobs/${job.id}/match-payment`, { amount_cents: ready.amount_cents, reference: "R2-89", invoice_id: draft.id }));
   view = (await api(p, `/api/jobs/${job.id}`)).data.job;
@@ -50,12 +51,12 @@ async function lastMoneyJob(p) {
   return { jobId: job.id, itemId: waiverItem.id };
 }
 
-export default async function ({ BASE, step, signedInPage }) {
+export default async function ({ BASE, step, signedInPage, signFirst }) {
   let made = null;
 
   await step("Georgia: the final form goes with the retainage request when the retainage is the last money", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
-    made = await lastMoneyJob(p);
+    made = await lastMoneyJob(p, signFirst);
     const job = (await api(p, `/api/jobs/${made.jobId}`)).data.job;
     assert.equal(job.waiver_state, "GA");
     assert.deepEqual(job.retainage_final_holds, [], "the request's gate and the form's rule: nothing else is open");

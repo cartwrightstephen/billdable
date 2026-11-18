@@ -12,6 +12,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import doc_check
+import approve_help
 import domain
 import waiver_form
 from test_money import clear_packet, new_job, new_state, send_open
@@ -123,7 +124,7 @@ class FinalWaiverOnlyForTheLastMoney(unittest.TestCase):
         domain.change_payapp_attachments(state, job["id"], inv["id"], "add_record", rec["id"])
         domain.answer_waiver_question(state, job["id"], rec["id"], "conditional", "Owner")
         with self.assertRaises(domain.GateError) as refused:
-            domain.approve_and_send(state, job["id"], "Owner")
+            approve_help.approve_and_send(state, job["id"], "Owner")
         self.assertIn("the job isn't finished", refused.exception.extra["final_waiver_held"])
         self.assertIn(inv["status"], domain.DRAFT_STATUSES)
         self.assertEqual(state["email_log"], [])
@@ -136,7 +137,7 @@ class FinalWaiverOnlyForTheLastMoney(unittest.TestCase):
         rec = signed_waiver(state, job["id"], "conditional_progress", "Conditional waiver")
         domain.change_payapp_attachments(state, job["id"], inv["id"], "add_record", rec["id"])
         domain.answer_waiver_question(state, job["id"], rec["id"], "conditional", "Owner")
-        domain.approve_and_send(state, job["id"], "Owner")
+        approve_help.approve_and_send(state, job["id"], "Owner")
         self.assertEqual(inv["status"], "sent")
 
 
@@ -186,7 +187,7 @@ class UntypedFinalRelease(unittest.TestCase):
         domain.answer_waiver_question(self.state, self.job["id"], rec["id"], "unconditional", "Owner")
         self.assertEqual(rec["waiver_kind"], "unconditional_final")
         with self.assertRaises(domain.GateError) as refused:
-            domain.approve_and_send(self.state, self.job["id"], "Owner", unconditional_override="GC asked")
+            approve_help.approve_and_send(self.state, self.job["id"], "Owner", unconditional_override="GC asked")
         self.assertTrue(refused.exception.extra["final_waiver_held"])
 
     def test_files_that_read_final_count_too(self):

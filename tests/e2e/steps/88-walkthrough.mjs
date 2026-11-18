@@ -19,7 +19,7 @@ const TESTER = "Tess Tester";
 // Any file stands in for the signed copies, photos and time sheet the document asks for.
 const file = (name) => ({ name, mimeType: "image/jpeg", buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16]) });
 
-export default async function ({ browser, BASE, step, errors }) {
+export default async function ({ browser, BASE, step, errors, signIfAsked }) {
   let p, jobUrl, broken = "";
   // The steps follow one another like the document: after one fails, the rest say so at once
   // instead of each waiting out its own timeout.
@@ -220,24 +220,12 @@ export default async function ({ browser, BASE, step, errors }) {
     assert.match(await p.locator("h1 + .sub").innerText(), /\$32,580\.00/);
   });
 
-  await walk("Walkthrough 9: approve if asked, Review & send, then $32,580.00 outstanding and $3,620.00 held back", async () => {
+  await walk("Walkthrough 9: sign, Review & send, then $32,580.00 outstanding and $3,620.00 held back", async () => {
     await p.getByText(`${CLIENT.approver} · ${CLIENT.email}`).first().waitFor();
-    // "If asked to approve, sign with your name" (Stephen, 18 Nov, answer 1: approval may carry a
-    // signature). Approval before send is being built in another stream; when this branch has
-    // no approvers it sends straight away.
-    const approvals = p.locator(".payapp-approvals");
-    if (await approvals.count()) {
-      const sign = approvals.locator('input[type="text"], input:not([type])');
-      if (await sign.count()) await sign.first().fill(TESTER);
-      await approvals.getByRole("button", { name: /Approve|Sign/ }).first().click();
-      const dialog = p.locator("dialog.confirm-dialog");
-      if (await dialog.count()) {
-        const typed = dialog.locator("input");
-        if (await typed.count()) await typed.first().fill(TESTER);
-        await dialog.locator(".confirm-actions .btn:not(.secondary)").click();
-      }
-      await approvals.getByText(/Approved/).first().waitFor();
-    }
+    // Every pay app is signed before it goes (Stephen, 18 Nov); with no approvers named, the owner
+    // (the tester) signs on Review & send, as the walkthrough's step 9 says.
+    assert.equal(await p.locator(".send-check .approve-sign").count(), 1, "the owner is asked to sign");
+    await signIfAsked(p, TESTER);
     await p.getByRole("button", { name: `Approve & send to ${CLIENT.email}` }).click();
     assert.match(await p.locator("dialog.confirm-dialog").innerText(), /Email PA-PEAC-01 for \$32,580\.00.*to Dana Whitfield/s);
     await confirm("Send");
