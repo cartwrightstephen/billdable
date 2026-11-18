@@ -86,7 +86,8 @@ export default async function ({ browser, BASE, step, confirmIfAsked, errors }) 
     assert.equal(st.approvals_none, true);
     await p.locator(".send-check .payapp-approvals").getByRole("button", { name: "Open Client playbook" }).click();
     await p.waitForURL(/\/jobs\/clients/);
-    await p.locator(".client-approvers", { hasText: "Nobody. Its pay apps can't be sent until someone is named." }).first().waitFor();
+    // The client's card (folded until opened) says the same under Pay app approvers.
+    await p.locator(".client-approvers .blocker", { hasText: "Nobody. Its pay apps can't be sent until someone is named." }).first().waitFor({ state: "attached" });
     await ctx.close();
   });
 }

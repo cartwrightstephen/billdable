@@ -27,7 +27,7 @@ function clientApproversHtml(p, edits) {
   const key = `clientappr-${p.id}`;
   const picking = edits && (own || formOpen[key]);
   return `<div class="client-approvers" data-form-key="${key}"><h3>Pay app approvers</h3>${formErrorLine(key)}
-    ${picking ? `${approverBoxes(`client-${p.id}`, own ? list : [], render)}
+    ${picking ? `${own && !list.length ? `<p class="sub blocker">${clientApproversText(p)}</p>` : ""}${approverBoxes(`client-${p.id}`, own ? list : [], render)}
       <div class="form-inline"><button type="button" class="btn small" data-action="client-approvers-save" data-id="${p.id}">Save approvers</button>
       ${own ? `<button type="button" class="btn small secondary" data-action="client-approvers-company" data-id="${p.id}">Use the company's list</button>`
         : `<button type="button" class="btn small secondary" data-action="toggle-form" data-form="${key}">Cancel</button>`}</div>`
