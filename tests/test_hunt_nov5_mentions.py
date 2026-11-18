@@ -24,7 +24,8 @@ LOG = "Daily log Elm addition. Sub's unconditional lien waiver received from plu
 
 class Reading(unittest.TestCase):
     def read(self, text):
-        return doc_check.reading(text)
+        # The guess and whether it is a form; "final" is read too since Nov 18 (test_r2_ga_waiver_law).
+        return {k: v for k, v in doc_check.reading(text).items() if k != "final"}
 
     def test_reads_as_an_unconditional_waiver(self):
         for text in ("UNCONDITIONAL WAIVER AND RELEASE", "UNCONDITIONAL WAIVER AND RELEASE UPON PAYMENT", "Unconditional waiver of lien.", "Waiver and release, unconditional.",
