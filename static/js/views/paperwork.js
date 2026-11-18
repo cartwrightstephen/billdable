@@ -107,11 +107,14 @@ function waiverForms() {
 export function setWaiverForms(data) { forms = data; formsAsked = true; }
 
 // The state's form filled in from the job, to print and sign (decision 1): only for the job's own
-// state, and never a final one while money on the job is still to come (decision 6).
+// state, and never a final one while money on the job is still to come (decision 6), except with
+// the retainage request when that is the last money (the server's retainage_final_holds, the rule
+// its send gate uses; Georgia waivers, Nov 18).
 export function filledFormLink(j, kind, forId, st, entry) {
   if (!entry || !entry.fillable || !kind || st !== unesc(j.waiver_state || "")) return "";
   const final = kind.endsWith("_final");
-  if (final && (j.final_waiver_holds || []).length) return "";
+  const lastMoney = unesc(forId || "") === "retainage" && Array.isArray(j.retainage_final_holds) && !j.retainage_final_holds.length;
+  if (final && (j.final_waiver_holds || []).length && !lastMoney) return "";
   const q = forId ? `?for=${encodeURIComponent(unesc(forId))}` : "";
   return `<p><a class="btn small secondary" href="/api/jobs/${j.id}/waiver-form/${final ? "final" : "interim"}.pdf${q}" target="_blank" rel="noopener" data-filled-form>Fill in the ${entry.name} form</a></p>`;
 }
@@ -434,7 +437,7 @@ function packetItemsHtml(j, inv, packet, isCloseout, pick = null) {
         <button class="btn small" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">On this job</button>
         ${can("company") ? `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}" data-whole-client="1">For this whole client</button>` : ""}</div>` : ""}
       ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Why it can go without a checked file" aria-label="Why it can go without a checked file" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save override</button></div>` : ""}` : ""}
-      ${waiver && !skipped ? `<details class="waiver-details"><summary>What the signed waiver must show</summary>${waiverChecklistHtml(j, waiver, inv)}${waiverFormHtml(j, waiver, inv ? inv.id : "", filledFormOffered(inv))}</details>` : ""}
+      ${waiver && !skipped ? `<details class="waiver-details"><summary>What the signed waiver must show</summary>${waiverChecklistHtml(j, waiver, inv)}${waiverFormHtml(j, waiver, inv ? inv.id : isCloseout ? "retainage" : "", filledFormOffered(inv))}</details>` : ""}
     </div>`;
   }).join("")}`;
 }

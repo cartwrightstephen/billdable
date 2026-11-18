@@ -1840,6 +1840,29 @@ def final_waiver_holds(job: dict[str, Any]) -> list[str]:
     return still_open(job)
 
 
+# The filled-in form's ?for= for the retainage request (waiver_form.for_waiver, paperwork.js).
+RETAINAGE_REQUEST = "retainage"
+
+
+def retainage_final_holds(job: dict[str, Any], amount_cents: int | None = None) -> list[str]:
+    """Why a final waiver can't go with the retainage request, in words; empty when it may. The one
+    rule for the request's send gate (chase_retainage) and the filled-in final form for it
+    (waiver_form.for_waiver, the page's retainage_final_holds), so the two never disagree.
+    Georgia's final form is the one given "to induce making of final payment" and waits for the sum
+    it names (O.C.G.A. § 44-14-366(e), (g)(2)): it may go with the request for the last money,
+    naming all still owed. Here that is the retainage asked for in full, with the work finished,
+    nothing else owed, billed or on a draft, and every change order signed (Georgia waivers, Nov 18;
+    Stephen, 18 Nov: "Build as needed by your read of the law"). amount_cents: what the request
+    asks for, blank for all that is held."""
+    held = job_money(job)["retainage_open_cents"]
+    if held <= 0:
+        return ["no retainage is held"]
+    left = still_open(job, count_retainage=False)
+    if amount_cents is not None and amount_cents < held:
+        left.append(f"{money(held - amount_cents)} of retainage is not asked for")
+    return left
+
+
 # A partial payment's waiver (Stephen, 10 Nov, decision 5: "generally yes partial waivers are
 # involved with progress payments"): a Client playbook setting, on unless the client's is off,
 # so clients saved before it have it on.
@@ -1947,10 +1970,11 @@ def _shelve_waiver(invoice: dict[str, Any]) -> None:
         invoice.pop(key, None)
 
 
-def still_open(job: dict[str, Any], invoice: dict[str, Any] | None = None) -> list[str]:
+def still_open(job: dict[str, Any], invoice: dict[str, Any] | None = None, count_retainage: bool = True) -> list[str]:
     """What a final waiver would give up, in words, besides this pay app's own money: the job not
     finished, work or a change order not billed, a draft, pay apps owed, retainage held. A change
-    order on this draft has to be signed before it goes, so it isn't one."""
+    order on this draft has to be signed before it goes, so it isn't one. count_retainage=False
+    leaves out the retainage held, for the request that asks for it (retainage_final_holds)."""
     m = job_money(job)
     own_owed = own_draft = own_held = 0
     drafting = False
@@ -1967,7 +1991,7 @@ def still_open(job: dict[str, Any], invoice: dict[str, Any] | None = None) -> li
         out.append(f"{money(m['draft_cents'] - own_draft)} is on a draft")
     if m["outstanding_cents"] > own_owed:
         out.append(f"{money(m['outstanding_cents'] - own_owed)} is still owed")
-    if m["retainage_open_cents"] > 0 or own_held:
+    if count_retainage and (m["retainage_open_cents"] > 0 or own_held):
         out.append(f"{money(m['retainage_open_cents'] + own_held)} of retainage is still held")
     for co in job["change_orders"]:
         if co["status"] == "pending" and not (drafting and co.get("included_in_billing")):
@@ -2492,10 +2516,9 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
         raise GateError("The closeout documents aren't complete.", [_blocker_text(job, item) for item in missing], keep_changes=bool(asked))
     _need_waiver_answers(state, job, closeout, (), (), read_file)
     _no_early_final_waiver(job, _finals_going(job, closeout, retainage=True), "with the retainage request")
-    # The closeout's conditional final waiver is for the last money: all the retainage, nothing else open.
-    left = [why for why in still_open(job) if not why.endswith("of retainage is still held")]
-    if partial:
-        left.append(f"{money(open_retainage - amount)} of retainage is not asked for")
+    # The closeout's conditional final waiver is for the last money: all the retainage, nothing else
+    # open. The same rule serves the filled-in final form for the request (retainage_final_holds).
+    left = retainage_final_holds(job, amount)
     _no_final_waiver_for_part(job, [r for r in _conditional_finals_going(job, closeout) if not _sent_for_this_job(job, r)], left,
                               "with the retainage request")
     unconditional = _unconditional_going(job, closeout, retainage=True)
@@ -2534,8 +2557,9 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
         + (f" The closeout documents on file are attached ({len(files)})." if files else "")
         + f"\n\n{sign_off(state, actor)}"
     )
+    # What it asked for stays on the email: a Georgia waiver going with it waits for that sum (ga_waivers).
     _record_email(state, job_id, "retainage", to, subject, body, actor, attachments=files,
-                  payapp_invoice_id=newest["id"] if newest else None)
+                  payapp_invoice_id=newest["id"] if newest else None, extra={"retainage_asked_cents": amount})
     if override:
         job.setdefault("retainage_overrides", []).append({"by": actor, "at": utcnow(), "reason": override, "record_ids": [r["id"] for r in unconditional]})
         audit(state, job_id, "unconditional_override",
@@ -2763,6 +2787,7 @@ def _paperwork_view(state: dict[str, Any], job: dict[str, Any], out: dict[str, A
             inv["pencil_preview"] = {"subject": subject, "body": body}
     if not job.get("closed"):
         out["final_waiver_holds"] = final_waiver_holds(job)
+        out["retainage_final_holds"] = retainage_final_holds(job)
         for item in out.get("closeout_packet") or []:
             if item.get("required") and sov.name_only(job, item):
                 item.update(present=False, name_only=True)
@@ -3189,6 +3214,10 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         for info in co_info_rows(job):
             add(3.2, "co_info", job, "Change order", "amber", info["text"], info["button"], f"/money/change-order/{job['id']}/{info['co_id']}",
                 co_id=info["co_id"], perm="manage_jobs")
+        # A Georgia waiver sent before its money: the affidavit of nonpayment before day 90, then
+        # a note that it took effect (Georgia waivers, Nov 18; domain/gawaivers.py).
+        for row in affidavit_rows(state, job, today):
+            add(row.pop("rank"), row.pop("kind"), job, row.pop("label"), row.pop("tone"), row.pop("text"), "", perm=AFFIDAVIT_PERM, **row)
         # A pay app sent and unpaid past the payer's follow-up window is its own row. One follow-up
         # names every unpaid pay app; after a logged conversation the row waits for the date
         # noted (R4-06).
@@ -3227,6 +3256,8 @@ DIGEST_NOUNS = {
     "closeout": ("job missing closeout documents", "jobs missing closeout documents"), "retainage": ("retainage to ask for", "retainages to ask for"),
     "finish": ("job ready to finish", "jobs ready to finish"), "finish_held": ("job held up before finishing", "jobs held up before finishing"),
     "co_info": ("change order to price", "change orders to price"),
+    "affidavit": ("lien waiver near its 90 days, unpaid", "lien waivers near their 90 days, unpaid"),
+    "waiver_in_effect": ("lien waiver now in effect, unpaid", "lien waivers now in effect, unpaid"),
 }
 # Finishing is never urgent: these rows stay on the Dashboard, and the email names them once a week.
 WEEKLY_DIGEST_KINDS = {"finish", "finish_held"}
@@ -3266,7 +3297,9 @@ def daily_digest(state: dict[str, Any], base: str = "", now: datetime | None = N
     def this_week(r: dict[str, Any]) -> bool:
         return r["kind"] not in WEEKLY_DIGEST_KINDS or _digest_week_day(by_id.get(r["job_id"]), now.date())
 
-    rows = [r for r in rows_with_perms(today_rows(state, now), perms) if r["kind"] in DIGEST_NOUNS and due_now(r) and this_week(r)]
+    # A row said once (a Georgia waiver now in effect) goes in the email on its day only.
+    rows = [r for r in rows_with_perms(today_rows(state, now), perms) if r["kind"] in DIGEST_NOUNS and due_now(r) and this_week(r)
+            and (r.get("digest_on") or day) == day]
     if team_perms is not None:
         # A row assigned to someone whose permissions don't cover it (a change order to price, for
         # a Member) is nobody's to them, so it goes to the owners as an unassigned one (B23).
@@ -7209,3 +7242,4 @@ from .comms import *  # noqa: E402,F401,F403
 from .contact import *  # noqa: E402,F401,F403
 from .jobinfo import *  # noqa: E402,F401,F403
 from .jobrules import *  # noqa: E402,F401,F403
+from .gawaivers import *  # noqa: E402,F401,F403
