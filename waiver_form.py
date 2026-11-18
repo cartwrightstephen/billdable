@@ -96,8 +96,9 @@ def _money(cents: int) -> str:
 
 def prefill(state: dict[str, Any], job: dict[str, Any], for_id: str, which: str) -> dict[str, str]:
     """What Duracash already knows for each blank. for_id: the pay app or retainage release the
-    waiver is for (blank: none). The sum is the waiver's own money: what a payment due its waiver
-    brought in since the last one, else what the pay app still has to bring in."""
+    waiver is for (blank: none), or "retainage" for the retainage request. The sum is the waiver's
+    own money: what a payment due its waiver brought in since the last one, else what the pay app
+    still has to bring in; the retainage request's final form names the retainage held."""
     from domain.validate import parse_legacy_address
     payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
     company = state.get("company", {})
@@ -116,6 +117,10 @@ def prefill(state: dict[str, Any], job: dict[str, Any], for_id: str, which: str)
         amount = _money(max(0, cents))
     elif release:
         amount = _money(release["amount_cents"])
+    elif for_id == domain.RETAINAGE_REQUEST and which == "final":
+        # The final form with the retainage request names the whole amount still owed
+        # (§ 44-14-366(e)); for_waiver serves it only when that is the retainage held, all of it.
+        amount = _money(domain.job_money(job)["retainage_open_cents"])
     owner_client = domain.client_type_role(payer.get("client_type")) == "Owner" if payer.get("client_type") else payer.get("role") == "Owner"
     return {
         "county": "", "project_county": "",
@@ -297,7 +302,8 @@ def _appearance(value: str, w: float, h: float, multi: bool) -> bytes:
 def for_waiver(state: dict[str, Any], job_id: str, for_id: str = "", which: str = "interim") -> tuple[bytes | None, str, str]:
     """(PDF, file name, refusal) for a job's waiver in its state's form. Refused: no form for the
     job's state (or not switched on), or a final waiver while money on the job is still to come
-    (decision 6)."""
+    (decision 6), unless for_id is the retainage request (domain.RETAINAGE_REQUEST) and that
+    request is for the last money (domain.retainage_final_holds)."""
     job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
     if not job:
         return None, "", "Job not found."
@@ -309,10 +315,16 @@ def for_waiver(state: dict[str, Any], job_id: str, for_id: str = "", which: str 
     if which not in ("interim", "final"):
         which = "interim"
     if which == "final" and not job.get("closed"):
-        # Georgia's final form waits for the sum it names (§ 44-14-366(g)(2)), so the law would let
-        # it go with the request for the last money; decision 6 holds it until all the money is in.
-        # attorney/Stephen: fill it for the retainage request when retainage is all that's left?
+        # Decision 6 holds a final waiver until all the money is in, with one exception the law
+        # makes: Georgia's final form waits for the sum it names (§ 44-14-366(g)(2)), so it goes
+        # with the request for the last money. When that is the retainage asked for in full, the
+        # form is filled in for the request, by the same rule its send gate uses (Georgia waivers,
+        # Nov 18; Stephen, 18 Nov: "Build as needed by your read of the law").
         left = domain.final_waiver_holds(job)
+        if left and for_id == domain.RETAINAGE_REQUEST:
+            left = domain.retainage_final_holds(job)
+            if left:
+                return None, "", f"A final waiver goes only with the request for all the money left on {job['name']}: {', '.join(left)}."
         if left:
             return None, "", f"A final waiver waits until all the money on {job['name']} is in: {', '.join(left)}."
     form = forms[which]
