@@ -111,4 +111,19 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     }
     await p.context().close();
   });
+
+  await step("Georgia waiver page: the notes say 90 days and the affidavit of nonpayment, with no attorney questions on the page", async () => {
+    assert.ok(made, "the Georgia job from the first step");
+    const p = await signedInPage({ width: 1280, height: 900 });
+    const forms = (await api(p, "/api/waiver-forms")).data;
+    assert.equal(forms.states.GA.attorney, undefined);
+    await p.goto(`${BASE}/money/waiver/${made.jobId}`);
+    const box = p.locator(".waiver-form-state", { hasText: "within 90 days" }).first();
+    await box.waitFor();
+    const text = await box.innerText();
+    assert.match(text, /affidavit of nonpayment/);
+    assert.match(text, /Filing a lien does not stop it\./);
+    assert.doesNotMatch(await p.locator("body").innerText(), /attorney:/);
+    await p.context().close();
+  });
 }
