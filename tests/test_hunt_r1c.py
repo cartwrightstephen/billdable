@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import auth
 import doc_check
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import server
 import sov
 import unconditional_corpus as c
@@ -89,7 +90,7 @@ class FiledUnderAnotherKind(Case):
         domain.resolve_packet_item(self.state, self.job["id"], self.cert["id"], "Sam", reason="In hand")
 
     def send(self, **kw):
-        return domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read, **kw)
+        return approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read, **kw)
 
     def test_each_kind_and_a_scan_named_file_asks_then_takes_the_owner(self):
         title = c.LONG_TITLES[2]   # "Acme Electric - Unconditional Waiver and Release of Lien - Elm addition - Pay App 3": 14 words
@@ -232,7 +233,7 @@ class WhoSetsAnAnswer(Case):
         self.attach_by(OTHER_SENDER, "unconditional")
         self.assertEqual(self.rec["waiver_answer"]["kind"], "unconditional")
         with self.assertRaises(domain.GateError):   # and now it is the gate's: the send needs the owner
-            domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
+            approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
 
 
 class AskingForRetainage(unittest.TestCase):
@@ -292,7 +293,7 @@ class ASentFinalWaiverIsExemptOnlyWhereItWasSent(Case):
         for item in self.inv["packet"]:
             if not item["present"]:
                 domain.resolve_packet_item(self.state, self.job["id"], item["id"], "Sam", reason="x")
-        domain.approve_and_send(self.state, self.job["id"], "Sam")
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam")
         domain.match_payment(self.state, self.job["id"], self.inv["amount_cents"], "chk", invoice_id=self.inv["id"])
         sent = self.stored("Final", pdf("UNCONDITIONAL WAIVER AND RELEASE ON FINAL PAYMENT Pine kitchen $4,000.00"), typed="unconditional_final")
         # One sent early, as a confirm allowed before decision 6 (Nov 17) refused it outright.
@@ -366,7 +367,7 @@ class IHaveThisDoesNotReplaceAnAnswer(Case):
         for item in self.inv["packet"]:
             if not item["present"]:
                 domain.resolve_packet_item(self.state, self.job["id"], item["id"], "Sam", reason="x")
-        domain.approve_and_send(self.state, self.job["id"], "Sam")
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam")
         self.assertEqual(self.state["email_log"][-1]["attachments"], [])
 
     def test_an_answered_file_stays_after_the_override(self):
@@ -548,6 +549,7 @@ class Through(HttpBase):
             self.assertEqual(status, 409, "a member can't give the reason")
             if kind != "insurance":
                 self.post(f"/api/jobs/{self.job_id}/payapp/{self.draft()['id']}/attachments", {"action": "remove_record", "record_id": rid}, cookie=self.cat)
+        approve_help.sign_http(self, self.job_id, self.ann)   # the owner signs, then gives the reason and sends
         status, data = self.P("send", {"reviewed": self.draft()["email_preview"]["stamp"], "unconditional_override": "Paid by wire"})
         self.assertEqual(status, 200, data)
 
@@ -586,6 +588,7 @@ class ThroughRetainage(HttpBase):
         for item in self.draft()["packet"]:
             if item["required"] and not item["present"]:
                 self.assertEqual(self.P(f"resolve/{item['id']}", {"reason": "In hand"})[0], 200)
+        approve_help.sign_http(self, self.job_id, self.ann)
         status, data = self.P("send", {"reviewed": self.draft()["email_preview"]["stamp"]})
         self.assertEqual(status, 200, data)
         sent = next(i for i in self.job()["invoices"] if i["status"] == "sent")

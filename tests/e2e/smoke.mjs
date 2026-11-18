@@ -50,7 +50,26 @@ async function confirmIfAsked(p) {
   }
 }
 
-const ctx = { browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors };
+// No pay app goes unapproved, and approving is signing (Stephen, 18 Nov 2026): with nobody named,
+// the owner signs on Review & send before Approve & send. signIfAsked signs on the page when the
+// form is there; signFirst does the same through the API for steps that send that way.
+async function signIfAsked(p, name = "Smoke Signer") {
+  const form = p.locator(".send-check .approve-sign");
+  if (!(await form.count())) return;
+  await form.locator('input[name="signature"]').fill(name);
+  await form.locator('[data-action="payapp-approve"]').click();
+  await form.waitFor({ state: "detached" });
+}
+const signFirst = (p, jobId, name = "Smoke Signer") => p.evaluate(async ([id, signer]) => {
+  const job = (await (await fetch(`/api/jobs/${id}`)).json()).job;
+  const d = job.invoices.find((i) => ["draft", "awaiting_approval"].includes(i.status));
+  if (!d || !d.approval || !(d.approval.waiting || []).length) return 0;
+  const r = await fetch(`/api/jobs/${id}/payapp-approve`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ invoice_id: d.id, stamp: d.approval.stamp, signature: signer }) });
+  return r.status;
+}, [jobId, name]);
+
+const ctx = { browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors, signIfAsked, signFirst };
 const stepsDir = new URL("./steps/", import.meta.url);
 const only = (process.env.DURACASH_STEPS || "").split(",").map(s => s.trim()).filter(Boolean);
 for (const f of readdirSync(stepsDir).filter(f => f.endsWith(".mjs") && (!only.length || only.some(o => f.startsWith(o)))).sort()) {

@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import payapp_pdf
 import qty_import
 import server
@@ -167,7 +168,7 @@ class Sequence:
                 domain.resolve_packet_item(self.state, self.id, item["id"], "Sam", reason="fuzz")
         ready = not domain.blocker_lines(self.job)
         try:
-            domain.approve_and_send(self.state, self.id, "Sam", reviewed=domain.review_stamp(self.state, self.job, draft))
+            approve_help.approve_and_send(self.state, self.id, "Sam", reviewed=domain.review_stamp(self.state, self.job, draft))
         except domain.GateError as exc:
             assert not ready, f"{draft['number']} showed nothing in the way and was refused: {exc} {exc.blockers}"
             raise

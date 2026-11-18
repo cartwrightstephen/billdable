@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import server
 from test_packet import new_state, new_job, record, draft
 from waiver_help import confirm_suggested, signed_waiver
@@ -23,7 +24,7 @@ def sent_pay_app(state, job, cents=400_000):
     if any(not p["present"] and p["required"] for p in inv["packet"]):
         record(state, job, "waiver", f"Signed conditional waiver {inv['number']}")
         confirm_suggested(state, job)
-    domain.approve_and_send(state, job["id"], "Owner")
+    approve_help.approve_and_send(state, job["id"], "Owner")
     return inv
 
 
@@ -41,7 +42,7 @@ class UnconditionalWithPayAppTests(unittest.TestCase):  # M14
 
     def test_refused_without_a_reason(self):
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(self.state, self.job["id"], "Owner")
+            approve_help.approve_and_send(self.state, self.job["id"], "Owner")
         self.assertEqual(str(raised.exception), domain.UNCONDITIONAL_ATTACHED)
         self.assertIn("unconditional_override", raised.exception.fields)
         self.assertEqual(self.inv["status"], "awaiting_approval")
@@ -51,7 +52,7 @@ class UnconditionalWithPayAppTests(unittest.TestCase):  # M14
         self.assertEqual(domain.waiver_stages(self.state, self.job, self.inv)["conditional"]["status"], "Attached, but unconditional")
 
     def test_an_owner_override_is_kept_and_audited(self):
-        domain.approve_and_send(self.state, self.job["id"], "Owner", unconditional_override="Client already paid by wire")
+        approve_help.approve_and_send(self.state, self.job["id"], "Owner", unconditional_override="Client already paid by wire")
         self.assertEqual(self.inv["status"], "sent")
         self.assertEqual((self.inv["unconditional_override"]["reason"], self.inv["unconditional_override"]["by"]),
                          ("Client already paid by wire", "Owner"))
@@ -61,7 +62,7 @@ class UnconditionalWithPayAppTests(unittest.TestCase):  # M14
     def test_left_out_of_the_email_it_no_longer_blocks(self):
         domain.change_payapp_attachments(self.state, self.job["id"], self.inv["id"], "exclude_file", self.rec["file_ids"][0])
         with self.assertRaises(domain.GateError) as raised:  # the item is missing again instead
-            domain.approve_and_send(self.state, self.job["id"], "Owner")
+            approve_help.approve_and_send(self.state, self.job["id"], "Owner")
         self.assertEqual(str(raised.exception), "Pay app blocked.")
 
     def test_a_member_cannot_override(self):
@@ -150,7 +151,7 @@ class SuggestedTypeTests(unittest.TestCase):  # M17
         for item in inv["packet"]:
             if not item["present"]:
                 domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
-        domain.approve_and_send(state, job["id"], "Owner")
+        approve_help.approve_and_send(state, job["id"], "Owner")
         domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1")
         self.assertTrue(inv["final"])
         self.assertEqual(domain.suggested_waiver_kind(job, inv), "unconditional_progress")

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import doc_check
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import helper
 import server
 import unconditional_corpus as c
@@ -123,7 +124,7 @@ class EditingAWaiverOutOfTheQuestion(Case):
         self.assertEqual(self.asked(), [self.rec], "ever a waiver, asked until a person answers")
         self.assertEqual(domain.unconditional_waivers_attached(self.job, self.inv), [self.rec])
         with self.assertRaises(domain.GateError) as refused:
-            domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
+            approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
         self.assertTrue(refused.exception.extra.get("waiver_question"))
         domain.answer_waiver_question(self.state, self.job["id"], self.rec["id"], "no", "Sam", shown=self.rec["file_ids"], answerer=SENDER)
         self.assertEqual(self.asked(), [])

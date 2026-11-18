@@ -3,9 +3,13 @@ module; the tests import it."""
 
 import json
 
+from approve_help import sign_http
+
 
 def reviewed(case, job_id, cookie=None):
-    """A POST /send body, as the page makes it from the job's open draft."""
+    """A POST /send body, as the page makes it from the job's open draft. The page's first step
+    comes first: the person signs it when it waits on them (Stephen, 18 Nov: nothing goes unapproved)."""
+    sign_http(case, job_id, cookie)
     res = case.request("GET", f"/api/jobs/{job_id}", cookie=cookie)
     raw = res[1]
     data = json.loads(raw) if isinstance(raw, (bytes, str)) else raw

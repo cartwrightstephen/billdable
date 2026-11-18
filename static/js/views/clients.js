@@ -9,11 +9,18 @@ import { readJson } from "../net.js";
 import { pathFor } from "../routes.js";
 import { state, me, formOpen, onSessionEnd } from "../state.js";
 import { post, render, emptyState, can, nav, moreDetails } from "../app-core.js";
-import { approverBoxes, approverIds, approverNames, forgetApprovers } from "../approvers.js";
+import { approverBoxes, approverIds, approverNames, ownersLine, forgetApprovers } from "../approvers.js";
 import { sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount, contractImportHtml, contractMark, forgetClosedContract } from "./jobs.js";
 
 // Who approves this client's pay apps before they go (Stephen, 10 Nov, decision 8): the company's
-// list, unless the client has its own, which replaces it.
+// list, unless the client has its own, which replaces it; with neither, the owners. An own list
+// left empty means its pay apps can't be approved or sent (Stephen, 18 Nov, answer 2).
+export function clientApproversText(p, company = state.company, owners = state.team_owners) {
+  if (Array.isArray(p.payapp_approvers)) return approverNames(p.payapp_approvers, "Nobody. Its pay apps can't be sent until someone is named.");
+  const list = (company || {}).payapp_approvers || [];
+  return list.length ? `${approverNames(list)} (the company's list)` : ownersLine(owners);
+}
+
 function clientApproversHtml(p, edits) {
   const own = Array.isArray(p.payapp_approvers);
   const list = own ? p.payapp_approvers : ((state.company || {}).payapp_approvers || []);
@@ -24,7 +31,7 @@ function clientApproversHtml(p, edits) {
       <div class="form-inline"><button type="button" class="btn small" data-action="client-approvers-save" data-id="${p.id}">Save approvers</button>
       ${own ? `<button type="button" class="btn small secondary" data-action="client-approvers-company" data-id="${p.id}">Use the company's list</button>`
         : `<button type="button" class="btn small secondary" data-action="toggle-form" data-form="${key}">Cancel</button>`}</div>`
-    : `<p class="sub">${approverNames(list)}${own ? "" : " (the company's list)"}</p>
+    : `<p class="sub${own && !list.length ? " blocker" : ""}">${clientApproversText(p)}</p>
       ${edits ? `<button type="button" class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="false">Own list for this client</button>` : ""}`}
   </div>`;
 }

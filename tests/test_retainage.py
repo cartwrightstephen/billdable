@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 from test_packet import new_state, new_job, draft
 from waiver_help import signed_waiver
 
@@ -18,7 +19,7 @@ def done_and_paid(state, job):
     for item in inv["packet"]:
         if not item["present"]:
             domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
-    domain.approve_and_send(state, job["id"], "Owner")
+    approve_help.approve_and_send(state, job["id"], "Owner")
     domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1")
     signed_waiver(state, job["id"])
     domain.send_waiver(state, job["id"], "Owner")
@@ -35,7 +36,7 @@ class AskTests(unittest.TestCase):
         inv = draft(job)
         for item in inv["packet"]:
             domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
-        domain.approve_and_send(state, job["id"], "Owner")
+        approve_help.approve_and_send(state, job["id"], "Owner")
         with self.assertRaises(domain.GateError) as raised:
             domain.chase_retainage(state, job["id"], "Owner", amount_cents=10_000)
         self.assertIn("Use Final pay app first", str(raised.exception))

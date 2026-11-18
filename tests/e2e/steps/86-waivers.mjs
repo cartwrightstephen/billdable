@@ -32,6 +32,9 @@ async function partPaidJob(p) {
   }
   view = (await api(p, `/api/jobs/${job.id}`)).data.job;
   const ready = view.invoices.find((i) => i.id === draft.id);
+  // The owner signs it first: nothing goes unapproved (Stephen, 18 Nov).
+  const signed = await api(p, `/api/jobs/${job.id}/payapp-approve`, { invoice_id: ready.id, stamp: ready.approval.stamp, signature: "Smoke Signer" });
+  assert.equal(signed.status, 200, JSON.stringify(signed.data));
   const send = await api(p, `/api/jobs/${job.id}/send`, { reviewed: (ready.email_preview || {}).stamp || "" });
   assert.equal(send.status, 200, JSON.stringify(send.data));
   const paid = await api(p, `/api/jobs/${job.id}/match-payment`, { amount_cents: 150_000, reference: "R2-PART-1", invoice_id: draft.id });

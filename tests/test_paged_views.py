@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 from waiver_help import signed_waiver
 from seed import seed_state
 
@@ -177,7 +178,7 @@ class TimelineTests(unittest.TestCase):
                 if item.get("required") and not item.get("present"):
                     domain.resolve_packet_item(state, job["id"], item["id"], "t", reason="Emailed to the payer")
             domain.draft_invoice(state, job["id"], "t")
-            domain.approve_and_send(state, job["id"], "t")
+            approve_help.approve_and_send(state, job["id"], "t")
             inv = next(i for i in job["invoices"] if i["status"] == "sent")
             domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1", "t", invoice_id=inv["id"])
             signed_waiver(state, job["id"])

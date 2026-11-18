@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import exports
 import qty_import
 from domain import profiles
@@ -282,7 +283,7 @@ class ExportFileTests(unittest.TestCase):
         domain.add_change_order(self.state, self.job["id"], "@Extra outlets", -50_000, reason="other", description="A credit")
         domain.record_progress(self.state, self.job["id"], 4_000_000)
         clear_packet(self.state, self.job)
-        domain.approve_and_send(self.state, self.job["id"])
+        approve_help.approve_and_send(self.state, self.job["id"])
         inv = self.job["invoices"][-1]
         domain.match_payment(self.state, self.job["id"], inv["amount_cents"], "-1 chk", received_on="2026-10-20")
         self.done = new_job(self.state, name="Finished porch", contract=100_000)

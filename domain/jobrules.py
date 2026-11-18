@@ -8,9 +8,14 @@ gives it a price (price_change_order). It still collects hours from New job reco
 tickets and invoices tied to it (co_accrued).
 
 Approvers: company["payapp_approvers"] = [{id, name}], and a client may have its own list
-(payer["payapp_approvers"], which replaces the company's; an empty one means nobody for that
-client). Each approval is kept on the draft as {id, name, at, stamp}; stamp is approval_stamp
-of the pay app when it was given, so one given before the pay app changed no longer counts.
+(payer["payapp_approvers"], which replaces the company's). Since Stephen's answers of 18 Nov no
+pay app goes without approval: with no list named, every owner of the company approves
+(state["team_owners"], which the server fills from the team each time it loads the company),
+and a client list saved empty means its pay apps can't be approved or sent. Approving is
+signing: each approval is kept on the draft as {id, name, signed_name, title, at, stamp,
+consent, ip, user_agent}; stamp is approval_stamp of the pay app when it was signed, so a
+signature given before the pay app changed no longer counts. Sending keeps the signatures that
+counted on the pay app as it went (approvals_frozen_at), and its PDF prints them.
 
 Imported at the bottom of domain/__init__.py (from .jobrules import *). Helpers from domain
 are imported inside each function, so the two modules never import each other at load time.
@@ -25,8 +30,9 @@ from typing import Any
 __all__ = [
     "co_needs", "co_accrued", "co_view_extras", "co_info_rows", "price_change_order", "need_price",
     "closeout_override_needed", "record_closeout_override",
-    "APPROVE_PERM", "payapp_approvers", "set_payapp_approvers", "rename_approver", "approval_stamp", "approval_view", "approvals_missing",
-    "approve_payapp", "clear_stale_approvals", "drop_approver", "drop_approvers_without",
+    "APPROVE_PERM", "APPROVAL_CONSENT", "payapp_approvers", "set_payapp_approvers", "rename_approver", "approval_stamp", "approval_view",
+    "approvals_missing", "approval_blocked", "approve_payapp", "clear_stale_approvals", "drop_approver", "drop_approvers_without",
+    "set_team_owners", "freeze_approvals", "signed_approvals", "send_unapproved", "approval_way_out",
 ]
 
 
@@ -166,12 +172,51 @@ def _people(raw: Any) -> list[dict[str, str]]:
     return [{"id": str(p.get("id") or ""), "name": str(p.get("name") or "")} for p in raw or [] if isinstance(p, dict) and p.get("id")]
 
 
-def payapp_approvers(state: dict[str, Any], job: dict[str, Any]) -> list[dict[str, str]]:
-    """Who must approve this job's pay apps: the client's own list when it has one, else the company's."""
+# What an approver agrees to by signing (kept with each signature, as CO_CONSENT is with a client's).
+APPROVAL_CONSENT = "I have checked this pay app and approve it to go to the client. My typed name is my signature."
+
+
+def set_team_owners(state: dict[str, Any], owners: Any) -> None:
+    """The company's owners, [{id, name}], from the team (auth). The server sets it each time it
+    loads the company, so it is never older than the request: they approve when no list is named."""
+    state["team_owners"] = _people(owners)
+
+
+def _approver_source(state: dict[str, Any], job: dict[str, Any]) -> tuple[str, list[dict[str, str]]]:
     payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
     if "payapp_approvers" in payer:
-        return _people(payer["payapp_approvers"])
-    return _people(state.get("company", {}).get("payapp_approvers"))
+        return "client", _people(payer["payapp_approvers"])
+    company = _people(state.get("company", {}).get("payapp_approvers"))
+    if company:
+        return "company", company
+    # "Unapproved pay applications should never send" (Stephen, 18 Nov): with nobody named, every
+    # owner approves (Yusuf's default, 18 Nov). A company with one owner signs, then sends.
+    return "owners", _people(state.get("team_owners"))
+
+
+def payapp_approvers(state: dict[str, Any], job: dict[str, Any]) -> list[dict[str, str]]:
+    """Who must approve this job's pay apps: the client's own list when it has one, else the
+    company's, else every owner of the company."""
+    return _approver_source(state, job)[1]
+
+
+def approval_blocked(state: dict[str, Any], job: dict[str, Any]) -> str:
+    """Why nobody can approve this job's pay apps, or "". "If a client's approver list is empty,
+    then the pay app cannot be approved and be sent out" (Stephen, 18 Nov, answer 2)."""
+    source, people = _approver_source(state, job)
+    if people:
+        return ""
+    if source == "client":
+        payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
+        return f"Nobody is named to approve {payer.get('name') or 'this client'}'s pay apps, so they can't be sent. Name approvers in Client playbook."
+    return "Nobody can approve pay apps yet. Name approvers in Settings, Company."
+
+
+def approval_way_out(state: dict[str, Any], job: dict[str, Any]) -> dict[str, str]:
+    """The link a refusal for nobody to approve carries: where approvers are named."""
+    if _approver_source(state, job)[0] == "client":
+        return {"label": "Open Client playbook", "view": "playbook"}
+    return {"label": "Open Settings, Company", "view": "company"}
 
 
 def set_payapp_approvers(state: dict[str, Any], user_ids: Any, pool: dict[str, str], payer_id: str = "",
@@ -205,8 +250,9 @@ def set_payapp_approvers(state: dict[str, Any], user_ids: Any, pool: dict[str, s
 def drop_approver(state: dict[str, Any], user_id: str, why: str = "left the team") -> None:
     """Someone left the team, or no longer holds Approve pay apps: they come off every approvers
     list, so no pay app waits on them. A client's own list they emptied comes off too, so the
-    company's applies again: an empty list there reads as "nobody needs to approve", which no one
-    chose. A list an owner saved empty on purpose has no one to remove and stays as it is."""
+    company's applies again: an empty list there reads as "this client's pay apps can't be sent",
+    which no one chose. A list an owner saved empty on purpose has no one to remove and stays as
+    it is. The company's list emptied this way falls back to the owners."""
     from domain import audit
     company = state.get("company", {})
     for holder in [company, *state.get("payers", [])]:
@@ -262,46 +308,105 @@ def _valid(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) 
     return {a["id"]: a for a in invoice.get("approvals") or [] if a.get("stamp") == stamp}
 
 
+def _shown(sig: dict[str, Any] | None) -> dict[str, str]:
+    """A signature as the pages show it: not the network address or browser kept with it."""
+    sig = sig or {}
+    return {"approved_at": sig.get("at", ""), "signed_name": sig.get("signed_name") or "", "title": sig.get("title") or ""}
+
+
 def approval_view(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, Any]:
-    """For Review & send: each named approver and whether they have approved this version."""
+    """For Review & send: each approver, whether they have signed this version, and why nobody
+    can when nobody is named for the client (blocked)."""
     valid = _valid(state, job, invoice)
-    required = [{"id": p["id"], "name": p["name"], "approved_at": valid[p["id"]]["at"] if p["id"] in valid else ""}
-                for p in payapp_approvers(state, job)]
-    # stamp: the version shown, which the Approve button sends back (approve_payapp's seen).
+    source, people = _approver_source(state, job)
+    required = [{"id": p["id"], "name": p["name"], **_shown(valid.get(p["id"]))} for p in people]
+    # stamp: the version shown, which the Sign button sends back (approve_payapp's seen).
     return {"required": required, "waiting": [p["name"] for p in required if not p["approved_at"]],
-            "stamp": approval_stamp(state, job, invoice)}
+            "stamp": approval_stamp(state, job, invoice), "source": source,
+            "blocked": approval_blocked(state, job), "consent": APPROVAL_CONSENT}
 
 
 def approvals_missing(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> list[str]:
     return approval_view(state, job, invoice)["waiting"]
 
 
+def _clean_name(raw: Any, limit: int = 120) -> str:
+    return " ".join(str(raw or "").split())[:limit]
+
+
 def approve_payapp(state: dict[str, Any], job_id: str, actor: str = "owner", actor_id: str = "",
-                   invoice_id: str | None = None, seen: str | None = None) -> dict[str, Any]:
-    """One named approver approves the open draft, as the version they looked at: invoice_id and
-    seen (approval_view's stamp) are what the page showed, and a draft changed or replaced since
-    is refused, as Review & send refuses a stale send (B13). None is for callers with no page.
+                   invoice_id: str | None = None, seen: str | None = None, signature: Any = None, title: Any = "",
+                   ip: str = "", user_agent: str = "") -> dict[str, Any]:
+    """One approver signs the open draft, as the version they looked at: invoice_id and seen
+    (approval_view's stamp) are what the page showed, and a draft changed or replaced since is
+    refused, as Review & send refuses a stale send (B13). None is for callers with no page.
     Only once it is ready to send (awaiting_approval): a draft still missing paperwork will change
-    before it goes."""
-    from domain import GateError, _open_job, audit, utcnow, money
+    before it goes. "The approval chain ... involve[s] application of a signature to a document"
+    (Stephen, 18 Nov, answer 1): the typed full name is the signature, as a client's on a change
+    order (sign_change_order); title is optional and printed with it."""
+    from domain import GateError, _open_job, audit, blocker_lines, utcnow, money
     job = _open_job(state, job_id)
     invoice = next((i for i in reversed(job["invoices"]) if i["status"] in {"draft", "awaiting_approval"}), None)
     if not invoice:
         raise GateError("No draft pay app to approve.")
     if (invoice_id is not None and invoice_id != invoice["id"]) or (seen is not None and seen != approval_stamp(state, job, invoice)):
-        raise GateError(f"{invoice['number']} changed since you opened it. Look it over again, then approve.",
+        raise GateError(f"{invoice['number']} changed since you opened it. Look it over again, then sign.",
                         extra={"review_changed": True, "invoice_id": invoice["id"]})
+    blocked = approval_blocked(state, job)
+    if blocked:
+        raise GateError(blocked, extra={"approvals_none": True}, action=approval_way_out(state, job))
     if not any(p["id"] == actor_id for p in payapp_approvers(state, job)):
         raise GateError(f"You aren't one of the people who approve {invoice['number']}.")
-    if invoice["status"] != "awaiting_approval":
+    # Ready to send is what Approve & send goes by: nothing on the job's blocker list.
+    if invoice["status"] != "awaiting_approval" and blocker_lines(job):
         raise GateError(f"{invoice['number']} still needs its supporting documents. Approve it once it is ready to send.")
     if actor_id in _valid(state, job, invoice):
-        raise GateError(f"You have already approved {invoice['number']}.")
+        raise GateError(f"You have already signed {invoice['number']}.")
+    signed = _clean_name(signature)
+    if len(signed) < 2:
+        raise GateError("Type your full name to sign.", fields={"signature": "Type your full name to sign."})
     approvals = [a for a in invoice.get("approvals") or [] if a.get("id") != actor_id]
-    approvals.append({"id": actor_id, "name": actor, "at": utcnow(), "stamp": approval_stamp(state, job, invoice)})
+    approvals.append({"id": actor_id, "name": actor, "signed_name": signed, "title": _clean_name(title, 80), "at": utcnow(),
+                      "stamp": approval_stamp(state, job, invoice), "consent": APPROVAL_CONSENT,
+                      "ip": str(ip or "")[:64], "user_agent": str(user_agent or "")[:200]})
     invoice["approvals"] = approvals
-    audit(state, job_id, "payapp_approved", f"{actor} approved {invoice['number']} for {money(invoice['amount_cents'])} to go.", actor)
+    audit(state, job_id, "payapp_approved", f"{actor} signed {invoice['number']} for {money(invoice['amount_cents'])} to go (signed as {signed}).", actor)
     return job
+
+
+def freeze_approvals(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> None:
+    """Approve & send, at the moment it goes: the signatures that counted stay with the pay app as
+    it was sent, in the order of the list, and nothing changes them after (signed_approvals)."""
+    from domain import utcnow
+    valid = _valid(state, job, invoice)
+    invoice["approvals"] = [valid[p["id"]] for p in payapp_approvers(state, job) if p["id"] in valid]
+    invoice["approvals_frozen_at"] = utcnow()
+
+
+def signed_approvals(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, str]]:
+    """The signatures for the PDF's Approved by block and the pay app's page: those it went with
+    once sent, or, on a draft, those that count for it now."""
+    if invoice.get("approvals_frozen_at"):
+        sigs = invoice.get("approvals") or []
+    elif invoice.get("status") in {"draft", "awaiting_approval"}:
+        valid = _valid(state, job, invoice)
+        sigs = [valid[p["id"]] for p in payapp_approvers(state, job) if p["id"] in valid]
+    else:
+        sigs = []
+    return [{"name": a.get("name", ""), **_shown(a)} for a in sigs]
+
+
+def send_unapproved(job: dict[str, Any] | None, email: dict[str, Any]) -> str:
+    """Why a pay app's email can't go (the Outbox, and Send again), or "": "Unapproved pay
+    applications should never send" (Stephen, 18 Nov, answer 2). A pay app goes with the
+    signatures Approve & send kept; one marked sent without them (before 18 Nov) doesn't go now."""
+    if email.get("kind") != "pay_app" or not email.get("payapp_invoice_id"):
+        return ""
+    inv = next((i for i in (job or {}).get("invoices", []) if i["id"] == email["payapp_invoice_id"]), None)
+    if inv and inv.get("approvals_frozen_at") and inv.get("approvals"):
+        return ""
+    number = (inv or {}).get("number", "The pay app")
+    return f"{number} has no approval on record."
 
 
 def clear_stale_approvals(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> None:

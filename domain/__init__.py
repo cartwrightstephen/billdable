@@ -1396,11 +1396,6 @@ def approve_and_send(
     if not invoice:
         raise GateError("No draft pay app to send.")
     _need_playbook(state, job)
-    # Named approvers (Stephen, 10 Nov, decision 8): every one has approved this version of it.
-    waiting = approvals_missing(state, job, invoice)
-    if waiting:
-        raise GateError(f"{invoice['number']} needs approval from {', '.join(waiting)} before it goes.",
-                        [f"{name} hasn't approved it." for name in waiting], extra={"approvals_missing": True})
     if reviewed is not None and reviewed != review_stamp(state, job, invoice):
         raise GateError(f"{invoice['number']} changed since you opened it. Look it over again, then send." if reviewed
                         else f"Open {invoice['number']} and look it over, then send.", extra={"review_changed": True, "invoice_id": invoice["id"]})
@@ -1425,6 +1420,20 @@ def approve_and_send(
             raise GateError(f"{invoice['number']} changed since you opened it. Look at {flipped[0]['label']} again, then send.",
                             [f"{item['label']}: {item['check']['problems'][-1]}" for item in flipped],
                             extra={"review_changed": True, "invoice_id": invoice["id"]}, keep_changes=True)
+    # "Unapproved pay applications should never send" (Stephen, 18 Nov, answer 2): every approver
+    # (the client's list, the company's, or else the owners) has signed this version of it, and a
+    # client whose list is empty can't be sent to. The sender needs no approve permission. Checked
+    # last, so a question about the files going is answered before anyone signs what goes.
+    blocked = approval_blocked(state, job)
+    if blocked:
+        raise GateError(blocked, extra={"approvals_missing": True, "approvals_none": True},
+                        action=approval_way_out(state, job))
+    waiting = approvals_missing(state, job, invoice)
+    if waiting:
+        raise GateError(f"{invoice['number']} needs {'a signature' if len(waiting) == 1 else 'signatures'} from {', '.join(waiting)} before it goes.",
+                        [f"{name} hasn't signed it." for name in waiting], extra={"approvals_missing": True})
+    # The signatures go with it as they are now; nothing after this changes them (Stephen, 18 Nov).
+    freeze_approvals(state, job, invoice)
     invoice["status"] = "sent"
     invoice["sent_at"] = utcnow()
     invoice["approved_by"] = actor   # shown as "sent by" (R4-05)
@@ -2608,11 +2617,14 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     _payapp_figures(job, out)
     _co_flags(out)
     co_view_extras(state, job, out)
-    # Who has approved the open draft, of those named (Stephen, 10 Nov, decision 8).
+    # Who has signed the open draft (Stephen, 10 Nov, decision 8), and the signatures a sent pay
+    # app went with (18 Nov); the network address and browser kept with each stay on the server.
     for stored, inv in zip(job.get("invoices", []), out.get("invoices", [])):
         if stored.get("status") in DRAFT_STATUSES:
             inv["approval"] = approval_view(state, job, stored)
-            inv.pop("approvals", None)
+        elif stored.get("approvals_frozen_at"):
+            inv["signatures"] = signed_approvals(state, job, stored)
+        inv.pop("approvals", None)
     # Money > Unpaid's Recent contact (M11), only on jobs with money owed, to keep the page light.
     if out["money"]["outstanding_cents"] > 0:
         out["recent_contact"], out["contact_total"] = contact_log(state, job["id"])

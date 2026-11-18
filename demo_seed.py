@@ -237,6 +237,12 @@ class _Builder:
         self.files: dict[str, bytes] = {}
         self.state: dict[str, Any] = {"company": {"name": COMPANY_NAME}, "payers": [], "jobs": [], "audit": [], "email_log": [], "schema_version": 1}
         migrations.migrate(self.state)
+        # The owner approves (no approvers named, Stephen, 18 Nov): their signature goes on each pay
+        # app the demo sends. The server sets the owners again from the team on every load.
+        import auth
+        user = auth.user_by_email(OWNER_EMAIL) or {}
+        self.owner_id = user.get("id") or "demo-owner"
+        domain.set_team_owners(self.state, [{"id": self.owner_id, "name": OWNER_NAME}])
         self.ticket_no = 55100
         self.check_no = 20410
 
@@ -409,6 +415,7 @@ class _Builder:
         inv = next(inv for inv in job["invoices"] if inv["status"] in domain.DRAFT_STATUSES)
         self.at(days_ago, 17)
         self.paperwork(job, inv)
+        domain.approve_payapp(self.state, job["id"], ACTOR, self.owner_id, signature=OWNER_NAME, title="Owner")
         domain.approve_and_send(self.state, job["id"], ACTOR, link_base=self.link_base, company_id=self.company_id)
         return inv
 

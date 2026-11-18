@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import calendar_feed
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import exports
 import job_archive
 
@@ -267,7 +268,7 @@ class OlderClientTests(unittest.TestCase):
         for item in draft_of(job)["packet"]:
             item.update(required=False)
         domain._refresh_draft_gate(job, state)
-        domain.approve_and_send(state, job["id"])
+        approve_help.approve_and_send(state, job["id"])
         self.assertEqual(job["invoices"][-1]["status"], "sent")
         self.assertFalse(domain.job_view(state, job)["playbook_blocks"])
 
@@ -367,7 +368,7 @@ class PayAppGateTests(unittest.TestCase):
         domain.merge_payer(state, job["payer_id"], "payer-old")
         for item in draft_of(job)["packet"]:
             item.update(present=True, required=False)
-        self.assert_refused(lambda: domain.approve_and_send(state, job["id"]))
+        self.assert_refused(lambda: approve_help.approve_and_send(state, job["id"]))
         self.assert_refused(lambda: domain.send_pencil(state, job["id"]))
         self.assertEqual(draft_of(job)["sent_at"], None)
 
@@ -508,7 +509,7 @@ class JobPaperworkTests(unittest.TestCase):
         for item in sent["packet"]:
             item.update(required=False)
         domain._refresh_draft_gate(job, state)
-        domain.approve_and_send(state, job["id"])
+        approve_help.approve_and_send(state, job["id"])
         self.assertEqual(sent["status"], "sent")
         before = self.labels(sent)
         domain.set_job_paperwork(state, job["id"], {"packet": "Insurance certificate"}, "Pat")
@@ -640,7 +641,7 @@ class PublicJobItemTests(unittest.TestCase):
         for item in first["packet"]:
             item.update(required=False)
         domain._refresh_draft_gate(self.job, self.state)
-        domain.approve_and_send(self.state, self.job["id"])
+        approve_help.approve_and_send(self.state, self.job["id"])
         domain.record_progress(self.state, self.job["id"], 0, period_cents=100_000)
         self.assertFalse(self.item("Certified payroll")["present"])
 

@@ -3,7 +3,7 @@
 // in; a scan the app can't read picks nothing. Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
-export default async function ({ BASE, step, signedInPage, confirmIfAsked }) {
+export default async function ({ BASE, step, signedInPage, confirmIfAsked, signIfAsked }) {
   const TITLE = "Acme Electric - Unconditional Waiver and Release of Lien - Elm addition - Pay App 3";
   const BODY = "\nProject: Elm addition\nAmount: $5,000.00\nThe undersigned has been paid in full and releases all lien rights through 10/31/2026.\nSigned ____\n";
 
@@ -32,6 +32,7 @@ export default async function ({ BASE, step, signedInPage, confirmIfAsked }) {
     await question.locator('[data-action="waiver-answer"][data-answer="unconditional"][aria-current="true"]').click();
     const warning = p.locator(".unconditional-warning");
     await warning.filter({ hasText: "acme-oct.txt" }).waitFor();
+    await signIfAsked(p);   // the owner signs what goes (Stephen, 18 Nov), then gives the reason
     await warning.locator(`#override-reason-${made.inv}`).fill("Paid by wire");
     await warning.locator('[data-action="send-override"]').click();
     await confirmIfAsked(p);

@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import qty_import
 import sov
 from test_money import new_job, new_state, send_open
@@ -247,7 +248,7 @@ class NoDeadEndAtSend(unittest.TestCase):
         domain.confirm_packet_item(state, job["id"], item["id"], "Sam", looked=True, answer="conditional")
         self.assertTrue(item["present"])
         self.assertEqual(domain.blocker_lines(job), [])
-        self.assertIsNone(tried(state, domain.approve_and_send, job["id"], "Sam", reviewed=domain.review_stamp(state, job, draft)))
+        self.assertIsNone(tried(state, approve_help.approve_and_send, job["id"], "Sam", reviewed=domain.review_stamp(state, job, draft)))
 
     def test_withdrawing_the_change_order(self):
         state = new_state()
@@ -281,7 +282,7 @@ class NoDeadEndAtSend(unittest.TestCase):
         domain.mark_done(state, job["id"])
         self.confirmed(state, job)
         job["change_orders"][0]["status"] = "withdrawn"   # as withdraw_change_order left it before
-        refused = tried(state, domain.approve_and_send, job["id"], "Sam", reviewed=domain.review_stamp(state, job, draft_of(job)))
+        refused = tried(state, approve_help.approve_and_send, job["id"], "Sam", reviewed=domain.review_stamp(state, job, draft_of(job)))
         self.assertIsNotNone(refused)
         self.assertTrue(refused.extra.get("review_changed"))
         job = job_in(state, job["id"])

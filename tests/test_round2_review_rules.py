@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import importer
 from test_accounts import ServerCase
 from test_money import clear_packet, new_job, new_state, send_open
@@ -102,6 +103,8 @@ class Approvers(unittest.TestCase):
         domain.drop_approver(self.state, "u-ana")
         self.assertEqual(self.state["payers"][0]["payapp_approvers"], [])
         self.assertEqual(domain.approvals_missing(self.state, self.job, self.inv), [])
+        # Nobody named for that client: its pay apps can't be approved or sent (Stephen, 18 Nov).
+        self.assertTrue(domain.approval_blocked(self.state, self.job))
 
     def test_someone_without_the_permission_comes_off(self):
         domain.set_payapp_approvers(self.state, ["u-ana", "u-ben"], self.POOL)
