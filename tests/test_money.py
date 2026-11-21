@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 from waiver_help import signed_waiver
 import server
 from seed import seed_state
@@ -35,7 +36,7 @@ def clear_packet(state, job):
 
 def send_open(state, job):
     clear_packet(state, job)
-    domain.approve_and_send(state, job["id"], "Owner")
+    approve_help.approve_and_send(state, job["id"], "Owner")
     return job["invoices"][-1]
 
 
@@ -86,7 +87,7 @@ class RetainageTests(unittest.TestCase):
         self.assertIn("A lien waiver is still due.", raised.exception.blockers)
         signed_waiver(state, job["id"], "unconditional_final")
         domain.send_waiver(state, job["id"], "Owner", release_id=job["retainage_waivers"][-1]["id"])
-        domain.close_job(state, job["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
 
 
@@ -143,13 +144,13 @@ class DraftTests(unittest.TestCase):
         domain.mark_done(state, job["id"])
         clear_packet(state, job)
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(state, job["id"])
+            approve_help.approve_and_send(state, job["id"])
         self.assertIn("Add the email pay apps go to", str(raised.exception))
         self.assertIn("ap_email", raised.exception.fields)
         self.assertIn(job["invoices"][-1]["status"], domain.DRAFT_STATUSES, "nothing changed")
         self.assertFalse(state.get("email_log"))
         domain.update_payer(state, payer["id"], {"ap_email": "dana@example.com"})
-        domain.approve_and_send(state, job["id"])
+        approve_help.approve_and_send(state, job["id"])
         self.assertEqual(state["email_log"][-1]["to"], "dana@example.com")
 
     def test_repeat_customer_keeps_saved_contact(self):  # R1-05
@@ -272,7 +273,8 @@ class ChangeOrderTests(unittest.TestCase):
         state = new_state()
         job = new_job(state)
         # A negative amount is a credit (R3-06), refused only when larger than the contract.
-        for title, amount in [("", 1000), ("Tile", 0), ("Tile", -job["contract_cents"] - 1)]:
+        # No amount saves it without a price (Round 2 decision 2), so 0 is no longer refused here.
+        for title, amount in [("", 1000), ("Tile", -job["contract_cents"] - 1)]:
             with self.assertRaises(domain.GateError):
                 domain.add_change_order(state, job["id"], title, amount)
         with self.assertRaises(domain.GateError):
@@ -289,7 +291,7 @@ class ChangeOrderTests(unittest.TestCase):
         inv = clear_packet(state, job)
         self.assertEqual(inv["amount_cents"], 1_120_000)
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(state, job["id"])
+            approve_help.approve_and_send(state, job["id"])
         self.assertTrue(any("CO 1" in b or "Change Order 1" in b for b in raised.exception.blockers))
 
 
@@ -413,7 +415,7 @@ class ReviewFindingTests(unittest.TestCase):
         domain.approve_change_order(state, "job-ponce", job["change_orders"][-1]["id"])
         domain.draft_invoice(state, "job-ponce", strict=True)
         inv = clear_packet(state, job)
-        domain.approve_and_send(state, "job-ponce", "Owner")
+        approve_help.approve_and_send(state, "job-ponce", "Owner")
         domain.match_payment(state, "job-ponce", inv["amount_cents"], "CHK-P2", invoice_id=inv["id"])
         rec = signed_waiver(state, "job-ponce")
         # Two are owed (this pay app's and the older one): it is said to be for the pay app (B1).
@@ -556,7 +558,7 @@ class ShortPayTests(unittest.TestCase):  # R4-01
         self.assertEqual([b["kind"] for b in domain.close_blocker_items(job)], ["waiver"])
         signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
-        domain.close_job(state, job["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
 
     def test_short_pay_needs_a_payment_and_a_reason(self):
@@ -601,7 +603,7 @@ class ReopenAndUndoTests(unittest.TestCase):  # R4-02
         domain.settle_short_pay(state, job["id"], inv["id"], "Customer held $1,000 for touch-ups")
         signed_waiver(state, job["id"])
         domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
-        domain.close_job(state, job["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         with self.assertRaises(domain.GateError):
             domain.match_payment(state, job["id"], 100_000, "CHK 2")
         with self.assertRaises(domain.GateError) as raised:
@@ -613,7 +615,11 @@ class ReopenAndUndoTests(unittest.TestCase):  # R4-02
         self.assertEqual(state["audit"][-1]["action"], "reopen_job")
         domain.match_payment(state, job["id"], 100_000, "CHK 2")
         self.assertEqual((inv["short_pay_cents"], domain.job_money(job)["collected_cents"]), (0, 1_000_000))
-        domain.close_job(state, job["id"])
+        # The late money owes its own waiver (decision 5) before the job closes again.
+        self.assertEqual((inv["waiver_due"], inv["waiver_sent"], domain.waiver_cents(job, inv)), (True, False, 100_000))
+        signed_waiver(state, job["id"], label="Waiver for the touch-up money")
+        domain.send_waiver(state, job["id"], "Owner", invoice_id=inv["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
         with self.assertRaises(domain.GateError):
             domain.reopen_job(state, "job-none", "x")
@@ -623,7 +629,7 @@ class ReopenAndUndoTests(unittest.TestCase):  # R4-02
         job = new_job(state, contract=1_000_000, retainage=10)
         domain.record_progress(state, job["id"], 400_000)
         send_open(state, job)
-        domain.mark_done(state, job["id"])
+        domain.mark_done(state, job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         final = job["invoices"][-1]
         self.assertTrue(domain.can_undo_done(job))
         job_route(state, job, "undo-done", {})
@@ -802,7 +808,7 @@ class RetainageChangeTests(unittest.TestCase):
             with self.assertRaises(domain.GateError) as raised:
                 domain.chase_retainage(state, job["id"], amount_cents=amount)
             self.assertIn("Use Final pay app first", str(raised.exception))
-        domain.mark_done(state, job["id"])
+        domain.mark_done(state, job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         for item in job["closeout_packet"]:
             domain.resolve_packet_item(state, job["id"], item["id"], reason="In the binder")
         with self.assertRaises(domain.GateError) as raised:

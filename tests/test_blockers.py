@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import doc_check
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import payapp_pdf
 import payer_page
 from test_packet import new_state, new_job, record, draft
@@ -81,7 +82,7 @@ class StephensReportTests(Case):
                 self.assertIn(f"Conditional waiver on progress payment: look at {title} and confirm it.", domain.blocker_lines(self.job))
                 self.assertEqual(self.inv["status"], "draft")
                 with self.assertRaises(domain.GateError):
-                    domain.approve_and_send(self.state, self.job["id"], "Sam")
+                    approve_help.approve_and_send(self.state, self.job["id"], "Sam")
 
     def test_the_title_no_longer_matters(self):
         good = self.stored("zzz", pdf(GOOD))
@@ -137,7 +138,7 @@ class AcceptanceTests(Case):  # acceptance.md 66-70, 74, 76, 80
         rec = self.stored("waiver.pdf", pdf(GOOD), typed="")
         confirm_suggested(self.state, self.job)  # no reader: the answer alone
         domain.resolve_packet_item(self.state, self.job["id"], next(p for p in self.inv["packet"] if p["label"] == "Invoice")["id"], reason="x")
-        domain.approve_and_send(self.state, self.job["id"], "Sam")
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam")
         self.assertEqual(rec["waiver_kind"], "conditional_progress")
 
     def test_an_unconditional_waiver_filed_as_other_still_warns(self):
@@ -162,31 +163,32 @@ class AcceptanceTests(Case):  # acceptance.md 66-70, 74, 76, 80
     def test_an_override_prints_no_tick_for_the_client(self):
         for item in self.inv["packet"]:
             domain.resolve_packet_item(self.state, self.job["id"], item["id"], "Sam", reason="with PM on site")
-        domain.approve_and_send(self.state, self.job["id"], "Sam")
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam")
         body = self.state["email_log"][-1]["body"]
         self.assertNotIn("[x]", body)
         self.assertNotIn("accounted for", body)
         self.assertIn("Not attached: Conditional waiver on progress payment", body)
         self.assertNotIn("✓", payer_page.render(self.state, self.job, self.inv, "/p/x").split("<h2>Supporting documents</h2>")[1].split("</div>")[0])
 
-    def test_a_final_waiver_while_retainage_is_held_needs_a_confirm(self):
+    def test_a_final_waiver_while_retainage_is_held_is_refused(self):  # decision 6, Nov 17: was a confirm
         state = new_state()
         job = new_job(state, retainage=10, packet="Invoice.")
         domain.record_progress(state, job["id"], 500_000)
         inv = draft(job)
         for item in inv["packet"]:
             domain.resolve_packet_item(state, job["id"], item["id"], "Sam", reason="x")
-        domain.approve_and_send(state, job["id"], "Sam")
+        approve_help.approve_and_send(state, job["id"], "Sam")
         domain.match_payment(state, job["id"], inv["amount_cents"], "chk")
         from waiver_help import signed_waiver
         signed_waiver(state, job["id"], "unconditional_final", "Final waiver")
         sent = len(state["email_log"])
         with self.assertRaises(domain.GateError) as raised:
             domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final")
-        self.assertTrue(raised.exception.extra["final_waiver_warning"])
+        self.assertTrue(raised.exception.extra["final_waiver_held"])
         self.assertEqual(len(state["email_log"]), sent)
-        domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final", confirm_final=True)
-        self.assertEqual(len(state["email_log"]), sent + 1)
+        with self.assertRaises(domain.GateError):
+            domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final", confirm_final=True)
+        self.assertEqual(len(state["email_log"]), sent)
 
     def test_not_needed_on_a_waiver_is_this_job_only_unless_said(self):  # accept. 10
         state = new_state()
@@ -214,7 +216,7 @@ class AcceptanceTests(Case):  # acceptance.md 66-70, 74, 76, 80
         inv = draft(job)
         for item in inv["packet"]:
             domain.resolve_packet_item(state, job["id"], item["id"], "Sam", reason="x")
-        domain.approve_and_send(state, job["id"], "Sam")
+        approve_help.approve_and_send(state, job["id"], "Sam")
         domain.match_payment(state, job["id"], inv["amount_cents"] - 1, "chk")
         with self.assertRaises(domain.GateError):
             domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"])
@@ -227,10 +229,10 @@ class AcceptanceTests(Case):  # acceptance.md 66-70, 74, 76, 80
         extra = self.stored("Lumber receipt", pdf("x" * 20), kind="other", typed="")
         domain.change_payapp_attachments(self.state, self.job["id"], self.inv["id"], "add_record", extra["id"])
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(self.state, self.job["id"], "Sam", reviewed=stamp)
+            approve_help.approve_and_send(self.state, self.job["id"], "Sam", reviewed=stamp)
         self.assertTrue(raised.exception.extra["review_changed"])
         self.assertFalse(self.state["email_log"])
-        domain.approve_and_send(self.state, self.job["id"], "Sam", reviewed=domain.review_stamp(self.state, self.job, self.inv))
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam", reviewed=domain.review_stamp(self.state, self.job, self.inv))
         self.assertEqual(self.inv["status"], "sent")
 
     def test_a_lump_sum_schedule_is_no_backup(self):
@@ -359,7 +361,7 @@ class OverrideTests(Case):
         reason = "Original at the GC office"
         for item in self.inv["packet"]:
             domain.resolve_packet_item(self.state, self.job["id"], item["id"], "Sam", reason=reason)
-        domain.approve_and_send(self.state, self.job["id"], "Sam")
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam")
         self.assertNotIn(reason, self.state["email_log"][-1]["body"])
         self.assertNotIn(reason, payer_page.render(self.state, self.job, self.inv, "/p/x"))
         self.assertNotIn(reason.encode("latin-1"), payapp_pdf.for_invoice(self.state, self.job["id"], self.inv["id"])[0])
@@ -471,7 +473,7 @@ class ExistingDataTests(unittest.TestCase):
         self.assertEqual(domain.blocker_lines(job), [])
         self.assertEqual(inv["status"], "awaiting_approval")
         self.assertTrue(all(p["present"] for p in inv["packet"]))
-        domain.approve_and_send(state, job["id"], "Sam")
+        approve_help.approve_and_send(state, job["id"], "Sam")
         self.assertIn(rec["file_ids"][0], state["email_log"][-1]["attachments"], "an old automatic attachment still goes")
 
     def test_a_sent_pay_app_does_not_change(self):
@@ -484,7 +486,7 @@ class ExistingDataTests(unittest.TestCase):
         for item in inv["packet"]:
             if not item["present"]:
                 domain.resolve_packet_item(state, job["id"], item["id"], reason="test")
-        domain.approve_and_send(state, job["id"], "Sam")
+        approve_help.approve_and_send(state, job["id"], "Sam")
         before = copy.deepcopy(inv["packet"])
         item = next(p for p in inv["packet"] if p["kind"] == "waiver")
         for call in (lambda: domain.resolve_packet_item(state, job["id"], item["id"], "Sam", reason="late"),
@@ -509,7 +511,7 @@ class ReviewTests(Case):
         view = next(i for i in domain.job_view(self.state, self.job)["invoices"] if i["id"] == self.inv["id"])
         self.assertEqual(self.inv, before, "showing it changes nothing")
         preview = view["email_preview"]
-        domain.approve_and_send(self.state, self.job["id"], "Sam")
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam")
         mail = self.state["email_log"][-1]
         self.assertEqual(preview["subject"], mail["subject"])
         self.assertEqual(preview["body"].replace(domain.PREVIEW_SENDER, "Sam").replace("\n\n" + "See this pay app and its supporting documents, and tell us it reached you:\n" + domain.PREVIEW_LINK, ""), mail["body"])

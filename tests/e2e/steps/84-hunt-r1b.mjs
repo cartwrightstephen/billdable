@@ -3,7 +3,7 @@
 // the one tap that says which waiver it is. Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
-export default async function ({ BASE, step, signedInPage, confirmIfAsked }) {
+export default async function ({ BASE, step, signedInPage, confirmIfAsked, signFirst }) {
   const call = (p, path, body) => p.evaluate(async ([u, b]) => {
     const r = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b || {}) });
     return { status: r.status, data: await r.json() };
@@ -16,6 +16,7 @@ export default async function ({ BASE, step, signedInPage, confirmIfAsked }) {
     await call(p, `/api/jobs/${job.id}/sov-progress`, { done: { [job.sov.lines[0].id]: "0.4" } });
     const draft = (await read(p, job.id)).invoices.at(-1);
     for (const item of draft.packet) if (item.required && !item.present) await call(p, `/api/jobs/${job.id}/resolve/${item.id}`, { reason: "In hand" });
+    await signFirst(p, job.id);
     const sent = await call(p, `/api/jobs/${job.id}/send`, { reviewed: (await read(p, job.id)).invoices.at(-1).email_preview.stamp });
     assert.equal(sent.status, 200, JSON.stringify(sent.data));
     const inv = (await read(p, job.id)).invoices.at(-1);

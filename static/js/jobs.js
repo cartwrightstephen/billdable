@@ -143,7 +143,8 @@ export function finalPayAppConfirm(j, p) {
   const amount = `${money(p.amount_cents)}${p.retainage_cents ? ` (${money(p.gross_cents)} less ${money(p.retainage_cents)} retainage)` : ""}`;
   const replaces = p.replaces ? ` It replaces draft ${unesc(p.replaces)}.` : "";
   if (p.final) return { text: `${termText("Final pay app")} for ${name}: ${amount}. ${finishes}${replaces}`, button: termText("Final pay app") };
-  const cos = (p.pending_cos || []).map(c => `CO ${c.number} (${money(c.amount_cents)})`).join(", ");
+  // An unpriced change order has no amount to state (decision 2), not $0.00.
+  const cos = (p.pending_cos || []).map(c => `CO ${c.number} (${c.unpriced ? "no price yet" : money(c.amount_cents)})`).join(", ");
   return {
     text: `${termText("This won't be the final pay app")} for ${name}${cos ? `: ${cos} isn't signed or on the bill` : ""}. ${termText("Pay app")} ${unesc(p.number)}: ${amount}. ${finishes}${replaces}`,
     button: termText("Draft pay app"),
@@ -207,8 +208,10 @@ export function waiverPick(j, inv = null, release = null) {
 export function waiverSendForm(j, inv, disabled = false, release = null) {
   const key = release ? release.id : inv ? inv.id : "job";
   const pick = waiverPick(j, inv, release);
+  // A final waiver can't go while money on the job is still to come (domain.final_waiver_holds, decision 6).
+  const held = (j.final_waiver_holds || []).length > 0;
   return `<div class="form-inline">
-    <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}>${v}</option>`).join("")}</select>
+    <select id="waiver-kind-${key}" aria-label="Waiver type">${Object.entries(WAIVER_KINDS).map(([k, v]) => `<option value="${k}" ${k === pick ? "selected" : ""}${k.endsWith("_final") && held ? " disabled" : ""}>${v}</option>`).join("")}</select>
     <button class="btn small" data-action="waiver" data-id="${j.id}"${inv ? ` data-inv="${inv.id}"` : ""}${release ? ` data-release="${release.id}"` : ""}${disabled ? " disabled" : ""}>Approve & send</button>
   </div>
   <p class="sub waiver-hint" data-waiver-hint="${key}">${waiverHint(pick)}</p>`;
@@ -263,6 +266,21 @@ export function defaultJobId(openJobs, lastId = "") {
 
 const DRAFTS = ["draft", "awaiting_approval"];
 const OPEN_FOR_PAYMENT = ["sent", "approved", "partial"];   // domain.OPEN_FOR_PAYMENT
+
+// The pay apps sent and not paid in full (domain.unpaid_pay_apps): while there are any, Final pay
+// app takes a reason, kept as an override (Stephen, 10 Nov, decision 6).
+export function unpaidPayApps(j) { return (j.invoices || []).filter(i => OPEN_FOR_PAYMENT.includes(i.status)); }
+
+// "PA-01", "PA-01 and PA-02": as domain._numbers.
+export function payAppNames(invoices) {
+  const names = invoices.map(i => unesc(i.number));
+  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+// The override that let the final pay app go with an earlier one unpaid: who, when and why.
+export function finalOverrideText(o) {
+  return o ? `Final pay app with ${payAppNames((o.unpaid || []).map(number => ({ number })))} unpaid. Overridden by ${o.by} on ${fmtDate(o.at)}: ${o.reason}` : "";
+}
 
 // Work already billed, before retainage, on the pay apps that count, leaving out an open draft
 // (a progress entry replaces it). The server's _billed_gross, which a draw is added to.
@@ -446,6 +464,7 @@ export const ACTION_PERM = {
   "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",
   close: "close_jobs", reopen: "close_jobs",
   done: "manage_jobs", "undo-done": "manage_jobs", edit: "manage_jobs", "approve-co": "manage_jobs", "withdraw-co": "manage_jobs", "include-co": "manage_jobs",
+  "co-price": "manage_jobs", "payapp-approve": "approve_payapps",
 };
 
 // perms: {list: the signed-in person's permissions (me.perms)}; {owner: true} allows all.
@@ -459,10 +478,13 @@ export function mayTake(action, perms) {
 
 // The job-page button keys that need a permission.
 const KEY_ACTION = { send: "send", waiver: "waiver", retainage: "retainage", void: "void-draft", close: "close", match: "match-payment", retpay: "retainage-paid",
-  draft: "draft", progress: "progress", done: "done", undo: "undo-done" };
+  draft: "draft", progress: "progress", done: "done", undo: "undo-done", coprice: "co-price" };
 
-const SECONDARY_ORDER = ["clear", "send", "waiver", "match", "follow", "conversation", "pencil", "pencil-ok", "pencil-no", "sentback", "packet", "closeout",
+const SECONDARY_ORDER = ["clear", "coprice", "send", "waiver", "match", "follow", "conversation", "pencil", "pencil-ok", "pencil-no", "sentback", "packet", "closeout",
   "draft", "progress", "done", "retainage", "retpay", "co", "close", "undo", "void", "qbo"];
+
+// The button for a change order still missing its price: the same words as its Dashboard row.
+export function coPriceLabel(co) { return `Add the price to CO ${co.number}`; }
 
 export function jobActions(j, { now = new Date(), demo = false, perms = null } = {}) {
   if (j.closed) return { primary: null, more: [] };
@@ -487,6 +509,10 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
       add("clear", blockerButton(j), `data-action="open-packet" data-job="${j.id}"${draft ? ` data-inv="${draft.id}"` : ""}${first ? ` data-item="${first.item_id}"` : ""}`, "bill");
     }
   }
+  // A change order saved without a price (Stephen, 10 Nov, decision 2): one task each, in the
+  // words of its Dashboard row (domain.today_rows "co_info"). Not the job's main step.
+  (j.change_orders || []).filter(c => c.status === "pending" && (c.needs || []).length)
+    .forEach(co => add("coprice", coPriceLabel(co), `data-action="open-co" data-job="${j.id}" data-co="${co.id}"`, "bill"));
   // Every send passes "Before you send" (R1-06): the job page opens it instead of sending.
   if (draft) add("send", "Review & send", `data-action="open-payapp" data-job="${j.id}" data-inv="${draft.id}" data-focus=".send-check"`, "bill");
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "paid");
@@ -535,7 +561,7 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
 // tasks: [{key, label, attrs, allowed}] — one this person may not take is listed without a button.
 // blockers: what the pay app is missing, listed in the banner. others: the rest, allowed only.
 export const MAIN_BUTTONS = [["co", "New Change Order"], ["progress", "Progress Pay App"], ["done", "Final Pay App"], ["match", "Record a Payment"]];
-const TASK_ORDER = ["clear", "pencil-ok", "pencil-no", "send", "waiver", "follow", "draft", "closeout", "retainage", "close"];
+const TASK_ORDER = ["clear", "coprice", "pencil-ok", "pencil-no", "send", "waiver", "follow", "draft", "closeout", "retainage", "close"];
 export function jobPageActions(j, { now = new Date(), demo = false, perms = null } = {}) {
   if (j.closed) return { main: [], tasks: [], blockers: [], others: [] };
   const { all } = jobActions(j, { now, demo, perms });
@@ -559,7 +585,7 @@ export function jobPageActions(j, { now = new Date(), demo = false, perms = null
 }
 
 // The permission a job-page action takes, in the Team page's words (domain/profiles.py PERMISSIONS).
-const PERM_NAMES = { send_payapps: "Send pay apps", send_waivers: "Send lien waivers", ask_retainage: "Ask for retainage",
+const PERM_NAMES = { send_payapps: "Send pay apps", approve_payapps: "Approve pay apps before they go", send_waivers: "Send lien waivers", ask_retainage: "Ask for retainage",
   record_payments: "Record payments", void: "Delete drafts, pull back sent pay apps and accept short pays", close_jobs: "Finish and reopen jobs",
   manage_jobs: "Change a job's contract, change orders and mark work done" };
 
@@ -599,10 +625,10 @@ function closeBlockerButtons(j, b, now) {
       ...(b.invoice_id ? [{ label: `Open ${b.number}`, attrs: `data-action="open-payapp" data-job="${id}" data-inv="${b.invoice_id}"` }] : []),
       ...(b.creditable_cents ? [{ label: "Take credit off retainage", attrs: `data-action="toggle-form" data-form="retcredit"`, needs: "retainage-credit" }] : []),
       ...(b.settleable === false ? [] : [{ label: "Record refund or credit", attrs: `data-action="toggle-form" data-form="overbilled"`, needs: "overbilling-settled" }])];
-    case "outstanding": return [{ label: "Record a payment", attrs: `data-action="toggle-form" data-form="match"` },
+    case "outstanding": return [{ label: "Record a payment", attrs: `data-action="toggle-form" data-form="match"`, needs: "match-payment" },
       ...shortPayable(j).map(i => ({ label: shortPayLabel(i), attrs: shortPayAttrs(j, i), needs: "accept-short-pay" }))];
     case "retainage": return [
-      { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"` },
+      { label: "Record retainage paid", attrs: `data-action="toggle-form" data-form="retpay"`, needs: "retainage-paid" },
       ...(retainageAskWaits(j, now) && !closeoutMissing(j) ? [] : [closeoutMissing(j)
         // An older job without a closeout packet keeps those items in the job paperwork (as on Closeout).
         ? { label: "Open closeout documents", attrs: closeoutAttrs(j) }

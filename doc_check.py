@@ -183,7 +183,14 @@ def reading(text: str) -> dict[str, Any]:
         guess = "unconditional" if many[0] > many[1] else "conditional" if many[1] > many[0] else ""
     form = (any(_names_a_waiver(line) for line in heads) or bool(_STATUTORY_TITLE.search(text)) or bool(_TYPE_NEAR_RIGHTS.search(text))
             or bool(_OPERATIVE.search(text) and _LIEN.search(text)) or _claim_waiver(plain))
-    return {"guess": guess, "form": form}
+    # Final, not interim or progress, in a heading that names a waiver, or the statute's final title:
+    # a "Final lien release" that says neither word is asked about, never taken as progress.
+    final = any(_FINAL.search(line) and not _PROGRESS.search(line) and _names_a_waiver(line) for line in heads) \
+        or bool(_FINAL_TITLE.search(text))
+    return {"guess": guess, "form": form, "final": final}
+
+
+_FINAL_TITLE = re.compile(r"\b(?:waiver|release)\b[^.\n]{0,80}\b(?:on|upon)\s+final\s+payment\b", re.I)
 
 
 FORM_LINES = 600   # lines looked at for a form of each kind (separate_forms)
@@ -211,7 +218,7 @@ def waiver_reading(files: list[tuple[str, str, Any]]) -> dict[str, Any]:
     does, else blank. "both": the files read as different waivers, or a file has a conditional and
     an unconditional form in it; then there is no guess, since the app can't tell which one the
     person means. A photo, a scan or a file that couldn't be read says nothing. Never raises."""
-    out = {"guess": "", "form": False, "both": False}
+    out = {"guess": "", "form": False, "both": False, "final": False}
     try:
         guesses = set()
         for _name, ext, data in files:
@@ -222,6 +229,7 @@ def waiver_reading(files: list[tuple[str, str, Any]]) -> dict[str, Any]:
                 continue
             got = reading(read.text)
             out["form"] = out["form"] or got["form"]
+            out["final"] = out["final"] or got["final"]
             out["both"] = out["both"] or separate_forms(read.text)
             guesses.add(got["guess"])
         out["both"] = out["both"] or {"conditional", "unconditional"} <= guesses

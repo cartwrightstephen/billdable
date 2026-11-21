@@ -301,7 +301,24 @@ def _settings_auth_company_admins(data: dict[str, Any]) -> bool:
     return changed
 
 
-AUTH_STEPS: list[Callable[[dict[str, Any]], bool]] = [_settings_auth_company_admins]
+def _demo_electrical_owner(data: dict[str, Any]) -> bool:
+    """Round 2 (Stephen, 10 Nov, decision 11): the demo company is Redbud Electric now, and its
+    account Dana Whitfield, owner@redbudelectric.example. The account that was Alex Hartline,
+    owner@hartline.example, is renamed in place, so it keeps its id and sessions and ensure_demo
+    doesn't make a second one. A name someone gave it since is kept. Safe to run again."""
+    import demo_seed
+    changed = False
+    taken = {u.get("email") for u in data.get("users", [])}
+    for user in data.get("users", []):
+        if user.get("email") == demo_seed.OLD_OWNER_EMAIL and demo_seed.OWNER_EMAIL not in taken:
+            user["email"] = demo_seed.OWNER_EMAIL
+            if user.get("name") == demo_seed.OLD_OWNER_NAME:
+                user["name"] = demo_seed.OWNER_NAME
+            changed = True
+    return changed
+
+
+AUTH_STEPS: list[Callable[[dict[str, Any]], bool]] = [_settings_auth_company_admins, _demo_electrical_owner]
 SCHEMA_VERSION = len(STEPS) + 1
 
 

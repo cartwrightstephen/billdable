@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import migrations
 import sov
 from seed import seed_state
@@ -62,7 +63,7 @@ def send_one(state, job, total, tag):
     record(state, job, "photo", f"Photos {tag}")
     record(state, job, "waiver", f"Signed conditional waiver {tag}")
     confirm_suggested(state, job)
-    domain.approve_and_send(state, job["id"])
+    approve_help.approve_and_send(state, job["id"])
     return inv
 
 
@@ -194,7 +195,7 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         domain.skip_packet_item(s, job["id"], w["id"], "Homeowner, doesn't take waivers", whole_client=True)
         record(s, job, "photo", "Photos")
         confirm_suggested(s, job)
-        domain.approve_and_send(s, job["id"])
+        approve_help.approve_and_send(s, job["id"])
         domain.match_payment(s, job["id"], inv["amount_cents"], "chk")
         self.assertFalse(inv["waiver_due"])
         self.assertEqual(inv["waiver_not_needed"]["reason"], "Homeowner, doesn't take waivers")
@@ -202,7 +203,7 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         self.assertNotEqual(domain.status_label(job), "Payment received, waiver not sent")
         domain.mark_done(s, job["id"])
         self.assertNotIn("A lien waiver is still due.", domain.close_blockers(job))
-        domain.close_job(s, job["id"])
+        domain.close_job(s, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
 
     def test_no_waiver_due_on_a_retainage_release_for_that_client(self):
@@ -213,7 +214,7 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         domain.skip_packet_item(s, job["id"], next(p for p in inv["packet"] if p.get("waiver_kind"))["id"], "Doesn't take them", whole_client=True)
         record(s, job, "photo", "Photos")
         confirm_suggested(s, job)
-        domain.approve_and_send(s, job["id"])
+        approve_help.approve_and_send(s, job["id"])
         domain.match_payment(s, job["id"], inv["amount_cents"], "chk")
         domain.record_retainage_payment(s, job["id"], inv["retainage_cents"], "ret")
         release = job["retainage_waivers"][-1]
@@ -239,7 +240,7 @@ class NoWaiverClientTests(unittest.TestCase):  # B2 (r10_no_waiver_client.py, r1
         self.assertIn("Handed the signed form to Sam on site", row["detail"])
         self.assertIn("PA-PINE-01", row["detail"])
         domain.mark_done(s, job["id"])
-        domain.close_job(s, job["id"])
+        domain.close_job(s, job["id"], closeout_override="Closeout binder handed over")
 
     def test_an_older_job_level_waiver_can_be_settled_the_same_way(self):
         s = seed_state()
@@ -279,7 +280,7 @@ class FinalWaiverWithRetainageTests(unittest.TestCase):  # B3 (r5_final_ret.py)
         record(s, job, "photo", "Photos Oct")
         record(s, job, "waiver", "Signed conditional waiver PA-2")
         confirm_suggested(s, job)
-        domain.approve_and_send(s, job["id"])
+        approve_help.approve_and_send(s, job["id"])
         self.assertEqual(inv2["conditional_waiver_kind"], "conditional_progress")
         domain.match_payment(s, job["id"], inv2["amount_cents"], "chk2")
         self.assertEqual(domain.waiver_stages(s, job, inv2)["unconditional"]["kind"], "unconditional_progress")
@@ -288,7 +289,7 @@ class FinalWaiverWithRetainageTests(unittest.TestCase):  # B3 (r5_final_ret.py)
         s = new_state()
         job = new_job(s, packet="Progress photos")
         first = send_one(s, job, 500_000, "PA-1")
-        domain.mark_done(s, job["id"])
+        domain.mark_done(s, job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         item = next(i for i in draft(job)["packet"] if i.get("waiver_kind"))
         self.assertEqual(item["waiver_kind"], "conditional_progress", "PA-1 is still owed, and a final waiver would give it up (Nov 5)")
         domain.match_payment(s, job["id"], first["amount_cents"], "chk")
@@ -417,7 +418,7 @@ class TicketSkipSticksTests(unittest.TestCase):  # B7 (r12_ticket_skip.py)
         record(s, job, "photo", "Photos 1")
         record(s, job, "waiver", "Signed conditional waiver 1")
         confirm_suggested(s, job)
-        domain.approve_and_send(s, job["id"])
+        approve_help.approve_and_send(s, job["id"])
         domain.record_sov_progress(s, job["id"], {ids[0]: "300"})
         t2 = next(p for p in draft(job)["packet"] if p["kind"] == "ticket")
         self.assertFalse(t2["required"])
@@ -462,7 +463,7 @@ class SentPayAppPaperworkStaysTests(unittest.TestCase):  # B9 (r6_attach_sent.py
         self.assertTrue(self.photos["required"])
 
     def test_closeout_paperwork_still_takes_them(self):
-        domain.mark_done(self.s, self.job["id"])
+        domain.mark_done(self.s, self.job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         item = self.job["closeout_packet"][0]
         domain.skip_packet_item(self.s, self.job["id"], item["id"], "Not on this job")
         self.assertFalse(item["required"])

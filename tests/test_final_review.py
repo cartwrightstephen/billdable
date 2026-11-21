@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import alerts
 import doc_check
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import mailer
 import monthly
 import server
@@ -74,7 +75,7 @@ class TheWaiverQuestion(unittest.TestCase):
 
     def test_many_forward_sentences_still_read_and_the_title_decides(self):
         text = "Conditional waiver.\n" + "The contractor will deliver an unconditional waiver.\n" * 201 + "UNCONDITIONAL WAIVER AND RELEASE"
-        self.assertEqual(reading(text), {"guess": "conditional", "form": True})
+        self.assertEqual({k: reading(text)[k] for k in ("guess", "form")}, {"guess": "conditional", "form": True})
 
 
 class ThroughTheServer(Base):
@@ -119,7 +120,8 @@ class ThroughTheServer(Base):
                 self.assertEqual(self.waiver_item()["waiver_question"]["guess"], "unconditional")
                 status, data = self.post(f"/api/jobs/{self.job_id}/packet-confirm/{item['id']}", {"looked": True, "shown": [rid], "answer": "unconditional"}, cookie=self.bob)
                 self.assertEqual(status, 200, data)
-                self.assertEqual(self.record(rid)["waiver_kind"], "unconditional_progress", "the answer types it")
+                # A form titled final stays final whatever item it sits on (Georgia waivers, Nov 18).
+                self.assertEqual(self.record(rid)["waiver_kind"], "unconditional_final" if "FINAL" in title else "unconditional_progress", "the answer types it")
                 self.assertIn(rid, [r["record_id"] for r in self.draft()["unconditional_attached"]])
                 self.clear_the_rest()
                 status, data = self.send(cookie=self.bob)
@@ -166,7 +168,7 @@ def signed_co(state, job, cents):
 class PayingBackARefund(unittest.TestCase):
     def test_paid_back_while_the_contract_has_room_to_bill(self):
         s = new_state(); j = new_job(s, contract=10_000_000); i = j["id"]
-        domain.record_progress(s, i, 5_000_000); clear_packet(s, j); domain.approve_and_send(s, i, "Owner"); inv = j["invoices"][-1]
+        domain.record_progress(s, i, 5_000_000); clear_packet(s, j); approve_help.approve_and_send(s, i, "Owner"); inv = j["invoices"][-1]
         domain.match_payment(s, i, 5_000_000, "c", invoice_id=inv["id"])
         signed_co(s, j, -6_000_000); domain.settle_overbilling(s, i, "Refund")
         signed_co(s, j, 6_000_000)
@@ -210,7 +212,7 @@ class TheCardAndABlankBox(unittest.TestCase):
         line = sov.lines(j)[0]
         domain.add_daily_record(s, i, "Work", details={"sections": {"quantities": [{"line_id": line["id"], "qty": "10%"}]}})
         domain.record_sov_progress(s, i, {line["id"]: "0.507"})
-        clear_packet(s, j); domain.approve_and_send(s, i, "Owner")
+        clear_packet(s, j); approve_help.approve_and_send(s, i, "Owner")
         domain.record_sov_progress(s, i, {}, stored={line["id"]: "1000"})
         draft = j["invoices"][-1]
         domain.void_draft(s, i, "Sam")
@@ -227,7 +229,7 @@ class AnAmountTypedAhead(unittest.TestCase):
         line = sov.lines(j)[0]
         domain.record_sov_progress(s, i, {line["id"]: "0.245"})
         domain.set_payapp_amounts(s, i, {line["id"]: "2450.81"})   # 81 cents past the quantity
-        clear_packet(s, j); domain.approve_and_send(s, i, "Owner")
+        clear_packet(s, j); approve_help.approve_and_send(s, i, "Owner")
         domain.record_sov_progress(s, i, {}, stored={line["id"]: "1000"})
         domain.set_payapp_amounts(s, i, {line["id"]: "1519.61"})   # more than the stored materials suggested
         entry = j["invoices"][-1]["sov_sheet"][0]
@@ -278,7 +280,7 @@ class CreditOffRetainageAndTheFinalWaiver(unittest.TestCase):
         self.assertTrue(release["waiver_due"])
         signed_waiver(self.s, self.i, "unconditional_final")
         domain.send_waiver(self.s, self.i, "Sam", release_id=release["id"])
-        domain.close_job(self.s, self.i, "Sam")
+        domain.close_job(self.s, self.i, "Sam", closeout_override="Closeout binder handed over")
         self.assertTrue(self.j["closed"])
 
     def test_a_final_waiver_already_sent_isnt_owed_twice(self):

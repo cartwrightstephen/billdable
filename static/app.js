@@ -23,6 +23,7 @@ import { setOutboxJobFilter } from "./js/views/communications.js";
 import { loadReminders } from "./js/views/automations.js";
 import { newInboxCount, loadImportSettings, guessPasteSource } from "./js/views/inbox.js";
 import { loadHelperReview, loadAdminCompanies, companySwitch, setAuditJobFilter } from "./js/views/settings.js";
+import { approverTick } from "./js/approvers.js";
 import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml } from "./js/views/auth.js";
 import { setAiVisible, updateAiContext } from "./js/views/helper.js";
 
@@ -332,6 +333,7 @@ function listenForActions() {
       if (hint) hint.textContent = waiverHint(e.target.value);
     }
     if (e.target.dataset && e.target.dataset.companySwitch) companySwitch(e.target);
+    if (e.target.dataset && e.target.dataset.approver) approverTick(e.target);
     // The Payments import: a pay app picked for a row ticks it; a tick is remembered across redraws (R5-03).
     if (e.target.dataset && e.target.dataset.qboPick !== undefined && paymentImport) {
       const n = +e.target.dataset.qboPick;

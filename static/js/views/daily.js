@@ -168,7 +168,7 @@ function sectionHtml(key, j) {
   }
   if (key === "co_work") {
     const cos = (j.change_orders || []).filter(c => c.status !== "withdrawn");
-    const options = [["", "New work, not priced yet"], ...cos.map(c => [c.id, `CO ${unesc(String(c.number))} ${unesc(c.title || "")}`.trim()])];
+    const options = [["", "New work, not priced yet"], ...cos.map(c => [c.id, `CO ${unesc(String(c.number))} ${unesc(c.title || "")}${c.unpriced ? " (no price yet)" : ""}`.trim()])];
     const rows = Array.from({ length: daily.rows.co }, (_, n) => `<div class="form-grid">
         ${field({ form: "daily", name: `co_${n}`, id: `daily-co-${n}`, label: "Change order", options })}
         ${field({ form: "daily", name: `co_hours_${n}`, id: `daily-co-hours-${n}`, label: "Hours", inputmode: "decimal" })}

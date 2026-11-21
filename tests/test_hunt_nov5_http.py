@@ -14,6 +14,7 @@ from urllib.parse import quote, urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hartline_demo import hartline_demo
 
 import auth
 import doc_check
@@ -21,12 +22,14 @@ import domain
 import helper
 import importer
 import server
+from approve_help import sign_http  # noqa: E402
 import sov
 import storage
 
 PASSWORD = "correct horse battery"
 
 
+@hartline_demo
 class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -151,6 +154,7 @@ class FileThatSaysUnconditional(Base):
         return rid
 
     def send(self, cookie=None, **body):
+        sign_http(self, self.job_id, self.ann)   # the owner signs first (Stephen, 18 Nov: nothing goes unapproved)
         draft = self.draft()
         return self.post(f"/api/jobs/{self.job_id}/send", {"reviewed": draft["email_preview"]["stamp"], **body}, cookie=cookie)
 
@@ -324,6 +328,7 @@ class EveryWaiverFileIsRead(Base):
         for item in draft["packet"]:
             if item["required"] and not item["present"]:
                 self.post(f"/api/jobs/{self.job_id}/resolve/{item['id']}", {"reason": "In hand"})
+        sign_http(self, self.job_id, self.ann)
         status, data = self.post(f"/api/jobs/{self.job_id}/send", {"reviewed": self.draft()["email_preview"]["stamp"]})
         self.assertEqual(status, 200, data)
         self.invoice = self.job()["invoices"][-1]

@@ -66,7 +66,11 @@ _CODE_WRONG: dict[str, int] = {}
 class AuthError(ValueError):
     pass
 
-DEMO_EMAIL = "owner@hartline.example"
+DEMO_EMAIL = "owner@redbudelectric.example"  # demo_seed.OWNER_EMAIL; was owner@hartline.example (renamed by migrations)
+# The demo's addresses, now and before the rename: nobody else may hold one, or the demo can't be
+# made or renamed on the next start (B15). Only the built-in demo account (enforce_policy=False) has one.
+RESERVED_EMAILS = {DEMO_EMAIL, "owner@hartline.example"}
+RESERVED_WORDS = "That email address is kept for the sample company. Use your own."
 DEMO_PASSWORD = "demo"
 DEMO_COMPANY_ID = "co-hartline"
 SESSION_DAYS = 14
@@ -464,6 +468,8 @@ def create_user(
     email = email.strip().lower()
     if not EMAIL_RE.match(email):
         raise ValueError("A real email is required.")
+    if enforce_policy and email in RESERVED_EMAILS:
+        raise ValueError(RESERVED_WORDS)
     if enforce_policy and len(password) < MIN_PASSWORD:
         raise ValueError(f"Password must be at least {MIN_PASSWORD} characters.")
     if not password:
@@ -955,6 +961,14 @@ def owner_names(company_id: str) -> list[str]:
         return [u.get("name") or u.get("email", "") for u in _load()["users"] if u["company_id"] == company_id and u.get("role", "owner") == "owner"]
 
 
+def owners(company_id: str) -> list[dict[str, str]]:
+    """[{id, name}] of the company's owners: they approve pay apps when no approvers are named
+    (Stephen, 18 Nov). Read from the cached file, as every request's session check is."""
+    with LOCK:
+        return [{"id": u["id"], "name": u.get("name") or u.get("email", "")} for u in _read()["users"]
+                if u["company_id"] == company_id and u.get("role", "owner") == "owner"]
+
+
 def team(company_id: str) -> dict[str, Any]:
     with LOCK:
         data = _load()
@@ -986,6 +1000,8 @@ def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor
     profile_id = _check_profile(role, profiles)
     role = "owner" if profile_id == OWNER_PROFILE else "member"
     email = email.strip().lower()
+    if email in RESERVED_EMAILS:
+        raise AuthError(RESERVED_WORDS)
     with LOCK:
         data = _load()
         actor = _require_owner(data, company_id, actor_id, managers)
@@ -1028,6 +1044,8 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
             raise AuthError("This invite has already been used.")
         if any(u["email"] == entry["email"] for u in data["users"]):
             raise AuthError("That email already has a Duracash account.")
+        if entry["email"] in RESERVED_EMAILS:   # an invite made before the address was kept
+            raise AuthError(RESERVED_WORDS)
         data["tokens"].pop(key, None)
         user = {
             "id": _new_user_id(data),

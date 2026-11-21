@@ -20,6 +20,7 @@ from typing import Any
 
 import domain
 import metrics
+from exports import text
 
 BILLED = domain.BILLED_STATUSES
 BUCKETS = [("current", "0–30 days", 0, 30), ("31_60", "31–60 days", 31, 60), ("61_90", "61–90 days", 61, 90), ("over_90", "Over 90 days", 91, None)]
@@ -94,7 +95,7 @@ def compute(state: dict[str, Any], today: date | None = None) -> dict[str, Any]:
     aging = {k: 0 for k, *_ in BUCKETS}
     by_client: dict[str, dict[str, Any]] = {}
     aging_rows = []
-    backlog = unbilled = overbilled = pending_co = retainage = open_contract = 0
+    backlog = unbilled = overbilled = pending_co = retainage = open_contract = unpriced_cos = 0
     open_jobs = completed_12 = 0
     backlog_jobs = []
 
@@ -127,6 +128,9 @@ def compute(state: dict[str, Any], today: date | None = None) -> dict[str, Any]:
             unbilled += m["unbilled_completed_cents"]
             overbilled += m["overbilled_cents"]
             pending_co += m["pending_co_cents"]
+            # Round 2 decision 2: a change order saved before it has a price counts nowhere in the
+            # money, so it is listed by number rather than as $0.
+            unpriced_cos += sum(1 for co in job.get("change_orders", []) if co.get("status") == "pending" and co.get("unpriced"))
         for inv in job.get("invoices", []):
             d = _day(inv.get("sent_at"))
             if inv.get("status") in BILLED and d and d >= first_month:
@@ -135,11 +139,21 @@ def compute(state: dict[str, Any], today: date | None = None) -> dict[str, Any]:
                 if key in monthly:
                     monthly[key]["billed_cents"] += gross
                     c["billed_12m_cents"] += gross
-        for p in job.get("payments", []):
-            d = _day(p.get("matched_at"))
+        # Collected is money that stayed: payments and retainage released, less refunds, each in
+        # the month it happened, as the payments CSV adds up (B1, B11).
+        moves = [(p.get("matched_at"), p["amount_cents"]) for p in job.get("payments", [])]
+        moves += [(p.get("at"), int(p.get("amount_cents") or 0)) for p in job.get("retainage_payments", [])]
+        # Only money that came in can go back, as job_money caps it.
+        came_in = sum(cents for _at, cents in moves)
+        for s in job.get("overbilling_settled") or []:
+            back = max(0, min(int(s.get("returned_cents", s.get("cents") or 0)), came_in))
+            came_in -= back
+            moves.append((s.get("at"), -back))
+        for at, cents in moves:
+            d = _day(at)
             key = d and f"{d.year:04d}-{d.month:02d}"
             if key in monthly:
-                monthly[key]["collected_cents"] += p["amount_cents"]
+                monthly[key]["collected_cents"] += cents
 
     receivable = sum(aging.values())
     billed_12 = sum(r["billed_cents"] for r in monthly.values())
@@ -163,6 +177,7 @@ def compute(state: dict[str, Any], today: date | None = None) -> dict[str, Any]:
         "unbilled_cents": unbilled,
         "overbilled_cents": overbilled,
         "pending_co_cents": pending_co,
+        "unpriced_cos": unpriced_cos,
         "open_jobs": open_jobs,
         "open_contract_cents": open_contract,
         "completed_jobs_12m": completed_12,
@@ -182,13 +197,15 @@ def to_csv(f: dict[str, Any]) -> str:
     out = io.StringIO()
     w = csv.writer(out)
     d = lambda cents: f"{cents / 100:.2f}"
-    w.writerow([f"{f['company']} financial summary", f"as of {f['as_of']}"])
+    # Names are typed by people: each goes as text a spreadsheet won't run as a formula (B3).
+    w.writerow([text(f"{f['company']} financial summary"), f"as of {f['as_of']}"])
     w.writerow([])
     w.writerow(["Summary", "Amount"])
     for label, key in [("Owed by clients (receivables)", "receivable_cents"), ("Retainage held", "retainage_cents"), ("Backlog (signed work not done yet)", "backlog_cents"),
                        ("Done, not billed", "unbilled_cents"), ("Billed ahead of the contract", "overbilled_cents"), ("Change orders waiting for signature", "pending_co_cents"),
                        ("Open contract value", "open_contract_cents"), ("Billed, last 12 months", "billed_12m_cents"), ("Collected, last 12 months", "collected_12m_cents")]:
         w.writerow([label, d(f[key])])
+    w.writerow(["Change orders without a price yet", f["unpriced_cos"]])
     w.writerow(["Open jobs", f["open_jobs"]])
     w.writerow(["Jobs completed, last 12 months", f["completed_jobs_12m"]])
     w.writerow(["Days from sent to paid, median", "" if f["paid_median_days"] is None else f["paid_median_days"]])
@@ -199,7 +216,7 @@ def to_csv(f: dict[str, Any]) -> str:
     w.writerow([])
     w.writerow(["Job", "Client", "Pay app", "Days since sent", "Owed"])
     for r in f["aging_rows"]:
-        w.writerow([r["job"], r["client"], r["pay_app"], r["days"], d(r["cents"])])
+        w.writerow([text(r["job"]), text(r["client"]), text(r["pay_app"]), r["days"], d(r["cents"])])
     w.writerow([])
     w.writerow(["Month", "Billed", "Collected"])
     for r in f["monthly"]:
@@ -207,10 +224,10 @@ def to_csv(f: dict[str, Any]) -> str:
     w.writerow([])
     w.writerow(["Client", "Owed", "Retainage held", "Share of receivables %", "Billed, last 12 months", "Share of billings %"])
     for r in f["clients"]:
-        w.writerow([r["client"], d(r["owed_cents"]), d(r["retainage_cents"]), "" if r["owed_share"] is None else r["owed_share"],
+        w.writerow([text(r["client"]), d(r["owed_cents"]), d(r["retainage_cents"]), "" if r["owed_share"] is None else r["owed_share"],
                     d(r["billed_12m_cents"]), "" if r["billed_share"] is None else r["billed_share"]])
     w.writerow([])
     w.writerow(["Backlog by job", "Client", "Contract with change orders", "Billed", "Done, not billed", "Work not done yet"])
     for r in f["backlog_jobs"]:
-        w.writerow([r["job"], r["client"], d(r["contract_cents"]), d(r["billed_cents"]), d(r["unbilled_cents"]), d(r["left_cents"])])
+        w.writerow([text(r["job"]), text(r["client"]), d(r["contract_cents"]), d(r["billed_cents"]), d(r["unbilled_cents"]), d(r["left_cents"])])
     return out.getvalue()

@@ -23,11 +23,15 @@ jobs:
           npm install --no-save playwright@1.47.2
           npx playwright install --with-deps chromium
       - name: Start a server on a fresh data directory
+        # The steps are written against the Hartline Remodeling data (seed.py), not the live
+        # demo; a second server has the live demo (Redbud Electric, demo_seed.py) for 86-demo.mjs.
         run: |
-          DURACASH_DATA_DIR="$RUNNER_TEMP/data" BACKUP_HOURS=0 HOST=127.0.0.1 PORT=8765 python3 server.py > "$RUNNER_TEMP/server.log" 2>&1 &
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8765/healthz > /dev/null && break; sleep 1; done
+          DURACASH_DEMO_SEED=hartline DURACASH_DATA_DIR="$RUNNER_TEMP/data" BACKUP_HOURS=0 HOST=127.0.0.1 PORT=8765 python3 server.py > "$RUNNER_TEMP/server.log" 2>&1 &
+          mkdir -p "$RUNNER_TEMP/demo-data"
+          DURACASH_DATA_DIR="$RUNNER_TEMP/demo-data" BACKUP_HOURS=0 HOST=127.0.0.1 PORT=8766 python3 server.py > "$RUNNER_TEMP/demo-server.log" 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8765/healthz > /dev/null && curl -sf http://127.0.0.1:8766/healthz > /dev/null && break; sleep 1; done
       - name: Browser smoke test
-        run: DURACASH_URL_UNDER_TEST=http://127.0.0.1:8765 node tests/e2e/smoke.mjs
+        run: DURACASH_URL_UNDER_TEST=http://127.0.0.1:8765 DURACASH_DEMO_URL_UNDER_TEST=http://127.0.0.1:8766 node tests/e2e/smoke.mjs
       - name: Server log
         if: always()
-        run: tail -n 80 "$RUNNER_TEMP/server.log"
+        run: tail -n 80 "$RUNNER_TEMP/server.log" "$RUNNER_TEMP/demo-server.log"

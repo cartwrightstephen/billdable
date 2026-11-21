@@ -60,7 +60,7 @@ class PeriodAndDueTests(unittest.TestCase):
         domain.record_progress(state, job["id"], 400_000)
         first = send_open(state, job)
         self.assertFalse(first["final"])
-        domain.mark_done(state, job["id"])
+        domain.mark_done(state, job["id"], unpaid_reason="Paid at closeout")   # an earlier pay app is unpaid (decision 6)
         inv = send_open(state, job)
         self.assertTrue(inv["final"])
         self.assertIn(b"FINAL APPLICATION", pdf_text(state, job, inv))

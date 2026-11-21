@@ -2,8 +2,8 @@
 
 The layout follows the familiar G702/G703 pattern (summary lines 1-9, then a
 line-by-line sheet), but it is Duracash's own document, not an AIA form, and
-it says so on every page. Waiver documents are not generated: lien waiver
-forms are set by state law, so the contractor supplies their own.
+it says so on every page. Lien waiver forms are set by state law: the contractor
+supplies their own, or prints a state's form filled in by waiver_form.py.
 
 Written with the standard library only: a small PDF writer using the built-in
 Helvetica and Courier fonts (no embedding), landscape US Letter.
@@ -177,8 +177,11 @@ def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, Any], invoice: dict[str, Any]) -> bytes:
-    """`company` is the company record (name, address, phone, license) or, for older callers, its name."""
+def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, Any], invoice: dict[str, Any],
+           approvals: list[dict[str, Any]] | None = None) -> bytes:
+    """`company` is the company record (name, address, phone, license) or, for older callers, its name.
+    `approvals`: the signatures for the Approved by block (domain.signed_approvals); for_invoice
+    passes them."""
     company = {"name": company} if isinstance(company, str) else (company or {})
     company_name = company.get("name", "")
     figures = summary(job, invoice)
@@ -260,6 +263,20 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         p.text(MARGIN + 20, y, f"Retainage released to date, recorded separately: {_money(figures['released'])}.", "F1", 9)
     y -= 30
     p.text(MARGIN + 20, y, "Contractor signature: ____________________________________     Date: ______________", "F1", 10)
+    # "Approval ... involve[s] application of a signature to a document" (Stephen, 18 Nov): each
+    # approver's typed signature, title and date, as kept with the pay app when it went.
+    if approvals:
+        y -= 30
+        p.text(MARGIN + 20, y, "APPROVED BY", "F2", 9)
+        for n, sig in enumerate(approvals):
+            if y < 70:
+                p.text(MARGIN + 20, y - 14, f"and {len(approvals) - n} more, kept with the contractor's records.", "F1", 9)
+                break
+            y -= 16
+            who = ", ".join(x for x in [sig.get("name", ""), sig.get("title", "")] if x)
+            p.text(MARGIN + 20, y, _fit(f"/s/ {sig.get('signed_name') or sig.get('name', '')}", 40), "F2", 10)
+            p.text(MARGIN + 240, y, _fit(who, 44), "F1", 9.5)
+            p.right(MARGIN + 520, y, f"Date {str(sig.get('approved_at') or '')[:10]}", 9.5)
     pages.append(p)
 
     # Continuation sheet: every schedule line, or the pay app's lines when the job has no schedule.
@@ -408,4 +425,5 @@ def for_invoice(state: dict[str, Any], job_id: str, invoice_id: str) -> tuple:
         return None, None
     payer = next((p for p in state.get("payers", []) if p["id"] == job["payer_id"]), {})
     name = re.sub(r"[^A-Za-z0-9._-]", "-", invoice["number"]) + ".pdf"
-    return render(state.get("company", {}), job, payer, invoice), name
+    import domain   # here: domain imports this module
+    return render(state.get("company", {}), job, payer, invoice, domain.signed_approvals(state, job, invoice)), name

@@ -56,3 +56,18 @@ test("Financials has its own address under Money", () => {
   assert.equal(routes.pathFor("financials"), "/money/financials");
   assert.deepEqual(routes.routeFromPath("/money/financials"), { view: "financials" });
 });
+
+test("a month whose only money is a refund draws below the line, never a negative height (B11)", () => {
+  const rows = [{ month: "2026-10", billed_cents: 500000, collected_cents: 300000 },
+                { month: "2026-11", billed_cents: 0, collected_cents: -200000 }];
+  const svg = fin.monthlyChart(rows);
+  const heights = [...svg.matchAll(/height="(-?[\d.]+)"/g)].map(m => Number(m[1]));
+  assert.ok(heights.every(h => h >= 0), `no negative heights: ${heights}`);
+  const axis = Number(svg.match(/class="bar-axis"[^>]*y1="([\d.]+)"/)[1]);
+  const refund = svg.match(/collected -\$2,000\.00<\/title>[\s\S]*?<rect class="bar-collected" x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/);
+  assert.ok(refund, "the tooltip keeps the true figure");
+  assert.equal(Number(refund[1]), axis, "the refund bar starts at the line and hangs below it");
+  assert.ok(Number(refund[2]) > 0);
+  const oct = svg.match(/<rect class="bar-billed" x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/);
+  assert.equal(Number(oct[1]) + Number(oct[2]), axis, "a positive bar stands on the line");
+});

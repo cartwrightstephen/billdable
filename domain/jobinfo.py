@@ -243,4 +243,5 @@ def payer_extras(state: dict[str, Any], payer: dict[str, Any]) -> None:
     payer["playbook_missing"] = playbook_missing(payer)  # read before the type below fills in
     payer["client_type"] = client_type_of(payer)
     payer["retainage_default"] = default_retainage_pct(payer)   # what New job starts at (round 1, item 1)
+    payer["partial_waivers"] = payer.get("partial_waivers") is not False   # decision 5: on unless turned off
     payer["packet_items"] = [] if payer.get("no_paperwork") else parse_packet_text(payer.get("packet") or "")

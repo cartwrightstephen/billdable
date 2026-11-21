@@ -624,7 +624,17 @@ def file_and_mark_done(state: dict[str, Any], item_id: str, actor: str) -> dict[
     job_id = item.get("says_done_job_id")
     if not job_id:
         raise domain.GateError("This item doesn't say a job is done.")
+    # Done since the message came in: say so and leave the message, as mark_done would, before
+    # the unpaid check below files it and opens a form that has nothing left to draft.
+    if domain._open_job(state, job_id).get("work_status") == "complete":
+        raise domain.GateError("Job is already marked done.")
     file_item(state, item_id, job_id, item["kind"] if item["kind"] != "daily" else "note", actor)
+    # An earlier pay app unpaid needs a reason first (Stephen, 10 Nov, decision 6), and the reason
+    # box is on the job's Final pay app form: the message is filed and the page opens that form,
+    # rather than refusing here and leaving the message where it was.
+    unpaid = domain.unpaid_pay_apps(domain._open_job(state, job_id))
+    if unpaid:
+        return {"needs_reason": [inv["number"] for inv in unpaid], "job_id": job_id}
     note = (item.get("text") or "").strip().splitlines()[0][:300] if item.get("text") else ""
     return domain.mark_done(state, job_id, actor, notes=f"From {item.get('from') or 'a message'}: {note}".strip(),
                             note_record=False)

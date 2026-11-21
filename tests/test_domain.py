@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 from waiver_help import signed_waiver
 from seed import seed_state
 
@@ -99,7 +100,7 @@ class MoneyFileTests(unittest.TestCase):
         state = seed_state()
         domain.draft_invoice(state, "job-oak")
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(state, "job-oak")
+            approve_help.approve_and_send(state, "job-oak")
         self.assertGreaterEqual(len(raised.exception.blockers), 2)
         domain.resolve_packet_item(state, "job-oak", "pkt-oak-waiver", reason="Received by email")
         domain.resolve_packet_item(state, "job-oak", "pkt-oak-tickets", reason="Received by email")
@@ -107,7 +108,7 @@ class MoneyFileTests(unittest.TestCase):
         job["change_orders"][0]["status"] = "approved"
         job["change_orders"][0]["included_in_billing"] = False
         domain._refresh_draft_gate(job)
-        domain.approve_and_send(state, "job-oak", actor="owner")
+        approve_help.approve_and_send(state, "job-oak", actor="owner")
         invoice = job["invoices"][-1]
         self.assertEqual(invoice["status"], "sent")
         self.assertEqual(invoice["approved_by"], "owner")
@@ -136,7 +137,9 @@ class MoneyFileTests(unittest.TestCase):
         domain.match_payment(state, "job-turner", 5000000, "QBO-20012")
         job = domain._job(state, "job-turner")
         self.assertEqual(job["invoices"][-1]["status"], "partial")
-        self.assertFalse(job["waiver_due"])
+        # It owes a waiver for what came in (decision 5, Nov 17), not the paid-in-full one.
+        self.assertTrue(job["waiver_due"] and not job["waiver_sent"])
+        self.assertEqual(domain.waiver_cents(job, job["invoices"][-1]), 5000000)
         self.assertEqual(domain.job_money(job)["outstanding_cents"], 6970000)
 
     def test_playbook_update_and_learn_rejection(self):
@@ -156,7 +159,7 @@ class MoneyFileTests(unittest.TestCase):
         job["change_orders"][0]["included_in_billing"] = False
         domain._refresh_draft_gate(job)
         domain.draft_invoice(state, "job-oak")
-        domain.approve_and_send(state, "job-oak", actor="owner")
+        approve_help.approve_and_send(state, "job-oak", actor="owner")
         self.assertGreater(len(state.get("email_log", [])), 0)
         self.assertEqual(state["email_log"][-1]["kind"], "pay_app")
 
@@ -324,7 +327,7 @@ class DeleteJobTests(unittest.TestCase):  # R3-09
         domain.record_progress(state, paid["id"], 400_000, "", "owner")
         waiver = next(p for p in paid["invoices"][-1]["packet"] if p["kind"] == "waiver")
         domain.skip_packet_item(state, paid["id"], waiver["id"], "They take no waiver")
-        domain.approve_and_send(state, paid["id"], "owner")
+        approve_help.approve_and_send(state, paid["id"], "owner")
         domain.match_payment(state, paid["id"], 100_000, "1001", "owner")
         with self.assertRaises(domain.GateError) as raised:
             domain.delete_job(state, paid["id"])

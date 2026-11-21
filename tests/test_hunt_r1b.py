@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import server
 import sov
 from test_blockers import GOOD, Case, pdf
@@ -30,7 +31,7 @@ class WhichWaiverIsThis(Case):
         self.assertFalse(self.waiver["present"], "and still waits for the answer")
         self.assertEqual(domain.item_question(self.job, self.waiver), {"guess": "conditional", "reads_as": "conditional"})
         with self.assertRaises(domain.GateError):
-            domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
+            approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
         with self.assertRaises(domain.GateError) as raised:
             domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read, answer="maybe")
         self.assertIn("answer", raised.exception.fields)
@@ -56,10 +57,10 @@ class WhichWaiverIsThis(Case):
             if not item["present"]:
                 domain.resolve_packet_item(self.state, self.job["id"], item["id"], "Sam", reason="x")
         with self.assertRaises(domain.GateError) as refused:
-            domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
+            approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
         self.assertEqual(str(refused.exception), domain.UNCONDITIONAL_ATTACHED)
         self.assertIn("Sam said it is the unconditional waiver", " ".join(refused.exception.blockers))
-        domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read, unconditional_override="Paid by wire")
+        approve_help.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read, unconditional_override="Paid by wire")
         self.assertEqual(self.inv["unconditional_override"]["record_ids"], [rec["id"]])
 
     def test_a_record_typed_before_keeps_its_type_and_the_app_picks_nothing_for_a_scan(self):
@@ -98,12 +99,12 @@ class WhichWaiverIsThis(Case):
                 domain.resolve_packet_item(self.state, self.job["id"], item["id"], "Sam", reason="x")
         self.waiver["present"] = True   # as it was saved
         with self.assertRaises(domain.GateError) as refused:
-            domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
+            approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
         self.assertTrue(refused.exception.keep_changes and refused.exception.extra["waiver_question"])
         self.assertFalse(self.waiver["present"])
         self.assertEqual(self.inv["status"], "draft")
         domain.confirm_packet_item(self.state, self.job["id"], self.waiver["id"], "Sam", read_file=self.read, answer="conditional")
-        domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
         self.assertEqual(self.inv["status"], "sent")
 
     def test_a_sent_pay_app_never_changes(self):
@@ -112,7 +113,7 @@ class WhichWaiverIsThis(Case):
         for item in self.inv["packet"]:
             if not item["present"]:
                 domain.resolve_packet_item(self.state, self.job["id"], item["id"], "Sam", reason="x")
-        domain.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam", read_file=self.read)
         before = [dict(p) for p in self.inv["packet"]]
         rec.pop("waiver_answer")
         domain.record_progress(self.state, self.job["id"], 500_000)
@@ -150,15 +151,17 @@ class ClosingOut(unittest.TestCase):
         self.assertEqual(rec["waiver_kind"], "unconditional_final")
         with self.assertRaises(domain.GateError) as refused:
             domain.chase_retainage(self.state, self.job["id"], "Sam")
-        self.assertEqual(str(refused.exception), domain.UNCONDITIONAL_ATTACHED)
+        self.assertTrue(str(refused.exception).startswith("A final waiver can't go out until all the money"))
         view = domain.job_view(self.state, self.job)
         self.assertEqual([r["record_id"] for r in view["closeout_unconditional"]], [rec["id"]])
         member = server.Ctx(user={"role": "member"}, body={"unconditional_override": "Because"}, company_id="co", actor="Mo")
         with self.assertRaises(domain.GateError):
             server._retainage(None, self.state, self.job["id"], None, member)
-        domain.chase_retainage(self.state, self.job["id"], "Owner", unconditional_override="Retainage paid by wire already")
-        self.assertEqual(self.job["retainage_overrides"][0]["reason"], "Retainage paid by wire already")
-        self.assertTrue(any(a["action"] == "unconditional_override" for a in self.state["audit"]))
+        # It is the final lien release: no reason sends it before the retainage is in (decision 6).
+        with self.assertRaises(domain.GateError) as held:
+            domain.chase_retainage(self.state, self.job["id"], "Owner", unconditional_override="Retainage paid by wire already")
+        self.assertEqual(held.exception.extra["final_waiver_held"], ["$1,000.00 of retainage is still held"])
+        self.assertNotIn("retainage_overrides", self.job)
 
     def test_a_conditional_one_goes_with_the_request(self):
         rec = signed_waiver(self.state, self.job["id"], None, "Final waiver")

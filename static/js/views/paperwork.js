@@ -106,8 +106,29 @@ function waiverForms() {
 }
 export function setWaiverForms(data) { forms = data; formsAsked = true; }
 
-// The state form for a job (M22): the job's state from its address, or one picked here.
-export function waiverFormHtml(j, kind) {
+// The state's form filled in from the job, to print and sign (decision 1): only for the job's own
+// state, and never a final one while money on the job is still to come (decision 6), except with
+// the retainage request when that is the last money (the server's retainage_final_holds, the rule
+// its send gate uses; Georgia waivers, Nov 18).
+export function filledFormLink(j, kind, forId, st, entry) {
+  if (!entry || !entry.fillable || !kind || st !== unesc(j.waiver_state || "")) return "";
+  const final = kind.endsWith("_final");
+  const lastMoney = unesc(forId || "") === "retainage" && Array.isArray(j.retainage_final_holds) && !j.retainage_final_holds.length;
+  if (final && (j.final_waiver_holds || []).length && !lastMoney) return "";
+  const q = forId ? `?for=${encodeURIComponent(unesc(forId))}` : "";
+  return `<p><a class="btn small secondary" href="/api/jobs/${j.id}/waiver-form/${final ? "final" : "interim"}.pdf${q}" target="_blank" rel="noopener" data-filled-form>Fill in the ${entry.name} form</a></p>`;
+}
+
+// The state form for a job (M22): the job's state from its address, or one picked here. Where the
+// server has the state's form switched on (decision 1), a link to it filled in for this waiver:
+// forId is the pay app or retainage release it is for.
+// A sent pay app whose waiver is settled (paid, nothing owed a waiver) has no form left to fill in.
+export function filledFormOffered(inv) {
+  if (!inv || DRAFT.includes(inv.status)) return true;
+  return !(inv.status === "paid" && !(inv.waiver_due && !inv.waiver_sent));
+}
+
+export function waiverFormHtml(j, kind, forId = "", offerFilled = true) {
   const all = waiverForms();
   const st = pickedState[j.id] || unesc(j.waiver_state || "");
   const entry = all && st ? (all.states || {})[st] : null;
@@ -120,6 +141,7 @@ export function waiverFormHtml(j, kind) {
   else if (!entry) body = (all.other && all.other.notes || []).map(n => `<p class="sub">${n}</p>`).join("");
   else body = `<p><strong>${entry.name}</strong>: ${entry.citation}</p>
     ${kind && entry.forms && entry.forms[kind] ? `<p>Form for this waiver: <strong>${entry.forms[kind]}</strong></p>` : ""}
+    ${offerFilled ? filledFormLink(j, kind, forId, st, entry) : ""}
     <ul class="plain-list">${(entry.notes || []).map(n => `<li>${n}</li>`).join("")}</ul>`;
   return `<div class="waiver-form-state"><h3>State form</h3>${picker}${body}</div>`;
 }
@@ -415,7 +437,7 @@ function packetItemsHtml(j, inv, packet, isCloseout, pick = null) {
         <button class="btn small" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}">On this job</button>
         ${can("company") ? `<button class="btn small secondary" data-action="packet-skip" data-id="${j.id}" data-item="${p.id}" data-whole-client="1">For this whole client</button>` : ""}</div>` : ""}
       ${formOpen["resolve-" + p.id] ? `<div class="form-inline"><input id="resolve-reason-${p.id}" placeholder="Why it can go without a checked file" aria-label="Why it can go without a checked file" class="grow"><button class="btn small" data-action="resolve" data-id="${j.id}" data-item="${p.id}">Save override</button></div>` : ""}` : ""}
-      ${waiver && !skipped ? `<details class="waiver-details"><summary>What the signed waiver must show</summary>${waiverChecklistHtml(j, waiver, inv)}${waiverFormHtml(j, waiver)}</details>` : ""}
+      ${waiver && !skipped ? `<details class="waiver-details"><summary>What the signed waiver must show</summary>${waiverChecklistHtml(j, waiver, inv)}${waiverFormHtml(j, waiver, inv ? inv.id : isCloseout ? "retainage" : "", filledFormOffered(inv))}</details>` : ""}
     </div>`;
   }).join("")}`;
 }

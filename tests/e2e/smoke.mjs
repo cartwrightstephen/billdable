@@ -1,6 +1,11 @@
 // Browser smoke test (P1-10): drives the demo account the way a person would.
-// Runs in GitHub Actions (.github/workflows/e2e.yml) against a fresh server:
+// Runs in GitHub Actions (.github/workflows/e2e.yml) against a fresh server whose demo company is
+// the Hartline Remodeling data the steps are written against (DURACASH_DEMO_SEED=hartline):
+//   DURACASH_DEMO_SEED=hartline DURACASH_DATA_DIR=$(mktemp -d) PORT=8765 python3 server.py
 //   DURACASH_URL_UNDER_TEST=http://127.0.0.1:8765 node tests/e2e/smoke.mjs
+// The live demo (Redbud Electric, demo_seed.py) is looked at by 86-demo.mjs on a second server
+// started without DURACASH_DEMO_SEED, named by DURACASH_DEMO_URL_UNDER_TEST. DURACASH_STEPS=86
+// runs only the step files whose names start with one of the prefixes given (comma-separated).
 // Needs Playwright: npm install --no-save playwright@1.47.2 && npx playwright install --with-deps chromium
 //
 // This file is the runner: it signs in, then runs every tests/e2e/steps/*.mjs in name order, one
@@ -28,7 +33,7 @@ async function signedInPage(viewport) {
   await page.goto(BASE + "/");
   const status = await page.evaluate(async () => (await fetch("/api/auth/login", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "owner@hartline.example", password: "demo" }),
+    body: JSON.stringify({ email: "owner@redbudelectric.example", password: "demo" }),
   })).status);
   assert.equal(status, 200, "demo sign-in");
   return page;
@@ -45,9 +50,29 @@ async function confirmIfAsked(p) {
   }
 }
 
-const ctx = { browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors };
+// No pay app goes unapproved, and approving is signing (Stephen, 18 Nov 2026): with nobody named,
+// the owner signs on Review & send before Approve & send. signIfAsked signs on the page when the
+// form is there; signFirst does the same through the API for steps that send that way.
+async function signIfAsked(p, name = "Smoke Signer") {
+  const form = p.locator(".send-check .approve-sign");
+  if (!(await form.count())) return;
+  await form.locator('input[name="signature"]').fill(name);
+  await form.locator('[data-action="payapp-approve"]').click();
+  await form.waitFor({ state: "detached" });
+}
+const signFirst = (p, jobId, name = "Smoke Signer") => p.evaluate(async ([id, signer]) => {
+  const job = (await (await fetch(`/api/jobs/${id}`)).json()).job;
+  const d = job.invoices.find((i) => ["draft", "awaiting_approval"].includes(i.status));
+  if (!d || !d.approval || !(d.approval.waiting || []).length) return 0;
+  const r = await fetch(`/api/jobs/${id}/payapp-approve`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ invoice_id: d.id, stamp: d.approval.stamp, signature: signer }) });
+  return r.status;
+}, [jobId, name]);
+
+const ctx = { browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors, signIfAsked, signFirst };
 const stepsDir = new URL("./steps/", import.meta.url);
-for (const f of readdirSync(stepsDir).filter(f => f.endsWith(".mjs")).sort()) {
+const only = (process.env.DURACASH_STEPS || "").split(",").map(s => s.trim()).filter(Boolean);
+for (const f of readdirSync(stepsDir).filter(f => f.endsWith(".mjs") && (!only.length || only.some(o => f.startsWith(o)))).sort()) {
   const mod = await import(new URL(f, stepsDir));
   await mod.default(ctx);
 }

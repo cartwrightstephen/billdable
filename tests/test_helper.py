@@ -155,7 +155,10 @@ class HelperTests(unittest.TestCase):
         reply = helper.answer("draft a follow-up for turner", state, "co-x", "u-1")
         self.assertNotIn("has no sent, unpaid pay app", reply["text"])
         self.assertIn(job["invoices"][0]["number"], reply["text"])
-        self.assertTrue(any(a.get("label") == "Send the follow-up" for a in reply["actions"]))
+        # Round 2 (Stephen, 10 Nov, decision 12): the helper never sends it; it opens the job, whose
+        # Send follow-up does.
+        self.assertFalse(any(a.get("type") == "post" for a in reply["actions"]))
+        self.assertIn({"type": "job", "job_id": "job-turner", "label": "Open Turner office TI"}, reply["actions"])
 
     def test_billed_this_month_leaves_out_a_pulled_back_pay_app(self):
         state = seed_state()

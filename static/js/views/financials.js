@@ -64,19 +64,24 @@ function tile(label, cents, sub = "", cls = "") {
 }
 
 // Billed and collected by month, as bars drawn with SVG attributes (the CSP allows no inline styles).
-function monthlyChart(rows) {
+export function monthlyChart(rows) {
+  // A month whose only money is a refund collects less than nothing (B11): its bar hangs below
+  // the line, sized on the same scale, and the tooltip keeps the true figure.
   const top = Math.max(1, ...rows.map(r => Math.max(r.billed_cents, r.collected_cents)));
+  const low = Math.max(0, ...rows.map(r => -Math.min(r.billed_cents, r.collected_cents)));
   const W = 720, H = 180, pad = 22, slot = (W - 8) / rows.length, bw = Math.max(4, slot / 2 - 5);
-  const h = (c) => Math.round((H - pad - 8) * c / top);
+  const room = H - pad - 8, axis = 8 + Math.round(room * top / (top + low));
+  const h = (c) => Math.round(room * Math.abs(c) / (top + low));
+  const y = (c) => c < 0 ? axis : axis - h(c);
   const bars = rows.map((r, i) => {
     const x = 4 + i * slot;
     return `<g><title>${monthName(r.month)}: billed ${money(r.billed_cents)}, collected ${money(r.collected_cents)}</title>
-      <rect class="bar-billed" x="${x + 2}" y="${H - pad - h(r.billed_cents)}" width="${bw}" height="${h(r.billed_cents)}" rx="2"></rect>
-      <rect class="bar-collected" x="${x + 4 + bw}" y="${H - pad - h(r.collected_cents)}" width="${bw}" height="${h(r.collected_cents)}" rx="2"></rect>
+      <rect class="bar-billed" x="${x + 2}" y="${y(r.billed_cents)}" width="${bw}" height="${h(r.billed_cents)}" rx="2"></rect>
+      <rect class="bar-collected" x="${x + 4 + bw}" y="${y(r.collected_cents)}" width="${bw}" height="${h(r.collected_cents)}" rx="2"></rect>
       <text class="bar-label" x="${x + slot / 2}" y="${H - 6}" text-anchor="middle">${monthName(r.month)}</text></g>`;
   }).join("");
   return `<svg class="fin-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Billed and collected by month, last 12 months">
-      <line class="bar-axis" x1="0" x2="${W}" y1="${H - pad}" y2="${H - pad}"></line>${bars}</svg>
+      <line class="bar-axis" x1="0" x2="${W}" y1="${axis}" y2="${axis}"></line>${bars}</svg>
     <p class="fin-legend"><span class="key key-billed"></span> Billed <span class="key key-collected"></span> Collected</p>`;
 }
 
@@ -134,7 +139,7 @@ function reportHtml(f) {
       </table></div>` : `<p class="sub">No signed work waiting.</p>`}
       <dl class="fin-facts">
         <dt>Contract value of open jobs</dt><dd>${money(f.open_contract_cents)}</dd>
-        <dt>Change orders waiting for signature</dt><dd>${money(f.pending_co_cents)}</dd>
+        <dt>Change orders waiting for signature</dt><dd>${money(f.pending_co_cents)}${f.unpriced_cos ? `, and ${f.unpriced_cos} with no price yet` : ""}</dd>
         <dt>Billed ahead of the contract</dt><dd>${money(f.overbilled_cents)}</dd>
         <dt>Jobs completed, last 12 months</dt><dd>${f.completed_jobs_12m}</dd>
       </dl>

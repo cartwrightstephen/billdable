@@ -12,6 +12,7 @@ import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, se
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
 import { THEMES, ACCENTS, applyAppearance, normalizeAppearance, storedAppearance } from "../theme.js";
 import { qboCardHtml } from "./payments.js";
+import { approverBoxes, approverIds, forgetApprovers, approverNames } from "../approvers.js";
 import { forgetImportSettings } from "./inbox.js";
 import { notificationsCardHtml, saveReminderPrefs } from "./automations.js";
 
@@ -178,6 +179,18 @@ function companySwitchesHtml(owner) {
     </div>`;
 }
 
+// Who approves pay apps before they go (Stephen, 10 Nov, decision 8). A client can have its own
+// list on its Client playbook card.
+function approversCardHtml(owner) {
+  const saved = (state.company || {}).payapp_approvers || [];
+  return `<div class="card" id="approvers-card" data-form-key="approvers">
+      <h2>Pay app approvers</h2>${formErrorLine("approvers")}
+      ${approverBoxes("company", saved, render, !owner)}
+      ${saved.length ? "" : `<p class="sub approvers-default">Nobody ticked, so the owners approve: ${approverNames(state.team_owners, "every owner")}.</p>`}
+      ${owner ? `<button class="btn small" data-action="approvers-save">Save approvers</button>` : ""}
+    </div>`;
+}
+
 // A switch ticked (app.js's change listener): kept until Save.
 export function companySwitch(box) {
   switchDraft[box.dataset.companySwitch] = !!box.checked;
@@ -230,6 +243,7 @@ function companyView() {
     </div>
     ${isDemo ? "" : companySwitchesHtml(owner)}
     </div>
+    ${approversCardHtml(owner)}
     ${qboCardHtml(false)}
     <details class="card danger-zone" data-more="danger"${formOpen.reset || moreDetails.danger ? " open" : ""}>
       <summary><strong>Your data</strong></summary>
@@ -456,7 +470,7 @@ function adminCompaniesHtml() {
 
 let helperReview = null;
 let helperDraft = null;   // the answer being written or edited
-const HELPER_VIEWS = ["dashboard", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "waivers", "retainage", "account", "audit"];
+const HELPER_VIEWS = ["dashboard", "calendar", "jobs", "daily", "history", "playbook", "inbox", "outbox", "import", "export", "payapps", "packets", "cos", "collections", "waivers", "retainage", "financials", "account", "audit"];
 
 export async function loadHelperReview() {
   const body = document.getElementById("helper-admin-body");
@@ -733,6 +747,10 @@ export const actions = {
     if (r.ok) { me.two_step = false; render(); }
   },
   // The Company page's one Save (S1): the details, the address and the switches together.
+  "approvers-save": async () => {
+    const r = await post("/api/approvers", { user_ids: approverIds("company", (state.company || {}).payapp_approvers || []) }, { formKey: "approvers" });
+    if (r && r.ok) { forgetApprovers("company"); toast("Approvers saved."); }
+  },
   "save-company": async () => {
     const { body, errors } = companyChanges(formValues("company"), state.company, switchDraft);
     if (refuseForm("company", errors)) return;

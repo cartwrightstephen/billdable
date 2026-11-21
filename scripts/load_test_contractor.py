@@ -196,9 +196,15 @@ class Run:
         return payload
 
     def send(self, step: str, job_id: str) -> Dict[str, Any]:
-        """Approve & send, with the stamp of what Review & send shows."""
+        """Approve & send, with the stamp of what Review & send shows. The owner signs it first:
+        no pay app goes unapproved, and with nobody named the owner approves (Stephen, 18 Nov)."""
         invoices = self.get(f"/api/jobs/{job_id}")["job"]["invoices"]
-        stamp = next((i["email_preview"]["stamp"] for i in invoices if i["status"] in ("draft", "awaiting_approval")), "")
+        draft = next((i for i in invoices if i["status"] in ("draft", "awaiting_approval")), None) or {}
+        approval = draft.get("approval") or {}
+        if approval.get("waiting"):
+            self.post(f"{step} (signed by {OWNER_NAME})", f"/api/jobs/{job_id}/payapp-approve",
+                      {"invoice_id": draft["id"], "stamp": approval.get("stamp", ""), "signature": OWNER_NAME, "title": "Owner"}, quiet=True)
+        stamp = (draft.get("email_preview") or {}).get("stamp", "")
         return self.post(step, f"/api/jobs/{job_id}/send", {"reviewed": stamp})
 
     def send_waiver(self, step: str, job_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -298,7 +304,7 @@ def setup(run: Run) -> None:
     run.post("PEAC: match payment ACH 7781", f"/api/jobs/{j['PEAC']}/match-payment", {"amount_cents": 3_850_000, "reference": "ACH 7781"})
     signed_waiver(run, "PEAC")
     run.send_waiver("PEAC: send waiver", j['PEAC'], {})
-    run.post("PEAC: close for record", f"/api/jobs/{j['PEAC']}/close")
+    run.post("PEAC: close for record", f"/api/jobs/{j['PEAC']}/close", {"closeout_override": "Closeout binder handed over at the walk"})
     # DECA: finished, paid less retainage, waiver sent, retainage held.
     run.post("DECA: mark done", f"/api/jobs/{j['DECA']}/done", {"notes": "Substantially complete; punch walk pending."})
     run.clear_packet("DECA")

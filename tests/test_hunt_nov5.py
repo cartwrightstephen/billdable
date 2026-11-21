@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import qty_import
 import sov
 from test_money import new_job, new_state, send_open
@@ -126,14 +127,14 @@ class FinalWaiverOnlyWhenNothingIsLeft(unittest.TestCase):
         domain.match_payment(self.state, self.id, second["amount_cents"], "c2", invoice_id=second["id"])
         self.assertEqual(domain.suggested_waiver_kind(self.job, second), "unconditional_final")
 
-    def test_sending_it_anyway_warns(self):
+    def test_sending_it_anyway_is_refused(self):  # decision 6, Nov 17: was a warning
         self.signed_co()
         domain.match_payment(self.state, self.id, self.first["amount_cents"], "c", invoice_id=self.first["id"])
         signed_waiver(self.state, self.id, "unconditional_final")
         sent = len(self.state["email_log"])
         with self.assertRaises(domain.GateError) as refused:
             domain.send_waiver(self.state, self.id, "Sam", invoice_id=self.first["id"], kind="unconditional_final")
-        self.assertTrue(refused.exception.extra.get("final_waiver_warning"))
+        self.assertTrue(refused.exception.extra.get("final_waiver_held"))
         self.assertIn("$1,000.00", str(refused.exception), "it says what is left")
         self.assertEqual(len(self.state["email_log"]), sent)
 
@@ -157,7 +158,7 @@ class ConditionalWaiverOnAFinalDraft(unittest.TestCase):
         line = sov.lines(job)[0]
         domain.record_sov_progress(state, job["id"], {line["id"]: "50"})
         first = send_open(state, job)
-        domain.mark_done(state, job["id"])
+        domain.mark_done(state, job["id"], unpaid_reason="Client pays PA-01 Friday")   # decision 6's override
         draft = draft_of(job)
         self.assertTrue(draft["final"])
         self.assertEqual(waiver_item(draft)["waiver_kind"], "conditional_progress", "$5,000.00 is still owed on PA-01")
@@ -247,7 +248,7 @@ class NoDeadEndAtSend(unittest.TestCase):
         domain.confirm_packet_item(state, job["id"], item["id"], "Sam", looked=True, answer="conditional")
         self.assertTrue(item["present"])
         self.assertEqual(domain.blocker_lines(job), [])
-        self.assertIsNone(tried(state, domain.approve_and_send, job["id"], "Sam", reviewed=domain.review_stamp(state, job, draft)))
+        self.assertIsNone(tried(state, approve_help.approve_and_send, job["id"], "Sam", reviewed=domain.review_stamp(state, job, draft)))
 
     def test_withdrawing_the_change_order(self):
         state = new_state()
@@ -281,7 +282,7 @@ class NoDeadEndAtSend(unittest.TestCase):
         domain.mark_done(state, job["id"])
         self.confirmed(state, job)
         job["change_orders"][0]["status"] = "withdrawn"   # as withdraw_change_order left it before
-        refused = tried(state, domain.approve_and_send, job["id"], "Sam", reviewed=domain.review_stamp(state, job, draft_of(job)))
+        refused = tried(state, approve_help.approve_and_send, job["id"], "Sam", reviewed=domain.review_stamp(state, job, draft_of(job)))
         self.assertIsNotNone(refused)
         self.assertTrue(refused.extra.get("review_changed"))
         job = job_in(state, job["id"])

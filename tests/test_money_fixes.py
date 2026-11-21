@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 import migrations
 import payapp_pdf
 import qty_import
@@ -339,7 +340,7 @@ class WaiverKindTests(WaiverFiles):  # item 8
         self.assertEqual(item["waiver_kind"], "conditional_progress")
         self.assertFalse(item["present"])
         with self.assertRaises(domain.GateError):
-            domain.approve_and_send(self.state, self.job["id"])
+            approve_help.approve_and_send(self.state, self.job["id"])
         self.assertEqual(draft["status"], "draft")
 
     def test_send_refuses_a_flip_no_change_caught(self):
@@ -351,7 +352,7 @@ class WaiverKindTests(WaiverFiles):  # item 8
         self.job["change_orders"].append({"id": "co-x", "number": 9, "title": "Extra", "amount_cents": 50_000, "status": "pending", "included_in_billing": False})
         before = len(self.state["email_log"])
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(self.state, self.job["id"])
+            approve_help.approve_and_send(self.state, self.job["id"])
         self.assertIn("progress", " ".join(raised.exception.blockers))
         self.assertEqual(draft["status"] in domain.DRAFT_STATUSES, True)
         self.assertEqual(len(self.state["email_log"]), before)
@@ -423,7 +424,7 @@ class WaiverNotNeededTests(unittest.TestCase):  # item 7
     def test_a_job_skip_doesnt_cancel_the_waiver_after_payment(self):
         inv = open_draft(self.job)
         clear_packet(self.state, self.job)
-        domain.approve_and_send(self.state, self.job["id"])
+        approve_help.approve_and_send(self.state, self.job["id"])
         domain.match_payment(self.state, self.job["id"], inv["amount_cents"], "chk")
         self.assertTrue(inv["waiver_due"])
         self.assertNotIn("waiver_not_needed", inv)
@@ -439,7 +440,7 @@ class WaiverNotNeededTests(unittest.TestCase):  # item 7
         inv = open_draft(job)
         domain.skip_packet_item(state, job["id"], waiver_item(inv)["id"], "Homeowner", "Sam", whole_client=True)
         clear_packet(state, job)
-        domain.approve_and_send(state, job["id"])
+        approve_help.approve_and_send(state, job["id"])
         domain.match_payment(state, job["id"], inv["amount_cents"], "chk")
         self.assertFalse(inv["waiver_due"])
         self.assertEqual(inv["waiver_not_needed"]["reason"], "Homeowner")
@@ -507,7 +508,7 @@ class OldNameOnlyTests(unittest.TestCase):  # item 3, acceptance 96
         self.fill_the_rest()
         sent = len(self.state["email_log"])
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(self.state, self.job["id"], "Sam")
+            approve_help.approve_and_send(self.state, self.job["id"], "Sam")
         self.assertIn("No file was kept", " ".join(raised.exception.blockers))
         self.assertEqual(len(self.state["email_log"]), sent)
 
@@ -631,7 +632,7 @@ class CreditAfterFinalTests(unittest.TestCase):  # item 9
         self.assertEqual(domain.job_money(job)["overbilled_cents"], 0)
         self.assertIn("Refund check 1044", actions(state, "overbilling_settled")[-1])
         self.assertIn("$500.00", actions(state, "overbilling_settled")[-1])
-        domain.close_job(state, job["id"])
+        domain.close_job(state, job["id"], closeout_override="Closeout binder handed over")
         self.assertTrue(job["closed"])
 
     def test_pulling_it_back_and_drafting_again_clears_it(self):
@@ -1079,7 +1080,7 @@ class FinalWaiverOnAJobNotFinishedTests(unittest.TestCase):  # items 16, 17, acc
         domain.send_waiver(state, job["id"], "Sam", release_id=release["id"])
         self.assertEqual(release["kind"], "unconditional_progress")
 
-    def test_a_final_waiver_asked_for_on_a_job_half_done_with_no_retainage_warns(self):
+    def test_a_final_waiver_asked_for_on_a_job_half_done_with_no_retainage_is_refused(self):  # decision 6: was a warning
         state = new_state()
         job = auto_job(state, contract=10_000_000)
         domain.record_sov_progress(state, job["id"], {sov.lines(job)[0]["id"]: "0.5"})
@@ -1089,11 +1090,12 @@ class FinalWaiverOnAJobNotFinishedTests(unittest.TestCase):  # items 16, 17, acc
         sent = len(state["email_log"])
         with self.assertRaises(domain.GateError) as raised:
             domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final")
-        self.assertTrue(raised.exception.extra["final_waiver_warning"])
+        self.assertIn("the job isn't finished", raised.exception.extra["final_waiver_held"])
         self.assertIn("isn't finished", str(raised.exception))
         self.assertEqual(len(state["email_log"]), sent)
-        domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final", confirm_final=True)
-        self.assertEqual(inv["waiver_kind"], "unconditional_final")
+        with self.assertRaises(domain.GateError):
+            domain.send_waiver(state, job["id"], "Sam", invoice_id=inv["id"], kind="unconditional_final", confirm_final=True)
+        self.assertFalse(inv.get("waiver_sent"))
 
 
 class UnreadWaiverTests(unittest.TestCase):  # item 18
@@ -1125,16 +1127,16 @@ class UnreadWaiverTests(unittest.TestCase):  # item 18
         self.add(rec)
         self.assertEqual(domain.waiver_questions(self.job, self.inv["packet"], self.inv["extra_record_ids"]), [rec], "the page asks")
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
+            approve_help.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
         self.assertTrue(raised.exception.extra["waiver_question"])
         domain.answer_waiver_question(self.state, self.job["id"], rec["id"], "unconditional", "Owner", shown=rec["file_ids"])
         self.assertEqual(domain.unconditional_waivers_attached(self.job, self.inv), [rec], "the page's warning")
         sent = len(self.state["email_log"])
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
+            approve_help.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
         self.assertEqual(str(raised.exception), domain.UNCONDITIONAL_ATTACHED)
         self.assertEqual(len(self.state["email_log"]), sent)
-        domain.approve_and_send(self.state, self.job["id"], "Owner", unconditional_override="Paid by wire", read_file=self.read)
+        approve_help.approve_and_send(self.state, self.job["id"], "Owner", unconditional_override="Paid by wire", read_file=self.read)
         self.assertEqual(self.inv["status"], "sent")
 
     def test_a_file_filed_as_other(self):
@@ -1147,7 +1149,7 @@ class UnreadWaiverTests(unittest.TestCase):  # item 18
         rec = self.record("Release", "other", "UNCONDITIONAL WAIVER AND RELEASE")
         self.inv["extra_record_ids"] = [rec["id"]]
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
+            approve_help.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
         self.assertTrue(raised.exception.extra["waiver_question"])
         self.assertEqual(rec["waiver_read"]["guess"], "unconditional", "read at send, kept for the page")
 
@@ -1157,14 +1159,14 @@ class UnreadWaiverTests(unittest.TestCase):  # item 18
         photo = self.record("Site", "photo", "UNCONDITIONAL")
         self.add(photo)
         with self.assertRaises(domain.GateError):
-            domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
+            approve_help.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
         domain.answer_waiver_question(self.state, self.job["id"], form["id"], "conditional", "Owner")
         domain.answer_waiver_question(self.state, self.job["id"], photo["id"], "no", "Owner")
-        domain.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
+        approve_help.approve_and_send(self.state, self.job["id"], "Owner", read_file=self.read)
         self.assertEqual(self.inv["status"], "sent")
 
     def test_the_waiver_step_reads_a_record_with_no_type(self):
-        domain.approve_and_send(self.state, self.job["id"], "Owner")
+        approve_help.approve_and_send(self.state, self.job["id"], "Owner")
         domain.match_payment(self.state, self.job["id"], self.inv["amount_cents"], "chk")
         rec = self.record("Signed form", "waiver", "Conditional waiver upon payment for another job")
         with self.assertRaises(domain.GateError) as raised:
@@ -1185,7 +1187,7 @@ class ReviewGateTests(unittest.TestCase):  # item 19, acceptance 80
 
     def test_no_stamp_is_refused_and_says_where_to_look(self):
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(self.state, self.job["id"], "Sam", reviewed="")
+            approve_help.approve_and_send(self.state, self.job["id"], "Sam", reviewed="")
         self.assertTrue(raised.exception.extra["review_changed"])
         self.assertEqual(raised.exception.extra["invoice_id"], self.inv["id"])
         self.assertEqual(self.inv["status"], "awaiting_approval")
@@ -1197,11 +1199,11 @@ class ReviewGateTests(unittest.TestCase):  # item 19, acceptance 80
         clear_packet(self.state, self.job)
         self.assertNotEqual(new["id"], self.inv["id"])
         with self.assertRaises(domain.GateError) as raised:
-            domain.approve_and_send(self.state, self.job["id"], "Sam", reviewed=stamp)
+            approve_help.approve_and_send(self.state, self.job["id"], "Sam", reviewed=stamp)
         self.assertEqual(raised.exception.extra["invoice_id"], new["id"])
 
     def test_the_stamp_the_page_showed_sends(self):
-        domain.approve_and_send(self.state, self.job["id"], "Sam", reviewed=domain.review_stamp(self.state, self.job, self.inv))
+        approve_help.approve_and_send(self.state, self.job["id"], "Sam", reviewed=domain.review_stamp(self.state, self.job, self.inv))
         self.assertEqual(self.inv["status"], "sent")
 
 

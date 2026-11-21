@@ -13,6 +13,7 @@ import doc_check
 import server
 from domain import profiles
 from test_hunt_nov5_http import Base
+from approve_help import sign_http
 
 CALIFORNIA = """UNCONDITIONAL WAIVER AND RELEASE ON PROGRESS PAYMENT
 NOTICE: THIS DOCUMENT WAIVES THE CLAIMANT'S LIEN RIGHTS UNCONDITIONALLY AND STATES THAT YOU HAVE BEEN PAID FOR GIVING UP THOSE RIGHTS.
@@ -24,7 +25,8 @@ LOG = "Daily log Elm addition. Sub's unconditional lien waiver received from plu
 
 class Reading(unittest.TestCase):
     def read(self, text):
-        return doc_check.reading(text)
+        # The guess and whether it is a form; "final" is read too since Nov 18 (test_r2_ga_waiver_law).
+        return {k: v for k, v in doc_check.reading(text).items() if k != "final"}
 
     def test_reads_as_an_unconditional_waiver(self):
         for text in ("UNCONDITIONAL WAIVER AND RELEASE", "UNCONDITIONAL WAIVER AND RELEASE UPON PAYMENT", "Unconditional waiver of lien.", "Waiver and release, unconditional.",
@@ -85,6 +87,7 @@ class SendGates(Base):
                 self.assertEqual(status, 200, data)
 
     def send(self, cookie=None, **body):
+        sign_http(self, self.job_id, self.ann)   # the owner signs first (Stephen, 18 Nov: nothing goes unapproved)
         return self.post(f"/api/jobs/{self.job_id}/send", {"reviewed": self.draft()["email_preview"]["stamp"], **body}, cookie=cookie)
 
     def audit(self):

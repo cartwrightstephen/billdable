@@ -16,11 +16,13 @@ import server
 import trial
 from dollar_jobs import dollar_jobs
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hartline_demo import hartline_demo
 from review_help import reviewed
 
 PASSWORD = "correct horse battery"
 
 
+@hartline_demo
 @dollar_jobs
 class HttpTests(unittest.TestCase):
     @classmethod

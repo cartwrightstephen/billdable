@@ -9,11 +9,23 @@ import { webcalUrl } from "../calendar.js";
 import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "../inbox.js";
 import { termText } from "../terms.js";
 import { draftValue, clearForm } from "../forms.js";
-import { state, me, currentView, currentJobId, clearSession, onSessionEnd } from "../state.js";
+import { state, me, currentView, currentJobId, clearSession, onSessionEnd, formOpen } from "../state.js";
 import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can, may } from "../app-core.js";
 import { moreButton } from "../dom.js";
 import { printSheet } from "./communications.js";
 import { stageRecordFiles, rememberDailyJob } from "./daily.js";
+
+// The confirm for "Mark job done" from a message. With an earlier pay app unpaid the final pay app
+// needs a reason (Stephen, 10 Nov, decision 6), asked on the job's Final pay app form.
+export function inboxDoneConfirm(j, p) {
+  const unpaid = (p && p.unpaid) || [];
+  if (!unpaid.length) return finalPayAppConfirm(j, p);
+  const which = unpaid.map(unesc).join(", ");
+  return { text: `${which} ${unpaid.length === 1 ? "is" : "are"} not paid yet. File the message and open ${termText("Final pay app")} on ${unesc(j.name || "the job")} to say why it goes now?`,
+    button: `Open ${termText("Final pay app")}` };
+}
+
+export function doneFormNeeded(j) { return !!j && j.work_status !== "complete" && !j.closed; }
 
 // Which job? on Import starts on "Not sure, file later", so nothing skips the Inbox without someone
 // choosing a job here. A job's own files go in through New job record (Yusuf, 10 Nov).
@@ -523,14 +535,19 @@ export const actions = {
     const it = (state.inbox || []).find(x => x.id === el.dataset.item);
     const j = it && state.jobs.find(x => x.id === it.says_done_job_id);
     const res = j ? await fetch(`/api/jobs/${encodeURIComponent(j.id)}/final-preview`).catch(() => null) : null;
-    const words = res && res.ok ? finalPayAppConfirm(j, await res.json())
+    const preview = res && res.ok ? await res.json() : null;
+    const words = preview ? inboxDoneConfirm(j, preview)
       : { text: `Record ${unesc(j ? j.name : "the job")} as finished? ${termText("This bills the rest of the contract on a final pay app.")}`, button: termText("Final pay app") };
     const answer = await askConfirm(words.text, words.button, false, "Just file the message");
     if (!answer) return;
     if (answer === "alt") { if (it) await post(`/api/inbox/${it.id}/file`, { job_id: it.says_done_job_id, kind: it.kind }); return; }
     const r = await post(`/api/inbox/${el.dataset.item}/mark-done`);
     const item = r && r.ok && (state.inbox || []).find(x => x.id === el.dataset.item);
-    if (item) nav("job", item.filed_job_id);
+    if (!item) return;
+    nav("job", item.filed_job_id);
+    // An earlier pay app unpaid (decision 6): the server filed the message and left the job open,
+    // so the Final pay app form opens here for the reason.
+    if (doneFormNeeded(state.jobs.find(x => x.id === item.filed_job_id))) { formOpen.done = true; render(); }
   },
   "inbox-undo": (el) => post(`/api/inbox/${el.dataset.item}/undo`),
   // One row of Everything received on paper: who, when, how it came in, what became of it, its text and files.

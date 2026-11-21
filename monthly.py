@@ -24,6 +24,7 @@ import alerts
 import auth
 import backup
 import domain
+from domain import profiles
 import mailer
 import metrics
 import reminders
@@ -142,12 +143,17 @@ def _digests(state: dict, company_id: str, base: str, now: datetime) -> list:
     what is assigned to them and what nobody has; a member with a confirmed email gets only what
     is assigned to them, and nothing on a day with none."""
     out = []
+    # What each person on the team may do: a row assigned to someone who can't act on it goes to
+    # the owners instead (B23).
+    team = {u["id"]: profiles.perms_of(u, state) for u in auth.all_users() if u.get("company_id") == company_id}
     for addr in auth.owner_emails(company_id):
         user = auth.user_by_email(addr)
-        out.append((addr, domain.daily_digest(state, base, now, user_id=user["id"] if user else None)))
+        out.append((addr, domain.daily_digest(state, base, now, user_id=user["id"] if user else None,
+                                              perms=profiles.perms_of(user, state) if user else None, team_perms=team)))
     for user in auth.all_users():
         if user.get("company_id") == company_id and user.get("role") != "owner" and user.get("email_verified"):
-            out.append((user["email"], domain.daily_digest(state, base, now, user_id=user["id"], owner=False)))
+            out.append((user["email"], domain.daily_digest(state, base, now, user_id=user["id"], owner=False, perms=profiles.perms_of(user, state),
+                                                           team_perms=team)))
     return out
 
 

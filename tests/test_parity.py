@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import calendar_feed
 import domain
+import approve_help  # noqa: E402  every pay app is signed before it goes (Stephen, 18 Nov)
 from waiver_help import signed_waiver
 import helper
 import sov
@@ -32,10 +33,10 @@ def _two_sent(state):
     job = domain.create_job(state, "Pine", "Jones GC", 10000000, address="12 Pine", approver="Sam", ap_email="ap@j.example", phone="(404) 555-0100", role="Owner")
     domain.record_progress(state, job["id"], 1000000, "a")
     _clear(job)
-    domain.approve_and_send(state, job["id"])
+    approve_help.approve_and_send(state, job["id"])
     domain.record_progress(state, job["id"], 1500000, "b")
     _clear(job)
-    domain.approve_and_send(state, job["id"])
+    approve_help.approve_and_send(state, job["id"])
     return job
 
 
@@ -84,7 +85,7 @@ class CalendarFeedTests(unittest.TestCase):
         job = domain.create_job(state, "Pine", "Jones GC", 10000000, address="12 Pine", approver="Sam", ap_email="ap@j.example", phone="(404) 555-0100", role="Owner")
         domain.record_progress(state, job["id"], 1000000, "a")
         _clear(job)
-        domain.approve_and_send(state, job["id"])
+        approve_help.approve_and_send(state, job["id"])
         return state, job
 
     def _follow_ups(self, state):
