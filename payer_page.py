@@ -308,6 +308,11 @@ def _co_rows(snap: dict[str, Any]) -> str:
     return out
 
 
+def _co_amount_words(cents: int) -> str:
+    """A credit says so in the heading, not with a bare minus sign."""
+    return f"credit of {domain.money(-cents)}" if cents < 0 else domain.money(cents)
+
+
 def render_co(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], base: str, error: str = "") -> str:
     """The signing page for one change order (P2-3). Signed, it shows what was signed."""
     company = state.get("company", {}).get("name", "") or "Your contractor"
@@ -316,7 +321,7 @@ def render_co(state: dict[str, Any], job: dict[str, Any], co: dict[str, Any], ba
             f'<meta name="robots" content="noindex"><title>{_e(title)}</title><style>{PAGE_STYLE}</style></head><body><main>')
     snap = (co.get("signature") or {}).get("snapshot") or domain.co_snapshot(state, job, co)
     summary = (f'<p class="sub">{_e(company)} · {_e(job["name"])} · {_e(job.get("address", ""))}</p>'
-               f"<h1>Change order {_e(co['number'])}: {_e(domain.money(snap.get('amount_cents', co['amount_cents'])))}</h1>"
+               f"<h1>Change order {_e(co['number'])}: {_e(_co_amount_words(snap.get('amount_cents', co['amount_cents'])))}</h1>"
                + _co_rows(snap))
     sig = co.get("signature")
     if sig:

@@ -52,7 +52,7 @@ export default async function ({ browser, BASE, step, confirmIfAsked, errors }) 
     await row.waitFor();
     await row.getByRole("button", { name: "Add the price to CO 1" }).click();
     await p.waitForURL(/\/money\/change-order\//);
-    await p.locator(".co-price input").fill("1,250");
+    await p.locator(".co-price input[data-money]").fill("1,250");
     await p.click('[data-action="co-price"]');
     await p.locator("h1 + .sub", { hasText: "$1,250.00" }).waitFor();
     await p.locator('[data-action="request-co-signature"]').waitFor();

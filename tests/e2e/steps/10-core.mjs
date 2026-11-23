@@ -195,12 +195,15 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.locator('.job-actions [data-action="new-co"]').click();
     await p.fill("#co-title", "Owner buys the railing");
     await p.selectOption("#co-reason", "value_engineering");
-    await p.fill("#co-amt", "-500");
+    // A credit (Nov 21): pick Credit (deducts) and type the amount as a plain figure.
+    await p.click('[data-for="co-kind"][data-value="deduct"]');
+    assert.equal(await p.getAttribute('[data-for="co-kind"][data-value="deduct"]', "aria-pressed"), "true");
+    await p.fill("#co-amt", "500");
     await p.click('[data-action="add-co-here"]');
     const made = p.locator(".new-co-card");
     await made.waitFor();
     assert.match(await made.innerText(), /CO 1: Owner buys the railing/);
-    assert.match(await made.innerText(), /A credit of \$500\.00/);
+    assert.match(await made.innerText(), /Credit of \$500\.00/);
     await made.getByRole("button", { name: "Request signature" }).waitFor();
     // On a phone, a missing paperwork item offers Take a photo.
     await p.setViewportSize({ width: 375, height: 812 });
