@@ -276,7 +276,7 @@ flowchart TD
     A{"Where are you?"} -->|"Job page"| A1["Tap 'New change order'"]
     A -->|"Money, Change orders"| A2["Tap 'New change order'; with more than one open job, 'Which job?' and 'Open the form'"]
     A2 --> B
-    A1 --> B["Card 'New change order' on the job page: Title, Reason (Owner request, Unforeseen condition, Design issue, Value engineering, Other), Description (required for Other), Contract section or original scope it changes (optional), Pricing (two buttons: Lump sum or Time and materials), Amount ($), negative for a credit"]
+    A1 --> B["Card 'New change order' on the job page: Title, Reason (Owner request, Unforeseen condition, Design issue, Value engineering, Other), Description (required for Other), Contract section or original scope it changes (optional), Type (two buttons: Adds to the contract or Credit (deducts)), Pricing (two buttons: Lump sum or Time and materials), Amount ($)"]
     B --> B2["Optional: 'Add a cost line' (label and amount; their total becomes the amount), Schedule change, days, Work started on, Backup from the job records"]
     B2 --> D["Tap 'Create change order'"]
     D -->|"No reason"| D2["'Pick why the scope changed.'"]

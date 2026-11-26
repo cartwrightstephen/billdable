@@ -59,7 +59,10 @@ export const plainNumber = (v) => String(v ?? "").replace(/[$,\s%]/g, "");
 // Dollars typed into a form, as whole cents, without floating-point drift:
 // {cents, error}. Blank and anything that isn't an amount come back with an error to show.
 export function centsFrom(text) {
-  const t = plainNumber(text);
+  // A credit the way bookkeepers write it, "(1,250.00)", or with a typographic minus, reads as -1,250.
+  let t = plainNumber(String(text ?? "").replace(/[\u2212\u2013]/g, "-"));
+  const paren = /^\((.*)\)$/.exec(t);
+  if (paren && !paren[1].startsWith("-")) t = "-" + paren[1];
   if (!t) return { cents: null, error: "Enter an amount in dollars, like 12,500.50." };
   if (/^-?\d*\.\d{3,}$/.test(t)) return { cents: null, error: "Use no more than two digits after the point." };
   if (!/^-?(\d+\.?\d{0,2}|\.\d{1,2})$/.test(t)) return { cents: null, error: "Enter an amount in dollars, like 12,500.50." };
