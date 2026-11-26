@@ -22,6 +22,9 @@ services:
       # Production refuses to start without the settings below and turns the demo account off.
       - key: DURACASH_ENV
         value: production
+      # Keep the sample company available for prospects (readonly: look around, no changes).
+      - key: DURACASH_DEMO
+        value: readonly
       - key: COOKIE_SECURE
         value: "1"
       # The site's https:// address; set it in the Render dashboard.
