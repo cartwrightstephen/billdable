@@ -686,6 +686,11 @@ span.due-item { cursor: default; }
 .daily-files li { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
 .record-row { padding: 4px 0 8px; }
 .record-row + .record-row { border-top: 1px solid var(--line); padding-top: 10px; }
+/* The time sheet's rows of crew member and hours, and Remove on any row (Nov 26). */
+.crew-row { align-items: end; }
+.crew-row + .crew-row { border-top: 1px solid var(--line); padding-top: 8px; }
+.crew-total { font-weight: 600; margin-left: 12px; }
+.row-remove { margin-top: 4px; }
 /* New job record (Round 1, item 15): a chip per kind of document opens its section. */
 .record-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .record-chips [aria-pressed="true"] { border-color: var(--copper); }

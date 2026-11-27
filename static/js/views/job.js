@@ -67,17 +67,6 @@ export function shortPayButtons(j) {
   return list.map(i => `<button class="btn small secondary" ${shortPayAttrs(j, i)}>${list.length > 1 ? i.number + ": " : ""}${shortPayLabel(i)}</button>`).join(" ");
 }
 
-// Log a conversation (R4-06): a record of kind "conversation" on the job. While a pay app waits for
-// payment it counts as a follow-up, and the date holds the next one until then.
-export function conversationFormHtml(j) {
-  const waiting = (j.invoices || []).some(i => ["sent", "approved", "partial"].includes(i.status));
-  return `<div class="card form-card" data-form-key="conversation"><h2>Conversation with ${j.payer.approver || j.payer.name}</h2>${formErrorLine("conversation")}<div class="form-row">
-    ${field({ form: "conversation", name: "text", id: "conversation-text", label: "What did they say?", required: true, placeholder: "Check goes out Friday", wide: true })}
-    ${waiting ? field({ form: "conversation", name: "next_on", id: "conversation-next", label: "Check again on (optional)", type: "date", attrs: `min="${todayIso()}"` }) : ""}
-    <button class="btn small" data-action="save-conversation" data-id="${j.id}">Save</button>
-    <button class="btn small secondary" data-action="toggle-form" data-form="conversation">Cancel</button></div></div>`;
-}
-
 // Today on this device, as a date box wants it (YYYY-MM-DD).
 function todayIso() {
   const d = new Date();
@@ -379,7 +368,6 @@ export const views = {
         ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">${openDraft.number} becomes the final pay app. Its number and supporting documents stay.</p>` : ""}
         <button class="btn small" data-action="done" data-id="${j.id}">${termText("Draft final pay app")}</button></div></div>` : ""}
       ${formOpen.closeoverride && may("close") ? closeOverrideHtml(j) : ""}
-      ${formOpen.conversation ? conversationFormHtml(j) : ""}
       ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Record a payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
         ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", oneAsText: true, options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${owedText(i)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
         ${moneyField({ form: "match", name: "amount_cents", id: "match-amt", label: "Amount received ($)", cents: (openForPay.find(i => i.id === draftValue("match", "invoice_id", "")) || openForPay[0]).remaining_cents })}
@@ -476,24 +464,12 @@ export const actions = {
     }
     await post(`/api/jobs/${id}/done`, { notes: v.notes || "", period_to: v.period_to || "", ...(v.unpaid_reason ? { unpaid_reason: v.unpaid_reason } : {}) }, { formKey: "done", close: "done" });
   },
-  // Log a conversation (R4-06): counts as a follow-up while a pay app waits; with a date, Today waits until then.
-  "save-conversation": async (el, id) => {
-    const v = formValues("conversation");
-    if (refuseForm("conversation", v.text ? {} : { text: "Enter what they said, like \"Check goes out Friday\"." })) return;
-    await post(`/api/jobs/${id}/note-contact`, { text: v.text, next_on: v.next_on || "" }, { formKey: "conversation", close: "conversation" });
-  },
   // From a page with no job open, such as Payments: the job, with Record a payment's form open.
   "record-payment": (el, id) => {
     nav("job", id);
     formOpen.match = true;
     render();
     focusAfterDraw(() => document.getElementById("match-amt"));
-  },
-  "log-conversation": (el, id) => {
-    nav("job", id);
-    formOpen.conversation = true;
-    render();
-    focusAfterDraw(() => document.getElementById("conversation-text"));
   },
   "retainage-paid": async (el, id) => {
     const v = formValues("retpay");

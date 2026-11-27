@@ -62,7 +62,8 @@ export function rowButtons(r, perms) {
   // Marking work done takes manage_jobs: without it, a "Job's done?" row just opens the job.
   const attrs = r.kind === "email_failed" && !mailReady ? null : r.kind === "says_done" && !mayTake("done", perms) ? null : ACTIONS[r.kind];
   const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` + (r.kind === "inbox" ? inboxKindSelect(r) : "") : "";
-  const talked = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="log-conversation" data-id="${r.job_id}">Log a conversation</button>` : "";
+  // Talked to them? A Conversation / note with client on New job record (Nov 26), for this job.
+  const talked = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="daily-conversation" data-id="${r.job_id}">Note a conversation</button>` : "";
   const open = OPENS_JOB.includes(r.kind) ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${r.job_id}">Open</button>`;
   return main + talked + open;
 }

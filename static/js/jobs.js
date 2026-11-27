@@ -480,7 +480,7 @@ export function mayTake(action, perms) {
 const KEY_ACTION = { send: "send", waiver: "waiver", retainage: "retainage", void: "void-draft", close: "close", match: "match-payment", retpay: "retainage-paid",
   draft: "draft", progress: "progress", done: "done", undo: "undo-done", coprice: "co-price" };
 
-const SECONDARY_ORDER = ["clear", "coprice", "send", "waiver", "match", "follow", "conversation", "pencil", "pencil-ok", "pencil-no", "sentback", "packet", "closeout",
+const SECONDARY_ORDER = ["clear", "coprice", "send", "waiver", "match", "follow", "pencil", "pencil-ok", "pencil-no", "sentback", "packet", "closeout",
   "draft", "progress", "done", "retainage", "retpay", "co", "close", "undo", "void", "qbo"];
 
 // The button for a change order still missing its price: the same words as its Dashboard row.
@@ -518,9 +518,8 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   if (j.waiver_due && !j.waiver_sent) add("waiver", "Choose waiver and send", `data-action="open-waiver" data-id="${j.id}"`, "paid");
   if (waitingPay) add("match", "Record a payment", `data-action="toggle-form" data-form="match"`, "paid");
   if (follow) add("follow", followDue ? "Send follow-up" : "Follow up now", `data-action="follow-up" data-id="${j.id}"${followDue ? "" : ` data-early="1"`}`, "paid");
-  // A conversation is a record on any open job. While a pay app waits for payment it counts as a
-  // follow-up, and its check-again date holds the next one (R4-06).
-  add("conversation", "Log a conversation", `data-action="toggle-form" data-form="conversation"`, "paid");
+  // A conversation goes through New job record (Stephen, Nov 26): its Conversation / note with
+  // client section counts as a follow-up while a pay app waits, as Log a conversation did (R4-06).
   if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "bill");
   if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "bill");
   if (j.work_status === "complete" && closeoutMissing(j)) add("closeout", "Open closeout documents", closeoutAttrs(j), "close");

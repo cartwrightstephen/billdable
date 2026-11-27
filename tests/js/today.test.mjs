@@ -88,9 +88,9 @@ test("each kind of row has its one main button, with the ids it needs", () => {
   }
 });
 
-test("a follow-up offers Log a conversation as a second button", () => {  // R4-06
+test("a follow-up offers Note a conversation, on New job record, as a second button", () => {  // R4-06, Nov 26
   const html = rowButtons(row({ kind: "follow_up", button: "Send follow-up" }));
-  assert.match(html, /<button class="btn small secondary" data-action="log-conversation" data-id="j1">Log a conversation<\/button>/);
+  assert.match(html, /<button class="btn small secondary" data-action="daily-conversation" data-id="j1">Note a conversation<\/button>/);
 });
 
 test("a pay app the customer approved has no main button, only Open", () => {  // R4-08

@@ -3645,6 +3645,8 @@ JOB_ACTIONS = {
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
     "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body, c.reply)),
+    # Edit on a saved job record (Nov 26): the same form, with the rows it saved (domain.update_job_record).
+    "daily-record-edit": (True, lambda h, st, j, i, c: domain.update_job_record(st, j, i, _text(c.body, "notes"), c.actor, c.body, c.reply)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead),
                                                                          looked=c.body.get("looked") is True, answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
 }

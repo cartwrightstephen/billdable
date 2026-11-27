@@ -2668,6 +2668,12 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     out["blocked"] = is_blocked(job)
     out["needs_paperwork"] = needs_paperwork(job)
     out["blocker_button"] = blocker_button(job) if out["blocked"] else ""
+    # Edit on a diary entry opens its New job record form again (Nov 26): which daily record it reads.
+    for rec in out.get("records") or []:
+        if rec.get("kind") == "daily" and not rec.get("daily_record_id"):
+            found = daily_record_for(state, job, rec["id"])
+            if found:
+                rec["daily_record_id"] = found["id"]
     out["payer"] = deepcopy(_payer(state, job["payer_id"]))
     out["retainage_usual"] = default_retainage_pct(out["payer"])   # the pay app warns at 0% (round 1, item 1)
     out["can_delete"] = can_delete_job(job)

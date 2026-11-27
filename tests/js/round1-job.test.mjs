@@ -172,11 +172,11 @@ test("New job record: Diary, crew, weather and quantities open; the documents ar
   core.setState({ ...company(), jobs: [j], payers: [j.payer], daily_records: [] });
   page.setLocation("daily");
   let html = reg.views.daily();
-  for (const id of ["daily-notes", "daily-crew", "daily-weather", "daily-qty-l1"]) assert.match(html, new RegExp(`id="${id}"`), id);
+  for (const id of ["daily-notes", "daily-ts-pick-0", "daily-ts-hours-0", "daily-weather", "daily-qty-l1"]) assert.match(html, new RegExp(`id="${id}"`), id);
   assert.doesNotMatch(html, /data-daily-section="quantities"/, "quantities aren't behind a tick box");
   const chips = [...html.matchAll(/data-action="daily-chip" data-kind="([a-z_]+)"[^>]*>([^<]+)</g)].map(m => [m[1], m[2]]);
-  assert.deepEqual(chips, [["delivery", "+ Delivery ticket"], ["photos", "+ Photos"], ["time_sheets", "+ Time sheet"], ["invoices", "+ Invoice"], ["inspections", "+ Inspection"], ["other", "+ Other"]]);
-  assert.doesNotMatch(html, /data-record-section=/, "no document block until its chip is tapped");
+  assert.deepEqual(chips, [["delivery", "+ Delivery ticket"], ["photos", "+ Photos"], ["invoices", "+ Invoice"], ["inspections", "+ Inspection"], ["conversation", "+ Conversation / note with client"], ["other", "+ Other"]]);
+  assert.doesNotMatch(html, /data-record-section="(?!time_sheets)/, "no document block until its chip is tapped; the time sheet is always there");
   daily.actions["daily-chip"]({ dataset: { kind: "delivery" } });
   html = reg.views.daily();
   assert.match(html, /data-record-section="delivery"/);

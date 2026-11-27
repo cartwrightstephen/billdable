@@ -156,7 +156,7 @@ test("an in-progress job with a draft: Review & send, then the draft's two next 
   const j = job({ invoices: [{ id: "d1", status: "draft" }], close_blockers: ["Work is not marked done."] });
   const { primary, more } = jobActions(j);
   assert.equal(primary.label, "Review & send");
-  assert.deepEqual(keys(more), ["conversation", "pencil", "packet", "progress", "done", "co", "void"]);
+  assert.deepEqual(keys(more), ["pencil", "packet", "progress", "done", "co", "void"]);
   assert.ok(more.every(a => ["bill", "paid", "close"].includes(a.group) && !("why" in a)));
   assert.deepEqual(more.filter(a => a.minor).map(a => a.label), ["Delete draft"], "smaller, but shown");
   assert.equal(jobActions(job({ closed: true })).primary, null);
@@ -289,7 +289,8 @@ test("follow-ups name every unpaid pay app, and a noted call waits for its date"
   assert.equal(f.invoice, a, "the oldest, approved counts too");
   assert.equal(payAppList(f.invoices), "PA-1 and PA-2");
   assert.equal(payAppList([a, b, { number: "PA-3" }]), "PA-1, PA-2 and PA-3");
-  assert.ok(jobActions(j, { now: new Date("2026-10-28T12:00:00Z") }).more.some(x => x.key === "conversation" && x.label === "Log a conversation"));
+  // A conversation goes through New job record now (Nov 26): no job action of its own.
+  assert.ok(!jobActions(j, { now: new Date("2026-10-28T12:00:00Z") }).more.some(x => x.key === "conversation"));
   const called = job({ ...j, contact_noted_at: "2026-10-28T12:00:00+00:00", expected_payment_on: "2026-11-04",
     invoices: [{ ...a, last_follow_up_at: "2026-10-28T12:00:00+00:00" }, { ...b, last_follow_up_at: "2026-10-28T12:00:00+00:00" }] });
   assert.equal(followUpDue(called).day.getDate(), 4);

@@ -39,7 +39,16 @@ function recordRow(j, stored) {
   const files = recordFileList(r);
   const label = files.length === 1 ? `<a href="/api/files/${files[0].id}" target="_blank" rel="noopener">${r.label}</a>` : r.label;
   const when = r.source || r.added_at || r.on_date ? ` <span class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.on_date || r.added_at)}</span>` : "";
-  return `<div class="list-item record-line"><span class="pill">${termText(recordKindWord(r))}</span> ${label}${files.length > 1 ? ` <span class="sub">${recordFiles(r)}</span>` : ""}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${when}${j.closed ? "" : ` <button class="linkish tall" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`}${(r.quantities || []).length && !j.closed && j.work_status !== "complete" ? ` <button class="linkish" data-action="quantities-undo" data-id="${j.id}" data-item="${r.id}" aria-label="Undo import: ${r.label}">Undo import</button>` : ""}${r.quantities_undone ? `<div class="sub">Quantities taken off by ${r.quantities_undone.by}, ${fmtDate(r.quantities_undone.at)}</div>` : ""}</div>`;
+  return `<div class="list-item record-line"><span class="pill">${termText(recordKindWord(r))}</span> ${label}${files.length > 1 ? ` <span class="sub">${recordFiles(r)}</span>` : ""}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${when}${j.closed ? "" : editButton(j, r)}${(r.quantities || []).length && !j.closed && j.work_status !== "complete" ? ` <button class="linkish" data-action="quantities-undo" data-id="${j.id}" data-item="${r.id}" aria-label="Undo import: ${r.label}">Undo import</button>` : ""}${r.quantities_undone ? `<div class="sub">Quantities taken off by ${r.quantities_undone.by}, ${fmtDate(r.quantities_undone.at)}</div>` : ""}</div>`;
+}
+
+// Edit: a diary entry opens its New job record form again, with all its parts (Nov 26); any other
+// record has its label, kind and note.
+function editButton(j, r) {
+  if (unesc(r.kind) === "daily" && r.daily_record_id && (state.daily_records || []).some(d => d.id === r.daily_record_id)) {
+    return ` <button class="linkish tall" data-action="daily-edit" data-id="${j.id}" data-item="${r.daily_record_id}" aria-label="Edit ${r.label}">Edit</button>`;
+  }
+  return ` <button class="linkish tall" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`;
 }
 
 // A record's files that are still there.

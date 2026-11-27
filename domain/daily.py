@@ -19,12 +19,12 @@ are imported inside each function, so the two modules never import each other at
 from __future__ import annotations
 
 import secrets
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 __all__ = [
     "WEATHER", "DAILY_SECTIONS", "INSPECTION_TYPES", "CREW_MAX", "RECORD_SECTIONS", "add_daily_record", "clean_daily_details",
-    "clean_record_entries", "daily_record_note", "hold_for_job_record", "save_job_record",
+    "clean_record_entries", "daily_record_note", "daily_record_for", "hold_for_job_record", "save_job_record", "update_job_record",
 ]
 
 _HOLD_HOURS = 24   # how long an uploaded file waits for its New job record
@@ -48,9 +48,15 @@ RECORD_SECTIONS = {
     "time_sheets": {"kind": "ticket", "ticket_type": "time_sheet", "word": "Time sheet"},
     "invoices": {"kind": "supplier_invoice", "word": "Invoice"},
     "inspections": {"kind": "inspection", "word": "Inspection"},
+    # Conversation / note with client (Stephen, Nov 26): what Log a conversation did, now on New job
+    # record, so everything that happens on a job goes through the one form.
+    "conversation": {"kind": "conversation", "word": ""},
     "other": {"kind": "", "word": ""},
 }
 CREW_MAX = 500
+# A time sheet's rows (Nov 26): crew member and hours, a team member or anyone typed. A row's hours
+# are a day's or a week's on a sheet that covers one.
+CREW_HOURS_MAX = 168
 _LIST_MAX = 50          # rows in any one list (crew names, punch items, inspections...)
 _ATTACH_MAX = 30
 _NAME_MAX = 80
@@ -106,10 +112,15 @@ def _amount(value: Any, field: str, label: str) -> int:
     return milli
 
 
-def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[str, Any],
+                        credit: dict[str, int] | None = None, gate_over: bool = False) -> dict[str, Any]:
     """The daily record's fields beyond the Diary, checked: crew, weather, materials, deliveries,
-    the ticked sections and the files already on the job record. Raises GateError under the field."""
-    from domain import _refuse, parse_int
+    the ticked sections and the files already on the job record. Raises GateError under the field.
+    A quantity more than what is left on its line is a soft gate (Nov 26: 2 sinks on a 1-each line
+    went through): refused with over_schedule saying which, unless body["over_ok"] says to record
+    it anyway; gate_over is the form's save (an import or a script records what it is given).
+    credit: what this record already added to each line, on Edit (it is left again)."""
+    from domain import GateError, _refuse, parse_int
     import sov
     out: dict[str, Any] = {}
     if body.get("crew_count") not in (None, ""):
@@ -140,7 +151,7 @@ def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[s
         if not sov.has_sov(job):
             _refuse("", {"quantities": "This job has no schedule of values to add quantities to."})
         by_id = {line["id"]: line for line in sov.lines(job)}
-        rows, seen, unchanged = [], set(), False
+        rows, seen, unchanged, over = [], set(), False, []
         for entry in _list(raw["quantities"], "quantities", "Quantities"):
             entry = entry if isinstance(entry, dict) else {}
             line = by_id.get(str(entry.get("line_id") or ""))
@@ -175,7 +186,17 @@ def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[s
                     unchanged = True
                 continue
             if amount:
+                left = max(0, line["qty_milli"] - sov.field_total(line) + int((credit or {}).get(line["id"], 0)))
+                if amount > left:
+                    over.append({"line_id": line["id"], "field": field, "description": line["description"], "unit": line["unit"],
+                                 "lump_sum": lump, "typed_milli": amount, "left_milli": left})
                 rows.append({"line_id": line["id"], "qty_milli": amount})
+        if over and gate_over and body.get("over_ok") is not True:
+            def words(o: dict[str, Any], milli: int) -> str:
+                return f"{sov.fmt_qty(milli * 100)}%" if o["lump_sum"] else f"{sov.fmt_qty(milli)} {o['unit']}"
+            said = {o["field"]: f"{words(o, o['typed_milli'])} is more than the {words(o, o['left_milli'])} left on {o['description']}." for o in over}
+            raise GateError("More than the schedule of values has left. Check the quantities, or record them anyway.",
+                            list(said.values()), fields=said, extra={"over_schedule": over})
         if rows:
             sections["quantities"] = rows
         elif not unchanged:   # a lump sum typed at its own total adds nothing, and isn't a mistake
@@ -291,7 +312,7 @@ def daily_record_note(job: dict[str, Any], rec: dict[str, Any]) -> str:
 
 
 def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str = "owner", at: str | None = None,
-                     details: dict[str, Any] | None = None) -> dict[str, Any]:
+                     details: dict[str, Any] | None = None, gate_over: bool = False) -> dict[str, Any]:
     """A dated note on the job: the Diary, and optionally crew, weather, materials, deliveries,
     ticked sections and files already on the job record (details, the request's body). `at` lets
     an import keep the day the note was written; otherwise the day is the page's own date
@@ -300,7 +321,7 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
     with quantities_not_applied saying why (_apply_quantities)."""
     from domain import _job, add_job_record, audit, utcnow, local_today
     job = _job(state, job_id)
-    extra = clean_daily_details(state, job, details or {}) if details is not None else {}
+    extra = clean_daily_details(state, job, details or {}, gate_over=gate_over) if details is not None else {}
     when = at or utcnow()
     day = when[:10] if at else local_today((details or {}).get("today"))
     quantities = (extra.get("sections") or {}).get("quantities") or []
@@ -324,6 +345,7 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
     if quantities:
         label += f": {_qty_words(job, quantities)}"[:160]
     add_job_record(state, job_id, label[:200], "daily", daily_record_note(job, rec), actor)
+    job["records"][-1]["daily_record_id"] = rec["id"]   # Edit opens this record's form again (Nov 26)
     for record in job.get("records", []):
         if record["id"] in rec.get("attachments", []):
             record["daily_record_id"] = rec["id"]
@@ -396,18 +418,53 @@ def clean_record_entries(job: dict[str, Any], raw: Any, actor: str = "", report:
                 _refuse("", {"attachments": "A file isn't waiting to be saved on this job. Add it again."})
         spec = RECORD_SECTIONS[section]
         clean = {"kind": spec["kind"], "ticket_type": spec.get("ticket_type", ""), "word": spec["word"],
-                 "title": "", "note": "", "extra": {}, "attachments": attachments}
+                 "title": "", "note": "", "extra": {}, "attachments": attachments, "section": section,
+                 # On Edit (update_job_record): the record this row was saved as.
+                 "record_id": str(entry.get("record_id") or "")[:40]}
         if section == "delivery":
             clean["title"] = _joined(text("supplier", "The supplier"), text("number", "The ticket number"))
             clean["note"] = text("what", "What arrived", _TEXT_MAX)
         elif section == "photos":
             clean["title"] = text("note", "What they show")
+        elif section == "time_sheets" and entry.get("crew") not in (None, "", []):
+            # Rows of crew member and hours (Nov 26): a team member picked, or anyone typed.
+            crew = []
+            for n, person in enumerate(_list(entry.get("crew"), name("crew"), "Crew rows")):
+                person = person if isinstance(person, dict) else {}
+                who = " ".join(_text(person.get("name"), _NAME_MAX, f"time_sheets_crew_name_{n}", "The name").split())
+                raw_hours = person.get("hours")
+                if not who and raw_hours in (None, ""):
+                    continue
+                if not who:
+                    _refuse("", {f"time_sheets_crew_name_{n}": "Pick who worked, or type their name."})
+                if raw_hours in (None, ""):
+                    _refuse("", {f"time_sheets_crew_hours_{n}": f"Enter the hours {who} worked, like 8."})
+                hours = _amount(raw_hours, f"time_sheets_crew_hours_{n}", "Hours")
+                if hours <= 0 or hours > CREW_HOURS_MAX * 1000:
+                    _refuse("", {f"time_sheets_crew_hours_{n}": f"Enter hours from 0.25 to {CREW_HOURS_MAX}."})
+                member = _text(person.get("member_id"), 60, f"time_sheets_crew_name_{n}", "The team member")
+                crew.append({"name": who, "hours_milli": hours, **({"member_id": member} if member else {})})
+            if crew:
+                total = sum(p["hours_milli"] for p in crew)
+                clean["title"] = f"{len(crew)} crew, {sov.fmt_qty(total)} h"
+                clean["note"] = "; ".join(f"{p['name']} {sov.fmt_qty(p['hours_milli'])} h" for p in crew)
+                clean["extra"].update(crew=crew, hours_milli=total)
+                clean["crew"] = crew
         elif section == "time_sheets":
             clean["title"] = text("who", "Who")
             if entry.get("hours") not in (None, ""):
                 hours = _amount(entry.get("hours"), name("hours"), "Hours")
                 clean["extra"]["hours_milli"] = hours
                 clean["note"] = f"Hours: {sov.fmt_qty(hours)}"
+        elif section == "conversation":
+            said = " ".join(_text(entry.get("text"), 500, name("text"), "What was said").split())
+            if not said and not attachments:
+                continue
+            if not said:
+                _refuse("", {name("text"): "Enter what was said, like \"Check goes out Friday\"."})
+            day = _next_on(job, entry.get("next_on"), name("next_on"))
+            clean["note"] = said + (f" Check again {day.isoformat()}." if day else "")
+            clean["conversation"] = {"text": said, "day": day}
         elif section == "invoices":
             clean["title"] = _joined(text("supplier", "The supplier"), text("number", "The invoice number"))
             if entry.get("amount") not in (None, ""):
@@ -437,6 +494,18 @@ def clean_record_entries(job: dict[str, Any], raw: Any, actor: str = "", report:
     return out
 
 
+def _next_on(job: dict[str, Any], value: Any, field: str) -> "date | None":
+    """A conversation's Check again on (as Log a conversation took it): today or later, and only
+    while a pay app waits for payment, since that is the follow-up it holds."""
+    from domain import OPEN_FOR_PAYMENT, _day, _refuse
+    day = _day(value, field, "Enter the date to check again, like 2026-11-07.")
+    if day and day < datetime.now(timezone.utc).date() - timedelta(days=1):
+        _refuse("", {field: "Enter today or a later date to check again."})
+    if day and not any(inv["status"] in OPEN_FOR_PAYMENT for inv in job["invoices"]):
+        _refuse("", {field: "No sent pay app is waiting for payment, so there is no follow-up to hold."})
+    return day
+
+
 def _record_day(body: dict[str, Any]) -> str:
     """The day the form says, YYYY-MM-DD: today where the person is, or a day gone by."""
     from domain import START_BACK_DAYS, _refuse, local_today
@@ -458,10 +527,20 @@ def _record_day(body: dict[str, Any]) -> str:
 def _apply_entry(state: dict[str, Any], job: dict[str, Any], entry: dict[str, Any], day: str, actor: str, daily_id: str) -> None:
     """Make one section's records: its fields on each file it uploaded, one record per file, or
     one record of what was typed when no file came with it."""
-    from domain import add_job_record, audit
+    from domain import _log_conversation, _payer, add_job_record, audit, utcnow
     head = lambda rest: f"{entry['word']}: {rest}" if entry["word"] else rest
     files = [next(r for r in job["records"] if r["id"] == rid) for rid in entry["attachments"]]
-    if files:
+    if entry.get("conversation"):
+        # As Log a conversation did (R4-06): a record of kind conversation that counts as a follow-up
+        # while a pay app waits, and with Check again on holds the next one until then.
+        payer = _payer(state, job["payer_id"])
+        now = utcnow()
+        job.setdefault("records", []).append({"id": "rec-" + secrets.token_hex(3), "kind": "conversation",
+                                              "label": (entry["title"] or f"Conversation with {payer.get('approver') or payer['name']}")[:200],
+                                              "note": entry["note"], "added_at": now, "added_by": actor})
+        _log_conversation(state, job, entry["conversation"]["text"], entry["conversation"]["day"], actor, now)
+        files = [job["records"][-1]]
+    elif files:
         for n, rec in enumerate(files, 1):
             if entry["title"]:
                 many = f" ({n} of {len(files)})" if len(files) > 1 else ""
@@ -486,6 +565,15 @@ def _apply_entry(state: dict[str, Any], job: dict[str, Any], entry: dict[str, An
             rec["ticket_type"] = entry["ticket_type"]
         if daily_id:
             rec["daily_record_id"] = daily_id
+
+
+def _crew_from_sheet(details: dict[str, Any], entries: list[dict[str, Any]]) -> None:
+    """The crew count and names come from the time sheet's rows when it has them (Nov 26): the
+    count box is gone from the form. A count typed by a script or an older page stays as given."""
+    sheet = next((e["crew"] for e in entries if e.get("crew")), None)
+    if sheet and details.get("crew_count") in (None, "") and not details.get("crew_names"):
+        names = list(dict.fromkeys(p["name"] for p in sheet))
+        details["crew_count"], details["crew_names"] = len(names), names
 
 
 def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, body: dict[str, Any],
@@ -525,12 +613,166 @@ def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, 
     daily_id = ""
     if notes:
         details["attachments"] = list(body.get("attachments") or []) + [rid for e in entries for rid in e["attachments"]]
+        _crew_from_sheet(details, entries)
         at = None if day == local_today(body.get("today")) else f"{day}T12:00:00+00:00"
-        add_daily_record(state, job_id, notes, actor, at=at, details=details)
+        add_daily_record(state, job_id, notes, actor, at=at, details=details, gate_over=True)
         daily_id = state["daily_records"][-1]["id"]
     for entry in entries:
         _apply_entry(state, job, entry, day, actor, daily_id)
     if entries and not job.get("closed"):
+        _refresh_draft_gate(job, state)
+    return job
+
+
+def _added_rows(rec: dict[str, Any]) -> list[dict[str, Any]]:
+    """What a daily record put on the field totals: quantities_added, or for a record from before it,
+    all of its quantities or none (as _quantities_from_records reads them)."""
+    if "quantities_added" in rec:
+        return list(rec.get("quantities_added") or [])
+    return [] if rec.get("quantities_not_applied") else list((rec.get("sections") or {}).get("quantities") or [])
+
+
+def _same_quantities(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> bool:
+    key = lambda rows: sorted((r["line_id"], r["qty_milli"], r.get("to_date_milli")) for r in rows)
+    return key(a) == key(b)
+
+
+def _daily_job_record(job: dict[str, Any], rec: dict[str, Any]) -> dict[str, Any] | None:
+    """The "daily" job record that reads a daily record out: linked by id, or for one saved before
+    the link, the one whose note is that record's note."""
+    daily = [r for r in job.get("records", []) if r.get("kind") == "daily"]
+    linked = next((r for r in daily if r.get("daily_record_id") == rec["id"]), None)
+    if linked:
+        return linked
+    said = daily_record_note(job, rec)
+    return next((r for r in daily if not r.get("daily_record_id") and r.get("note") == said), None)
+
+
+def daily_record_for(state: dict[str, Any], job: dict[str, Any], record_id: str) -> dict[str, Any] | None:
+    """The daily record a job record of kind "daily" reads out, for its Edit."""
+    rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not rec or rec.get("kind") != "daily":
+        return None
+    ids = set(job.get("daily_records") or [])
+    for d in state.get("daily_records", []):
+        if d.get("id") in ids and _daily_job_record(job, d) is rec:
+            return d
+    return None
+
+
+def _drop_typed_record(state: dict[str, Any], job: dict[str, Any], rec: dict[str, Any], actor: str) -> bool:
+    """A row taken off a saved job record on Edit: a record with no file goes, and comes off any
+    draft's supporting documents; one with a file, or one that went out with a pay app, stays on the
+    job records, no longer part of this job record. Returns whether it went."""
+    from domain import DRAFT_STATUSES, audit
+    rec.pop("daily_record_id", None)
+    if rec.get("file_ids"):
+        return False
+    packets = [(inv, inv.get("packet") or []) for inv in job.get("invoices", [])] + [(None, job.get("packet") or []), (None, job.get("closeout_packet") or [])]
+    if any(inv is not None and inv.get("status") not in DRAFT_STATUSES and a.get("record_id") == rec["id"]
+           for inv, packet in packets for item in packet for a in item.get("attachments") or []):
+        return False
+    for inv, packet in packets:
+        if inv is not None and inv.get("status") not in DRAFT_STATUSES:
+            continue
+        for item in packet:
+            if any(a.get("record_id") == rec["id"] for a in item.get("attachments") or []):
+                item["attachments"] = [a for a in item["attachments"] if a.get("record_id") != rec["id"]]
+                if not item["attachments"] and item.get("present") and not item.get("override"):
+                    item["present"] = False
+    job["records"] = [r for r in job["records"] if r is not rec]
+    audit(state, job["id"], "edit_record", f"{actor} took {rec['label']} off a job record.", actor)
+    return True
+
+
+def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: str, actor: str, body: dict[str, Any],
+                      report: dict[str, list] | None = None) -> dict[str, Any]:
+    """Edit on a saved job record (Stephen, Nov 26): the same form again, with all its parts. The
+    body is what New job record sends; rows that came from the saved record carry their record_id.
+    The Diary and the day's details are replaced; quantities changed come off the field totals and
+    the new ones go on (refused once a sent pay app may have billed them: Correct field total on the
+    schedule card changes those); each row saved before is changed in place, a row taken off goes
+    (_drop_typed_record) and a new row is added, as on a new record. Audited."""
+    from domain import GateError, DRAFT_STATUSES, _open_job, _refresh_draft_gate, _refuse, audit, utcnow
+    import sov
+    job = _open_job(state, job_id)
+    rec = next((d for d in state.get("daily_records", []) if d.get("id") == daily_id and d.get("job_id") == job_id), None)
+    if not rec:
+        raise GateError("That job record is not on this job.")
+    notes = (notes or "").strip()
+    if not notes:
+        _refuse("", {"notes": "Enter the diary entry."})
+    report = report if report is not None else {}
+    report.setdefault("already_saved", [])
+    report.setdefault("not_added", [])
+    entries = clean_record_entries(job, body.get("entries"), actor, report)
+    linked = {r["id"]: r for r in job.get("records", []) if r.get("daily_record_id") == daily_id and r.get("kind") != "daily"}
+    for entry in entries:
+        if entry["record_id"] and entry["record_id"] not in linked:
+            raise GateError("Part of this job record was changed or taken off since you opened it. Open it again.")
+    day = _record_day({**body, "today": body.get("today")}) if body.get("date") else str(rec.get("at") or "")[:10]
+    shown = _daily_job_record(job, rec)
+    old_rows = _added_rows(rec)
+    details = {k: v for k, v in body.items() if k != "entries"}
+    _crew_from_sheet(details, entries)
+    credit: dict[str, int] = {}
+    for row in old_rows:
+        credit[row["line_id"]] = credit.get(row["line_id"], 0) + int(row["qty_milli"])
+    extra = clean_daily_details(state, job, details, credit=credit, gate_over=True)
+    new_q = (extra.get("sections") or {}).get("quantities") or []
+    before_q = (rec.get("sections") or {}).get("quantities") or []
+    if not _same_quantities(before_q, new_q):
+        sent = [inv for inv in sov.live_invoices(job) if inv.get("status") not in DRAFT_STATUSES and str(inv.get("created_at") or "") >= str(rec.get("at") or "")]
+        if old_rows and sent:
+            raise GateError(f"The quantities on this job record may be billed on {sent[0]['number']}, which has gone to the client. "
+                            "Leave them as they are here, and change the field total with Correct field total on the Schedule of values card.",
+                            fields={"quantities": "These quantities may already be billed."})
+        by_id = {line["id"]: line for line in sov.lines(job)}
+        for row in old_rows:
+            line = by_id.get(row["line_id"])
+            if line:
+                line["field_milli"] = max(0, sov.field_total(line) - int(row["qty_milli"]))
+        job["completed_value_cents"] = sov.totals({"sov": {"op_bp": sov.op_bp(job), "lines": [sov.anticipated(job, l) for l in sov.lines(job)]}})["to_date_cents"]
+        added, not_applied = _apply_quantities(job, new_q, day) if new_q else ([], "")
+        rec["quantities_added"] = added
+        if not_applied:
+            rec["quantities_not_applied"] = not_applied
+        else:
+            rec.pop("quantities_not_applied", None)
+    rec["notes"] = notes
+    keep_attached = [rid for rid in rec.get("attachments", []) if rid in linked]
+    for k in ("crew_count",):
+        rec.pop(k, None)
+    rec.update({k: v for k, v in extra.items() if k != "attachments"})
+    if day != str(rec.get("at") or "")[:10]:
+        rec["at"] = f"{day}T12:00:00+00:00"
+    kept: set[str] = set()
+    for entry in entries:
+        if entry["record_id"]:
+            old = linked[entry["record_id"]]
+            kept.add(old["id"])
+            head = f"{entry['word']}: {entry['title']}" if entry["word"] and entry["title"] else entry["title"]
+            if head:
+                old["label"] = head[:200]
+            if entry["note"] or entry["section"] != "photos":
+                old["note"] = entry["note"]
+            for k in ("crew", "hours_milli", "amount_cents"):
+                old.pop(k, None)
+            old.update(entry["extra"])
+            old["on_date"] = day
+            if entry["attachments"]:
+                _apply_entry(state, job, {**entry, "record_id": ""}, day, actor, daily_id)
+        else:
+            _apply_entry(state, job, entry, day, actor, daily_id)
+    gone = [r for rid, r in linked.items() if rid not in kept and _drop_typed_record(state, job, r, actor)]
+    rec["attachments"] = [rid for rid in keep_attached if rid in kept] + [r["id"] for r in job.get("records", [])
+                          if r.get("daily_record_id") == daily_id and r.get("file_ids") and r["id"] not in keep_attached]
+    label = f"Diary entry {day}" + (f": {_qty_words(job, new_q)}"[:160] if new_q else "")
+    if shown is not None:
+        shown["label"], shown["note"], shown["daily_record_id"] = label[:200], daily_record_note(job, rec), daily_id
+        shown["edited"] = {"by": actor, "at": utcnow()}
+    audit(state, job_id, "daily_record_edit", f"{actor} changed the job record of {day}" + (f", taking off {', '.join(r['label'] for r in gone)}" if gone else "") + ".", actor)
+    if not job.get("closed"):
         _refresh_draft_gate(job, state)
     return job
 

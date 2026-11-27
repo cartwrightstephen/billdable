@@ -88,6 +88,12 @@ function askTeam() {
   fetch("/api/team").then(r => (r.ok ? readJson(r) : null)).then(data => { if (data) { setTeamData(escDeep(data)); render(); } }).catch(() => {});
 }
 
+// The company's team, for a time sheet's crew dropdown (Nov 26): asked for once, like Assigned to.
+export function teamUsers() {
+  askTeam();
+  return (teamData && teamData.users) || [];
+}
+
 export function assigneeField(form, prefix, current = "") {
   askTeam();
   const users = (teamData && teamData.users) || [];
