@@ -3780,6 +3780,8 @@ class Handler(BaseHTTPRequestHandler):
         """A document's file as the raw body, its name in X-Filename (as the job record's uploads).
         Written before the lock, as the Inbox's uploads; deleted again if the change is refused."""
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
+        if self._upload_refused(user):   # the hourly upload limits, as every stored upload (H5)
+            return
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()
         if not user:
@@ -3839,6 +3841,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "Not found"})
             return
         filename = unquote(self.headers.get("X-Filename", "") or "form.pdf")
+        if self._upload_refused(user):   # the hourly upload limits, as every stored upload (H5)
+            return
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()   # still signed in, and still allowed, now the upload is here?
         if not user:
