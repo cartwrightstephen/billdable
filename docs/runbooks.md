@@ -176,3 +176,40 @@ homeowners in draws (Settings, Company, How you bill) gets a 45-day trial instea
 Design partners: make a second price at $99 a month, set `STRIPE_PARTNER_PRICE_ID`, and mark each
 partner with `python3 admin.py partner <company id> on` before they subscribe. The plan caps them
 at 3; the command says how many there are. Nothing is ever deleted for an unpaid bill.
+
+## 8. GitHub and Render settings that guard the code (M12)
+
+Done once, by whoever administers the GitHub repository and the Render account. Nothing in the
+repository can turn these on by itself.
+
+**Protect `main`** (GitHub, the repository, **Settings → Branches → Add branch ruleset**, or
+"Add rule" on older screens), target branch `main`:
+
+1. Require a pull request before merging, with at least one approval; dismiss approvals when new
+   commits are pushed.
+2. Require status checks to pass, and require the branch to be up to date. Add the checks
+   `unittest`, `unittest-json`, `smoke` and both `analyze` runs (CodeQL, python and
+   javascript-typescript). They appear in the list after each workflow has run once.
+3. Block force pushes and deletion. Include administrators (no bypass list), so a mistaken push
+   from either founder is refused too.
+4. Do the same for `dev`, without the approval if one person works there alone.
+
+**Scanning** (**Settings → Code security**):
+
+1. Turn on **Dependabot alerts** and **Dependabot security updates**. `.github/dependabot.yml`
+   then opens weekly pull requests into `dev` when a pinned Action or the Docker base image has
+   a newer release; merge them like any other change, once the tests pass.
+2. Turn on **Secret scanning** and **Push protection**, so a key pasted into a commit is refused
+   before it reaches GitHub.
+3. **Code scanning** runs from `.github/workflows/codeql.yml`; its findings are under
+   **Security → Code scanning**.
+
+**Actions** (**Settings → Actions → General**): allow only actions from GitHub and verified
+creators, and set the default workflow permissions to "Read repository contents". The
+workflows pin every action to a full commit id (the version is in the comment beside it);
+Dependabot moves the pins.
+
+**Render**: `render.yaml` sets `autoDeployTrigger: checksPass` on both services, so a push
+deploys only after GitHub's checks pass on that commit. After the next blueprint sync, check
+each service's **Settings → Build & Deploy → Auto-Deploy** reads "After CI checks pass".
+

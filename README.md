@@ -184,7 +184,7 @@ python3 -m unittest discover -s tests -v
 
 Browser test: `DURACASH_DEMO_SEED=hartline DURACASH_DATA_DIR=$(mktemp -d) BACKUP_HOURS=0 HOST=127.0.0.1 PORT=8873 python3 server.py`, then `DURACASH_URL_UNDER_TEST=http://127.0.0.1:8873 node tests/e2e/smoke.mjs`. The steps are written against the Hartline Remodeling data (seed.py), which `DURACASH_DEMO_SEED=hartline` makes the demo company. The live demo's own steps (86-demo.mjs) need a second server started without it, named by `DURACASH_DEMO_URL_UNDER_TEST`; `DURACASH_STEPS=86` runs only those. Keep a Mac awake for it (run both under `caffeinate -s -i -m`): when it sleeps, the browser's waits run out and steps fail with timeouts that have nothing to do with the app. `pmset -g log` shows whether it slept.
 
-Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github/workflows/tests.yml`) runs them on every push and pull request; protect `main` so a red run blocks the merge (Settings, Branches, require the `unittest` check).
+Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github/workflows/tests.yml`) runs them on every push and pull request; protect `main` so a red run blocks the merge (docs/runbooks.md, section 8, lists every setting). Actions are pinned to commit ids, `.github/dependabot.yml` proposes updates, and `.github/workflows/codeql.yml` scans the code.
 
 ## Project layout
 

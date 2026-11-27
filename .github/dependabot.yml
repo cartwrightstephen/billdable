@@ -1,0 +1,17 @@
+# Dependabot (M12): weekly pull requests when a pinned GitHub Action or the Docker base image
+# has a newer release. The app has no Python packages to watch (standard library only).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: "docker"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
