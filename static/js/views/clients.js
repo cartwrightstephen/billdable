@@ -249,7 +249,10 @@ export const views = {
           ${p.waiver_not_needed ? `<p class="override-note">Lien waivers not needed for this client. Marked by ${p.waiver_not_needed.by} on ${fmtDate(p.waiver_not_needed.at)}: ${p.waiver_not_needed.reason || "no reason given"} ${edits ? `<button type="button" class="btn small secondary" data-action="client-waiver-needed" data-id="${p.id}">Needed after all</button>` : ""}</p>` : ""}
           ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${(n => n === 1 ? "1 day" : `${n} days`)(Math.round(Number(unesc(String(p.paid_days_avg)))))} after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
             const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
-            if (!(p.paid_count >= 2 && Math.abs(avg - set) >= 2)) return "That matches your setting.";
+            // One paid pay app is too few to weigh against the setting: nothing is said either way
+            // (Nov 27 hunt: "That matches your setting" under 0 days against a 14-day setting).
+            if (p.paid_count < 2) return "";
+            if (Math.abs(avg - set) < 2) return "That matches your setting.";
             // Offered only for a number the server takes: 1 to 365 days (domain.update_payer).
             return edits && avg >= 1 && avg <= 365
               ? `Your setting says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} day${avg === 1 ? "" : "s"}</button>`
