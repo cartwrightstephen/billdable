@@ -30,6 +30,13 @@ class FirstDueAfterStartTests(unittest.TestCase):
         self.assertFalse([d for d in dates if (d["key"].startswith("cutoff") or d["key"] == "first_payapp") and d["date"] <= "2026-11-14"], dates)
         self.assertEqual(next(d for d in dates if d["label"] == "First pay app due")["date"], "2026-12-15")
 
+    def test_this_months_cutoff_gone_by_isnt_listed(self):
+        self.job["started_on"] = "2026-10-01"
+        dates = {d["key"]: d for d in domain.job_key_dates(self.state, self.job, today=date(2026, 11, 27))}
+        self.assertNotIn("cutoff_this", dates, "Nov 13 has gone by")
+        self.assertEqual(dates["cutoff_next"]["date"], "2026-12-15")
+        self.assertFalse([d for d in dates.values() if d["key"].startswith("cutoff") and d["date"] < "2026-11-27"])
+
     def test_a_job_without_a_start_still_counts_from_today(self):
         self.job.pop("started_on", None)
         self.job.pop("start_date", None)

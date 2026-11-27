@@ -320,6 +320,8 @@ def job_key_dates(state: dict[str, Any], job: dict[str, Any], payer: dict[str, A
                                 ("cutoff_next", "Pay app due next month", _cutoff(day, today.year + (today.month == 12), nxt))):
             if start and business_day_on_or_before(cut) <= start:
                 continue
+            if business_day_on_or_before(cut) < today:
+                continue   # gone by: next month's is the one to meet (Nov 27 audit)
             if first and not any(d["key"].startswith("cutoff") or d["key"] == "first_payapp" for d in out):
                 key, label = key, "First pay app due"
             add(key, label, business_day_on_or_before(cut).isoformat())
