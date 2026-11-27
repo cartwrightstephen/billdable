@@ -259,6 +259,57 @@ class SecurityHttpTests(unittest.TestCase):
         res, _ = self.request("POST", "/api/mail-events/whatever", {}, headers=evil)
         self.assertEqual(res.status, 404, "the token check answers, not the Origin check")
 
+    def test_the_nov27_branches_routes_keep_the_cross_site_rules(self):
+        # Integration (Nov 27): the posts records, delivery and compliance added are refused from
+        # another site like every other; the open-tracking image (GET) needs no sign-in and says
+        # nothing; provider delivery and open events still come in through the bounce webhook.
+        import delivery
+        host = f"127.0.0.1:{self.port}"
+        evil, own = {"Origin": "https://evil.example"}, {"Origin": f"http://{host}"}
+        posts = [(f"/api/jobs/{self.job_id}/daily-record-edit/rec-x", {"notes": "x"}), (f"/api/jobs/{self.job_id}/dismiss-row", {"key": "k"}),
+                 (f"/api/jobs/{self.job_id}/revise/inv-x", {"reason": "x"}), ("/api/outbox/eml-x/resend", {"email": "a@b.example"}),
+                 (f"/api/jobs/{self.job_id}/packet-soft-check/item-x", {"answer": "checked"}),
+                 ("/api/compliance/docs", {"type": "coi"}), ("/api/compliance/settings", {"remind_days": [30]}),
+                 (f"/api/compliance/liens/{self.job_id}", {"tier": "lower"}), ("/api/compliance/requirements", {"type": "coi"})]
+        for path, body in posts:
+            res, data = self.request("POST", path, body, cookie=self.owner, headers=evil)
+            self.assertEqual(res.status, 403, path)
+            self.assertIn("another site", data["error"], path)
+            res, data = self.request("POST", path, body, cookie=self.owner, headers=own)
+            self.assertNotIn("another site", str(data.get("error", "")) if isinstance(data, dict) else "", path)
+        res, data = self.request("POST", "/api/compliance/docs/cdoc-00000000/file", raw=b"%PDF-1.4", cookie=self.owner,
+                                 headers={**evil, "Content-Type": "application/pdf", "X-Filename": "coi.pdf"})
+        self.assertEqual(res.status, 403, "the raw upload too")
+        # The image: no cookie, any token, the same answer; a real one records an open only when the
+        # company turned tracking on, and nothing about the email comes back.
+        with server.company_lock(self.company):
+            state = server.load_company(self.company)
+            entry = {"id": "eml-track", "kind": "pay_app", "job_id": self.job_id, "status": "sent", "to": "ap@park.example", "cc": [],
+                     "at": "2026-11-27T00:00:00+00:00", "subject": "Pay app"}
+            delivery.start(entry, "2026-11-27T00:00:01+00:00", [], {"ap@park.example": "t" * 24}, {})
+            state.setdefault("email_log", []).append(entry)
+            server.save_company(self.company, state)
+        answers = []
+        for path in (f"/o/{self.company}.{'t' * 24}.gif", f"/o/{self.company}.{'u' * 24}.gif", f"/o/co-nobody.{'t' * 24}.gif"):
+            res, body = self.request("GET", path)
+            answers.append((res.status, res.getheader("Content-Type"), body, res.getheader("Set-Cookie")))
+        self.assertEqual(answers, [(200, "image/gif", delivery.PIXEL, None)] * 3)
+        stored = next(e for e in server.load_company(self.company)["email_log"] if e["id"] == "eml-track")
+        self.assertEqual(delivery.row_for(stored, "ap@park.example")["status"], "sent", "tracking is off by default: nothing recorded")
+        self.assertEqual(self.request("POST", "/api/company", {"open_tracking": True}, cookie=self.owner)[0].status, 200)
+        self.request("GET", f"/o/{self.company}.{'t' * 24}.gif", headers=evil)
+        stored = next(e for e in server.load_company(self.company)["email_log"] if e["id"] == "eml-track")
+        self.assertEqual(delivery.row_for(stored, "ap@park.example")["status"], "opened")
+        # Delivery events through the bounce webhook, with its password.
+        token = "t" * 20
+        with mock.patch.dict(os.environ, {"MAIL_EVENTS_TOKEN": token, "MAIL_EVENTS_PASSWORD": "pw"}):
+            event = [{"event": "delivered", "email": "ap@park.example", "subject": "Pay app", "timestamp": 1890000000}]
+            res, _ = self.request("POST", f"/api/mail-events/{token}", event, headers=evil)
+            self.assertEqual(res.status, 401, "no password: refused by its own check, not the Origin one")
+            res, out = self.request("POST", f"/api/mail-events/{token}", event,
+                                    headers={**evil, "Authorization": "Basic " + base64.b64encode(b"x:pw").decode()})
+            self.assertEqual(res.status, 200, out)
+
     # ----- M2: password asked again, and throttled -----
 
     def test_password_checks_in_a_session_are_throttled(self):
