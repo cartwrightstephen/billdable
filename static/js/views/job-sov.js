@@ -1,12 +1,12 @@
 // The job page's schedule of values: the card, the editor, pasted rows, and line-by-line progress.
 import { esc, unesc, money, fmtDate } from "../format.js";
 import { mayTake } from "../jobs.js";
-import { sovMilli, lumpDone, sovCents, sovBp, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovFixedNote, sovPeriodHtml, sovLostLines } from "../sov.js";
+import { sovMilli, lumpDone, sovCents, sovBp, sovExtend, sovMarkup, fmtQty, blankSovLine, sovLineProblem, sovFixedNote, sovPeriodHtml, sovLostLines, progressEstimate, progressEstimateHtml } from "../sov.js";
 import { readJson, setNetBanner } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { field, formValues, formErrorLine, refuseForm, clearForm } from "../forms.js";
 import { termText } from "../terms.js";
-import { state, formOpen, onSessionEnd, currentView } from "../state.js";
+import { state, formOpen, onSessionEnd, currentView, currentJobId } from "../state.js";
 import { perms, post, toast, render, nav } from "../app-core.js";
 import { qtyImportForJob } from "./data.js";
 
@@ -364,3 +364,17 @@ export const actions = {
   "sov-correct-cancel": () => { sovCorrecting = null; render(); },
   "sov-correct-save": (el, id) => sovCorrectSave(id),
 };
+
+// The Progress pay app page's running figure follows the boxes as they are typed in (Nov 27 hunt).
+export function updateProgressEstimate() {
+  const shown = document.getElementById("sovp-estimate");
+  const j = shown && state && state.jobs.find(x => x.id === currentJobId);
+  if (!j || !j.sov_view) return;
+  const typed = {};
+  document.querySelectorAll("[data-sovp]").forEach(el => { (typed[el.dataset.sovp] ||= {}).done = el.value; });
+  document.querySelectorAll("[data-sovs]").forEach(el => { (typed[el.dataset.sovs] ||= {}).stored = el.value; });
+  shown.outerHTML = progressEstimateHtml(j, progressEstimate(j.sov_view.lines, typed));
+}
+if (typeof document !== "undefined" && document.addEventListener) document.addEventListener("input", (e) => {
+  if (e.target && e.target.matches && e.target.matches("[data-sovp], [data-sovs]")) updateProgressEstimate();
+});
