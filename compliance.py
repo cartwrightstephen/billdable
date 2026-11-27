@@ -266,15 +266,20 @@ def doc_status(doc: dict[str, Any], today: date, warn_days: int) -> str:
 
 
 def _replaced(docs: list[dict[str, Any]]) -> set[str]:
-    """Documents a later one of the same kind, client and job takes over from (a renewed COI):
-    no reminders for the old one."""
-    latest: dict[tuple, dict[str, Any]] = {}
-    for d in docs:
-        key = (d.get("type"), d.get("payer_id", ""), d.get("job_id", ""), d.get("additional_insured", False))
-        best = latest.get(key)
-        if not best or (d.get("expires_on") or "9999", d.get("added_at", "")) > (best.get("expires_on") or "9999", best.get("added_at", "")):
-            latest[key] = d
-    return {d["id"] for d in docs if d["type"] not in {"payroll", "other"}} - {d["id"] for d in latest.values()}
+    """Documents a newer one of the same kind and holder (client, job, additional insured) takes
+    over from, a renewed COI: no reminders for the old one. Newer is a later effective date; when
+    neither has one, a later expiry date. A document with no expiry date never takes over from a
+    dated one by being undated (Nov 27 hunt: an old undated COI silenced the renewed one)."""
+    def key(d: dict[str, Any]) -> tuple:
+        return (d.get("type"), d.get("payer_id", ""), d.get("job_id", ""), d.get("additional_insured", False))
+
+    def newer(b: dict[str, Any], a: dict[str, Any]) -> bool:
+        if b.get("effective_on") or a.get("effective_on"):
+            return bool(b.get("effective_on")) and b["effective_on"] > (a.get("effective_on") or "")
+        return bool(b.get("expires_on")) and bool(a.get("expires_on")) and b["expires_on"] > a["expires_on"]
+
+    return {a["id"] for a in docs if a.get("type") not in {"payroll", "other"}
+            and any(b is not a and key(b) == key(a) and newer(b, a) for b in docs)}
 
 
 # ---------- requirements ----------
@@ -311,10 +316,12 @@ def _payer_name(state: dict[str, Any], payer_id: str) -> str:
 
 def meets(req: dict[str, Any], doc: dict[str, Any]) -> bool:
     """Whether a document is the kind a requirement asks for, for that client and job. A COI
-    naming the client as additional insured must be that client's own."""
+    naming the client as additional insured must be that client's own; one filed for a job meets
+    only that job's requirement."""
     if doc.get("type") != req["type"]:
         return False
-    if doc.get("job_id") and doc["job_id"] != req.get("job_id") and req.get("job_id"):
+    # A job's own document is for that job only: it doesn't meet a client-wide requirement (Nov 27).
+    if doc.get("job_id") and doc["job_id"] != req.get("job_id"):
         return False
     if req.get("additional_insured"):
         return doc.get("payer_id") == req["payer_id"] and bool(doc.get("additional_insured"))
