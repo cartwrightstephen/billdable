@@ -171,6 +171,16 @@ def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
     earned = completed - retained
     previous = sum(inv["amount_cents"] for inv in earlier)
     contract_to_date = original + net_co + unsigned_total
+    # G702 lines 5a and 5b: of the retainage held to date, what is on materials stored (column F
+    # of this pay app's sheet, at each line's percent), and the rest, on work completed.
+    own_pct = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)
+    stored = stored_ret = 0
+    for e in invoice.get("sov_sheet") or []:
+        cents = int(e.get("stored_cents") or 0)
+        if cents > 0:
+            stored += cents
+            stored_ret += sov.retainage_on(cents, int(e.get("retainage_pct", own_pct) or 0))
+    stored_ret = max(0, min(stored_ret, retained))
     return {
         "original": original,
         "net_co": net_co,
@@ -178,6 +188,9 @@ def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
         "contract_to_date": contract_to_date,
         "completed": completed,
         "retainage": retained,
+        "retainage_work": retained - stored_ret,
+        "retainage_stored": stored_ret,
+        "stored": stored,
         "released": terms["released_cents"],
         "earned": earned,
         "previous": previous,
@@ -253,6 +266,13 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         ("3. Contract sum to date (1 + 2" + (" + 2a)" if figures["unsigned_co"] else ")"), figures["contract_to_date"]),
         ("4. Total completed to date", figures["completed"]),
         ("5. Retainage held to date", figures["retainage"]),
+    ]
+    if figures["retainage"]:
+        rows += [
+            ("    a. On completed work", figures["retainage_work"]),
+            ("    b. On stored materials" + (f" ({_money(figures['stored'])} stored)" if figures["stored"] else ""), figures["retainage_stored"]),
+        ]
+    rows += [
         ("6. Total earned less retainage (4 - 5)", figures["earned"]),
         ("7. Less previous pay apps", figures["previous"]),
         ("8. CURRENT PAYMENT DUE (6 - 7)", figures["due"]),
@@ -265,8 +285,11 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         y -= 20 if not label.startswith(("3.", "6.")) else 26
     y -= 6
     pct = invoice.get("retainage_cents", 0)
-    p.text(MARGIN + 20, y, f"This pay app: {_money(invoice.get('gross_cents', invoice['amount_cents']))} of work"
-           + (f", less {_money(pct)} retainage" if pct else "") + f" = {_money(invoice['amount_cents'])}.", "F1", 9)
+    if invoice.get("retainage_release"):
+        p.text(MARGIN + 20, y, f"This pay app bills no new work: it releases {_money(invoice['amount_cents'])} of the retainage held.", "F1", 9)
+    else:
+        p.text(MARGIN + 20, y, f"This pay app: {_money(invoice.get('gross_cents', invoice['amount_cents']))} of work"
+               + (f", less {_money(pct)} retainage" if pct else "") + f" = {_money(invoice['amount_cents'])}.", "F1", 9)
     if figures["released"]:
         y -= 14
         p.text(MARGIN + 20, y, f"Retainage released to date, recorded separately: {_money(figures['released'])}.", "F1", 9)
@@ -390,7 +413,9 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         page.line(MARGIN, y + 8, PAGE_W - MARGIN, y + 8)
         page.text(MARGIN, y - 4, row_text(["", "Totals", *(f"{t / 100:,.2f}" for t in totals[:4]), "", f"{totals[4] / 100:,.2f}", "",
                                            f"{(totals[0] - totals[4]) / 100:,.2f}", f"{totals[5] / 100:,.2f}"]), "F3", size)
-        if pct_ret:
+        if any("retainage_pct" in e for e in sheet):
+            page.text(MARGIN, y - 18, "Retainage column: each line's percent of its total to date, for reference. Line 5 on page 1 is the retainage actually held to date.", "F1", 8)
+        elif pct_ret:
             page.text(MARGIN, y - 18, f"Retainage column: {pct_ret}% of the total to date on each line, for reference. Line 5 on page 1 is the retainage actually held to date.", "F1", 8)
         page, y = notes_on(page, y - 30)
         pages.append(page)

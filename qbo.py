@@ -382,6 +382,10 @@ def _cell(text: Any) -> str:
 
 
 def _item(line: dict[str, Any]) -> str:
+    # Retainage held is a negative Retainage line; a release pay app bills it back on the same item
+    # (Nov 27), so QuickBooks moves it from retainage receivable to what the customer owes now.
+    if line.get("retainage_release"):
+        return "Retainage"
     if line.get("co_id"):
         return "Change order"
     if line["amount_cents"] < 0 and line["label"].startswith("Less retainage"):
@@ -398,6 +402,8 @@ def invoice_rows(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, 
         raise domain.GateError(f"{invoice['number']} was deleted or pulled back, so there is nothing to put in QuickBooks.")
     if invoice.get("status") not in EXPORTABLE:
         raise domain.GateError(f"{invoice['number']} hasn't gone to the client, so it isn't ready for QuickBooks. Send it first.")
+    if not domain.qbo_pushable(invoice):
+        raise domain.GateError(f"{invoice['number']} was billed before Duracash, so it is in your books already. Only pay apps made here go to QuickBooks.")
     payer = next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
     issued = _qb_date(invoice.get("sent_at") or invoice.get("created_at"))
     head = {"InvoiceNo": _cell(invoice["number"]), "Customer": _cell(payer.get("name", "")),

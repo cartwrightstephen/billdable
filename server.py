@@ -2342,6 +2342,9 @@ class Handler(BaseHTTPRequestHandler):
         waiver_for = (query.get("waiver_for") or [""])[0] if file_now else ""
         # A file on its way into the New job record form: that form's save fills in what it is.
         for_job_record = file_now and (query.get("for_job_record") or [""])[0] == "1"
+        # Backup for one schedule line's stored materials, and the copy of an earlier pay app (Nov 27).
+        sov_line = (query.get("sov_line") or [""])[0] if file_now else ""
+        history_of = (query.get("history") or [""])[0] if file_now else ""
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
@@ -2394,6 +2397,10 @@ class Handler(BaseHTTPRequestHandler):
                 made.extend(filed["record_ids"])   # the upload's answer names its records: the page's copy of the job can be out of date
                 if for_job_record:
                     domain.hold_for_job_record(state, job_id, filed["record_ids"], actor)
+                if sov_line:
+                    domain.link_record_to_work(state, job_id, filed["record_ids"][0], sov_line_id=sov_line, actor=actor)
+                if history_of:
+                    domain.attach_history_file(state, job_id, history_of, filed["record_ids"][0], actor)
                 if waiver_kind in domain.WAIVER_KINDS and filed.get("filed_kind") == "waiver":
                     domain.set_waiver_type(state, job_id, filed["record_ids"][0], waiver_kind, actor, for_id=waiver_for, said=False)
                 if attach_to:
@@ -3649,6 +3656,15 @@ JOB_ACTIONS = {
     "accept-short-pay": (True, lambda h, st, j, i, c: domain.settle_short_pay(st, j, i, _text(c.body, "reason"), c.actor)),
     "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
     "edit": (False, _edit_job),
+    # Pay-app core (Nov 27): a job started mid-project with its earlier pay apps, retainage by line
+    # and for one pay app, and the retainage-only pay app.
+    "earlier-payapps": (False, lambda h, st, j, i, c: domain.import_earlier_payapps(st, j, c.body, c.actor)),
+    "earlier-payapps-remove": (False, lambda h, st, j, i, c: domain.remove_earlier_payapps(st, j, c.actor)),
+    "line-retainage": (False, lambda h, st, j, i, c: domain.set_line_retainage(st, j, c.body.get("pcts"), c.actor)),
+    "payapp-retainage": (False, lambda h, st, j, i, c: domain.set_payapp_retainage(st, j, c.body.get("pct"), c.actor)),
+    "retainage-release": (False, lambda h, st, j, i, c: domain.draft_retainage_release(
+        st, j, None if c.body.get("amount_cents") in (None, "") else _number(c.body, "amount_cents", "the retainage to bill"),
+        _text(c.body, "stage", "final"), c.actor, period_end=_text(c.body, "period_to"), notes=_text(c.body, "notes"))),
     # Dismiss a Dashboard reminder (Nov 26): no job record that day, a change order with no work.
     "dismiss-row": (False, lambda h, st, j, i, c: domain.dismiss_row(st, j, _text(c.body, "key"), c.actor)),
     "paperwork": (False, lambda h, st, j, i, c: domain.set_job_paperwork(st, j, c.body, c.actor)),

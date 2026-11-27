@@ -348,6 +348,8 @@ def item_gate(job: dict[str, Any], item: dict[str, Any]) -> str:
 
 def soft_question(item: dict[str, Any]) -> str:
     """What whoever sends is asked about a soft item that isn't in."""
+    if gate_key(item) == "stored" and item.get("covers"):
+        return f"Stored materials billed on {', '.join(item['covers'])}: is each line's supplier invoice, receipt or photo checked, or not needed this time?"
     if gate_key(item) == "stored":
         return "Any stored materials received this period to bill?"
     return f"{item['label']}: checked, or not needed this time?"
@@ -379,7 +381,8 @@ def soft_check_packet_item(state: dict[str, Any], job_id: str, item_id: str, ans
         _refuse("", {"answer": "Say checked, or not needed this time."})
     note = " ".join(str(note or "").split())[:300]
     item["soft_check"] = {"answer": answer, "by": actor, "at": utcnow(), **({"note": note} if note else {})}
-    said = ("stored materials: none this period" if answer == "not_needed" else "stored materials: on this pay app") if gate_key(item) == "stored" \
+    said = (f"stored materials backup: {SOFT_ANSWERS[answer]}" if item.get("covers")
+            else "stored materials: none this period" if answer == "not_needed" else "stored materials: on this pay app") if gate_key(item) == "stored" \
         else f"{item['label']}: {SOFT_ANSWERS[answer]}"
     audit(state, job_id, "packet_soft_check", f"{actor} checked {said} on {invoice['number']}" + (f" ({note})" if note else "") + ".", actor)
     return job
@@ -517,6 +520,7 @@ def record_progress(
         raise GateError("Job is already marked done. Draft the remaining pay app instead.")
     if sov.has_sov(job):
         raise GateError("This job bills from its schedule of values. Enter quantities completed on each line instead.")
+    not_on_release_draft(job)
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft and open_draft.get("pencil_status") == "sent":
         raise GateError(f"{open_draft['number']} is with the client as a draft. Void it or record their answer first.")
@@ -572,8 +576,14 @@ def _billed_gross(job: dict[str, Any], skip: dict[str, Any] | None = None) -> in
 def _next_number(job: dict[str, Any]) -> str:
     """PA-<code>-NN, one past the pay apps that count. A voided draft's number is used again,
     unless the customer saw it: as a draft for review, or sent and then pulled back (R4-03)."""
-    taken = {inv["number"] for inv in job["invoices"] if inv["status"] != "void" or inv.get("pencil_sent_at") or inv.get("sent_at")}
+    taken = {inv["number"] for inv in job["invoices"]
+             if inv["status"] != "void" or ((inv.get("pencil_sent_at") or inv.get("sent_at")) and not inv.get("imported"))}
     n = len([inv for inv in job["invoices"] if inv["status"] != "void"]) + 1
+    # Earlier pay apps entered from before Duracash: the next one follows the last of them.
+    for inv in imported_invoices(job):
+        found = re.search(r"(\d+)$", inv["number"])
+        if found:
+            n = max(n, int(found.group(1)) + 1)
     while f"PA-{job['code']}-{n:02d}" in taken:
         n += 1
     return f"PA-{job['code']}-{n:02d}"
@@ -611,6 +621,7 @@ def mark_done(state: dict[str, Any], job_id: str, actor: str = "owner", notes: s
             f"{open_draft['number']} is with the client for their review. Record their answer or delete the draft, "
             "then use Final pay app so it covers the rest."
         )
+    not_on_release_draft(job)
     if not open_draft:
         _need_playbook(state, job)
     runs_to = period_to(job, period_end)
@@ -727,8 +738,11 @@ def draft_invoice(
             raise GateError("Nothing to draft: there is no unbilled completed work on this job.")
         audit(state, job_id, "draft_skipped", "Nothing unbilled to draft.", actor)
         return job
-    pct = int(job.get("retainage_pct") or 0)
-    retained = (gross * pct + 50) // 100 if pct else 0
+    # Retainage by line, or one percent on this period's work when the draft it replaces had one.
+    ret_override = (replaces or {}).get("retainage_pct_override")
+    held = retainage_for(job, period, pending_cents, ret_override, work_cents=0 if period else work)
+    pct = held["pct"]
+    retained = held["cents"]
     amount = gross - retained
     number = _next_number(job)
     lines = []
@@ -742,7 +756,7 @@ def draft_invoice(
     for co in pending_included:
         lines.append({"label": f"CO {co['number']} — {co['title']} (unsigned)", "amount_cents": co["amount_cents"], "co_id": co["id"]})
     if retained:
-        lines.append({"label": f"Less retainage {pct}%", "amount_cents": -retained})
+        lines.append({"label": held["label"], "amount_cents": -retained})
     invoice_id = f"inv-{job['id']}-{len(job['invoices']) + 1}"
     if replaces and replaces.get("packet") and replaces.get("packet_id") != "job-packet":
         packet = _carry_packet(replaces["packet"], invoice_id)
@@ -759,6 +773,8 @@ def draft_invoice(
         fields = {line["id"]: sov.field_total(line) for line in sov.lines(job)}
         for entry in period["sheet"]:
             entry["field_milli_at_draft"] = fields[entry["line_id"]]
+            if entry["line_id"] in held["by_line"]:
+                entry["retainage_pct"] = held["by_line"][entry["line_id"]]
     invoice = {
         "id": invoice_id,
         "number": number,
@@ -780,6 +796,8 @@ def draft_invoice(
         "period_to": period_end or period_to(job),
         "progress_notes": (notes or "").strip()[:2000] or (replaces or {}).get("progress_notes", ""),
     }
+    if ret_override is not None:
+        invoice["retainage_pct_override"] = ret_override
     if replaces:
         invoice["replaces"] = replaces["id"]
         _carry_send_choices(state, job, replaces, invoice)
@@ -805,8 +823,9 @@ def draft_invoice(
         invoice["final_override"] = dict(override)
     if invoice["packet_id"] != "job-packet":
         _name_conditional_waiver(job, invoice)
-        if _add_ticket_item(job, invoice, _payer(state, job["payer_id"])):
+        if _add_ticket_item(job, invoice, _payer(state, job["payer_id"])) | add_stored_item(job, invoice):
             _attach_from_record(state, job, packet, number)
+        stored_backup_follows(job, invoice)
     blockers = blocker_lines(job)
     invoice["status"] = "draft" if blockers else "awaiting_approval"
     audit(
@@ -848,6 +867,7 @@ def set_payapp_amounts(state: dict[str, Any], job_id: str, amounts: Any, actor: 
     draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if not draft:
         raise GateError("There is no draft pay app to change. Draft one first.")
+    not_on_release_draft(job)
     if _with_client(draft):
         raise GateError(f"{draft['number']} is with the client as a draft. Void it or record their answer first.")
     if not sov.has_sov(job):
@@ -939,7 +959,10 @@ def _carry_send_choices(state: dict[str, Any], job: dict[str, Any], old: dict[st
 
 def _redraft(state: dict[str, Any], job: dict[str, Any], open_draft: dict[str, Any], why: str, period_end: str = "", notes: str = "") -> dict[str, Any]:
     """Replace a draft that has not gone to the client with a new one (B6 of the Oct 30 review):
-    it keeps its number, paperwork, notes (unless new ones are given) and email choices."""
+    it keeps its number, paperwork, notes (unless new ones are given) and email choices. A retainage
+    release bills no work, so nothing about the work changes it: it stays as it is."""
+    if open_draft.get("retainage_release"):
+        return job
     open_draft["status"] = "void"
     open_draft["voided_at"] = utcnow()
     open_draft["replaced"] = True
@@ -1571,7 +1594,7 @@ def approve_and_send(
                         extra={"unconditional_waiver": True}, keep_changes=True)   # what was read goes on the page
     # The bill can stop being the final one under a confirmed waiver (a change order written since,
     # say): that waiver isn't sent as the other type without a look.
-    invoice["final"] = is_final(job)
+    invoice["final"] = final_for(job, invoice)
     if invoice.get("packet_id") != "job-packet":
         flipped = _name_conditional_waiver(job, invoice)
         if flipped:
@@ -2129,7 +2152,8 @@ def still_open(job: dict[str, Any], invoice: dict[str, Any] | None = None, count
         out.append(f"{money(m['draft_cents'] - own_draft)} is on a draft")
     if m["outstanding_cents"] > own_owed:
         out.append(f"{money(m['outstanding_cents'] - own_owed)} is still owed")
-    if count_retainage and (m["retainage_open_cents"] > 0 or own_held):
+    # A retainage release draft holds minus what it releases (payapp_core): what is left after it.
+    if count_retainage and m["retainage_open_cents"] + own_held > 0:
         out.append(f"{money(m['retainage_open_cents'] + own_held)} of retainage is still held")
     for co in job["change_orders"]:
         if co["status"] == "pending" and not (drafting and co.get("included_in_billing")):
@@ -2635,9 +2659,10 @@ def chase_retainage(state: dict[str, Any], job_id: str, actor: str = "duracash",
     about as a pay app's are: an unconditional one where the closeout needs the conditional final
     waiver takes unconditional_override, the reason (the server lets only an owner give one)."""
     job = _open_job(state, job_id)
-    open_retainage = job_money(job)["retainage_open_cents"]
+    # Retainage on a release pay app still a draft is billed there, not asked for again.
+    open_retainage = job_money(job)["retainage_open_cents"] - release_drafted_cents(job)
     if open_retainage <= 0:
-        raise GateError("No open retainage.")
+        raise GateError("No open retainage." if not release_drafted_cents(job) else "The retainage held is on a release pay app that is still a draft. Send it or delete it.")
     if job.get("work_status") != "complete":
         raise GateError("Retainage is asked for once the work is finished. Use Final pay app first.")
     if amount_cents is not None:
@@ -2722,9 +2747,10 @@ def record_retainage_payment(
     """Record retainage the payer released. Kept apart from pay-app payments. Each release owes
     its own lien waiver (M20): unconditional, on final payment only when the job is finished by it."""
     job = _open_job(state, job_id)
-    open_retainage = job_money(job)["retainage_open_cents"]
+    # Retainage on a release pay app still a draft is paid on that pay app once it is sent.
+    open_retainage = job_money(job)["retainage_open_cents"] - release_drafted_cents(job)
     if open_retainage <= 0:
-        raise GateError("No open retainage.")
+        raise GateError("No open retainage." if not release_drafted_cents(job) else "The retainage held is on a release pay app that is still a draft. Send it, then record its payment, or delete it.")
     if not isinstance(amount_cents, int) or isinstance(amount_cents, bool) or amount_cents <= 0:
         raise GateError("Retainage payment must be greater than zero.")
     if amount_cents > open_retainage:
@@ -2849,6 +2875,7 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
             last["remaining_cents"] += out["money"]["refund_owed_cents"]
             last["refund_owed_cents"] = out["money"]["refund_owed_cents"]
     _payapp_figures(job, out)
+    payapp_core_view(state, job, out)
     _co_flags(out)
     co_view_extras(state, job, out)
     # Who has signed the open draft (Stephen, 10 Nov, decision 8), and the signatures a sent pay
@@ -3656,13 +3683,14 @@ def _refresh_draft_gate(job: dict[str, Any], state: dict[str, Any] | None = None
     if not invoice:
         return
     # Whether it is the final one can move under it (a change order written or signed, say).
-    invoice["final"] = is_final(job)
+    invoice["final"] = final_for(job, invoice)
     if invoice.get("packet_id") != "job-packet":
         _name_conditional_waiver(job, invoice)
     if state is not None:
         _attach_from_record(state, job, active_packet(job), invoice["number"])
     _ask_which_waiver(job, invoice.get("packet") or [])
     _items_follow_files(job, invoice)  # an item whose files are all left out of the email stays missing (M4)
+    stored_backup_follows(job, invoice)  # each line's stored materials have their backup (Nov 27)
     invoice["status"] = "draft" if blocker_lines(job) else "awaiting_approval"
     if state is not None:
         clear_stale_approvals(state, job, invoice)
@@ -4795,6 +4823,7 @@ def void_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, reaso
     invoice = next((inv for inv in job["invoices"] if inv["id"] == invoice_id), None)
     if not invoice or invoice["status"] not in {"sent", "approved", "partial", "paid"}:
         raise GateError("Pick a pay app that has gone out. A draft is deleted instead.")
+    not_imported(invoice, "pulled back")
     if invoice["status"] in {"partial", "paid"} or any(p["invoice_id"] == invoice["id"] for p in job["payments"]):
         raise GateError(f"A payment is recorded on {invoice['number']}, so it can't be pulled back. Correct the next pay app instead.")
     if _holds_paid_retainage(job, invoice):
@@ -5603,8 +5632,9 @@ def _attach_from_record(state: dict[str, Any], job: dict[str, Any], packet: list
         if wanted == auto:
             continue
         item["attachments"] = [a for a in attached if not a.get("auto") or a.get("record_id") in wanted]
+        have = {a.get("record_id") for a in attached}   # one already on it isn't suggested again
         for record in fits:
-            if record["id"] in auto:
+            if record["id"] in auto or record["id"] in have:
                 continue
             item["attachments"].append({
                 "name": record["label"], "record_id": record["id"], "added_at": utcnow(), "added_by": "duracash", "auto": True, "unconfirmed": True,
@@ -5804,7 +5834,7 @@ def _item_to_confirm(state: dict[str, Any], job: dict[str, Any], item_id: str, s
                         extra={"review_changed": True, "invoice_id": (invoice or {}).get("id", "")})
     if invoice and invoice.get("packet_id") != "job-packet":
         # Saved before a change said so: what this confirm is for is the type the pay app needs now.
-        invoice["final"] = is_final(job)
+        invoice["final"] = final_for(job, invoice)
         _name_conditional_waiver(job, invoice)
     return item, invoice
 
@@ -6816,6 +6846,7 @@ def record_sov_progress(
         raise GateError("This job has no schedule of values. Enter completed-to-date in dollars, or add a schedule first.")
     if job.get("work_status") == "complete":
         raise GateError("Job is already marked done. Draft the remaining pay app instead.")
+    not_on_release_draft(job)
     open_draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
     if open_draft and open_draft.get("pencil_status") == "sent":
         raise GateError(f"{open_draft['number']} is with the client as a draft. Void it or record their answer first.")
@@ -6867,6 +6898,9 @@ def record_sov_progress(
             line.pop("from_daily_on", None)
         elif "field_milli" not in line and qty != line["done_milli"]:
             line.pop("from_daily_on", None)
+        if store != int(line.get("stored_cents") or 0):
+            # Where the work stood when these materials were stored: work past it may have used them.
+            line["stored_qty_milli"] = qty
         line["done_milli"] = qty
         line["stored_cents"] = store
     job["completed_value_cents"] = sov.totals(job)["to_date_cents"]
@@ -7479,7 +7513,8 @@ def _sov_period(state: dict[str, Any] | None, job: dict[str, Any]) -> dict[str, 
     # A signed credit with nothing else to bill suggests nothing; it waits to come off the next pay app.
     waiting = max(0, -gross)
     gross = max(0, gross)
-    held = (gross * pct + 50) // 100 if pct and gross > 0 else 0
+    held_now = retainage_for(job, suggested, unsigned, (draft or {}).get("retainage_pct_override"))
+    held = held_now["cents"] if gross > 0 else 0
     period = pay_period(state, job) if state is not None else {}
     return {
         # The contract's pay period (Nov 26): from the day after the last one billed, or the start.
@@ -7488,7 +7523,8 @@ def _sov_period(state: dict[str, Any] | None, job: dict[str, Any]) -> dict[str, 
         "draft": {"id": draft["id"], "number": draft["number"], "with_client": _with_client(draft)} if draft else None,
         "lines": rows,
         "op_suggested_cents": suggested["op_cents"], "op_final_cents": (draft or {}).get("op_cents", 0),
-        "unsigned_cents": unsigned, "retainage_pct": pct,
+        "unsigned_cents": unsigned, "retainage_pct": pct, "retainage_label": held_now["label"],
+        "retainage_override": (draft or {}).get("retainage_pct_override"),
         "suggested_gross_cents": gross, "suggested_retainage_cents": held, "suggested_net_cents": gross - held,
         "credit_waiting_cents": waiting, "credit_waiting_names": [r["description"] for r in rows if r["credit"] and r["suggested_cents"] < 0] if waiting else [],
         "final_gross_cents": (draft or {}).get("gross_cents", 0), "final_retainage_cents": (draft or {}).get("retainage_cents", 0),
@@ -7581,3 +7617,4 @@ from .contact import *  # noqa: E402,F401,F403
 from .jobinfo import *  # noqa: E402,F401,F403
 from .jobrules import *  # noqa: E402,F401,F403
 from .gawaivers import *  # noqa: E402,F401,F403
+from .payapp_core import *  # noqa: E402,F401,F403

@@ -77,6 +77,9 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     # Round 2 (Stephen, 10 Nov): pricing a change order saved without one changes the contract
     # (decision 2); approving a pay app is the named approvers' own permission (decision 8).
     "co-price": "manage_jobs", "payapp-approve": "approve_payapps",
+    # Nov 27: earlier pay apps and retainage by line change the job's money; a release asks for retainage.
+    "earlier-payapps": "manage_jobs", "earlier-payapps-remove": "manage_jobs", "line-retainage": "manage_jobs",
+    "retainage-release": "ask_retainage", "payapp-retainage": None,
     # Drafting, records, paperwork and follow-ups: everyone on the team.
     "sov-amounts": None, "sov-correct": None, "quantities-undo": None, "waiver-needed": None,
     "progress": None, "sov": None, "sov-progress": None, "draft": None,

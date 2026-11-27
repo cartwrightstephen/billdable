@@ -260,7 +260,9 @@ def retainage_on(cents: int, pct: int) -> int:
 
 def sheet_columns(entry: dict[str, Any], retainage_pct: int = 0) -> dict[str, int]:
     """The G703 columns for one continuation-sheet entry. Entries from before stored
-    materials have no work/stored split: all of their billing is work."""
+    materials have no work/stored split: all of their billing is work. An entry held at its own
+    percent (retainage by line, Nov 27) carries retainage_pct, which the retainage column reads."""
+    retainage_pct = int(entry.get("retainage_pct", retainage_pct) or 0)
     to_date = entry["to_date_cents"]
     stored = int(entry.get("stored_cents") or 0)
     work_this = entry.get("work_this_cents", entry["amount_cents"])
