@@ -73,7 +73,16 @@ export default async function ({ BASE, step, signedInPage }) {
     p.on("console", (m) => { if (["error", "warning"].includes(m.type())) said.push(m.text().slice(0, 200)); });
     const record = async (pct) => {
       await p.goto(`${BASE}/jobs/daily`);
-      const picked = await p.selectOption("#daily-job", id);
+      // The page redraws once the team list arrives (the time sheet's names). An older Chromium
+      // (GitHub's runner) can pick on the select that redraw is replacing, and the pick is lost:
+      // wait for the page to settle, and pick again until the job sticks.
+      await p.waitForLoadState("networkidle");
+      let picked = [];
+      for (let i = 0; i < 5; i += 1) {
+        picked = await p.selectOption("#daily-job", id);
+        if (await p.locator("#daily-job").inputValue() === id) break;
+        await p.waitForTimeout(300);
+      }
       const box = p.locator('input[aria-label="Contract amount: % done to date"]');
       try {
         await box.waitFor({ timeout: 15000 });
