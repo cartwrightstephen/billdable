@@ -1135,7 +1135,7 @@ class Handler(BaseHTTPRequestHandler):
                 trial_sub = billing.trial_end_due(state) if end_trial and billing.configured() else None
                 save_company(company_id, state)
                 # A To Do row is for those whose permissions cover it (a change order to price, Round 2 decision 2).
-                payload = domain.light_snapshot(state, perms=profiles.perms_of(user, state) if user else None)
+                payload = domain.light_snapshot(state, perms=profiles.perms_of(user, state) if user else None, today=self._page_day())
                 # Only the emails this change queued: one another person approved (queued, not yet
                 # delivered by their own request) goes out under their name, not this user's.
                 # Most changes queue none: then the company isn't loaded again just to find that out.
@@ -1495,7 +1495,13 @@ class Handler(BaseHTTPRequestHandler):
     def _g_state(self, m, user) -> None:
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
-        self._json(200, domain.light_snapshot(state, perms=profiles.perms_of(user, state)))
+        self._json(200, domain.light_snapshot(state, perms=profiles.perms_of(user, state), today=self._page_day()))
+
+    def _page_day(self) -> str:
+        """The day the page says it is where the person is (static/js/app-core.js sends it with
+        /api/state and every change), YYYY-MM-DD; light_snapshot keeps it only within a day of UTC's."""
+        value = str(self.headers.get("X-Duracash-Today") or "").strip()
+        return value if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) else ""
 
     def _paging(self, default_limit: int = 50) -> tuple:
         q = parse_qs(urlparse(self.path).query)

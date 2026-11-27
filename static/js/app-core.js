@@ -190,10 +190,17 @@ export function applyLocation() {
   history.replaceState(null, "", pathFor(currentView, currentJobId, currentDetailId));
 }
 
+// The day it is here (Nov 27): the To Do rows and the job dates the server answers with follow
+// this person's day, not UTC's, which a US evening is already past.
+function dayHeader() {
+  const d = new Date();
+  return { "X-Duracash-Today": `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` };
+}
+
 export async function load() {
   let res;
   try {
-    res = await fetch("/api/state");
+    res = await fetch("/api/state", { headers: dayHeader() });
   } catch (_) {
     setNetBanner(true);
     return;
@@ -317,7 +324,7 @@ export async function post(path, body = {}, opts = {}) {
   try {
     res = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...dayHeader() },
       body: JSON.stringify(body),
     });
   } catch (_) {
