@@ -57,3 +57,10 @@ test("up to tablet width, boxes, fold titles, the money strip and Log out are 44
   assert.match(block, /\.money-strip \.strip-item \{ display: inline-flex; align-items: center; gap: 0\.3em; min-height: 44px; \}/);
   assert.match(block, /\.user-meta \.reset-btn \{ min-height: 44px;/);
 });
+
+test("the retainage percent boxes on a draft and by line carry their % inside the box", () => {
+  const src = readFileSync(new URL("../../static/js/views/job-payapp-core.js", import.meta.url), "utf8");
+  assert.match(src, /label: "Retainage this period", suffix: "%"/);
+  assert.doesNotMatch(src, /Retainage this period %/);
+  assert.match(src, /<span class="with-suffix inline"><input id="lr-\$\{l\.id\}"[^]*?<span class="suffix" aria-hidden="true">%<\/span><\/span>/);
+});
