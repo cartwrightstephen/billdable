@@ -813,6 +813,16 @@ class ReviewFourTests(ServerCase):
         self.assertEqual(res.status, 200)
         self.assertNotIn(b"{{", page)
 
+    def test_privacy_policy_names_what_is_kept_and_who_holds_it(self):  # security review M4
+        res, page = self.request("GET", "/privacy")
+        text = page.decode()
+        for words in ("Stripe", "Intuit (QuickBooks Online)", "off-site backup storage provider", "network (IP) address",
+                      "Certified payroll", "up to three cookies", "Draft"):
+            self.assertIn(words, text)
+        self.assertNotIn("one cookie keeps you signed in", text)
+        # The cookies the policy counts are the ones the server names.
+        self.assertEqual(3, len(re.findall(r'^[A-Z_]*COOKIE = "duracash_[a-z]+"', pathlib_text(server), re.M)))
+
 
 class ReviewFourOfflineTests(unittest.TestCase):
     def test_pdf_summary_cases(self):  # M4, M5, L1
@@ -870,3 +880,8 @@ class ReviewFourOfflineTests(unittest.TestCase):
                     backup.restore(partial)  # no auth.json: refused
             finally:
                 storage.DATA_DIR = orig
+
+
+def pathlib_text(module) -> str:
+    return Path(module.__file__).read_text()
+

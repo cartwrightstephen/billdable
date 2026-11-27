@@ -22,7 +22,7 @@ from pathlib import Path
 
 import backup
 
-TERMS_VERSION = "2026-10-12"
+TERMS_VERSION = "2026-11-27"
 FOLDER = Path(__file__).resolve().parent / "legal"
 MISSING = "[to be completed]"
 
