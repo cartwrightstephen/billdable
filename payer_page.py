@@ -168,11 +168,18 @@ def _approval(company: str, invoice: dict[str, Any], base: str, errors: dict[str
     if invoice.get("status") != "sent":
         return ""
     err = "".join(f'<p class="no" role="alert">{_e(v)}</p>' for v in errors.values())
+    # The date box starts at the payment terms' due date (Nov 26: a mistyped date went through
+    # unseen), and takes nothing before yesterday (the payer's today may be the server's yesterday).
+    today = datetime.now(timezone.utc).date()
+    due = str(invoice.get("due_on") or "")
+    start = due if due and due >= today.isoformat() else ""
     return (f'<div class="card{" alert" if err else ""}"><strong>Approve for payment</strong>'
-            f'<p class="sub">Tell {_e(company)} this pay app is approved and when to expect the money.</p>{err}'
+            f'<p class="sub">Tell {_e(company)} this pay app is approved and when to expect the money.'
+            + (f' Under the payment terms it is due by {_e(_date(due))}.' if due else "") + f'</p>{err}'
             f'<form class="stack" method="post" action="{_e(base)}/approve">'
             f'<label for="ap-name" class="sub">Your name</label><input id="ap-name" name="name" maxlength="80" autocomplete="name" required>'
-            f'<label for="ap-date" class="sub">Payment expected by</label><input id="ap-date" name="expected_on" type="date" required>'
+            f'<label for="ap-date" class="sub">Payment expected by</label><input id="ap-date" name="expected_on" type="date" required'
+            f' min="{(today - timedelta(days=1)).isoformat()}" max="{(today + timedelta(days=366)).isoformat()}"' + (f' value="{_e(start)}"' if start else "") + '>'
             f'<button class="btn" type="submit">Approve for payment</button></form></div>')
 
 
@@ -278,7 +285,8 @@ def approve(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any],
         day = domain._day(expected_on, "expected_on", "Enter the date payment is expected, like 2026-11-14.")
     except domain.GateError as exc:
         day, problems = None, {**problems, **exc.fields}
-    today = datetime.fromisoformat(now).date()
+    # The server's day is UTC; the payer's may still be yesterday (an evening in the US).
+    today = datetime.fromisoformat(now).date() - timedelta(days=1)
     if day is None and "expected_on" not in problems:
         problems["expected_on"] = "Enter the date payment is expected."
     elif day and day < today:

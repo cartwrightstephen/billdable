@@ -45,11 +45,16 @@ test("New job record: crew, weather and the ticked sections stay through a redra
   core.setState(company([sovJob]));
   page.setLocation("daily");
   const daily = await import("../../static/js/views/daily.js");
-  forms.formDraft.daily = { crew_count: "4", weather: "Rain", materials: "Wire <12 boxes>", qty_l1: "120" };
+  forms.formDraft.daily = { ts_pick_0: "__other", ts_name_0: "Jose", ts_hours_0: "4", weather: "Rain", materials: "Wire <12 boxes>", qty_l1: "120" };
   daily.daily.checked.add("quantities");
   daily.daily.checked.add("co_work");
   const html = reg.views.daily();
-  assert.match(html, /id="daily-crew"[^>]*type="number" value="4"/);
+  // The time sheet replaced the crew count (Nov 26): a row per person, with the total.
+  assert.doesNotMatch(html, /id="daily-crew"/);
+  assert.match(html, /<option value="__other" selected>Someone else \(type the name\)<\/option>/);
+  assert.match(html, /id="daily-ts-name-0"[^>]*value="Jose"/);
+  assert.match(html, /id="daily-ts-hours-0"[^>]*value="4"/);
+  assert.match(html, /Total: 4 h/);
   assert.match(html, /<option value="Rain" selected>Rain<\/option>/);
   assert.match(html, /data-field="materials"[^>]*>Wire &lt;12 boxes&gt;<\/textarea>/);
   assert.doesNotMatch(html, /data-daily-section="quantities"/, "quantities are open, not ticked (Round 1)");
@@ -60,9 +65,9 @@ test("New job record: crew, weather and the ticked sections stay through a redra
   // A job without a schedule has no Quantities box.
   core.setState(company([job()]));
   assert.doesNotMatch(reg.views.daily(), /Quantities put in place today/);
-  const body = daily.dailyBody({ notes: "Framing", crew_count: "4", weather: "Rain", qty_l1: "120", qty_l2: "", co_0: "co1", co_desc_0: "Two circuits", co_hours_0: "3",
+  const body = daily.dailyBody({ notes: "Framing", weather: "Rain", qty_l1: "120", qty_l2: "", co_0: "co1", co_desc_0: "Two circuits", co_hours_0: "3",
     punch: "Patch" }, sovJob, new Set(["quantities", "co_work"]));
-  assert.deepEqual(body, { notes: "Framing", crew_count: "4", weather: "Rain",
+  assert.deepEqual(body, { notes: "Framing", weather: "Rain",
     sections: { quantities: [{ line_id: "l1", qty: "120" }], co_work: [{ co_id: "co1", description: "Two circuits", hours: "3" }] } });
   daily.daily.checked.clear();
   forms.clearForm("daily");
@@ -98,12 +103,14 @@ test("New job record: a section for each document, none behind a dropdown, every
   page.setLocation("daily");
   const daily = await import("../../static/js/views/daily.js");
   // Each document is a chip that opens its section (Round 1, item 15); here every one is open.
-  for (const key of ["delivery", "photos", "time_sheets", "invoices", "inspections", "other"]) daily.daily.open.add(key);
+  for (const key of ["delivery", "photos", "invoices", "inspections", "conversation", "other"]) daily.daily.open.add(key);
   const html = reg.views.daily();
   daily.daily.open.clear();
   assert.match(html, /<h1>New job record<\/h1>/);
   assert.match(html, /id="daily-date"[^>]*type="date"/);
-  for (const title of ["Delivery tickets", "Progress photos", "Time sheets", "Invoices", "Inspections", "Other documents and notes"]) assert.ok(html.includes(`<h3>${title}</h3>`), title);
+  for (const title of ["Delivery tickets", "Progress photos", "Time sheet", "Invoices", "Inspections", "Conversation / note with client", "Other documents and notes"]) assert.ok(html.includes(`<h3>${title}</h3>`), title);
+  assert.match(html, /id="daily-conversation-text-0"/);
+  assert.doesNotMatch(html, /id="daily-conversation-next_on-0"/, "Check again on only while a pay app waits");
   assert.doesNotMatch(html, /<details/);
   for (const key of ["delivery_0", "photos_0", "time_sheets_0", "invoices_0", "inspections_0", "other_0"]) {
     assert.match(html, new RegExp(`data-record-files="${key}" accept="image/\\*" capture="environment"`), `${key}: the phone camera`);
@@ -117,12 +124,12 @@ test("New job record: a section for each document, none behind a dropdown, every
 
 test("New job record: rows become entries with their files; a Kind alone is nothing", async () => {
   const daily = await import("../../static/js/views/daily.js");
-  const v = { notes: "x", delivery_supplier_0: "ABC", delivery_number_0: "", delivery_what_0: "", photos_note_0: "", time_sheets_who_1: "Ana", time_sheets_hours_1: "8", other_kind_0: "insurance", other_label_0: "", other_note_0: "", invoices_amount_0: "" };
+  const v = { notes: "x", delivery_supplier_0: "ABC", delivery_number_0: "", delivery_what_0: "", photos_note_0: "", ts_pick_0: "__other", ts_name_0: "Ana", ts_hours_0: "8", other_kind_0: "insurance", other_label_0: "", other_note_0: "", invoices_amount_0: "" };
   const entries = daily.recordEntries(v, [{ key: "photos_0", name: "a.jpg", record_id: "r1" }, { key: "photos_0", name: "b.jpg", record_id: "r2" }]);
   assert.deepEqual(entries, [
     { section: "delivery", row: 0, supplier: "ABC" },
     { section: "photos", row: 0, attachments: ["r1", "r2"] },
-    { section: "time_sheets", row: 1, who: "Ana", hours: "8" },
+    { section: "time_sheets", row: 0, crew: [{ name: "Ana", hours: "8" }] },
   ]);
   assert.equal(daily.savedWords("x", entries), "1 diary entry, 1 delivery ticket, 2 progress photos, 1 time sheet");
   assert.deepEqual(daily.recordEntries({ other_kind_0: "insurance" }), []);

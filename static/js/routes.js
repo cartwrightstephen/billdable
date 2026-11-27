@@ -4,7 +4,7 @@ import { unesc } from "./format.js";
 
 // A page's tab: a detail page's list, Retainage, which is part of the Closeout tab (R6-01), and
 // Paperwork, which is a column of Pay apps (R6-03).
-export const DETAIL_PARENT = { job: "jobs", "payapp-detail": "payapps", "packet-detail": "payapps", packets: "payapps", "co-detail": "cos", "waiver-detail": "waivers", retainage: "waivers",
+export const DETAIL_PARENT = { job: "jobs", "payapp-new": "payapps", "payapp-detail": "payapps", "packet-detail": "payapps", packets: "payapps", "co-detail": "cos", "waiver-detail": "waivers", retainage: "waivers",
   password: "account", "delete-company": "company" };
 
 export const VIEW_PATHS = {
@@ -33,7 +33,8 @@ export const PATH_ALIASES = {
   "/automations": "account#notifications", "/dashboard/results": "dashboard#results", "/money/payments": "payapps#payments",
 };
 
-export const DETAIL_PATHS = { "payapp-detail": "/money/pay-app", "packet-detail": "/money/packet", "co-detail": "/money/change-order", "waiver-detail": "/money/waiver" };
+// A progress pay app is started on its own page (Stephen, Nov 26), not in a form inside the job page.
+export const DETAIL_PATHS = { "payapp-new": "/money/new-pay-app", "payapp-detail": "/money/pay-app", "packet-detail": "/money/packet", "co-detail": "/money/change-order", "waiver-detail": "/money/waiver" };
 
 export function pathFor(view, jobId, detailId) {
   const seg = (x) => encodeURIComponent(unesc(String(x)));

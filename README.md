@@ -264,7 +264,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - A change order approved after the job is marked done becomes billable on the next pay app.
 - A payment goes to a pay app the user picks, must be above zero and at most the balance owed, and a reference can be used once per job.
 - One waiver per paid pay app and per retainage release (unconditional; final only when the job is finished by it, and a final waiver sent early warns first). The waiver document comes from the contractor; Duracash does not generate it.
-- A follow-up before the client's days between follow-ups have passed needs **Follow up now** and a confirm; one sent after **Log a conversation** with a check-again date or the client's **Approve for payment** waits for the date they gave. Each one writes an Outbox row.
+- A follow-up before the client's days between follow-ups have passed needs **Follow up now** and a confirm; one sent after a conversation on New job record with a check-again date or the client's **Approve for payment** waits for the date they gave. Each one writes an Outbox row.
 - A job closes only when work is done, nothing is drafted, unbilled, outstanding or pending, nothing is overbilled (or a refund or credit was recorded), retainage is released, and waivers are sent. Closed jobs are read-only except for notes.
 - A new job for an existing client keeps what the client has and asks only for what it is missing. Change the rest in the Client playbook.
 - A sent pay app with nothing paid can be pulled back with a reason (the client is told nothing is due on it); a part-paid one can be settled short with a reason; a finished job can be reopened by an owner with a reason. Each is in the Activity log.
@@ -293,6 +293,7 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/jobs`: create a job. Required: `name`, the address (`street`, `city`, `state`, `zip`), `customer`, `contract_cents`, and for a new client or what a saved one lacks: `client_type`, `approver`, `ap_email`, `phone`. Optional: `approver_confirmed` (the signer was typed, even as the client's own name), `sov_lines` (blank makes one lump-sum line; New job sends an imported contract's lines here, with its total as `contract_cents` when asked, so whoever may create the job sets its contract), `anticipated_end_on`, `retainage_pct` (0–20; blank or left out: the client's Usual retainage %, else 10 for a general contractor, public agency or another subcontractor and 0 for an owner or homeowner), `new_job` (keep it even though an open job has the same name), `note` (kept on the job record as "Job notes"; the old `packet_notes` key is read the same way), `contract_number`. The paperwork list for each pay app comes from the customer's settings, not from the job.
 - `GET /api/jobs/{id}/final-preview`: what Final pay app would bill; `POST /api/jobs/{id}/done`: `{notes, period_to}`
 - `POST /api/jobs/{id}/progress`: `{completed_cents, notes}` (jobs without a schedule of values)
+- `POST /api/jobs` and `/api/jobs/{id}/edit` take `period_end_day` (1 to 31): the day the job's pay period ends, from its contract
 - `POST /api/sov/parse`: `{text}` → `{lines, warnings, op_pct}`; reads pasted rows, saves nothing
 - `POST /api/jobs/{id}/sov`: `{lines: [{id?, item, description, quantity, unit, rate}], op_pct, update_contract}`
 - `POST /api/jobs/{id}/sov-progress`: `{done: {line_id: quantity_to_date}, stored, notes, period_to}`; lump sums take a fraction (0.35 = 35%); a line left out is at its suggestion
@@ -308,18 +309,21 @@ Company data (requires a session; scoped to the signed-in company). The audit tr
 - `POST /api/onboarding/dismiss`; team only: `GET /api/admin/companies`
 - `GET /healthz`
 - `POST /api/jobs/{id}/draft`: returns 409 when there is nothing to draft or a draft is already open
-- `POST /api/jobs/{id}/send`: `{reviewed, unconditional_override}`; `reviewed` is the draft's `email_preview.stamp`
+- `POST /api/jobs/{id}/send`: `{reviewed, unconditional_override, soft_checks, today}`; `reviewed` is the draft's `email_preview.stamp`; `soft_checks` `{item_id: "checked" | "not_needed"}` answers the soft gates (refused with `soft_checks` while one is unanswered); `today` is the sender's own date, which the payment terms count from (the due date moves to the next business day)
+- `POST /api/jobs/{id}/packet-soft-check/{item_id}`: `{answer: "checked" | "not_needed" | ""}`, a soft gate's answer at Review & send
+- `POST /api/jobs/{id}/daily-record`: New job record (`{notes, date, today, weather, materials, sections, entries, over_ok}`); a `time_sheets` entry takes `crew: [{name, hours, member_id}]`, a `conversation` entry `{text, next_on}`; a quantity past what a line has left is refused with `over_schedule` unless `over_ok: true`. `POST /api/jobs/{id}/daily-record-edit/{daily_record_id}`: the same body, to change a saved one (rows saved before carry `record_id`)
+- `POST /api/jobs/{id}/dismiss-row`: `{key}`, a Dashboard reminder (`no_record`, `co_no_work`) put away
 - `POST /api/jobs/{id}/follow-up`
 - `POST /api/jobs/{id}/match-payment`: `{amount_cents, reference, invoice_id, received_on}`. `invoice_id` is required when more than one pay app is open.
-- Owners only: `POST /api/jobs/{id}/accept-short-pay/{invoice_id}` `{reason}`, `/void-sent/{invoice_id}` `{reason}`, `/reopen` `{reason}`. Anyone on the team: `/undo-done`, `/note-contact` `{text, next_on}`, `/request-co-signature/{co_id}`, `/packet-skip/{item_id}`, `/detach/{item_id}`
+- Owners only: `POST /api/jobs/{id}/accept-short-pay/{invoice_id}` `{reason}`, `/void-sent/{invoice_id}` `{reason}`, `/reopen` `{reason}`. Anyone on the team: `/undo-done`, `/note-contact` `{text, next_on}` (older pages; New job record's conversation section does this now), `/request-co-signature/{co_id}`, `/packet-skip/{item_id}`, `/detach/{item_id}`
 - `POST /api/auth/demo`: a session in the sample company, when the server has one (`GET /api/auth/demo-available`)
 - `POST /api/jobs/{id}/waiver`: `{invoice_id, release_id, kind, confirm_final}`, all optional
 - `POST /api/jobs/{id}/retainage`: request retainage release
 - `POST /api/jobs/{id}/retainage-paid`: `{amount_cents, reference}`
-- `POST /api/jobs/{id}/resolve/{item_id}`: `{reason}` (required): the I have this override
+- `POST /api/jobs/{id}/resolve/{item_id}`: `{reason}` (required): the I have this override; on a hard stop (Required) it takes `send_payapps`, as does `/packet-skip` on one
 - `POST /api/jobs/{id}/attach/{item_id}`: `{file_id}`; a name alone is refused
 - `POST /api/jobs/{id}/attach-record/{item_id}`: `{record_id, looked}`; `POST /api/jobs/{id}/packet-confirm/{item_id}`: `{looked}`
-- `POST /api/jobs/{id}/packet-skip/{item_id}`: `{reason, whole_client}`; `/waiver-needed`; `/paperwork`: `{packet}`, `{no_paperwork: true}` or `{use_client: true}`; `/overbilling-settled`: `{reason}`
+- `POST /api/jobs/{id}/packet-skip/{item_id}`: `{reason, whole_client}`; `/waiver-needed`; `/paperwork`: `{packet}`, `{no_paperwork: true}` or `{use_client: true}`, and/or `{gates: {key: "hard" | "soft"}}` (the job's hard stops and checks); `/overbilling-settled`: `{reason}`
 - `POST /api/jobs/{id}/add-co`: `{title, reason, amount_cents}`
 - `POST /api/jobs/{id}/approve-co/{co_id}`
 - `POST /api/jobs/{id}/include-co/{co_id}`: put a pending CO on the next pay app; send stays blocked until it is signed

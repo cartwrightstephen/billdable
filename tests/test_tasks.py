@@ -61,7 +61,7 @@ class RowTests(unittest.TestCase):
     def setUp(self):
         self.state = server.empty_state("Pine Builders")
         self.job = domain.create_job(self.state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St",
-                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner")
+                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner", started_on="2026-10-01")
         self.payer = self.state["payers"][0]
 
     def rows(self, now=NOW):
@@ -100,7 +100,7 @@ class RowTests(unittest.TestCase):
     def test_a_pay_app_to_bill_is_due_on_the_clients_cutoff(self):
         self.payer["payapp_due_day"] = 31
         r = self.rows()[0]
-        self.assertEqual((r["kind"], r["ball_in_court"], r["due"]), ("due_soon", "us", "2026-10-31"))
+        self.assertEqual((r["kind"], r["ball_in_court"], r["due"]), ("due_soon", "us", "2026-10-30"))  # Oct 31, 2026 is a Saturday: the business day before
 
     def test_the_jobs_default_assignee_then_an_assignment(self):
         self.job["assignee_id"] = "u-mo"
@@ -159,7 +159,7 @@ class HandTaskTests(unittest.TestCase):
     def setUp(self):
         self.state = server.empty_state("Pine Builders")
         self.job = domain.create_job(self.state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St",
-                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner")
+                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner", started_on="2026-10-01")
 
     def test_add_edit_and_tick_off_with_every_change_audited(self):
         t = domain.add_task(self.state, {"title": "  Order  the tile ", "job_id": self.job["id"], "assignee_id": "u-mo", "due": "2026-11-03"},
@@ -209,7 +209,7 @@ class HandTaskTests(unittest.TestCase):
         later day waits for that day."""
         self.state["payers"][0]["payapp_due_day"] = 31
         rows = domain.today_rows(self.state, NOW)
-        self.assertEqual([(r["kind"], r["due"]) for r in rows], [("due_soon", "2026-10-31")])
+        self.assertEqual([(r["kind"], r["due"]) for r in rows], [("due_soon", "2026-10-30")])
         subject, body = domain.daily_digest(self.state, "", NOW)
         self.assertIn("Porch rebuild", body)
         key = rows[0]["key"]

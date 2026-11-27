@@ -11,10 +11,11 @@ import { termText } from "../terms.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, onSessionEnd, mailReady } from "../state.js";
 import { may, can, perms, render, post, load, backButton, emptyState, nav, EMAIL_PATTERN, moreDetails } from "../app-core.js";
 import { continuationHtml } from "../sov.js";
+import { localDay } from "../tasks.js";
 import { companyGapsHtml } from "../setup.js";
 import { QBO_READY, qboCsvLink, OWNER_SENDS, emailUnconfirmed, confirmFirstHtml } from "./money.js";
 import { shortPayCardHtml, owedText, emailFailed, sendsTo } from "./job.js";
-import { beforeYouSendHtml, supportingDocsHtml, missingDocsHtml } from "./paperwork.js";
+import { beforeYouSendHtml, supportingDocsHtml, missingDocsHtml, softChecksHtml, softWaiting } from "./paperwork.js";
 import { sendConfirmText } from "../payapp-text.js";
 
 export { sendConfirmText, deleteDraftText } from "../payapp-text.js";
@@ -72,7 +73,7 @@ function pullBackHtml(j, i) {
 function paperworkCell(a) {
   const pkt = a.packet || a.jobPacket || [];
   if (!pkt.length && !a.packet) return "—";
-  const missing = pkt.filter(p => p.required && !p.present).length;
+  const missing = pkt.filter(p => p.required && !p.present && p.gate !== "soft").length;
   return `<a href="${pathFor("payapp-detail", a.jobId, a.id)}" data-action="open-packet" data-job="${a.jobId}" data-inv="${a.id}">${missing ? `<span class="pill red">${missing} missing</span>` : pkt.some(p => p.override) ? `<span class="pill amber">Complete, overridden</span>` : `<span class="pill green">Complete</span>`}</a>`;
 }
 
@@ -204,7 +205,7 @@ export const views = {
     if (!j || !inv) return backButton("payapps", "Pay apps") + emptyState("Pay app not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="payapps">Go to Pay apps</button>`);
     const pays = j.payments.filter(p => p.invoice_id === inv.id);
     if (!qboStatus && QBO_READY.has(inv.status)) loadQboStatus();   // for Send to QuickBooks
-    const missing = (inv.packet || j.packet || []).filter(p => p.required && !p.present).length;
+    const missing = (inv.packet || j.packet || []).filter(p => p.required && !p.present && p.gate !== "soft").length;
     const draft = ["draft", "awaiting_approval"].includes(inv.status);
     const currentDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
     const fromDaily = draftFromDailyOn(j, inv);
@@ -216,7 +217,8 @@ export const views = {
     const locked = emailUnconfirmed();
     // The client's payment terms set the due date from the day it goes out (R4-04).
     const terms = Number(unesc(String(j.payer.payment_terms_days || ""))) || 0;
-    const dueIso = terms ? new Date(Date.now() + terms * 86400000).toISOString().slice(0, 10) : "";
+    // The server's date (domain.payment_due_on): from today, on a business day (Nov 26).
+    const dueIso = terms ? unesc((inv.email_preview || {}).due_on || "") || new Date(Date.now() + terms * 86400000).toISOString().slice(0, 10) : "";
     return `
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
@@ -245,6 +247,7 @@ export const views = {
         <div class="money-row"><span class="label">Subject</span><span>${subjectPreview(j, inv)}</span></div>
         ${inv.final ? `<p class="sub final-note">${termText("The final pay app: the PDF is marked FINAL APPLICATION.")}</p>` : ""}
         ${missingDocsHtml(j, inv)}
+        ${softChecksHtml(j, inv)}
         ${beforeYouSendHtml(j, inv)}
         ${approvalHtml({ ...inv, job_id: j.id })}
         ${companyGapsHtml(state.company)}
@@ -252,7 +255,7 @@ export const views = {
         ${firstSend && !noEmail ? `<p class="notice">First pay app to ${j.payer.name}. Check the email above; a typo sends it to a stranger.${can("company") ? ` Change it in <button class="linkish tall" data-action="nav" data-view="playbook">Client playbook</button>.` : ""}</p>` : ""}
         ${noEmail ? `<p class="blocker">${termText("Add the email pay apps go to, then send.")}</p>` : ""}
         ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
-        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}"${missing || (j.blockers || []).length || noEmail || locked || ((inv.approval || {}).waiting || []).length || (inv.approval || {}).blocked ? ' data-blocked="1"' : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
+        ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}"${missing || softWaiting(inv) || (j.blockers || []).length || noEmail || locked || ((inv.approval || {}).waiting || []).length || (inv.approval || {}).blocked ? ' data-blocked="1"' : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
       </div>` : ""}
       ${supportingDocsHtml(j, inv)}
       ${!draft ? `<div class="card">
@@ -314,10 +317,8 @@ export const views = {
 // Start a pay app on a job the way its own page does (G10): the Progress pay app form while the
 // work goes on, or Draft pay app for a job marked done. step comes from payAppStarts.
 export async function startPayApp(jobId, step) {
-  nav("job", jobId);
-  if (step === "draft") return post(`/api/jobs/${jobId}/draft`);
-  formOpen.progress = true;
-  render();
+  if (step === "draft") { nav("job", jobId); return post(`/api/jobs/${jobId}/draft`); }
+  nav("payapp-new", jobId);   // its own page (Nov 26)
   focusAfterDraw(() => document.querySelector('[data-form-key="progress"] input, [data-form-key="sovprogress"] input:not([disabled])'));
   return null;
 }
@@ -358,7 +359,8 @@ export const actions = {
     const j = state.jobs.find(x => x.id === id);
     const inv = j && j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
     if (j && inv && !(await askConfirm(sendConfirmText(j, inv), "Send"))) return null;
-    const r = await post(`/api/jobs/${id}/send`, { reviewed: el.dataset.reviewed || "" });
+    // today: the sender's own day, which the payment terms count from (domain.payment_due_on).
+    const r = await post(`/api/jobs/${id}/send`, { reviewed: el.dataset.reviewed || "", today: localDay(new Date()) });
     // A file read only now: the warning and the way past it go on the page.
     if (r && r.data && (r.data.unconditional_waiver || r.data.waiver_question)) { await load(); render(); }
     if (r && r.data && r.data.review_changed) {

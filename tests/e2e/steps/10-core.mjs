@@ -37,7 +37,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(await page.getByText("Next step").count(), 0);
     // Tabs and job-page buttons carry no tooltips (R3-04).
     assert.equal(await page.locator(".tabs .tab[title], .task-card .btn[title], .job-actions .btn[title]").count(), 0);
-    assert.match(await page.locator(".task-card .task-action").first().innerText(), /Fix 3 things before sending/);  // paperwork and a CO: R6-01 wording
+    assert.match(await page.locator(".task-card .task-action").first().innerText(), /Fix 2 things before sending/);  // paperwork and a CO: R6-01 wording (progress photos are a check now, Nov 26)
     await page.goBack();
     await page.getByRole("heading", { name: "Overview" }).waitFor();
     assert.equal(new URL(page.url()).pathname, "/dashboard");

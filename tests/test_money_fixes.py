@@ -803,7 +803,9 @@ class FiveSectionsTests(unittest.TestCase):  # item 11, acceptance 46
         return [a["record_id"] for a in self.packet[label]["attachments"]]
 
     def test_the_ticket_item_suggests_all_that_fit_and_no_invoice(self):
-        self.assertEqual(sorted(self.suggested("Daily tickets and time sheets")), sorted([self.delivery["id"], self.time["id"]]))
+        # A saved "Daily tickets and time sheets" is two items now (Nov 26), each taking its own.
+        self.assertEqual(self.suggested("Daily tickets"), [self.delivery["id"]])
+        self.assertEqual(self.suggested("Time sheets"), [self.time["id"]])
 
     def test_the_other_items_get_theirs(self):
         self.assertEqual(self.suggested("Progress photos"), [self.photo["id"]])
@@ -815,9 +817,10 @@ class FiveSectionsTests(unittest.TestCase):  # item 11, acceptance 46
         self.assertEqual(sorted(self.suggested("Progress photos")), sorted([self.photo["id"], second["id"]]))
 
     def test_confirming_the_item_sends_them_all(self):
-        item = self.packet["Daily tickets and time sheets"]
-        domain.confirm_packet_item(self.state, self.job["id"], item["id"], "Sam")
-        self.assertTrue(item["present"])
+        for label in ("Daily tickets", "Time sheets"):
+            item = self.packet[label]
+            domain.confirm_packet_item(self.state, self.job["id"], item["id"], "Sam")
+            self.assertTrue(item["present"])
         ids = domain._packet_file_ids(self.state, self.job, open_draft(self.job))
         self.assertIn(self.delivery["file_ids"][0], ids)
         self.assertIn(self.time["file_ids"][0], ids)

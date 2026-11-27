@@ -411,12 +411,16 @@ class AccountHttpTests(ServerCase):
                "contract_cents": 1_000_000, "retainage_pct": 0, "role": "Owner", "phone": "(404) 555-0100"}
         _, state = self.request("POST", "/api/jobs", job, cookie=owner)
         job_id = state["jobs"][0]["id"]
-        # A member drafts and gets the paperwork ready.
+        # A member drafts and gets the paperwork ready; a required document goes without its file
+        # only by someone who can send pay apps (Nov 26), so the owner overrides those.
         res, state = self.request("POST", f"/api/jobs/{job_id}/progress", {"completed_cents": 400_000}, cookie=member)
         self.assertEqual(res.status, 200, state)
         for item in state["jobs"][0]["invoices"][-1].get("packet") or []:
             if not item["present"]:
-                self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "In the email"}, cookie=member)
+                res, out = self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "In the email"}, cookie=member)
+                if item.get("gate") == "hard":
+                    self.assertEqual(res.status, 409, out)
+                    self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "In the email"}, cookie=owner)
         for action in ("send", "void-draft", "close", "delete"):
             res, out = self.request("POST", f"/api/jobs/{job_id}/{action}", {}, cookie=member)
             self.assertEqual((res.status, out["error"]), (403, server.NO_PERMISSION), action)

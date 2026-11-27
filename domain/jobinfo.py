@@ -14,7 +14,8 @@ from typing import Any
 __all__ = [
     "CLIENT_TYPES", "client_type_role", "client_type_of", "START_BACK_DAYS", "START_AHEAD_DAYS", "parse_start_date", "parse_end_date",
     "local_today", "job_started_on", "JOB_STAGES", "job_stage", "job_key_dates", "payer_jobs", "payer_extras",
-    "RETAINAGE_BY_TYPE", "default_retainage_pct",
+    "RETAINAGE_BY_TYPE", "default_retainage_pct", "us_federal_holidays", "is_business_day", "business_day_on_or_before",
+    "business_day_on_or_after", "next_payapp_due", "pay_period", "period_end_day", "PERIOD_END_MAX",
 ]
 
 # Client type (J2): six kinds of client ("Other" added 10 Nov 2026, Stephen), each mapped onto the two sets of defaults the app
@@ -169,8 +170,123 @@ def _cutoff(day: int, year: int, month: int) -> date:
     return date(year, month, min(day, last))
 
 
+# ---------- business days (Stephen, Nov 26) ----------
+# A computed date that lands on a weekend or a US federal holiday moves to a business day: a pay
+# app's due date to the business day before (it has to be in by then), a payment's to the one after.
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """The nth weekday (0 Monday) of a month; n = -1 is the last."""
+    if n > 0:
+        first = date(year, month, 1)
+        return first + timedelta(days=(weekday - first.weekday()) % 7 + 7 * (n - 1))
+    last = _cutoff(31, year, month)
+    return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+
+def _observed(d: date) -> date:
+    """A fixed-date holiday on a Saturday is kept the Friday before; on a Sunday, the Monday after."""
+    return d - timedelta(days=1) if d.weekday() == 5 else d + timedelta(days=1) if d.weekday() == 6 else d
+
+
+_HOLIDAYS: dict[int, frozenset] = {}
+
+
+def us_federal_holidays(year: int) -> frozenset:
+    """The days US federal offices are closed in a year, as observed (5 U.S.C. 6103)."""
+    if year not in _HOLIDAYS:
+        days = {_observed(date(year, 1, 1)), _nth_weekday(year, 1, 0, 3), _nth_weekday(year, 2, 0, 3), _nth_weekday(year, 5, 0, -1),
+                _observed(date(year, 6, 19)), _observed(date(year, 7, 4)), _nth_weekday(year, 9, 0, 1), _nth_weekday(year, 10, 0, 2),
+                _observed(date(year, 11, 11)), _nth_weekday(year, 11, 3, 4), _observed(date(year, 12, 25))}
+        if date(year + 1, 1, 1).weekday() == 5:
+            days.add(date(year, 12, 31))   # next New Year's Day, kept on this year's last Friday
+        _HOLIDAYS[year] = frozenset(days)
+    return _HOLIDAYS[year]
+
+
+def is_business_day(d: date) -> bool:
+    return d.weekday() < 5 and d not in us_federal_holidays(d.year)
+
+
+def business_day_on_or_before(d: date) -> date:
+    while not is_business_day(d):
+        d -= timedelta(days=1)
+    return d
+
+
+def business_day_on_or_after(d: date) -> date:
+    while not is_business_day(d):
+        d += timedelta(days=1)
+    return d
+
+
+def _as_date(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value or "")[:10])
+    except ValueError:
+        return None
+
+
+def next_payapp_due(state: dict[str, Any], job: dict[str, Any], payer: dict[str, Any] | None = None, today: date | None = None) -> date | None:
+    """The day the job's next pay app is due to the client (their "pay apps due by day N"), or None.
+    Never before the job starts: the first one falls in the billing cycle after the start date
+    (Nov 26: a job started today with day 15 showed a due date before it began). On a weekend or
+    a federal holiday it is the business day before."""
+    from domain import _int_or
+    today = today or datetime.now(timezone.utc).date()
+    payer = payer if payer is not None else next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
+    day = _int_or(payer.get("payapp_due_day"), 0)
+    if not 1 <= day <= 31:
+        return None
+    start = _as_date(job_started_on(state, job)) or today
+    y, m = min(start, today).year, min(start, today).month
+    for _ in range(40):
+        cut = _cutoff(day, y, m)
+        due = business_day_on_or_before(cut)
+        if cut > start and due >= today:
+            return due
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return None
+
+
+PERIOD_END_MAX = 31
+
+
+def period_end_day(state: dict[str, Any], job: dict[str, Any], payer: dict[str, Any] | None = None) -> int:
+    """The day of the month the job's pay period ends (its contract: "16th to the 15th" is 15).
+    The job's own setting, else the client's pay app day, else the month's last day (31)."""
+    from domain import _int_or
+    own = _int_or(job.get("period_end_day"), 0)
+    if 1 <= own <= PERIOD_END_MAX:
+        return own
+    payer = payer if payer is not None else next((p for p in state.get("payers", []) if p["id"] == job.get("payer_id")), {})
+    day = _int_or(payer.get("payapp_due_day"), 0)
+    return day if 1 <= day <= 31 else 31
+
+
+def pay_period(state: dict[str, Any], job: dict[str, Any], payer: dict[str, Any] | None = None, today: date | None = None) -> dict[str, Any]:
+    """The pay period the next pay app bills (Nov 26: the dates come from the contract): from the
+    day after the last sent pay app's period, or the job's start, to the first period end on or
+    after that. {from, to, end_day}, dates as YYYY-MM-DD; to may be ahead of today."""
+    from domain import DRAFT_STATUSES
+    today = today or datetime.now(timezone.utc).date()
+    end_day = period_end_day(state, job, payer)
+    sent = [_as_date(i.get("period_to")) for i in job.get("invoices", []) if i.get("status") not in DRAFT_STATUSES and i.get("status") != "void"]
+    sent = [d for d in sent if d]
+    floor = (max(sent) + timedelta(days=1)) if sent else (_as_date(job_started_on(state, job)) or today)
+    to = _cutoff(end_day, floor.year, floor.month)
+    if to < floor:
+        y, m = (floor.year + 1, 1) if floor.month == 12 else (floor.year, floor.month + 1)
+        to = _cutoff(end_day, y, m)
+    return {"from": floor.isoformat(), "to": to.isoformat(), "end_day": end_day}
+
+
 def _day(value: Any) -> str:
     return str(value or "")[:10]
+
+
+def _short(iso: str) -> str:
+    d = _as_date(iso)
+    return f"{d.strftime('%b')} {d.day}" if d else ""
 
 
 def job_key_dates(state: dict[str, Any], job: dict[str, Any], payer: dict[str, Any] | None = None,
@@ -191,11 +307,24 @@ def job_key_dates(state: dict[str, Any], job: dict[str, Any], payer: dict[str, A
     add("started", "Started", job_started_on(state, job))
     add("anticipated_end", "Anticipated end", job.get("anticipated_end_on"))
     day = _int_or(payer.get("payapp_due_day"), 0)
-    if 1 <= day <= 31 and not job.get("closed") and job.get("work_status") != "complete":
-        add("cutoff_this", "Pay app due this month", _cutoff(day, today.year, today.month).isoformat())
-        nxt = today.month % 12 + 1
-        add("cutoff_next", "Pay app due next month", _cutoff(day, today.year + (today.month == 12), nxt).isoformat())
     live = [i for i in job.get("invoices", []) if i.get("status") != "void"]
+    if 1 <= day <= 31 and not job.get("closed") and job.get("work_status") != "complete":
+        # Never before the job starts (Nov 26), on a business day; the first is named as the first.
+        start = _as_date(job_started_on(state, job))
+        first = not any(i.get("sent_at") for i in live)
+        nxt = today.month % 12 + 1
+        for key, label, cut in (("cutoff_this", "Pay app due this month", _cutoff(day, today.year, today.month)),
+                                ("cutoff_next", "Pay app due next month", _cutoff(day, today.year + (today.month == 12), nxt))):
+            if start and cut <= start:
+                continue
+            if first and not any(d["key"].startswith("cutoff") or d["key"] == "first_payapp" for d in out):
+                key, label = key, "First pay app due"
+            add(key, label, business_day_on_or_before(cut).isoformat())
+        due = next_payapp_due(state, job, payer, today)
+        if due and first and not any(d["label"] == "First pay app due" for d in out):
+            add("first_payapp", "First pay app due", due.isoformat())
+        period = pay_period(state, job, payer, today)
+        add("period", f"Pay period ends (from {_short(period['from'])})", period["to"])
     sent = sorted(_day(i.get("sent_at")) for i in live if i.get("sent_at"))
     add("last_sent", "Last pay app sent", sent[-1] if sent else "")
     unpaid = [i for i in live if i.get("status") in OPEN_FOR_PAYMENT]

@@ -22,8 +22,9 @@ def iso(when: datetime) -> str:
 class TodayRowsTests(unittest.TestCase):
     def setUp(self):
         self.state = server.empty_state("Pine Builders")
+        # Started before NOW: a pay app is never due before the job starts (Nov 26).
         self.job = domain.create_job(self.state, "Porch rebuild", "Dana Lee", 1_000_000, address="1 Elm St",
-                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner")
+                                     approver="Dana", ap_email="dana@example.com", phone="(404) 555-0100", role="Owner", started_on="2026-10-01")
         self.payer = self.state["payers"][0]
 
     def rows(self, now=NOW):
@@ -60,8 +61,8 @@ class TodayRowsTests(unittest.TestCase):
         inv = self.draft()
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"]), ("blocked", 3, "Needs supporting documents", "amber"))
-        self.assertEqual(r["text"], "Signed contract is missing. And 3 more.")
-        self.assertEqual(r["button"], "Add 4 missing documents")
+        self.assertEqual(r["text"], "Signed contract is missing. And 2 more.")  # progress photos are a check (Nov 26)
+        self.assertEqual(r["button"], "Add 3 missing documents")
         self.assertEqual((r["invoice_id"], r["co_id"]), (inv["id"], ""))
         self.assertEqual(r["path"], f"/money/packet/{self.job['id']}/{inv['id']}")
 
@@ -98,12 +99,12 @@ class TodayRowsTests(unittest.TestCase):
         self.payer["payapp_due_day"] = 31
         r = self.only()
         self.assertEqual((r["kind"], r["rank"], r["label"], r["tone"], r["button"]), ("due_soon", 1.5, "Due soon", "amber", "Progress pay app"))
-        self.assertEqual(r["text"], "Record this month's progress and draft the pay app. Pay app due to Dana Lee by Oct 31, 2026.")
+        self.assertEqual(r["text"], "Record this month's progress and draft the pay app. Pay app due to Dana Lee by Oct 30, 2026.")
         # A cutoff also lifts a blocked job's row, and says so.
         self.draft()
         r = self.only()
         self.assertEqual((r["kind"], r["rank"]), ("blocked", 1.5))
-        self.assertTrue(r["text"].endswith("Pay app due to Dana Lee by Oct 31, 2026."))
+        self.assertTrue(r["text"].endswith("Pay app due to Dana Lee by Oct 30, 2026."))
 
     def test_follow_up_names_every_unpaid_pay_app(self):
         inv = self.sent()
@@ -191,7 +192,7 @@ class TodayRowsTests(unittest.TestCase):
         self.assertEqual((view["blocked"], view["needs_paperwork"], view["blocker_button"]), (False, False, ""))
         inv = self.draft()
         view = domain.job_view(self.state, self.job)
-        self.assertEqual((view["blocked"], view["needs_paperwork"], view["blocker_button"]), (True, True, "Add 4 missing documents"))
+        self.assertEqual((view["blocked"], view["needs_paperwork"], view["blocker_button"]), (True, True, "Add 3 missing documents"))
         self.clear_packet(inv)
         self.job["change_orders"].append({"id": "co-2", "number": 2, "status": "pending", "included_in_billing": True,
                                           "amount_cents": 50_000, "description": "Extra rail"})
@@ -331,7 +332,7 @@ class TodayRowsTests(unittest.TestCase):
     def test_a_file_waiting_for_a_look_changes_the_button(self):
         inv = self.draft()
         self.clear_packet(inv)
-        self.job["records"].append({"id": "r1", "label": "scan.pdf", "file_ids": ["f1"]})
+        self.job["records"].append({"id": "r1", "label": "scan.pdf", "file_ids": ["f1"], "added_at": "2026-10-27T15:00:00+00:00"})
         inv["packet"][0].update(present=False, attachments=[{"record_id": "r1", "name": "scan.pdf", "unconfirmed": True}])
         r = self.only()
         self.assertEqual(r["button"], "Check 1 document")
@@ -343,7 +344,7 @@ class TodayRowsTests(unittest.TestCase):
         self.state["company"]["billing_style"] = "draws"
         self.payer["payapp_due_day"] = 31
         r = self.only()
-        self.assertEqual(r["text"], "Record this month's progress and draft the draw. Draw due to Dana Lee by Oct 31, 2026.")
+        self.assertEqual(r["text"], "Record this month's progress and draft the draw. Draw due to Dana Lee by Oct 30, 2026.")
         self.draft()["status"] = "void"
         self.job["work_status"] = "complete"
         self.payer["payapp_due_day"] = None

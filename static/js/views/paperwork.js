@@ -410,7 +410,9 @@ function packetItemsHtml(j, inv, packet, isCloseout, pick = null) {
     return `
     <div class="list-item packet-item ${p.present || skipped ? "present" : "absent"}" id="packet-item-${p.id}" tabindex="-1">
       <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
-        ${!p.present && !skipped && !hasWaiting ? `<span class="field-error">${p.blocker}</span>` : ""}
+        ${gatePill(p, isCloseout)}
+        ${!p.present && !skipped && !hasWaiting && !isSoft(p) ? `<span class="field-error">${p.blocker}</span>` : ""}
+        ${!p.present && !skipped && isSoft(p) ? `<div class="sub">${p.soft_check ? softAnswerText(p) : "A check: asked at Review &amp; send, and the pay app can go without it."}</div>` : ""}
         ${(p.covers || []).length ? `<div class="sub">For ${p.covers.join(", ")}</div>` : ""}
         ${skipped ? skippedHtml(p, isCloseout, editable ? j : null) : ""}
         ${p.present && made ? `<div class="sub">Produced by Duracash with the pay app</div>` : ""}
@@ -428,6 +430,7 @@ function packetItemsHtml(j, inv, packet, isCloseout, pick = null) {
         <button class="btn small" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}"${waiver ? ` data-waiver-kind="${waiver}"` : ""} data-capture="1">Take a photo</button>
         <button class="btn small secondary" data-action="pick-files" data-job="${j.id}" data-attach="${p.id}" data-kind="${recordKindFor(p)}"${waiver ? ` data-waiver-kind="${waiver}"` : ""}>Choose file</button>
       </div>`}
+      ${!isSoft(p) && !isCloseout && !may("send") ? `<p class="sub">Required on this job: someone who can send pay apps can let it go without it.</p>` : ""}
       <div class="form-inline">
         <button class="btn small secondary" data-action="toggle-form" data-form="resolve-${p.id}" aria-expanded="${!!formOpen["resolve-" + p.id]}">I have this…</button>
         ${waiver.startsWith("conditional") && !isCloseout
@@ -443,10 +446,48 @@ function packetItemsHtml(j, inv, packet, isCloseout, pick = null) {
   }).join("")}`;
 }
 
-// What a draft still needs: required, not in, not marked not needed. It sits in Review & send above
-// Approve & send while there is any (round 1, item 4).
+// What a draft still needs: required, not in, not marked not needed, and a hard stop. It sits in
+// Review & send above Approve & send while there is any (round 1, item 4). A soft one is asked
+// about there instead (Nov 26, softChecksHtml).
 export function isMissing(p) {
-  return p.required && !p.present && !p.skipped_reason;
+  return p.required && !p.present && !p.skipped_reason && !isSoft(p);
+}
+
+// Hard and soft gates (Stephen, Nov 26): the job sets each document Required (hard stop) or Check (soft).
+export function isSoft(p) { return unesc(p.gate || "") === "soft"; }
+function gatePill(p, isCloseout) {
+  if (isCloseout || !p.gate || !p.required) return "";
+  return isSoft(p) ? `<span class="pill gate-soft">Check</span>` : `<span class="pill gate-hard">Required</span>`;
+}
+export function softAnswerText(p) {
+  const c = p.soft_check || {};
+  const stored = /stored materials/i.test(unesc(p.soft_question || ""));
+  const said = stored ? (c.answer === "not_needed" ? "No stored materials this period" : "Stored materials are on this pay app")
+    : c.answer === "not_needed" ? "Not needed this time" : "Checked";
+  return `${said}: ${c.by || ""}, ${fmtDate(c.at)}${c.note ? ` (${c.note})` : ""}`;
+}
+
+// The soft items of a draft that aren't in: whoever sends says each was checked or isn't needed
+// this time, and the pay app can go. Stored materials ask whether any came in to bill.
+export function softChecksHtml(j, inv) {
+  const packet = inv.packet || [];
+  const soft = packet.filter(p => p.required && !p.present && !p.skipped_reason && isSoft(p));
+  if (!soft.length) return "";
+  const stored = (p) => /stored materials/i.test(unesc(p.soft_question || ""));
+  return `<div class="send-soft" id="soft-checks">
+      <h3>Check before it goes (${soft.length})</h3>
+      ${soft.map(p => `<div class="list-item soft-check" data-item="${p.id}">
+        <p>${p.soft_question || p.label}</p>
+        ${p.soft_check ? `<p class="sub">${softAnswerText(p)} <button class="linkish" data-action="packet-soft-check" data-id="${j.id}" data-item="${p.id}" data-answer="">Change</button></p>`
+          : `<div class="form-inline">
+          <button class="btn small secondary" data-action="packet-soft-check" data-id="${j.id}" data-item="${p.id}" data-answer="checked">${stored(p) ? "Yes, they're on this pay app" : "Checked"}</button>
+          <button class="btn small secondary" data-action="packet-soft-check" data-id="${j.id}" data-item="${p.id}" data-answer="not_needed">${stored(p) ? "None this period" : "Not needed this time"}</button>
+        </div>`}
+      </div>`).join("")}
+    </div>`;
+}
+export function softWaiting(inv) {
+  return (inv.packet || []).some(p => p.required && !p.present && !p.skipped_reason && isSoft(p) && !p.soft_check);
 }
 
 export function missingDocsHtml(j, inv) {
@@ -582,6 +623,7 @@ export const actions = {
   "open-packet": (el) => openSupportingDocs(el.dataset.job, el.dataset.inv, el.dataset.item),
   "packet-detach": (el, id) => post(`/api/jobs/${id}/detach/${el.dataset.item}`),
   "waiver-needed": (el, id) => post(`/api/jobs/${id}/waiver-needed`),
+  "packet-soft-check": (el, id) => post(`/api/jobs/${id}/packet-soft-check/${el.dataset.item}`, { answer: el.dataset.answer || "" }, { quiet: true }),
   "packet-skip": (el, id) => {
     const reason = (document.getElementById(`skip-reason-${el.dataset.item}`)?.value || "").trim();
     return post(`/api/jobs/${id}/packet-skip/${el.dataset.item}`, { reason, ...(el.dataset.wholeClient ? { whole_client: true } : {}) });

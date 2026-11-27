@@ -72,9 +72,10 @@ class CatalogTests(unittest.TestCase):
             items = domain.parse_packet_text(payer["packet"])
             self.assertTrue(items and set(items) <= labels, (role, items))
         self.assertEqual(snap["payers"][0]["packet_items"], list(domain.DEFAULT_PAPERWORK["Owner"]))
-        # A catalog label with "and" in it stays one item; a typed list still splits on "and".
+        # A catalog label with "and" in it stays one item; a typed list still splits on "and". The
+        # older "Daily tickets and time sheets" is the two items it is now (Nov 26).
         self.assertEqual(domain.parse_packet_text("daily tickets and time sheets, Supplier invoices and receipts and gate pass"),
-                         ["Daily tickets and time sheets", "Supplier invoices and receipts", "Gate pass"])
+                         ["Daily tickets", "Time sheets", "Supplier invoices and receipts", "Gate pass"])
 
     def test_a_saved_list_with_old_labels_moves_to_the_catalog_labels(self):  # migration
         state = seed_state()
@@ -86,7 +87,7 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue(migrations.migrate(state))
         self.assertEqual(state["payers"][0]["packet"], "Signed contract, Conditional waiver, Progress photos, Pay app backup")
         self.assertEqual(domain.parse_packet_text(state["payers"][1]["packet"]),
-                         ["Conditional waiver", "Progress photos", "Daily tickets and time sheets", "Certified payroll", "Final lien waivers"])
+                         ["Conditional waiver", "Progress photos", "Daily tickets", "Time sheets", "Certified payroll", "Final lien waivers"])
         self.assertEqual(state["payers"][2]["packet"], "Invoice and gate pass.", "nothing to change, left as typed")
         self.assertTrue(domain._is_closeout("Final lien waivers"), "still kept for closeout")
 
@@ -255,6 +256,7 @@ class AttachmentTests(unittest.TestCase):  # M4
         self.assertIn("Lumber receipt 1.pdf", page)
 
     def test_leaving_out_the_last_file_of_an_item_makes_it_missing(self):
+        self.job["paperwork_gates"] = {"photo": "hard"}   # a hard stop on this job (Nov 26): missing holds the send
         photos = next(p for p in self.inv["packet"] if p["kind"] != "waiver" and "photo" in p["label"].lower())
         self.assertTrue(photos["present"])
         for fid in self.photo["file_ids"]:
@@ -268,6 +270,7 @@ class AttachmentTests(unittest.TestCase):  # M4
         self.assertEqual(self.inv["status"], "awaiting_approval")
 
     def test_attaching_again_a_record_whose_files_are_left_out_keeps_the_item_missing(self):
+        self.job["paperwork_gates"] = {"photo": "hard"}
         photos = next(p for p in self.inv["packet"] if p["kind"] != "waiver" and "photo" in p["label"].lower())
         for fid in self.photo["file_ids"]:
             self.change("exclude_file", fid)

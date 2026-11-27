@@ -145,7 +145,8 @@ class HelperTests(unittest.TestCase):
         self.assertNotIn("Grant Park addition", reply["text"])
         self.assertIn("Oak Street kitchen", reply["text"])
         reply = helper.answer("what's blocking grant park", state, "co-x", "u-1")
-        self.assertIn("isn't blocked yet", reply["text"])
+        # Its missing progress photos are a check now, not a hard stop (Nov 26).
+        self.assertTrue("isn't blocked yet" in reply["text"] or "nothing blocking it" in reply["text"], reply["text"])
 
     def test_follow_up_answer_covers_an_approved_pay_app(self):
         # A pay app the customer approved is still out for payment; the server follows up on it.

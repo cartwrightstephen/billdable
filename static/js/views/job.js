@@ -10,11 +10,11 @@ import { pathFor } from "../routes.js";
 import { moreButton, askConfirm, focusAfterDraw } from "../dom.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, draftValue, clearForm } from "../forms.js";
 import { termText, actionWords } from "../terms.js";
-import { state, me, currentJobId, formOpen } from "../state.js";
+import { state, me, currentJobId, currentView, formOpen } from "../state.js";
 import { may, can, listPage, DEMO_COMPANY_ID, perms, post, toast, render, jobDetailLoading, jobDetailFailed, backButton, emptyState, nav, moreDetails } from "../app-core.js";
 import { jobFields, jobFieldErrors, savedJobFields, assigneeField } from "./jobs.js";
 import { coSignControls, newCoCardHtml, coAmountText } from "./job-cos.js";
-import { sovCardHtml } from "./job-sov.js";
+import { sovCardHtml, progressDone } from "./job-sov.js";
 import { recordCardHtml } from "./job-record.js";
 import { moneyCardHtml } from "./job-money.js";
 import { playbookMissingHtml, jobPaperworkHtml } from "./job-paperwork.js";
@@ -67,20 +67,8 @@ export function shortPayButtons(j) {
   return list.map(i => `<button class="btn small secondary" ${shortPayAttrs(j, i)}>${list.length > 1 ? i.number + ": " : ""}${shortPayLabel(i)}</button>`).join(" ");
 }
 
-// Log a conversation (R4-06): a record of kind "conversation" on the job. While a pay app waits for
-// payment it counts as a follow-up, and the date holds the next one until then.
-export function conversationFormHtml(j) {
-  const waiting = (j.invoices || []).some(i => ["sent", "approved", "partial"].includes(i.status));
-  return `<div class="card form-card" data-form-key="conversation"><h2>Conversation with ${j.payer.approver || j.payer.name}</h2>${formErrorLine("conversation")}<div class="form-row">
-    ${field({ form: "conversation", name: "text", id: "conversation-text", label: "What did they say?", required: true, placeholder: "Check goes out Friday", wide: true })}
-    ${waiting ? field({ form: "conversation", name: "next_on", id: "conversation-next", label: "Check again on (optional)", type: "date", attrs: `min="${todayIso()}"` }) : ""}
-    <button class="btn small" data-action="save-conversation" data-id="${j.id}">Save</button>
-    <button class="btn small secondary" data-action="toggle-form" data-form="conversation">Cancel</button></div></div>`;
-}
-
 // Today on this device, as a date box wants it (YYYY-MM-DD).
-function todayIso() {
-  const d = new Date();
+function todayIso(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
@@ -89,10 +77,15 @@ function todayIso() {
 function lastPeriod(j) {
   return (j.invoices || []).filter(i => i.period_to && !["void", "draft", "awaiting_approval"].includes(i.status)).map(i => unesc(i.period_to)).sort().pop() || "";
 }
+// The box starts at the end of the job's pay period (Nov 26: the contract's dates, "16th to the
+// 15th"), when it is no more than a month ahead (domain.period_to's limit).
 function periodField(form, j) {
   const last = lastPeriod(j), today = todayIso();
+  const end = unesc((j.pay_period || {}).to || "");
+  const monthAhead = new Date(); monthAhead.setDate(monthAhead.getDate() + 31);
+  const usable = end && end >= last && end <= todayIso(monthAhead) ? end : "";
   return field({ form, name: "period_to", id: `${form}-period`, label: "Period to", helpKey: "period_to", type: "date",
-    value: last > today ? last : today, attrs: last ? `min="${last}"` : "" });
+    value: usable || (last > today ? last : today), attrs: last ? `min="${last}"` : "" });
 }
 
 // The box the progress form shows for its mode, by request key.
@@ -296,6 +289,24 @@ export function closeoutOverrideNote(j) {
 }
 
 export const views = {
+  // Progress pay app, on its own page (Stephen, Nov 26): the schedule of values' lines filled in
+  // from the job records within the pay period, or the dollar form for a job without one.
+  "payapp-new"() {
+    const j = state.jobs.find(x => x.id === currentJobId);
+    if (!j && jobDetailLoading === currentJobId) return backButton("jobs", "Open jobs") + `<p class="sub">Loading the job…</p>`;
+    if (!j || j.closed) return backButton("jobs", "Open jobs") + emptyState("Job not found", "It may have been finished or deleted.", `<button class="btn" data-action="nav" data-view="jobs">Go to Jobs</button>`);
+    const openDraft = (j.invoices || []).find(i => ["draft", "awaiting_approval"].includes(i.status));
+    const lump = oneLumpLine(j);
+    const sovForm = !!(j.sov_view && j.sov_view.present) && !(lump && lumpInDollars);
+    const p = j.pay_period;
+    const head = `${backButton("job", j.name, j.id)}
+      <h1>${termText("Progress pay app")}</h1>
+      <p class="sub"><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a>${p ? ` · pay period ${fmtDate(p.from)} to ${fmtDate(p.to)}` : ""}${j.payapp_due_on ? ` · due to ${j.payer.name} ${fmtDate(j.payapp_due_on)}` : ""}</p>`;
+    if (j.work_status === "complete") return `${head}<p class="sub">The work is marked done: draft the final pay app from the job page.</p>`;
+    return `${head}
+      ${sovForm ? sovProgressHtml(j, periodField("sovprogress", j), formErrorLine("sovprogress"),
+        lump ? `<p class="form-inline"><button class="linkish" data-action="progress-dollars">Bill by dollars instead</button></p>` : "") : progressFormHtml(j, openDraft, lump)}`;
+  },
   job() {
     const j = state.jobs.find(x => x.id === currentJobId);
     if (!j && jobDetailLoading === currentJobId) return backButton("jobs", "Open jobs") + `<p class="sub">Loading the job…</p>`;
@@ -352,6 +363,7 @@ export const views = {
             ${ejf.retainage_pct}
             ${ejf.started_on}
             ${ejf.anticipated_end_on}
+            ${ejf.period_end_day}
             ${assigneeField("editjob", "ej", j.assignee_id)}
           </div>
           <p class="sub">${hasPayApps && !(j.sov_view && j.sov_view.contract_follows) ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The client's type and where pay apps go: <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
@@ -368,9 +380,6 @@ export const views = {
         ${field({ form: "sentback", name: "reason", id: "learn-reason", label: "Why they sent it back", placeholder: "For example: needs a revised schedule of values", wide: true })}
         <button class="btn small" data-action="learn" data-id="${j.id}">Save to the client playbook</button>
         <button class="btn small secondary" data-action="toggle-form" data-form="sentback">Cancel</button></div></div>` : ""}
-      ${formOpen.progress && sovForm ? sovProgressHtml(j, periodField("sovprogress", j), formErrorLine("sovprogress"),
-        lump ? `<p class="form-inline"><button class="linkish" data-action="progress-dollars">Bill by dollars instead</button></p>` : "") : ""}
-      ${formOpen.progress && !sovForm ? progressFormHtml(j, openDraft, lump) : ""}
       ${formOpen.pencilchanges ? `<div class="card form-card" data-form-key="pencilchanges"><h2>Client wants changes</h2><div class="form-inline"><input id="pencil-note" data-field="note" value="${esc(draftValue("pencilchanges", "note"))}" placeholder="What to change: quantities, change orders, missing items" class="grow"><button class="btn small" data-action="pencil-changes" data-id="${j.id}">Save</button></div></div>` : ""}
       ${formOpen.done && may("done") ? `<div class="card form-card" data-form-key="done"><h2>${termText("Final pay app")}</h2>${formErrorLine("done")}<div class="form-row">
         ${field({ form: "done", name: "notes", id: "done-notes", label: "Anything to note? (optional)", wide: true, help: NOTES_HELP })}
@@ -380,7 +389,6 @@ export const views = {
         ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">${openDraft.number} becomes the final pay app. Its number and supporting documents stay.</p>` : ""}
         <button class="btn small" data-action="done" data-id="${j.id}">${termText("Draft final pay app")}</button></div></div>` : ""}
       ${formOpen.closeoverride && may("close") ? closeOverrideHtml(j) : ""}
-      ${formOpen.conversation ? conversationFormHtml(j) : ""}
       ${formOpen.match ? `<div class="card form-card" data-form-key="match"><h2>Record a payment</h2>${openForPay.length ? `${formErrorLine("match")}<div class="form-row">
         ${field({ form: "match", name: "invoice_id", id: "match-inv", label: "Pay app", oneAsText: true, options: openForPay.map(i => [unesc(i.id), `${unesc(i.number)} · ${owedText(i)} · ${INVOICE_WORDS[unesc(i.status)] || unesc(i.status)}`]) })}
         ${moneyField({ form: "match", name: "amount_cents", id: "match-amt", label: "Amount received ($)", cents: (openForPay.find(i => i.id === draftValue("match", "invoice_id", "")) || openForPay[0]).remaining_cents })}
@@ -410,7 +418,7 @@ export const views = {
           <h2>${termText("Pay apps")}</h2>
           ${j.invoices.length ? j.invoices.filter(i => !i.replaced).map(i => {  // a draft replaced by a progress correction stays in the history only
             const pkt = i.packet || j.packet || [];
-            const missing = pkt.filter(p => p.required && !p.present).length;
+            const missing = pkt.filter(p => p.required && !p.present && p.gate !== "soft").length;
             const pencil = i.pencil_status ? ` · draft ${i.pencil_status === "sent" ? "with client" : words(i.pencil_status)}${i.pencil_note ? ": " + i.pencil_note : ""}` : "";
             return `<div class="list-item row-link">
               <div><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}"><strong>${i.number}</strong></a> ${invoicePill(i)} <span class="num">${money(i.amount_cents)}</span>
@@ -449,20 +457,33 @@ export const actions = {
       if (refuseForm("progress", d.error ? { [input]: d.error } : {})) return;
       const r = await post(`/api/jobs/${id}/sov-progress`, { done: { [line.id]: d.done }, amounts: { [line.id]: d.amount }, notes: v.notes || "", period_to: v.period_to || "" },
         { formKey: "progress", close: "progress" });
-      if (r && r.ok) lumpInDollars = false;
+      if (r && r.ok) { lumpInDollars = false; progressDone(id); }
       return;
     }
     const f = progressFigures(j, progressMode, v[input]);
     if (refuseForm("progress", f.error ? { [input]: f.error } : {})) return;
-    await post(`/api/jobs/${id}/progress`, { [f.field]: f.field === "period_cents" ? f.period : f.completed, notes: v.notes, period_to: v.period_to || "" },
+    const r = await post(`/api/jobs/${id}/progress`, { [f.field]: f.field === "period_cents" ? f.period : f.completed, notes: v.notes, period_to: v.period_to || "" },
       { formKey: "progress", close: "progress" });
+    if (r && r.ok) progressDone(id);
+  },
+  // Progress pay app opens its own page (Stephen, Nov 26), not a form inside the job page.
+  "progress-open": (el, id) => {
+    nav("payapp-new", id);
+    focusAfterDraw(() => document.querySelector('[data-form-key="progress"] input, [data-form-key="sovprogress"] input:not([disabled])'));
   },
   // A one-line schedule: the dollar form, or back to its % done.
   "progress-dollars": (el) => { lumpInDollars = !el.dataset.off; progressMode = "period"; render(); document.querySelector('[data-form-key="progress"] [data-money], [data-sovp]')?.focus(); },
   "activity-all": () => { moreDetails["job-activity-all"] = true; render(); },
   "progress-mode": (el) => { progressMode = el.dataset.mode; render(); document.querySelector('[data-form-key="progress"] [data-money], #progress-pct')?.focus(); },
   // "All of it": the Final Pay App form instead, which drafts the final pay app for the rest.
-  "progress-all": () => { formOpen.progress = false; clearForm("progress"); formOpen.done = true; render(); document.getElementById("done-notes")?.focus(); },
+  "progress-all": () => {
+    const id = currentJobId;
+    clearForm("progress");
+    if (currentView === "payapp-new") nav("job", id);   // the Final pay app form is on the job page
+    formOpen.done = true;
+    render();
+    focusAfterDraw(() => document.getElementById("done-notes"));
+  },
   "done": async (el, id) => {
     const j = state.jobs.find(x => x.id === id);
     const v = formValues("done");
@@ -477,24 +498,12 @@ export const actions = {
     }
     await post(`/api/jobs/${id}/done`, { notes: v.notes || "", period_to: v.period_to || "", ...(v.unpaid_reason ? { unpaid_reason: v.unpaid_reason } : {}) }, { formKey: "done", close: "done" });
   },
-  // Log a conversation (R4-06): counts as a follow-up while a pay app waits; with a date, Today waits until then.
-  "save-conversation": async (el, id) => {
-    const v = formValues("conversation");
-    if (refuseForm("conversation", v.text ? {} : { text: "Enter what they said, like \"Check goes out Friday\"." })) return;
-    await post(`/api/jobs/${id}/note-contact`, { text: v.text, next_on: v.next_on || "" }, { formKey: "conversation", close: "conversation" });
-  },
   // From a page with no job open, such as Payments: the job, with Record a payment's form open.
   "record-payment": (el, id) => {
     nav("job", id);
     formOpen.match = true;
     render();
     focusAfterDraw(() => document.getElementById("match-amt"));
-  },
-  "log-conversation": (el, id) => {
-    nav("job", id);
-    formOpen.conversation = true;
-    render();
-    focusAfterDraw(() => document.getElementById("conversation-text"));
   },
   "retainage-paid": async (el, id) => {
     const v = formValues("retpay");
@@ -588,6 +597,7 @@ export const actions = {
     const body = { name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, contract_number: v.contract_number };
     if (v.started_on) body.started_on = v.started_on;
     if ("anticipated_end_on" in v) body.anticipated_end_on = v.anticipated_end_on;
+    if ("period_end_day" in v) body.period_end_day = v.period_end_day;
     if ("assignee_id" in v) body.assignee_id = v.assignee_id;
     const errors = jobFieldErrors(v, savedJobFields(state.jobs.find(x => x.id === id)));
     if ("contract_cents" in v) {

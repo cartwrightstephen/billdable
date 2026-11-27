@@ -85,7 +85,9 @@ class PeriodTotalTests(unittest.TestCase):
             rec["at"] = "2026-01-01T08:00:00Z"
         sent["created_at"] = "2026-01-02T08:00:00Z"
         p = period(job, state)
-        self.assertEqual(p["from"], sent["period_to"])
+        # The next pay period starts the day after the last one billed (domain.pay_period, Nov 26).
+        from datetime import date, timedelta
+        self.assertEqual(p["from"], (date.fromisoformat(sent["period_to"]) + timedelta(days=1)).isoformat())
         self.assertEqual(p["draft"], None)
         self.assertEqual((row(p, rough)["qty_this_milli"], row(p, rough)["record_count"], p["suggested_gross_cents"]), (0, 0, 0))
         daily(state, job, [{"line_id": rough, "qty": "33.333"}])

@@ -154,7 +154,10 @@ export default async function ({ browser, BASE, step, errors, signIfAsked }) {
     await p.locator("main").getByRole("button", { name: "New job record" }).first().click();
     await p.waitForURL(/\/jobs\/daily$/);
     await p.fill("#daily-notes", "Temporary power set. Ran conduit on level 1. Set panels LP-1 and LP-2.");
-    await p.fill("#daily-crew", "4");
+    // The time sheet: a row per person, the team's or someone else typed (Nov 26).
+    await p.selectOption("#daily-ts-pick-0", "__other");
+    await p.fill("#daily-ts-name-0", "Level 1 crew");
+    await p.fill("#daily-ts-hours-0", "32");
     await qty("Temporary power:").fill("100");
     await qty("Branch conduit and wire:").fill("700");
     await qty("Panelboards:").fill("2");
@@ -163,15 +166,14 @@ export default async function ({ browser, BASE, step, errors, signIfAsked }) {
     await p.getByText("Done, not billed $19,750").waitFor();
 
     await p.fill("#daily-notes", "Finished level 1 conduit. Hung 40 fixtures. Roughed in the EV circuits.");
-    await p.fill("#daily-crew", "5");
     await qty("Branch conduit and wire:").fill("500");
     await qty("Light fixtures, set and wired:").fill("40");
     await qty("CO 1 ").fill("50");
     await p.getByRole("button", { name: "+ Photos", exact: true }).click();
     await p.locator("#daily-photos_0-files").setInputFiles(file("level1-fixtures.jpg"));
-    await p.getByRole("button", { name: "+ Time sheet", exact: true }).click();
-    await p.fill("#daily-time_sheets-who-0", "Level 1 crew");
-    await p.fill("#daily-time_sheets-hours-0", "40");
+    await p.selectOption("#daily-ts-pick-0", "__other");
+    await p.fill("#daily-ts-name-0", "Level 1 crew");
+    await p.fill("#daily-ts-hours-0", "40");
     await p.locator("#daily-time_sheets_0-files").setInputFiles(file("timesheet-level1.jpg"));
     await p.getByRole("button", { name: "Save job record" }).click();
     await p.locator(".saved-result", { hasText: "1 diary entry, 1 progress photo, 1 time sheet" }).waitFor();
@@ -183,22 +185,26 @@ export default async function ({ browser, BASE, step, errors, signIfAsked }) {
     assert.equal(await periodRow("Suggested amount due").innerText(), "$32,580.00");
   });
 
-  await walk("Walkthrough 7: Progress Pay App drafts PA-PEAC-01 for $32,580.00 with 3 supporting documents missing", async () => {
+  await walk("Walkthrough 7: Progress Pay App drafts PA-PEAC-01 for $32,580.00 with 2 supporting documents missing", async () => {
     await p.getByRole("button", { name: "Progress Pay App" }).click();
+    await p.waitForURL(/\/money\/new-pay-app\//);   // its own page (Nov 26)
     const done = await p.locator('[data-form-key="sovprogress"] input[id^="sovp-done-"]').evaluateAll(els => els.map(e => e.value));
     assert.deepEqual(done, ["100", "1200", "40", "2", "0", "50"], "Done to date comes from the job records");
     await p.getByRole("button", { name: "Draft progress pay app" }).click();
+    await p.waitForURL(/\/money\/pay-app\//);   // the draft's own page
+    await openJob();
     const row = p.locator(".card", { hasText: "Pay apps" }).getByText(/PA-PEAC-01\s+Draft\s+\$32,580\.00/);
     await row.waitFor();
-    await p.getByText("3 supporting documents missing").waitFor();
+    // Progress photos are a check (soft), not a hard stop (Nov 26): two are missing.
+    await p.getByText("2 supporting documents missing").waitFor();
     assert.equal(await periodRow("On PA-PEAC-01").innerText(), "$36,200.00");
     assert.equal(await periodRow("Amount due").innerText(), "$32,580.00");
   });
 
   await walk("Walkthrough 8: the three supporting documents, then Ready to send", async () => {
-    await p.getByRole("button", { name: "Add or check 3 documents" }).click();
+    await p.getByRole("button", { name: "Add or check 2 documents" }).click();
     await p.waitForURL(/\/money\/pay-app\//);
-    await p.getByText("Missing (3)").waitFor();
+    await p.getByText("Missing (2)").waitFor();
     const item = (label) => p.locator(".packet-item", { hasText: label });
     for (const label of ["Conditional waiver on progress payment", "Progress photos", "Daily tickets and time sheets"]) await item(label).waitFor();
     const waiver = item("Conditional waiver on progress payment");

@@ -64,6 +64,7 @@ function pageName(e) {
   if (!state || !e) return "";
   const j = e.jobId && state.jobs.find(x => x.id === e.jobId);
   if (e.view === "job") return j ? j.name : "Job";
+  if (e.view === "payapp-new") return termText("Progress pay app");
   if (e.view === "payapp-detail") { const i = j && j.invoices.find(x => x.id === e.detailId); return i ? i.number : termText("Pay app"); }
   if (e.view === "packet-detail") return e.detailId === "closeout" ? "Closeout documents" : "Supporting documents";
   if (e.view === "co-detail") { const co = j && j.change_orders.find(x => x.id === e.detailId); return co ? `CO ${co.number}` : "Change order"; }
