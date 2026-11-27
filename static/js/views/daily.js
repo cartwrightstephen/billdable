@@ -14,7 +14,7 @@ import { teamUsers } from "./jobs.js";
 import { readJson, setNetBanner } from "../net.js";
 import { draftValue, clearForm, field, moneyField, formValues, formErrors, formDraft, refuseForm } from "../forms.js";
 import { termText } from "../terms.js";
-import { state, onSessionEnd, currentView } from "../state.js";
+import { state, onSessionEnd, currentView, teamData } from "../state.js";
 import { post, toast, render, emptyState, nav, setState } from "../app-core.js";
 import { focusAfterDraw, askConfirm } from "../dom.js";
 
@@ -139,7 +139,9 @@ export function crewRows(v, users = []) {
     const name = user ? unesc(user.name || user.email || "") : (v[`ts_name_${n}`] || "").trim();
     const hours = (v[`ts_hours_${n}`] || "").trim();
     if (!name && !hours) continue;
-    out.push({ name, hours, ...(user ? { member_id: unesc(user.id) } : {}) });
+    // A team member put back by Edit before the team list came: the saved name, the same member.
+    const member = user ? unesc(user.id) : pick && pick !== OTHER_PERSON ? pick : "";
+    out.push({ name, hours, ...(member ? { member_id: member } : {}) });
   }
   return out;
 }
@@ -529,7 +531,11 @@ export function editPrefill(j, dr) {
       const crew = (r.crew || []).length ? r.crew : [{ name: NO_HEAD(raw(r.label), "Time sheet"), hours_milli: r.hours_milli || 0 }];
       crew.forEach((p, n) => {
         const user = p.member_id && users.find(u => unesc(u.id) === unesc(p.member_id));
-        if (user) d[`ts_pick_${n}`] = unesc(user.id); else { d[`ts_pick_${n}`] = OTHER_PERSON; d[`ts_name_${n}`] = raw(p.name); }
+        // Opened straight after the page loads, the team list may not be here yet: a member stays
+        // picked (with the saved name kept for the save) instead of turning into Someone else.
+        if (user) d[`ts_pick_${n}`] = unesc(user.id);
+        else if (p.member_id && !teamData) { d[`ts_pick_${n}`] = raw(p.member_id); d[`ts_name_${n}`] = raw(p.name); }
+        else { d[`ts_pick_${n}`] = OTHER_PERSON; d[`ts_name_${n}`] = raw(p.name); }
         d[`ts_hours_${n}`] = p.hours_milli ? String(p.hours_milli / 1000) : "";
       });
       rows.crew = Math.max(1, crew.length);
