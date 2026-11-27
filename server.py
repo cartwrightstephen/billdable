@@ -3579,6 +3579,7 @@ class Handler(BaseHTTPRequestHandler):
             # Every new job has a schedule of values: one lump-sum line until the person sets one.
             auto_schedule=True, schedule_lines=body.get("sov_lines"), schedule_op=body.get("sov_op_pct"),
         )
+        _zip_warning(ctx)
 
     def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:
         job_id, action, item = m.group(1), m.group(2), m.group(3)
@@ -3600,6 +3601,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _m_company_update(self, state: dict, m, ctx: "Ctx") -> None:
         domain.update_company(state, ctx.body, ctx.actor)
+        co = state.get("company") or {}
+        _zip_warning(ctx, {"state": co.get("state"), "zip": co.get("zip")})
 
     def _m_approvers(self, state: dict, m, ctx: "Ctx") -> None:
         """Who approves pay apps before they go (Round 2 decision 8): the company's list, or one
@@ -4403,6 +4406,16 @@ def _address_parts(body: dict) -> dict | None:
     return {k: _text(body, k, limit=200) for k in keys} if any(k in body for k in keys) else None
 
 
+def _zip_warning(c: "Ctx", parts: dict | None = None) -> None:
+    """A ZIP from another state is asked about, not refused (Nov 27 audit): the reply carries
+    warnings.zip with the page's own question, for an address saved by a script, an import or a
+    page that didn't ask. parts: the address's four boxes; else the body's, or its one-line address."""
+    parts = parts if parts is not None else (_address_parts(c.body) or domain.validate.split_address(_text(c.body, "address")) or {})
+    question = domain.validate.zip_state_question(parts.get("zip"), parts.get("state"))
+    if question:
+        c.reply.setdefault("warnings", {})["zip"] = question
+
+
 def _assignee(c: Ctx, user_id: str) -> tuple:
     """(id, name) of the team member a job is assigned to; someone not on the team is refused."""
     if not user_id:
@@ -4424,6 +4437,8 @@ def _edit_job(h, st, j, i, c):
     if "retainage_pct" in body:
         updates["retainage_pct"] = _number(body, "retainage_pct", "the retainage percent", 0)
     domain.edit_job(st, j, updates, c.actor)
+    if any(k in body for k in ("street", "city", "state", "zip", "address")):
+        _zip_warning(c)
 
 
 # Who may do what (S6): each person's permission profile (domain/profiles.py). Every job action

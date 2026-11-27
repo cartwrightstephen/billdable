@@ -127,6 +127,43 @@ class TicketItemsSplitTests(unittest.TestCase):
         self.assertEqual([(p["required"], p["skipped_reason"]) for p in packet], [(False, "Lump sum"), (False, "Lump sum")])
 
 
+class ZipStateTests(unittest.TestCase):
+    """Item 4: the server asks the page's question about a ZIP from another state; never refuses."""
+    def test_the_question_matches_the_page(self):
+        from domain.validate import zip_state_question
+        self.assertEqual(zip_state_question("33909", "GA"), "ZIP 33909 is in Florida, not Georgia. Check the state or the ZIP.")
+        self.assertEqual(zip_state_question("30303", "ga"), "")
+        self.assertEqual(zip_state_question("", "GA"), "")
+        self.assertEqual(zip_state_question("33909", ""), "")
+        self.assertEqual(zip_state_question("09012", "GA"), "", "military mail isn't questioned")
+        self.assertEqual(zip_state_question("96910-1234", "GU"), "")
+
+    def test_a_contract_with_a_zip_from_another_state_says_so(self):
+        import contract_import
+        out = contract_import.suggest("Project: Oak kitchen\nProject address: 12 Peach St, Atlanta, GA 33909\n", "Pine Co")
+        self.assertEqual(out["fields"]["zip"], "33909")
+        self.assertIn("Florida, not Georgia", out["warnings"]["zip"])
+        self.assertNotIn("warnings", contract_import.suggest("Project address: 12 Peach St, Atlanta, GA 30303\n", "Pine Co"))
+
+
+class ZipStateHttpTests(ServerCase):
+    def test_job_and_company_saves_carry_the_warning_and_still_save(self):
+        owner, _ = self.signup("owner@zip.example", "Zip Co")
+        res, out = self.request("POST", "/api/jobs", {**test_team.JOB, "street": "1 Main St", "city": "Atlanta", "state": "GA", "zip": "33909"}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        self.assertEqual(out["warnings"]["zip"], "ZIP 33909 is in Florida, not Georgia. Check the state or the ZIP.")
+        job_id = out["jobs"][0]["id"]
+        res, out = self.request("POST", f"/api/jobs/{job_id}/edit", {"street": "1 Main St", "city": "Atlanta", "state": "GA", "zip": "30303"}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        self.assertNotIn("warnings", out)
+        res, out = self.request("POST", f"/api/jobs/{job_id}/edit", {"street": "1 Main St", "city": "Atlanta", "state": "GA", "zip": "10001"}, cookie=owner)
+        self.assertIn("New York, not Georgia", out["warnings"]["zip"])
+        res, out = self.request("POST", "/api/company", {"name": "Zip Co", "street": "1 Main St", "city": "Atlanta", "state": "GA", "zip": "33909"}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        self.assertEqual(out["company"]["zip"], "33909", "saved: a warning, not a refusal")
+        self.assertIn("Florida, not Georgia", out["warnings"]["zip"])
+
+
 class GateChangeHttpTests(ServerCase):
     """The server passes the send permission through to the gate change."""
     join = test_team.TeamHttpTests.join

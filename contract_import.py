@@ -579,7 +579,10 @@ def suggest(text: str, company_name: str = "") -> dict[str, Any]:
     if schedule:
         n = len(schedule["lines"])
         notes.append(f"A schedule of values with {n} line{'s' if n != 1 else ''}, {_dollars(schedule['total_cents'])} in all.")
-    return {"fields": fields, "found": sorted(fields), "sov": schedule, "notes": notes}
+    # A ZIP from another state in the contract is asked about on the new job form (Nov 27 audit).
+    from domain.validate import zip_state_question
+    question = zip_state_question(fields.get("zip"), fields.get("state"))
+    return {"fields": fields, "found": sorted(fields), "sov": schedule, "notes": notes, **({"warnings": {"zip": question}} if question else {})}
 
 
 def _words_date(iso: str) -> str:
