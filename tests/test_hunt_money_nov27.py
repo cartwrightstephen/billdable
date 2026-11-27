@@ -92,5 +92,26 @@ class ClientFormValuesTests(unittest.TestCase):
         self.assertEqual(approve_unsigned["status"], "pending")
 
 
+
+class ReleasePreviewTests(unittest.TestCase):
+    def test_a_part_release_on_a_finished_job_previews_as_it_goes(self):
+        """Review & send's email for a retainage release asked is_final(job), not the release's own
+        rule: a part release on a finished job previewed as "the final pay application", and went
+        as a plain one."""
+        import approve_help
+        state, job, labor, materials = schedule_job(retainage=10)
+        domain.record_sov_progress(state, job["id"], {labor: "1", materials: "100"})
+        inv = send(state, job)
+        domain.match_payment(state, job["id"], inv["amount_cents"], "CHK-1", invoice_id=inv["id"])
+        domain.mark_done(state, job["id"])
+        self.assertTrue(domain.is_final(job))
+        domain.draft_retainage_release(state, job["id"], 50_000, "substantial")
+        rel = next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)
+        self.assertFalse(domain.final_for(job, rel))
+        preview = domain.email_preview(state, job, rel)
+        self.assertNotIn("final pay application", preview["body"])
+        self.assertTrue(preview["subject"].startswith("Pay application"))
+
+
 if __name__ == "__main__":
     unittest.main()

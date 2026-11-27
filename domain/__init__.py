@@ -1494,7 +1494,7 @@ PREVIEW_LINK = "[private link to this pay app]"
 def email_preview(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, str]:
     """A draft's email as it would go now, for Review & send. Changes nothing on the draft."""
     payer = _payer(state, job["payer_id"])
-    going = {**invoice, "final": is_final(job)}
+    going = {**invoice, "final": final_for(job, invoice)}   # a retainage release is final by its own rule (payapp_core)
     due = payment_due_on(payer)
     if due:
         going["due_on"] = due
