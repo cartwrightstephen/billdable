@@ -70,7 +70,7 @@ class AuditChainTests(unittest.TestCase):
         state = self.state_with_rows()
         rows = state["audit"]
         self.assertEqual(rows[-1]["prev"], rows[-2]["hash"])
-        self.assertEqual(domain.check_audit(state), {"ok": True, "rows": len(rows), "broken_at": None})
+        self.assertEqual(domain.check_audit(state), {"ok": True, "rows": len(rows), "broken_at": None, "keyed": True})
 
     def test_an_edited_row_breaks_the_chain_there(self):
         state = self.state_with_rows()
