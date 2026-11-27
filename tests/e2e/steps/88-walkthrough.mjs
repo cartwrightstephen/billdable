@@ -185,7 +185,7 @@ export default async function ({ browser, BASE, step, errors, signIfAsked }) {
     assert.equal(await periodRow("Suggested amount due").innerText(), "$32,580.00");
   });
 
-  await walk("Walkthrough 7: Progress Pay App drafts PA-PEAC-01 for $32,580.00 with 2 supporting documents missing", async () => {
+  await walk("Walkthrough 7: Progress Pay App drafts PA-PEAC-01 for $32,580.00 with 3 supporting documents missing", async () => {
     await p.getByRole("button", { name: "Progress Pay App" }).click();
     await p.waitForURL(/\/money\/new-pay-app\//);   // its own page (Nov 26)
     const done = await p.locator('[data-form-key="sovprogress"] input[id^="sovp-done-"]').evaluateAll(els => els.map(e => e.value));
@@ -195,18 +195,20 @@ export default async function ({ browser, BASE, step, errors, signIfAsked }) {
     await openJob();
     const row = p.locator(".card", { hasText: "Pay apps" }).getByText(/PA-PEAC-01\s+Draft\s+\$32,580\.00/);
     await row.waitFor();
-    // Progress photos are a check (soft), not a hard stop (Nov 26): two are missing.
-    await p.getByText("2 supporting documents missing").waitFor();
+    // Progress photos are a check (soft), not a hard stop (Nov 26). Billing CO 1's work asks for its
+    // daily tickets and its time sheets, two items since the Nov 27 audit, each a hard stop for
+    // change order work: with the waiver, three are missing.
+    await p.getByText("3 supporting documents missing").waitFor();
     assert.equal(await periodRow("On PA-PEAC-01").innerText(), "$36,200.00");
     assert.equal(await periodRow("Amount due").innerText(), "$32,580.00");
   });
 
-  await walk("Walkthrough 8: the three supporting documents, then Ready to send", async () => {
-    await p.getByRole("button", { name: "Add or check 2 documents" }).click();
+  await walk("Walkthrough 8: the supporting documents, then Ready to send", async () => {
+    await p.getByRole("button", { name: "Add or check 3 documents" }).click();
     await p.waitForURL(/\/money\/pay-app\//);
-    await p.getByText("Missing (2)").waitFor();
+    await p.getByText("Missing (3)").waitFor();
     const item = (label) => p.locator(".packet-item", { hasText: label });
-    for (const label of ["Conditional waiver on progress payment", "Progress photos", "Daily tickets and time sheets"]) await item(label).waitFor();
+    for (const label of ["Conditional waiver on progress payment", "Progress photos", "Daily tickets", "Time sheets"]) await item(label).first().waitFor();
     const waiver = item("Conditional waiver on progress payment");
     await pick(waiver.getByRole("button", { name: "Choose file" }), "conditional-waiver.jpg");
     await waiver.getByText("Which waiver is this?").waitFor();
@@ -215,10 +217,16 @@ export default async function ({ browser, BASE, step, errors, signIfAsked }) {
     await item("Progress photos").getByRole("button", { name: "I checked this file" }).click();
     await item("Progress photos").locator(".mark", { hasText: "✓" }).waitFor();
     // The time sheet saved with job record 2 is found in the job records, as the photo is.
-    const sheets = item("Daily tickets and time sheets");
+    const sheets = item("Time sheets");
     await sheets.getByText("timesheet-level1.jpg").waitFor();
     await sheets.getByRole("button", { name: "I checked this file" }).click();
     await sheets.locator(".mark", { hasText: "✓" }).waitFor();
+    // No delivery tickets on this work: the owner (who can send pay apps) lets it go with a reason.
+    const tickets = p.locator(".packet-item", { hasText: "Daily tickets" }).filter({ hasNotText: "Time sheets" });
+    await tickets.getByRole("button", { name: "I have this…" }).click();
+    await tickets.getByLabel("Why it can go without a checked file").fill("CO 1 was billed on the time sheet; no delivery tickets");
+    await tickets.getByRole("button", { name: "Save override" }).click();
+    await tickets.locator(".mark", { hasText: "✓" }).waitFor();
     await p.locator("h1 + .sub", { hasText: "Ready to send" }).waitFor();
     // The email preview's sums, as the document has the tester check the PDF.
     await p.getByText("Less retainage 10%: -$3,620.00").first().waitFor();
