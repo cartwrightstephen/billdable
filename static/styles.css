@@ -1037,3 +1037,10 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 @media (max-width: 800px) {
   #view table.stack td > a, #view tr.action-item td > a { display: inline-flex; align-items: center; min-height: 44px; }
 }
+
+/* Client playbook: its cards and their sections are flex rows, which drops the browser's fold
+   triangle; this one says they open (Nov 27 hunt). */
+.playbook-card summary { list-style: none; }
+.playbook-card summary::-webkit-details-marker { display: none; }
+.playbook-card details:not(.info-pop) > summary::before, details.playbook-card > summary::before { content: "▶"; font-size: 0.7em; color: var(--ink); width: 1.2em; flex: none; align-self: center; }
+.playbook-card details[open]:not(.info-pop) > summary::before, details.playbook-card[open] > summary::before { content: "▼"; }

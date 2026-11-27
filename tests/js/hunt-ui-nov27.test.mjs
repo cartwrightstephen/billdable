@@ -135,3 +135,9 @@ test("a lump sum billed in full reads billed 100%, not 100.0%", () => {
   const src = readFileSync(new URL("../../static/js/sov.js", import.meta.url), "utf8");
   assert.match(src, /`billed \$\{l\.lump_sum \? \+\(l\.billed_qty_milli \/ 10\)\.toFixed\(1\) \+ "%"/);
 });
+
+test("Client playbook cards and sections show a fold marker", () => {
+  const css = readFileSync(new URL("../../static/styles.css", import.meta.url), "utf8");
+  assert.match(css, /\.playbook-card details:not\(\.info-pop\) > summary::before, details\.playbook-card > summary::before \{ content: "▶";/);
+  assert.match(css, /details\.playbook-card\[open\] > summary::before \{ content: "▼"; \}/);
+});
