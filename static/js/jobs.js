@@ -769,6 +769,9 @@ export const RECORD_GROUPS = [
 // conversation; what is stored stays until someone edits it.
 export function recordFace(r) {
   const label = unesc(r.label || "");
+  // A diary entry's label carries its day as the server wrote it (2026-11-27): the page says Nov 27, 2026.
+  const day = unesc(r.kind || "") === "daily" && /^Diary entry (\d{4}-\d{2}-\d{2})/.exec(label);
+  if (day) return { ...r, label: String(r.label).replace(day[1], fmtDate(day[1])) };
   if (unesc(r.kind || "") !== "note" || !/^Spoke to /i.test(label)) return r;
   return { ...r, kind: "conversation", label: String(r.label).replace(/^Spoke to /i, "Conversation with ") };
 }

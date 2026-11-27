@@ -39,3 +39,10 @@ test("Remove on a job record row keeps the focus in the list", () => {
   assert.match(body, /q\(n\) \|\| q\(n - 1\)/);
   assert.match(body, /data-action="daily-more"\]\[data-kind="crew"\]/);
 });
+
+test("a diary entry's label shows its day as the page writes dates, not 2026-11-27", async () => {
+  const { recordFace } = await import("../../static/js/jobs.js");
+  assert.equal(recordFace({ kind: "daily", label: "Diary entry 2026-11-27" }).label, "Diary entry Nov 27, 2026");
+  assert.equal(recordFace({ kind: "daily", label: "Diary entry 2026-11-27: 3 EA sink" }).label, "Diary entry Nov 27, 2026: 3 EA sink");
+  assert.equal(recordFace({ kind: "note", label: "Diary entry 2026-11-27" }).label, "Diary entry 2026-11-27");
+});
