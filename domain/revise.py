@@ -90,5 +90,8 @@ def revise_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, rea
     domain.audit(state, job_id, "payapp_revised",
                  f"{actor} put {number} ({domain.money(revisions[-1]['amount_cents'])}) back to a draft to revise it: {reason}. "
                  f"The version sent {revisions[-1].get('sent_at', '')[:10]} is kept as revision {revisions[-1]['n']}"
-                 + ("." if file_id else ", without its PDF (it couldn't be made)."), actor)
+                 + ("." if file_id else ", without its PDF (it couldn't be made).")
+                 + (f" QuickBooks invoice {invoice['qbo'].get('doc_number') or invoice['qbo'].get('invoice_id')} still shows "
+                    f"{domain.money(invoice['qbo'].get('total_cents') or 0)} until it is sent again and sent to QuickBooks."
+                    if (invoice.get("qbo") or {}).get("invoice_id") else ""), actor)
     return job

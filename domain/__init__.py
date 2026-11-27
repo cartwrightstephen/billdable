@@ -796,6 +796,8 @@ def draft_invoice(
         _carry_send_choices(state, job, replaces, invoice)
         if replaces.get("revisions"):   # a pay app back to a draft for revision keeps what went (domain/revise.py)
             invoice["revisions"], invoice["revised_at"] = deepcopy(replaces["revisions"]), replaces.get("revised_at")
+        if replaces.get("qbo"):   # its QuickBooks invoice moves with it, so sending it there again updates that one (qbo_sync.push)
+            invoice["qbo"] = replaces.pop("qbo")
     job.pop("sov_replaced_draft", None)
     if period and period.get("kept"):
         invoice["sov_overrides"] = period["kept"]

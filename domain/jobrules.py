@@ -300,6 +300,10 @@ def approval_stamp(state: dict[str, Any], job: dict[str, Any], invoice: dict[str
     from domain import review_stamp
     what = [review_stamp(state, job, invoice), json.dumps(invoice.get("lines") or [], sort_keys=True, default=str),
             str(invoice.get("period_to") or ""), str(invoice.get("retainage_cents") or 0)]
+    # A pay app put back to a draft with Revise (domain/revise.py) is a new version even before it
+    # changes: a signature on the version that went (a DocuSign envelope still out) is not one on it.
+    if invoice.get("revisions"):
+        what.append(f"revision {len(invoice['revisions'])}")
     return hashlib.sha256("|".join(what).encode()).hexdigest()[:16]
 
 

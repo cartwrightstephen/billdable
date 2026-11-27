@@ -83,6 +83,14 @@ test("a revised pay app says so, and its earlier version opens with its PDF and 
   assert.doesNotMatch(html, /Revise this pay app/, "a draft isn't revised; it is changed");
 });
 
+// Integration (Nov 27): a revised draft already in QuickBooks says its invoice there is updated later.
+test("a revised draft already in QuickBooks says that invoice is updated when it goes again", () => {
+  const draft = (over) => job({ invoices: [sent({ status: "draft", sent_at: null, revised_at: "2026-11-05T10:00:00Z", revisions: [], predicted_pay: undefined, ...over })] });
+  assert.match(show(draft({ qbo: { invoice_id: "130", doc_number: "PA-GRT-01", total_cents: 1_000_000 } })),
+    /QuickBooks invoice will be updated when you send it again: invoice PA-GRT-01 still shows \$10,000\.00/);
+  assert.doesNotMatch(show(draft({})), /QuickBooks invoice will be updated/, "not in QuickBooks: nothing to say");
+});
+
 test("Money owed lists open pay apps soonest expected first, past-expected ones flagged", () => {
   const a = job({ id: "ja", name: "A job", invoices: [sent({ id: "ia", number: "PA-A-01", predicted_pay: { on: "2026-12-20", text: "Expected about Dec 20 · x", overdue_days: 0 } })] });
   const b = job({ id: "jb", name: "B job", invoices: [sent({ id: "ib", number: "PA-B-01", predicted_pay: { on: "2026-11-20", text: "Expected about Nov 20 · y", overdue_days: 7 } })] });

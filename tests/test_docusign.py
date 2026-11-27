@@ -466,6 +466,89 @@ class DocusignHttp(ServerCase):
         self.assertEqual(len([r for r in job["records"] if "DocuSign" in r["label"]]), 2, "the signed files are kept all the same")
         self.assertIn("doesn't count", next(a for a in reversed(state["audit"]) if a["action"] == "docusign_completed")["detail"])
 
+    # ----- with the other Nov 27 branches (records' gates, delivery's Revise) -----
+
+    def draft_with_packet(self):
+        _, state = self.request("POST", "/api/jobs", JOB, cookie=self.cookie)
+        job_id = state["jobs"][0]["id"]
+        line = state["jobs"][0]["sov"]["lines"][0]
+        self.request("POST", f"/api/jobs/{job_id}/sov-progress", {"done": {line["id"]: "0.3"}}, cookie=self.cookie)
+        return job_id
+
+    def open_draft(self, job_id):
+        _, data = self.request("GET", f"/api/jobs/{job_id}", cookie=self.cookie)
+        return next(i for i in data["job"]["invoices"] if i["status"] in domain.DRAFT_STATUSES)
+
+    def test_docusign_approval_keeps_the_hard_and_soft_gates_of_the_typed_one(self):
+        self.connected()
+        job_id = self.draft_with_packet()
+        packet = self.open_draft(job_id)["packet"]
+        with server.company_lock(self.cid):   # one soft item to answer at send (records: Check, soft)
+            state = server.load_company(self.cid)
+            job = next(j for j in state["jobs"] if j["id"] == job_id)
+            job["paperwork_gates"] = {domain.gate_key(i): "hard" for i in packet}
+            job["paperwork_gates"][domain.gate_key(packet[0])] = "soft"
+            server.save_company(self.cid, state)
+        inv = self.open_draft(job_id)
+        hard = [i for i in inv["packet"] if i["required"] and not i["present"] and i.get("gate") == "hard"]
+        soft = [i for i in inv["packet"] if i["required"] and not i["present"] and i.get("gate") == "soft"]
+        self.assertTrue(hard and soft, inv["packet"])
+        # A hard item missing: the typed signature and DocuSign are refused alike, and no envelope is made.
+        typed_res, typed = self.request("POST", f"/api/jobs/{job_id}/payapp-approve", {"invoice_id": inv["id"], "stamp": inv["approval"]["stamp"],
+                                                                                     "signature": "Pat Pine"}, cookie=self.cookie)
+        ds_res, ds = self.request("POST", "/api/docusign/sign", {"kind": "payapp", "job_id": job_id, "invoice_id": inv["id"],
+                                                                 "stamp": inv["approval"]["stamp"]}, cookie=self.cookie)
+        self.assertEqual((typed_res.status, ds_res.status), (409, 409))
+        self.assertEqual(ds["error"], typed["error"])
+        self.assertIn("supporting documents", ds["error"])
+        self.assertFalse(self.fake.envelopes)
+        # The hard ones in (an override takes send_payapps), the soft one unanswered: both may sign,
+        # and the send still asks the soft question after a DocuSign signature, as after a typed one.
+        for item in hard:
+            res, out = self.request("POST", f"/api/jobs/{job_id}/resolve/{item['id']}", {"reason": "In hand"}, cookie=self.cookie)
+            self.assertEqual(res.status, 200, out)
+        inv = self.open_draft(job_id)
+        res, data = self.request("POST", "/api/docusign/sign", {"kind": "payapp", "job_id": job_id, "invoice_id": inv["id"],
+                                                                "stamp": inv["approval"]["stamp"]}, cookie=self.cookie)
+        self.assertEqual(res.status, 200, data)
+        self.fake.complete(data["envelope_id"])
+        self.assertEqual(self.webhook(data["envelope_id"])[0].status, 200)
+        inv = self.open_draft(job_id)
+        res, out = self.request("POST", f"/api/jobs/{job_id}/send", {"reviewed": inv["email_preview"]["stamp"]}, cookie=self.cookie)
+        self.assertEqual(res.status, 409, out)
+        self.assertEqual([c["item_id"] for c in out.get("soft_checks") or []], [i["id"] for i in soft], "the soft question, as on the typed path")
+        res, out = self.request("POST", f"/api/jobs/{job_id}/send", {"reviewed": inv["email_preview"]["stamp"],
+                                                                     "soft_checks": {i["id"]: "checked" for i in soft}}, cookie=self.cookie)
+        self.assertNotEqual(out.get("approvals_missing"), True, "answering a soft check doesn't undo the DocuSign approval")
+        self.assertEqual(res.status, 200, out)
+
+    def test_an_envelope_for_the_version_sent_doesnt_approve_it_once_revised(self):
+        self.connected()
+        job_id, inv = self.ready_payapp()
+        res, data = self.request("POST", "/api/docusign/sign", {"kind": "payapp", "job_id": job_id, "invoice_id": inv["id"],
+                                                                "stamp": inv["approval"]["stamp"]}, cookie=self.cookie)
+        self.assertEqual(res.status, 200, data)
+        env_id = data["envelope_id"]
+        # Signed by typed name meanwhile, sent, then put back to a draft with Revise (delivery).
+        res, out = self.request("POST", f"/api/jobs/{job_id}/payapp-approve", {"invoice_id": inv["id"], "stamp": inv["approval"]["stamp"],
+                                                                              "signature": "Pat Pine"}, cookie=self.cookie)
+        self.assertEqual(res.status, 200, out)
+        inv = self.open_draft(job_id)
+        res, out = self.request("POST", f"/api/jobs/{job_id}/send", {"reviewed": inv["email_preview"]["stamp"]}, cookie=self.cookie)
+        self.assertEqual(res.status, 200, out)
+        res, out = self.request("POST", f"/api/jobs/{job_id}/revise/{inv['id']}", {"reason": "Wrong quantity on line 1"}, cookie=self.cookie)
+        self.assertEqual(res.status, 200, out)
+        # The envelope for the version that went completes now: it is filed, but approves nothing.
+        self.fake.complete(env_id)
+        self.assertEqual(self.webhook(env_id)[0].status, 200)
+        state = self.stored()
+        job = next(j for j in state["jobs"] if j["id"] == job_id)
+        draft = next(i for i in job["invoices"] if i["id"] == inv["id"])
+        self.assertIn(draft["status"], domain.DRAFT_STATUSES)
+        self.assertEqual(draft.get("approvals") or [], [], "the revised draft isn't approved by a signature on what went before")
+        self.assertTrue(domain.approvals_missing(state, job, draft))
+        self.assertIn("doesn't count", next(a for a in reversed(state["audit"]) if a["action"] == "docusign_completed")["detail"])
+
     def test_declined_marks_nothing_and_check_keeps_to_the_polling_limit(self):
         self.connected()
         job_id, inv = self.ready_payapp()

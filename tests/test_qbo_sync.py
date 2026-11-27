@@ -270,6 +270,31 @@ class PushTests(FakeCase):
         update = [b for m, p, q, b in BOOKS.log if m == "POST" and p == "invoice"][-1]
         self.assertEqual((update["Id"], update["SyncToken"], update["sparse"]), (first, "0", True))
 
+    def test_a_revised_pay_app_sent_again_updates_the_same_invoice(self):
+        # Integration (Nov 27): delivery's Revise puts a sent pay app back to a draft with its number;
+        # corrected (record_progress replaces the draft) and sent again, it keeps its QuickBooks
+        # invoice, so Send to QuickBooks updates that one with its SyncToken instead of making another.
+        state, job, inv = self.job_with_retainage()
+        self.push(state, job, inv)
+        first, old_total = inv["qbo"]["invoice_id"], inv["amount_cents"]
+        domain.revise_sent_pay_app(state, job["id"], inv["id"], "Wrong amount", "Pat")
+        self.assertIn(f"QuickBooks invoice {inv['qbo']['doc_number']} still shows {domain.money(old_total)}", state["audit"][-1]["detail"])
+        domain.record_progress(state, job["id"], 4_500_000)
+        draft = next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)
+        self.assertEqual((draft["number"], draft["qbo"]["invoice_id"]), (inv["number"], first), "the QuickBooks link moves to the corrected draft")
+        self.assertNotIn("qbo", inv, "the replaced draft no longer claims it")
+        with self.assertRaises(domain.GateError):
+            qbo_sync.push(self.cid, state, job["id"], draft["id"])   # not until it has gone again
+        again = send_open(state, job)
+        self.assertNotEqual(again["amount_cents"], old_total)
+        result = self.push(state, job, again)
+        self.assertEqual(result["action"], "updated")
+        self.assertEqual(len(BOOKS.invoices), 1, "no second invoice")
+        update = [b for m, p, q, b in BOOKS.log if m == "POST" and p == "invoice"][-1]
+        self.assertEqual((update["Id"], update["SyncToken"]), (first, "0"))
+        self.assertEqual(round(BOOKS.invoices[first]["TotalAmt"] * 100), again["amount_cents"])
+        self.assertEqual(qbo_sync.pushed(state)[first][1]["id"], again["id"])
+
     def test_an_invoice_changed_in_quickbooks_is_replaced_only_when_asked(self):
         state, job, inv = self.job_with_retainage()
         self.push(state, job, inv)

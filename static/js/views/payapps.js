@@ -275,6 +275,7 @@ export const views = {
       ${predictedHtml(inv)}
       ${inv.sent_at && inv.status !== "void" ? undeliveredHtml(inv) : ""}
       ${inv.revised_at && draft ? `<p class="notice revised-note">Back to a draft for revision ${fmtDate(inv.revised_at)}. Correct it, then approve and send it again.</p>` : ""}
+      ${inv.revised_at && draft && inv.qbo && inv.qbo.invoice_id ? `<p class="notice qbo-revised-note">QuickBooks invoice will be updated when you send it again: invoice ${inv.qbo.doc_number || inv.qbo.invoice_id} still shows ${money(inv.qbo.total_cents || 0)} until then. Once ${inv.number} has gone, Send to QuickBooks updates that same invoice.</p>` : ""}
       ${fromDaily ? `<p class="sov-daily payapp-daily">Updated from job records on ${fmtDate(fromDaily)}</p>` : ""}
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       ${inv.final_override ? `<p class="override-note final-override">${finalOverrideText(inv.final_override)}</p>` : ""}
