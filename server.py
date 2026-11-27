@@ -4375,7 +4375,7 @@ def _send_payapp(h, st, j, i, c):
                                    extra={"client_form": True})
     return domain.approve_and_send(st, j, c.actor, unconditional_override=override, reviewed=_text(c.body, "reviewed"),
                                    read_file=_file_reader(c.company_id, c.read_ahead), soft_checks=soft if isinstance(soft, dict) else None,
-                                   today=_text(c.body, "today"), client_form_check=their_form, **_co_args(c))
+                                   today=_text(c.body, "today"), client_form_check=their_form, check_only=c.body.get("check_only") is True, **_co_args(c))
 
 
 def _received_on(body: dict) -> str | None:

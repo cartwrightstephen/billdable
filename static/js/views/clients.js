@@ -190,6 +190,25 @@ if (typeof document !== "undefined" && document.addEventListener) document.addEv
   if (p) loadClientJobs(p.id);
 }, true);
 
+// How fast a client pays: the median line (payStatsHtml) when this client has pay apps paid in
+// full, else the average; and how that sits with the setting, with Use N days (Nov 27 hunt: the
+// two lines said the same days twice).
+export function payerTimingHtml(p, edits) {
+  if (!p.paid_count && !payStatsHtml(p)) return "";
+  const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
+  // One paid pay app is too few to weigh against the setting: nothing is said either way
+  // (Nov 27 hunt: "That matches your setting" under 0 days against a 14-day setting).
+  const setting = !p.paid_count || p.paid_count < 2 ? ""
+    : Math.abs(avg - set) < 2 ? "That matches your setting."
+    // Offered only for a number the server takes: 1 to 365 days (domain.update_payer).
+    : edits && avg >= 1 && avg <= 365
+      ? `Your setting says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} day${avg === 1 ? "" : "s"}</button>`
+      : `Your setting says ${set}.`;
+  const stats = payStatsHtml(p);
+  if (stats) return stats + (setting ? `<p class="sub payer-timing">${setting}</p>` : "");
+  return `<p class="sub payer-timing">Pays in about ${avg === 1 ? "1 day" : `${avg} days`} after a pay app is sent, on average (${p.paid_count} paid). ${setting}</p>`;
+}
+
 // This module's pages, by the name their address opens (routes.js).
 // Days to paid and on-time rate (Siteline comparison, item 6; domain/paydate.py client_stats):
 // from this client's pay apps paid in full. On time: paid by its due date, or the date they gave.
@@ -247,15 +266,7 @@ export const views = {
           </div>`).join("")}
           ${clientJobsHtml(p, open)}
           ${p.waiver_not_needed ? `<p class="override-note">Lien waivers not needed for this client. Marked by ${p.waiver_not_needed.by} on ${fmtDate(p.waiver_not_needed.at)}: ${p.waiver_not_needed.reason || "no reason given"} ${edits ? `<button type="button" class="btn small secondary" data-action="client-waiver-needed" data-id="${p.id}">Needed after all</button>` : ""}</p>` : ""}
-          ${p.paid_count ? `<p class="sub payer-timing">Pays in about ${(n => n === 1 ? "1 day" : `${n} days`)(Math.round(Number(unesc(String(p.paid_days_avg)))))} after a pay app is sent, on average (${p.paid_count} paid). ${(() => {
-            const avg = Math.round(Number(unesc(String(p.paid_days_avg)))), set = Number(unesc(String(p.usual_approval_days || 14)));
-            if (!(p.paid_count >= 2 && Math.abs(avg - set) >= 2)) return "That matches your setting.";
-            // Offered only for a number the server takes: 1 to 365 days (domain.update_payer).
-            return edits && avg >= 1 && avg <= 365
-              ? `Your setting says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} day${avg === 1 ? "" : "s"}</button>`
-              : `Your setting says ${set}.`;
-          })()}</p>` : ""}
-          ${payStatsHtml(p)}
+          ${payerTimingHtml(p, edits)}
           ${edits ? `<div data-form-key="${key}">
             ${formErrorLine(key)}
             <h3>Contact and billing</h3>

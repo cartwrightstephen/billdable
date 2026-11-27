@@ -1,6 +1,6 @@
 // Where a job stands: blocked or not, the one next step, status pills, change-order signatures and waiver kinds.
 
-import { unesc, fmtDate, fmtDateTime, toDate, centsFrom, percentFrom, money, words } from "./format.js";
+import { unesc, fmtDate, fmtDateTime, toDate, centsFrom, percentFrom, money, words, waitingForSignature } from "./format.js";
 import { termText } from "./terms.js";
 
 // The job record's kinds, as domain.RECORD_KINDS and importer.KINDS have them.
@@ -39,7 +39,7 @@ export function jobStatus(j) {
   const inv = j.invoices || [];
   if (j.closed) return ["Closed", "green"];
   if (isBlocked(j)) return needsPaperwork(j) ? ["Needs supporting documents", "amber"] : ["Blocked", "red"];
-  if (inv.some(i => ["draft", "awaiting_approval"].includes(i.status))) return ["Ready to send", "copper"];
+  if (inv.some(i => ["draft", "awaiting_approval"].includes(i.status))) return inv.some(waitingForSignature) ? ["Waiting for signature", "copper"] : ["Ready to send", "copper"];
   if (j.waiver_due && !j.waiver_sent) return ["Waiver due", "amber"];
   if (inv.some(i => i.status === "partial")) return ["Partly paid", "amber"];
   if (inv.some(i => i.status === "sent")) return ["Sent", "amber"];
@@ -783,6 +783,9 @@ export const RECORD_GROUPS = [
 // conversation; what is stored stays until someone edits it.
 export function recordFace(r) {
   const label = unesc(r.label || "");
+  // A diary entry's label carries its day as the server wrote it (2026-11-27): the page says Nov 27, 2026.
+  const day = unesc(r.kind || "") === "daily" && /^Diary entry (\d{4}-\d{2}-\d{2})/.exec(label);
+  if (day) return { ...r, label: String(r.label).replace(day[1], fmtDate(day[1])) };
   if (unesc(r.kind || "") !== "note" || !/^Spoke to /i.test(label)) return r;
   return { ...r, kind: "conversation", label: String(r.label).replace(/^Spoke to /i, "Conversation with ") };
 }

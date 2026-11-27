@@ -40,7 +40,7 @@ function lineBoxes(j, form) {
     <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Billed before</th><th>${head}</th></tr>
     ${lines.map(l => `<tr><td>${l.item}</td><td class="sov-desc-cell">${l.description}</td><td class="num">${money(l.scheduled_cents)}</td>
       <td class="num">${money(l.billed_cents || 0)}</td>
-      <td><input id="ep-line-${l.id}" class="sov-in sov-num" data-field="line_${l.id}" value="${esc(draftValue(form, `line_${l.id}`, ""))}" inputmode="decimal" aria-label="${l.description}: ${head}"></td></tr>`).join("")}
+      <td>${earlierLinesAs === "pct" ? `<span class="with-suffix inline">` : ""}<input id="ep-line-${l.id}" class="sov-in sov-num" data-field="line_${l.id}" value="${esc(draftValue(form, `line_${l.id}`, ""))}" inputmode="decimal" aria-label="${l.description}: ${head}">${earlierLinesAs === "pct" ? `<span class="suffix" aria-hidden="true">%</span></span>` : ""}</td></tr>`).join("")}
   </table></div>`;
 }
 
@@ -130,7 +130,7 @@ export function lineRetainageHtml(j) {
     <p class="sub">A line can hold its own retainage, like materials at 0% or 5% and labor at 10%. Blank is the job's percent. It applies from the next pay app.</p>
     <div class="table-wrap sov-wrap"><table class="sov-table"><tr><th>Item</th><th>Description</th><th>Retainage %</th></tr>
       ${(v.lines || []).map(l => `<tr><td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
-        <td><input id="lr-${l.id}" class="sov-in sov-num" data-field="pct_${l.id}" value="${esc(draftValue(form, `pct_${l.id}`, Number.isInteger(l.retainage_pct) ? String(l.retainage_pct) : ""))}" placeholder="${Number(j.retainage_pct) || 0}" inputmode="numeric" aria-label="${l.description}: retainage percent"></td></tr>`).join("")}
+        <td><span class="with-suffix inline"><input id="lr-${l.id}" class="sov-in sov-num" data-field="pct_${l.id}" value="${esc(draftValue(form, `pct_${l.id}`, Number.isInteger(l.retainage_pct) ? String(l.retainage_pct) : ""))}" placeholder="${Number(j.retainage_pct) || 0}" inputmode="numeric" aria-label="${l.description}: retainage percent"><span class="suffix" aria-hidden="true">%</span></span></td></tr>`).join("")}
     </table></div>
     <button class="btn small" data-action="line-retainage" data-id="${j.id}">Save retainage by line</button></div>
   </details>`;
@@ -158,7 +158,7 @@ export function payappRetainageHtml(j, inv) {
   const over = inv.retainage_pct_override;
   return `<div class="payapp-retainage" data-form-key="${key}">${formErrorLine(key)}
     <p class="sub">Retainage on this pay app: ${money(inv.retainage_cents || 0)}${over != null ? `, ${over}% for this period only` : ""}.</p>
-    <div class="form-inline">${field({ form: key, name: "pct", id: `${key}-pct`, label: "Retainage this period %", inputmode: "numeric", value: over != null ? String(over) : "" })}
+    <div class="form-inline">${field({ form: key, name: "pct", id: `${key}-pct`, label: "Retainage this period", suffix: "%", inputmode: "numeric", value: over != null ? String(over) : "" })}
       <button class="btn small secondary" data-action="payapp-retainage" data-id="${j.id}" data-inv="${inv.id}">${over != null ? "Change" : "Set for this period"}</button>
       ${over != null ? `<button class="linkish" data-action="payapp-retainage" data-id="${j.id}" data-inv="${inv.id}" data-clear="1">Back to the usual percents</button>` : ""}</div></div>`;
 }

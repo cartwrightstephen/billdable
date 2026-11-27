@@ -251,7 +251,7 @@ less retainage **-$3,620.00**, Amount due **$32,580.00**.
    quantities ("For Branch conduit and wire, ..."), and it found the time sheet you saved with job
    record 2. Tap **I checked this file**.
 
-**Checkpoint:** the line under **PA-PEAC-01** reads **Ready to send** and **$32,580.00**. Each of
+**Checkpoint:** the line under **PA-PEAC-01** reads **Waiting for signature** (your signature, in step 9) and **$32,580.00**. Each of
 the three documents has a ✓.
 
 Further down, **The email** shows what Dana will get: "Less retainage 10%: -$3,620.00" and

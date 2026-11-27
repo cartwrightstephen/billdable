@@ -32,3 +32,24 @@ test("an average the server takes is still offered", () => {
   assert.match(one, /data-days="1">Use 1 day<\/button>/);
   assert.match(one, /Pays in about 1 day after a pay app is sent/);
 });
+
+test("one paid pay app isn't said to match the setting (Nov 27 hunt)", () => {
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  page.setLocation("playbook");
+  core.setState(company({ paid_count: 1, paid_days_avg: 0 }));
+  const html = reg.views.playbook();
+  assert.match(html, /Pays in about 0 days after a pay app is sent, on average \(1 paid\)\. <\/p>/);
+  assert.doesNotMatch(html, /That matches your setting/);
+  core.setState(company({ paid_count: 3, paid_days_avg: 15 }));
+  assert.match(reg.views.playbook(), /That matches your setting\./);
+});
+
+test("with the median line shown, the average line isn't said again; Use N days stays (Nov 27 hunt)", () => {
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  page.setLocation("playbook");
+  core.setState(company({ paid_count: 3, paid_days_avg: 30.4, pay_stats: { paid: 3, median_days: 30, average_days: 30, judged: 0 } }));
+  const html = reg.views.playbook();
+  assert.match(html, /Days to paid: median 30 days/);
+  assert.doesNotMatch(html, /Pays in about/);
+  assert.match(html, /<p class="sub payer-timing">Your setting says 14\. <button[^>]*data-days="30">Use 30 days<\/button><\/p>/);
+});

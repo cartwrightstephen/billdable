@@ -14,7 +14,7 @@ import { teamUsers } from "./jobs.js";
 import { readJson, setNetBanner } from "../net.js";
 import { draftValue, clearForm, field, moneyField, formValues, formErrors, formDraft, refuseForm } from "../forms.js";
 import { termText } from "../terms.js";
-import { state, onSessionEnd, currentView } from "../state.js";
+import { state, onSessionEnd, currentView, teamData } from "../state.js";
 import { post, toast, render, emptyState, nav, setState } from "../app-core.js";
 import { focusAfterDraw, askConfirm } from "../dom.js";
 
@@ -50,7 +50,7 @@ export const RECORD_SECTIONS = [
     { name: "who", label: "Who inspected", placeholder: "City electrical inspector" }, { name: "outcome", label: "Result", placeholder: "Passed rough-in" }] },
   // Conversation / note with client (Nov 26): what Log a conversation did, here with the rest.
   { key: "conversation", title: "Conversation / note with client", chip: "Conversation / note with client", kind: "conversation", one: "conversation", many: "conversations", more: true, noFiles: true, fields: [
-    { name: "text", label: "What was said", wide: true, placeholder: "Owner asked to move the vanity 6 inches" },
+    { name: "text", label: "What was said", wide: true, multiline: true, placeholder: "Owner asked to move the vanity 6 inches" },
     { name: "next_on", label: "Check again on (optional)", type: "date", waiting: true }] },
   { key: "other", title: "Other documents and notes", chip: "Other", one: "other document or note", many: "other documents and notes", more: true, fields: [
     { name: "kind", label: "Kind", options: OTHER_KINDS }, { name: "label", label: "What it is", placeholder: "COI Brightwater 2026-27" },
@@ -118,7 +118,7 @@ function recordSectionHtml(s, j) {
   const waiting = !!(j && (j.invoices || []).some(i => ["sent", "approved", "partial"].includes(i.status)));
   const rows = Array.from({ length: daily.rows[s.key] || 1 }, (_, n) => {
     const boxes = s.fields.filter(f => !f.waiting || waiting).map(f => {
-      const opts = { form: "daily", name: `${s.key}_${f.name}_${n}`, id: `daily-${s.key}-${f.name}-${n}`, label: f.label, wide: f.wide, placeholder: f.placeholder || "", inputmode: f.inputmode || "", type: f.type || "text" };
+      const opts = { form: "daily", name: `${s.key}_${f.name}_${n}`, id: `daily-${s.key}-${f.name}-${n}`, label: f.label, wide: f.wide, multiline: !!f.multiline, placeholder: f.placeholder || "", inputmode: f.inputmode || "", type: f.type || "text" };
       if (f.money) return moneyField(opts);
       return field(f.options ? { ...opts, options: f.options() } : opts);
     }).join("");
@@ -139,7 +139,9 @@ export function crewRows(v, users = []) {
     const name = user ? unesc(user.name || user.email || "") : (v[`ts_name_${n}`] || "").trim();
     const hours = (v[`ts_hours_${n}`] || "").trim();
     if (!name && !hours) continue;
-    out.push({ name, hours, ...(user ? { member_id: unesc(user.id) } : {}) });
+    // A team member put back by Edit before the team list came: the saved name, the same member.
+    const member = user ? unesc(user.id) : pick && pick !== OTHER_PERSON ? pick : "";
+    out.push({ name, hours, ...(member ? { member_id: member } : {}) });
   }
   return out;
 }
@@ -150,12 +152,17 @@ export function crewTotal(rows) {
 function timeSheetHtml(s) {
   const users = teamUsers();
   const options = [["", "Pick who worked…"], ...users.map(u => [unesc(u.id), unesc(u.name || u.email || "")]), [OTHER_PERSON, "Someone else (type the name)"]];
-  const rows = Array.from({ length: daily.rows.crew || 1 }, (_, n) => {
-    const pick = draftValue("daily", `ts_pick_${n}`, "");
+  const count = daily.rows.crew || 1;
+  const picks = Array.from({ length: count }, (_, n) => draftValue("daily", `ts_pick_${n}`, ""));
+  const rows = Array.from({ length: count }, (_, n) => {
+    const pick = picks[n];
     const typedName = draftValue("daily", `ts_name_${n}`, "");
     const other = pick === OTHER_PERSON || (!pick && typedName);
+    // A team member already on another row isn't offered again (Nov 27 hunt).
+    const taken = new Set(picks.filter((p, m) => m !== n && p && p !== OTHER_PERSON));
+    const rowOptions = options.filter(([v]) => !taken.has(v));
     return `<div class="crew-row form-grid">
-      ${field({ form: "daily", name: `ts_pick_${n}`, id: `daily-ts-pick-${n}`, label: "Crew member", options, value: other && !pick ? OTHER_PERSON : "", attrs: 'data-crew-pick="1"' })}
+      ${field({ form: "daily", name: `ts_pick_${n}`, id: `daily-ts-pick-${n}`, label: "Crew member", options: rowOptions, value: other && !pick ? OTHER_PERSON : "", attrs: 'data-crew-pick="1"' })}
       ${other ? field({ form: "daily", name: `ts_name_${n}`, id: `daily-ts-name-${n}`, label: "Name", placeholder: "Independent contractor, day labor" }) : ""}
       ${field({ form: "daily", name: `ts_hours_${n}`, id: `daily-ts-hours-${n}`, label: "Hours", inputmode: "decimal", attrs: 'data-crew-hours="1" pattern="[0-9]*[.]?[0-9]*"' })}
       ${removeButton("crew", n, "crew member")}
@@ -437,7 +444,9 @@ if (typeof document !== "undefined" && document.addEventListener) document.addEv
     // Someone else opens the name box; a team member closes it.
     (formDraft.daily ||= {})[el.dataset.field] = el.value;
     render();
-    if (el.value === OTHER_PERSON) focusAfterDraw(() => document.getElementById(el.id.replace("-pick-", "-name-")));
+    // Straight to the name box: the redraw puts the focus back on the picker by its id, so a
+    // focus after the next frame found it taken and left it there (Nov 27 hunt).
+    if (el.value === OTHER_PERSON) document.getElementById(el.id.replace("-pick-", "-name-"))?.focus();
   } else if (el.id === "daily-job" && currentView === "daily") {
     // Files already up are on the job they went to; they can't come along to another.
     if (daily.uploaded.length) { daily.uploaded = []; toast("The files already uploaded stay on the job they went to."); }
@@ -529,7 +538,11 @@ export function editPrefill(j, dr) {
       const crew = (r.crew || []).length ? r.crew : [{ name: NO_HEAD(raw(r.label), "Time sheet"), hours_milli: r.hours_milli || 0 }];
       crew.forEach((p, n) => {
         const user = p.member_id && users.find(u => unesc(u.id) === unesc(p.member_id));
-        if (user) d[`ts_pick_${n}`] = unesc(user.id); else { d[`ts_pick_${n}`] = OTHER_PERSON; d[`ts_name_${n}`] = raw(p.name); }
+        // Opened straight after the page loads, the team list may not be here yet: a member stays
+        // picked (with the saved name kept for the save) instead of turning into Someone else.
+        if (user) d[`ts_pick_${n}`] = unesc(user.id);
+        else if (p.member_id && !teamData) { d[`ts_pick_${n}`] = raw(p.member_id); d[`ts_name_${n}`] = raw(p.name); }
+        else { d[`ts_pick_${n}`] = OTHER_PERSON; d[`ts_name_${n}`] = raw(p.name); }
         d[`ts_hours_${n}`] = p.hours_milli ? String(p.hours_milli / 1000) : "";
       });
       rows.crew = Math.max(1, crew.length);
@@ -617,7 +630,18 @@ export const actions = {
     focusAfterDraw(() => document.getElementById("daily-notes"));
   },
   "daily-edit-cancel": () => { const id = daily.editing && daily.editing.jobId; resetDaily(); clearForm("daily"); if (id) nav("job", id); else render(); },
-  "daily-row-remove": (el) => { dropRow(el.dataset.kind, +el.dataset.n); render(); },
+  "daily-row-remove": (el) => {
+    const kind = el.dataset.kind, n = +el.dataset.n;
+    dropRow(kind, n);
+    render();
+    // The focus stays in the list: on the row that moved up, else the one above, else the
+    // section's Add button (keyboard; Nov 27 hunt: it fell to the top of the page).
+    const at = document.activeElement;
+    if (!at || at === document.body) {
+      const q = (m) => document.querySelector(`[data-action="daily-row-remove"][data-kind="${kind}"][data-n="${m}"]`);
+      (q(n) || q(n - 1) || document.querySelector(kind === "crew" ? '[data-action="daily-more"][data-kind="crew"]' : `[data-action="daily-chip"][data-kind="${kind}"]`) || document.getElementById("daily-notes"))?.focus({ preventScroll: true });
+    }
+  },
   // "+ Delivery ticket": opens its section; once open, adds another row where the section takes more.
   "daily-chip": (el) => {
     const key = el.dataset.kind;
@@ -627,7 +651,7 @@ export const actions = {
     else if (s.more) daily.rows[key] = Math.min(10, (daily.rows[key] || 1) + 1);
     render();
     const n = (daily.rows[key] || 1) - 1;
-    focusAfterDraw(() => document.querySelector(`[data-record-section="${key}"] .record-row:nth-of-type(${n + 1}) input, [data-record-section="${key}"] .record-row:nth-of-type(${n + 1}) select`));
+    focusAfterDraw(() => document.querySelector(`[data-record-section="${key}"] .record-row:nth-of-type(${n + 1}) :is(input, select, textarea)`));
   },
   "daily-photos-done": (el) => { daily.photosDone.add(el.dataset.kind); render(); },
   "daily-photos-more": (el) => { daily.photosDone.delete(el.dataset.kind); render(); },

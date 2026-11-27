@@ -54,6 +54,19 @@ function pencilReviewHtml(j, inv, noEmail, locked) {
   </div>`;
 }
 
+// What a refused send (or its check) puts on the page: a file read only now brings its warning
+// and the way past it; a pay app changed since it was opened is looked at again.
+async function sendRefused(id, r) {
+  if (r && r.data && (r.data.unconditional_waiver || r.data.waiver_question)) { await load(); render(); }
+  if (r && r.data && r.data.review_changed) {
+    await load();
+    reviewAgain = { jobId: id, text: String(r.data.error || "Look it over again, then send.") };
+    if (r.data.invoice_id && r.data.invoice_id !== currentDetailId) nav("payapp-detail", id, r.data.invoice_id, { replace: true });
+    else render();
+  }
+  return r;
+}
+
 function subjectPreview(j, inv) {
   const company = (state.company || {}).name || "";
   return [`${inv.final ? "Final pay application" : "Pay application"} ${inv.number}`, j.name, money(inv.amount_cents), company,
@@ -421,18 +434,20 @@ export const actions = {
     reviewAgain = null;
     const j = state.jobs.find(x => x.id === id);
     const inv = j && j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
-    if (j && inv && !(await askConfirm(sendConfirmText(j, inv), "Send"))) return null;
     // today: the sender's own day, which the payment terms count from (domain.payment_due_on).
-    const r = await post(`/api/jobs/${id}/send`, { reviewed: el.dataset.reviewed || "", today: localDay(new Date()) });
-    // A file read only now: the warning and the way past it go on the page.
-    if (r && r.data && (r.data.unconditional_waiver || r.data.waiver_question)) { await load(); render(); }
-    if (r && r.data && r.data.review_changed) {
-      await load();
-      reviewAgain = { jobId: id, text: String(r.data.error || "Look it over again, then send.") };
-      if (r.data.invoice_id && r.data.invoice_id !== currentDetailId) nav("payapp-detail", id, r.data.invoice_id, { replace: true });
-      else render();
+    const body = { reviewed: el.dataset.reviewed || "", today: localDay(new Date()) };
+    // A page that shows something in the way (data-blocked: missing documents, a signature, a
+    // check) asks the server's checks first (check_only sends nothing), so what stands in the way
+    // shows under the button and "Email PA-x?" is asked only of a pay app that can go (Nov 27 hunt).
+    if (j && inv) {
+      if (el.dataset.blocked === "1") {
+        const pre = await post(`/api/jobs/${id}/send`, { ...body, check_only: true }, { quiet: true });
+        if (!pre || !pre.ok) return sendRefused(id, pre);
+      }
+      if (!(await askConfirm(sendConfirmText(j, inv), "Send"))) return null;
     }
-    return r;
+    const r = await post(`/api/jobs/${id}/send`, body);
+    return sendRefused(id, r);
   },
   // The version shown is the one signed: a draft changed since is refused (B13). The typed full
   // name is the signature (Stephen, 18 Nov).

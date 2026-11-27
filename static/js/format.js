@@ -118,11 +118,17 @@ export function words(code) {
 
 export const INVOICE_WORDS = { draft: "Draft", awaiting_approval: "Ready to send", sent: "Sent", approved: "Approved", partial: "Partly paid", paid: "Paid", void: "Cancelled" };
 
+// A draft whose documents are in but still waits on an approver's signature isn't ready to send
+// (Nov 27 hunt: it read "Ready to send" over "needs a signature from Dana").
+export function waitingForSignature(inv) {
+  return !!inv && unesc(inv.status || "") === "awaiting_approval" && ((inv.approval || {}).waiting || []).length > 0;
+}
+
 export function invoicePill(inv) {
   const st = unesc(inv.status || "");
   const colour = st === "paid" ? "green" : ["sent", "approved", "partial"].includes(st) ? "amber" : st === "void" ? "" : "copper";
   // The last pay app on a finished job (R4-04) says so beside its status.
-  return `<span class="pill ${colour}">${INVOICE_WORDS[st] || words(st)}</span>${inv.final && st !== "void" ? ` <span class="pill">Final</span>` : ""}`;
+  return `<span class="pill ${colour}">${waitingForSignature(inv) ? "Waiting for signature" : INVOICE_WORDS[st] || words(st)}</span>${inv.final && st !== "void" ? ` <span class="pill">Final</span>` : ""}`;
 }
 
 export function companyLine(c) {

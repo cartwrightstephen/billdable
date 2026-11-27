@@ -155,6 +155,36 @@ export function sovPeriodHtml(j, canChange = false) {
 // column heading is gone (R6-02): a lump sum is a percent, anything else a quantity in its unit.
 export function doneLabel(l) { return l.lump_sum ? "% done to date" : `Qty done (${l.unit})`; }
 
+// The Progress pay app page's running figure (Nov 27 hunt): what the boxes as typed would bill
+// before retainage, line by line as sov.py's this_period reads them (work completed plus materials
+// stored to date, less what pay apps sent billed on the line). typed: {line id: {done, stored}} as
+// the boxes read ("" or missing keeps the line's figure). Overhead and profit is left to the draft.
+export function progressEstimate(lines, typed = {}) {
+  let total = 0;
+  for (const l of lines || []) {
+    const t = typed[unesc(l.id)] || {};
+    let milli = l.form_done_milli ?? l.done_milli ?? 0;
+    if (t.done !== undefined && String(t.done).trim() !== "") {
+      milli = l.lump_sum ? Math.round(sovNum(t.done) * 10) : sovMilli(t.done);
+      if (isNaN(milli)) return null;
+    }
+    let storedCents = l.stored_cents || 0;
+    if (t.stored !== undefined && String(t.stored).trim() !== "") {
+      storedCents = sovCents(t.stored);
+      if (isNaN(storedCents)) return null;
+    } else if (t.stored !== undefined) storedCents = 0;
+    const completed = milli >= l.qty_milli ? l.scheduled_cents : sovExtend(milli, l.rate_cents);
+    const stored = Math.max(0, Math.min(storedCents, l.scheduled_cents - completed));
+    const amount = completed + stored - (l.sent_cents ?? l.billed_cents ?? 0);
+    total += l.scheduled_cents < 0 ? Math.min(0, amount) : Math.max(0, amount);
+  }
+  return total;
+}
+export function progressEstimateHtml(j, cents) {
+  const op = (j.sov_view || {}).op_bp ? " plus overhead and profit" : "";
+  return `<p class="sub progress-estimate" id="sovp-estimate" aria-live="polite">${cents === null ? "Check the boxes: a number doesn't read." : `This pay app: about ${money(cents)}${op}, before retainage.`}</p>`;
+}
+
 // periodHtml: the "Period to" box (R4-04); errorLine: the form's error line.
 // What was typed in a box is kept (forms.js, data-field) across a redraw; else the saved value.
 export function sovProgressHtml(j, periodHtml = "", errorLine = "", extra = "") {
@@ -167,13 +197,16 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "", extra = "") 
   // Only what was recorded within the pay period (Nov 26): what job records put on a line after the
   // period ends waits for the next pay app (domain.job_view pay_period.after_milli).
   const after = (j.pay_period && j.pay_period.after_milli) || {};
-  const rows = v.lines.map(l => { const start = Math.max((l.form_done_milli ?? l.done_milli) - (after[unesc(l.id)] || 0), l.sent_qty_milli ?? l.billed_qty_milli ?? 0), closed = (l.sent_qty_milli ?? l.billed_qty_milli ?? 0) >= l.qty_milli; return `
+  const shown = {};   // what each line's boxes show, for the running figure under the table
+  const rows = v.lines.map(l => { const start = Math.max((l.form_done_milli ?? l.done_milli) - (after[unesc(l.id)] || 0), l.sent_qty_milli ?? l.billed_qty_milli ?? 0), closed = (l.sent_qty_milli ?? l.billed_qty_milli ?? 0) >= l.qty_milli;
+    shown[unesc(l.id)] = { done: draftValue("sovprogress", `done_${l.id}`, String(l.lump_sum ? +(start / 10).toFixed(1) : start / 1000)), stored: draftValue("sovprogress", `stored_${l.id}`, l.stored_cents ? (l.stored_cents / 100).toFixed(2) : "") };
+    return `
     <tr>
       <td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
       <td class="num">${l.lump_sum ? "lump sum" : fmtQty(l.qty_milli) + " " + l.unit}</td>
       <td data-label="${doneLabel(l)}">${l.lump_sum ? `<span class="with-suffix inline">` : ""}<input id="sovp-done-${l.id}" class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" data-field="done_${l.id}" value="${typed(`done_${l.id}`, String(l.lump_sum ? +(start / 10).toFixed(1) : start / 1000))}" inputmode="decimal" aria-label="${l.description}: ${l.lump_sum ? "% done to date" : "done to date"}" ${closed ? "disabled" : ""}>${l.lump_sum ? `<span class="suffix" aria-hidden="true">%</span></span>` : " " + l.unit}</td>
       <td><input id="sovp-stored-${l.id}" class="sov-in sov-num" data-sovs="${l.id}" data-field="stored_${l.id}" value="${typed(`stored_${l.id}`, l.stored_cents ? (l.stored_cents / 100).toFixed(2) : "")}" inputmode="decimal" aria-label="${l.description}: materials stored, dollars" ${closed ? "disabled" : ""}></td>
-      <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
+      <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? +(l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
     </tr>`; }).join("");
   const later = Object.values(after).some(Boolean) && j.pay_period ? `<p class="sub period-later">Quantities recorded after ${fmtDate(j.pay_period.to)} wait for the next pay app.</p>` : "";
   return `<div class="card sov-progress">${sovPeriodHtml(j)}${later}<div data-form-key="sovprogress">${errorLine}
@@ -181,6 +214,7 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "", extra = "") 
       <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th>Stored materials $</th><th></th></tr>
       ${rows}
     </table></div>
+    ${progressEstimateHtml(j, progressEstimate(v.lines, shown))}
     ${periodHtml ? `<div class="form-row">${periodHtml}</div>` : ""}
     ${replaces ? `<p class="sub">This replaces ${replaces.number} (${money(replaces.amount_cents)}). Its number and supporting documents stay.</p>` : ""}
     <div class="form-inline"><input id="progress-notes" data-field="notes" value="${typed("notes", "")}" placeholder="What was completed (printed on the pay app)" aria-label="What was completed, printed on the pay app" class="grow"><button class="btn small" data-action="sov-progress" data-id="${j.id}">Draft progress pay app</button></div>

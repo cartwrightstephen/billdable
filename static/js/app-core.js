@@ -129,7 +129,9 @@ function decorateHelp(root) {
       dl.append(dt, dd);
     }
     box.append(summary, dl);
-    root.append(box);
+    // In the page, under its last card: a whole redraw's root is #app, where the list landed
+    // after the shell, against the screen's left edge, and stayed for the next page (Nov 27 hunt).
+    (root.querySelector && root.querySelector("#view") || root).append(box);
   }
   root.querySelectorAll(".nav button[data-section]").forEach(b => addInfoIcon(b, termText(NAV_HELP[b.dataset.section]), b));
 }

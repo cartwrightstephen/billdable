@@ -1559,9 +1559,10 @@ def _need_waiver_answers(state: dict[str, Any], job: dict[str, Any], packet: lis
 def approve_and_send(
     state: dict[str, Any], job_id: str, actor: str = "owner", link_base: str | None = None, company_id: str = "",
     unconditional_override: str = "", reviewed: str | None = None, read_file: Any = None, soft_checks: Any = None,
-    today: Any = "", client_form_check: Any = None,
+    today: Any = "", client_form_check: Any = None, check_only: bool = False,
 ) -> dict[str, Any]:
-    """Send the open draft. A signed unconditional waiver going with it is refused (M14) unless
+    """Send the open draft. check_only runs every check and stops before anything goes: the page
+    asks it first, so what stands in the way shows before "Email PA-x?" is asked (Nov 27 hunt). A signed unconditional waiver going with it is refused (M14) unless
     unconditional_override gives the reason (the server lets only an owner give one); the
     override is kept on the pay app and in the audit. reviewed is the stamp of what Review & send
     showed (review_stamp): the server always passes it, so a send needs a look at what goes.
@@ -1636,8 +1637,11 @@ def approve_and_send(
                         action=approval_way_out(state, job))
     waiting = approvals_missing(state, job, invoice)
     if waiting:
+        # One sentence names them all: a line per name under it said it again (Nov 27 hunt).
         raise GateError(f"{invoice['number']} needs {'a signature' if len(waiting) == 1 else 'signatures'} from {', '.join(waiting)} before it goes.",
-                        [f"{name} hasn't signed it." for name in waiting], extra={"approvals_missing": True})
+                        extra={"approvals_missing": True})
+    if check_only:
+        return job
     # The signatures go with it as they are now; nothing after this changes them (Stephen, 18 Nov).
     freeze_approvals(state, job, invoice)
     invoice["status"] = "sent"
@@ -3180,6 +3184,10 @@ def email_moot(job: dict[str, Any], e: dict[str, Any]) -> str:
         return f"{number} was pulled back." if inv.get("sent_at") else f"The draft {number} was deleted."
     if e.get("kind") == "pay_app" and inv and inv.get("revised_at") and inv.get("status") in DRAFT_STATUSES:
         return f"{inv.get('number', 'That pay app')} is back to a draft for revision."
+    # An email of the version before a revision carries that version's PDF: sent again, it would
+    # put the corrected figures' predecessor in front of the client.
+    if e.get("kind") == "pay_app" and inv and inv.get("revised_at") and str(e.get("at") or "") and str(e.get("at")) < str(inv["revised_at"]):
+        return f"{inv.get('number', 'That pay app')} was revised after this email; the revised version is the one that goes."
     # Once the money is in, a pay app or follow-up that didn't go out no longer matters.
     if e.get("kind") == "pay_app" and inv and inv.get("status") == "paid":
         return f"{inv.get('number', 'That pay app')} is paid."
@@ -7410,7 +7418,8 @@ def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, 
     """The pay app as plain text, for the email body and the pencil copy."""
     out = [f"{'FINAL APPLICATION ' if invoice.get('final') else ''}{invoice['number']} — {job['name']}", job.get("address", "")]
     if invoice.get("period_to"):
-        out.append(f"Period to {invoice['period_to']}")
+        # In words, as the email's payment due date is (Nov 27 hunt); the subject keeps its date as filed.
+        out.append(f"Period to {_long_day(invoice['period_to'])}")
     out.append("")
     for line in invoice.get("lines", []):
         out.append(f"  {line['label']}: {money(line['amount_cents'])}")

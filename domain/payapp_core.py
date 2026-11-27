@@ -618,6 +618,10 @@ def draft_retainage_release(state: dict[str, Any], job_id: str, amount_cents: An
     number = D._next_number(job)
     invoice_id = f"inv-{job['id']}-{len(job['invoices']) + 1}"
     packet = D._packet_for_pay_app(state, job, invoice_id, number)
+    if packet is not job.get("packet"):
+        # No new work is billed: the checks about work (daily tickets, time sheets, photos, stored
+        # materials) aren't asked of it; hard stops such as the conditional waiver stay (Nov 27 hunt).
+        packet = [item for item in packet if not (item.get("required") and D.item_gate(job, item) == "soft")]
     partial = amount < held
     label = (f"Retainage release {RELEASE_STAGES[stage]}: {D.money(amount)} of the {D.money(held)} held" if partial
              else f"Retainage release {RELEASE_STAGES[stage]}: all retainage held")
