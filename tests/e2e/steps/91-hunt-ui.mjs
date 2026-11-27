@@ -6,7 +6,12 @@ export default async function ({ browser, step, signedInPage, BASE, confirmDialo
   await step("hunt ui: the phone's What do these mean? stays inside the page after a job record is saved", async () => {
     const p = await signedInPage({ width: 375, height: 812 });
     await p.goto(`${BASE}/jobs/daily`);
-    await p.locator("#daily-job").selectOption("job-grant");
+    // The page redraws when the team list arrives; settle first so the pick isn't lost (see step 82).
+    await p.waitForLoadState("networkidle");
+    for (let i = 0; i < 5 && await p.locator("#daily-job").inputValue() !== "job-grant"; i += 1) {
+      await p.locator("#daily-job").selectOption("job-grant");
+      await p.waitForTimeout(200);
+    }
     await p.fill("#daily-notes", "Hunt: hung drywall");
     await p.click('[data-action="daily-save"]');
     await p.locator("#toast", { hasText: "Job record saved" }).waitFor();

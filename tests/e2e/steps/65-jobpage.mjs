@@ -66,7 +66,11 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     const id = await waitingJob(p);
     await p.goto(`${BASE}/jobs/daily`);
     await p.locator("#daily-job").waitFor();
-    await p.selectOption("#daily-job", id);
+    await p.waitForLoadState("networkidle");   // the team-list redraw can swallow an early pick (see step 82)
+    for (let i = 0; i < 5 && await p.locator("#daily-job").inputValue() !== id; i += 1) {
+      await p.selectOption("#daily-job", id);
+      await p.waitForTimeout(200);
+    }
     await p.fill("#daily-notes", "Typed before the call");
     await p.getByRole("button", { name: "+ Conversation / note with client", exact: true }).click();
     assert.equal(await p.inputValue("#daily-notes"), "Typed before the call", "the record being written stays");
