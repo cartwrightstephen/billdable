@@ -3139,7 +3139,7 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
     """What /api/state sends: bounded by the open work, not by the company's whole history.
     perms: the signed-in person's permissions; a To Do row for one they don't hold is left out."""
     since = ((now or datetime.now(timezone.utc)) - timedelta(days=RECENT_CLOSED_DAYS)).isoformat()
-    heavy = {"jobs", "audit", "email_log", "inbox"}
+    heavy = {"jobs", "audit", "email_log", "inbox", "gc_forms"}   # gc_forms: the client card asks for its own (gcforms.py)
     out = {k: deepcopy(v) for k, v in state.items() if k not in heavy}
     full, jobs = [], []
     closed_count, closed_collected = 0, 0
