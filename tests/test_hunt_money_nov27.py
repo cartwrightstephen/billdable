@@ -113,5 +113,35 @@ class ReleasePreviewTests(unittest.TestCase):
         self.assertTrue(preview["subject"].startswith("Pay application"))
 
 
+
+class DeleteRevisedDraftTests(unittest.TestCase):
+    def test_a_revised_pay_app_deleted_is_withdrawn_and_its_number_kept(self):
+        """Sent, put back to a draft to revise, then deleted: the client still held it with no word
+        that it was withdrawn, and the next pay app took its number for another amount."""
+        state, job, labor, _materials = schedule_job(retainage=10)
+        domain.record_sov_progress(state, job["id"], {labor: "0.5"})
+        inv = send(state, job)
+        domain.revise_sent_pay_app(state, job["id"], inv["id"], "Wrong quantity")
+        domain.record_sov_progress(state, job["id"], {labor: "0.4"})
+        again = next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)
+        self.assertEqual(again["number"], "PA-PINE-01")   # corrected, it keeps its number
+        domain.void_draft(state, job["id"])
+        last = state["email_log"][-1]
+        self.assertEqual(last["kind"], "pay_app_withdrawn")
+        self.assertIn("PA-PINE-01", last["subject"])
+        self.assertIn("$4,500.00", last["body"])
+        domain.record_sov_progress(state, job["id"], {labor: "0.3"})
+        nxt = next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)
+        self.assertEqual(nxt["number"], "PA-PINE-02")
+
+    def test_a_plain_draft_deleted_sends_nothing_and_its_number_comes_back(self):
+        state, job, labor, _materials = schedule_job(retainage=10)
+        domain.record_sov_progress(state, job["id"], {labor: "0.5"})
+        domain.void_draft(state, job["id"])
+        self.assertEqual(state["email_log"], [])
+        domain.record_sov_progress(state, job["id"], {labor: "0.3"})
+        self.assertEqual(next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)["number"], "PA-PINE-01")
+
+
 if __name__ == "__main__":
     unittest.main()

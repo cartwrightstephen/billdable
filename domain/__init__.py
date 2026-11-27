@@ -586,9 +586,11 @@ def _billed_gross(job: dict[str, Any], skip: dict[str, Any] | None = None) -> in
 
 def _next_number(job: dict[str, Any]) -> str:
     """PA-<code>-NN, one past the pay apps that count. A voided draft's number is used again,
-    unless the customer saw it: as a draft for review, or sent and then pulled back (R4-03)."""
+    unless the customer saw it: as a draft for review, sent and then pulled back (R4-03), or sent
+    and then put back to a draft to revise (domain/revise.py) and deleted."""
     taken = {inv["number"] for inv in job["invoices"]
-             if inv["status"] != "void" or ((inv.get("pencil_sent_at") or inv.get("sent_at")) and not inv.get("imported"))}
+             if inv["status"] != "void" or ((inv.get("pencil_sent_at") or inv.get("sent_at") or (inv.get("revisions") and not inv.get("replaced")))
+                                                 and not inv.get("imported"))}
     n = len([inv for inv in job["invoices"] if inv["status"] != "void"]) + 1
     # Earlier pay apps entered from before Duracash: the next one follows the last of them.
     for inv in imported_invoices(job):
@@ -4848,6 +4850,20 @@ def void_draft(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict
     draft["status"] = "void"
     draft["voided_at"] = utcnow()
     audit(state, job_id, "void_draft", f"{actor} voided draft {draft['number']} ({money(draft['amount_cents'])}).", actor)
+    went = (draft.get("revisions") or [None])[-1]
+    if went:
+        # It went to the client before it came back to be revised (domain/revise.py): they still
+        # hold it, so they are told it is withdrawn, as with Pull back, and its number isn't used again.
+        payer = _payer(state, job["payer_id"])
+        subject = f"Pay application {draft['number']} withdrawn — {job['name']}"
+        body = (
+            f"{payer.get('approver') or payer['name']},\n\n"
+            f"We have withdrawn pay application {draft['number']} for {job['name']} ({money(went['amount_cents'])}), "
+            f"sent {str(went.get('sent_at') or '')[:10]}. Nothing is due on it; please set it aside."
+            f"\n\nIf a corrected pay app is due, it follows separately."
+            f"\n\n{sign_off(state, actor)}"
+        )
+        _record_email(state, job_id, "pay_app_withdrawn", _send_to(payer), subject, body, actor, cc=_copy_list(payer))
     if job.get("work_status") != "complete" and not sov.has_sov(job):
         job["completed_value_cents"] = _billed_gross(job)
     carried = {line.get("co_id") for line in draft.get("lines", []) if line.get("co_id")}
