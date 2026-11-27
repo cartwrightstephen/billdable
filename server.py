@@ -371,11 +371,27 @@ _LIMITS_LOCK = threading.Lock()
 
 
 def trusted_proxy_hops() -> int:
-    """How many proxies in front of the server add to X-Forwarded-For (R6-05). Render has one."""
+    """How many proxies in front of the server add to X-Forwarded-For (R6-05): the setting
+    TRUSTED_PROXY_HOPS, 1 (Render's) by default. The first request's header shape is logged (M10)."""
     try:
         return max(0, int(os.environ.get("TRUSTED_PROXY_HOPS", "1")))
     except ValueError:
         return 1
+
+
+_FORWARDED_LOGGED = threading.Event()
+
+
+def _note_forwarded_shape(entries: int, hops: int) -> None:
+    """M10: once per start, the shape of the first X-Forwarded-For seen from a caller, so the
+    founders can check TRUSTED_PROXY_HOPS against what Render really sends: how many entries it
+    had, never the addresses (the log carries no network addresses). With fewer entries than
+    hops, every caller would share one rate limit: that is logged as a warning."""
+    if entries == 0 or _FORWARDED_LOGGED.is_set():
+        return
+    _FORWARDED_LOGGED.set()
+    log_json("info" if entries >= hops else "warn", msg="forwarded header shape", entries=entries, trusted_proxy_hops=hops,
+             note="" if entries >= hops else "fewer entries than TRUSTED_PROXY_HOPS: rate limits use the proxy's address")
 
 
 def _local(ip: str) -> bool:
@@ -837,7 +853,7 @@ class Handler(BaseHTTPRequestHandler):
         raw = self._read_body(length)
         try:
             body = json.loads(raw.decode("utf-8") or "{}")
-        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):  # nested too deep to read
+        except (UnicodeDecodeError, ValueError, RecursionError):  # nested too deep, or a number too long to read (L4)
             raise BadRequest("Request body must be valid JSON.")
         if not isinstance(body, dict):
             raise BadRequest("Request body must be a JSON object.")
@@ -926,18 +942,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(429, {"error": "Too many messages to this address this hour. Try again later."})
             return True
         password = os.environ.get("INBOUND_WEBHOOK_PASSWORD", "")
-        if password:
-            given = ""
-            auth_header = self.headers.get("Authorization") or ""
-            if auth_header[:6].lower() == "basic ":
-                try:
-                    given = base64.b64decode(auth_header[6:].strip(), validate=True).decode("utf-8").split(":", 1)[-1]
-                except (ValueError, UnicodeDecodeError):
-                    given = ""
-            if not hmac.compare_digest(given.encode(), password.encode()):
-                self._json(401, {"error": "Sign-in required for this address."}, {"WWW-Authenticate": 'Basic realm="Duracash inbound"'})
-                return True
+        if password and not self._basic_password_ok(password):
+            self._json(401, {"error": "Sign-in required for this address."}, {"WWW-Authenticate": 'Basic realm="Duracash inbound"'})
+            return True
         return False
+
+    def _basic_password_ok(self, password: str) -> bool:
+        """HTTP Basic's password (any user name) matches, compared in constant time."""
+        given = ""
+        auth_header = self.headers.get("Authorization") or ""
+        if auth_header[:6].lower() == "basic ":
+            try:
+                given = base64.b64decode(auth_header[6:].strip(), validate=True).decode("utf-8").split(":", 1)[-1]
+            except (ValueError, UnicodeDecodeError):
+                given = ""
+        return hmac.compare_digest(given.encode(), password.encode())
 
     def _mutate(self, company_id: str, fn, user: dict | None = None, deliver: bool = True, end_trial: bool = True) -> tuple:
         """The one way a company's state is changed (R6-08). Under the company's lock: load, run
@@ -1024,6 +1043,7 @@ class Handler(BaseHTTPRequestHandler):
         up. 0 means no proxy: the socket's address, and the header is ignored."""
         hops = trusted_proxy_hops()
         forwarded = [p.strip() for p in (self.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]
+        _note_forwarded_shape(len(forwarded), hops)
         return forwarded[-hops] if hops and len(forwarded) >= hops else self.client_address[0]
 
     def _session_user(self) -> dict | None:
@@ -1046,22 +1066,20 @@ class Handler(BaseHTTPRequestHandler):
         return user
 
     def do_GET(self) -> None:
-        self._rid, self._t0 = secrets.token_hex(6), time.monotonic()
-        try:
-            self._get()
-        except BadRequest as exc:
-            self._json(exc.code, {"error": str(exc), "request_id": self._rid})
-        except domain.GateError as exc:
-            self._json(409, _gate(exc))
-        except CompanyMissing:
-            self._json(503, {"error": CompanyMissing.MESSAGE, "request_id": self._rid})
-        except Exception:
-            self._crash()
+        self._answer(self._get)
 
     def do_POST(self) -> None:
+        self._answer(self._post)
+
+    def _answer(self, run) -> None:
         self._rid, self._t0 = secrets.token_hex(6), time.monotonic()
+        busy = getattr(self.server, "busy", None)   # counted for a clean stop on SIGTERM (Server.drain)
+        if busy:
+            busy(1)
+        if not _FORWARDED_LOGGED.is_set():
+            _note_forwarded_shape(len([p for p in (self.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]), trusted_proxy_hops())
         try:
-            self._post()
+            run()
         except BadRequest as exc:
             self._json(exc.code, {"error": str(exc), "request_id": self._rid})
         except domain.GateError as exc:
@@ -1070,6 +1088,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(503, {"error": CompanyMissing.MESSAGE, "request_id": self._rid})
         except Exception:
             self._crash()
+        finally:
+            if busy:
+                busy(-1)
 
     # ----- routing (P2-7): one table, one handler per route -----
     # Access levels: "public" (no sign-in), "user" (signed in; the handler reads its own body,
@@ -2614,12 +2635,24 @@ class Handler(BaseHTTPRequestHandler):
         if not company_id:
             self._json(404, {"error": "Not found"})
             return
+        key = os.environ.get("INBOUND_SIGNING_KEY", "")
+        # M3: the address alone is not enough in production. Without INBOUND_WEBHOOK_PASSWORD or
+        # INBOUND_SIGNING_KEY anyone who learns an address could fill the Inbox, so nothing is taken.
+        if production() and not (key or os.environ.get("INBOUND_WEBHOOK_PASSWORD")):
+            log_json("warn", msg="inbound email refused: set INBOUND_WEBHOOK_PASSWORD or INBOUND_SIGNING_KEY", rid=self._rid)
+            self.close_connection = True
+            self._json(503, {"error": "Inbound email isn't set up on this server yet."})
+            return
         if self._inbound_refused(token):
             return
         data = self._read_raw(MAX_INBOUND_BYTES)
-        key = os.environ.get("INBOUND_SIGNING_KEY", "")
         if key and not _signed_by_provider(data, self.headers.get("Content-Type") or "", key):
             self._json(401, {"error": "Signature check failed."})
+            return
+        # The same post twice (a replay, or the provider trying again) files nothing the second time (M3).
+        replay = (f"inbound:{company_id}", _replay_key(data, self.headers.get("Content-Type") or "", key))
+        if _seen_before(*replay):
+            self._json(200, {"ok": True, "ignored": "already received"})
             return
         if demo_locked(company_id):
             self._json(200, {"ok": True, "ignored": "the demo is read-only"})
@@ -2628,6 +2661,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             parsed = importer.parse_inbound_email(data, self.headers.get("Content-Type") or "")
         except importer.BadPayload as exc:
+            _forget_seen(*replay)
             raise BadRequest(str(exc))
         stored, skipped = self._store_email_files(company_id, parsed, "inbound email")
 
@@ -2644,15 +2678,26 @@ class Handler(BaseHTTPRequestHandler):
         status, payload = self._mutate(company_id, add)
         if status != 200:
             importer.discard(company_id, stored)
+            _forget_seen(*replay)   # not filed, so the provider's next try is taken
             self._json(status, payload)
             return
         self._json(200, {"ok": True})
 
     def _mail_events(self, token: str) -> None:
-        """Bounce and complaint webhook from the mail provider (P1-4); see mail_events.py."""
+        """Bounce and complaint webhook from the mail provider (P1-4); see mail_events.py. The token
+        in the address is compared in constant time; with MAIL_EVENTS_PASSWORD set, HTTP Basic's
+        password must match too (L4): Postmark and SendGrid both take https://user:PASSWORD@host/...
+        as the webhook address. At most 120 posts an hour."""
         secret = os.environ.get("MAIL_EVENTS_TOKEN", "")
-        if len(secret) < 16 or not hmac.compare_digest(token, secret):
+        if len(secret) < 16 or not hmac.compare_digest(token.encode(), secret.encode()):
             self._json(404, {"error": "Not found"})
+            return
+        if not _within_limit("mail-events", INBOUND_PER_HOUR, 3600):
+            self._json(429, {"error": "Too many posts this hour. Try again later."})
+            return
+        password = os.environ.get("MAIL_EVENTS_PASSWORD", "")
+        if password and not self._basic_password_ok(password):
+            self._json(401, {"error": "Sign-in required for this address."}, {"WWW-Authenticate": 'Basic realm="Duracash mail events"'})
             return
         try:
             body = json.loads(self._read_raw(MAX_BODY_BYTES) or b"null")
@@ -3800,6 +3845,42 @@ JOB_ACTIONS = {
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead),
                                                                          looked=c.body.get("looked") is True, answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
 }
+
+REPLAY_SECONDS = 24 * 3600
+_SEEN: dict[str, float] = {}
+_SEEN_LOCK = threading.Lock()
+
+
+def _replay_key(data: bytes, raw_ctype: str, key: str) -> str:
+    """What makes one inbound post unique: the provider's signing token when it is signed (Mailgun
+    sends a new one with every post), else the post itself."""
+    if key:
+        nonce = str(importer.provider_fields(data, raw_ctype).get("token") or "")
+        if nonce:
+            return "token:" + nonce
+    return "body:" + hashlib.sha256(data).hexdigest()
+
+
+def _seen_before(scope: str, key: str, now: float | None = None) -> bool:
+    """True when this key came in the last REPLAY_SECONDS (and so it is a repeat); else noted now.
+    In memory: a restart forgets, which the signature's 15-minute window covers for signed posts."""
+    now = time.monotonic() if now is None else now
+    full = f"{scope}:{key}"
+    with _SEEN_LOCK:
+        if len(_SEEN) > 50_000:
+            for k in [k for k, t in _SEEN.items() if now - t >= REPLAY_SECONDS]:
+                _SEEN.pop(k, None)
+        when = _SEEN.get(full)
+        if when is not None and now - when < REPLAY_SECONDS:
+            return True
+        _SEEN[full] = now
+        return False
+
+
+def _forget_seen(scope: str, key: str) -> None:
+    with _SEEN_LOCK:
+        _SEEN.pop(f"{scope}:{key}", None)
+
 
 def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None = None) -> bool:
     """Mailgun's signature (R6-07): `signature` is the hex HMAC-SHA256 of `timestamp` + `token`

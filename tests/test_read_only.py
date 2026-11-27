@@ -1,6 +1,7 @@
 """Read-only mode: the public demo in production, and a company a founder has put on hold
 (P2-2's "past due: read-only, never deletion")."""
 
+import base64
 import http.client
 import json
 import sys
@@ -61,9 +62,9 @@ class ReadOnlyHttpTests(unittest.TestCase):
     def setUp(self):
         auth._FAILURES.clear(); auth._IP_FAILURES.clear()
 
-    def request(self, method, path, body=None, cookie=None):
+    def request(self, method, path, body=None, cookie=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
-        headers = {"Content-Type": "application/json", **({"Cookie": cookie} if cookie else {})}
+        headers = {"Content-Type": "application/json", **({"Cookie": cookie} if cookie else {}), **(headers or {})}
         conn.request(method, path, body=json.dumps(body).encode() if body is not None else None, headers=headers)
         res = conn.getresponse()
         raw = res.read()
@@ -119,7 +120,8 @@ class ReadOnlyHttpTests(unittest.TestCase):
         self.assertEqual(me["read_only"], "")
 
     def test_the_production_demo_is_read_only(self):
-        env = {"DURACASH_ENV": "production", "DURACASH_DEMO": "readonly"}
+        # Production takes inbound email only with a password or signing key (M3).
+        env = {"DURACASH_ENV": "production", "DURACASH_DEMO": "readonly", "INBOUND_WEBHOOK_PASSWORD": "pw"}
         with mock.patch.dict("os.environ", env):
             res, data = self.request("POST", "/api/auth/login", {"email": auth.DEMO_EMAIL, "password": auth.DEMO_PASSWORD})
             self.assertEqual(res.status, 200, data)
