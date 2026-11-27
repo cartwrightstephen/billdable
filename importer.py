@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import email
+import email.header
 import email.policy
 import email.utils
 import hashlib
@@ -261,7 +262,45 @@ def html_to_text(raw: str) -> str:
 
 
 def parse_email(data: bytes) -> dict[str, Any]:
-    """Read a saved email (.eml / raw MIME) into sender, subject, date, body and attachments."""
+    """Read a saved email (.eml / raw MIME) into sender, subject, date, body and attachments.
+    An email Python's parser trips on (a broken address or Content-Type; it raises from deep
+    inside) is read the old, lenient way instead (_parse_email_leniently), never a server error."""
+    try:
+        return _parse_email(data)
+    except (AttributeError, IndexError, KeyError, LookupError, TypeError, ValueError, AssertionError):
+        return _parse_email_leniently(data)
+
+
+def _parse_email_leniently(data: bytes) -> dict[str, Any]:
+    """compat32: headers as the raw text they are, each part's payload as sent."""
+    msg = email.message_from_bytes(data, policy=email.policy.compat32)
+
+    def header(name: str) -> str:
+        try:
+            return str(email.header.make_header(email.header.decode_header(str(msg.get(name) or ""))))[:300]
+        except Exception:  # an encoded word that doesn't decode: the header as it is
+            return str(msg.get(name) or "")[:300]
+
+    text, attachments = "", []
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+        try:
+            payload = part.get_payload(decode=True) or b""
+            filename = part.get_filename()
+        except Exception:
+            continue
+        if filename or part.get_content_maintype() not in {"text"}:
+            if payload:
+                attachments.append({"filename": str(filename or "attachment"), "data": payload})
+        elif not text:
+            body = payload.decode("utf-8", "replace")
+            text = html_to_text(body) if part.get_content_subtype() == "html" else body
+    return {"from": header("from"), "to": header("to"), "subject": header("subject"), "sent_at": "", "text": text.strip(),
+            "attachments": attachments}
+
+
+def _parse_email(data: bytes) -> dict[str, Any]:
     msg = email.message_from_bytes(data, policy=email.policy.default)
     body = msg.get_body(preferencelist=("plain", "html"))
     text = ""
@@ -1017,9 +1056,12 @@ def parse_share(data: bytes, raw_ctype: str) -> dict:
         return out
     msg = email.message_from_bytes(b"Content-Type: " + raw_ctype.encode("latin-1", "replace") + b"\r\n\r\n" + data, policy=email.policy.default)
     for part in msg.iter_parts():
-        name = part.get_param("name", header="content-disposition") or ""
-        filename = part.get_filename()
-        payload = part.get_payload(decode=True) or b""
+        try:
+            name = part.get_param("name", header="content-disposition") or ""
+            filename = part.get_filename()
+            payload = part.get_payload(decode=True) or b""
+        except (AttributeError, IndexError, KeyError, LookupError, TypeError, ValueError):
+            continue   # a part the parser can't read (a broken header): left out, the rest kept
         if filename or name == "files":
             if payload:
                 out["files"].append({"filename": filename or "shared file", "data": payload})
@@ -1093,9 +1135,12 @@ def parse_inbound_email(data: bytes, raw_ctype: str) -> dict:
         msg = email.message_from_bytes(b"Content-Type: " + raw_ctype.encode("latin-1", "replace") + b"\r\n\r\n" + data, policy=email.policy.default)
         fields, attachments = {}, []
         for part in msg.iter_parts():
-            name = part.get_param("name", header="content-disposition") or ""
-            filename = part.get_filename()
-            payload = part.get_payload(decode=True) or b""
+            try:
+                name = part.get_param("name", header="content-disposition") or ""
+                filename = part.get_filename()
+                payload = part.get_payload(decode=True) or b""
+            except (AttributeError, IndexError, KeyError, LookupError, TypeError, ValueError):
+                continue   # a part the parser can't read: left out, the rest kept
             if filename:
                 attachments.append({"filename": filename, "data": payload})
             else:

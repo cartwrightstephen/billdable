@@ -152,5 +152,33 @@ class SensitiveFilesStayClosedEverywhere(ServerCase):
         self.assertIn("Jo Welder", json.dumps(out), "the owner still does")
 
 
+# Emails Python's email package trips on (found by fuzzing, Nov 27): a broken address across two
+# lines, a Content-Type with a stray ";", a NUL in a charset.
+BROKEN_EMAILS = [
+    b"From: A <a@\r\nb.example>\r\nTo: c@d.example<\r\nSubject: Pay app\r\n\r\nHello\r\n",
+    b"From: A <a@b.example>\r\nTo: c@d.example\r\nSubject: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; b/undary=XX\r\n\r\n"
+    b"--XX\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello\r\n--XX\r\nContent-Type: application/p;df; name=\"a.pdf\"\r\n"
+    b"Content-Disposition: attachment; filename=\"a.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQK\r\n--XX--\r\n",
+    b"From: A <a@b.example>\r\nSubject: x\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=u\x00tf-8\r\n\r\nHello\r\n",
+]
+BROKEN_SHARE = (b"--Btion\xff\xfe: form-data; name=\"title\"\xb0\n\r\n-Disposition: form-data; name=\"files\"; filename=\"p.jpg\"\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n\xff\xd8\xff\r\n--BB--\r\n")
+
+
+class BrokenEmailsAreReadNotCrashed(ServerCase):
+    def test_upload_paste_and_share(self):
+        cookie, _ = self.signup("broken-mail@pine.example")
+        for n, raw in enumerate(BROKEN_EMAILS):
+            res, out = self.request("POST", "/api/import/file", raw=raw, cookie=cookie,
+                                    headers={"Content-Type": "message/rfc822", "X-Filename": f"m{n}.eml"})
+            self.assertEqual(res.status, 200, (n, out))
+            res, out = self.request("POST", "/api/import/text", {"text": raw.decode("utf-8", "replace"), "source": "email"}, cookie=cookie)
+            self.assertEqual(res.status, 200, (n, out))
+        for who in (cookie, None):
+            res, _ = self.request("POST", "/share", raw=BROKEN_SHARE, cookie=who,
+                                  headers={"Content-Type": "multipart/form-data; boundary=BB", "Sec-Fetch-Site": "same-origin"})
+            self.assertEqual(res.status, 303)
+
+
 if __name__ == "__main__":
     unittest.main()
