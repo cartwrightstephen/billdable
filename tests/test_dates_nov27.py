@@ -50,6 +50,12 @@ class FirstPayAppTests(unittest.TestCase):
         self.job["started_on"] = "2026-10-20"
         self.assertEqual(domain.next_payapp_due(self.state, self.job, today=date(2026, 11, 2)), date(2026, 11, 13), "Nov 15, 2026 is a Sunday")
 
+    def test_a_weekend_cutoff_moved_back_is_still_never_before_the_start(self):   # Nov 27 hunt
+        self.job["started_on"] = "2026-11-14"   # a Saturday; the 15th is the Sunday, kept the Friday the 13th
+        self.assertEqual(domain.next_payapp_due(self.state, self.job, today=date(2026, 11, 10)), date(2026, 12, 15))
+        dates = domain.job_key_dates(self.state, self.job, today=date(2026, 11, 10))
+        self.assertFalse(any(d["date"] < "2026-11-14" for d in dates if d["key"].startswith("cutoff") or d["key"] == "first_payapp"), dates)
+
     def test_no_cutoff_no_due_date(self):
         self.payer.pop("payapp_due_day")
         self.assertIsNone(domain.next_payapp_due(self.state, self.job, today=date(2026, 11, 26)))

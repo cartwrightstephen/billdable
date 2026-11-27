@@ -242,7 +242,8 @@ def next_payapp_due(state: dict[str, Any], job: dict[str, Any], payer: dict[str,
     for _ in range(40):
         cut = _cutoff(day, y, m)
         due = business_day_on_or_before(cut)
-        if cut > start and due >= today:
+        # A cutoff on a weekend moves back to the Friday, which may be before a Saturday start.
+        if cut > start and due >= max(start, today):
             return due
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
     return None
@@ -315,7 +316,7 @@ def job_key_dates(state: dict[str, Any], job: dict[str, Any], payer: dict[str, A
         nxt = today.month % 12 + 1
         for key, label, cut in (("cutoff_this", "Pay app due this month", _cutoff(day, today.year, today.month)),
                                 ("cutoff_next", "Pay app due next month", _cutoff(day, today.year + (today.month == 12), nxt))):
-            if start and cut <= start:
+            if start and (cut <= start or business_day_on_or_before(cut) < start):   # never before the start
                 continue
             if first and not any(d["key"].startswith("cutoff") or d["key"] == "first_payapp" for d in out):
                 key, label = key, "First pay app due"
