@@ -6,7 +6,7 @@ import { draftValue, clearForm } from "../forms.js";
 import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
 import { state, onSessionEnd } from "../state.js";
-import { post, toast, render, nav, fileLink } from "../app-core.js";
+import { post, toast, render, nav, fileLink, may } from "../app-core.js";
 
 
 // A record on the job page, with Edit for its label, kind and what a conversation or note says
@@ -43,12 +43,20 @@ function recordRow(j, stored) {
 }
 
 // Edit: a diary entry opens its New job record form again, with all its parts (Nov 26); any other
-// record has its label, kind and note.
+// record opens the same form with its own section filled in (Nov 27 audit). Delete takes a saved
+// job record off (manage_jobs): a diary entry with what it added, or a record without a file.
 function editButton(j, r) {
-  if (unesc(r.kind) === "daily" && r.daily_record_id && (state.daily_records || []).some(d => d.id === r.daily_record_id)) {
-    return ` <button class="linkish tall" data-action="daily-edit" data-id="${j.id}" data-item="${r.daily_record_id}" aria-label="Edit ${r.label}">Edit</button>`;
-  }
-  return ` <button class="linkish tall" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`;
+  const diary = unesc(r.kind) === "daily" && r.daily_record_id && (state.daily_records || []).some(d => d.id === r.daily_record_id);
+  const edit = diary
+    ? ` <button class="linkish tall" data-action="daily-edit" data-id="${j.id}" data-item="${r.daily_record_id}" aria-label="Edit ${r.label}">Edit</button>`
+    : unesc(r.kind) === "daily" ? ""
+    : ` <button class="linkish tall" data-action="record-full-edit" data-id="${j.id}" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`;
+  return edit + (mayDelete(r, diary) ? ` <button class="linkish tall" data-action="record-delete" data-id="${j.id}" data-item="${r.id}" aria-label="Delete ${r.label}">Delete</button>` : "");
+}
+export function mayDelete(r, diary) {
+  if (!may("record-delete")) return false;
+  if (diary) return true;
+  return unesc(r.kind) !== "daily" && !(r.file_ids || []).length && !((r.quantities || []).length && !r.quantities_undone);
 }
 
 // A record's files that are still there.
@@ -115,6 +123,16 @@ export const actions = {
     const below = (rec.quantities || []).some(q => { const l = lines.find(x => x.id === q.line_id); return l && l.done_milli - q.qty_milli < (l.sent_qty_milli || 0); });
     const said = `Take the quantities from ${unesc(rec.label)} off the field totals?` + (below ? " Some of it is already billed. Pay apps sent stay as they are, and nothing more is suggested on those lines until the field total passes what they billed." : "");
     if (await askConfirm(said, "Undo import", below)) await post(`/api/jobs/${id}/quantities-undo/${rec.id}`, { below_billed: below });
+  },
+  // Delete a saved job record (Nov 27 audit). A diary entry's rows with a file stay on the job records.
+  "record-delete": async (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
+    const rec = (j?.records || []).find(r => r.id === el.dataset.item);
+    if (!rec) return;
+    const diary = unesc(rec.kind) === "daily";
+    const said = diary ? `Delete the job record ${unesc(rec.label)}? Its diary entry, the quantities it added and the rows it made without a file go. Files stay on the job records.`
+      : `Delete ${unesc(rec.label)} from the job records?`;
+    if (await askConfirm(said, "Delete", true)) await post(`/api/jobs/${id}/record-delete/${rec.id}`, {});
   },
   "record-edit": (el) => {
     if (editingRecord) clearForm(`record-${editingRecord}`);   // Cancel, or another record's Edit, drops what was typed

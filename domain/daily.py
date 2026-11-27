@@ -25,6 +25,7 @@ from typing import Any
 __all__ = [
     "WEATHER", "DAILY_SECTIONS", "INSPECTION_TYPES", "CREW_MAX", "RECORD_SECTIONS", "add_daily_record", "clean_daily_details",
     "clean_record_entries", "daily_record_note", "daily_record_for", "hold_for_job_record", "save_job_record", "update_job_record",
+    "delete_job_record", "delete_record", "update_record",
 ]
 
 _HOLD_HOURS = 24   # how long an uploaded file waits for its New job record
@@ -776,6 +777,124 @@ def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: 
         shown["label"], shown["note"], shown["daily_record_id"] = label[:200], daily_record_note(job, rec), daily_id
         shown["edited"] = {"by": actor, "at": utcnow()}
     audit(state, job_id, "daily_record_edit", f"{actor} changed the job record of {day}" + (f", taking off {', '.join(r['label'] for r in gone)}" if gone else "") + ".", actor)
+    if not job.get("closed"):
+        _refresh_draft_gate(job, state)
+    return job
+
+
+def _billed_since(job: dict[str, Any], rec: dict[str, Any]) -> dict[str, Any] | None:
+    """A pay app that has gone to the client since this daily record was saved, while the record
+    added quantities to the field totals: it may have billed them (the rule Edit keeps)."""
+    from domain import DRAFT_STATUSES
+    import sov
+    if not _added_rows(rec):
+        return None
+    return next((inv for inv in sov.live_invoices(job) if inv.get("status") not in DRAFT_STATUSES
+                 and str(inv.get("created_at") or "") >= str(rec.get("at") or "")), None)
+
+
+def delete_job_record(state: dict[str, Any], job_id: str, daily_id: str, actor: str) -> dict[str, Any]:
+    """Delete a whole saved job record (Nov 27 audit): its Diary and the day's details go, and the
+    quantities it added come off the field totals. Refused once a sent pay app may have billed
+    those quantities, as Edit is. Each row it made goes as Remove on Edit takes it off
+    (_drop_typed_record): a row with a file, or one that went out with a pay app, stays on the job
+    records on its own, so no file is ever deleted here. Audited."""
+    from domain import GateError, _open_job, _refresh_draft_gate, audit
+    import sov
+    job = _open_job(state, job_id)
+    rec = next((d for d in state.get("daily_records", []) if d.get("id") == daily_id and d.get("job_id") == job_id), None)
+    if not rec:
+        raise GateError("That job record is not on this job.")
+    sent = _billed_since(job, rec)
+    if sent:
+        raise GateError(f"The quantities on this job record may be billed on {sent['number']}, which has gone to the client, so it can't be deleted. "
+                        "Change the field total with Correct field total on the Schedule of values card, and Edit the record's words.")
+    old_rows = _added_rows(rec)
+    if old_rows:
+        by_id = {line["id"]: line for line in sov.lines(job)}
+        for row in old_rows:
+            line = by_id.get(row["line_id"])
+            if line:
+                line["field_milli"] = max(0, sov.field_total(line) - int(row["qty_milli"]))
+        job["completed_value_cents"] = sov.totals({"sov": {"op_bp": sov.op_bp(job), "lines": [sov.anticipated(job, l) for l in sov.lines(job)]}})["to_date_cents"]
+    shown = _daily_job_record(job, rec)
+    rows = [r for r in job.get("records", []) if r.get("daily_record_id") == daily_id and r is not shown]
+    kept = [r["label"] for r in rows if not _drop_typed_record(state, job, r, actor)]
+    if shown is not None:
+        job["records"] = [r for r in job["records"] if r is not shown]
+    state["daily_records"] = [d for d in state.get("daily_records", []) if d is not rec]
+    job["daily_records"] = [i for i in job.get("daily_records") or [] if i != daily_id]
+    day = str(rec.get("at") or "")[:10]
+    audit(state, job_id, "daily_record_delete", f"{actor} deleted the job record of {day}"
+          + (f"; {', '.join(kept)} stayed on the job records" if kept else "") + ".", actor)
+    if not job.get("closed"):
+        _refresh_draft_gate(job, state)
+    return job
+
+
+def delete_record(state: dict[str, Any], job_id: str, record_id: str, actor: str) -> dict[str, Any]:
+    """Delete on a job record (Nov 27 audit). A diary entry is delete_job_record. Any other record
+    without a file goes, off any draft's supporting documents; one with a file stays (files are
+    never deleted here: Edit it, or Remove it from a diary entry's Edit), as does one that went out
+    with a pay app or still holds imported quantities (Undo import first)."""
+    from domain import DRAFT_STATUSES, GateError, _open_job, _refresh_draft_gate
+    job = _open_job(state, job_id)
+    rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not rec:
+        raise GateError("That record is not on this job.")
+    if rec.get("kind") == "daily":
+        dr = daily_record_for(state, job, record_id)
+        if not dr:
+            raise GateError("That job record can't be deleted here. Reload the page.")
+        return delete_job_record(state, job_id, dr["id"], actor)
+    if rec.get("file_ids"):
+        raise GateError("A record with a file stays on the job records. Edit what it says, or file it under another kind.")
+    if rec.get("quantities") and not rec.get("quantities_undone"):
+        raise GateError("This record added quantities to the schedule of values. Undo import first.")
+    went = next((inv for inv in job.get("invoices", []) if inv.get("status") not in DRAFT_STATUSES
+                 for item in inv.get("packet") or [] for a in item.get("attachments") or [] if a.get("record_id") == record_id), None)
+    if went:
+        raise GateError(f"This record went out with {went['number']}, so it stays on the job records.")
+    _drop_typed_record(state, job, rec, actor)
+    if not job.get("closed"):
+        _refresh_draft_gate(job, state)
+    return job
+
+
+def update_record(state: dict[str, Any], job_id: str, record_id: str, actor: str, body: dict[str, Any],
+                  report: dict[str, list] | None = None, answerer: Any = None) -> dict[str, Any]:
+    """Edit on a record that isn't a diary entry (Nov 27 audit): the New job record form with that
+    record's own section, filled in. body is what that form sends: {entries: [one row carrying
+    record_id], date}. The label, kind and note change as edit_record changes them (a lien waiver
+    keeps its question); the section's own fields (crew and hours, an invoice's amount) and the
+    day are kept on it; files added on the row become records of their own, as on a new record."""
+    from domain import GateError, _open_job, _refresh_draft_gate, edit_record, _refuse
+    job = _open_job(state, job_id)
+    rec = next((r for r in job.get("records", []) if r["id"] == record_id), None)
+    if not rec or rec.get("kind") == "daily":
+        raise GateError("That record is not on this job.")
+    report = report if report is not None else {}
+    report.setdefault("already_saved", [])
+    report.setdefault("not_added", [])
+    entries = clean_record_entries(job, body.get("entries"), actor, report)
+    if not entries:
+        _refuse("", {"entries": "Fill in the record, or Delete it from the job records."})
+    if len(entries) > 1 or entries[0]["record_id"] != record_id:
+        raise GateError("This record was changed since you opened it. Open it again.")
+    entry = entries[0]
+    head = f"{entry['word']}: {entry['title']}" if entry["word"] and entry["title"] else entry["title"]
+    label = (head or rec.get("label") or "")[:120]
+    note = entry["note"] if (entry["note"] or entry["section"] != "photos") else None
+    edit_record(state, job_id, record_id, label, entry["kind"], actor, note, answerer=answerer)
+    for k in ("crew", "hours_milli", "amount_cents"):
+        rec.pop(k, None)
+    rec.update(entry["extra"])
+    if entry["ticket_type"]:
+        rec["ticket_type"] = entry["ticket_type"]
+    if body.get("date"):
+        rec["on_date"] = _record_day(body)
+    if entry["attachments"]:
+        _apply_entry(state, job, {**entry, "record_id": ""}, rec.get("on_date") or _record_day(body), actor, "")
     if not job.get("closed"):
         _refresh_draft_gate(job, state)
     return job

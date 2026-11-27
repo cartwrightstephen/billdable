@@ -139,5 +139,94 @@ class EditTests(unittest.TestCase):
         self.assertEqual(self.daily["notes"], "Typo fixed")
 
 
+
+class DeleteTests(EditTests):
+    """Deleting a whole saved job record, and Edit with the full form on any other record (Nov 27 audit)."""
+    test_the_diary_record_points_at_its_form = test_edit_changes_every_part_in_place = None
+    test_a_row_taken_off_goes_and_a_new_row_is_added = test_edit_is_refused_for_a_row_from_another_record = None
+    test_billed_quantities_are_not_changed_here = None
+
+    def test_delete_takes_the_record_and_its_quantities_off_and_keeps_files(self):
+        photo = domain.add_job_record(self.state, self.id, "site.jpg", "photo", "", "Ana")["records"][-1]
+        photo.update(file_ids=["f-1"], daily_record_id=self.daily["id"])
+        self.assertEqual(sov.field_total(self.rough), 10_000)
+        domain.delete_record(self.state, self.id, next(r for r in self.job["records"] if r["kind"] == "daily")["id"], "Ben")
+        self.assertEqual(sov.field_total(self.rough), 0, "the 10 it added came off")
+        self.assertNotIn(self.daily, self.state["daily_records"])
+        self.assertNotIn(self.daily["id"], self.job.get("daily_records") or [])
+        ids = [r["id"] for r in self.job["records"]]
+        self.assertNotIn(self.ticket["id"], ids, "a row without a file goes")
+        self.assertNotIn(self.sheet["id"], ids)
+        self.assertIn(photo["id"], ids, "a row with a file stays on the job records")
+        self.assertNotIn("daily_record_id", photo)
+        self.assertFalse(any(r["kind"] == "daily" for r in self.job["records"]))
+        last = self.state["audit"][-1]
+        self.assertEqual(last["action"], "daily_record_delete")
+        self.assertIn("site.jpg stayed on the job records", str(last))
+
+    def test_delete_is_refused_once_a_sent_pay_app_may_have_billed_it(self):
+        domain.record_sov_progress(self.state, self.id, {})
+        inv = [i for i in self.job["invoices"] if i["status"] in domain.DRAFT_STATUSES][-1]
+        inv["status"] = "sent"
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.delete_job_record(self.state, self.id, self.daily["id"], "Ben")
+        self.assertIn(inv["number"], str(ctx.exception))
+        self.assertIn("Correct field total", str(ctx.exception))
+        self.assertIn(self.daily, self.state["daily_records"], "nothing changed")
+        self.assertEqual(sov.field_total(self.rough), 10_000)
+
+    def test_any_other_record_deletes_unless_it_has_a_file_or_went_out(self):
+        note = domain.add_job_record(self.state, self.id, "Loose note", "note", "", "Ana")["records"][-1]
+        domain.delete_record(self.state, self.id, note["id"], "Ben")
+        self.assertNotIn(note["id"], [r["id"] for r in self.job["records"]])
+        filed = domain.add_job_record(self.state, self.id, "contract.pdf", "contract", "", "Ana")["records"][-1]
+        filed["file_ids"] = ["f-2"]
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.delete_record(self.state, self.id, filed["id"], "Ben")
+        self.assertIn("stays on the job records", str(ctx.exception))
+
+    def test_the_full_form_edits_a_record_that_isnt_a_diary_entry(self):
+        domain.save_job_record(self.state, self.id, "", "Ana", {"today": domain.local_today(),
+                               "entries": [{"section": "invoices", "row": 0, "supplier": "Home Depot", "number": "55", "amount": "40"}]})
+        inv = self.job["records"][-1]
+        self.assertNotIn("daily_record_id", inv)
+        domain.update_record(self.state, self.id, inv["id"], "Ben", {"today": domain.local_today(),
+                             "entries": [{"section": "invoices", "row": 0, "record_id": inv["id"], "supplier": "Lowe's", "number": "56", "amount": "45.50"}]})
+        self.assertEqual((inv["label"], inv["amount_cents"], inv["kind"]), ("Invoice: Lowe's #56", 4550, "supplier_invoice"))
+        self.assertIn("edit_record", [a["action"] for a in self.state["audit"]])
+        domain.update_record(self.state, self.id, self.ticket["id"], "Ben", {"today": domain.local_today(),
+                             "entries": [{"section": "delivery", "row": 0, "record_id": self.ticket["id"], "supplier": "ABC", "number": "9", "what": "Seat"}]})
+        self.assertEqual((self.ticket["label"], self.ticket["note"], self.ticket["ticket_type"]), ("Delivery ticket: ABC #9", "Seat", "delivery"))
+        with self.assertRaises(domain.GateError):
+            domain.update_record(self.state, self.id, inv["id"], "Ben", {"entries": [{"section": "invoices", "row": 0, "record_id": self.ticket["id"], "supplier": "X"}]})
+        with self.assertRaises(domain.GateError):
+            domain.update_record(self.state, self.id, next(r for r in self.job["records"] if r["kind"] == "daily")["id"], "Ben", {"entries": []})
+
 if __name__ == "__main__":
     unittest.main()
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_accounts import ServerCase  # noqa: E402
+import test_team  # noqa: E402  (a module, so its tests aren't run again here)
+
+
+class DeleteHttpTests(ServerCase):
+    """record-delete takes Manage jobs; record-update is anyone's, as Edit is."""
+    join = test_team.TeamHttpTests.join
+
+    def test_delete_needs_manage_jobs(self):
+        owner, _ = self.signup("owner@recdel.example", "Recdel Co")
+        res, out = self.request("POST", "/api/team/profiles", {"name": "Crew", "perms": []}, cookie=owner)
+        cookie, _ = self.join(owner, "crew@recdel.example", out["profile"]["id"])
+        _, state = self.request("POST", "/api/jobs", test_team.JOB, cookie=owner)
+        job_id = state["jobs"][0]["id"]
+        res, out = self.request("POST", f"/api/jobs/{job_id}/daily-record", {"notes": "Framing", "today": domain.local_today()}, cookie=cookie)
+        self.assertEqual(res.status, 200, out)
+        rec = next(r for r in out["jobs"][0]["records"] if r["kind"] == "daily")
+        res, out = self.request("POST", f"/api/jobs/{job_id}/record-delete/{rec['id']}", {}, cookie=cookie)
+        self.assertEqual(res.status, 403, out)
+        res, out = self.request("POST", f"/api/jobs/{job_id}/record-delete/{rec['id']}", {}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        self.assertFalse(any(r["kind"] == "daily" for r in out["jobs"][0]["records"]))
+        self.assertEqual(out.get("daily_records", []), [])

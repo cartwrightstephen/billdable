@@ -4618,6 +4618,8 @@ JOB_ACTIONS = {
     "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body, c.reply, gate_over=True)),
     # Edit on a saved job record (Nov 26): the same form, with the rows it saved (domain.update_job_record).
     "daily-record-edit": (True, lambda h, st, j, i, c: domain.update_job_record(st, j, i, _text(c.body, "notes"), c.actor, c.body, c.reply)),
+    "record-delete": (True, lambda h, st, j, i, c: domain.delete_record(st, j, i, c.actor)),
+    "record-update": (True, lambda h, st, j, i, c: domain.update_record(st, j, i, c.actor, c.body, c.reply, answerer=_answerer(c, st))),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead),
                                                                          looked=c.body.get("looked") is True, answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
 }

@@ -293,6 +293,7 @@ export const views = {
     // Quantities are open whenever the job has a schedule (Round 1, item 15); the other two are ticked.
     const box = (key, label) => key === "quantities" ? ""
       : `<label><input type="checkbox" data-daily-section="${key}"${daily.checked.has(key) ? " checked" : ""}> ${label}</label>`;
+    if (ed && ed.recordId) return recordEditView(ed, j);
     return `
       <h1>${ed ? "Edit job record" : "New job record"}</h1>
       ${daily.saved ? `<p class="saved-result" role="status">Saved to <a href="${pathFor("job", daily.saved.jobId)}" data-action="open-job" data-id="${daily.saved.jobId}">${daily.saved.jobName}</a>: ${esc(daily.saved.words)}.${esc(daily.saved.added || "")}</p>` : ""}
@@ -325,6 +326,21 @@ export const views = {
     `;
   },
 };
+
+// Edit on a record that isn't a diary entry (Nov 27 audit): its own section of the New job record
+// form, filled in, and the date. Save changes goes to record-update; Remove on the row, then Save,
+// is refused there: Delete on the job records takes a record off.
+function recordEditView(ed, j) {
+  return `
+      <h1>Edit record</h1>
+      <p class="sub">Changing ${esc(ed.label)} on ${j ? j.name : "this job"}.</p>
+      <div class="card" data-form-key="daily">
+        <div class="form-grid">${field({ form: "daily", name: "date", id: "daily-date", label: "Date", type: "date", value: ed.day || localDay(new Date()), attrs: `max="${localDay(new Date())}"` })}</div>
+        ${RECORD_SECTIONS.filter(s => daily.open.has(s.key) || (s.key === "time_sheets" && ed.recordIds.time_sheets_0)).map(s => recordSectionHtml(s, j)).join("")}
+        <div class="form-inline"><button class="btn" data-action="daily-save">Save changes</button>
+          <button class="btn secondary" data-action="daily-edit-cancel">Cancel</button></div>
+      </div>`;
+}
 
 // The request body from what is typed (formValues' names) and the ticked boxes.
 export function dailyBody(v, j, checked) {
@@ -516,11 +532,27 @@ export function editPrefill(j, dr) {
   if ((sec.co_work || []).length) { checked.add("co_work"); rows.co = sec.co_work.length; }
   if ((sec.punch || []).length) { checked.add("punch"); d.punch = sec.punch.map(raw).join("\n"); }
   if (sec.photos && !(j.records || []).some(r => r.daily_record_id === dr.id && r.kind === "photo")) { open.add("photos"); d.photos_note_0 = raw(sec.photos.note); }
+  const saved = (j.records || []).filter(x => x.daily_record_id === dr.id && x.kind !== "daily");
+  fillRows(saved, d, rows, recordIds, files, open);
+  return { draft: d, checked, open, rows, editing: { jobId: j.id, dailyId: unesc(dr.id), day, recordIds, files } };
+}
+
+// Edit on any other record (Nov 27 audit): the same form with only that record's section, filled in.
+export function recordPrefill(j, r) {
+  const d = {}, open = new Set(), rows = { co: 1, crew: 1 }, recordIds = {}, files = {};
+  const day = unesc(String(r.on_date || r.added_at || "")).slice(0, 10);
+  if (day) d.date = day;
+  fillRows([r], d, rows, recordIds, files, open);
+  return { draft: d, checked: new Set(), open, rows, editing: { jobId: j.id, dailyId: "", recordId: unesc(r.id), label: unesc(r.label || ""), day, recordIds, files } };
+}
+
+// The form's rows for saved records: each record in the section its kind and fields say.
+function fillRows(saved, d, rows, recordIds, files, open) {
+  const raw = (x) => unesc(x == null ? "" : String(x));
   const users = teamUsers();
   const count = {};
   const next = (key) => { const n = count[key] || 0; count[key] = n + 1; return n; };
   const fileNames = (r) => (r.file_ids || []).map(fid => (state.files || []).find(f => f.id === fid)).filter(Boolean).map(f => unesc(f.name));
-  const saved = (j.records || []).filter(x => x.daily_record_id === dr.id && x.kind !== "daily");
   for (const r of saved) {
     const kind = unesc(r.kind);
     let key;
@@ -575,7 +607,6 @@ export function editPrefill(j, dr) {
     open.add(key);
   }
   for (const [key, n] of Object.entries(count)) rows[key] = Math.max(rows[key] || 1, n);
-  return { draft: d, checked, open, rows, editing: { jobId: j.id, dailyId: unesc(dr.id), day, recordIds, files } };
 }
 
 // A second tap while a save is going makes nothing more.
@@ -616,6 +647,19 @@ export const actions = {
     render();
     focusAfterDraw(() => document.getElementById("daily-notes"));
   },
+  // Edit on any other record: the same form, with its own section (Nov 27 audit).
+  "record-full-edit": (el, id) => {
+    const j = state.jobs.find(x => x.id === id);
+    const r = j && (j.records || []).find(x => x.id === el.dataset.item);
+    if (!j || !r) { toast("That record isn't here any more. Reload the page."); return; }
+    resetDaily();
+    const p = recordPrefill(j, r);
+    nav("daily");
+    formDraft.daily = p.draft;
+    daily.checked = p.checked; daily.open = p.open; daily.rows = p.rows; daily.editing = p.editing;
+    render();
+    focusAfterDraw(() => document.querySelector("[data-record-section] input, [data-record-section] select, [data-record-section] textarea"));
+  },
   "daily-edit-cancel": () => { const id = daily.editing && daily.editing.jobId; resetDaily(); clearForm("daily"); if (id) nav("job", id); else render(); },
   "daily-row-remove": (el) => { dropRow(el.dataset.kind, +el.dataset.n); render(); },
   // "+ Delivery ticket": opens its section; once open, adds another row where the section takes more.
@@ -655,7 +699,7 @@ async function saveRecord() {
     const v = { ...formValues("daily"), notes };
     const users = teamUsers();
     const picked = daily.uploaded.length || Object.values(daily.files).some(list => list.length);
-    if (ed && !notes.trim()) { refuseForm("daily", { notes: "Enter the diary entry." }); return; }
+    if (ed && !ed.recordId && !notes.trim()) { refuseForm("daily", { notes: "Enter the diary entry." }); return; }
     if (!notes.trim() && !picked && !recordEntries(v, [], ed, users).length) { toast("Write the diary entry, or add a document."); refuseForm("daily", { notes: "Write the diary entry, or add a document." }); return; }
     // Remembered before saving: the save redraws the page, which picks the job last used.
     rememberDailyJob(job);
@@ -666,7 +710,8 @@ async function saveRecord() {
     if (entries.length || ed) body.entries = entries;
     if (v.date) body.date = v.date;
     body.today = localDay(new Date());   // the record's day is the person's own date, not the server's UTC one
-    const path = ed ? `/api/jobs/${job}/daily-record-edit/${encodeURIComponent(ed.dailyId)}` : `/api/jobs/${job}/daily-record`;
+    const path = ed && ed.recordId ? `/api/jobs/${job}/record-update/${encodeURIComponent(ed.recordId)}`
+      : ed ? `/api/jobs/${job}/daily-record-edit/${encodeURIComponent(ed.dailyId)}` : `/api/jobs/${job}/daily-record`;
     let r = await post(path, body, { formKey: "daily", quiet: true });
     if (r && !r.ok && r.data && r.data.over_schedule) {
       if (!(await askConfirm(overScheduleText(r.data), "Record anyway"))) return;
@@ -676,7 +721,7 @@ async function saveRecord() {
     if (r && r.data && r.data.stale_record_ids) { daily.uploaded = daily.uploaded.filter(u => !r.data.stale_record_ids.includes(u.record_id)); render(); }
     if (r && r.ok && ed) {
       resetDaily(); clearForm("daily");
-      toast("Job record changed.");
+      toast(ed.recordId ? "Record changed." : "Job record changed.");
       nav("job", job);
       return;
     }
