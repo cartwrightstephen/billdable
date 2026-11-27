@@ -283,6 +283,8 @@ function resultsHtml() {
   const m = ready ? metricsData.data : null;
   const days = (v) => v === null || v === undefined ? "—" : `${v} day${v === 1 ? "" : "s"}`;
   const num = (v) => v === null || v === undefined ? "—" : String(v);
+  // "1 pay app", "5 pay apps" (Nov 27 hunt: "1 pay apps").
+  const apps = (n, tail = "") => `${n} ${termText(n === 1 ? "pay app" : "pay apps")}${tail}`;
   const line = m ? ` <span class="sub">· ${termText("sent to paid")}: ${days(m.sent_to_paid_median_days)} median · ${m.pay_apps_paid} paid · ${metricsPeriod === "90" ? "last 90 days" : "all time"}</span>` : "";
   return `<details class="card dash-results" id="results" data-more="dash-results"${moreDetails["dash-results"] === false ? "" : " open"}><summary><strong>Results</strong>${line}</summary>
       <div class="filter-bar" role="group" aria-label="Period">${f("90", "Last 90 days")}${f("all", "All time")}</div>
@@ -290,12 +292,12 @@ function resultsHtml() {
       <div class="metrics">
         <div class="metric"><div class="k">${termText("Days from job completion to pay app sent")}</div><div class="v">${num(m.done_to_sent_median_days)}</div><div class="sub row-sub">median, ${m.done_to_sent_jobs} job${m.done_to_sent_jobs === 1 ? "" : "s"}</div></div>
         <div class="metric"><div class="k">${termText("Days from pay app sent to paid")}</div><div class="v">${num(m.sent_to_paid_median_days)}</div><div class="sub row-sub">median; average ${num(m.sent_to_paid_average_days)}; ${m.pay_apps_paid} paid</div></div>
-        <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
-        <div class="metric"><div class="k">${termText("Pay app rejections by Clients")}</div><div class="v">${m.sent_back}</div><div class="sub row-sub">of ${m.pay_apps_sent} ${termText("pay apps sent")}</div></div>
+        <div class="metric"><div class="k">${termText("Follow-ups per pay app")}</div><div class="v">${m.follow_ups_per_pay_app ?? "—"}</div><div class="sub row-sub">${m.follow_ups} follow-up${m.follow_ups === 1 ? "" : "s"}, ${apps(m.pay_apps_sent, " sent")}</div></div>
+        <div class="metric"><div class="k">${termText("Pay app rejections by Clients")}</div><div class="v">${m.sent_back}</div><div class="sub row-sub">of ${apps(m.pay_apps_sent, " sent")}</div></div>
       </div>
       <div class="metrics">
-        <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${m.pay_apps_sent} ${termText("pay apps")}</div></div>
-        <div class="metric"><div class="k">Paid</div><div class="v">${money(m.paid_cents)}</div><div class="sub row-sub">${m.pay_apps_paid} ${termText("pay apps")}</div></div>
+        <div class="metric"><div class="k">Billed</div><div class="v">${money(m.billed_cents)}</div><div class="sub row-sub">${apps(m.pay_apps_sent)}</div></div>
+        <div class="metric"><div class="k">Paid</div><div class="v">${money(m.paid_cents)}</div><div class="sub row-sub">${apps(m.pay_apps_paid)}</div></div>
         <div class="metric"><div class="k">Change orders billed</div><div class="v">${money(m.change_orders_billed_cents)}</div><div class="sub row-sub">signed, all time</div></div>
         <div class="metric"><div class="k">Held-back money received</div><div class="v">${money(m.retainage_collected_cents)}</div><div class="sub row-sub">all time</div></div>
       </div>

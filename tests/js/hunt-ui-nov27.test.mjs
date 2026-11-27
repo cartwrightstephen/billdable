@@ -64,3 +64,10 @@ test("the retainage percent boxes on a draft and by line carry their % inside th
   assert.doesNotMatch(src, /Retainage this period %/);
   assert.match(src, /<span class="with-suffix inline"><input id="lr-\$\{l\.id\}"[^]*?<span class="suffix" aria-hidden="true">%<\/span><\/span>/);
 });
+
+test("Results says 1 pay app, not 1 pay apps", () => {
+  const src = readFileSync(new URL("../../static/js/views/today.js", import.meta.url), "utf8");
+  assert.match(src, /const apps = \(n, tail = ""\) => `\$\{n\} \$\{termText\(n === 1 \? "pay app" : "pay apps"\)\}\$\{tail\}`;/);
+  assert.doesNotMatch(src, /\$\{m\.pay_apps_paid\} \$\{termText\("pay apps"\)\}/);
+  assert.doesNotMatch(src, /\$\{m\.pay_apps_sent\} \$\{termText\("pay apps/);
+});
