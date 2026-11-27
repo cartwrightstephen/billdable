@@ -150,9 +150,9 @@ function refusedCopies(e) {
 // as the server's profiles.may_send_again: the buttons show only to those who can use them.
 export const EMAIL_KIND_PERMS = { pay_app: "send_payapps", pay_app_withdrawn: "void", waiver: "send_waivers", retainage: "ask_retainage" };
 export function maySendAgain(e) {
-  if (!me) return false;
   const perm = EMAIL_KIND_PERMS[unesc((e && (e.kind || e.email_kind)) || "")];
   if (!perm) return true;
+  if (!me) return false;
   return Array.isArray(me.perms) ? me.perms.includes(perm) : me.role === "owner";
 }
 
