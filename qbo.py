@@ -1,7 +1,7 @@
-"""QuickBooks Online, read-only (P2-1, the API half; qbo_csv.py is the CSV fallback).
+"""QuickBooks Online: the connection, and reading payments (P2-1; qbo_csv.py is the CSV fallback,
+qbo_sync.py sends pay apps as invoices and records payments made against them).
 
-An owner connects the company's QuickBooks once (OAuth 2). After that Duracash reads, and
-never writes:
+An owner connects the company's QuickBooks once (OAuth 2). This module then reads:
 
 - payments received, proposed against open pay apps with the same matcher as the CSV import;
   a recorded payment keeps its QuickBooks payment id, so the same payment is never recorded
@@ -9,9 +9,11 @@ never writes:
 - invoices, for a reconciliation report: pay apps missing from QuickBooks, amounts that differ,
   and pay apps paid on one side but open on the other.
 
-Settings: QBO_CLIENT_ID and QBO_CLIENT_SECRET from the Intuit Developer app, QBO_ENV
-(sandbox, the default, or production) and DURACASH_URL, whose /api/qbo/callback must be
-listed as a redirect URI in the Intuit app. QBO_TOKEN_URL, QBO_REVOKE_URL and QBO_API_BASE
+Writing (a pay app sent as an invoice, and the customer it needs) is in qbo_sync.py.
+
+Settings: QBO_CLIENT_ID and QBO_CLIENT_SECRET from the Intuit Developer app, QBO_ENVIRONMENT
+(sandbox or production; unset, production on a production server and sandbox elsewhere) and
+DURACASH_URL, whose /api/qbo/callback must be listed as a redirect URI in the Intuit app. QBO_TOKEN_URL, QBO_REVOKE_URL and QBO_API_BASE
 override Intuit's addresses (tests use a local stand-in).
 
 Intuit's endpoints, scope, field names and minor version below were checked on Nov 3 2026 against
@@ -64,7 +66,12 @@ class QboError(Exception):
 
 
 def settings() -> dict[str, str]:
-    env = "production" if (os.environ.get("QBO_ENV") or "").strip().lower() == "production" else "sandbox"
+    # QBO_ENVIRONMENT (QBO_ENV, its earlier name, still works): sandbox or production. Unset, a
+    # production server (DURACASH_ENV=production) talks to live QuickBooks and anything else to the sandbox.
+    chosen = (os.environ.get("QBO_ENVIRONMENT") or os.environ.get("QBO_ENV") or "").strip().lower()
+    if chosen not in {"sandbox", "production"}:
+        chosen = "production" if (os.environ.get("DURACASH_ENV") or "").strip().lower() == "production" else "sandbox"
+    env = chosen
     return {
         "client_id": (os.environ.get("QBO_CLIENT_ID") or "").strip(),
         "client_secret": (os.environ.get("QBO_CLIENT_SECRET") or "").strip(),
@@ -239,7 +246,7 @@ def query(company_id: str, entity: str, where: str = "") -> list[dict[str, Any]]
                 raise QboError("QuickBooks no longer accepts this connection. An owner needs to connect it again.") from None
             if exc.code == 403:
                 # Sandbox keys against a live company, or the reverse, answer this way (Intuit's error 7001 family).
-                raise QboError("QuickBooks refused access (403). Check that QBO_ENV matches the keys and the company connected.") from None
+                raise QboError("QuickBooks refused access (403). Check that QBO_ENVIRONMENT matches the keys and the company connected.") from None
             raise QboError(f"QuickBooks answered {exc.code} when reading {entity.lower()}s.") from None
         except (error.URLError, TimeoutError, ValueError) as exc:
             raise QboError(f"Couldn't reach QuickBooks: {exc}") from None

@@ -78,5 +78,5 @@ services:
         sync: false
       - key: QBO_CLIENT_SECRET
         sync: false
-      - key: QBO_ENV
+      - key: QBO_ENVIRONMENT
         sync: false
