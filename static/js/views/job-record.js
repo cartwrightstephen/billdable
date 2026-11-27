@@ -37,9 +37,21 @@ function recordRow(j, stored) {
   // One row per file (Round 1, item 13): a record with one file is its link; with several, the
   // links follow on the same line; where it came from and the date close the line.
   const files = recordFileList(r);
-  const label = files.length === 1 ? fileLink(files[0].id, r.label) : r.label;
+  const word = termText(recordKindWord(r));
+  const shown = labelAfterKind(r.label, word);
+  const label = files.length === 1 ? fileLink(files[0].id, shown) : shown;
   const when = r.source || r.added_at || r.on_date ? ` <span class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.on_date || r.added_at)}</span>` : "";
-  return `<div class="list-item record-line"><span class="pill">${termText(recordKindWord(r))}</span> ${label}${files.length > 1 ? ` <span class="sub">${recordFiles(r)}</span>` : ""}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${when}${j.closed ? "" : editButton(j, r)}${(r.quantities || []).length && !j.closed && j.work_status !== "complete" ? ` <button class="linkish" data-action="quantities-undo" data-id="${j.id}" data-item="${r.id}" aria-label="Undo import: ${r.label}">Undo import</button>` : ""}${r.quantities_undone ? `<div class="sub">Quantities taken off by ${r.quantities_undone.by}, ${fmtDate(r.quantities_undone.at)}</div>` : ""}</div>`;
+  return `<div class="list-item record-line"><span class="pill">${word}</span> ${label}${files.length > 1 ? ` <span class="sub">${recordFiles(r)}</span>` : ""}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${when}${j.closed ? "" : editButton(j, r)}${(r.quantities || []).length && !j.closed && j.work_status !== "complete" ? ` <button class="linkish" data-action="quantities-undo" data-id="${j.id}" data-item="${r.id}" aria-label="Undo import: ${r.label}">Undo import</button>` : ""}${r.quantities_undone ? `<div class="sub">Quantities taken off by ${r.quantities_undone.by}, ${fmtDate(r.quantities_undone.at)}</div>` : ""}</div>`;
+}
+
+// A label that starts with its kind's own word ("Diary entry 2026-11-27: …", "Delivery ticket: ABC
+// #7") reads without it beside the pill that already says it (Nov 27: "Diary entry Diary entry").
+export function labelAfterKind(label, word) {
+  const text = String(label || "");
+  const w = String(word || "");
+  if (!w || text.length <= w.length || text.slice(0, w.length).toLowerCase() !== w.toLowerCase()) return text;
+  const rest = text.slice(w.length);
+  return /^[:\s]/.test(rest) && rest.replace(/^[:\s]+/, "") ? rest.replace(/^[:\s]+/, "") : text;
 }
 
 // Edit: a diary entry opens its New job record form again, with all its parts (Nov 26); any other

@@ -117,3 +117,15 @@ test("the Job records card: a diary entry's Edit opens its form; any other recor
   assert.match(html, /data-action="daily-edit" data-id="j1" data-item="dr1"/);
   assert.match(html, /data-action="record-edit" data-item="rn"/);
 });
+
+test("a record's label doesn't repeat the kind its pill says (Nov 27: \"Diary entry Diary entry\")", async () => {
+  const rec = await import("../../static/js/views/job-record.js");
+  assert.equal(rec.labelAfterKind("Diary entry 2026-11-27: Contract amount 40% done to date", "Diary entry"), "2026-11-27: Contract amount 40% done to date");
+  assert.equal(rec.labelAfterKind("Delivery ticket: ABC #7", "Delivery ticket"), "ABC #7");
+  assert.equal(rec.labelAfterKind("Diary entry", "Diary entry"), "Diary entry", "nothing else to say: kept");
+  assert.equal(rec.labelAfterKind("Invoices for Oak", "Invoice"), "Invoices for Oak", "only the whole word");
+  assert.equal(rec.labelAfterKind("COI 2026", "Insurance"), "COI 2026");
+  const html = rec.recordCardHtml(job({ records: [{ id: "r1", kind: "daily", label: "Diary entry 2026-11-27", note: "Walked it", added_at: "2026-11-27T12:00:00+00:00" }] }));
+  assert.doesNotMatch(html, /Diary entry<\/span> Diary entry/);
+  assert.match(html, /2026-11-27/);
+});
