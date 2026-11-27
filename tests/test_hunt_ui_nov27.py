@@ -53,5 +53,21 @@ class RevisedEmailTests(unittest.TestCase):
         self.assertIn("back to a draft", domain.email_moot(self.job("draft"), old))
 
 
+class SendCheckTests(unittest.TestCase):
+    def test_check_only_runs_the_checks_and_sends_nothing(self):
+        from test_round2_approvals import ready_state, sign, OWNER
+        state, job, inv = ready_state()
+        with self.assertRaises(domain.GateError) as refused:
+            domain.approve_and_send(state, job["id"], OWNER["name"], check_only=True)
+        self.assertEqual(str(refused.exception), f"{inv['number']} needs a signature from Dana Whitfield before it goes.")
+        self.assertEqual(refused.exception.blockers, [str(refused.exception)], "one sentence names who, no line per name under it")
+        sign(state, job)
+        domain.approve_and_send(state, job["id"], OWNER["name"], check_only=True)
+        self.assertIn(inv["status"], domain.DRAFT_STATUSES, "a check sends nothing")
+        self.assertFalse(inv.get("sent_at"))
+        domain.approve_and_send(state, job["id"], OWNER["name"])
+        self.assertEqual(inv["status"], "sent")
+
+
 if __name__ == "__main__":
     unittest.main()

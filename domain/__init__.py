@@ -1557,9 +1557,10 @@ def _need_waiver_answers(state: dict[str, Any], job: dict[str, Any], packet: lis
 def approve_and_send(
     state: dict[str, Any], job_id: str, actor: str = "owner", link_base: str | None = None, company_id: str = "",
     unconditional_override: str = "", reviewed: str | None = None, read_file: Any = None, soft_checks: Any = None,
-    today: Any = "", client_form_check: Any = None,
+    today: Any = "", client_form_check: Any = None, check_only: bool = False,
 ) -> dict[str, Any]:
-    """Send the open draft. A signed unconditional waiver going with it is refused (M14) unless
+    """Send the open draft. check_only runs every check and stops before anything goes: the page
+    asks it first, so what stands in the way shows before "Email PA-x?" is asked (Nov 27 hunt). A signed unconditional waiver going with it is refused (M14) unless
     unconditional_override gives the reason (the server lets only an owner give one); the
     override is kept on the pay app and in the audit. reviewed is the stamp of what Review & send
     showed (review_stamp): the server always passes it, so a send needs a look at what goes.
@@ -1634,8 +1635,11 @@ def approve_and_send(
                         action=approval_way_out(state, job))
     waiting = approvals_missing(state, job, invoice)
     if waiting:
+        # One sentence names them all: a line per name under it said it again (Nov 27 hunt).
         raise GateError(f"{invoice['number']} needs {'a signature' if len(waiting) == 1 else 'signatures'} from {', '.join(waiting)} before it goes.",
-                        [f"{name} hasn't signed it." for name in waiting], extra={"approvals_missing": True})
+                        extra={"approvals_missing": True})
+    if check_only:
+        return job
     # The signatures go with it as they are now; nothing after this changes them (Stephen, 18 Nov).
     freeze_approvals(state, job, invoice)
     invoice["status"] = "sent"

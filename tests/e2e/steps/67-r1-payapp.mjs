@@ -29,10 +29,9 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     assert.ok(missingTop < sendTop, "the missing items are above the button");
     await review.locator(".retainage-zero", { hasText: "usually holds 10%" }).waitFor();
     await send.click();
-    // It asks first even so (Round 1 hunt): the server says why it can't go.
-    await confirmDialog(p).waitFor();
-    await confirmDialog(p).locator(".confirm-actions .btn:not(.secondary)").click();
+    // The server's checks come first (Nov 27 hunt): why it can't go shows, and "Email PA-x?" isn't asked.
     await p.locator(".action-error", { hasText: "Pay app blocked" }).waitFor();
+    assert.equal(await confirmDialog(p).count(), 0, "no confirm for a pay app that can't go");
     // The numbers fold under one line.
     const fold = p.locator(".payapp-numbers");
     assert.equal(await fold.getAttribute("open"), null);
