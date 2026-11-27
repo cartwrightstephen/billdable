@@ -2853,7 +2853,7 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
         after: dict[str, int] = {}
         ids = set(job.get("daily_records") or [])
         for rec in state.get("daily_records", []) if ids else []:
-            if rec.get("id") in ids and str(rec.get("at") or "")[:10] > period["to"]:
+            if rec.get("id") in ids and record_day(rec) > period["to"]:
                 for row in rec.get("quantities_added", [] if rec.get("quantities_not_applied") else (rec.get("sections") or {}).get("quantities") or []):
                     after[row["line_id"]] = after.get(row["line_id"], 0) + int(row["qty_milli"])
         out["pay_period"] = {**period, "after_milli": after}
@@ -3537,7 +3537,7 @@ def record_missed_on(state: dict[str, Any], job: dict[str, Any], today: date) ->
     if not start or start > day.isoformat():
         return ""
     ids = set(job.get("daily_records") or [])
-    days = {str(r.get("at") or "")[:10] for r in state.get("daily_records", []) if r.get("id") in ids}
+    days = {record_day(r) for r in state.get("daily_records", []) if r.get("id") in ids}
     days |= {str(r.get("on_date") or r.get("added_at") or "")[:10] for r in job.get("records", [])}
     if not ids and not job.get("records"):
         return ""

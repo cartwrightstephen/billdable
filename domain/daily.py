@@ -24,7 +24,7 @@ from typing import Any
 
 __all__ = [
     "WEATHER", "DAILY_SECTIONS", "INSPECTION_TYPES", "CREW_MAX", "RECORD_SECTIONS", "add_daily_record", "clean_daily_details",
-    "clean_record_entries", "daily_record_note", "daily_record_for", "hold_for_job_record", "save_job_record", "update_job_record",
+    "clean_record_entries", "daily_record_note", "daily_record_for", "hold_for_job_record", "record_day", "save_job_record", "update_job_record",
 ]
 
 _HOLD_HOURS = 24   # how long an uploaded file waits for its New job record
@@ -342,6 +342,8 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
         "job_id": job_id,
         "notes": notes,
         "at": when,
+        # The day it is for, where the person is: in a US evening `at` (UTC) is already tomorrow.
+        "day": day,
         "actor": actor,
         "for_history": bool(job.get("closed")),
         **extra,
@@ -357,6 +359,7 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
         label += f": {_qty_words(job, quantities)}"[:160]
     add_job_record(state, job_id, label[:200], "daily", daily_record_note(job, rec), actor)
     job["records"][-1]["daily_record_id"] = rec["id"]   # Edit opens this record's form again (Nov 26)
+    job["records"][-1]["on_date"] = day
     for record in job.get("records", []):
         if record["id"] in rec.get("attachments", []):
             record["daily_record_id"] = rec["id"]
@@ -639,6 +642,12 @@ def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, 
     return job
 
 
+def record_day(rec: dict[str, Any]) -> str:
+    """The day a daily record is for, YYYY-MM-DD: the person's own day it was saved for, or for one
+    saved before that was kept, the day of its time (UTC, so a US evening reads as tomorrow)."""
+    return str(rec.get("day") or rec.get("at") or "")[:10]
+
+
 def _added_rows(rec: dict[str, Any]) -> list[dict[str, Any]]:
     """What a daily record put on the field totals: quantities_added, or for a record from before it,
     all of its quantities or none (as _quantities_from_records reads them)."""
@@ -725,7 +734,8 @@ def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: 
     for entry in entries:
         if entry["record_id"] and entry["record_id"] not in linked:
             raise GateError("Part of this job record was changed or taken off since you opened it. Open it again.")
-    day = _record_day({**body, "today": body.get("today")}) if body.get("date") else str(rec.get("at") or "")[:10]
+    was = record_day(rec)
+    day = _record_day({**body, "today": body.get("today")}) if body.get("date") else was
     shown = _daily_job_record(job, rec)
     old_rows = _added_rows(rec)
     details = {k: v for k, v in body.items() if k != "entries"}
@@ -759,8 +769,9 @@ def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: 
     for k in ("crew_count",):
         rec.pop(k, None)
     rec.update({k: v for k, v in extra.items() if k != "attachments"})
-    if day != str(rec.get("at") or "")[:10]:
+    if day != was:
         rec["at"] = f"{day}T12:00:00+00:00"
+    rec["day"] = day
     kept: set[str] = set()
     for entry in entries:
         if entry["record_id"]:
@@ -786,6 +797,7 @@ def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: 
     if shown is not None:
         shown["label"], shown["note"], shown["daily_record_id"] = label[:200], daily_record_note(job, rec), daily_id
         shown["edited"] = {"by": actor, "at": utcnow()}
+        shown["on_date"] = day
     audit(state, job_id, "daily_record_edit", f"{actor} changed the job record of {day}" + (f", taking off {', '.join(r['label'] for r in gone)}" if gone else "") + ".", actor)
     if not job.get("closed"):
         _refresh_draft_gate(job, state)

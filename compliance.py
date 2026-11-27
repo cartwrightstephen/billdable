@@ -402,9 +402,11 @@ def _tier(state: dict[str, Any], job: dict[str, Any], saved: dict[str, Any]) -> 
 def _furnishing(state: dict[str, Any], job: dict[str, Any]) -> tuple[str, str, str]:
     """(first, last, last_from): the first and last days of work from the job's records. The
     last is the latest job record's day, else the day the work was marked done."""
-    from domain import job_started_on
-    days = sorted(str(r.get("at") or "")[:10] for r in state.get("daily_records", [])
-                  if isinstance(r, dict) and r.get("job_id") == job["id"] and liens._day(r.get("at")))
+    from domain import job_started_on, record_day
+    # The day each record is for where the crew is (record_day): a US evening's record has a UTC
+    # time on the next day, which would put the lien deadlines a day late.
+    days = sorted(record_day(r) for r in state.get("daily_records", [])
+                  if isinstance(r, dict) and r.get("job_id") == job["id"] and liens._day(record_day(r)))
     first = job_started_on(state, job) or (days[0] if days else "")
     if days:
         return first, days[-1], "job_record"
