@@ -135,7 +135,8 @@ def _envelope_for(state: dict, ctx, body: dict) -> dict[str, Any]:
         invoice = docusign.check_payapp(state, job_id, user, S._text(body, "invoice_id"), S._text(body, "stamp"))
         out["pdf"], out["name"] = docusign.payapp_pdf(state, job_id, invoice["id"])
         out.update(label=invoice["number"], subject=f"Please sign {invoice['number']} - {job['name']}", invoice_id=invoice["id"],
-                   stamp=S._text(body, "stamp"), title=S._text(body, "title", limit=80))
+                   stamp=S._text(body, "stamp"), title=S._text(body, "title", limit=80),
+                   note=S.gcforms.docusign_note(state, job))   # the client takes only their own form (gcforms.py)
     elif kind == "co":
         if not S.may_take(user, "request-co-signature", state):
             raise S.OwnerOnly()
@@ -199,13 +200,14 @@ def _p_docusign_sign(self, m, ctx) -> None:
     docusign.save_envelope(env)
     status, payload = self._mutate(ctx.company_id, lambda st: domain.audit(
         st, what["job_id"], "docusign_sent", f"{ctx.actor} opened {what['label']} for signing in DocuSign (envelope {envelope_id})"
-        + (f"; DocuSign emails {what['second']['name']} to sign after." if what["second"] else "."), ctx.actor))
+        + (f"; DocuSign emails {what['second']['name']} to sign after." if what["second"] else ".")
+        + (f" {what['note']}" if what.get("note") else ""), ctx.actor))
     try:
         url = docusign.recipient_view(ctx.company_id, envelope_id, signer, f"{self._base_url()}/api/docusign/return?e={envelope_id}")
     except docusign.DocusignError as exc:
         self._json(409, {"error": str(exc)})
         return
-    self._json(200, {"url": url, "envelope_id": envelope_id})
+    self._json(200, {"url": url, "envelope_id": envelope_id, **({"note": what["note"]} if what.get("note") else {})})
 
 
 # ----- completion -----

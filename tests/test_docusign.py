@@ -549,6 +549,40 @@ class DocusignHttp(ServerCase):
         self.assertTrue(domain.approvals_missing(state, job, draft))
         self.assertIn("doesn't count", next(a for a in reversed(state["audit"]) if a["action"] == "docusign_completed")["detail"])
 
+    def test_a_client_on_their_own_form_only_signs_our_pdf_and_says_so(self):
+        # Integration (Nov 27, gc-forms): with the client's emails carrying only their own form,
+        # Sign with DocuSign signs Duracash's PDF of the pay app as the approval and says so (on
+        # the answer, in the audit line and on the pay app page's client-forms card).
+        import gcforms
+        import gcform_pdfs
+        self.connected()
+        job_id, inv = self.ready_payapp()
+        with server.company_lock(self.cid):
+            state = server.load_company(self.cid)
+            job = next(j for j in state["jobs"] if j["id"] == job_id)
+            data = gcform_pdfs.fillable_table()
+            meta = importer.store_bytes(self.cid, "gc-form.pdf", data, "Pat")
+            gcforms.add_template(state, job["payer_id"], "payapp", meta, gcforms.read_upload(data), "Pat")
+            gcforms.set_send(state, job["payer_id"], "theirs", "Pat")
+            server.save_company(self.cid, state)
+        res, data = self.request("POST", "/api/docusign/sign", {"kind": "payapp", "job_id": job_id, "invoice_id": inv["id"],
+                                                                "stamp": inv["approval"]["stamp"]}, cookie=self.cookie)
+        self.assertEqual(res.status, 200, data)
+        self.assertIn("signs Duracash's PDF of this pay app", data["note"])
+        sent = self.fake.envelopes[data["envelope_id"]]
+        pdf = base64.b64decode(sent["definition"]["documents"][0]["documentBase64"])
+        self.assertIn(b"(/ds_sign1/)", pdf, "our PDF with its anchor, not the client's form")
+        self.assertIn("doesn't sign that form", self.stored()["audit"][-1]["detail"])
+        _, view = self.request("GET", f"/api/jobs/{job_id}/payapp/{inv['id']}/client-forms", cookie=self.cookie)
+        self.assertEqual(view["docusign_note"], data["note"])
+        # Duracash's PDF going too: no note.
+        with server.company_lock(self.cid):
+            state = server.load_company(self.cid)
+            gcforms.set_send(state, next(j for j in state["jobs"] if j["id"] == job_id)["payer_id"], "both", "Pat")
+            server.save_company(self.cid, state)
+        _, view = self.request("GET", f"/api/jobs/{job_id}/payapp/{inv['id']}/client-forms", cookie=self.cookie)
+        self.assertEqual(view["docusign_note"], "")
+
     def test_declined_marks_nothing_and_check_keeps_to_the_polling_limit(self):
         self.connected()
         job_id, inv = self.ready_payapp()

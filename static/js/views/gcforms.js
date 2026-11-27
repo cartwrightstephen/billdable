@@ -186,6 +186,7 @@ export function payappFormsHtml(j, inv) {
   return `<div class="card client-forms-payapp">
     <h2>On ${j.payer ? j.payer.name : "the client"}'s own forms</h2>
     ${data.forms.length ? `<p class="sub">The email carries ${esc(data.send_label.toLowerCase())}.</p>` : ""}
+    ${data.docusign_note && draft ? `<p class="sub cf-docusign">${esc(data.docusign_note)}</p>` : ""}
     ${data.forms.map(f => `<div class="list-item"><div><strong>${esc(f.label)}</strong> <span class="sub">version ${f.version}</span>
       <a href="${esc(f.url)}" target="_blank" rel="noopener">${draft ? "Preview it filled in" : "Open it filled in"}</a></div>
       ${f.problems.length ? `<ul class="blocker cf-problems">${f.problems.map(p => `<li>${esc(p)}</li>`).join("")}</ul>` : `<p class="sub">Every matched field has its value.</p>`}</div>`).join("")}

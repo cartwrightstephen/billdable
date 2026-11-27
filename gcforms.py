@@ -781,4 +781,16 @@ def payapp_view(state: dict[str, Any], job_id: str, invoice_id: str) -> dict:
     waivers = [{"form_type": t, "label": FORM_TYPES[t], "version": active(state, payer_id, t)["version"],
                 "url": f"/api/jobs/{job_id}/payapp/{invoice_id}/client-form/{t}.pdf"} for t in WAIVER_TYPES if active(state, payer_id, t)]
     return {"send": mode, "send_label": SEND_MODES[mode], "forms": forms, "waivers": waivers,
-            "goes": bool(forms) and mode != "ours"}
+            "goes": bool(forms) and mode != "ours", "docusign_note": docusign_note(state, job)}
+
+
+def docusign_note(state: dict[str, Any], job: dict) -> str:
+    """What Sign with DocuSign signs when the client's emails carry only their own form: Duracash's
+    PDF of the pay app, as the approval; their form goes filled in, without DocuSign's signature
+    on it (its fields have no place DocuSign is told to sign). "" when Duracash's PDF goes too."""
+    payer_id = job.get("payer_id", "")
+    if send_mode(state, payer_id) != "theirs" or not any(active(state, payer_id, t) for t in PAYAPP_TYPES):
+        return ""
+    payer = next((p for p in state.get("payers", []) if p["id"] == payer_id), {})
+    return (f"Sign with DocuSign signs Duracash's PDF of this pay app, as your approval. "
+            f"{payer.get('name') or 'The client'}'s emails carry only their own form, filled in, and DocuSign doesn't sign that form.")
