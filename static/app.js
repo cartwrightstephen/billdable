@@ -26,6 +26,7 @@ import { loadHelperReview, loadAdminCompanies, companySwitch, setAuditJobFilter 
 import { approverTick } from "./js/approvers.js";
 import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml } from "./js/views/auth.js";
 import { setAiVisible, updateAiContext } from "./js/views/helper.js";
+import { focusSignature, findBySignature } from "./js/dom.js";
 
 // ---------- navigation: six destinations with tabs; every page has its own address ----------
 // On a phone the menu shows five; Import/Export goes under More (styles.css). Round 1 (item 19)
@@ -192,6 +193,9 @@ function render() {
   // with the cursor where it was, instead of dropping the focus on the page.
   const was = document.activeElement;
   const keep = was && was.id && app.contains(was) ? { id: was.id, start: was.selectionStart, end: was.selectionEnd } : null;
+  // A button without an id (a filter, Remove, a row's action) is found again by what it does, so
+  // a keyboard user stays on it, or on the one that took its place, instead of the page's top.
+  const keepSig = !keep && was && app.contains(was) ? focusSignature(was) : null;
   const whole = shell !== shellHtml || !document.getElementById("view");
   if (whole) {
     const tabsLeft = document.querySelector(".tabs")?.scrollLeft || 0;
@@ -213,6 +217,8 @@ function render() {
       again.focus({ preventScroll: true });
       try { if (typeof keep.start === "number") again.setSelectionRange(keep.start, keep.end); } catch (_) { /* not a text box */ }
     }
+  } else if (keepSig && (!document.activeElement || document.activeElement === document.body)) {
+    findBySignature(app, keepSig)?.focus({ preventScroll: true });
   }
   document.title = pageTitle();
   fadeTabs();

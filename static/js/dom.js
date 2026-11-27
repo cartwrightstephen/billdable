@@ -75,6 +75,20 @@ export function askConfirm(message, okLabel = "Yes", danger = false, altLabel = 
   });
 }
 
+// A focused control without an id, described by its tag and data-* (data-action, data-kind,
+// data-n, data-id...), so the redraw can put the focus back on the one that does the same thing
+// (a filter chip, a row's button). Null for anything without a data-action: nothing to go by.
+export function focusSignature(el) {
+  if (!el || !el.dataset || !el.dataset.action || !el.tagName) return null;
+  return { tag: el.tagName.toLowerCase(), data: { ...el.dataset } };
+}
+export function findBySignature(root, sig) {
+  if (!root || !sig) return null;
+  const sel = sig.tag + Object.entries(sig.data).map(([k, v]) =>
+    `[data-${k.replace(/[A-Z]/g, c => "-" + c.toLowerCase())}="${String(v).replace(/["\\]/g, "\\$&")}"]`).join("");
+  try { return root.querySelector(sel); } catch (_) { return null; }
+}
+
 // Put the cursor in a box once the page has drawn, unless the person has already gone to another
 // box by then: the frame can come late, and the focus would take what they are typing elsewhere.
 export function focusAfterDraw(find) {

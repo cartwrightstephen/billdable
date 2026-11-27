@@ -617,7 +617,18 @@ export const actions = {
     focusAfterDraw(() => document.getElementById("daily-notes"));
   },
   "daily-edit-cancel": () => { const id = daily.editing && daily.editing.jobId; resetDaily(); clearForm("daily"); if (id) nav("job", id); else render(); },
-  "daily-row-remove": (el) => { dropRow(el.dataset.kind, +el.dataset.n); render(); },
+  "daily-row-remove": (el) => {
+    const kind = el.dataset.kind, n = +el.dataset.n;
+    dropRow(kind, n);
+    render();
+    // The focus stays in the list: on the row that moved up, else the one above, else the
+    // section's Add button (keyboard; Nov 27 hunt: it fell to the top of the page).
+    const at = document.activeElement;
+    if (!at || at === document.body) {
+      const q = (m) => document.querySelector(`[data-action="daily-row-remove"][data-kind="${kind}"][data-n="${m}"]`);
+      (q(n) || q(n - 1) || document.querySelector(kind === "crew" ? '[data-action="daily-more"][data-kind="crew"]' : `[data-action="daily-chip"][data-kind="${kind}"]`) || document.getElementById("daily-notes"))?.focus({ preventScroll: true });
+    }
+  },
   // "+ Delivery ticket": opens its section; once open, adds another row where the section takes more.
   "daily-chip": (el) => {
     const key = el.dataset.kind;
