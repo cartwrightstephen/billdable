@@ -201,7 +201,7 @@ export default async function ({ browser, BASE, step, errors, signIfAsked }) {
     assert.equal(await periodRow("Amount due").innerText(), "$32,580.00");
   });
 
-  await walk("Walkthrough 8: the three supporting documents, then Ready to send", async () => {
+  await walk("Walkthrough 8: the three supporting documents, then Waiting for signature", async () => {
     await p.getByRole("button", { name: "Add or check 2 documents" }).click();
     await p.waitForURL(/\/money\/pay-app\//);
     await p.getByText("Missing (2)").waitFor();
@@ -219,7 +219,8 @@ export default async function ({ browser, BASE, step, errors, signIfAsked }) {
     await sheets.getByText("timesheet-level1.jpg").waitFor();
     await sheets.getByRole("button", { name: "I checked this file" }).click();
     await sheets.locator(".mark", { hasText: "✓" }).waitFor();
-    await p.locator("h1 + .sub", { hasText: "Ready to send" }).waitFor();
+    // In, it waits only on the signature of step 9 (Nov 27 hunt: it read Ready to send).
+    await p.locator("h1 + .sub", { hasText: "Waiting for signature" }).waitFor();
     // The email preview's sums, as the document has the tester check the PDF.
     await p.getByText("Less retainage 10%: -$3,620.00").first().waitFor();
     await p.getByText("Amount due this application: $32,580.00").first().waitFor();
